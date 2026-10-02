@@ -336,7 +336,9 @@ def test_observer_review_carries_the_unified_montage_receipts(
     assert review["content"].startswith("Not everything you asked for made it in:")
     assert "10 of 14 clips" in review["content"]
     assert "I guessed these, tell me if any is wrong: Dolmabahce" in review["content"]
-    assert [r["requirement_id"] for r in review["payload"]["requirement_receipts"]] == ["r1", "r2"]
+    # r2's stored "can't verify" judged nothing: no line, and not carried forward.
+    assert "fast" not in review["content"]
+    assert [r["requirement_id"] for r in review["payload"]["requirement_receipts"]] == ["r1"]
 
 
 def test_observer_review_ignores_receipts_from_an_older_brief_version(
@@ -719,3 +721,72 @@ def test_a_refused_phone_dispatch_is_not_a_retry_loop() -> None:
     assert execution.error["recovery"] == "ask_user"
     assert events[-1]["payload"]["recovery"] == "ask_user"
     assert "retry without" not in events[-1]["content"]
+
+
+def _finish_refused_dispatch(outcome: str) -> tuple[SimpleNamespace, list]:
+    job = _device_job()
+    db, _approval, execution, _rows = _claim_fixture(job)
+    execution.status = "accepted"
+    session = db._gets[CreatorAgentSession]
+    turn = db._gets[CreatorAgentTurn]
+    approval = db._gets[CreatorAgentApproval]
+    thread = db._gets[CreationThread]
+    session.render_attempts = 0
+    session.last_error = None
+    db._executes = [session, turn, approval, execution, thread]
+    claim = SimpleNamespace(
+        session_id=session.id,
+        turn_id=turn.id,
+        approval_id=approval.id,
+        execution_id=execution.id,
+        thread_id=thread.id,
+        target_variant_id=None,
+        target_generation_id=None,
+    )
+    events: list = []
+
+    def append(_db, _thread, **kwargs):  # noqa: ANN001, ANN202
+        events.append(kwargs)
+        return SimpleNamespace(id=uuid.uuid4())
+
+    @contextmanager
+    def sessions():  # noqa: ANN202
+        yield db
+
+    with (
+        patch.object(kria_runtime, "sync_session", sessions),
+        patch.object(kria_runtime, "_append_sync_event", append),
+        patch.object(kria_runtime, "_promote_queued_successor_sync", return_value=None),
+    ):
+        status, _ = kria_runtime._finish_approval_dispatch(claim, outcome=outcome, job_id=None)
+    assert status == "failed"
+    return execution, events
+
+
+@pytest.mark.parametrize(
+    ("outcome", "says"),
+    [
+        # KRI-217: a montage lane that cannot place Visuals (cloud runtime v2,
+        # or a Visual kind the phone cannot draw) refuses the same way on every
+        # retry, so the reply says how to get unstuck.
+        ("guided_edit_bypass_unsafe", "Remove them from Visuals"),
+        ("visuals_processing", "still being prepared"),
+    ],
+)
+def test_a_visuals_refusal_says_what_to_do_instead_of_retry(outcome: str, says: str) -> None:
+    execution, events = _finish_refused_dispatch(outcome)
+
+    assert execution.error["outcome"] == outcome
+    assert execution.error["retryable"] is False
+    assert execution.error["recovery"] == "ask_user"
+    assert events[-1]["payload"]["recovery"] == "ask_user"
+    assert events[-1]["payload"]["dispatch_outcome"] == outcome
+    assert says in events[-1]["content"]
+    assert "retry without" not in events[-1]["content"]
+
+
+def test_an_unknown_dispatch_failure_keeps_the_generic_retry_copy() -> None:
+    execution, events = _finish_refused_dispatch("publish_failed")
+
+    assert execution.error["recovery"] == "retry"
+    assert "retry without repeating the edit" in events[-1]["content"]

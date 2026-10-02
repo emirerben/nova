@@ -47,6 +47,7 @@ from pydantic import (
 
 from app.kria.render_assets import LibraryRenderAsset
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
+from app.pipeline.silence_cut import CutPlan  # noqa: TCH001
 
 # `Job.assembly_plan` key the runner reads/writes `PhoneSubtitledLaneRequest`
 # from. Versioned so a future incompatible shape can land beside it.
@@ -221,6 +222,63 @@ def lane_names(lanes: PhoneSubtitledLanes | None) -> tuple[str, ...]:
     if lanes.ending_clip is not None:
         names.append("ending_clip")
     return tuple(names)
+
+
+def remap_lanes_for_cut(
+    lanes: PhoneSubtitledLanes | None, plan: CutPlan
+) -> tuple[PhoneSubtitledLanes | None, frozenset[str]]:
+    """Shift every lane's main-timeline placement into a `CutPlan`'s cut time.
+
+    Every card/effect here was resolved (grounded or hand-authored) against
+    the ORIGINAL source-clip timeline -- grounding samples frames from the
+    original clip at those exact timestamps, so it must keep running in
+    source time. Once resolved, though, the compiled recipe plays the CUT
+    timeline, so this is the one place their placement moves:
+
+      - ``overlays``: a card's ``start_s``/``end_s`` window is remapped with
+        `app.pipeline.silence_cut.remap_range`; a card whose ENTIRE window
+        lands inside one or more removals is dropped (its id is returned so
+        the caller can demote its grounding/beat receipt entry instead of
+        silently losing it). ``source_start_s`` (a video card's OWN offset
+        into ITS OWN source file) is untouched -- that is never a
+        main-timeline coordinate.
+      - ``sound_effects``: only the request's ``at_s`` placement moves, via
+        `app.pipeline.silence_cut.remap_time` -- never dropped, since an
+        effect has no fixed on-timeline end to test against a removal (its
+        played duration is a property of the resolved catalog asset, not a
+        window here).
+      - ``ending_clip``: untouched. It always starts right after the
+        speaker clip's OWN (now-shorter) end, never at a fixed
+        source-timeline position, so it needs no remap.
+
+    Returns ``(lanes, frozenset())`` unchanged when ``lanes`` is ``None`` or
+    the plan removed nothing (byte-identical fast path for every render that
+    never applies a cut).
+    """
+    if lanes is None or not plan.removed:
+        return lanes, frozenset()
+    from app.pipeline.silence_cut import remap_range, remap_time  # noqa: PLC0415
+
+    kept_cards: list[SubtitledOverlayCard] = []
+    dropped_card_ids: set[str] = set()
+    for card in lanes.overlays:
+        mapped = remap_range(card.start_s, card.end_s, plan)
+        if mapped is None:
+            dropped_card_ids.add(card.id)
+            continue
+        new_start, new_end = mapped
+        kept_cards.append(card.model_copy(update={"start_s": new_start, "end_s": new_end}))
+
+    remapped_sfx: list[ResolvedSoundEffect] = []
+    for resolved in lanes.sound_effects:
+        new_at = remap_time(resolved.request.at_s, plan)
+        remapped_sfx.append(
+            resolved.model_copy(
+                update={"request": resolved.request.model_copy(update={"at_s": new_at})}
+            )
+        )
+    remapped = lanes.model_copy(update={"overlays": kept_cards, "sound_effects": remapped_sfx})
+    return remapped, frozenset(dropped_card_ids)
 
 
 def drop_lane(lanes: PhoneSubtitledLanes, name: str) -> PhoneSubtitledLanes:

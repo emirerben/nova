@@ -37,14 +37,16 @@ from app.pipeline.phone_subtitled_lanes import (
     SubtitledOverlayCard,
     SubtitledSoundEffect,
 )
+from app.pipeline.speech_cleanup_analysis import SpeechCleanupAnalysisInput, analyze_speech_cleanup
 from app.pipeline.transcribe import Transcript, Word
 from app.services.device_render import device_status
 from app.services.phone_overlay_grounding import GroundedOverlayCards
 from app.services.phone_reaction_grounding import GroundedReactionBeats
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD, PhoneVisualBinding
 from app.tasks import generative_build as gb
-from tests.pipeline.test_phone_montage_plan import _binding
+from tests.pipeline.test_phone_voiceover_montage_plan import _binding
 from tests.tasks.test_generative_build import _Meta
+from tests.tasks.test_generative_build_silence_cut import DURATION, SILENCES, _cut_words
 
 
 def _job_and_session(monkeypatch, *, assembly_plan: dict, all_candidates: dict):
@@ -102,8 +104,10 @@ def _words(*spans: tuple[str, float, float]) -> list[Word]:
 # --- subtitled ("Talking to camera") ----------------------------------------
 
 
-def _setup_subtitled(monkeypatch, *, edit_format="subtitled", transcript_words=None):
-    binding = _binding("c0", duration_s=10.0)
+def _setup_subtitled(
+    monkeypatch, *, edit_format="subtitled", transcript_words=None, duration_s=10.0
+):
+    binding = _binding("c0", duration_s=duration_s)
     snapshot = {
         PHONE_SOURCES_FIELD: [binding.model_dump(mode="json")],
         "creator_generation_id": "generation",
@@ -134,7 +138,10 @@ def _setup_subtitled(monkeypatch, *, edit_format="subtitled", transcript_words=N
     import app.pipeline.transcribe as transcribe_mod
 
     monkeypatch.setattr(
-        probe_mod, "probe_video", lambda path: SimpleNamespace(duration_s=10.0), raising=False
+        probe_mod,
+        "probe_video",
+        lambda path: SimpleNamespace(duration_s=duration_s),
+        raising=False,
     )
     words = transcript_words or _words(("Hello", 0.0, 0.5), ("there.", 0.5, 1.0))
     monkeypatch.setattr(
@@ -159,7 +166,7 @@ def test_subtitled_compiles_and_pins_device_request(monkeypatch):
     assert variant["render_status"] == "awaiting_device"
     assert variant["render_destination"] == "device"
     assert variant["caption_cues"]
-    assert job.assembly_plan["phone_deferred_variants"] == []
+    assert "phone_deferred_variants" not in job.assembly_plan
 
 
 def test_subtitled_redelivery_is_a_no_op(monkeypatch):
@@ -194,11 +201,124 @@ def test_subtitled_rejects_when_flag_off(monkeypatch):
         gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
 
 
-def test_subtitled_fails_closed_on_required_speech_cleanup_contract(monkeypatch):
+def test_subtitled_fails_closed_on_required_speech_cleanup_contract_without_a_snapshot(
+    monkeypatch,
+):
+    """`required_v1` now HAS a native phone application (a single
+    embedded-spine clip -- see the `cut_plan`-carrying tests further down),
+    but it still needs the immutable preflight snapshot to prove and apply
+    the accepted CutPlan from. A `required_v1` marker with no
+    `_speech_cleanup_internal.preflight_snapshot` at all (a malformed/stale
+    snapshot) must fail the WHOLE job as `speech_cleanup_failed`, never
+    silently render uncut."""
+    from app.services.speech_cleanup import SpeechCleanupFailure
+
     job, snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
     snapshot["speech_cleanup_contract"] = "required_v1"
-    with pytest.raises(UnsupportedPhonePlan, match="speech-cleanup"):
+    with pytest.raises(SpeechCleanupFailure):
         gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+
+def _raw_preflight_snapshot(
+    *,
+    storage_path: str,
+    kind: str = "embedded_spine",
+    media_identity: str = "c0",
+    generation: str = "1",
+) -> dict:
+    """Build the same raw ``preflight_snapshot`` mapping
+    `content_plan_build._speech_cleanup_dispatch_snapshot` persists onto
+    ``Job.assembly_plan["_speech_cleanup_internal"]`` for an accepted "clean"
+    choice, using `_cut_words`/`SILENCES`/`DURATION`
+    (`tests/tasks/test_generative_build_silence_cut.py`'s proven fixture:
+    two removals, `(0.88, 1.42)` and `(2.5, 4.4)`, out of an 8-word/6.5s
+    clip) so the exact resulting CutPlan is already documented and pinned
+    elsewhere. ``kind="embedded_spine"`` (default) is the phone
+    subtitled/self-narrated shape; ``kind="voiceover"`` is the phone narrated
+    shape -- `_run_phone_narrated_job`'s `require_source` does not check
+    ``window_duration_s``, so this fixture's 6.5s window works unchanged
+    against a voiceover of any real (mocked) duration."""
+    import uuid as _uuid
+
+    from app.services.clip_speech import SilenceDetectionResult
+
+    fingerprint = "a" * 64
+    analysis = analyze_speech_cleanup(
+        SpeechCleanupAnalysisInput(
+            source_fingerprint=fingerprint,
+            local_media_path="preflight.wav",
+            duration_s=DURATION,
+            source_window_start_s=0.0,
+            source_window_end_s=DURATION,
+            mixed_gap_mode="off",
+            over_budget_policy="clamp",
+        ),
+        transcribe_fn=lambda *_a, **_k: SimpleNamespace(
+            words=_cut_words(), language="en", low_confidence=False
+        ),
+        silence_detect_fn=lambda *_a, **_k: SilenceDetectionResult(spans=SILENCES, status="ok"),
+    )
+    return {
+        "schema_version": 1,
+        "analysis_id": str(_uuid.uuid4()),
+        "engine_version": "preflight-v1-2026-09-05",
+        "detector_version": analysis.detector_version,
+        "source": {
+            "kind": kind,
+            "media_identity": media_identity,
+            "storage_path": storage_path,
+            "generation": generation,
+            "window_start_s": 0.0,
+            "window_end_s": DURATION,
+            "source_policy_fingerprint": fingerprint,
+        },
+        "analysis": analysis.to_payload(),
+    }
+
+
+def test_subtitled_applies_required_speech_cleanup_cut_plan(monkeypatch):
+    """End-to-end `required_v1` phone subtitled: the accepted CutPlan (two
+    removals, three keep segments -- see `_raw_preflight_snapshot`) is
+    applied as hard cuts on the compiled recipe's main video track, captions
+    are rebuilt from the SAME preflight words (never a second Whisper call --
+    `transcribe_whisper_cached` is monkeypatched to explode if called), and
+    the terminal outcome context needed for the device-completion receipt
+    (KRI-118) is persisted on the variant."""
+    job, snapshot, _session, binding = _setup_subtitled(monkeypatch, duration_s=DURATION)
+    snapshot["speech_cleanup_contract"] = "required_v1"
+    snapshot["_speech_cleanup_internal"] = {
+        "preflight_snapshot": _raw_preflight_snapshot(storage_path=binding.proxy_path)
+    }
+
+    import app.pipeline.transcribe as transcribe_mod
+
+    def _explode(*_a, **_k):
+        raise AssertionError("required_v1 must never re-transcribe the clip")
+
+    monkeypatch.setattr(transcribe_mod, "transcribe_whisper_cached", _explode, raising=False)
+
+    gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    assert variant["render_status"] == "awaiting_device"
+    assert variant["silence_cut_outcome"] == "applied"
+    assert variant["silence_cut"]["removed"]
+    context = variant["_speech_cleanup_outcome_context"]
+    assert context["output_removal_count"] == 2
+    assert context["output_removed_ms"] == pytest.approx(2440, abs=1)
+
+    recipe = device_status(job, "subtitled").request.recipe
+    video_track = next(t for t in recipe.tracks if t.kind == "video")
+    assert [c.id for c in video_track.clips] == ["clip-0", "clip-1", "clip-2"]
+    starts_and_durations = [
+        (round(c.source_start, 3), round(c.source_duration, 3)) for c in video_track.clips
+    ]
+    assert starts_and_durations == [(0.0, 0.88), (1.42, 1.08), (4.4, 2.1)]
+    assert recipe.duration == pytest.approx(DURATION - (0.54 + 1.9), abs=1e-3)
+    # Captions were rebuilt from the remapped/filler-filtered preflight
+    # words, never left in source-clip time.
+    assert all(cue["end_s"] <= recipe.duration + 1e-6 for cue in variant["caption_cues"])
 
 
 def test_subtitled_rejects_clip_over_five_minutes(monkeypatch):
@@ -240,10 +360,142 @@ def test_self_narrated_resolving_to_talking_head_fails_closed(monkeypatch):
         gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
 
 
+# --- KRI-136: multi-clip Talking head (speaker clip + muted cutaways) ------
+
+
+_TALKING_HEAD_FEATURES = [
+    "basicComposition",
+    "local1080Export",
+    "positionedText",
+    "animatedText",
+    "narrationAudio",
+    "audioMix",
+    "visualBlocks",
+    "visualVideos",
+]
+
+
+def _setup_talking_head(monkeypatch, *, spine="c1", enabled=True):
+    """Three self-narrated clips; ``spine`` is the one `_resolve_archetype`
+    picks. c0/c2 become cutaways."""
+    durations = {"c0": 6.0, "c1": 20.0, "c2": 2.0}
+    bindings = {cid: _binding(cid, duration_s=dur) for cid, dur in durations.items()}
+    snapshot = {
+        PHONE_SOURCES_FIELD: [b.model_dump(mode="json") for b in bindings.values()],
+        "creator_generation_id": "generation",
+    }
+    all_candidates = {
+        "clip_paths": [b.proxy_path for b in bindings.values()],
+        "edit_format": "narrated_ready",
+        "language": "en",
+    }
+    job, session = _job_and_session(
+        monkeypatch, assembly_plan=snapshot, all_candidates=all_candidates
+    )
+    monkeypatch.setattr(gb.settings, "phone_render_verified_features", _TALKING_HEAD_FEATURES)
+    monkeypatch.setattr(gb.settings, "phone_talking_head_rendering_enabled", enabled)
+    monkeypatch.setattr(
+        gb,
+        "_ingest_clips",
+        lambda *a, **k: {
+            "clip_metas": [_Meta(cid, 5.0) for cid in durations],
+            "clip_id_to_gcs": {cid: b.proxy_path for cid, b in bindings.items()},
+            "clip_id_to_local": {cid: f"/tmp/{cid}.mp4" for cid in durations},
+            "probe_map": {},
+            "hero": _Meta(spine, 5.0),
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        gb, "_resolve_archetype", lambda *a, **k: ("talking_head", spine, None), raising=False
+    )
+
+    import app.pipeline.probe as probe_mod
+    import app.pipeline.transcribe as transcribe_mod
+
+    probed: list[str] = []
+
+    def _probe(path):
+        probed.append(path)
+        return SimpleNamespace(duration_s=durations[path.rsplit("/", 1)[-1].split(".")[0]])
+
+    monkeypatch.setattr(probe_mod, "probe_video", _probe, raising=False)
+    transcribed: list[str] = []
+
+    def _transcribe(path, *a, **k):
+        transcribed.append(path)
+        return Transcript(words=_words(("Hello", 0.0, 0.5), ("there.", 0.5, 1.0)), language="en")
+
+    monkeypatch.setattr(transcribe_mod, "transcribe_whisper_cached", _transcribe, raising=False)
+    return job, snapshot, bindings, transcribed
+
+
+def test_multi_clip_talking_head_keeps_speaker_audio_and_cuts_away(monkeypatch):
+    job, _snapshot, bindings, transcribed = _setup_talking_head(monkeypatch, spine="c1")
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    recipe = device_status(job, "subtitled").request.recipe
+    tracks = {track.id: track for track in recipe.tracks}
+    # Only the speaker plays on the main track, so its audio runs the whole way.
+    assert [c.source_asset_id for c in tracks["subtitled"].clips] == ["c1"]
+    assert recipe.duration == pytest.approx(20.0)
+    assert recipe.audio.original_volume == 1.0
+    # Captions come from the SPEAKER's own speech, never a cutaway's.
+    assert transcribed == ["/tmp/c1.mp4"]
+    assert recipe.text_layers
+    cutaways = tracks["talking-head-cutaways"].clips
+    assert [c.source_asset_id for c in cutaways] == ["c0", "c2"]
+    for clip in cutaways:
+        assert clip.volume == 0
+        assert clip.visual_placement is not None
+        assert clip.visual_placement.width_fraction is None  # full frame
+        assert clip.timeline_start >= 1.5  # speaker alone first
+        assert clip.timeline_start + clip.source_duration <= 20.0
+    assert {"visualBlocks", "visualVideos", "audioMix"} <= recipe.required_capabilities
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["resolved_archetype"] == "subtitled"
+    receipt = variant[gb.PHONE_TALKING_HEAD_FIELD]
+    assert receipt["speaker_media_id"] == "c1"
+    assert [row["media_id"] for row in receipt["cutaways"]] == ["c0", "c2"]
+
+
+def test_multi_clip_talking_head_flag_off_fails_closed(monkeypatch):
+    job, snapshot, _bindings, _t = _setup_talking_head(monkeypatch, enabled=False)
+    with pytest.raises(ValueError, match="exactly one clip"):
+        gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+
+def test_multi_clip_declared_subtitled_still_fails_closed(monkeypatch):
+    """Only self-narration resolves to a Talking head; a declared
+    `subtitled` item with 2+ clips keeps the single-clip contract."""
+    job, snapshot, _bindings, _t = _setup_talking_head(monkeypatch)
+    candidates = {**job.all_candidates, "edit_format": "subtitled"}
+    with pytest.raises(ValueError, match="exactly one clip"):
+        gb._run_phone_subtitled_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+
+
+def test_multi_clip_resolving_to_montage_fails_closed(monkeypatch):
+    job, snapshot, _bindings, _t = _setup_talking_head(monkeypatch)
+    monkeypatch.setattr(
+        gb, "_resolve_archetype", lambda *a, **k: ("montage", None, "no_speech"), raising=False
+    )
+    with pytest.raises(UnsupportedPhonePlan, match="unsupported"):
+        gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+
+def test_multi_clip_required_speech_cleanup_fails_closed(monkeypatch):
+    job, snapshot, _bindings, _t = _setup_talking_head(monkeypatch)
+    snapshot["speech_cleanup_contract"] = "required_v1"
+    with pytest.raises(gb.SpeechCleanupFailure):
+        gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+
 def test_subtitled_worker_rejects_direct_format_it_does_not_own(monkeypatch):
     """`_run_phone_subtitled_job`'s own defense-in-depth: only `subtitled` or
     a no-voiceover narrated* item may reach it -- a montage-family item
-    (routed to `_run_phone_montage_job` by the dispatch fork in normal
+    (routed to `_run_phone_voiceover_montage_job` by the dispatch fork in normal
     operation) is rejected if ever called directly."""
     job, snapshot, _session, _binding_ = _setup_subtitled(monkeypatch, edit_format="montage")
     with pytest.raises(ValueError, match="No phone renderer is registered"):
@@ -1609,7 +1861,7 @@ def test_resolve_phone_sound_effect_rejects_wrong_prefix(monkeypatch):
 # --- narrated (WITH a recorded voiceover) -----------------------------------
 
 
-def _fake_narration_bed(_job_id, voiceover_gcs_path):
+def _fake_narration_bed(_job_id, voiceover_gcs_path, *, narration=None):
     if not voiceover_gcs_path:
         return None
     from app.pipeline.phone_recipe_shared import PhoneNarrationBed
@@ -1618,7 +1870,7 @@ def _fake_narration_bed(_job_id, voiceover_gcs_path):
         plan_item_id="item-1",
         generation="9",
         fingerprint=RenderFingerprint(sha256="d" * 64, byte_count=999),
-        duration_s=12.0,
+        duration_s=narration.duration_s if narration is not None else 12.0,
     )
 
 
@@ -1746,11 +1998,84 @@ def test_narrated_rejects_without_a_voiceover(monkeypatch):
         gb._run_phone_narrated_job(str(job.id), snapshot, candidates, ownership_epoch=3)
 
 
-def test_narrated_fails_closed_on_required_speech_cleanup_contract(monkeypatch):
+def test_narrated_fails_closed_on_required_speech_cleanup_contract_without_a_snapshot(
+    monkeypatch,
+):
+    """`required_v1` now HAS a native phone application for a recorded
+    voiceover (`_phone_narrated_cleaned_narration` +
+    `app.services.guided_speech_cleanup.build_cleaned_narration`), but it
+    still needs the immutable preflight snapshot to prove and apply the
+    accepted CutPlan from. A `required_v1` marker with no
+    `_speech_cleanup_internal.preflight_snapshot` at all must fail the WHOLE
+    job as `speech_cleanup_failed`, never silently render the raw voiceover."""
+    from app.services.speech_cleanup import SpeechCleanupFailure
+
     job, snapshot, _session, _bindings = _setup_narrated(monkeypatch)
     snapshot["speech_cleanup_contract"] = "required_v1"
-    with pytest.raises(UnsupportedPhonePlan, match="speech-cleanup"):
+    with pytest.raises(SpeechCleanupFailure):
         gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+
+def test_narrated_applies_required_speech_cleanup_to_the_recorded_voiceover(monkeypatch):
+    """End-to-end `required_v1` phone narrated: `_phone_narrated_cleaned_narration`
+    (mocked here -- its own machinery,
+    `app.services.guided_speech_cleanup.build_cleaned_narration`, is covered
+    by `tests/services/test_guided_speech_cleanup.py`) returns a cleaned
+    derivative; the render points `_resolve_phone_voiceover_bed` at that
+    derivative's path/duration, rebuilds its transcript from the cleaned
+    words directly (never a second Whisper call), and the compiled recipe's
+    total duration follows the CLEANED (shorter) voiceover -- no separate
+    video-timeline remap needed, since every step boundary here is already
+    computed FROM the voiceover's own duration/words."""
+    from app.schemas.edit_proposal import NarrationSpeechCleanup, NarrationTrack, NarrationWord
+
+    job, snapshot, _session, _bindings = _setup_narrated(monkeypatch)
+    snapshot["speech_cleanup_contract"] = "required_v1"
+    snapshot["_speech_cleanup_internal"] = {
+        "preflight_snapshot": _raw_preflight_snapshot(
+            storage_path=job.all_candidates["voiceover_gcs_path"],
+            kind="voiceover",
+            media_identity="voiceover-1",
+        )
+    }
+
+    cleaned = NarrationTrack(
+        gcs_path="users/u/plan/i/speech-cleanup/analysis/deadbeef.wav",
+        generation="42",
+        duration_s=9.0,
+        words=[
+            NarrationWord(text="First", start_s=0.0, end_s=0.5),
+            NarrationWord(text="clip.", start_s=0.5, end_s=1.0),
+            NarrationWord(text="Third", start_s=6.0, end_s=6.5),
+            NarrationWord(text="clip.", start_s=6.5, end_s=7.0),
+        ],
+        speech_cleanup=NarrationSpeechCleanup(
+            analysis_id=str(uuid.uuid4()),
+            source_gcs_path=job.all_candidates["voiceover_gcs_path"],
+            source_generation="1",
+            source_duration_s=12.0,
+            cut_sha256="b" * 64,
+        ),
+    )
+    monkeypatch.setattr(gb, "_phone_narrated_cleaned_narration", lambda *a, **k: cleaned)
+
+    import app.pipeline.transcribe as transcribe_mod
+
+    def _explode(*_a, **_k):
+        raise AssertionError("required_v1 must never re-transcribe the cleaned voiceover")
+
+    monkeypatch.setattr(transcribe_mod, "transcribe_whisper", _explode, raising=False)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    assert variant["silence_cut_outcome"] == "applied"
+    assert variant["_speech_cleanup_outcome_context"]["output_removal_count"] == 2
+    status = device_status(job, "narrated")
+    # The compiled recipe follows the CLEANED (shorter) voiceover duration,
+    # not the mocked `_probe_duration`/`split_phrases` fixture's own 12.0s.
+    assert status.request.recipe.duration == pytest.approx(9.0)
 
 
 def test_narrated_bed_level_mix_math_matches_montage_convention(monkeypatch):

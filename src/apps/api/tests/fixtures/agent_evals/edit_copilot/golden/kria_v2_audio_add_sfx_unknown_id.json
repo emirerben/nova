@@ -1,0 +1,65 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-29-v51",
+  "input": {
+    "utterance": "add a laser at 2s",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "editor_ops_version": 2,
+      "allowed_op_families": [
+        "sfx"
+      ],
+      "has_narrated_captions": false,
+      "text_bars": [],
+      "slots": [
+        {
+          "output_start_s": 0,
+          "output_end_s": 8,
+          "duration_s": 8
+        }
+      ],
+      "total_duration_s": 8,
+      "sfx": {
+        "placements": [
+          {
+            "index": 0,
+            "id": "a",
+            "label": "Pop",
+            "at_s": 1.0,
+            "gain": 1.0,
+            "duration_s": 0.2
+          }
+        ],
+        "catalog": [
+          {
+            "id": "whoosh_01",
+            "name": "Whoosh",
+            "label": "Whoosh",
+            "category": "transitions",
+            "duration_s": 0.8
+          },
+          {
+            "id": "pop_01",
+            "name": "Pop",
+            "label": "Pop",
+            "category": "ui",
+            "duration_s": 0.2
+          }
+        ]
+      }
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"add_sfx\", \"effect_id\": \"laser_99\", \"at_s\": 2, \"gain\": 1}], \"confidence\": 0.9, \"reply\": \"I could not find a laser sound in the catalog.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [],
+    "confidence": 0.4,
+    "reply": "I could not find a laser sound in the catalog.",
+    "suggestions": [],
+    "needs_clarification": true
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "add_sfx_unknown_id"
+  }
+}

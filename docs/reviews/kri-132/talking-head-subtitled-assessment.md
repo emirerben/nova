@@ -85,3 +85,24 @@ The gap is not the renderer, it's the **phone compiler**: nothing produces a tal
 5. **Subtitled phone compiler — after (1) and after talking_head's decision-object pattern is proven in production**, since subtitled's assembler has the same "everything in one function" shape and can reuse whatever `TalkingHeadVariantDecision`-equivalent pattern gets established, rather than inventing its own.
 
 Total rough sizing for a minimally-shippable talking_head phone path (steps 1-3, skipping crop and deferring subtitled): **medium-large**, comparable to or somewhat larger than the original montage-family phone work (KRI-114), since that work had the benefit of the decision/media split already being done — this doesn't.
+
+## KRI-136: smallest multi-clip slice (design + size, shipped)
+
+**Shape.** Reuse the Subtitled recipe instead of adding a Talking-head plan object. The speaker (spine) clip is the only main-track clip, so its own audio carries the whole video and the Subtitled caption lane captions it unchanged. Every other clip is a cutaway on a new `talking-head-cutaways` overlay track: muted (`volume=0`), with a `VisualMediaPlacement` that has no `width_fraction`, so the engine cover-fills the frame. That is the "keep this audio, swap the picture" primitive from §5, and it already existed. Placed clips never contribute audio (`Composition.swift`), and `widthFraction == nil` means a cover crop (`VisualBlocks.swift`). No Swift change was needed.
+
+**Decisions reused from the cloud.** Spine selection is the same `_resolve_archetype` self-narration branch (`_pick_speech_spine`, which falls back on `spine_too_short`). Windows come from `talking_head_assembler.schedule_broll`, which was already pure.
+
+**Pieces.**
+- Compiler: the `cutaways` param in `app/pipeline/phone_subtitled_plan.py`, plus `cutaways_from_recipe` and `speaker_binding_from_recipe` for editor Saves.
+- Worker: `_run_phone_subtitled_job` accepts 2+ bindings when `phone_talking_head_supported()`.
+- Gates: the dispatch gate (`content_plan_build.py`) and the planner manifest (`creator_capabilities.py`) both consult the same helper.
+- Flag: `PHONE_TALKING_HEAD_RENDERING_ENABLED`, default off.
+
+**Size.** About 250 lines of server code, about 350 lines of tests, and 1 simulator render test (`TalkingHeadCutawayCompositionTests`). Roughly 1–2 days.
+
+**Deferred.** These are the next slices, in order:
+1. Speech cleanup on the spine. This needs the cutaway schedule computed on the CUT timeline, with windows biased onto the cuts.
+2. Face-aware crop, so a landscape speaker works (KRI-140).
+3. A declared `talking_head` format on phone accounts.
+4. Loudnorm and punch-in reframe on the speaker.
+

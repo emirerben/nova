@@ -20,6 +20,8 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
+    null,
     text,
 )
 from sqlalchemy.dialects.postgresql import BYTEA, JSONB, UUID
@@ -1588,6 +1590,9 @@ class CreatorAgentTurn(Base):
     # thread-revision conflict does not count.
     abandoned_claims: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     error: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # The editor's unsaved state (EditorStateIn) for this turn; NULLed on completion.
+    # Never copied into thread events (up to 256 KB).
+    editor_state: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
@@ -3828,3 +3833,18 @@ class BuildTask(Base):
         # Reaper path: WHERE status='in_progress' AND claimed_at < cutoff.
         Index("idx_build_task_status_claimed", "status", "claimed_at"),
     )
+
+
+# The editor's unsaved state is only needed while a turn is being planned. Clear it as
+# soon as the turn leaves planning (completed / awaiting approval / failed / cancelled /
+# superseded) so a 256KB blob never outlives its use. Central so every completion
+# path (draft, response, read, failure, cancel) honours it.
+_TURN_STATE_DONE = frozenset(
+    {"completed", "awaiting_approval", "failed", "cancelled", "superseded"}
+)
+
+
+@event.listens_for(CreatorAgentTurn, "before_update")
+def _clear_turn_editor_state(mapper, connection, target) -> None:  # noqa: ANN001, ARG001
+    if target.editor_state is not None and target.status in _TURN_STATE_DONE:
+        target.editor_state = null()

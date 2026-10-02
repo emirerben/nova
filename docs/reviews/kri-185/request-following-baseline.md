@@ -6,7 +6,7 @@ Share of creator requirements the finished edit actually met (strict: `partial` 
 
 - **Requirements met: 44%** (4/9; partial 1, unmet 4)
 - Replies that overclaimed (talked as if a requirement was handled when it was not, with no 'not done' marker): **4**
-- Threads measured from recordings: 1. Authored threads awaiting recordings (not in the KPI): 12.
+- Threads measured from recordings: 1. Authored threads awaiting recordings (not in the KPI): 29.
 - Small-sample warning: until authored threads are recorded (P6b), the KPI is the East Run thread alone. Read it as a trend line per phase, not as a rate.
 
 ## By request type
@@ -49,7 +49,7 @@ Turns:
 - `t0-suggest` (recorded) asked: 'Suggest an edit.' -> '(no reply recorded)'
 - `t1-brief` (v1_copilot) asked: 'This was a 20k run I completed today. Do an edit highlighting the landmarks and locations of each spot. Do it fast paced but leave enough time for the users to read where it was from. I ran from Arnavutkoy to Eminonu' -> 'Edit text. Everything else is unchanged.'
 - `t2-recreate` (v1_copilot) asked: 'Create the video again based on my prompt' -> "I can't recreate or regenerate the entire video from scratch here. You can edit the text, clip timing, title, and transitions, or start a new project from the prompt page."
-- `t3-keep15` (v1_copilot) asked: 'Keep 15 seconds and include everything with faster pacing' -> 'operation is unavailable for this draft'
+- `t3-keep15` (v1_copilot) asked: 'Keep 15 seconds and include everything with faster pacing' -> "I can't change that on this edit yet."
 - `t4-replan` (recorded) asked: '[re-plan approved; the message text is not exposed by the admin API]' -> '(no reply recorded)'
 - `t5-brief-again` (v1_copilot) asked: 'This was a 20k run I completed today. Do an edit highlighting the landmarks and locations of each spot. Do it fast paced but leave enough time for the users to read where it was from. I ran from Arnavutkoy to Eminonu' -> 'Edit text. Everything else is unchanged.'
 - `t6-no-fraunces` (v1_copilot) asked: 'Never use fraunces again in my edits' -> 'Patch text style. Everything else is unchanged.'
@@ -62,25 +62,43 @@ Each authored brief carries a hand-built reference edit. It must score `met` on 
 |---|---:|---:|---|
 | food_described_labels | 2 | 2/2 | awaiting recording |
 | food_exact_title | 1 | 1/1 | awaiting recording |
+| food_fonts_then_forbid | 3 | 3/3 | awaiting recording |
 | food_readability | 2 | 2/2 | awaiting recording |
+| harbor_label_dedupe | 3 | 3/3 | awaiting recording |
+| harbor_landmark_correction | 3 | 3/3 | awaiting recording |
+| harbor_route_matches_filming | 2 | 2/2 | awaiting recording |
+| harbor_route_reversed | 2 | 2/2 | awaiting recording |
+| harbor_route_reversed_then_route_order | 3 | 3/3 | awaiting recording |
+| harbor_selection_duration_pacing | 3 | 3/3 | awaiting recording |
+| harbor_title_from_brief | 3 | 3/3 | awaiting recording |
 | sport_duration_pacing | 2 | 2/2 | awaiting recording |
 | sport_exact_labels | 1 | 1/1 | awaiting recording |
+| sport_exclude_then_duration | 2 | 2/2 | awaiting recording |
 | sport_explicit_order | 1 | 1/1 | awaiting recording |
+| sport_labels_without_place_facts | 2 | 2/2 | awaiting recording |
+| sport_title_font_only | 4 | 4/4 | awaiting recording |
 | trip_chronological | 1 | 1/1 | awaiting recording |
 | trip_described_title_facts | 2 | 2/2 | awaiting recording |
+| trip_label_each_clip_from_facts | 5 | 5/5 | awaiting recording |
+| trip_landmark_labels_english | 2 | 2/2 | awaiting recording |
+| trip_landmark_labels_turkish | 2 | 2/2 | awaiting recording |
 | trip_route_order | 1 | 1/1 | awaiting recording |
+| vlog_change_all_fonts | 4 | 4/4 | awaiting recording |
 | vlog_creator_facts | 1 | 1/1 | awaiting recording |
+| vlog_default_title_disclosed | 1 | 1/1 | awaiting recording |
+| vlog_exact_title_then_labels | 3 | 3/3 | awaiting recording |
 | vlog_restructure | 4 | 4/4 | awaiting recording |
 | vlog_selection | 2 | 2/2 | awaiting recording |
 
 ## Wrong-landmark rate
 
-Share of *inferred* landmark guesses that name the wrong place (D4 accepts best-guess names, so guess quality is measured). Stub until P3 supplies inferred landmark facts.
+Share of *inferred* landmark guesses that name the wrong place (D4 accepts best-guess names, so guess quality is measured). The guesses are the synthetic footage's recorded `inferred` landmark facts scored against each clip's `true_landmark`; a live `landmark_guess` run is scored with `scorer.wrong_landmark_rate(footage, guesses)`.
 
 | Footage | Rate | Guesses judged |
 |---|---:|---:|
 | east_run | n/a | 0 |
 | food_day | n/a | 0 |
+| harbor_run | 14% | 7 |
 | sport | n/a | 0 |
-| trip | n/a | 0 |
+| trip | 25% | 4 |
 | vlog | n/a | 0 |

@@ -22,7 +22,12 @@ What it decides, and only this:
   lasts a default fast-cut length;
 * title: the creator's confirmed title, else a title written from brief facts
   ("20K Run · Arnavutköy → Eminönü"). Text stays NFC; nothing is folded to
-  ASCII. A montage never takes its title from a Gemini setting.
+  ASCII. A montage never takes its title from a Gemini setting;
+* Visuals (KRI-217): the item's ready Visuals-pool photos and videos are spread
+  evenly between the clips (the montage always opens on a clip) and keep their
+  upload order. A photo holds for a fast-cut length, never longer than a beat of
+  attention. Runtime v2 has no guided proposal to place them, so without this
+  every phone montage with a photo was refused at dispatch.
 
 The output is an ordinary ``EditProposalSnapshot`` (direction ``fast_montage``
 with exact ``fast_cuts`` and ``clip_labels``), so the strict guided compiler,
@@ -33,13 +38,21 @@ from __future__ import annotations
 
 import math
 import unicodedata
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 from pydantic import ValidationError
 
+from app.kria.brief_route import (
+    END_KEYS,
+    START_KEYS,
+    first_text,
+    fold_text,
+    wants_filming_time_text,
+    wants_hour_only_text,
+)
 from app.schemas.edit_proposal import (
     MAX_PROPOSAL_DURATION_S,
     ClipLabel,
@@ -49,7 +62,12 @@ from app.schemas.edit_proposal import (
     StoryBeat,
     canonical_media_digest,
 )
-from app.services.clip_facts import order_by_capture_time
+from app.services.clip_facts import (
+    capture_time_from_facts,
+    display_timezone,
+    format_capture_hour,
+    order_by_capture_time,
+)
 
 FPS = 30
 # The reading-time rule: 0.8s to notice the text plus 60ms per character,
@@ -60,6 +78,12 @@ READING_MIN_S = 1.2
 READING_MAX_S = 3.0
 # An unlabelled cut keeps the classic fast-montage length.
 DEFAULT_CUT_S = 1.2
+# A photo has no source length of its own: it holds like a cut and never longer
+# than a beat of attention, even when a stated length leaves time to fill.
+STILL_MAX_S = READING_MAX_S
+# The strict snapshot's shortest video cut (``EditProposalSnapshot``). A clip
+# shorter than this is valid only shown whole.
+MIN_VIDEO_CUT_S = 0.4
 MIN_TOTAL_S = 3.0
 # Model- and fact-derived labels stay short; the creator's own words are never cut
 # (``ClipLabel`` allows 120).
@@ -68,8 +92,8 @@ MAX_CREATOR_LABEL_CHARS = 120
 # Only when the creator gave nothing to title with.
 DEFAULT_TITLE = "Montage"
 _CAPTURE_ORDER_KEYS = frozenset({"capture_time", "chronological", "route", "time", "shot_order"})
-_START_KEYS = ("start", "from", "origin")
-_END_KEYS = ("end", "to", "destination", "finish")
+_START_KEYS = START_KEYS
+_END_KEYS = END_KEYS
 
 
 def min_display_s(chars: int) -> float:
@@ -90,7 +114,12 @@ def _cap_label(text: str, provenance: str) -> str:
 
 @dataclass(frozen=True)
 class UnifiedClip:
-    """One phone-bound clip, in attachment order."""
+    """One phone-bound clip, in attachment order, or one Visuals-pool item.
+
+    A Visual (``lane="asset"``) is a ready ``PlanItemAsset``: ``media_id`` is its
+    row id (what the phone binder pins), ``proxy_path`` its pool path, and
+    ``duration_s`` is ignored for a photo.
+    """
 
     media_id: str
     proxy_path: str
@@ -104,6 +133,20 @@ class UnifiedClip:
     # account has no clip-facts access.
     facts: tuple[Mapping[str, Any], ...] = ()
     capture_time: datetime | None = None
+    lane: str = "clip"
+    kind: str = "video"
+    # The creator manifest's id (``asset-<uuid>`` for a Visual), which brief
+    # scopes and resolved clip intents use. None means ``media_id``.
+    manifest_id: str | None = None
+    # A Visual's stored aspect; a clip's comes from its width and height.
+    aspect: float | None = None
+    source_filename: str = ""
+    user_context: str = ""
+    content_hash: str | None = None
+
+    @property
+    def ref_id(self) -> str:
+        return self.manifest_id or self.media_id
 
 
 @dataclass(frozen=True)
@@ -118,6 +161,10 @@ class BriefView:
     # described label; only the scoped ones above are applied per clip.
     wants_order: bool = False
     order_by_capture: bool = False
+    # KRI-219: the per-clip text is the hour each clip was filmed, not its place.
+    per_clip_text_is_time: bool = False
+    # "hh_mm" or "hour" (just the hour, no minutes) for those filming-time labels.
+    time_format: str = "hh_mm"
     title_literal: str | None = None
     global_literal: str | None = None
     facts: Mapping[str, Any] = field(default_factory=dict)
@@ -131,6 +178,8 @@ def brief_view(brief: Any) -> BriefView:
     wants_text = False
     wants_order = False
     order_capture = False
+    wants_time = False
+    hour_only = False
     clip_literals: dict[str, str] = {}
     title_literal: str | None = None
     global_literal: str | None = None
@@ -141,6 +190,12 @@ def brief_view(brief: Any) -> BriefView:
             if value not in (None, "") and key not in facts:
                 facts[str(key)] = value
         if req.kind == "text":
+            if wants_filming_time_text(
+                req.kind, req.scope, req.literal, req.description, req.facts
+            ):
+                wants_time = True
+            if req.scope == "per_clip" and wants_hour_only_text(req.description, req.literal):
+                wants_time = hour_only = True
             if req.scope == "per_clip":
                 wants_text = True
             elif req.scope.startswith("clip:") and req.literal:
@@ -167,6 +222,8 @@ def brief_view(brief: Any) -> BriefView:
         clip_literals=clip_literals,
         wants_order=wants_order,
         order_by_capture=order_capture,
+        per_clip_text_is_time=wants_time,
+        time_format="hour" if hour_only else "hh_mm",
         title_literal=title_literal,
         global_literal=global_literal,
         facts=facts,
@@ -174,14 +231,7 @@ def brief_view(brief: Any) -> BriefView:
     )
 
 
-def _first(facts: Mapping[str, Any], keys: Iterable[str]) -> str | None:
-    for key in keys:
-        value = facts.get(key)
-        if isinstance(value, (str, int, float)) and not isinstance(value, bool):
-            text = _nfc(value)
-            if text:
-                return text
-    return None
+_first = first_text
 
 
 def _has_dotted_i(text: str) -> bool:
@@ -244,6 +294,45 @@ def _fact_label(clip: UnifiedClip) -> tuple[str, str, bool] | None:
     return None
 
 
+def _endpoint_record(clip: UnifiedClip) -> dict[str, Any]:
+    """Where one endpoint clip was filmed: its geocoded place and inferred landmark.
+
+    ``places`` keeps the full geocode ("Kadıköy, İstanbul, Türkiye") so a route name can
+    match any part of it; ``label`` is the short text the creator would recognise.
+    """
+    places: list[dict[str, str]] = []
+    label = ""
+    for fact in clip.facts:
+        kind = str(fact.get("kind") or "")
+        value = _nfc(fact.get("value"))
+        if kind not in ("place", "landmark") or not value:
+            continue
+        places.append(
+            {
+                "text": value[:120],
+                "kind": kind,
+                "provenance": str(fact.get("provenance") or ""),
+            }
+        )
+        if kind == "place" and not label:
+            label = _place_label(value)[:MAX_LABEL_CHARS]
+    if not label:
+        label = next((row["text"] for row in places if row["kind"] == "landmark"), "")[
+            :MAX_LABEL_CHARS
+        ]
+    return {"media_id": clip.media_id, "label": label, "places": places}
+
+
+def _endpoint_places(ordered: Sequence[UnifiedClip]) -> dict[str, Any]:
+    """The first and last ordered clips' place facts (needs at least two clips)."""
+    if len(ordered) < 2:
+        return {}
+    first, last = _endpoint_record(ordered[0]), _endpoint_record(ordered[-1])
+    if not first["places"] and not last["places"]:
+        return {}
+    return {"first": first, "last": last}
+
+
 @dataclass
 class UnifiedMontagePlan:
     snapshot: EditProposalSnapshot
@@ -258,9 +347,31 @@ class UnifiedMontagePlan:
     duration_s: float
     brief_version: int | None
     wants_per_clip_text: bool
+    # media_id -> why its label was left off ("repeat": same text as the previous
+    # kept label; "no_fact": nothing grounded to write). Ids only, never text.
+    dropped_label_reasons: dict[str, str] = field(default_factory=dict)
+    # The route the creator stated, and where the first/last clips were filmed
+    # (KRI-208): what the receipt needs to notice a reversed route.
+    route: dict[str, str] = field(default_factory=dict)
+    endpoint_places: dict[str, Any] = field(default_factory=dict)
+    # The Visuals-pool ids among ``clip_ids`` (KRI-217), in plan order.
+    visual_ids: list[str] = field(default_factory=list)
+    # Zone the filming hours were printed in, "" when the labels are not hours.
+    label_timezone: str = ""
+    label_timezone_basis: str = ""
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
+        # Only a montage with Visuals names them: every earlier record stays as is.
+        visuals = {"visual_ids": list(self.visual_ids)} if self.visual_ids else {}
+        zone = (
+            {
+                "label_timezone": self.label_timezone,
+                "label_timezone_basis": self.label_timezone_basis,
+            }
+            if self.label_timezone
+            else {}
+        )
         return {
             "version": 1,
             "brief_version": self.brief_version,
@@ -280,9 +391,14 @@ class UnifiedMontagePlan:
                 for label in (self.snapshot.clip_labels or [])
             ],
             "dropped_label_clip_ids": list(self.dropped_label_clip_ids),
+            "dropped_label_reasons": dict(self.dropped_label_reasons),
             "short_label_clip_ids": list(self.short_label_clip_ids),
             "ordering_basis": self.ordering_basis,
             "ordering_fallback_clip_ids": list(self.ordering_fallback_clip_ids),
+            "route": dict(self.route),
+            "endpoint_places": dict(self.endpoint_places),
+            **visuals,
+            **zone,
         }
 
     def guided_edit(self, *, generation_attempt_id: str | None = None) -> dict[str, Any]:
@@ -358,6 +474,8 @@ def _shrink(frames: list[int], labelled: Sequence[bool], total: int, target: int
 
 
 def _capacity_frames(clip: UnifiedClip) -> int:
+    if clip.kind == "image":
+        return int(round(STILL_MAX_S * FPS))
     return max(1, int(math.floor((float(clip.duration_s) + 0.001) * FPS + 1e-6)))
 
 
@@ -438,6 +556,40 @@ def _order(
     )
 
 
+def _scatter(clips: Sequence[UnifiedClip], visuals: Sequence[UnifiedClip]) -> list[UnifiedClip]:
+    """Spread ``visuals`` evenly between ``clips``; the first cut stays a clip.
+
+    Visual ``j`` of ``m`` goes after ``round((j + 1) * n / (m + 1))`` of the
+    ``n`` clips (at least one), so 6 clips and 2 photos read C C P C C P C C.
+    """
+    n, m = len(clips), len(visuals)
+    after = [max(1, int(math.floor((j + 1) * n / (m + 1) + 0.5))) for j in range(m)]
+    merged: list[UnifiedClip] = []
+    pending = list(zip(after, visuals, strict=True))
+    for index, clip in enumerate(clips, start=1):
+        merged.append(clip)
+        while pending and pending[0][0] <= index:
+            merged.append(pending.pop(0)[1])
+    merged.extend(visual for _slot, visual in pending)
+    return merged
+
+
+def selected_visual_ids(strategy: Mapping[str, Any] | None) -> frozenset[str] | None:
+    """Manifest ids of the media an explicit ``selected`` scope names, else None.
+
+    None means every ready Visual. The guided strategy leaves
+    ``selected_media_ids`` empty when it takes everything
+    (``normalize_creator_strategy_media``), so only a non-empty explicit subset
+    narrows the Visuals a unified montage places.
+    """
+    if not isinstance(strategy, Mapping) or strategy.get("media_scope") != "selected":
+        return None
+    ids = strategy.get("selected_media_ids")
+    if not isinstance(ids, list) or not ids:
+        return None
+    return frozenset(str(media_id) for media_id in ids)
+
+
 def plan_unified_montage(
     clips: Sequence[UnifiedClip],
     view: BriefView | None = None,
@@ -446,25 +598,35 @@ def plan_unified_montage(
     clip_intents_enabled: bool = False,
     font_covers: Callable[[str, str], bool] | None = None,
     creator_order: Sequence[int] = (),
+    visuals: Sequence[UnifiedClip] = (),
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan for ``clips`` (attachment order).
 
     ``strategy`` is the serialized Main Creator ``CreativeStrategy`` the job was
     approved with. Only its creator-confirmed copy is read: ``opening_title``,
-    ``closing_title``, ``shot_labels``, ``font_family``, ``text_color`` and, when
-    ``clip_intents_enabled``, the server-verified ``resolved_clip_intents``.
-    ``creator_order`` is the server-pinned order of the previous timeline
-    (indices into ``clips``); see ``_order``. ``font_covers(family, text)`` says
-    whether a bundled font has a glyph for every character of ``text`` (see
-    ``skia_font_covers``); without it the default typography is used as is.
+    ``closing_title``, ``shot_labels``, ``font_family``, ``text_color``,
+    ``image_layout`` and, when ``clip_intents_enabled``, the server-verified
+    ``resolved_clip_intents``. ``creator_order`` is the server-pinned order of
+    the previous timeline (indices into ``clips``); see ``_order``.
+    ``font_covers(family, text)`` says whether a bundled font has a glyph for
+    every character of ``text`` (see ``skia_font_covers``); without it the
+    default typography is used as is. ``visuals`` are the item's ready
+    Visuals-pool items (``lane="asset"``) in upload order; see ``_scatter``.
     """
     view = view or BriefView()
     strategy = strategy or {}
     if not clips:
         raise ValueError("a montage needs at least one clip")
-    if len({clip.media_id for clip in clips}) != len(clips):
+    if any(visual.lane != "asset" for visual in visuals):
+        raise ValueError("montage visuals must come from the Visuals pool")
+    if len({clip.media_id for clip in (*clips, *visuals)}) != len(clips) + len(visuals):
         raise ValueError("montage clips must have unique media identities")
     ordered, basis, fallback_ids = _order(clips, view, creator_order)
+    ordered = _scatter(ordered, visuals)
+    if view.order_by_capture:
+        # Visuals carry no capture time: they keep their spread slot, and the
+        # receipt says their place is not the filmed order.
+        fallback_ids = [*fallback_ids, *(v.media_id for v in visuals if v.capture_time is None)]
 
     # ── labels ───────────────────────────────────────────────────────────────
     labels_requested = bool(
@@ -479,15 +641,31 @@ def plan_unified_montage(
 
     labels: dict[str, ClipLabel] = {}
     dropped: list[str] = []
+    dropped_reasons: dict[str, str] = {}
+    previous_kept: str | None = None  # folded text of the last label that stayed
+    # "Add the hour to each video" (KRI-219): print the filming hour, or leave the
+    # clip unlabelled and say so. A place name is never substituted for it.
+    hour_zone, hour_basis = display_timezone(
+        [clip.facts for clip in ordered] if view.per_clip_text_is_time else []
+    )
     for index, clip in enumerate(ordered):
         chosen: tuple[str, str, str | None, bool] | None = None  # text, provenance, kind, inferred
-        if clip.media_id in view.clip_literals:
-            chosen = (view.clip_literals[clip.media_id], "creator", None, False)
+        if clip.ref_id in view.clip_literals:
+            chosen = (view.clip_literals[clip.ref_id], "creator", None, False)
         elif index < len(positional):
             chosen = (positional[index], "creator", None, False)
-        elif clip.media_id in intent_labels:
-            text, creator_text = intent_labels[clip.media_id]
+        elif clip.ref_id in intent_labels:
+            text, creator_text = intent_labels[clip.ref_id]
             chosen = (text, "creator" if creator_text else "fact", None, not creator_text)
+        elif view.wants_per_clip_text and view.per_clip_text_is_time:
+            moment = clip.capture_time or capture_time_from_facts(clip.facts)
+            if moment is not None:
+                chosen = (
+                    format_capture_hour(moment, hour_zone, view.time_format),
+                    "fact",
+                    "capture_time",
+                    False,
+                )
         elif view.wants_per_clip_text:
             fact = _fact_label(clip)
             if fact is not None:
@@ -499,11 +677,24 @@ def plan_unified_montage(
         if chosen is None:
             if labels_requested:
                 dropped.append(clip.media_id)
+                dropped_reasons[clip.media_id] = (
+                    "no_capture_time" if view.per_clip_text_is_time else "no_fact"
+                )
             continue
         text = _cap_label(_nfc(chosen[0]), chosen[1])
         if not text:
             dropped.append(clip.media_id)
+            dropped_reasons[clip.media_id] = "no_fact"
             continue
+        folded = fold_text(text)
+        if chosen[1] != "creator" and chosen[2] != "capture_time" and folded == previous_kept:
+            # Three clips on one bridge would read "Bosphorus Strait" three times: a
+            # label stays only when it adds information. The creator's own words are
+            # never dropped, however often they repeat them.
+            dropped.append(clip.media_id)
+            dropped_reasons[clip.media_id] = "repeat"
+            continue
+        previous_kept = folded
         labels[clip.media_id] = ClipLabel(
             media_id=clip.media_id,
             text=text,
@@ -522,9 +713,10 @@ def plan_unified_montage(
     family, title, closing, labels = _fit_typography(
         font_covers, requested_font, title, closing, labels
     )
-    dropped.extend(
-        media_id for media_id in ordered_ids(ordered) if media_id in labelled_before - set(labels)
-    )
+    for media_id in ordered_ids(ordered):
+        if media_id in labelled_before - set(labels):
+            dropped.append(media_id)
+            dropped_reasons[media_id] = "no_fact"
     if not title:
         title, title_source = DEFAULT_TITLE, "default"
 
@@ -567,11 +759,18 @@ def plan_unified_montage(
     refs: list[MediaRef] = []
     for index, (clip, frames) in enumerate(zip(ordered, wanted, strict=True)):
         duration = frames / FPS
-        start = _window_start_s(clip, duration)
-        end = round(start + duration, 3)
-        if end > clip.duration_s + 0.001:
-            start = round(max(0.0, clip.duration_s - duration), 3)
+        if clip.kind == "image":
+            start, end = 0.0, round(duration, 3)
+        elif clip.duration_s < MIN_VIDEO_CUT_S:
+            # Whole frames stop a fraction of a frame short of a 0.298s clip,
+            # which the snapshot refuses: a clip this short is shown whole.
+            start, end = 0.0, math.floor(clip.duration_s * 1000) / 1000
+        else:
+            start = _window_start_s(clip, duration)
             end = round(start + duration, 3)
+            if end > clip.duration_s + 0.001:
+                start = round(max(0.0, clip.duration_s - duration), 3)
+                end = round(start + duration, 3)
         cuts.append(
             FastMontageCut(
                 cut_id=f"unified-cut-{index + 1}",
@@ -584,20 +783,23 @@ def plan_unified_montage(
                 beat_align=False,
             )
         )
-        aspect = None
+        aspect = clip.aspect
         if clip.width and clip.height:
             swapped = clip.orientation_degrees in (90, 270)
             aspect = (clip.height / clip.width) if swapped else (clip.width / clip.height)
         refs.append(
             MediaRef(
-                lane="clip",
+                lane=clip.lane,  # type: ignore[arg-type]
                 media_id=clip.media_id,
                 gcs_path=clip.proxy_path,
                 generation=clip.generation,
-                kind="video",
-                duration_s=clip.duration_s,
+                kind=clip.kind,  # type: ignore[arg-type]
+                duration_s=clip.duration_s if clip.kind == "video" else None,
                 aspect=aspect,
                 analysis=dict(clip.analysis) if isinstance(clip.analysis, Mapping) else {},
+                source_filename=clip.source_filename,
+                user_context=clip.user_context,
+                content_hash=clip.content_hash,
             )
         )
     total_s = round(sum(cut.output_duration_s for cut in cuts), 3)
@@ -605,6 +807,13 @@ def plan_unified_montage(
     snapshot_kwargs: dict[str, Any] = {}
     if closing:
         snapshot_kwargs["closing_title"] = closing
+    image_layout = strategy.get("image_layout")
+    if image_layout in ("fullscreen", "supporting_card") and any(
+        clip.kind == "image" for clip in ordered
+    ):
+        # The creator's own "don't crop my photos" choice; otherwise a photo
+        # cut takes the fast montage's fullscreen cover crop.
+        snapshot_kwargs["image_layout"] = image_layout
     hold = strategy.get("opening_title_duration_s")
     if isinstance(hold, (int, float)) and not isinstance(hold, bool):
         snapshot_kwargs["opening_title_duration_s"] = hold
@@ -652,6 +861,13 @@ def plan_unified_montage(
         duration_s=total_s,
         brief_version=view.version,
         wants_per_clip_text=labels_requested,
+        dropped_label_reasons=dropped_reasons,
+        route={key: value for key, value in (("start", start_fact), ("end", end_fact)) if value},
+        # Where the first and last clips were filmed: a Visual carries no place.
+        endpoint_places=_endpoint_places([clip for clip in ordered if clip.lane == "clip"]),
+        visual_ids=[clip.media_id for clip in ordered if clip.lane == "asset"],
+        label_timezone=hour_zone if view.per_clip_text_is_time and labels else "",
+        label_timezone_basis=hour_basis if view.per_clip_text_is_time and labels else "",
     )
 
 
@@ -766,6 +982,7 @@ __all__ = [
     "brief_view",
     "min_display_s",
     "plan_unified_montage",
+    "selected_visual_ids",
     "skia_font_covers",
     "title_from_facts",
 ]

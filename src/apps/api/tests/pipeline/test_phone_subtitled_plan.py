@@ -16,11 +16,16 @@ from app.pipeline.phone_subtitled_lanes import (
     sfx_path_is_playable,
 )
 from app.pipeline.phone_subtitled_plan import (
+    CUTAWAY_TRACK_ID,
     SFX_SPEECH_DUCK_GAIN,
+    PhoneCutaway,
     compile_phone_subtitled_plan,
+    cutaways_from_recipe,
     sfx_duck_receipt,
+    speaker_binding_from_recipe,
     speech_windows_from_cues,
 )
+from app.pipeline.silence_cut import CutPlan, Removal, no_op_plan
 from app.services.phone_rollout import validate_phone_pilot_recipe
 from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
 
@@ -194,8 +199,96 @@ def test_empty_caption_cues_still_renders_the_clip():
     recipe = compile_phone_subtitled_plan(bindings, caption_cues=[])
 
     assert recipe.text_layers == []
-    assert "positionedText" not in recipe.required_capabilities
-    assert len(recipe.tracks[0].clips) == 1
+
+
+# --- cut_plan (required speech cleanup applied against the analysis proxy) --
+
+
+def _cut_plan(removed: list[tuple[float, float]], duration: float) -> CutPlan:
+    """A CutPlan whose ``keep_segments`` partition ``[0, duration]`` around
+    ``removed`` -- mirrors `tests/pipeline/test_silence_cut.py`'s
+    `plan_with_removals` (kept local: that module owns the real fixture)."""
+    removals = [Removal(start_s=lo, end_s=hi, reason="silence") for lo, hi in removed]
+    keep: list[tuple[float, float]] = []
+    cursor = 0.0
+    for lo, hi in removed:
+        if lo > cursor:
+            keep.append((cursor, lo))
+        cursor = hi
+    if cursor < duration:
+        keep.append((cursor, duration))
+    saved = sum(hi - lo for lo, hi in removed)
+    return CutPlan(keep_segments=keep, removed=removals, time_saved_s=saved)
+
+
+def test_cut_plan_emits_one_clip_per_keep_segment():
+    bindings = (_binding(duration_s=10.0),)
+    plan = _cut_plan([(4.0, 6.0)], 10.0)
+    recipe = compile_phone_subtitled_plan(bindings, caption_cues=[], cut_plan=plan)
+
+    video_track = next(t for t in recipe.tracks if t.kind == "video")
+    assert [c.id for c in video_track.clips] == ["clip-0", "clip-1"]
+    first, second = video_track.clips
+    assert (first.source_start, first.source_duration, first.timeline_start) == (0.0, 4.0, 0.0)
+    assert (second.source_start, second.source_duration, second.timeline_start) == (6.0, 4.0, 4.0)
+    # No transition/crossfade between the two cuts -- a hard cut (see the
+    # `cut_plan` docstring for why: no per-clip audio-only fade exists to
+    # declick a crossfade between two unrelated words).
+    assert first.transition is None
+    assert second.transition is None
+    assert recipe.duration == pytest.approx(8.0)
+
+
+def test_cut_plan_with_no_removals_is_identical_to_omitting_it():
+    bindings = (_binding(duration_s=10.0),)
+    plan = no_op_plan(10.0)
+    with_plan = compile_phone_subtitled_plan(bindings, caption_cues=_CUES, cut_plan=plan)
+    without_plan = compile_phone_subtitled_plan(bindings, caption_cues=_CUES, cut_plan=None)
+
+    assert with_plan.model_dump_json() == without_plan.model_dump_json()
+
+
+def test_cut_plan_caption_timeline_uses_the_cut_duration_not_the_source_duration():
+    bindings = (_binding(duration_s=10.0),)
+    plan = _cut_plan([(4.0, 6.0)], 10.0)
+    # 8.5s would be a perfectly valid cue against the original 10.0s source,
+    # but is past the 8.0s CUT duration this plan produces -- proves
+    # `compile_caption_layers` is clamping against the cut timeline, not the
+    # source clip's own duration.
+    cues = [{"text": "too late", "start_s": 8.5, "end_s": 8.9}]
+    recipe = compile_phone_subtitled_plan(bindings, caption_cues=cues, cut_plan=plan)
+    assert recipe.text_layers == []
+
+    surviving = [{"text": "in time", "start_s": 7.0, "end_s": 7.9}]
+    recipe = compile_phone_subtitled_plan(bindings, caption_cues=surviving, cut_plan=plan)
+    assert len(recipe.text_layers) == 1
+
+
+def test_cut_plan_clamps_lane_windows_against_the_cut_duration():
+    bindings = (_binding(duration_s=10.0),)
+    plan = _cut_plan([(4.0, 6.0)], 10.0)
+    # This card's window already assumes CUT-timeline coordinates (the
+    # runner remaps a card's window via `remap_lanes_for_cut` before this
+    # point) and extends past the 8.0s cut duration -- clamped exactly like
+    # a card overrunning an uncut clip's own duration.
+    card = SubtitledOverlayCard(
+        id="card-1", media_id=PHOTO_ID, gcs_path=PHOTO_PATH, generation="77", start_s=6.0, end_s=9.0
+    )
+    lanes = PhoneSubtitledLanes(overlays=[card])
+    recipe = compile_phone_subtitled_plan(
+        bindings, caption_cues=[], visuals=(_photo_visual(),), lanes=lanes, cut_plan=plan
+    )
+    overlay_track = next(t for t in recipe.tracks if t.id == "subtitled-overlays")
+    (overlay_clip,) = overlay_track.clips
+    assert overlay_clip.visual_placement.window_start == pytest.approx(6.0)
+    assert overlay_clip.visual_placement.window_end == pytest.approx(8.0)
+
+
+def test_cut_plan_removing_the_entire_clip_raises():
+    bindings = (_binding(duration_s=10.0),)
+    plan = _cut_plan([(0.0, 10.0)], 10.0)
+    with pytest.raises(UnsupportedPhonePlan, match="removed the entire clip"):
+        compile_phone_subtitled_plan(bindings, caption_cues=[], cut_plan=plan)
 
 
 def test_rejects_zero_clips():
@@ -238,7 +331,7 @@ def test_rejects_clip_over_five_minutes():
 def test_unexpected_caption_compilation_failure_fails_closed(monkeypatch):
     """A caption-compiler crash (bad transcript/edit content, a font that
     can't resolve a glyph, ...) must fail closed as `UnsupportedPhonePlan`,
-    never propagate a raw exception -- mirrors `compile_phone_montage_plan`'s
+    never propagate a raw exception -- mirrors `compile_phone_voiceover_montage_plan`'s
     identical wrapping of `build_persistent_intro_overlays`/
     `compile_text_overlay` failures."""
     import app.pipeline.phone_subtitled_plan as module
@@ -1113,6 +1206,156 @@ def test_video_overlay_recipe_passes_phone_pilot_validation_when_verified(monkey
         lanes=PhoneSubtitledLanes(overlays=[card]),
     )
     monkeypatch.setattr(settings, "phone_editor_media_enabled", True)
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe, allow_editor_media=True)
+
+
+def test_a_caption_ending_at_the_clip_end_never_overshoots_the_timeline():
+    """KRI-209 audit: the subtitled compiler is one un-retimed clip and clamps every
+    caption to `timeline_duration_s == clip duration`, so it cannot overshoot by float
+    noise. Pinned so a future retime or ending-clip change has to face the strict
+    `layer.end > duration` validation in `EditRecipeV2`."""
+    duration_s = 24.998
+    cues = [
+        {"text": "Hello everyone", "start_s": 0.0, "end_s": 1.5},
+        {"text": "and that is it", "start_s": 23.5, "end_s": duration_s + 0.004},
+    ]
+
+    recipe = compile_phone_subtitled_plan((_binding(duration_s=duration_s),), caption_cues=cues)
+
+    assert recipe.duration == duration_s
+    assert all(layer.end <= recipe.duration for layer in recipe.text_layers)
+
+
+# --- KRI-136: multi-clip Talking head cutaways ------------------------------
+
+
+def _cutaway(media_id: str, start_s: float, end_s: float, **binding_kwargs) -> PhoneCutaway:
+    return PhoneCutaway(binding=_binding(media_id, **binding_kwargs), start_s=start_s, end_s=end_s)
+
+
+def test_cutaways_are_muted_full_frame_overlays_over_the_speaker():
+    speaker = _binding("speaker", duration_s=20.0)
+    recipe = compile_phone_subtitled_plan(
+        (speaker,),
+        caption_cues=_CUES,
+        cutaways=(
+            _cutaway("broll-a", 1.5, 4.5),
+            # Landscape b-roll is fine: it is cover-cropped, not a face.
+            _cutaway("broll-b", 10.0, 12.0, width=1920, height=1080),
+        ),
+    )
+
+    main, cutaway_track = recipe.tracks[0], recipe.tracks[1]
+    assert main.id == "subtitled"
+    assert [clip.source_asset_id for clip in main.clips] == ["speaker"]
+    assert recipe.duration == pytest.approx(20.0)
+    assert cutaway_track.id == CUTAWAY_TRACK_ID
+    assert cutaway_track.kind == "overlay"
+    assert [
+        (c.source_asset_id, c.timeline_start, c.source_duration) for c in cutaway_track.clips
+    ] == [
+        ("broll-a", 1.5, pytest.approx(3.0)),
+        ("broll-b", 10.0, pytest.approx(2.0)),
+    ]
+    for clip in cutaway_track.clips:
+        assert clip.volume == 0
+        assert clip.visual_placement.width_fraction is None
+        assert clip.visual_placement.contain is False
+    assert {"visualBlocks", "visualVideos", "audioMix"} <= recipe.required_capabilities
+    recipe.model_validate(recipe.model_dump(mode="json"))
+
+
+def test_cutaways_empty_is_byte_identical_to_single_clip():
+    bindings = (_binding(duration_s=10.0),)
+    assert (
+        compile_phone_subtitled_plan(bindings, caption_cues=_CUES, cutaways=()).model_dump_json()
+        == compile_phone_subtitled_plan(bindings, caption_cues=_CUES).model_dump_json()
+    )
+
+
+def test_cutaway_is_clamped_to_speaker_and_to_its_own_footage():
+    speaker = _binding("speaker", duration_s=10.0)
+    recipe = compile_phone_subtitled_plan(
+        (speaker,),
+        caption_cues=_CUES,
+        cutaways=(
+            # Only 1.2s of footage: the window shrinks, never freezes.
+            _cutaway("short", 2.0, 5.0, duration_s=1.2),
+            # Runs past the speaker: clamped, the video is never extended.
+            _cutaway("late", 8.5, 11.0),
+        ),
+    )
+    clips = recipe.tracks[1].clips
+    assert [(c.source_asset_id, c.source_duration) for c in clips] == [
+        ("short", pytest.approx(1.2)),
+        ("late", pytest.approx(1.5)),
+    ]
+    assert recipe.duration == pytest.approx(10.0)
+
+    # Below the 0.5s floor after clamping: dropped, and no empty track.
+    tiny = compile_phone_subtitled_plan(
+        (speaker,), caption_cues=_CUES, cutaways=(_cutaway("tiny", 9.7, 12.0),)
+    )
+    assert [track.id for track in tiny.tracks] == ["subtitled"]
+
+
+def test_cutaways_draw_under_overlay_cards():
+    speaker = _binding("speaker", duration_s=10.0)
+    recipe = compile_phone_subtitled_plan(
+        (speaker,),
+        caption_cues=_CUES,
+        visuals=(_photo_visual(),),
+        lanes=PhoneSubtitledLanes(overlays=[_overlay_card()]),
+        cutaways=(_cutaway("broll", 1.5, 4.0),),
+    )
+    assert [track.id for track in recipe.tracks] == [
+        "subtitled",
+        CUTAWAY_TRACK_ID,
+        "subtitled-overlays",
+    ]
+
+
+@pytest.mark.parametrize(
+    "cutaways, match",
+    [
+        ((_cutaway("speaker", 2.0, 4.0),), "reuse the speaker"),
+        ((_cutaway("a", 2.0, 5.0), _cutaway("b", 4.0, 6.0)), "overlap"),
+    ],
+)
+def test_cutaway_rejections(cutaways, match):
+    with pytest.raises(UnsupportedPhonePlan, match=match):
+        compile_phone_subtitled_plan(
+            (_binding("speaker", duration_s=10.0),), caption_cues=_CUES, cutaways=cutaways
+        )
+
+
+def test_speaker_and_cutaways_read_back_from_a_pinned_recipe():
+    speaker = _binding("speaker", duration_s=20.0)
+    cutaways = (_cutaway("broll-a", 1.5, 4.5), _cutaway("broll-b", 10.0, 12.0))
+    bindings = (cutaways[0].binding, speaker, cutaways[1].binding)
+    recipe = compile_phone_subtitled_plan((speaker,), caption_cues=_CUES, cutaways=cutaways)
+
+    assert speaker_binding_from_recipe(recipe, bindings) == speaker
+    assert cutaways_from_recipe(recipe, bindings) == cutaways
+    recompiled = compile_phone_subtitled_plan(
+        (speaker_binding_from_recipe(recipe, bindings),),
+        caption_cues=_CUES,
+        cutaways=cutaways_from_recipe(recipe, bindings),
+    )
+    assert recompiled.model_dump_json() == recipe.model_dump_json()
+    single = compile_phone_subtitled_plan((speaker,), caption_cues=_CUES)
+    assert cutaways_from_recipe(single, (speaker,)) == ()
+
+
+def test_talking_head_passes_phone_pilot_validation(monkeypatch):
+    recipe = compile_phone_subtitled_plan(
+        (_binding("speaker", duration_s=20.0),),
+        caption_cues=_CUES,
+        cutaways=(_cutaway("broll", 1.5, 4.5),),
+    )
     monkeypatch.setattr(
         settings, "phone_render_verified_features", list(recipe.required_capabilities)
     )

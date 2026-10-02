@@ -91,19 +91,31 @@ final class ChatWorkspaceTests: XCTestCase {
         )
     }
 
-    func testFormatPromptExposesOnlyServerAvailableChoices() {
-        let prompt = ThreadEvent(
-            id: "format-prompt",
-            sequence: 1,
-            revision: 1,
-            role: "assistant",
-            eventType: "format_prompt",
-            content: "Choose a format",
-            payload: ["formats": .object(["montage": .string("montage"), "narrated": .string("narrated_planned"), "slides": .string("slides")])],
-            createdAt: .now
-        )
+    func testThinkingSettlesOnReplyDeliveredByFullProjection() {
+        // The reply arrived via the full projection; the later delta is empty. Settlement reads the
+        // merged events, so the delivering fetch is irrelevant.
+        let merged = ChatTranscriptHistory.merge([], with: [event(id: "reply", sequence: 5)])
+        XCTAssertTrue(ChatThinkingSettlement.isSettled(events: merged, after: 4))
+    }
 
-        XCTAssertEqual(CreationFormat.available(in: [prompt]), [.montage, .narrated, .slides])
+    func testApprovalApprovedAloneDoesNotSettleThinking() {
+        let approved = ThreadEvent(
+            id: "a", sequence: 6, revision: 6, role: "system", eventType: "approval_approved",
+            content: nil, payload: nil, createdAt: .now
+        )
+        XCTAssertFalse(ChatThinkingSettlement.isSettled(events: [approved], after: 5))
+    }
+
+    func testThinkingNotSettledWhenAnchorIsAfterLastAssistantEvent() {
+        XCTAssertFalse(ChatThinkingSettlement.isSettled(events: [event(id: "old", sequence: 5)], after: 5))
+        XCTAssertFalse(ChatThinkingSettlement.isSettled(events: [event(id: "old", sequence: 5)], after: 9))
+    }
+
+    func testReplyMergedBeforeAnchorDoesNotSettleNewTurn() {
+        // A turn accepted at sequence 7 must ignore the reply to the previous turn (sequence 3).
+        let events = [event(id: "prev", sequence: 3)]
+        XCTAssertFalse(ChatThinkingSettlement.isSettled(events: events, after: 7))
+        XCTAssertTrue(ChatThinkingSettlement.isSettled(events: events + [event(id: "new", sequence: 8)], after: 7))
     }
 
     func testAcceptedMutationRefreshFailureDoesNotReportTheMutationAsRejected() async throws {

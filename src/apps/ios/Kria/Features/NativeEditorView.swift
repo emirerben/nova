@@ -1,4 +1,5 @@
 import SwiftUI
+import KriaMediaEngine
 
 struct NativeEditorView: View {
     let project: ProjectSummary
@@ -18,8 +19,13 @@ struct NativeEditorView: View {
     @State private var inspector: NativeEditorInspector?
     @State private var showsUnsavedExit = false
     @State private var showsDeviceRender = false
+    @State private var showsOriginalsRecovery = false
     @State private var showsConversation = false
     @State private var selectedTextForActions: String?
+    /// KRI-185: a block opened from the Text tab's list edits its words first and
+    /// returns to that list; one opened from the timeline keeps the old behaviour.
+    @State private var textEditOrigin: TextEditOrigin = .timeline
+    private enum TextEditOrigin { case timeline, list }
     @State private var keyboardVisible = false
     /// KRI-170: the timeline handle and the panel handle are independent.
     /// `previewResize` is in points (positive shrinks the preview, negative
@@ -135,6 +141,11 @@ struct NativeEditorView: View {
                         .presentationDragIndicator(.visible)
                 }
             }
+            .sheet(isPresented: $showsOriginalsRecovery) {
+                EditorOriginalsRecoveryView(session: session)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
             .onChange(of: deviceLocalFile) { _, file in
                 if let file { session.showDeviceOutput(file) }
             }
@@ -147,7 +158,29 @@ struct NativeEditorView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
-            .onChange(of: conversationAcceptedID) { _, _ in showsConversation = false }
+            // Sending from the conversation sheet must not dismiss it (only the
+            // creator closes it); `conversationAcceptedID` is intentionally unused here.
+            // A re-plan can finish as a NEW job while this editor is open: show it.
+            .onChange(of: project.activeJobID) { _, _ in Task { await loadEditor() } }
+            .safeAreaInset(edge: .top) {
+                if let newer = session.newerJobPrompt {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("A new version of your video is ready")
+                            .font(KriaFont.body().weight(.semibold))
+                        Text("Switching discards your unsaved edits.")
+                            .font(.footnote)
+                        HStack {
+                            Button("Switch") { Task { await session.switchToLatestJob(newer, api: model.api) } }
+                                .accessibilityIdentifier("native-editor-switch-job")
+                            Button("Keep editing") { session.keepEditingCurrentJob() }
+                                .accessibilityIdentifier("native-editor-keep-editing")
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(KriaColor.paper)
+                }
+            }
             .sheet(isPresented: $exporter.isSharing, onDismiss: exporter.removeSharedFile) {
                 if let file = exporter.sharedFile { ShareSheetView(url: file) }
             }
@@ -194,7 +227,8 @@ struct NativeEditorView: View {
             topChromeHeight: topChromeHeight,
             previewAspectRatio: session.previewAspectRatio,
             keyboardVisible: keyboardVisible,
-            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize,
+            shrinksPreviewWhileTyping: panel?.tool == .text
         )
         let showsTimeline = panel == nil
         let showsContext = showsTimeline && (session.selection?.kind == .text || session.selectedClipID != nil)
@@ -229,7 +263,10 @@ struct NativeEditorView: View {
             .fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { topChromeHeight = $0 }
 
-            NativeVideoPreview(session: session, onEmptyTap: enterFullscreen)
+            NativeVideoPreview(
+                session: session, onEmptyTap: enterFullscreen,
+                onFindOriginals: { showsOriginalsRecovery = true }
+            )
                 .frame(width: previewHeight * session.previewAspectRatio, height: previewHeight)
                 .clipped()
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { previewGlobalFrame = $0 }
@@ -375,7 +412,9 @@ struct NativeEditorView: View {
                             if let selection = session.selection, selection.kind == .text {
                                 NativeEditorTextContextStrip(
                                     onEdit: { changePanel(to: .text(selection.id)) },
-                                    onDeselect: { session.select(nil) }
+                                    onDeselect: { session.select(nil) },
+                                    onDelete: { session.deleteText(id: selection.id) },
+                                    deleteBlockedReason: blockedReason(session.textDeletion(id: selection.id))
                                 )
                                 .transition(panelTransition)
                             } else if let selection = session.selection, selection.kind == .clip {
@@ -390,13 +429,20 @@ struct NativeEditorView: View {
                         }
                         VStack(spacing: 0) {
                             if panelIsOpen {
+                                let panelRange = metrics.panelRange(areaHeight: area.size.height, previewHeight: previewHeight)
                                 panelContent
                                     .environment(\.nativeEditorPanelContentWidth, max(0, area.size.width - 72))
+                                    .environment(\.nativeEditorPanelResize, NativeEditorPanelResize(expansion: $panelExpansion, range: panelRange))
                                     .padding(.top, 18)
+                                    .overlay(alignment: .top) {
+                                        // The band beside the grabber resizes too (KRI-235).
+                                        Color.clear.frame(height: 18).contentShape(Rectangle())
+                                            .modifier(NativeEditorPanelResizeDrag(expansion: $panelExpansion, range: panelRange, minimumDistance: 8))
+                                    }
                                     .overlay(alignment: .top) {
                                         NativeEditorPanelResizeGrabber(
                                             expansion: $panelExpansion,
-                                            range: metrics.panelRange(areaHeight: area.size.height, previewHeight: previewHeight),
+                                            range: panelRange,
                                             reduceMotion: shouldReduceMotion,
                                             accessibilityIdentifier: "native-editor-panel-resize",
                                             topAligned: true,
@@ -437,12 +483,16 @@ struct NativeEditorView: View {
     @ViewBuilder private var panelContent: some View {
         switch panel {
         case .textCreation:
-            NativeTextCreationPanel(session: session) { selection in
+            NativeTextCreationPanel(session: session, onDone: { selection in
                 selectedTextForActions = selection.id
                 changePanel(to: .text(selection.id))
-            }
+            }, onSelectBlock: { openTextBlock($0) })
         case .text(let id):
-            NativeEditorTextPanel(id: id, session: session) { changePanel(to: nil) }.id(id)
+            NativeEditorTextPanel(
+                id: id, session: session, initialTab: textEditOrigin == .list ? .edit : .style
+            ) {
+                if textEditOrigin == .list { showTextTab() } else { changePanel(to: nil) }
+            }.id(id)
         case .captions:
             NativeCaptionPanel(session: session) { changePanel(to: nil) }
         case .visuals:
@@ -468,6 +518,7 @@ struct NativeEditorView: View {
         guard panel != destination else { return }
         finishPanelEditing()
         inspector = nil
+        if case .text = destination {} else { textEditOrigin = .timeline }
         withAnimation(shouldReduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.88)) {
             panel = destination
         }
@@ -486,13 +537,7 @@ struct NativeEditorView: View {
                 // Finish the outgoing destination before creating the draft,
                 // then install the creation destination directly. This keeps
                 // the panel mounted throughout the transition.
-                finishPanelEditing()
-                session.beginTextCreation()
-                guard session.pendingText != nil else { return }
-                inspector = nil
-                withAnimation(shouldReduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.88)) {
-                    panel = .textCreation
-                }
+                showTextTab()
             }
         case .captions: changePanel(to: .captions)
         case .visuals:
@@ -503,6 +548,38 @@ struct NativeEditorView: View {
             changePanel(to: nil)
             inspector = .tool(tool)
         }
+    }
+
+    /// Opens the Text tab: the new-text field with the list of existing blocks.
+    private func showTextTab() {
+        finishPanelEditing()
+        textEditOrigin = .timeline
+        session.beginTextCreation()
+        guard session.pendingText != nil else { return }
+        inspector = nil
+        withAnimation(shouldReduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.88)) {
+            panel = .textCreation
+            // The default panel fits about one row; open taller when there is a list to
+            // browse. The handle still resizes it, and closing the panel resets it.
+            if session.document.textBlocks.count > 1 { panelExpansion = max(panelExpansion, 0.55) }
+        }
+    }
+
+    /// A row in the Text tab's list: jump to the block and edit its words. The
+    /// timeline is disabled while a panel is open, so this selects the block itself.
+    private func openTextBlock(_ id: String) {
+        guard session.document.textElements.contains(where: { $0.id == id }),
+              EditorTextBlock.listIsInteractive(draft: session.pendingText?.text, canEdit: session.canEdit(.text))
+        else { return }
+        session.cancelTextCreation()
+        // The raised list would hide the very text being edited under the panel.
+        withAnimation(shouldReduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.88)) {
+            panelExpansion = 0
+        }
+        selectedTextForActions = id
+        textEditOrigin = .list
+        session.select(EditorSelection(kind: .text, id: id))
+        changePanel(to: .text(id))
     }
 
     private func routeSelection() {
@@ -563,21 +640,36 @@ struct NativeEditorView: View {
     private func loadEditor() async {
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
-        let sourceFailure = arguments.contains("-ui-testing-editor-source-failure")
-        if sourceFailure || arguments.contains("-ui-testing-editor-source-text") {
+        // A generic failure is retryable; missing originals are not (KRI-211), so they
+        // are separate fixtures with separate recovery UI.
+        let forcedFailure: Error? = arguments.contains("-ui-testing-editor-missing-originals")
+            ? SourceAssetError.missingOriginal("fixture-source")
+            : arguments.contains("-ui-testing-editor-source-failure") ? NativeEditorRenderError.missingVideoTrack : nil
+        if forcedFailure != nil || arguments.contains("-ui-testing-editor-source-text") {
             let delayed = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source")
             if delayed, session.loadState == .loaded { return }
-            let url = sourceFailure
+            let url = forcedFailure != nil
                 ? URL(fileURLWithPath: "/tmp/kria-missing-source-preview.mp4")
                 : Bundle.main.url(forResource: "montage", withExtension: "mp4")!
-            await session.prepareFixtureSourcePreview(url: url, delayedLoad: delayed, forceFailure: sourceFailure)
+            await session.prepareFixtureSourcePreview(
+                url: url, delayedLoad: delayed, forceFailure: forcedFailure != nil,
+                failure: forcedFailure ?? NativeEditorRenderError.missingVideoTrack
+            )
             return
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") || ProcessInfo.processInfo.arguments.contains("-ui-testing-brand") { return }
         #endif
         session.useDeviceRendering(model.deviceRenders)
         session.useMediaUploads(model.uploads)
-        guard session.needsReload(for: project) else { return }
+        if session.isBehindActiveJob(project) {
+            await session.adoptLatestJob(project, api: model.api)
+            return
+        }
+        guard session.needsReload(for: project) else {
+            // Already loaded: a chat draft may have landed while this tab was hidden.
+            if project.runtimeVersion == 2 { await session.synchronizePromptRevision() }
+            return
+        }
         if let libraryJobID {
             await session.load(libraryJobID: libraryJobID, api: model.api)
         } else {
@@ -585,6 +677,11 @@ struct NativeEditorView: View {
         }
         await session.refreshDeviceRender()
         if let file = deviceLocalFile { session.showDeviceOutput(file) }
+    }
+
+    private func blockedReason(_ deletion: NativeEditorSession.TextDeletion) -> String? {
+        if case let .blocked(reason) = deletion { return reason }
+        return nil
     }
 
     private func requestBack() {
@@ -722,7 +819,10 @@ private struct NativeKriaInspector: View {
                 NativeProposalCard(title: "Make speech easier to follow", detail: "Turn on captions so the cut still works without sound.", actionTitle: session.draft.captions.enabled ? "Captions on" : "Turn on captions") {
                     if !session.draft.captions.enabled { session.toggleCaptions() }
                 }
-                .disabled(!session.canEditCaptions)
+                // toggleCaptions() writes caption_meta ("enabled"), so this is
+                // gated by the meta capability (KRI-216), not the coarse
+                // canEditCaptions, which can be true from cues alone.
+                .disabled(!session.canEditCaptionMeta)
                 NativeDocumentInspector(session: session)
             }
             .padding(24)
@@ -827,8 +927,11 @@ private struct NativeCaptionsInspector: View {
     var body: some View {
         Form {
             Section {
+                // toggleCaptions()/setCaptionStyle() both write caption_meta,
+                // so these are gated by the meta capability (KRI-216) rather
+                // than the coarse canEditCaptions.
                 Toggle("Captions", isOn: Binding(get: { session.draft.captions.enabled }, set: { _ in session.toggleCaptions() }))
-                    .disabled(!session.canEditCaptions)
+                    .disabled(!session.canEditCaptionMeta)
                     .accessibilityIdentifier("native-editor-captions-toggle")
             } footer: {
                 Text("Captions stay synchronized to the cut. Toggle them on to preview the readable version.")
@@ -837,10 +940,10 @@ private struct NativeCaptionsInspector: View {
                 Picker("Caption style", selection: $style) { ForEach(styles, id: \.self, content: Text.init) }
                     .pickerStyle(.menu)
                     .onChange(of: style) { _, newValue in session.setCaptionStyle(newValue.lowercased()) }
-                    .disabled(!session.canEditCaptions)
+                    .disabled(!session.canEditCaptionMeta)
                     .accessibilityIdentifier("native-editor-caption-style")
             }
-            if !session.canEditCaptions {
+            if !session.canEditCaptionMeta {
                 Section { Label("This video has no caption-safe render base, so caption changes are unavailable.", systemImage: "lock") }
             }
         }

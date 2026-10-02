@@ -75,6 +75,10 @@ struct NativeVideoPreview: View {
     /// KRI-170: called for a tap that lands on no object (and not on a selected
     /// object's rotate/scale corner) so the editor can open the fullscreen preview.
     private let onEmptyTap: (() -> Void)?
+    /// KRI-211: opens the "find your original files" flow. Nil when this
+    /// session has no device-render identity to relink against, in which case
+    /// the missing-originals state explains itself without offering the action.
+    private let onFindOriginals: (() -> Void)?
     /// Last time a drag or pinch changed on the canvas. A drag that also
     /// resolves as a tap (its tap location is where the finger went down) must
     /// never count as an empty tap. Reference type: writing it must not re-render.
@@ -108,9 +112,10 @@ struct NativeVideoPreview: View {
     @State private var textAlignmentFeedback = NativeTextAlignmentFeedback()
     @State private var textAlignmentHaptic = UISelectionFeedbackGenerator()
 
-    init(session: NativeEditorSession, onEmptyTap: (() -> Void)? = nil) {
+    init(session: NativeEditorSession, onEmptyTap: (() -> Void)? = nil, onFindOriginals: (() -> Void)? = nil) {
         self.session = session
         self.onEmptyTap = onEmptyTap
+        self.onFindOriginals = onFindOriginals
         _clock = ObservedObject(wrappedValue: session.playbackClock)
     }
 
@@ -590,6 +595,23 @@ struct NativeVideoPreview: View {
         }
     }
 
+    /// KRI-211: plain copy plus the one useful next step. Retry is deliberately absent.
+    @ViewBuilder private func originalsUnavailableBody(textStyle: Font, alignment: HorizontalAlignment = .center) -> some View {
+        Text(onFindOriginals == nil
+             ? "The original clips for this edit are on another device. Open the edit there to change it."
+             : NativeEditorSession.originalsUnavailableMessage)
+            .font(textStyle)
+            .multilineTextAlignment(alignment == .center ? .center : .leading)
+            .padding(.horizontal, alignment == .center ? 16 : 0)
+            .accessibilityIdentifier("native-editor-originals-unavailable")
+        if let onFindOriginals {
+            Button("Find original files", action: onFindOriginals)
+                .font(textStyle.weight(.semibold))
+                .frame(minHeight: 44)
+                .accessibilityIdentifier("native-editor-find-originals")
+        }
+    }
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             Color.black
@@ -621,6 +643,13 @@ struct NativeVideoPreview: View {
                     Button("Retry") { Task { await session.prepareSourcePreview() } }
                 }
                 .foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if session.sourcePreviewState == .originalsUnavailable {
+                // No Retry: trying again cannot make the files appear.
+                VStack(spacing: 12) {
+                    Text("Preview unavailable").font(KriaFont.body(14).weight(.semibold))
+                    originalsUnavailableBody(textStyle: KriaFont.body(12))
+                }
+                .foregroundStyle(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
                 BundledPosterImage(name: "montage")
                     .scaledToFill()
@@ -642,27 +671,6 @@ struct NativeVideoPreview: View {
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(24)
-            }
-
-            if case .failed(let message) = session.sourcePreviewState, session.isShowingRenderedFallback {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Showing finished render")
-                        .font(KriaFont.body(12).weight(.semibold))
-                    Text(message)
-                        .font(KriaFont.body(11))
-                        .lineLimit(2)
-                    Button("Retry") { Task { await session.prepareSourcePreview() } }
-                        .accessibilityIdentifier("native-editor-retry-source-preview")
-                        .font(KriaFont.body(11).weight(.semibold))
-                }
-                .foregroundStyle(.white)
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .padding(10)
-                .frame(maxHeight: .infinity, alignment: .bottom)
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("native-editor-preview-fallback")
             }
 
             if let frozen = liveMediaFrame {
@@ -732,6 +740,51 @@ struct NativeVideoPreview: View {
                 )
             }
             .accessibilityElement(children: .contain)
+            // The canvas's full-size gesture surface used to sit over the failure UI and swallow every
+            // tap on "Retry" (KRI-211: "Retry does nothing"). With no video shown at all, the failure
+            // message sits underneath and the canvas has nothing to interact with. When the finished
+            // render still plays, the fallback card below is drawn above the canvas instead, so its
+            // buttons work and tap-to-fullscreen on the empty canvas keeps working.
+            .allowsHitTesting(!(session.sourcePreviewState.isFailure && !session.isShowingRenderedFallback))
+
+            if session.showsEditApplied {
+                Label("Edit applied", systemImage: "checkmark.circle.fill")
+                    .font(KriaFont.body(12).weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(.black.opacity(0.72), in: Capsule())
+                    .padding(10)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+                    .accessibilityIdentifier("native-editor-edit-applied")
+                    .onAppear { UIAccessibility.post(notification: .announcement, argument: "Edit applied") }
+            }
+
+            if session.sourcePreviewState.isFailure, session.isShowingRenderedFallback {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Showing your last finished video")
+                        .font(KriaFont.body(12).weight(.semibold))
+                    if case .failed(let message) = session.sourcePreviewState {
+                        Text(message)
+                            .font(KriaFont.body(11))
+                            .lineLimit(2)
+                        Button("Try again") { Task { await session.prepareSourcePreview() } }
+                            .accessibilityIdentifier("native-editor-retry-source-preview")
+                            .font(KriaFont.body(11).weight(.semibold))
+                    } else {
+                        originalsUnavailableBody(textStyle: KriaFont.body(11), alignment: .leading)
+                    }
+                }
+                .foregroundStyle(.white)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(10)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("native-editor-preview-fallback")
+            }
 
         }
         .aspectRatio(session.previewAspectRatio, contentMode: .fit)
@@ -2337,6 +2390,17 @@ private struct NativeTimelineBar: View {
     let onTrimEnd: () -> Void
     var onDragXChange: ((CGFloat) -> Void)? = nil
     @State private var isMoving = false
+    /// Global x of the finger when the long press was recognized. The move is
+    /// measured from here, not from the sequenced drag's `translation`: SwiftUI
+    /// starts that drag at the first touch sample it handles after the press
+    /// is recognized, so `translation` drops the travel before that sample.
+    /// Selecting the block at recognition keeps the main thread busy for a
+    /// moment, and a quick drag can arrive as one coalesced sample and lose
+    /// all of its travel.
+    @State private var moveAnchorX: CGFloat?
+    /// The finger's global x at touch-down and at its latest sample, seen from
+    /// the start of the touch so `moveAnchorX` is known at recognition.
+    @GestureState private var touchX: (down: CGFloat, latest: CGFloat)?
     @GestureState private var moveGestureActive = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -2386,20 +2450,32 @@ private struct NativeTimelineBar: View {
                 onMoveStart(); onMoveChange(1); onMoveEnd()
             }
             .simultaneousGesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                    .updating($touchX) { value, touch, _ in touch = (value.startLocation.x, value.location.x) }
+            )
+            .simultaneousGesture(
                 LongPressGesture(minimumDuration: 0.45, maximumDistance: 8)
                     .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
                     .updating($moveGestureActive) { _, active, _ in active = true }
                     .onChanged { value in
                         guard canMove, case .second(true, let drag) = value else { return }
-                        if !isMoving { isMoving = true; onMoveStart() }
+                        if !isMoving {
+                            isMoving = true
+                            // A recognition that arrives with a drag sample may
+                            // already count it in `latest`; touch-down can't.
+                            moveAnchorX = drag == nil ? touchX?.latest : touchX?.down
+                            onMoveStart()
+                        }
                         if let drag {
-                            onMoveChange(TimeInterval(drag.translation.width / max(1, pixelsPerSecond)))
+                            let travel = drag.location.x - (moveAnchorX ?? drag.startLocation.x)
+                            onMoveChange(TimeInterval(travel / max(1, pixelsPerSecond)))
                             onDragXChange?(drag.location.x)
                         }
                     }
                     .onEnded { _ in
                         if isMoving { onMoveEnd() }
                         isMoving = false
+                        moveAnchorX = nil
                     }
             )
 
@@ -2442,6 +2518,7 @@ private struct NativeTimelineBar: View {
         .onChange(of: moveGestureActive) { _, active in
             if !active && isMoving {
                 isMoving = false
+                moveAnchorX = nil
                 onMoveEnd()
             }
         }

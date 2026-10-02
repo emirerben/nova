@@ -1,0 +1,199 @@
+{
+  "footage_id": "harbor_run",
+  "description": "A 14k coastal run around the invented town of Brightwater. Eight clips attached out of filming order; route_rank follows the route the creator STATES (Kestrel Point to Old Mill Pier), which is the reverse of the order they filmed in.",
+  "clips": [
+    {
+      "clip_id": "H5",
+      "duration_s": 3.0,
+      "subject": "stone fort on the hill",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-13T07:40:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Halden Hill, Brightwater",
+          "provenance": "geocode"
+        },
+        {
+          "kind": "landmark",
+          "value": "Halden Watchtower",
+          "provenance": "inferred",
+          "confidence": 0.6
+        }
+      ],
+      "route_rank": 4,
+      "true_landmark": "Fort Halden"
+    },
+    {
+      "clip_id": "H1",
+      "duration_s": 3.0,
+      "subject": "wooden pier at dawn",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-13T06:30:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Old Mill, Brightwater",
+          "provenance": "geocode"
+        },
+        {
+          "kind": "landmark",
+          "value": "Old Mill Pier",
+          "provenance": "inferred",
+          "confidence": 0.6
+        }
+      ],
+      "route_rank": 8,
+      "true_landmark": "Old Mill Pier"
+    },
+    {
+      "clip_id": "H8",
+      "duration_s": 3.5,
+      "subject": "finish arch at the point",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-13T08:52:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Kestrel Point, Brightwater",
+          "provenance": "geocode"
+        },
+        {
+          "kind": "landmark",
+          "value": "Kestrel Point Finish",
+          "provenance": "inferred",
+          "confidence": 0.6
+        }
+      ],
+      "route_rank": 1,
+      "true_landmark": "Kestrel Point"
+    },
+    {
+      "clip_id": "H3",
+      "duration_s": 3.5,
+      "subject": "lighthouse on the breakwater",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-13T07:05:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Tern Bay, Brightwater",
+          "provenance": "geocode"
+        },
+        {
+          "kind": "landmark",
+          "value": "Tern Lighthouse",
+          "provenance": "inferred",
+          "confidence": 0.6
+        }
+      ],
+      "route_rank": 6,
+      "true_landmark": "Tern Lighthouse"
+    },
+    {
+      "clip_id": "H6",
+      "duration_s": 2.0,
+      "subject": "cliff path",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-13T08:05:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Halden Hill, Brightwater",
+          "provenance": "geocode"
+        }
+      ],
+      "route_rank": 3
+    },
+    {
+      "clip_id": "H2",
+      "duration_s": 2.5,
+      "subject": "fish stalls opening",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-13T06:48:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Old Mill, Brightwater",
+          "provenance": "geocode"
+        },
+        {
+          "kind": "landmark",
+          "value": "Saltwood Fish Market",
+          "provenance": "inferred",
+          "confidence": 0.6
+        }
+      ],
+      "route_rank": 7,
+      "true_landmark": "Saltwood Fish Market"
+    },
+    {
+      "clip_id": "H7",
+      "duration_s": 3.0,
+      "subject": "white beach cove",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-13T08:30:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Kestrel Cove, Brightwater",
+          "provenance": "geocode"
+        },
+        {
+          "kind": "landmark",
+          "value": "Kestrel Beach",
+          "provenance": "inferred",
+          "confidence": 0.6
+        }
+      ],
+      "route_rank": 2,
+      "true_landmark": "Kestrel Beach"
+    },
+    {
+      "clip_id": "H4",
+      "duration_s": 2.5,
+      "subject": "runner passing the lighthouse base",
+      "facts": [
+        {
+          "kind": "capture_time",
+          "value": "2026-09-13T07:12:00+03:00",
+          "provenance": "exif"
+        },
+        {
+          "kind": "place",
+          "value": "Tern Bay, Brightwater",
+          "provenance": "geocode"
+        },
+        {
+          "kind": "landmark",
+          "value": "Tern Lighthouse",
+          "provenance": "inferred",
+          "confidence": 0.6
+        }
+      ],
+      "route_rank": 5,
+      "true_landmark": "Tern Lighthouse"
+    }
+  ]
+}

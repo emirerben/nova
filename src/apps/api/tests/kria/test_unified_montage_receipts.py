@@ -1,4 +1,4 @@
-"""KRI-190: the flag, its allowlist, and the review reply built from a unified plan's receipts."""
+"""KRI-190: the review reply built from a unified plan's receipts."""
 
 from __future__ import annotations
 
@@ -39,26 +39,11 @@ def brief_on(monkeypatch):
     monkeypatch.setattr(kria_runtime, "load_latest_brief_sync", lambda _db, _thread_id: _brief())
 
 
-def test_flag_and_allowlist(monkeypatch):
-    user = uuid.uuid4()
-    monkeypatch.setattr(settings, "montage_unified_plan_enabled", False)
-    monkeypatch.setattr(settings, "montage_unified_plan_user_ids", [])
-    assert settings.montage_unified_plan_for(user) is False
-    monkeypatch.setattr(settings, "montage_unified_plan_user_ids", [str(user)])
-    assert settings.montage_unified_plan_for(user) is True
-    assert settings.montage_unified_plan_for(uuid.uuid4()) is False
-    monkeypatch.setattr(settings, "montage_unified_plan_enabled", True)
-    assert settings.montage_unified_plan_for(uuid.uuid4()) is True
-    assert Settings.model_fields["montage_unified_plan_enabled"].default is False
-
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [("abc-123", ["abc-123"]), ("a, b", ["a", "b"]), ('["a","b"]', ["a", "b"]), ("", [])],
-)
-def test_allowlist_env_loads_single_csv_and_json(monkeypatch, raw, expected):
-    monkeypatch.setenv("MONTAGE_UNIFIED_PLAN_USER_IDS", raw)
-    assert Settings(_env_file=None).montage_unified_plan_user_ids == expected
+def test_the_unified_montage_flag_and_allowlist_are_gone():
+    """KRI-220: every non-voiceover phone montage is unified; there is nothing to toggle."""
+    for name in ("montage_unified_plan_enabled", "montage_unified_plan_user_ids"):
+        assert name not in Settings.model_fields
+    assert not hasattr(Settings, "montage_unified_plan_for")
 
 
 def test_reply_lists_what_was_partial_and_what_was_guessed(brief_on):
@@ -140,10 +125,11 @@ def test_an_unverifiable_timing_never_turns_the_reply_into_a_failure_notice():
         "ordering_basis": "attachment",
     }
     receipts = build_receipts(brief.live(), plan_facts_from_unified_montage(record))
-    assert {r.requirement_id: r.status for r in receipts}["r2"] == "partial"
+    # "Fast but readable" has no number to check: no receipt, so it stays open.
+    assert [r.requirement_id for r in receipts] == ["r1", "r3"]
     text = reply_from_receipts(brief, receipts, summary=DEFAULT)
     assert text.startswith(DEFAULT)
-    assert "Not everything" not in text
+    assert "Not everything" not in text and "Partly" not in text
 
 
 def test_a_numeric_timing_that_misses_is_still_reported():
@@ -168,3 +154,33 @@ def test_receipts_from_an_older_brief_version_are_not_reported(brief_on):
     receipts = [{"requirement_id": "r1", "status": "partial", "reason": "x", "inferred": []}]
     stale = _job(receipts, brief_version=1)
     assert kria_runtime._unified_montage_review(None, _thread(), stale, DEFAULT) == (DEFAULT, [])
+
+
+def test_a_stored_unjudged_receipt_is_neither_shown_nor_carried_into_the_review(monkeypatch):
+    # A record planned before unjudged receipts were dropped can still carry one.
+    brief = CreativeBrief(
+        version=2,
+        requirements=[
+            BriefRequirement(id="r1", kind="text", scope="per_clip", description="landmarks"),
+            BriefRequirement(id="r2", kind="style", scope="global", description="make it warm"),
+        ],
+    )
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    monkeypatch.setattr(kria_runtime, "load_latest_brief_sync", lambda _db, _thread_id: brief)
+    receipts = [
+        {"requirement_id": "r1", "status": "met", "reason": None, "inferred": []},
+        {
+            "requirement_id": "r2",
+            "status": "partial",
+            "reason": "I can't verify this one automatically yet.",
+            "inferred": [],
+        },
+    ]
+    text, payload = kria_runtime._unified_montage_review(None, _thread(), _job(receipts), DEFAULT)
+    assert text == f"{DEFAULT}\n- Done: landmarks"
+    assert [row["requirement_id"] for row in payload] == ["r1"]
+    only_unjudged = _job(receipts[1:])
+    assert kria_runtime._unified_montage_review(None, _thread(), only_unjudged, DEFAULT) == (
+        DEFAULT,
+        [],
+    )

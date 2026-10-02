@@ -42,3 +42,97 @@ def test_structured_rejection_remains_authoritative() -> None:
     )
 
     assert _honest_outcome(output, []) == ("unsupported", "Text is locked.")
+
+
+def test_no_effect_with_unmet_reason_never_claims_already_reflected() -> None:
+    output = EditCopilotOutput(
+        intent="edit",
+        ops=[],
+        confidence=0.9,
+        reply="Done, I deleted the Atlantis labels.",
+        unmet_requests=[
+            {
+                "request": "delete all the labels that say Atlantis",
+                "reason": "No labels matching 'Atlantis' were found in the current draft.",
+            }
+        ],
+    )
+
+    outcome, response = _honest_outcome(output, [])
+
+    assert outcome == "no_effect"
+    assert response == "No labels matching 'Atlantis' were found in the current draft."
+
+
+_CAP_REJECTION = [
+    {
+        "op": "patch_slots",
+        "reason": "capability_unavailable",
+        "detail": "I can't change that on this edit yet.",
+    }
+]
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "I shortened all the clips to make the video faster.",
+        "Shortening every clip now, the video is faster.",
+        "I trimmed and reordered the clips, but not the music.",
+    ],
+)
+def test_capability_rejection_never_surfaces_success_prose(reply: str) -> None:
+    output = EditCopilotOutput(
+        intent="edit", ops=[], confidence=0.9, reply=reply, rejection_reasons=_CAP_REJECTION
+    )
+
+    outcome, response = _honest_outcome(output, [])
+
+    assert outcome == "unsupported"
+    assert response == "I can't change that on this edit yet."
+
+
+@pytest.mark.parametrize("outcome_reason", ["missing_required", "other"])
+def test_failed_or_no_effect_rejection_replaces_success_claim(outcome_reason: str) -> None:
+    output = EditCopilotOutput(
+        intent="edit",
+        ops=[],
+        confidence=0.9,
+        reply="I shortened all the clips.",
+        rejection_reasons=[{"op": "patch_slots", "reason": outcome_reason, "detail": "No slots."}],
+    )
+
+    _outcome, response = _honest_outcome(output, [])
+
+    assert "shortened" not in response
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "I didn't shorten any clips.",
+        "Nothing was changed.",
+        "I can't shorten the clips on this edit yet.",
+    ],
+)
+def test_negated_phrasing_passes_through_when_nothing_to_contradict(reply: str) -> None:
+    output = EditCopilotOutput(intent="edit", ops=[], confidence=0.9, reply=reply)
+
+    outcome, response = _honest_outcome(output, [])
+
+    assert outcome == "no_effect"
+    assert response == reply
+
+
+def test_genuine_success_with_ops_is_untouched() -> None:
+    output = EditCopilotOutput(intent="edit", ops=[], confidence=0.9, reply="Tightened the cuts.")
+    ops = [{"op": "patch_slots"}]
+
+    assert _honest_outcome(output, ops) == (
+        "proposed",
+        "I prepared this edit for the editor to validate and stage.",
+    )
+    output = EditCopilotOutput(
+        intent="edit", ops=[], confidence=0.9, reply="Sounds good, a tighter pace works."
+    )
+    assert _honest_outcome(output, ops)[1] == "Sounds good, a tighter pace works."

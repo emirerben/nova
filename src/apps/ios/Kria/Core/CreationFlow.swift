@@ -7,11 +7,16 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var runtimeVersions: [Int]? = nil
     var visualsEnabled: Bool? = nil
     var phoneRendering: PhoneRenderingCapabilities? = nil
+    /// Server accepts the editor's unsaved state with a chat turn (nil/false = legacy flush-then-send).
+    var editorStateTurns: Bool? = nil
+    var editorStateMaxBytes: Int? = nil
+    var editorStateTurnsEnabled: Bool { editorStateTurns == true }
     var preferredRuntimeVersion: Int { runtimeVersions?.contains(2) == true ? 2 : 1 }
     enum CodingKeys: String, CodingKey {
         case formats, media
         case runtimeVersions = "runtime_versions", visualsEnabled = "visuals_enabled"
         case phoneRendering = "phone_rendering"
+        case editorStateTurns = "editor_state_turns", editorStateMaxBytes = "editor_state_max_bytes"
     }
 }
 
@@ -201,7 +206,9 @@ enum ProjectUploadDestination: Equatable {
                 : "Add photos or supporting videos here. Kria renders your video on this iPhone."
         case .checking: "Checking how this project renders…"
         case .paused: "Rendering on iPhone is temporarily unavailable. Your project is saved; try again later."
-        case .mixed: "This project has sources from different rendering destinations. Keep the project and reconnect its original footage before continuing."
+        // KRI-141: name the control that clears this. Removing the listed footage empties
+        // `sourcePurposes`, so the next upload resolves to one destination again.
+        case .mixed: "Some footage in this project was uploaded for a different kind of render. Remove the clips listed under Footage, then add them again to continue."
         case .visualsUnavailableOnPhone: "Visuals aren’t available yet for videos rendered on iPhone. Continue with your footage; Kria renders it on this iPhone."
         case .voiceoverUnavailableOnPhone: "Voiceover isn’t available yet for videos rendered on iPhone. Your project is saved."
         }

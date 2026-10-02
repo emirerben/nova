@@ -43,8 +43,17 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # when the brief is on for the creator) -- v37.
 # KRI-189: when/where clip facts with provenance (v38).
 # KRI-190: brief `facts` (distance/activity/start/end) and an `order` requirement
-# are always captured when the creator states a route or a sequence (v39).
-MAIN_CREATOR_PROMPT_VERSION = "2026-09-24-v39"
+# are always captured when the creator asks the edit to follow a route or sequence (v39).
+# KRI-244: descriptive footage chronology remains creative context unless the
+# creator actually asks the edit to order, group, label, include, or caption it (v40).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-02-v40"
+
+# Prior chat messages the model sees. Callers must bound their history to this:
+# runtime v2 loaded 24 rows, so every turn on a longer thread failed input
+# validation with "I couldn't finish that step" (KRI-238). Raised 20 -> 40: 20 was
+# too small for real threads; the planner truncates each row to 1000 chars, so 40
+# rows is ~10k tokens worst case.
+MAIN_CREATOR_CONVERSATION_MAX = 40
 
 # Appended to the OWNED FOOTAGE SUMMARIES header line ONLY when CLIP_FACTS is on
 # for the account ("" otherwise, so the flag-off prompt is byte-identical). The
@@ -200,18 +209,29 @@ null", "description": "what is wanted in the creator's own framing, or null", "f
 in `description` with `literal` null. Put structured details in `facts` (for order: {"key":
 "capture_time"}; for timing: {"duration_s": 20}; for a route or distance: {"distance_km": 20,
 "start": "...", "end": "..."}). Keep the creator's language and spelling (Turkish stays
-Turkish). ALWAYS record what the creator states as structured `facts` on the requirement it
-belongs to, even when the same words also sit in a title or a sentence: a distance, an
-activity, a start point or an end point ("I ran 20K from Arnavutköy to Eminönü") go in `facts`
-as {"distance_km": 20, "activity": "run", "start": "Arnavutköy", "end": "Eminönü"} on the text
-requirement (title or per_clip) they describe; never return empty `facts` for a message that
-names one. ALWAYS add an `order` requirement when the creator names a sequence ("in the order
-I filmed", "chronologically", "from A to B", "start at X and finish at Y"): {"kind": "order",
-"scope": "global", "facts": {"key": "capture_time"}} plus "start"/"end" when named. One
-requirement per (kind, scope): a new one replaces the older one. A message that
-only asks to redo the edit ("do it again based on my prompt") adds no requirements -- propose a
-full strategy that honours EVERY requirement in the contract. Example: "Title it 20K Koşu, put
-the landmark name on each clip and order them by the time I filmed them" => brief_updates:
+Turkish).
+
+The brief stores creator INSTRUCTIONS, not incidental descriptions of the footage. A sentence
+such as "I took the sunset pictures walking to the bus and the night ones cycling home" supplies
+creative context; it does NOT ask to group or order clips. "Come up with creative ideas" does not
+turn those descriptive facts into operations. Use that context when proposing `action`, but emit
+no `brief_updates` for it. Only add a requirement when the creator asks the output to do something
+with the material or supplies exact on-screen copy.
+
+When a real requirement is present, ALWAYS record the structured facts that belong to it, even
+when the same words also sit in a title or sentence: a distance, activity, start point, or end
+point ("I ran 20K from Arnavutköy to Eminönü") go in `facts` as {"distance_km": 20,
+"activity": "run", "start": "Arnavutköy", "end": "Eminönü"} on the requested text/order
+requirement they describe. Never invent a requirement only to store background facts. ALWAYS add
+an `order` requirement when the creator ASKS the edit to follow a sequence ("put them in the order
+I filmed", "order them chronologically", "start the edit at X and finish at Y"): {"kind":
+"order", "scope": "global", "facts": {"key": "capture_time"}} plus "start"/"end" when named.
+Merely narrating that footage was captured "from A to B", at sunset and then at night, or during
+two activities is not such an ask. One requirement per (kind, scope): a new one replaces the
+older one. A message that only asks to redo the edit ("do it again based on my prompt") adds no
+requirements -- propose a full strategy that honours EVERY requirement in the contract. Example:
+"Title it 20K Koşu, put the landmark name on each clip and order them by the time I filmed
+them" => brief_updates:
 [{"kind": "text", "scope": "title", "literal": "20K Koşu", "description": null, "facts": {}},
 {"kind": "text", "scope": "per_clip", "literal": null, "description": "the landmark shown in
 each clip", "facts": {}}, {"kind": "order", "scope": "global", "literal": null, "description":
@@ -228,7 +248,7 @@ class MainCreatorInput(BaseModel):
     creator_direction: str = Field(default="", max_length=4000)
     item_context: str = Field(default="", max_length=4000)
     media_context: list[dict] = Field(default_factory=list, max_length=50)
-    conversation: list[dict] = Field(default_factory=list, max_length=20)
+    conversation: list[dict] = Field(default_factory=list, max_length=MAIN_CREATOR_CONVERSATION_MAX)
     capability_manifest: ResolvedCreatorManifest
     # KRI-188: True only when the Creative Brief is on for this creator. Off =>
     # the prompt is byte-identical and no `brief_updates` are read from output.
@@ -467,6 +487,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             )[:1000]
             raise SchemaError(f"main_creator: invalid output: {exc}") from exc
         except Exception as exc:  # noqa: BLE001
+            if isinstance(exc, ValueError):
+                # Server policy refusals ("all-media scope requires the guided
+                # proposal capability") carry fixed, value-free messages. Name
+                # the rule so the retry can change course instead of repeating
+                # the same strategy blind (KRI-238).
+                self._schema_feedback = str(exc)[:300]
             raise SchemaError(f"main_creator: invalid output: {exc}") from exc
 
     def schema_clarification(self) -> str:
@@ -510,12 +536,14 @@ def _reaction_beats_available(manifest: ResolvedCreatorManifest) -> bool:
 
 
 def _repair_action_envelope(action: object) -> object:
-    """Repair only the known harmless nested-summary envelope typo.
+    """Repair only the known harmless nested-field envelope typos.
 
-    Some model responses put a proposal summary inside ``strategy`` although
-    the documented envelope puts it beside ``strategy``. Move only a string
-    summary when the destination is absent; all other malformed or unknown
-    fields remain subject to the strict adapter and fail closed.
+    Some model responses put the proposal `summary` (a string) or
+    `render_intent_evidence` (an object) inside ``strategy`` although the
+    documented envelope puts both beside ``strategy`` (the evidence one was
+    seen on a phone Talking "Add captions" turn, KRI-238). Move each only when
+    its destination is absent; all other malformed or unknown fields remain
+    subject to the strict adapter and fail closed.
     """
 
     if not isinstance(action, dict) or action.get("kind") != "propose_strategy":
@@ -523,18 +551,19 @@ def _repair_action_envelope(action: object) -> object:
     strategy = action.get("strategy")
     if not isinstance(strategy, dict):
         return action
-    nested_summary = strategy.get("summary")
-    if "summary" in action or not isinstance(nested_summary, str):
+    moved = {
+        key: strategy[key]
+        for key, kind in (("summary", str), ("render_intent_evidence", dict))
+        if key not in action and isinstance(strategy.get(key), kind)
+    }
+    if not moved:
         return action
-    repaired_strategy = dict(strategy)
-    repaired_strategy.pop("summary", None)
-    repaired = dict(action)
-    repaired["strategy"] = repaired_strategy
-    repaired["summary"] = nested_summary
-    return repaired
+    repaired_strategy = {key: value for key, value in strategy.items() if key not in moved}
+    return {**action, "strategy": repaired_strategy, **moved}
 
 
 __all__ = [
+    "MAIN_CREATOR_CONVERSATION_MAX",
     "MAIN_CREATOR_PROMPT_VERSION",
     "MainCreatorAgent",
     "MainCreatorInput",

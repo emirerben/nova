@@ -1,5 +1,5 @@
 {
-  "_comment": "Synthetic guided-voiceover speech-cleanup preflight snapshot (mixed-gap-v2). Word timings and pause structure mirror a real 48.6 s narrated voiceover; the text, ids, paths and generation are invented. Built with the real analyze_speech_cleanup (mixed_gap_mode=apply, over_budget_policy=clamp) from injected timed words and FFmpeg silence spans.",
+  "_comment": "Synthetic guided-voiceover speech-cleanup preflight snapshot (mixed-gap-v2 structure, stamped with the current DETECTOR_VERSION). Word timings and pause structure mirror a real 48.6 s narrated voiceover; the text, ids, paths and generation are invented. Built with the real analyze_speech_cleanup (mixed_gap_mode=apply, over_budget_policy=clamp) from injected timed words and FFmpeg silence spans.",
   "owner_id": "0f0f0f0f-1111-4111-8111-111111111111",
   "plan_item_id": "0f0f0f0f-2222-4222-8222-222222222222",
   "expected": {
@@ -14,7 +14,7 @@
     "schema_version": 1,
     "analysis_id": "0f0f0f0f-3333-4333-8333-333333333333",
     "engine_version": "preflight-v1-2026-09-05",
-    "detector_version": "mixed-gap-v2",
+    "detector_version": "mixed-gap-v4",
     "source": {
       "kind": "voiceover",
       "media_identity": "voiceover-synthetic",
@@ -27,7 +27,7 @@
     "analysis": {
       "schema_version": 1,
       "source_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-      "detector_version": "mixed-gap-v2",
+      "detector_version": "mixed-gap-v4",
       "source_window_start_s": 0.0,
       "source_window_end_s": 48.618667,
       "language": "en",

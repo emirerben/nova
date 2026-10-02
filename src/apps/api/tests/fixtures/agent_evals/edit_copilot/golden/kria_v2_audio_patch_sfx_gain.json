@@ -1,0 +1,71 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-09-29-v51",
+  "input": {
+    "utterance": "make the pop louder",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "editor_ops_version": 2,
+      "allowed_op_families": [
+        "sfx"
+      ],
+      "has_narrated_captions": false,
+      "text_bars": [],
+      "slots": [
+        {
+          "output_start_s": 0,
+          "output_end_s": 8,
+          "duration_s": 8
+        }
+      ],
+      "total_duration_s": 8,
+      "sfx": {
+        "placements": [
+          {
+            "index": 0,
+            "id": "a",
+            "label": "Pop",
+            "at_s": 1.0,
+            "gain": 1.0,
+            "duration_s": 0.2
+          }
+        ],
+        "catalog": [
+          {
+            "id": "whoosh_01",
+            "name": "Whoosh",
+            "label": "Whoosh",
+            "category": "transitions",
+            "duration_s": 0.8
+          },
+          {
+            "id": "pop_01",
+            "name": "Pop",
+            "label": "Pop",
+            "category": "ui",
+            "duration_s": 0.2
+          }
+        ]
+      }
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"patch_sfx\", \"sfx_index\": 0, \"gain\": 1.5}], \"confidence\": 0.92, \"reply\": \"Made the pop louder.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "patch_sfx",
+        "sfx_index": 0,
+        "gain": 1.5
+      }
+    ],
+    "confidence": 0.92,
+    "reply": "Made the pop louder.",
+    "suggestions": [],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "patch_sfx_gain"
+  }
+}

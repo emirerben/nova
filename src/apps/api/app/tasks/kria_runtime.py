@@ -30,14 +30,16 @@ from app.kria.brief import (
 )
 from app.kria.brief_checks import (
     build_receipts,
+    is_judged,
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
     reply_from_receipts,
+    requirements_to_check_at_draft,
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
 from app.kria.language import is_paraphrase_only
-from app.kria.planner import PlannedKriaTurn, plan_live_turn
+from app.kria.planner import PlannedKriaTurn, extract_deferred_brief, plan_live_turn
 from app.kria.registry import KRIA_TOOLS
 from app.models import (
     ContentPlan,
@@ -59,12 +61,18 @@ from app.routes.generative_jobs import (
     enqueue_editor_commit_render,
     phone_subtitled_sfx_paths_sync,
     prepare_editor_commit,
+    variant_render_baseline,
 )
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
 from app.services.kria_editor_ops import (
+    EditorStateReplyError,
+    EditorStateSpeechCutError,
+    KriaEditorOpError,
     compile_editor_ops,
+    editor_state_has_lanes,
     merge_editor_draft,
-    project_editor_draft,
+    parse_editor_state,
+    resolve_editor_base,
 )
 from app.worker import celery_app
 
@@ -108,6 +116,11 @@ class _ApprovalDispatchClaim:
     target_generation_id: str | None
     creator_request: str
     preflight_analysis_id: uuid.UUID | None = None
+    speech_cleanup_analysis_id: uuid.UUID | None = None
+    speech_cleanup_choice: str | None = None
+    # What the plan item pointed at BEFORE a strategy dispatch mints its new Job, so a
+    # failure after the pointer moves can put it back (never leave an orphan target).
+    prior_item_status: str | None = None
 
 
 def _snapshot(thread: CreationThread) -> dict[str, Any]:
@@ -283,6 +296,14 @@ def _useful_plan(planned: PlannedKriaTurn, *, user_message: str) -> PlannedKriaT
     return replace(planned, plan=plan.model_copy(update={"intents": intents}))
 
 
+def _state_event_fields(state_id: str | None, trace: dict[str, Any]) -> dict[str, Any]:
+    """`draft_applied` additions; empty (byte-identical event) when no state rode the turn."""
+    return {
+        **({"based_on_client_state_id": state_id} if state_id else {}),
+        **trace,
+    }
+
+
 def _complete_draft_turn(
     turn_id: uuid.UUID,
     *,
@@ -304,6 +325,11 @@ def _complete_draft_turn(
     changes: list[str] = []
     snapshot: dict[str, Any] = {}
     snapshot_hash = ""
+    # Editor-state provenance (set only when a client state rode this turn).
+    state_trace: dict[str, Any] = {}
+    state_id: str | None = None
+    your_edits_snapshot: dict[str, Any] | None = None
+    your_edits_hash = ""
     if apply_intent.tool_name == "draft.apply_strategy":
         changes = _strategy_changes(arguments)
         document = KriaDraftDocument(
@@ -379,6 +405,7 @@ def _complete_draft_turn(
 
         variant_key = str(session.target_variant_id or "initial")
         generation_id = str(session.target_generation_id or "") or None
+        draft_generation_id = generation_id
         head = db.execute(
             select(CreatorEditDraft)
             .where(
@@ -403,22 +430,33 @@ def _complete_draft_turn(
             )
             if variant is None:
                 raise RuntimeError("The exact editor target is no longer available")
-            prior_payload = (
-                (head.snapshot_json or {}).get("editor_payload") or {}
-                if head is not None
-                and head.base_job_id == job.id
-                and head.base_generation_id == generation_id
-                and (head.snapshot_json or {}).get("kind") == "editor"
-                else {}
+            # The SAME resolver the planner used for the snapshot the model saw, re-run
+            # here under the row locks so a state that went stale during the model
+            # call is refused instead of silently rebased.
+            client_state = parse_editor_state(turn.editor_state)
+            editor_base = resolve_editor_base(
+                job,
+                variant,
+                head if head is not None and head.base_job_id == job.id else None,
+                client_state,
             )
-            if prior_payload and any(
+            prior_payload = editor_base.prior_payload
+            # The session pointer goes stale after an editor Save; stamp the draft
+            # with the variant's real generation so it never self-perpetuates.
+            draft_generation_id = variant_render_baseline(variant) or generation_id
+            wants_speech_cut = any(
                 op.get("op") == "apply_speech_cut_candidate" for op in arguments.operations
-            ):
-                raise RuntimeError("Save the current draft before applying speech processing")
-            compiled = compile_editor_ops(
-                job, project_editor_draft(variant, prior_payload), arguments.operations
             )
+            if wants_speech_cut and editor_base.source == "client_state":
+                if editor_state_has_lanes(client_state):
+                    raise EditorStateSpeechCutError(EditorStateSpeechCutError.reply)
+            elif wants_speech_cut and prior_payload:
+                raise RuntimeError("Save the current draft before applying speech processing")
+            compiled = compile_editor_ops(job, editor_base.projected, arguments.operations)
             changes = compiled.changes
+            state_id = (
+                client_state.client_state_id if editor_base.source == "client_state" else None
+            )
             document = KriaDraftDocument(
                 kind="editor",
                 intent=arguments.summary,
@@ -430,9 +468,30 @@ def _complete_draft_turn(
                     if isinstance(compiled.payload, EditorCommitRequest)
                     else compiled.payload
                 ),
+                editor_text_diff=compiled.text_diff or None,
                 changes=changes,
+                client_state_id=state_id,
             )
             snapshot, snapshot_hash = canonical_snapshot(document)
+            if client_state is not None:
+                state_trace = {
+                    "editor_state_source": editor_base.source,
+                    **(
+                        {"editor_state_fallback": editor_base.fallback_reason}
+                        if editor_base.fallback_reason
+                        else {}
+                    ),
+                }
+            if editor_base.source == "client_state" and editor_state_has_lanes(client_state):
+                your_edits = KriaDraftDocument(
+                    kind="editor",
+                    intent="Your edits",
+                    edit_format=str(item.edit_format or "montage"),
+                    editor_payload=prior_payload,
+                    changes=[],
+                    client_state_id=state_id,
+                )
+                your_edits_snapshot, your_edits_hash = canonical_snapshot(your_edits)
         if document is None:
             raise RuntimeError("Kria produced an unsupported draft tool")
         reply_text = arguments.summary
@@ -451,12 +510,26 @@ def _complete_draft_turn(
                     facts = plan_facts_from_strategy(
                         document.strategy,
                         clip_ids=planned.brief_clip_ids,
+                        manifest=planned.brief_manifest,
+                        speech_cleanup_enabled=bool(getattr(item, "speech_cleanup_enabled", False)),
                     )
                     checked = brief.live()
+                    # KRI-190: the unified montage planner writes the per-clip text,
+                    # order and title at render time and reports on them then. Judging
+                    # them against this text-free draft would only mislead.
+                    checked = requirements_to_check_at_draft(
+                        checked,
+                        creator_id=thread.creator_id,
+                        strategy=document.strategy,
+                        item_edit_format=item.edit_format,
+                        clip_paths=item.clip_gcs_paths or (),
+                    )
                 else:
                     # Editor operations verify only the requirements stated in
                     # this very turn, against literal text in the editor payload.
-                    facts = plan_facts_from_editor_payload(document.editor_payload)
+                    facts = plan_facts_from_editor_payload(
+                        document.editor_payload, document.editor_text_diff, changes
+                    )
                     checked = [req for req in brief.live() if req.source_turn_id == str(turn.id)]
                 if checked:
                     receipts = build_receipts(checked, facts)
@@ -465,6 +538,7 @@ def _complete_draft_turn(
                         CreativeBrief(version=brief.version, requirements=checked),
                         receipts,
                         summary=arguments.summary,
+                        notices=planned.policy_notices,
                     )
         next_revision = (
             int(
@@ -491,7 +565,7 @@ def _complete_draft_turn(
             group_order=0,
             target_thread_id=thread.id,
             status="completed",
-            result={"snapshot_hash": snapshot_hash, "changes": changes},
+            result={"snapshot_hash": snapshot_hash, "changes": changes, **state_trace},
             started_at=datetime.now(UTC),
             completed_at=datetime.now(UTC),
         )
@@ -499,15 +573,38 @@ def _complete_draft_turn(
         db.flush()
         if head is not None:
             head.is_head = False
+        parent_draft = head
+        if your_edits_snapshot is not None:
+            # The creator's unsaved editor state becomes its own revision first (the
+            # chat draft's parent, so Undo returns to exactly what they had).
+            db.flush()
+            parent_draft = CreatorEditDraft(
+                creator_id=thread.creator_id,
+                thread_id=thread.id,
+                item_id=item.id,
+                variant_key=variant_key,
+                base_job_id=job.id if job is not None else None,
+                base_generation_id=draft_generation_id,
+                draft_revision=next_revision,
+                parent_draft_id=head.id if head is not None else None,
+                snapshot_json=your_edits_snapshot,
+                snapshot_hash=your_edits_hash,
+                is_head=True,
+            )
+            db.add(parent_draft)
+            db.flush()
+            parent_draft.is_head = False
+            db.flush()
+            next_revision += 1
         draft = CreatorEditDraft(
             creator_id=thread.creator_id,
             thread_id=thread.id,
             item_id=item.id,
             variant_key=variant_key,
             base_job_id=job.id if job is not None else None,
-            base_generation_id=generation_id,
+            base_generation_id=draft_generation_id,
             draft_revision=next_revision,
-            parent_draft_id=head.id if head is not None else None,
+            parent_draft_id=parent_draft.id if parent_draft is not None else None,
             snapshot_json=snapshot,
             snapshot_hash=snapshot_hash,
             source_execution_id=draft_execution.id,
@@ -536,9 +633,10 @@ def _complete_draft_turn(
                     "draft_revision": draft.draft_revision,
                     "snapshot_hash": draft.snapshot_hash,
                     "changes": changes,
-                    "can_undo": head is not None,
+                    "can_undo": parent_draft is not None,
                     "receipt_ids": [str(draft_execution.id)],
                     "render_requested": False,
+                    **_state_event_fields(state_id, state_trace),
                     **(
                         {"requirement_receipts": requirement_receipts}
                         if requirement_receipts
@@ -630,8 +728,9 @@ def _complete_draft_turn(
                 "draft_revision": draft.draft_revision,
                 "snapshot_hash": draft.snapshot_hash,
                 "changes": changes,
-                "can_undo": head is not None,
+                "can_undo": parent_draft is not None,
                 "receipt_ids": [str(draft_execution.id)],
+                **_state_event_fields(state_id, state_trace),
                 **({"requirement_receipts": requirement_receipts} if requirement_receipts else {}),
             },
         )
@@ -689,6 +788,7 @@ async def _plan_with_live_agent(
     turn_id: uuid.UUID,
     lease_owner: str,
     lease_epoch: int,
+    editor_state: dict[str, Any] | None = None,
 ) -> PlannedKriaTurn:
     stop = asyncio.Event()
 
@@ -725,12 +825,15 @@ async def _plan_with_live_agent(
     heartbeat = asyncio.create_task(_heartbeat())
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+            parsed_state = parse_editor_state(editor_state)
             return await plan_live_turn(
                 db,
                 thread_id=uuid.UUID(str(snapshot["thread_id"])),
                 item_id=uuid.UUID(str(snapshot["item_id"])),
                 creator_id=uuid.UUID(str(snapshot["creator_id"])),
                 user_message=user_message,
+                # Only passed when present so the no-state call is byte-identical.
+                **({"editor_state": parsed_state} if parsed_state is not None else {}),
             )
     finally:
         stop.set()
@@ -790,9 +893,14 @@ def _owns_turn_lease(
     )
 
 
+def _stored_editor_state(turn: Any) -> dict[str, Any] | None:
+    state = getattr(turn, "editor_state", None)
+    return state if isinstance(state, dict) else None
+
+
 def _claim(
     turn_id: uuid.UUID, lease_owner: str
-) -> tuple[dict[str, Any], str, int, int] | _ClaimsExhausted | None:
+) -> tuple[dict[str, Any], str, int, int, dict[str, Any] | None] | _ClaimsExhausted | None:
     """Claim briefly; no lock survives tool/model/storage/broker work."""
 
     if not settings.kria_runtime_v2_enabled:
@@ -835,6 +943,7 @@ def _claim(
             str(source.content or ""),
             int(turn.lease_epoch),
             int(thread.revision),
+            _stored_editor_state(turn),
         )
 
 
@@ -988,11 +1097,20 @@ def _project_retryable_failure(
     thread: CreationThread,
     *,
     code: str,
+    detail: dict[str, str] | None = None,
 ) -> None:
-    """Fail a locked turn and tell the creator to retry; the caller commits."""
+    """Fail a locked turn and tell the creator to retry; the caller commits.
+
+    ``detail`` (``error_class`` + a truncated ``error_message``) makes an
+    otherwise opaque ``runtime_turn_failed`` diagnosable (KRI-203: the
+    2026-09-25 failure carried only the code). The full detail lives on
+    ``turn.error``, which only admin routes read. The ``assistant_error`` event
+    payload is returned unfiltered to the creator's app, so it gets the class
+    name only (see ``_event_failure_detail``). Creator-facing copy is unchanged.
+    """
 
     turn.status = "failed"
-    turn.error = {"code": code, "retryable": True, "recovery": "retry"}
+    turn.error = {"code": code, "retryable": True, "recovery": "retry", **(detail or {})}
     turn.completed_at = datetime.now(UTC)
     turn.lease_owner = None
     turn.lease_expires_at = None
@@ -1013,6 +1131,7 @@ def _project_retryable_failure(
             # Planning failed before a tool execution receipt existed.
             # Keep this empty rather than inventing a receipt identity.
             "receipt_ids": [],
+            **_event_failure_detail(detail),
         },
     )
     turn.observed_event_id = event.id
@@ -1051,12 +1170,37 @@ def _fail_exhausted_turn(
     return _ClaimsExhausted(str(successor.id) if successor is not None else None)
 
 
+_FAILURE_MESSAGE_CHARS = 200
+
+
+# Only these exceptions carry a message written for humans (no SQL, paths, URLs or
+# provider bodies), so only their message may reach the creator-visible event.
+_EVENT_SAFE_MESSAGE_CLASSES = frozenset({"KriaEditorOpError"})
+
+
+def _event_failure_detail(detail: dict[str, str] | None) -> dict[str, str]:
+    """The slice of a failure detail that may go on a creator-visible event."""
+    if not detail:
+        return {}
+    out = {"error_class": detail["error_class"]} if detail.get("error_class") else {}
+    if detail.get("error_class") in _EVENT_SAFE_MESSAGE_CLASSES and detail.get("error_message"):
+        out["error_message"] = detail["error_message"]
+    return out
+
+
+def _failure_detail(exc: BaseException) -> dict[str, str]:
+    """Bounded, single-line error summary safe to persist on a turn/event."""
+    message = " ".join(str(exc).split())[:_FAILURE_MESSAGE_CHARS]
+    return {"error_class": type(exc).__name__, "error_message": message}
+
+
 def _fail_turn(
     turn_id: uuid.UUID,
     *,
     code: str,
     lease_owner: str,
     lease_epoch: int,
+    detail: dict[str, str] | None = None,
 ) -> str | None:
     try:
         with sync_session() as db:
@@ -1077,7 +1221,7 @@ def _fail_turn(
             ).scalar_one_or_none()
             if thread is None:
                 return None
-            _project_retryable_failure(db, turn, thread, code=code)
+            _project_retryable_failure(db, turn, thread, code=code, detail=detail)
             db.commit()
         return _promote_queued_successor_sync(thread_id)
     except Exception:  # noqa: BLE001 - preserve the original task exception
@@ -1108,7 +1252,8 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                 queue="agent-control",
             )
         return {"turn_id": turn_id, "status": "failed"}
-    snapshot, user_message, lease_epoch, claimed_thread_revision = claimed
+    snapshot, user_message, lease_epoch, claimed_thread_revision, *claimed_rest = claimed
+    editor_state = claimed_rest[0] if claimed_rest else None
     try:
         if settings.main_creator_agent_enabled and snapshot.get("item_id"):
             planned = asyncio.run(
@@ -1118,6 +1263,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     turn_id=identifier,
                     lease_owner=lease_owner,
                     lease_epoch=lease_epoch,
+                    **({"editor_state": editor_state} if editor_state else {}),
                 )
             )
             planned = _useful_plan(planned, user_message=user_message)
@@ -1131,13 +1277,54 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     brief_updates=planned.brief_updates,
                 )
             else:
-                completion = _complete_draft_turn(
-                    identifier,
-                    lease_owner=lease_owner,
-                    lease_epoch=lease_epoch,
-                    claimed_thread_revision=claimed_thread_revision,
-                    planned=planned,
-                )
+                try:
+                    completion = _complete_draft_turn(
+                        identifier,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        claimed_thread_revision=claimed_thread_revision,
+                        planned=planned,
+                    )
+                except EditorStateReplyError as exc:
+                    # The creator's unsaved state is stale (video changed) or the op
+                    # cannot honour it (speech cut): an honest reply, nothing changed.
+                    log.info("kria_editor_state_refused", turn_id=turn_id, reply=exc.reply)
+                    planned = replace(
+                        planned,
+                        plan=KriaTurnPlan(
+                            mode="respond", turn_value="recovery", response=exc.reply
+                        ),
+                    )
+                    completion = _complete_response_turn(
+                        identifier,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        claimed_thread_revision=claimed_thread_revision,
+                        plan=planned.plan,
+                    )
+                except KriaEditorOpError as exc:
+                    # KRI-219: an op the recipe cannot represent (e.g. speed on a
+                    # device recipe) is a limit to explain, not a runtime crash.
+                    # The draft transaction rolled back; reply with the reason.
+                    log.info("kria_editor_op_unsupported", turn_id=turn_id, error=str(exc)[:200])
+                    planned = replace(
+                        planned,
+                        plan=KriaTurnPlan(
+                            mode="respond",
+                            turn_value="recovery",
+                            response=(
+                                f"I can't do that on this edit: {str(exc).strip().rstrip('.')}. "
+                                "Nothing was changed."
+                            ),
+                        ),
+                    )
+                    completion = _complete_response_turn(
+                        identifier,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        claimed_thread_revision=claimed_thread_revision,
+                        plan=planned.plan,
+                    )
             if not completion.committed:
                 if completion.requeue_turn_id is not None:
                     run_kria_turn.apply_async(
@@ -1147,6 +1334,15 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     )
                     return {"turn_id": turn_id, "status": "requeued"}
                 return {"turn_id": turn_id, "status": "ignored"}
+            if planned.defer_brief:
+                try:
+                    extract_kria_brief.apply_async(
+                        args=[turn_id], task_id=f"brief-{turn_id}", queue="agent-control"
+                    )
+                except Exception:  # noqa: BLE001 - the brief is best-effort context
+                    log.warning(
+                        "kria_deferred_brief_enqueue_failed", turn_id=turn_id, exc_info=True
+                    )
             if completion.successor_turn_id is not None:
                 run_kria_turn.apply_async(
                     args=[completion.successor_turn_id],
@@ -1231,12 +1427,21 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     error_class=type(exc).__name__,
                 )
         return {"turn_id": turn_id, "status": "completed"}
-    except Exception:  # noqa: BLE001 - failure is projected before Celery records it
+    except Exception as exc:  # noqa: BLE001 - failure is projected before Celery records it
+        # The failure was invisible for weeks: no log line, no error detail
+        # (KRI-203). Record the class + a truncated message on the turn/event
+        # and log the traceback before re-raising.
+        log.exception(
+            "kria_turn_failed",
+            turn_id=turn_id,
+            error_class=type(exc).__name__,
+        )
         successor_turn_id = _fail_turn(
             identifier,
             code="runtime_turn_failed",
             lease_owner=lease_owner,
             lease_epoch=lease_epoch,
+            detail=_failure_detail(exc),
         )
         if successor_turn_id is not None:
             run_kria_turn.apply_async(
@@ -1245,6 +1450,87 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                 queue="agent-control",
             )
         raise
+
+
+async def _extract_brief_async(snapshot: dict[str, Any], user_message: str):
+    engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+            return await extract_deferred_brief(
+                db,
+                thread_id=uuid.UUID(str(snapshot["thread_id"])),
+                item_id=uuid.UUID(str(snapshot["item_id"])),
+                creator_id=uuid.UUID(str(snapshot["creator_id"])),
+                user_message=user_message,
+            )
+    finally:
+        await engine.dispose()
+
+
+_DEFERRED_REPLAN_NOTE = (
+    "I made that change in the editor. Part of your request needs a fresh edit, not an "
+    "in-place tweak: tell me to redo it and I'll re-plan around your full request."
+)
+
+
+@celery_app.task(
+    bind=True,
+    name="tasks.extract_kria_brief",
+    soft_time_limit=90,
+    time_limit=120,
+    max_retries=0,
+)
+def extract_kria_brief(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
+    """KRI-219: record the requirements of an in-place edit the copilot already applied.
+
+    The fast path answered the creator first; this runs the slow extraction after
+    the fact, persists the brief version for that turn (idempotent per turn), and
+    says so when the router would have re-planned (the edit covered only part of
+    the ask). Best-effort: it never touches the draft.
+    """
+    identifier = uuid.UUID(turn_id)
+    with sync_session() as db:
+        turn = db.get(CreatorAgentTurn, identifier)
+        if turn is None or turn.status != "completed":
+            return {"turn_id": turn_id, "status": "ignored"}
+        thread = db.get(CreationThread, turn.thread_id)
+        source = db.get(CreationThreadEvent, turn.source_event_id)
+        if thread is None or source is None:
+            return {"turn_id": turn_id, "status": "ignored"}
+        snapshot, message = _snapshot(thread), str(source.content or "")
+    if not snapshot.get("item_id"):
+        return {"turn_id": turn_id, "status": "ignored"}
+    try:
+        updates, route = asyncio.run(_extract_brief_async(snapshot, message))
+    except Exception:  # noqa: BLE001 - best-effort context
+        log.warning("kria_deferred_brief_failed", turn_id=turn_id, exc_info=True)
+        return {"turn_id": turn_id, "status": "failed"}
+    with sync_session() as db:
+        thread = db.execute(
+            select(CreationThread)
+            .where(CreationThread.id == uuid.UUID(str(snapshot["thread_id"])))
+            .with_for_update()
+        ).scalar_one()
+        if updates:
+            persist_brief_version_sync(db, thread_id=thread.id, turn_id=identifier, updates=updates)
+        if route == "replan":
+            log.info("kria_fast_path_route_mismatch", turn_id=turn_id)
+            _append_sync_event(
+                db,
+                thread,
+                role="assistant",
+                event_type="assistant_response",
+                content=_DEFERRED_REPLAN_NOTE,
+                payload={
+                    "turn_id": turn_id,
+                    "turn_value": "recovery",
+                    "receipt_ids": [],
+                    "next_actions": [],
+                    "schema_version": 2,
+                },
+            )
+        db.commit()
+    return {"turn_id": turn_id, "status": "done", "route": str(route)}
 
 
 def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim | None:
@@ -1449,10 +1735,15 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
         strategy_payload: dict[str, Any] | None = None
         editor_prep: dict[str, Any] | None = None
         preflight_analysis_id: uuid.UUID | None = None
+        speech_cleanup_analysis_id: uuid.UUID | None = None
+        speech_cleanup_choice: str | None = None
         target_variant_id = approval.target_variant_id
         target_generation_id = approval.target_generation_id
         if document.kind == "strategy":
             from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+            from app.services.speech_cleanup_decision import (  # noqa: PLC0415
+                resolve_next_audio_mode,
+            )
 
             strategy = CreativeStrategy.model_validate(document.strategy)
             strategy_payload = strategy.model_dump(mode="json", exclude_none=True)
@@ -1462,13 +1753,8 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             target_variant_id = None
             target_generation_id = None
             execution.target_variant_id = None
-            if strategy.audio_strategy == "original_audio":
-                next_audio_mode = "original"
-            elif strategy.audio_strategy == "licensed_music":
-                next_audio_mode = "kria"
-            elif item.voiceover_gcs_path:
-                next_audio_mode = "voiceover"
-            else:
+            next_audio_mode = resolve_next_audio_mode(strategy, item)
+            if next_audio_mode is None:
                 approval.status = "cancelled"
                 execution.status = "failed"
                 execution.error = {
@@ -1525,6 +1811,21 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             elif strategy.caption_style == "none":
                 item.voiceover_caption_style = None
             item.user_edited = True
+            # KRI-205: `decide_approval` stashed the speech-cleanup decision it
+            # (or its legacy default) already validated at approval time --
+            # read it back rather than asking the creator again here. Absent
+            # for a thread that predates the stash, an editor-kind draft, or a
+            # cohort/mode this item was never in; `dispatch_item_render_for`
+            # treats both `None`s exactly like today's no-decision call.
+            stash = (execution.result or {}).get("speech_cleanup")
+            if isinstance(stash, dict):
+                try:
+                    speech_cleanup_analysis_id = (
+                        uuid.UUID(str(stash["analysis_id"])) if stash.get("analysis_id") else None
+                    )
+                except (TypeError, ValueError):
+                    speech_cleanup_analysis_id = None
+                speech_cleanup_choice = stash.get("choice")
         else:
             if current_job is None or not approval.target_variant_id:
                 return None
@@ -1655,6 +1956,13 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             target_generation_id=target_generation_id,
             creator_request=dispatch_request,
             preflight_analysis_id=preflight_analysis_id,
+            speech_cleanup_analysis_id=speech_cleanup_analysis_id,
+            speech_cleanup_choice=speech_cleanup_choice,
+            prior_item_status=(
+                str(getattr(item, "item_status", None))
+                if getattr(item, "item_status", None) is not None
+                else None
+            ),
         )
 
 
@@ -1752,6 +2060,114 @@ def _phone_gate_refusal_copy(reason: str) -> str:
     return f"{lead} Tell me what you'd like to change and I'll try a different approach."
 
 
+# KRI-205: every `DispatchResult("speech_cleanup_*")` outcome
+# `dispatch_item_render_for` can return (grep `content_plan_build.py` for
+# `DispatchResult("speech_cleanup`) -- the decision `decide_approval` stashed
+# (or the claim's own re-derived mutation) no longer matches what dispatch
+# re-validates under its own fresh lock. This is never the generic "retry"
+# dead loop this whole feature exists to close: the creator must approve
+# again to answer the question, not resend the exact same request.
+_SPEECH_CLEANUP_DISPATCH_REFUSALS: dict[str, str] = {
+    # An approval is single-use, so each copy points at the failed card's
+    # "Refresh project" button: it asks Kria for a fresh draft, whose new
+    # approval runs the speech-cleanup gate against the current analysis.
+    "speech_cleanup_analysis_conflict": (
+        "The speech check changed before I could start. Tap Refresh project and "
+        "I'll set it up again so you can choose how to handle the pauses."
+    ),
+    "speech_cleanup_recovery_conflict": (
+        "The speech check changed before I could start. Tap Refresh project and "
+        "I'll set it up again so you can choose how to handle the pauses."
+    ),
+    "speech_cleanup_unavailable": (
+        "The speech check isn't available for this video yet. Tap Refresh project "
+        "and I'll render it without cleanup."
+    ),
+    "speech_cleanup_unavailable_on_phone": (
+        "Cleaning up speech isn't available for this iPhone edit yet. Tap Refresh "
+        "project and choose to keep the original speech."
+    ),
+}
+
+# KRI-217: the project's Visuals block this render. Resending the same approval
+# refuses the same way, so these are never the generic "retry" copy either.
+_VISUALS_DISPATCH_REFUSALS: dict[str, str] = {
+    # The montage lane this edit renders on cannot place Visuals (a cloud
+    # runtime-v2 montage, or a Visual kind the phone cannot draw yet).
+    "guided_edit_bypass_unsafe": (
+        "I can't put your Visuals into this montage yet, so I didn't start the "
+        "render. Remove them from Visuals, then tap Refresh project and I'll make "
+        "it from your videos."
+    ),
+    "visuals_processing": (
+        "A photo or video you added to Visuals is still being prepared. Give it a "
+        "moment, then tap Refresh project and I'll start the render."
+    ),
+}
+
+
+_FINISH_DEADLOCK_ATTEMPTS = 3
+
+
+def _is_deadlock(exc: BaseException) -> bool:
+    from sqlalchemy.exc import DBAPIError  # noqa: PLC0415
+
+    if not isinstance(exc, DBAPIError):
+        return False
+    return (getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)) in {
+        "40P01",
+        "40001",
+    }
+
+
+def _finish_with_deadlock_retry(
+    claim: _ApprovalDispatchClaim, **kwargs: Any
+) -> tuple[str, str | None]:
+    """`_finish_approval_dispatch` is idempotent (a dispatched execution returns early),
+    so an aborted deadlock victim may simply be retried a bounded number of times."""
+    import time  # noqa: PLC0415
+
+    for attempt in range(_FINISH_DEADLOCK_ATTEMPTS):
+        try:
+            return _finish_approval_dispatch(claim, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            if not _is_deadlock(exc) or attempt == _FINISH_DEADLOCK_ATTEMPTS - 1:
+                raise
+            log.warning("kria_approval_finish_deadlock_retry", attempt=attempt + 1)
+            time.sleep(0.15 * 2**attempt)
+    raise AssertionError("unreachable")
+
+
+def _compensate_failed_dispatch(claim: _ApprovalDispatchClaim, new_job_id: str) -> None:
+    """Undo `dispatch_item_render_for`'s pointer move when the approval could not be settled.
+
+    Only while the plan item still points at the Job this dispatch minted (anything newer
+    wins). Restores the previous Job and item status and fails the orphan Job. Lock order:
+    PlanItem -> Job (canonical).
+    """
+    new_id = uuid.UUID(str(new_job_id))
+    with sync_session() as db:
+        item = db.execute(
+            select(PlanItem).where(PlanItem.id == claim.item_id).with_for_update()
+        ).scalar_one_or_none()
+        job = db.execute(select(Job).where(Job.id == new_id).with_for_update()).scalar_one_or_none()
+        if item is None or job is None or item.current_job_id != new_id:
+            return
+        if claim.target_job_id is not None:
+            item.current_job_id = claim.target_job_id
+            if claim.prior_item_status is not None:
+                item.item_status = claim.prior_item_status
+        job.status = "failed"
+        job.failure_reason = "kria_dispatch_aborted"
+        db.commit()
+        log.warning(
+            "kria_dispatch_compensated",
+            item_id=str(claim.item_id),
+            orphan_job_id=str(new_id),
+            restored_job_id=str(claim.target_job_id),
+        )
+
+
 def _finish_approval_dispatch(
     claim: _ApprovalDispatchClaim,
     *,
@@ -1762,6 +2178,15 @@ def _finish_approval_dispatch(
     successful = outcome in {"dispatched", "already_active"} and job_id is not None
     successor_id: str | None = None
     with sync_session() as db:
+        if successful:
+            # Canonical order (db_locks): PlanItem -> Job -> Session. Pointing the session and
+            # the execution at the NEW Job takes a FOR KEY SHARE on that Job row through the
+            # foreign key, and a status poll holds that Job FOR UPDATE while it waits for the
+            # Session (`_lock_reconciliation_graph`): taking the Session first here made the
+            # two a deadlock (2026-10-01, approval 3ac08f80). Lock the same rows in the same
+            # order so the later FK check is a no-op.
+            db.execute(select(PlanItem).where(PlanItem.id == claim.item_id).with_for_update())
+            db.execute(select(Job).where(Job.id == uuid.UUID(str(job_id))).with_for_update())
         session = db.execute(
             select(CreatorAgentSession)
             .where(CreatorAgentSession.id == claim.session_id)
@@ -1866,14 +2291,19 @@ def _finish_approval_dispatch(
             db.commit()
             return "outcome_unknown", _promote_queued_successor_sync(thread.id)
 
+        refusal_copy = _SPEECH_CLEANUP_DISPATCH_REFUSALS.get(
+            outcome
+        ) or _VISUALS_DISPATCH_REFUSALS.get(outcome)
+        never_retry = refusal_copy is not None or bool(reason)
         execution.status = "failed"
         execution.error = {
             "code": "render_dispatch_failed",
             "outcome": outcome,
-            "retryable": outcome == "publish_failed" and not reason,
-            # A phone-gate refusal (`reason`) refuses identically every time,
-            # so it must not send the creator into a retry loop.
-            "recovery": "ask_user" if reason else "retry",
+            "retryable": outcome == "publish_failed" and not never_retry,
+            # A phone-gate refusal (`reason`), a speech-cleanup conflict or a
+            # Visuals refusal refuses identically every time, so none may send
+            # the creator into a retry loop -- each needs a fresh approval.
+            "recovery": "ask_user" if never_retry else "retry",
             **({"reason": reason} if reason else {}),
         }
         execution.completed_at = now
@@ -1888,9 +2318,9 @@ def _finish_approval_dispatch(
             role="assistant",
             event_type="assistant_render_failed",
             content=(
-                _phone_gate_refusal_copy(reason)
-                if reason
-                else (
+                refusal_copy
+                or (_phone_gate_refusal_copy(reason) if reason else None)
+                or (
                     "I couldn't start the render. Your draft is still saved, "
                     "so you can retry without repeating the edit."
                 )
@@ -1903,7 +2333,7 @@ def _finish_approval_dispatch(
                 "status": "failed",
                 "code": "render_dispatch_failed",
                 "dispatch_outcome": outcome,
-                "recovery": "ask_user" if reason else "retry",
+                "recovery": "ask_user" if never_retry else "retry",
             },
         )
         db.commit()
@@ -1984,18 +2414,44 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
             # path; the flag inside dispatch decides whether it may proceed to
             # the device montage compiler. Non-phone accounts ignore it.
             allow_phone_unapproved_montage=True,
+            # Runtime-v2 has no creator choice surface for the speech-cleanup
+            # card v1's chat route offers, so an undecided phone (analysis
+            # proxy) narration source dispatches without cleanup instead of
+            # refusing under the enforce guard (see the docstring on
+            # `_dispatch_item_render` in content_plan_build.py).
+            phone_speech_cleanup_unattended=True,
             creator_strategy=claim.strategy,
             creator_request=claim.creator_request,
+            speech_cleanup_analysis_id=(
+                str(claim.speech_cleanup_analysis_id)
+                if claim.speech_cleanup_analysis_id is not None
+                else None
+            ),
+            speech_cleanup_choice=claim.speech_cleanup_choice,
         )
         outcome = result.outcome
         result_job_id = result.job_id
         dispatch_reason = getattr(result, "reason", None)
-    status, successor_id = _finish_approval_dispatch(
-        claim,
-        outcome=outcome,
-        job_id=result_job_id,
-        **({"reason": dispatch_reason} if dispatch_reason else {}),
-    )
+    try:
+        status, successor_id = _finish_with_deadlock_retry(
+            claim,
+            outcome=outcome,
+            job_id=result_job_id,
+            **({"reason": dispatch_reason} if dispatch_reason else {}),
+        )
+    except Exception:
+        # The dispatch already minted the Job and moved the plan item to it. Leaving that
+        # half-switched strands the project on an unrendered orphan (the app shows the old
+        # video "gone"), and the reconcile sweep would then find the approval stale. Put the
+        # pointer back, fail the new Job, and settle the approval as a retryable failure.
+        log.exception("kria_approval_finish_failed", approval_id=approval_id, job_id=result_job_id)
+        if outcome == "dispatched" and result_job_id is not None:
+            _compensate_failed_dispatch(claim, result_job_id)
+            status, successor_id = _finish_approval_dispatch(
+                claim, outcome="publish_failed", job_id=None
+            )
+        else:
+            raise
     if successor_id is not None:
         run_kria_turn.apply_async(
             args=[successor_id],
@@ -2062,7 +2518,8 @@ def _unified_montage_review(
         except ValueError:
             continue
     live = {req.id: req for req in brief.live()}
-    receipts = [receipt for receipt in receipts if receipt.requirement_id in live]
+    # A record planned before unjudged receipts were dropped can still carry some.
+    receipts = [r for r in receipts if is_judged(live.get(r.requirement_id), r)]
     if not receipts:
         return default_text, []
     checked = CreativeBrief(
@@ -2342,7 +2799,154 @@ def reconcile_kria_turns() -> dict[str, int]:
 
     if not settings.kria_runtime_v2_enabled:
         return {"published": 0, "settled": 0}
+    # One sweep at a time: beat can fire again (or a local helper loop can run) while the
+    # previous sweep is still observing renders. A second sweep would only republish the
+    # same approvals and fight the first over the same rows, so skip it.
+    from sqlalchemy import text  # noqa: PLC0415
 
+    from app.database import sync_engine  # noqa: PLC0415
+
+    with sync_engine.connect() as lock_conn:
+        got = lock_conn.execute(
+            text("select pg_try_advisory_lock(:key)"), {"key": _RECONCILE_ADVISORY_KEY}
+        ).scalar()
+        if not got:
+            log.info("kria_reconcile_skipped_overlap")
+            return {"published": 0, "settled": 0, "skipped": 1}
+        try:
+            result = _reconcile_kria_turns_body()
+            try:
+                for successor_id in _expire_pending_approvals():
+                    run_kria_turn.apply_async(
+                        args=[successor_id], task_id=successor_id, queue="agent-control"
+                    )
+            except Exception:  # noqa: BLE001 - expiry is best-effort; the next sweep retries
+                log.warning("kria_approval_expiry_sweep_failed", exc_info=True)
+            return result
+        finally:
+            lock_conn.execute(
+                text("select pg_advisory_unlock(:key)"), {"key": _RECONCILE_ADVISORY_KEY}
+            )
+            lock_conn.commit()
+
+
+# Arbitrary, stable advisory-lock key for the reconcile sweep ("kria rec" in hex).
+_RECONCILE_ADVISORY_KEY = 0x4B52494152454300
+
+
+def _expire_pending_approvals() -> list[str]:
+    """Cancel approvals past `expires_at` that nobody decided (they would block the thread
+    forever), release the queued follow-up, and say so. Returns successor turn ids to publish.
+
+    Only approvals with nothing to reverse are swept here: a strategy approval whose
+    execution carries a committed media mutation (`strategy_media_before`) keeps its
+    existing lazy path (the next approve/deny restores the item).
+    """
+    successors: list[str] = []
+    with sync_session() as db:
+        pending = list(
+            db.execute(
+                select(CreatorAgentApproval.id)
+                .where(
+                    CreatorAgentApproval.status == "pending",
+                    CreatorAgentApproval.expires_at < func.now(),
+                )
+                .order_by(CreatorAgentApproval.expires_at)
+                .limit(25)
+            ).scalars()
+        )
+    for approval_id in pending:
+        try:
+            with sync_session() as db:
+                ref = db.get(CreatorAgentApproval, approval_id)
+                if ref is None:
+                    continue
+                # Canonical order (subset): Session -> Turn -> Approval -> Execution -> Thread.
+                session = db.execute(
+                    select(CreatorAgentSession)
+                    .where(CreatorAgentSession.id == ref.session_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                turn = db.execute(
+                    select(CreatorAgentTurn)
+                    .where(CreatorAgentTurn.id == ref.turn_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                approval = db.execute(
+                    select(CreatorAgentApproval)
+                    .where(CreatorAgentApproval.id == approval_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                execution = None
+                try:
+                    execution_id = uuid.UUID(str((ref.execution_ids or [None])[0]))
+                    execution = db.execute(
+                        select(CreatorAgentExecution)
+                        .where(CreatorAgentExecution.id == execution_id)
+                        .with_for_update()
+                    ).scalar_one_or_none()
+                except (TypeError, ValueError, IndexError):
+                    execution = None
+                thread = db.execute(
+                    select(CreationThread)
+                    .where(CreationThread.id == ref.thread_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if (
+                    session is None
+                    or turn is None
+                    or approval is None
+                    or thread is None
+                    or approval.status != "pending"
+                ):
+                    continue
+                if isinstance(getattr(execution, "result", None), dict) and (
+                    "strategy_media_before" in execution.result
+                ):
+                    continue
+                now = datetime.now(UTC)
+                error = {
+                    "code": "approval_expired",
+                    "retryable": False,
+                    "recovery": "refresh_replan",
+                }
+                approval.status = "expired"
+                if execution is not None and execution.status == "awaiting_approval":
+                    execution.status = "stale"
+                    execution.error = error
+                    execution.completed_at = now
+                if turn.status == "awaiting_approval":
+                    turn.status = "failed"
+                    turn.completed_at = now
+                    turn.error = error
+                if session.status != "rendering":
+                    session.status = "awaiting_feedback"
+                _append_sync_event(
+                    db,
+                    thread,
+                    role="assistant",
+                    event_type="assistant_error",
+                    content=(
+                        "That approval expired before it was decided, so nothing was rendered. "
+                        "Tell me what you want and I'll prepare it again."
+                    ),
+                    payload={
+                        "turn_id": str(turn.id),
+                        "approval_id": str(approval.id),
+                        "code": "approval_expired",
+                        "recovery": "refresh_replan",
+                    },
+                )
+                db.commit()
+                successor = _promote_queued_successor_sync(thread.id)
+                if successor is not None:
+                    successors.append(successor)
+        except Exception:  # noqa: BLE001 - one bad approval must not stop the sweep
+            log.warning("kria_approval_expiry_failed", approval_id=str(approval_id), exc_info=True)
+    return successors
+
+
+def _reconcile_kria_turns_body() -> dict[str, int]:
     with sync_session() as db:
         database_now = db.execute(select(func.now())).scalar_one()
         turns = list(

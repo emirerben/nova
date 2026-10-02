@@ -130,7 +130,7 @@ def _fixture(*, capture: bool = True):
 
 @pytest.fixture
 def harness(monkeypatch):
-    def build(*, flag: bool = True, brief: CreativeBrief | None = None, capture: bool = True):
+    def build(*, brief: CreativeBrief | None = None, capture: bool = True):
         bindings, assignments = _fixture(capture=capture)
         user_id = uuid.uuid4()
         snapshot = {
@@ -168,6 +168,8 @@ def harness(monkeypatch):
         monkeypatch.setattr(
             gb, "_load_unified_montage_inputs", lambda _job_id: (user_id, assignments, brief)
         )
+        # KRI-217: no Visuals unless a test adds them.
+        monkeypatch.setattr(gb, "_load_unified_montage_visuals", lambda *_a, **_k: [])
 
         def fake_guided_plan(_job_id, guided):
             plan = compile_execution_plan(guided, track=None)
@@ -176,7 +178,7 @@ def harness(monkeypatch):
 
         monkeypatch.setattr(gb, "_guided_execution_plan", fake_guided_plan)
 
-        def fake_enrich(results, *, make_ctx, on_updated=None, budget_s=45.0):
+        def fake_enrich(results, *, make_ctx, on_updated=None, budget_s=45.0, creator_text=""):
             out = []
             for entry, ref in results:
                 index = int(str(entry["media_id"]).rsplit("-", 1)[1])
@@ -196,7 +198,6 @@ def harness(monkeypatch):
         monkeypatch.setattr(clip_facts, "enrich_clip_facts", fake_enrich)
         monkeypatch.setattr(gb.settings, "phone_rendering_enabled", True)
         monkeypatch.setattr(gb.settings, "clip_facts_enabled", True)
-        monkeypatch.setattr(gb.settings, "montage_unified_plan_enabled", flag)
         monkeypatch.setattr(
             gb.settings,
             "phone_render_verified_features",
@@ -209,8 +210,12 @@ def harness(monkeypatch):
                 "audioMix",
             ],
         )
-        plain = Mock(side_effect=AssertionError("the plain phone-montage lane must not run"))
-        monkeypatch.setattr(gb, "_run_phone_montage_job", plain)
+        plain = Mock(
+            side_effect=AssertionError(
+                "the voiceover montage lane must not run for a non-voiceover montage"
+            )
+        )
+        monkeypatch.setattr(gb, "_run_phone_voiceover_montage_job", plain)
         cloud = Mock(side_effect=AssertionError("phone job entered the cloud renderer"))
         monkeypatch.setattr(gb, "_run_guided_story_job", cloud)
         return job, snapshot, session, bindings, plain
@@ -218,7 +223,7 @@ def harness(monkeypatch):
     return build
 
 
-def test_flag_on_renders_the_east_run_brief_as_a_guided_device_job(harness):
+def test_a_non_voiceover_montage_renders_the_east_run_brief_as_a_guided_device_job(harness):
     job, _snapshot, session, _bindings, plain = harness(brief=_brief())
 
     gb._run_generative_job(str(job.id))
@@ -269,8 +274,16 @@ def test_receipts_say_what_was_met_and_what_was_partial(harness):
     assert receipts["r1"]["status"] == "partial"
     assert "10 of 14" in receipts["r1"]["reason"]
     assert receipts["r1"]["inferred"], "guessed landmarks must be listed for correction"
-    assert receipts["r4"]["status"] == "met"
+    # KRI-208: the East Run shape. The creator said Arnavutköy -> Eminönü but the clips
+    # were filmed the other way round; the plan keeps filming order and says so.
+    assert receipts["r4"]["status"] == "partial"
+    assert "reverse of the route you gave (Arnavutköy → Eminönü)" in receipts["r4"]["reason"]
+    assert "ending at Arnavutköy" in receipts["r4"]["reason"]
+    assert "I kept filming order" in receipts["r4"]["reason"]
+    assert job.assembly_plan["unified_montage"]["ordering_basis"] == "capture_time"
     assert receipts["r3"]["status"] == "met"
+    # "Fast but readable" has no number to check: nothing judged it, so no receipt.
+    assert "r2" not in receipts
 
 
 def test_without_capture_times_the_order_stays_attachment_and_says_so(harness):
@@ -295,24 +308,16 @@ def test_no_brief_still_produces_a_plain_guided_montage(harness):
     assert "requirement_receipts" not in record
 
 
-def test_flag_off_keeps_the_plain_lane_and_never_plans_unified(harness, monkeypatch):
-    job, _snapshot, _session, _bindings, plain = harness(flag=False, brief=_brief())
-    plain.side_effect = None
-    unified = Mock(side_effect=AssertionError("flag off must not run the unified planner"))
-    monkeypatch.setattr(gb, "_run_phone_unified_montage_job", unified)
-
+def test_a_non_voiceover_montage_takes_unified_with_no_flag_set(harness):
+    """KRI-220: no flag, no allowlist -- every non-voiceover montage is unified, even at
+    the item's default `landscape_fit="fit"` the removed plain lane rejected."""
+    assert not hasattr(gb.settings, "montage_unified_plan_enabled")
+    assert not hasattr(gb.settings, "montage_unified_plan_for")
+    job, _snapshot, _session, _bindings, plain = harness(brief=_brief())
+    assert job.all_candidates["landscape_fit"] == "fit"
+    assert not job.all_candidates.get("voiceover_gcs_path")
     gb._run_generative_job(str(job.id))
-
-    plain.assert_called_once()
-    unified.assert_not_called()
-    assert "guided_edit" not in job.assembly_plan
-    assert "unified_montage" not in job.assembly_plan
-
-
-def test_allowlisted_account_gets_unified_while_the_global_flag_is_off(harness, monkeypatch):
-    job, *_ = harness(flag=False, brief=_brief())
-    monkeypatch.setattr(gb.settings, "montage_unified_plan_user_ids", [str(job.user_id)])
-    gb._run_generative_job(str(job.id))
+    plain.assert_not_called()
     assert job.status == "awaiting_device"
     assert "unified_montage" in job.assembly_plan
 
@@ -361,33 +366,6 @@ def test_a_clip_without_a_phone_binding_fails_closed(harness):
         gb._run_phone_unified_montage_job(
             str(job.id), snapshot, job.all_candidates, ownership_epoch=3
         )
-
-
-def test_flag_off_the_plain_lane_is_untouched_including_its_fit_guard(monkeypatch):
-    """The failure the East Run thread hit stays byte-identical with the flag off."""
-    from tests.tasks.test_phone_montage_dispatch import setup as montage_setup
-
-    job, _snapshot, _session, _bindings, _cloud = montage_setup(monkeypatch)
-    job.all_candidates["landscape_fit"] = "fit"
-    monkeypatch.setattr(gb.settings, "montage_unified_plan_enabled", False)
-    failures: list[tuple[str, str | None]] = []
-    monkeypatch.setattr(gb, "mark_failed_phase", lambda *_a, **_k: None)
-    monkeypatch.setattr(
-        gb,
-        "_fail_job",
-        lambda _job_id, detail, failure_reason=None: (
-            failures.append((detail, failure_reason)) or True
-        ),
-    )
-    unified = Mock(side_effect=AssertionError("flag off must not run the unified planner"))
-    monkeypatch.setattr(gb, "_run_phone_unified_montage_job", unified)
-
-    gb._run_generative_job(str(job.id))
-
-    assert failures == [
-        ("letterboxed landscape fit is not yet supported on the phone", "phone_plan_unsupported")
-    ]
-    unified.assert_not_called()
 
 
 def test_chat_text_edit_on_the_unified_plan_succeeds(harness, monkeypatch):
@@ -562,3 +540,282 @@ def test_loader_handles_a_job_with_no_plan_item(monkeypatch):
     job, _db, _latest, loaded = _loader(monkeypatch, item=None, thread_id=None, brief_flag=True)
     user_id, assignments, brief = gb._load_unified_montage_inputs(str(job.id))
     assert user_id == job.user_id and assignments == [] and brief is None and loaded == []
+
+
+def test_landmark_creator_text_is_the_briefs_exact_words_plus_the_first_message():
+    from app.pipeline.unified_montage import BriefView
+
+    view = BriefView(
+        clip_literals={"c1": "Km   5"}, title_literal="20k run", global_literal="Slow  Sunday"
+    )
+    text = gb._landmark_creator_text(view, "my run   from A to B")
+    assert text == "Km 5 20k run Slow Sunday my run from A to B"
+    assert gb._landmark_creator_text(BriefView(), "") == ""
+    assert len(gb._landmark_creator_text(BriefView(), "x" * 900)) == 400
+
+
+def test_first_user_message_is_best_effort_and_never_raises(monkeypatch):
+    job = SimpleNamespace(content_plan_item_id=uuid.uuid4())
+    session = Mock()
+    session.get.return_value = job
+    session.execute.return_value.scalar_one_or_none.return_value = "my run from A to B"
+
+    @contextmanager
+    def sessions():
+        yield session
+
+    monkeypatch.setattr(gb, "_sync_session", sessions)
+    assert gb._first_user_message(str(uuid.uuid4())) == "my run from A to B"
+
+    session.execute.return_value.scalar_one_or_none.return_value = None
+    assert gb._first_user_message(str(uuid.uuid4())) == ""
+    session.execute.side_effect = RuntimeError("db down")
+    assert gb._first_user_message(str(uuid.uuid4())) == ""
+    session.get.return_value = SimpleNamespace(content_plan_item_id=None)
+    assert gb._first_user_message(str(uuid.uuid4())) == ""
+
+
+def _checkpoint_harness(monkeypatch, item, *, job_item_id="present"):
+    """A real (in-memory) PlanItem behind a fake session: the REAL sole-writer facade runs,
+    which is what a Mock item hid."""
+    session = Mock()
+    session.get.return_value = (
+        None
+        if job_item_id == "no-job"
+        else SimpleNamespace(
+            content_plan_item_id=None if job_item_id == "no-item" else uuid.uuid4()
+        )
+    )
+    session.execute.return_value.scalar_one_or_none.return_value = (
+        None if job_item_id == "missing-row" else item
+    )
+
+    @contextmanager
+    def sessions():
+        yield session
+
+    monkeypatch.setattr(gb, "_sync_session", sessions)
+    # No speech-cleanup analysis rows in this harness (the rollout flag is off in prod paths
+    # that reach here too); the facade only needs the "current analysis" to be None.
+    monkeypatch.setattr(
+        "app.services.speech_cleanup_preflight.mutation_current_analysis_sync",
+        lambda *a, **k: None,
+    )
+    return session
+
+
+def _plan_item(rows):
+    from app.models import PlanItem
+
+    item = PlanItem()
+    item.id = uuid.uuid4()
+    item.clip_assignments = rows
+    item.clip_gcs_paths = [row["gcs_path"] for row in rows]
+    item.edit_format = "montage"
+    item.audio_mode = "kria"
+    item.speech_cleanup_enabled = True
+    return item
+
+
+def _row(**overrides):
+    return {
+        "media_id": "clip-0",
+        "gcs_path": "users/u/analysis-proxy-clip-0.mp4",
+        "shot_id": None,
+        "storage_generation": "7",
+        "analysis": {"best_moments": [{"start_s": 1.0}]},
+        **overrides,
+    }
+
+
+def _enriched(generation="7", **overrides):
+    entry = {
+        "media_id": "clip-0",
+        "gcs_path": "users/u/analysis-proxy-clip-0.mp4",
+        "storage_generation": generation,
+        "analysis": {
+            clip_facts.FACTS_KEY: [
+                {"kind": "landmark", "value": "Galata Bridge", "provenance": "inferred"}
+            ],
+            clip_facts.LANDMARK_GENERATION_KEY: f"{generation}|en",
+        },
+    }
+    entry.update(overrides)
+    return entry
+
+
+JOB = "00000000-0000-0000-0000-000000000001"
+
+
+def test_unified_facts_are_persisted_through_the_sole_writer_facade(monkeypatch):
+    """A landmark asked for during a render must survive it, or every re-render and Celery
+    retry asks (and pays) again. Merged with what is stored, nothing else touched, and the
+    speech-cleanup identity is not disturbed."""
+    row = _row(
+        analysis={
+            "best_moments": [{"start_s": 1.0}],
+            clip_facts.FACTS_KEY: [
+                {"kind": "place", "value": "Ortaköy", "provenance": "geocode"},
+                {"kind": "landmark", "value": "Old Guess", "provenance": "inferred"},
+            ],
+        }
+    )
+    other = {"media_id": "clip-1", "gcs_path": "users/u/x.mp4", "shot_id": None, "analysis": {}}
+    item = _plan_item([row, other])
+    session = _checkpoint_harness(monkeypatch, item)
+
+    gb._checkpoint_unified_facts(JOB, _enriched(), None)
+
+    saved = item.clip_assignments[0]["analysis"]
+    assert saved["best_moments"] == [{"start_s": 1.0}], "other analysis is left alone"
+    assert saved[clip_facts.LANDMARK_GENERATION_KEY] == "7|en"
+    by_kind = {f["kind"]: f["value"] for f in saved[clip_facts.FACTS_KEY]}
+    assert by_kind == {"place": "Ortaköy", "landmark": "Galata Bridge"}, "merged, not overwritten"
+    assert item.clip_assignments[1]["gcs_path"] == other["gcs_path"]
+    # The facade ran: an analysis-only write superseded nothing and kept the consent mirror.
+    assert item.speech_cleanup_enabled is True
+    session.commit.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    [{"media_id": "other"}, {"gcs_path": "users/u/elsewhere.mp4"}, {"storage_generation": "8"}],
+)
+def test_unified_facts_are_only_written_for_the_exact_clip_and_generation(monkeypatch, mismatch):
+    item = _plan_item([_row()])
+    before = [dict(r) for r in item.clip_assignments]
+    session = _checkpoint_harness(monkeypatch, item)
+    gb._checkpoint_unified_facts(JOB, _enriched(**mismatch), None)
+    assert item.clip_assignments == before
+    session.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("missing", ["no-job", "no-item", "missing-row"])
+def test_unified_facts_checkpoint_tolerates_a_missing_job_or_item(monkeypatch, missing):
+    item = _plan_item([_row()])
+    before = [dict(r) for r in item.clip_assignments]
+    session = _checkpoint_harness(monkeypatch, item, job_item_id=missing)
+    gb._checkpoint_unified_facts(JOB, _enriched(), None)
+    assert item.clip_assignments == before
+    session.commit.assert_not_called()
+
+
+def test_a_failed_facts_checkpoint_never_fails_the_render(monkeypatch):
+    item = _plan_item([_row()])
+    session = _checkpoint_harness(monkeypatch, item)
+    session.execute.side_effect = RuntimeError("db down")
+    gb._checkpoint_unified_facts(JOB, _enriched(), None)
+
+
+# ── KRI-217: Visuals photos in the unified phone montage ─────────────────────
+
+
+def _photos(job, count: int = 2) -> list:
+    from app.pipeline.unified_montage import UnifiedClip
+
+    photos = []
+    for index in range(count):
+        row_id = str(uuid.uuid4())
+        photos.append(
+            UnifiedClip(
+                media_id=row_id,
+                proxy_path=f"users/{job.user_id}/plan/{job.content_plan_item_id}/pool/p{index}.jpg",
+                generation="17",
+                duration_s=0.0,
+                lane="asset",
+                kind="image",
+                manifest_id=f"asset-{row_id}",
+                aspect=4 / 3,
+            )
+        )
+    return photos
+
+
+def test_ready_photos_reach_the_phone_recipe(harness, monkeypatch):
+    """Thread 6BF1213E: videos plus Visuals photos render on the phone, photos included."""
+    import json
+
+    from app.services import phone_visuals
+    from app.services.phone_sources import PhoneVisualBinding
+    from tests._prod_profile import PROD_VERIFIED_FEATURES
+
+    job, *_ = harness(brief=None)
+    monkeypatch.setattr(gb.settings, "phone_render_verified_features", list(PROD_VERIFIED_FEATURES))
+    photos = _photos(job)
+    monkeypatch.setattr(gb, "_load_unified_montage_visuals", lambda *_a, **_k: photos)
+    timeline_visuals: list[set[str]] = []
+
+    def bind(_open, *, job_id, story_timeline, kinds):  # noqa: ANN001, ANN202
+        assert "image" in kinds
+        timeline_visuals.append(
+            {moment.media_id for moment in story_timeline if moment.lane == "asset"}
+        )
+        return tuple(
+            PhoneVisualBinding(
+                media_id=photo.media_id,
+                gcs_path=photo.proxy_path,
+                generation=photo.generation,
+                sha256="b" * 64,
+                byte_count=2048,
+                kind="image",
+            )
+            for photo in photos
+        )
+
+    monkeypatch.setattr(phone_visuals, "bind_phone_visuals", bind)
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    record = job.assembly_plan["unified_montage"]
+    assert record["visual_ids"] == [photo.media_id for photo in photos]
+    order = record["clip_ids"]
+    assert order[0] == "clip-0", "the montage opens on a clip"
+    assert timeline_visuals == [{photo.media_id for photo in photos}]
+    recipe = json.dumps(device_status(job, "guided_story").request.recipe.model_dump(mode="json"))
+    for photo in photos:
+        assert photo.media_id in recipe
+
+
+def test_a_photo_the_phone_cannot_draw_fails_instead_of_being_dropped(harness, monkeypatch):
+    job, snapshot, *_ = harness(brief=None)  # the harness verifies no stillImages
+    monkeypatch.setattr(gb, "_load_unified_montage_visuals", lambda *_a, **_k: _photos(job, 1))
+
+    with pytest.raises(UnsupportedPhonePlan):
+        gb._run_phone_unified_montage_job(
+            str(job.id), snapshot, job.all_candidates, ownership_epoch=3
+        )
+
+
+def test_the_worker_narrows_visuals_to_an_explicit_selection(harness, monkeypatch):
+    job, snapshot, *_ = harness(brief=None)
+    job.all_candidates["creator_strategy"] = {
+        **job.all_candidates["creator_strategy"],
+        "media_scope": "selected",
+        "selected_media_ids": ["clip-0", "asset-x"],
+    }
+    calls: list = []
+
+    def load(_job_id, *, selected):  # noqa: ANN001, ANN202
+        calls.append(selected)
+        return []
+
+    monkeypatch.setattr(gb, "_load_unified_montage_visuals", load)
+    gb._run_phone_unified_montage_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert calls == [frozenset({"clip-0", "asset-x"})]
+
+
+def test_a_clip_shorter_than_any_cut_reaches_the_phone_recipe(harness):
+    """Thread 6BF1213E carried a 0.3s iPhone clip: it plays whole on the phone."""
+    job, *_ = harness(brief=None)
+    job.assembly_plan[PHONE_SOURCES_FIELD][4]["original"]["duration_s"] = 0.29833333333333334
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    plan = GuidedStoryExecutionPlan.model_validate(job.assembly_plan["guided_story_execution_plan"])
+    short = next(moment for moment in plan.story_timeline if moment.media_id == "clip-4")
+    assert short.source_start_s == 0.0
+    assert 0.297 <= short.source_end_s <= 0.29834
+    assert device_status(job, "guided_story").request.recipe is not None

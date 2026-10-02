@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     # KRI-132: montage/day_vlog/single_hero items with a recorded voiceover
     # resolve to the "voiceover" archetype (`_resolve_archetype` in
     # generative_build.py) same as on the cloud, and phone rendering compiles
-    # a narration audio track for them (`compile_phone_montage_plan`) instead
+    # a narration audio track for them (`compile_phone_voiceover_montage_plan`) instead
     # of failing closed with "Phone rendering does not yet support voiceover
     # edits". True (default since the KRI-132 rollout): the pilot cohort's
     # montage-family voiceover edits render on the device. False: byte-identical
@@ -195,40 +195,19 @@ class Settings(BaseSettings):
     # set PHONE_SUBTITLED_VIDEO_OVERLAYS_ENABLED=false --app nova-video` +
     # `fly machine restart <id>` (api + worker).
     phone_subtitled_video_overlays_enabled: bool = False
-    # KRI-190: one montage plan. True (or the account is in the allowlist): a
-    # phone-rendered montage-family job with no approved guided proposal is
-    # compiled through the guided plan format (fast montage + per-clip text)
-    # instead of the plain phone-montage lane. False (default): the plain lane,
-    # including its landscape-fit guard, runs byte-identically. Allowlist is
-    # comma-separated or a JSON list of user ids. Apply:
-    # `fly secrets set MONTAGE_UNIFIED_PLAN_ENABLED=true --app nova-video`
-    # + restart worker. Rollback: set it false + restart.
-    montage_unified_plan_enabled: bool = False
-    montage_unified_plan_user_ids: Annotated[list[str], NoDecode] = []
-
-    @field_validator("montage_unified_plan_user_ids", mode="before")
-    @classmethod
-    def parse_montage_unified_plan_user_ids(cls, value: object) -> object:
-        if not isinstance(value, str):
-            return value
-        raw = value.strip()
-        if not raw:
-            return []
-        if raw.startswith("["):
-            try:
-                return json.loads(raw)
-            except json.JSONDecodeError:
-                return value
-        return [part.strip() for part in raw.split(",") if part.strip()]
-
-    def montage_unified_plan_for(self, user_id: object) -> bool:
-        """Global flag OR the per-account allowlist (allowlist only ever adds)."""
-        if self.montage_unified_plan_enabled:
-            return True
-        return user_id is not None and str(user_id) in {
-            str(uid) for uid in self.montage_unified_plan_user_ids
-        }
-
+    # KRI-136: a self-narrated (`narrated*`, no recorded voiceover) item with
+    # 2+ clips that resolves to the `talking_head` archetype renders on the
+    # device: the speech clip stays the main track (its audio runs the whole
+    # way, with editable captions) and the other clips cover the picture as
+    # muted full-frame cutaways (`compile_phone_subtitled_plan(cutaways=...)`).
+    # Also needs `narrated_self_narration_enabled`, phone `subtitled`, and the
+    # `visualBlocks`/`visualVideos`/`audioMix` device features -- see
+    # `app.services.phone_rollout.phone_talking_head_supported`. False
+    # (default): byte-identical, the dispatch gate refuses with
+    # `self_narration_multi_clip`. Apply: `fly secrets set
+    # PHONE_TALKING_HEAD_RENDERING_ENABLED=true --app nova-video` +
+    # `fly machine restart <id>` (api + worker). No NEXT_PUBLIC twin.
+    phone_talking_head_rendering_enabled: bool = False
     # KRI-132 (narrated walkthrough): a `narrated`/`narrated_planned`/
     # `narrated_ready` item WITH a recorded voiceover compiles through
     # `app.pipeline.phone_narrated_plan.compile_phone_narrated_plan`
@@ -449,6 +428,11 @@ class Settings(BaseSettings):
     # runtime_version=1 project remain available when this is false; the new
     # durable turn/approval endpoints deliberately fail closed as 404.
     kria_runtime_v2_enabled: bool = False
+    # Chat copilot continues on the editor's CURRENT UNSAVED state: the client may
+    # send `editor_state` with a turn (EditorStateIn) and the planner + draft compiler
+    # build on it instead of the saved variant / stale head. Off (default) = the
+    # field is accepted and silently dropped, nothing stored, byte-identical to before.
+    kria_editor_state_turns_enabled: bool = False
     # KRI-189 (KRI-185 P3): clip facts -- capture time, place name and a
     # best-guess landmark per clip, each with provenance. Gates SERVER
     # CONSUMPTION only: the landmark agent run, exposing facts to the Main
@@ -528,6 +512,11 @@ class Settings(BaseSettings):
     # Preflight downloads/transcription must never queue behind video renders or
     # run on the small maintenance machine.
     speech_cleanup_analysis_queue: str = "speech-analysis"
+    # When the plan item carries no Gemini clip transcript (Kria v2 never saves
+    # one), the preflight worker asks Gemini to transcribe the narration's first
+    # 30 s so whisper's detected language is still cross-checked before the cut
+    # plan is built. Best-effort; False skips the call (item transcript only).
+    speech_cleanup_gemini_reference_enabled: bool = True
 
     # yt-dlp cookies for admin URL imports. Use YTDLP_COOKIES_B64 in hosted
     # environments (secret-safe, decoded into a short-lived 0600 temp file) or
@@ -726,6 +715,18 @@ class Settings(BaseSettings):
     # render_geometry.choose_guided_text_y_frac. Default OFF ⇒ byte-identical to
     # today's fixed y_frac placement.
     guided_text_face_placement_enabled: bool = False
+    # KRI-140: the same decision for a PHONE-rendered guided story. There is no
+    # assembled video on the server, so `_run_phone_guided_job` samples faces
+    # from each footage moment's analysis proxy (mapped through the moment's
+    # crop + the engine's cover-fit) and bakes the chosen `y_frac` into the
+    # variant's text rows before the recipe compiles
+    # (`app.pipeline.phone_guided_text_placement`). Independent of the cloud
+    # flag above; server-only (no app build needed). False (default) leaves the
+    # authored position: byte-identical. Read at plan time, so a flip affects
+    # the next phone render. Apply: `fly secrets set
+    # PHONE_GUIDED_TEXT_FACE_PLACEMENT_ENABLED=true --app nova-video` + `fly
+    # machine restart <id>` (worker).
+    phone_guided_text_face_placement_enabled: bool = False
 
     # Kill switch for authored TextElements on subtitled variants. When False,
     # subtitled remains captions-only and the text-element routes/capabilities
@@ -1319,6 +1320,15 @@ class Settings(BaseSettings):
             "groups."
         ),
     )
+    kria_guided_timeline_ops: bool = Field(
+        default=False,
+        description=(
+            "KRI-219: let the Kria chat copilot reorder/trim/retime/split/remove clips and "
+            "set transitions on guided-native (story) variants. Per-clip label bars follow "
+            "their segment through the edit (services/kria_editor_timeline.py). Off keeps "
+            "guided variants text-only in chat, byte-identical to before."
+        ),
+    )
     guided_story_editor_v2_enabled: bool = Field(
         default=False,
         description=(
@@ -1523,6 +1533,14 @@ class Settings(BaseSettings):
     # the thread's original request. Kill switch: false restores the legacy
     # "<Op>. Everything else is unchanged." reply and stateless copilot turn.
     copilot_honest_replies_enabled: bool = True
+    # KRI-219 latency: serve short in-place text/label/order edits with the fast copilot
+    # BEFORE the pro-model requirement extraction (which then runs off the critical
+    # path). false = the previous extract-first order for every post-render turn.
+    kria_copilot_first_enabled: bool = True
+    # Analyse a thread's clips in the background after attach (KRI-219) so the copilot
+    # knows what the footage shows (`analysis["understanding"]`). Needs a Gemini key.
+    # false = no analysis; chat edits then clarify instead of describing clips.
+    kria_clip_understanding_enabled: bool = True
     # Owner-safe "Nova steps" activity feed projected from pipeline_trace +
     # phase_log + AgentRun (app/services/nova_steps.py) onto the generative
     # job status response. Ships OFF -- `steps` stays None (byte-identical

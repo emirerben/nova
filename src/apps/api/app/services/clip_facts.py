@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import unicodedata
 from collections.abc import Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FutureTimeoutError
@@ -103,7 +104,11 @@ def capture_facts(capture: ClipCapture | None) -> list[ClipFact]:
                     kind="capture_time", value=_iso_utc(capture.capture_time), provenance="exif"
                 )
             )
-    if capture.place is not None:
+    # A country alone ("Türkiye") says nothing about where the clip was filmed, so it is
+    # not a place fact and can never caption a clip (KRI-190 simulator test). Decided
+    # here, where the parts are still separate: a lone "Singapore" from a locality that
+    # shares its country's name is a real place and is kept.
+    if capture.place is not None and (capture.place.sub_locality or capture.place.locality):
         label = capture.place.label()
         if label:
             # A label made only of characters the fact cleaner strips is "no place".
@@ -206,6 +211,160 @@ def order_by_capture_time(
     return CaptureOrdering(ordered, "capture_time", untimed)
 
 
+# ── Filming-hour display (KRI-219) ────────────────────────────────────────────
+
+# Capture times are stored in UTC only (the phone's local offset is dropped at
+# ``ClipCapture``), so showing "the hour it was filmed" needs a zone. Nothing
+# per-clip or per-creator carries one, so: an explicit zone the creator named,
+# else the zone of a single-zone country read off the clips' geocoded place,
+# else UTC. The label text never guesses; the reply names the basis.
+_SINGLE_ZONE_COUNTRIES: dict[str, str] = {
+    # Keys are diacritic-stripped and case-folded; the phone's geocoder answers in the
+    # DEVICE language ("Turquia" on a Portuguese phone), so each country lists its
+    # common spellings. Only countries with exactly one civil zone belong here.
+    **dict.fromkeys(
+        ("turkiye", "turkey", "turkei", "turquia", "turquie", "turkije", "turcja", "turchia"),
+        "Europe/Istanbul",
+    ),
+    **dict.fromkeys(
+        (
+            "united kingdom",
+            "birlesik krallik",
+            "reino unido",
+            "royaume-uni",
+            "grossbritannien",
+            "verenigd koninkrijk",
+        ),
+        "Europe/London",
+    ),
+    **dict.fromkeys(
+        ("germany", "almanya", "deutschland", "alemanha", "allemagne", "alemania", "duitsland"),
+        "Europe/Berlin",
+    ),
+    **dict.fromkeys(("italy", "italya", "italia", "italie", "italien"), "Europe/Rome"),
+    **dict.fromkeys(
+        ("greece", "yunanistan", "grecia", "grece", "griechenland", "griekenland"),
+        "Europe/Athens",
+    ),
+    **dict.fromkeys(
+        ("netherlands", "hollanda", "paises baixos", "pays-bas", "niederlande", "nederland"),
+        "Europe/Amsterdam",
+    ),
+    **dict.fromkeys(("japan", "japonya", "japao", "japon"), "Asia/Tokyo"),
+}
+
+
+def _fold_place(text: str) -> str:
+    stripped = unicodedata.normalize("NFKD", text.replace("\u0130", "i").replace("\u0131", "i"))
+    stripped = "".join(ch for ch in stripped if not unicodedata.combining(ch))
+    return " ".join(stripped.casefold().split())
+
+
+def zone_for_timezone_name(name: object) -> str | None:
+    """A validated IANA zone name, or None (never raises)."""
+    if not isinstance(name, str) or not name.strip() or len(name) > 64:
+        return None
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # noqa: PLC0415
+
+    try:
+        ZoneInfo(name.strip())
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return None
+    return name.strip()
+
+
+def _zone_of_facts(facts: Iterable[Mapping[str, Any]]) -> str | None:
+    """The single-zone country zone named by one clip's place fact, if any."""
+    for fact in facts:
+        if fact.get("kind") != "place":
+            continue
+        parts = [_fold_place(part) for part in str(fact.get("value") or "").split(",")]
+        for part in reversed(parts):  # the country is the last part of the geocode
+            zone = _SINGLE_ZONE_COUNTRIES.get(part)
+            if zone is not None:
+                return zone
+    return None
+
+
+def display_timezone(
+    facts_per_clip: Iterable[Iterable[Mapping[str, Any]]], override: object = None
+) -> tuple[str, str]:
+    """``(iana_name, basis)`` used to print filming hours; basis is "creator",
+    "place" or "utc".
+
+    THE one resolver (editor ops and the planner both call it), order-independent:
+    a zone the creator named wins; otherwise a non-UTC zone is used only when every
+    timed clip that HAS a place names a country of one single zone and they all agree
+    (a clip with no place abstains; a place in an unrecognised country forces UTC).
+    Different countries get UTC, stated, never a confident guess (2026-09-30: a UK clip
+    first in one order and a Turkish clip first in another printed the same clips two
+    hours apart).
+    """
+    named = zone_for_timezone_name(override)
+    if named is not None:
+        return named, "creator"
+    zones: set[str | None] = set()
+    for facts in facts_per_clip:
+        rows = [f for f in facts if isinstance(f, Mapping)]
+        if capture_time_from_facts(rows) is None:
+            continue
+        if not any(f.get("kind") == "place" for f in rows):
+            continue  # no place recorded: abstains (cannot contradict the others)
+        zones.add(_zone_of_facts(rows))
+    if len(zones) == 1 and None not in zones:
+        return next(iter(zones)), "place"  # type: ignore[arg-type]
+    return "UTC", "utc"
+
+
+TIME_FORMATS = ("hh_mm", "hour")
+
+
+def format_capture_hour(moment: datetime, zone: str, time_format: str = "hh_mm") -> str:
+    """24-hour ``HH:MM`` (default) or the zero-padded hour alone (``"hour"``) in ``zone``.
+
+    No locale is known for a creator today, so both are 24-hour. ``hour`` is the data
+    contract for "just the hour, not the minutes"; the display is the bare "14".
+    """
+    from zoneinfo import ZoneInfo  # noqa: PLC0415
+
+    local = moment.astimezone(ZoneInfo(zone))
+    return local.strftime("%H") if time_format == "hour" else local.strftime("%H:%M")
+
+
+def timezone_note(zone: str, basis: str) -> str:
+    """The plain-language basis a reply must state alongside filming hours."""
+    if basis == "utc":
+        return (
+            "Times are shown in UTC (your clips were filmed in more than one time zone, or "
+            "one I can't tell)."
+        )
+    return f"Times are shown in {zone.replace('_', ' ')} time."
+
+
+def ordered_capture_media(
+    media_ids: list[str], capture_times: Mapping[str, datetime], *, descending: bool = False
+) -> CaptureOrdering:
+    """Chronological order (or newest first) with untimed clips pinned in place.
+
+    Ascending is exactly :func:`order_by_capture_time`. Descending reuses the same
+    slot-pinning; ties keep their attachment order either way.
+    """
+    ordering = order_by_capture_time(media_ids, capture_times)
+    if not descending or ordering.basis != "capture_time":
+        return ordering
+    timed_slots = [i for i, media_id in enumerate(media_ids) if media_id in capture_times]
+    attach = {media_id: i for i, media_id in enumerate(media_ids)}
+    ranked = sorted(
+        (media_id for media_id in media_ids if media_id in capture_times),
+        key=lambda media_id: (capture_times[media_id], -attach[media_id]),
+        reverse=True,
+    )
+    ordered = list(media_ids)
+    for slot, media_id in zip(timed_slots, ranked, strict=True):
+        ordered[slot] = media_id
+    return CaptureOrdering(ordered, "capture_time", ordering.fallback_ids)
+
+
 # ── Landmark enrichment (best guess, inferred) ────────────────────────────────
 
 
@@ -221,12 +380,38 @@ def _generation(assignment: Mapping[str, Any]) -> str:
     return str(assignment.get("generation") or assignment.get("storage_generation") or "")
 
 
-def _landmark_attempted(assignment: Mapping[str, Any]) -> bool:
-    """True once a guess (even an empty one) was recorded for this generation."""
+def _landmark_key(assignment: Mapping[str, Any], language: str = "") -> str:
+    """The cache key of one landmark answer: the storage generation plus the language the
+    creator wrote in. No creator text is the bare generation (what the edit-proposal
+    enrichment records, since it runs before the creator's words are known)."""
+    generation = _generation(assignment)
+    return f"{generation}|{language}" if language else generation
+
+
+# Languages whose rule is worth a dedicated guess. "und" (text in another language) and ""
+# (no text) share the untagged bare-generation entry.
+_TAGGED_LANGUAGES = frozenset({"tr", "en"})
+
+
+def _landmark_attempted(assignment: Mapping[str, Any], language: str = "") -> bool:
+    """True once a guess (even an empty one) was recorded for this storage generation.
+
+    Without a known creator language (the edit-proposal enrichment, which runs before the
+    creator's words are known, or text in a language we cannot name) ANY entry for this
+    generation counts, bare or language-tagged: that path never re-asks and never
+    overwrites a tagged entry. With a known language only a language-tagged entry counts,
+    so a guess made before the creator's language was known is re-asked ONCE with the
+    language rule and then reused by every later render."""
     analysis = assignment.get("analysis")
     if not isinstance(analysis, dict):
         return False
-    return analysis.get(LANDMARK_GENERATION_KEY) == _generation(assignment)
+    recorded = analysis.get(LANDMARK_GENERATION_KEY)
+    if not isinstance(recorded, str):
+        return False
+    generation, _sep, tag = recorded.partition("|")
+    if generation != _generation(assignment):
+        return False
+    return True if language not in _TAGGED_LANGUAGES else bool(tag)
 
 
 def _landmark_prompt_place(assignment: Mapping[str, Any]) -> tuple[str, float | None, float | None]:
@@ -249,7 +434,9 @@ def _has_landmark_context(assignment: Mapping[str, Any]) -> bool:
     return bool(place) or (lat is not None and lon is not None)
 
 
-def _guess_landmark(assignment: dict[str, Any], *, ctx: Any) -> ClipFact | None:
+def _guess_landmark(
+    assignment: dict[str, Any], *, ctx: Any, creator_text: str = ""
+) -> ClipFact | None:
     """Download the pinned clip, upload it once, ask the landmark agent."""
     from app.agents._model_client import default_client  # noqa: PLC0415
     from app.agents.landmark_guess import LandmarkGuessAgent, LandmarkGuessInput  # noqa: PLC0415
@@ -271,6 +458,7 @@ def _guess_landmark(assignment: dict[str, Any], *, ctx: Any) -> ClipFact | None:
                 place=place,
                 lat=lat,
                 lon=lon,
+                creator_text=creator_text[:400],
             ),
             ctx=ctx,
         )
@@ -319,14 +507,29 @@ def with_capture_facts(assignment: dict[str, Any]) -> dict[str, Any]:
     return {**assignment, "analysis": analysis}
 
 
-def with_landmark_fact(assignment: dict[str, Any], fact: ClipFact | None) -> dict[str, Any]:
+def with_landmark_fact(
+    assignment: dict[str, Any], fact: ClipFact | None, *, language: str = ""
+) -> dict[str, Any]:
     """Copy of ``assignment`` with the guess (or the "asked, no answer") recorded."""
     entry = dict(assignment)
     analysis = dict(entry.get("analysis") or {})
-    analysis[FACTS_KEY] = _merge_stored_facts(
-        analysis, [fact] if fact is not None else [], replace_kind="landmark"
+    recorded = analysis.get(LANDMARK_GENERATION_KEY)
+    # "Unknown" from one pass (another language's, a retry) is not proof the landmark a
+    # previous pass found for THIS storage generation is wrong: only a new generation of
+    # the file invalidates it.
+    generation = _generation(entry)
+    keep_stored = (
+        fact is None
+        and generation != ""
+        and isinstance(recorded, str)
+        and recorded.split("|", 1)[0] == generation
     )
-    analysis[LANDMARK_GENERATION_KEY] = _generation(entry)
+    analysis[FACTS_KEY] = _merge_stored_facts(
+        analysis,
+        [fact] if fact is not None else [],
+        replace_kind=None if keep_stored else "landmark",
+    )
+    analysis[LANDMARK_GENERATION_KEY] = _landmark_key(entry, language)
     entry["analysis"] = analysis
     return entry
 
@@ -342,6 +545,7 @@ def enrich_clip_facts(
     make_ctx: Any,
     on_updated: Any = None,
     budget_s: float = LANDMARK_BUDGET_S,
+    creator_text: str = "",
 ) -> list[tuple[dict[str, Any], Any]]:
     """Store every clip's facts on its analysis: capture copies, then a landmark guess.
 
@@ -355,9 +559,16 @@ def enrich_clip_facts(
 
     ``on_updated(entry, ref)`` lets the caller checkpoint each enriched
     assignment so a Celery retry does not pay for the guess twice.
-    ``make_ctx(media_id)`` builds the per-call RunContext. Returns the results
+    ``make_ctx(media_id)`` builds the per-call RunContext. ``creator_text`` (the creator's
+    own words, when known) makes the landmark names follow their language, and its language
+    is part of each guess's cache key (KRI-210). Returns the results
     with entries AND refs updated (the ref carries the new analysis).
     """
+    from app.agents.landmark_guess import creator_language  # noqa: PLC0415
+
+    language = creator_language(creator_text)
+    if language not in _TAGGED_LANGUAGES:
+        language = ""  # untagged: shares (and reuses) the bare-generation entry
     updated: list[tuple[dict[str, Any], Any]] = []
     for entry, ref in results:
         new_entry = with_capture_facts(entry)
@@ -374,7 +585,7 @@ def enrich_clip_facts(
 
     def _record(index: int, fact: ClipFact | None) -> None:
         entry, ref = updated[index]
-        new_entry = with_landmark_fact(entry, fact)
+        new_entry = with_landmark_fact(entry, fact, language=language)
         ref = _ref_with_analysis(ref, new_entry["analysis"])
         final[index] = (new_entry, ref)
         if on_updated is not None:
@@ -385,7 +596,7 @@ def enrich_clip_facts(
 
     todo: list[int] = []
     for index, (entry, ref) in enumerate(updated):
-        if getattr(ref, "kind", "video") != "video" or _landmark_attempted(entry):
+        if getattr(ref, "kind", "video") != "video" or _landmark_attempted(entry, language):
             continue
         if not _has_landmark_context(entry):
             # Nothing to narrow a guess with: record "asked, no answer" and never call.
@@ -398,7 +609,9 @@ def enrich_clip_facts(
     def run(index: int) -> ClipFact | None:
         entry, _ref = updated[index]
         try:
-            return _guess_landmark(entry, ctx=make_ctx(str(entry.get("media_id"))))
+            # With no creator text the call is exactly the pre-KRI-210 one.
+            extra = {"creator_text": creator_text} if creator_text.strip() else {}
+            return _guess_landmark(entry, ctx=make_ctx(str(entry.get("media_id"))), **extra)
         except Exception as exc:  # noqa: BLE001 — best-effort context, never fatal
             log.warning(
                 "clip_facts.landmark_failed",

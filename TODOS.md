@@ -74,6 +74,24 @@ test exercises tapping "Editor" from chat or "Chat" from the editor header.
 `native-editor-chat-tab`; that tap returns to the chat header's `Editor`
 segment; no intermediate blank/black frame during the crossfade.
 
+### `testPreviewResizeIsAvailableAcrossEditorPanels` fails on `main` locally
+**Priority:** P3
+**What:** Discovered while merging `origin/main` into this branch (118 commits
+behind). Fails deterministically (not flaky, 3/3) with
+`XCTAssertEqualWithAccuracy failed: ("284.0") is not equal to ("120.0")` and
+`("184.0") is not equal to ("80.0")` for the "text-edit" panel case — i.e. the
+preview isn't shrinking to `NativeEditorLayoutMetrics.typingPreviewHeight`
+(KRI-185) while a text panel is being typed into, even though the call site
+(`NativeEditorView.swift`) does pass `shrinksPreviewWhileTyping: panel?.tool
+== .text`. Confirmed failing identically (same two assertions, same values) on
+a fresh `origin/main` checkout (commit c17f89a60) with no KRI-197 changes
+present at all, so this is a pre-existing bug on `main`, not caused by this
+branch or its merge.
+**Acceptance:** Investigate why `shrinksPreviewWhileTyping` doesn't take effect
+for the text-edit panel (timing of `keyboardVisible` vs `panel?.tool`? a second
+call site constructing `NativeEditorLayoutMetrics` without the flag?); fix or
+adjust the test.
+
 ## SFX picker search — deferred follow-ups (2026-09-24)
 
 The web editor's Sounds drawer and legacy SFX lane gained search + category
@@ -2293,24 +2311,32 @@ The same root cause has three other surfaces; each is real but out of scope
 for a single-client bugfix. Root-cause narrative and code map:
 `~/.claude/plans/kri-110-fluffy-sky.md`.
 
-### Web editor has the identical Captions-tab blind spot
-**What:** `captionToolState` (`src/apps/web/src/app/plan/items/[id]/_editor/editor-capabilities.ts:27-51`)
-requires `resolved_archetype ∈ {narrated, subtitled}`, so `captionsControl` stays
-`undefined` (`EditorShell.tsx:6730`) and the Captions rail button greys out for
-every guided-story video on the web. `captionCueRows` (`EditorShell.tsx:3416`)
-also filters with the narrow `isCaptionBar` instead of the union predicate.
-**Why:** Guided-story is the dominant archetype for new videos (chat-first
-creation is canonical), so this is not a corner case — it is the common case,
-on the surface most creators actually use to edit.
-**How:** Structurally identical fix to the iOS one. The union predicate
-already exists — `isCaptionUnitBar` (`editor-bars.ts:280`) — unlike iOS, which
-had to add one. Swap it into `captionCueRows`'s filter, widen
-`captionToolState` to also accept a `guided_story` variant carrying
-`caption_cue`-tagged text elements, and route the drawer's edit callback to
-`text_elements` for those bars (mirrors the iOS `updateCaptionCue` split).
-**Effort:** M (CC: ~1h — same shape as the iOS fix, plus web test fixtures)
-**Priority:** P1
-**Depends on:** —
+### Web editor has the identical Captions-tab blind spot — FIXED (KRI-201)
+**What it was:** `captionToolState` required `resolved_archetype ∈ {narrated,
+subtitled}`, so `captionsControl` stayed `undefined` and the Captions rail
+button greyed out — with the dishonest "this edit has no captions" tooltip —
+for every guided-story video on the web, even one with real narration
+captions. `captionCueRows` also filtered with the narrow `isCaptionBar`
+instead of the union predicate, so even a forced-open drawer would show zero
+rows.
+**Fix shipped:** `captionToolState` (`editor-capabilities.ts`) now also
+returns `"editable"` when `variant.text_elements` contains a narration-caption
+bar (`isNarrationCaptionBar`); `captionCueRows` (`EditorShell.tsx`) and
+`buildCaptionTextReplacement` (`editor-bars.ts`) were swapped from
+`isCaptionBar` to the existing union predicate `isCaptionUnitBar`. Global
+"All captions" style patches (`patchCaptionMeta`) and Find/Replace All
+(`replaceInCaptions`) now also mark `textDirty` when they touch a
+narration-caption bar, since those bars persist through `text_elements`, not
+`caption_cues` — without that split the live preview would update but Save
+would silently drop the change. This is additive to KRI-18's on-canvas
+per-caption inspector (unaffected) — the drawer's job is exactly what KRI-18's
+inspector deliberately excludes: global/bulk caption styling and Find/Replace
+across every line.
+Covered by `EditorShell-captions-guided-story.test.tsx` (new "Captions drawer
+reachable for guided-story (KRI-201)" suite: rail enabled + cue rows, Replace
+All rewrites narration captions, a global font/color change round-trips into
+the `text_elements` save payload), plus unit coverage in
+`editor-capabilities.test.tsx` and `editor-text-lane-rows.test.ts`.
 
 ### AI copilot cannot see or edit guided-story captions
 **What:** `kria_editor_ops.py`'s caption snapshot (~line 198) is built from
@@ -2409,3 +2435,32 @@ worth a dedicated investigation if the two-tap UX becomes a real complaint,
 but out of scope to chase further here.
 **Priority:** P2 (both fixed; the "still open" notes above are the residual
 follow-ups, not live bugs).
+
+### Kria session `target_generation_id` goes stale after an editor Save (KRI-237 secondary)
+
+**Completed:** 2026-10-01 (branch `feat/copilot-stale-head-draft-2026-10-01`) — resolved by not trusting the session pointer or `base_generation_id` column: a head draft is honored only if `editor_payload['base_generation'] == variant_render_baseline(variant)` (`fresh_editor_head_payload` in `kria_editor_ops.py`, shared by `planner._load_editor_target` and the `kria_runtime` draft apply path); new drafts are stamped with the variant's real generation. Tests: `tests/kria/test_stale_head_draft.py`.
+
+**What:** After the creator taps editor Save, the variant gets a new render generation, but
+`CreatorAgentSession.target_generation_id` keeps the pre-save value. `_load_editor_target`
+resolves the head draft with `CreatorEditDraft.base_generation_id == session.target_generation_id`,
+so after a Save the head draft (and the snapshot built on it) can be resolved against the stale
+generation, and the copilot edits the wrong base.
+**Why:** Found while root-causing KRI-237 ("Add animation to the title" right after Save became a
+render approval). The primary bug (target missing while the variant is `rendering`) is fixed with a
+`render_in_flight` miss + recovery reply; the stale-generation resolution is a separate correctness
+gap that only shows once the render finishes.
+**How:** Re-sync `session.target_generation_id` to the variant's current `render_generation_id`
+when the Save render completes (the existing re-sync near `app/tasks/kria_runtime.py:~2571` only covers some
+paths), or have `_load_editor_target` read the generation from the variant instead of the session.
+Add a regression test: Save -> render ready -> ask resolves the post-Save head draft.
+**Effort:** S (human ~half day / CC ~30 min)
+**Priority:** P2
+**Depends on:** KRI-237 recovery guard (planner `render_in_flight`) landing first
+
+### Copilot reply claims success on an `unsupported` outcome
+**What:** When the copilot's editor plan is rejected as `unsupported` (e.g. `patch_slots capability_unavailable`), the user-facing reply is still the model's optimistic text ("I shortened all the clips...") instead of an honest "I can't do that yet".
+**Why:** Prod thread e798da2: "All videos are too long, make them shorter" was rejected with `patch_slots capability_unavailable`, yet the reply told the user the clips were shortened. A false success is worse than a refusal (see KRI-129 no-silent-overrides rules).
+**How:** In the copilot/planner path that consumes the op-validation result (`app/kria/planner.py` editor-revision flow + `app/routes/_copilot.py`), when any op is rejected as `unsupported`/`capability_unavailable`, replace or prefix the reply with a deterministic "I can't do that yet" message naming the capability gap. Add a regression test with a rejected `patch_slots` op asserting the reply never claims success.
+**Effort:** S (human ~half day / CC ~30 min)
+**Priority:** P2
+**Depends on:** None

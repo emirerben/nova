@@ -392,7 +392,7 @@ def effective_render_program(
             # render_program == "native"` a few lines after this resolves.
             #
             # The montage-family phone compiler
-            # (`app.pipeline.phone_montage_plan.compile_phone_montage_plan`)
+            # (`app.pipeline.phone_voiceover_montage_plan.compile_phone_voiceover_montage_plan`)
             # only ever binds clip-lane sources bound to the device
             # (`PhoneSourceBinding`) — it has no Visuals-pool asset support
             # at all, unlike the guided-story compiler. An explicit
@@ -470,6 +470,37 @@ def effective_render_program(
     return "native"
 
 
+def _repair_single_clip_all_scope(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> CreativeStrategy:
+    """Model boundary: "all" media on a one-clip project is that clip.
+
+    `media_scope: "all"` routes to the guided specialist, so it is refused when
+    the manifest has no guided proposals -- always the case for a phone Talking
+    (`subtitled`) edit. With exactly one attached clip, selecting it already
+    covers all of the media, so nothing the creator asked for is dropped. The
+    model chose "all" for the single clip on 6 of 12 live "Add captions" turns
+    and every retry could repeat it until the turn failed (KRI-238).
+    """
+
+    guided = manifest.capabilities.get(CAPABILITY_DRAFT_GUIDED_PROPOSAL)
+    if (
+        strategy.media_scope != "all"
+        or (guided is not None and guided.available)
+        or manifest.has_voiceover
+        or strategy.execution_contract is not None
+        or len(manifest.media) != 1
+        or manifest.media[0].media_id.startswith("asset-")
+    ):
+        return strategy
+    return strategy.model_copy(
+        update={
+            "media_scope": "selected",
+            "selected_media_ids": [manifest.media[0].media_id],
+        }
+    )
+
+
 def normalize_creator_strategy_media(
     manifest: ResolvedCreatorManifest,
     strategy: CreativeStrategy,
@@ -478,6 +509,8 @@ def normalize_creator_strategy_media(
 ) -> CreativeStrategy:
     """Bound exact refs; optional repair is reserved for the model boundary."""
 
+    if repair_model_output:
+        strategy = _repair_single_clip_all_scope(manifest, strategy)
     if strategy.video_reuse_policy in {"distinct_windows", "allow_repeat"}:
         strategy = strategy.model_copy(update={"direction": "fast_montage"})
     if (

@@ -2,6 +2,301 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.77.47.0] - 2026-10-02
+
+### Changed
+- fix: keep footage context out of clip commands (KRI-244) (#1305) <!-- release-pr: 1305 -->
+
+## [0.77.46.0] - 2026-10-01
+
+### Changed
+- feat(ios): chat turns send the editor's unsaved state; no save-before-send (flag-gated) (#1300) <!-- release-pr: 1300 -->
+
+## [0.77.45.0] - 2026-10-01
+
+### Changed
+- feat(ios): clip labels follow their clip when you trim, extend, reorder or delete (no server) (#1299) <!-- release-pr: 1299 -->
+
+## [0.77.44.0] - 2026-10-01
+
+### Changed
+- feat(copilot): realign_labels op — server-computed label retime after a manual trim (prompt v65) (#1298) <!-- release-pr: 1298 -->
+
+## [0.77.43.0] - 2026-10-01
+
+### Changed
+- docs(clip-intents): record the prod flag flip and its live eval gate (#1302) <!-- release-pr: 1302 -->
+
+## [0.77.42.0] - 2026-10-01
+
+### Fixed
+- fix(kria): "Add captions" on a montage is never a chapter caption clip intent (#1301) <!-- release-pr: 1301 -->
+
+## [0.77.41.0] - 2026-10-01
+
+### Changed
+- feat(kria): chat turns can carry the editor's unsaved state (dark, additive) (#1296) <!-- release-pr: 1296 -->
+
+## [0.77.40.0] - 2026-10-01
+
+### Changed
+- fix(reframe): crossfade speech-cleanup cuts and cut their audio on the frame grid (#1292) <!-- release-pr: 1292 -->
+
+## [0.77.39.0] - 2026-10-01
+
+### Fixed
+- fix(kria): "Add captions" on a Talking edit never becomes a clip intent (KRI-238 follow-up) (#1290) <!-- release-pr: 1290 -->
+
+## [0.77.38.0] - 2026-10-01
+
+### Changed
+- fix(kria): keep a guided label's manual start offset through a timeline change (#1294) <!-- release-pr: 1294 -->
+
+## [0.77.37.0] - 2026-10-01
+
+### Changed
+- fix(kria): never overlay a stale chat draft onto the creator's saved edits (#1295) <!-- release-pr: 1295 -->
+
+## [0.77.36.0] - 2026-10-01
+
+### Changed
+- test(copilot): guided phone-commit coverage for copilot shorten (KRI-219/KRI-237) (#1293) <!-- release-pr: 1293 -->
+
+## [0.77.35.0] - 2026-10-01
+
+### Changed
+- feat(copilot): vague "make it shorter/longer" asks one follow-up with concrete options (prompt v64) (#1291) <!-- release-pr: 1291 -->
+
+## [0.77.34.0] - 2026-10-01
+
+### Changed
+- fix(copilot): never claim success when an op was rejected (#1289) <!-- release-pr: 1289 -->
+
+## [0.77.33.0] - 2026-10-01
+
+### Changed
+- fix(kria): cap the Main Creator conversation at its schema limit (20, not 24) (#1287) <!-- release-pr: 1287 -->
+
+## [0.77.32.0] - 2026-10-01
+
+### Fixed
+- fix(kria): "Add captions" on a one-clip iPhone Talking project no longer fails the turn (KRI-238) (#1288) <!-- release-pr: 1288 -->
+
+## [0.77.31.0] - 2026-10-01
+
+### Fixed
+- fix(speech-cleanup): crossfade narration cleanup cuts instead of hard splices (#1286) <!-- release-pr: 1286 -->
+
+## [0.77.30.0] - 2026-10-01
+
+### Changed
+- fix(kria): never turn an in-flight editor Save into a render approval (KRI-237) (#1285) <!-- release-pr: 1285 -->
+
+## [0.77.29.0] - 2026-10-01
+
+### Changed
+- fix(speech-cleanup): carve the stretched tail of a sentence-final token (KRI-236) (#1284) <!-- release-pr: 1284 -->
+
+## [0.77.28.0] - 2026-10-01
+
+### Changed
+- fix(ios): editor panel resizes from its whole header, not just the grabber (KRI-235) (#1283) <!-- release-pr: 1283 -->
+
+## [0.77.27.0] - 2026-10-01
+
+### Changed
+- fix(speech-cleanup): ambient-adaptive silence spans for noisy Talking takes (KRI-234) (#1282) <!-- release-pr: 1282 -->
+
+## [0.77.26.0] - 2026-10-01
+
+### Changed
+- v0.77.8.0 feat(copilot): full editor-op parity — selector text/timeline/audio ops, guided label-follow, honest receipts (KRI-219, KRI-218) (#1271) <!-- release-pr: 1271 -->
+
+## [0.77.25.0] - 2026-10-01
+
+### Changed
+- fix(ios): play phone Talking source as its speech-cleanup cut in the editor (KRI-232) (#1281) <!-- release-pr: 1281 -->
+
+## [0.77.24.0] - 2026-10-01
+
+### Changed
+- fix(gallery): mint posters for phone renders and stop endless tile spinner (KRI-231) (#1280) <!-- release-pr: 1280 -->
+
+## [0.77.23.0] - 2026-10-01
+
+### Fixed
+- fix(kria): run the server strategy checks on iOS (runtime-v2) plans (KRI-142) (#1279) <!-- release-pr: 1279 -->
+
+## [0.77.22.0] - 2026-10-01
+
+### Changed
+- feat(phone): multi-clip Talking head renders on the iPhone (KRI-136) (#1278) <!-- release-pr: 1278 -->
+
+## [0.77.21.0] - 2026-10-01
+
+### Changed
+- feat(ios): phone audio mix parity — fades, loudness, ducking (KRI-139) (#1277) <!-- release-pr: 1277 -->
+
+## [0.77.20.0] - 2026-09-30
+
+### Changed
+- fix(ios): phone render journey tests, timed-out copy, single variant (KRI-141) (#1276) <!-- release-pr: 1276 -->
+
+## [0.77.19.0] - 2026-09-30
+
+### Changed
+- feat(phone): crop/re-frame + face-aware guided text on iPhone renders (KRI-140) (#1275) <!-- release-pr: 1275 -->
+
+## [0.77.18.0] - 2026-09-30
+
+### Changed
+- fix(ios): Save no longer shows a false "video changed" card (KRI-227) (#1274) <!-- release-pr: 1274 -->
+
+## [0.77.17.0] - 2026-09-30
+
+### Fixed
+- fix(ios): list Talking captions once on the editor timeline, not as cue and mirrored text element (#1273) <!-- release-pr: 1273 -->
+
+## [0.77.16.0] - 2026-09-29
+
+### Changed
+- fix(phone): edit and restyle captions on iPhone-rendered Talking edits (KRI-216) (#1264) <!-- release-pr: 1264 -->
+
+## [0.77.15.0] - 2026-09-29
+
+### Changed
+- fix(ios): long-press text moves keep the finger's whole drag (#1266) <!-- release-pr: 1266 -->
+
+## [0.77.14.0] - 2026-09-29
+
+### Changed
+- fix(kria): unchecked brief asks no longer read "Partly" (#1272) <!-- release-pr: 1272 -->
+
+## [0.77.13.0] - 2026-09-29
+
+### Fixed
+- fix(kria): iOS montage with photos renders instead of "couldn't start the render" (KRI-217) (#1265) <!-- release-pr: 1265 -->
+
+## [0.77.12.0] - 2026-09-29
+
+### Changed
+- fix(speech-cleanup): preflight cuts from what was said, not whisper's translation (#1228) <!-- release-pr: 1228 -->
+
+## [0.77.11.0] - 2026-09-29
+
+### Changed
+- refactor(phone): voiceover-only montage writer; unified planner for every other montage (KRI-220) (#1269) <!-- release-pr: 1269 -->
+
+## [0.77.10.0] - 2026-09-29
+
+### Changed
+- fix(evals): edit_copilot v48 phone-restyle regression + KRI-221 live rerun (#1270) <!-- release-pr: 1270 -->
+
+## [0.77.9.0] - 2026-09-29
+
+### Changed
+- fix(ios): settle chat thinking regardless of which fetch delivered the reply (KRI-222) (#1268) <!-- release-pr: 1268 -->
+
+## [0.77.8.0] - 2026-09-29
+
+### Changed
+- feat(web): make the landing wordmark living glass (#1267) <!-- release-pr: 1267 -->
+
+## [0.77.7.0] - 2026-09-29
+
+### Changed
+- feat(ios): requirement receipt chips and guessed-name corrections in chat (KRI-207) (#1258) <!-- release-pr: 1258 -->
+
+## [0.77.6.0] - 2026-09-29
+
+### Changed
+- test(evals): request-following golden set to 30 threads, live report flag, P6b KPI (KRI-212) (#1257) <!-- release-pr: 1257 -->
+
+## [0.77.5.0] - 2026-09-29
+
+### Changed
+- feat(ios): originals-missing editor state, failed attach never blocks Send, flaky text test (KRI-211, KRI-213) (#1256) <!-- release-pr: 1256 -->
+
+## [0.77.4.0] - 2026-09-29
+
+### Changed
+- feat(kria): copilot sees clips, facts and brief; one-op bulk fonts (KRI-191, KRI-203) (#1255) <!-- release-pr: 1255 -->
+
+## [0.77.3.0] - 2026-09-29
+
+### Changed
+- feat(kria): route-direction, label and title receipts, narrated float-noise snap (KRI-208/209/210) (#1254) <!-- release-pr: 1254 -->
+
+## [0.77.2.0] - 2026-09-28
+
+### Changed
+- test(ios): expect Edit text's 120pt typing preview in the resize test (KRI-185) (#1263) <!-- release-pr: 1263 -->
+
+## [0.77.1.0] - 2026-09-28
+
+### Changed
+- fix(kria): let v2 phone Talking renders dispatch past the enforce cleanup guard (#1259) <!-- release-pr: 1259 -->
+
+## [0.77.0.0] - 2026-09-28
+
+### Added
+- feat(web): launch video-led Kria landing hero (#1262) <!-- release-pr: 1262 -->
+
+## [0.76.232.0] - 2026-09-28
+
+### Changed
+- feat(ios): ask the speech-cleanup question on the runtime-v2 approval card (#1261) <!-- release-pr: 1261 -->
+
+## [0.76.231.0] - 2026-09-28
+
+### Changed
+- fix(kria): ask the speech-cleanup question in runtime v2 and apply it on the phone (#1260) <!-- release-pr: 1260 -->
+
+## [0.76.230.0] - 2026-09-25
+
+### Changed
+- feat(ios): list every on-screen text block in the editor's Text tab (KRI-185) (#1250) <!-- release-pr: 1250 -->
+
+## [0.76.229.0] - 2026-09-25
+
+### Changed
+- fix(speech-cleanup): show cleanup question for Talking-to-camera on phone (KRI-205) (#1253) <!-- release-pr: 1253 -->
+
+## [0.76.228.0] - 2026-09-25
+
+### Changed
+- fix(ios): clamp overlapping caption_cues before burning captions (KRI-202) (#1252) <!-- release-pr: 1252 -->
+
+## [0.76.227.0] - 2026-09-25
+
+### Changed
+- fix(web): make guided-story captions reachable in the Captions drawer (KRI-201) (#1251) <!-- release-pr: 1251 -->
+
+## [0.76.226.0] - 2026-09-25
+
+### Changed
+- fix(kria): verify reaction beats and whole-take asks in brief receipts (#1249) <!-- release-pr: 1249 -->
+
+## [0.76.225.0] - 2026-09-25
+
+### Changed
+- fix(ios): editor play never silently does nothing when the player item fails (KRI-200) (#1248) <!-- release-pr: 1248 -->
+
+## [0.76.224.0] - 2026-09-25
+
+### Fixed
+- fix(ios): burn Talking captions once, not as cue and mirrored text element (#1245) <!-- release-pr: 1245 -->
+
+## [0.76.223.0] - 2026-09-25
+
+### Changed
+- fix(montage): defer draft-time receipts to the unified planner; a country alone is not a place (KRI-190) (#1247) <!-- release-pr: 1247 -->
+
+## [0.76.222.0] - 2026-09-25
+
+### Changed
+- fix(phone): snap float-noise text overshoot so unified montage recipes validate (KRI-190) (#1246) <!-- release-pr: 1246 -->
+
 ## [0.76.221.0] - 2026-09-25
 
 ### Changed

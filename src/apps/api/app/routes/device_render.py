@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from fractions import Fraction
 from pathlib import Path
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,6 +37,7 @@ from app.kria.device_render import (
     DeviceRenderStatus,
     DeviceRetryBody,
     DeviceRetryOut,
+    finished_durations,
     require_current_request,
 )
 from app.kria.render_assets import LibraryRenderAsset, VisualRenderAsset, VoiceoverRenderAsset
@@ -63,7 +65,9 @@ from app.services.job_storage_paths import project_media_reference_lock_key
 from app.services.render_library import catalog_path, inspect_library_asset
 from app.services.speech_cleanup import SpeechCleanupFailure
 from app.services.speech_cleanup_outcome import build_preflight_public_outcome
+from app.services.template_poster import upload_video_poster
 
+log = structlog.get_logger()
 router = APIRouter()
 
 # GET /device-render is polled continuously by the phone client and the item
@@ -326,26 +330,54 @@ def _cleaned_voiceover_path(
     return narration.gcs_path
 
 
-def _device_speech_cleanup_outcome(assembly: dict, job_id: uuid.UUID) -> dict | None:
-    """The public "Clean up speech" receipt for a device-rendered guided story.
+def _device_speech_cleanup_outcome(
+    assembly: dict, job_id: uuid.UUID, variant_id: str
+) -> dict | None:
+    """The public "Clean up speech" receipt for a device-rendered edit.
 
     The phone never reaches the cloud finalizer, so completion writes the same
-    receipt: ``applied`` when the published recipe played the cleaned
-    derivative the Job's required_v1 snapshot consented to, ``failed`` when it
-    cannot prove that. None (nothing written) for every other Job, including
-    one whose narration is raw: such a Job was pinned before guided cleanup
-    existed (a new one is refused at dispatch), so a native re-export of it
-    must not gain a false "failed" receipt.
+    receipt the cloud finalizer would: ``applied`` when the published recipe
+    played the cleaned derivative the Job's required_v1 snapshot consented to,
+    ``checked_no_change``/``failed`` otherwise. None (nothing written) for
+    every other Job.
+
+    Two phone shapes carry this proof, checked in order:
+      - A guided-story narration (`_approved_guided_narration`): re-binds the
+        approved `NarrationTrack` to the snapshot via
+        `require_guided_cleanup_binding` (a Job pinned before guided cleanup
+        existed carries no cleaned narration, so this yields ``None`` rather
+        than a false "failed" receipt for a native re-export of it).
+      - A subtitled/self-narrated (`_run_phone_subtitled_job`) or
+        narrated-with-voiceover (`_run_phone_narrated_job`) render: both
+        persist their OWN `_speech_cleanup_outcome_context` directly on the
+        completed ``variant_id`` entry at plan time (mirrors the cloud
+        renderer's `base["_speech_cleanup_outcome_context"]`) -- no separate
+        re-binding proof is needed here, since that variant was only ever
+        pinned by the SAME render pass that validated the snapshot.
     """
     narration = _approved_guided_narration(assembly)
-    if narration is None or assembly.get("speech_cleanup_contract") != "required_v1":
-        return None
-    try:
-        if narration_speech_cleanup(narration) is None:
+    if narration is not None:
+        if assembly.get("speech_cleanup_contract") != "required_v1":
             return None
-        context = require_guided_cleanup_binding(assembly, narration)
-    except (ValueError, SpeechCleanupFailure):
-        context = None
+        try:
+            if narration_speech_cleanup(narration) is None:
+                return None
+            context = require_guided_cleanup_binding(assembly, narration)
+        except (ValueError, SpeechCleanupFailure):
+            context = None
+        return build_preflight_public_outcome(
+            assembly,
+            job_id=str(job_id),
+            results=[{"ok": True, "_speech_cleanup_outcome_context": context}],
+        )
+    variant = next(
+        (v for v in assembly.get("variants") or [] if v.get("variant_id") == variant_id), None
+    )
+    if not isinstance(variant, dict):
+        return None
+    context = variant.get("_speech_cleanup_outcome_context")
+    if context is None:
+        return None
     return build_preflight_public_outcome(
         assembly,
         job_id=str(job_id),
@@ -543,7 +575,15 @@ def _verify_export(
     expected_sha256: str,
     status: DeviceRenderStatus,
     brand_tail: str = "none",
-) -> None:
+    *,
+    poster_job_id: uuid.UUID | None = None,
+) -> str | None:
+    """Verify the phone's export; with ``poster_job_id``, also publish its poster.
+
+    Returns the poster key, or ``None`` when no poster was requested or the
+    extraction failed. The poster is fail-open: a healthy export still
+    publishes without one, and the library's repair path can mint it later.
+    """
     with tempfile.TemporaryDirectory(prefix="kria_device_export_") as directory:
         local = Path(directory) / "export.mp4"
         storage.download_generation_to_file(path, str(local), generation=generation)
@@ -607,6 +647,21 @@ def _verify_export(
             0.1, 2 / recipe.frame_rate
         ):
             raise ValueError("export duration mismatch")
+        if poster_job_id is None:
+            return None
+        # Reuse the verified download: phone renders never pass through a
+        # worker, so this is the only point that holds the published bytes.
+        try:
+            return upload_video_poster(str(local), path, job_id=poster_job_id)
+        except Exception as exc:  # noqa: BLE001 - poster is fail-open by contract
+            log.warning(
+                "device_export_poster_failed",
+                job_id=str(poster_job_id),
+                video_path=path,
+                error_class=type(exc).__name__,
+                error=str(exc)[:300],
+            )
+            return None
 
 
 @router.post("/jobs/{job_id}/device-render/complete", response_model=DeviceExportCompleteOut)
@@ -641,7 +696,7 @@ async def complete_device_export(
             or not metadata.generation
         ):
             raise ValueError("export metadata mismatch")
-        await asyncio.to_thread(
+        poster_path = await asyncio.to_thread(
             _verify_export,
             attempt["path"],
             str(metadata.generation),
@@ -649,6 +704,7 @@ async def complete_device_export(
             attempt["sha256"],
             status,
             attempt.get("brand_tail", "none"),
+            poster_job_id=job_id,
         )
     except FileNotFoundError as exc:
         raise HTTPException(409, "Export upload has not finished") from exc
@@ -696,10 +752,12 @@ async def complete_device_export(
             "render_generation_id": attempt_id,
             "render_finished_at": datetime.now(UTC).isoformat(),
             "video_path": attempt["path"],
+            # Always overwrite: a poster inherited from an earlier cloud render
+            # would show a different video than the one now published.
+            "poster_path": poster_path,
             "output_url": url,
             "render_destination": "device",
-            "duration_s": status.request.recipe.duration
-            + BRAND_TAIL_SECONDS[attempt.get("brand_tail", "none")],
+            **finished_durations(status.request.recipe.duration, attempt.get("brand_tail", "none")),
         }
         if v.get("variant_id") == body.identity.variant_id
         else v
@@ -710,7 +768,7 @@ async def complete_device_export(
         job.status = "variants_ready"
         job.current_phase = None
         job.finished_at = datetime.now(UTC)
-        outcome = _device_speech_cleanup_outcome(assembly, job.id)
+        outcome = _device_speech_cleanup_outcome(assembly, job.id, body.identity.variant_id)
         if outcome is not None:
             job.assembly_plan = {**assembly, "speech_cleanup_outcome": outcome}
     cleanup.status = "attached"

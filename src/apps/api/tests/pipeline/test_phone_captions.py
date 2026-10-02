@@ -1,13 +1,18 @@
 import pytest
 
 from app.kria.recipes_v2 import EditRecipeV2
+from app.pipeline.captions import SUBTITLED_CAPTION_MARGIN_V, y_frac_to_margin_v
+from app.pipeline.narrated_assembler import is_valid_caption_font
 from app.pipeline.phone_captions import (
     CAPTION_FONT_FAMILY,
     MAX_CAPTION_LAYERS,
+    PhoneCaptionLook,
     caption_font_assets,
+    caption_look_from_variant,
     compile_caption_layers,
 )
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
+from app.pipeline.text_overlay import _FONT_REGISTRY
 
 
 def _word(text: str, start_s: float, end_s: float) -> dict:
@@ -149,3 +154,288 @@ def test_caption_font_assets_resolves_the_bundled_tiktok_sans_font():
 
 def test_empty_cue_list_compiles_to_no_layers():
     assert compile_caption_layers([], canvas_width=1080, canvas_height=1920) == []
+
+
+# --- PhoneCaptionLook (KRI-216) -----------------------------------------------
+
+
+def test_default_look_is_byte_identical_to_no_look_and_to_look_none():
+    cues = [{"text": "Hello there", "start_s": 0.0, "end_s": 1.5}]
+    legacy = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920)
+    explicit_none = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920, look=None)
+    explicit_default = compile_caption_layers(
+        cues, canvas_width=1080, canvas_height=1920, look=PhoneCaptionLook()
+    )
+    assert legacy == explicit_none == explicit_default
+
+
+def test_captions_enabled_false_compiles_no_layers():
+    cues = [{"text": "Hello there", "start_s": 0.0, "end_s": 1.5}]
+    look = PhoneCaptionLook(captions_enabled=False)
+    assert compile_caption_layers(cues, canvas_width=1080, canvas_height=1920, look=look) == []
+
+
+def test_every_valid_caption_font_key_compiles_to_its_own_font_file():
+    cue = [{"text": "hi", "start_s": 0.0, "end_s": 1.0}]
+    checked = 0
+    for key, entry in _FONT_REGISTRY.get("fonts", {}).items():
+        if not is_valid_caption_font(key):
+            continue
+        look = PhoneCaptionLook(font_family=key)
+        layers = compile_caption_layers(cue, canvas_width=1080, canvas_height=1920, look=look)
+        expected_asset_id = "font-" + entry["file"]
+        assert layers[0].runs[0].font_asset_id == expected_asset_id, key
+        checked += 1
+    assert checked >= 40  # sanity: the registry loaded and most fonts are non-deprecated
+
+
+def test_text_size_color_and_outline_flow_through_look():
+    look = PhoneCaptionLook(text_size_px=100, text_color="#112233", outline_px=8)
+    cues = [{"text": "hi", "start_s": 0.0, "end_s": 1.0}]
+    layers = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920, look=look)
+    run = layers[0].runs[0]
+    assert run.font_size == pytest.approx(100)
+    assert run.stroke_width == pytest.approx(16)  # outline_px * 2, mirrors the karaoke path
+    assert run.fill.red == pytest.approx(0x11 / 255)
+    assert run.fill.green == pytest.approx(0x22 / 255)
+    assert run.fill.blue == pytest.approx(0x33 / 255)
+
+
+def test_position_y_frac_from_look_moves_the_anchor():
+    look = PhoneCaptionLook(position_y_frac=0.5)
+    cues = [{"text": "hi", "start_s": 0.0, "end_s": 1.0}]
+    layers = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920, look=look)
+    assert layers[0].anchor_y == pytest.approx(960.0)
+
+
+def test_alignment_left_sets_anchor_x_and_keeps_vertical_position():
+    cues = [{"text": "hi", "start_s": 0.0, "end_s": 1.0}]
+    centered = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920)
+    look = PhoneCaptionLook(text_anchor="left", position_x_frac=80 / 1080)
+    layers = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920, look=look)
+    assert layers[0].anchor_x == pytest.approx(80.0)
+    # `vertical_anchor="center"` (set alongside `text_anchor`) keeps the same
+    # y anchor a "left" text_anchor would otherwise flip to a TOP anchor.
+    assert layers[0].anchor_y == pytest.approx(centered[0].anchor_y)
+
+
+def test_alignment_right_sets_anchor_x_from_the_far_margin():
+    cues = [{"text": "hi", "start_s": 0.0, "end_s": 1.0}]
+    look = PhoneCaptionLook(text_anchor="right", position_x_frac=1 - 80 / 1080)
+    layers = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920, look=look)
+    assert layers[0].anchor_x == pytest.approx(1000.0)
+
+
+def test_shadow_enabled_false_with_no_other_override_disables_the_shadow():
+    cues = [{"text": "hi", "start_s": 0.0, "end_s": 1.0}]
+    default_layers = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920)
+    assert len(default_layers[0].runs[0].blur_layers) > 0  # today's implicit standard shadow
+
+    look = PhoneCaptionLook(shadow_enabled=False)
+    layers = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920, look=look)
+    assert layers[0].runs[0].blur_layers == []
+
+
+def test_shadow_opacity_zero_disables_the_shadow():
+    look = PhoneCaptionLook(shadow_color="#ff0000", shadow_opacity=0.0)
+    cues = [{"text": "hi", "start_s": 0.0, "end_s": 1.0}]
+    layers = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920, look=look)
+    assert layers[0].runs[0].blur_layers == []
+
+
+def test_stroke_color_overrides_the_outline_ink():
+    look = PhoneCaptionLook(stroke_color="#00ff00")
+    cues = [{"text": "hi", "start_s": 0.0, "end_s": 1.0}]
+    layers = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920, look=look)
+    stroke = layers[0].runs[0].stroke
+    assert stroke.red == pytest.approx(0.0, abs=1e-3)
+    assert stroke.green == pytest.approx(1.0, abs=1e-3)
+    assert stroke.blue == pytest.approx(0.0, abs=1e-3)
+
+
+def test_default_word_style_highlight_color_is_lime():
+    cues = [
+        {
+            "text": "Hello there",
+            "start_s": 0.0,
+            "end_s": 1.0,
+            "words": [_word("Hello", 0.0, 0.4), _word("there", 0.4, 1.0)],
+        }
+    ]
+    layers = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920, style="word")
+    highlight = layers[0].karaoke.highlight
+    assert highlight.red == pytest.approx(0x84 / 255)
+    assert highlight.green == pytest.approx(0xCC / 255)
+    assert highlight.blue == pytest.approx(0x16 / 255)
+
+
+def test_highlight_spoken_word_true_forces_karaoke_for_sentence_style():
+    cues = [
+        {
+            "text": "Hello there",
+            "start_s": 0.0,
+            "end_s": 1.0,
+            "words": [_word("Hello", 0.0, 0.4), _word("there", 0.4, 1.0)],
+        }
+    ]
+    look = PhoneCaptionLook(highlight_spoken_word=True)
+    layers = compile_caption_layers(
+        cues, canvas_width=1080, canvas_height=1920, style="sentence", look=look
+    )
+    assert layers[0].effect == "karaoke-line"
+
+
+def test_highlight_spoken_word_false_keeps_karaoke_but_drops_the_tint():
+    cues = [
+        {
+            "text": "Hello there",
+            "start_s": 0.0,
+            "end_s": 1.0,
+            "words": [_word("Hello", 0.0, 0.4), _word("there", 0.4, 1.0)],
+        }
+    ]
+    look = PhoneCaptionLook(highlight_spoken_word=False, text_color="#123456")
+    layers = compile_caption_layers(
+        cues, canvas_width=1080, canvas_height=1920, style="word", look=look
+    )
+    layer = layers[0]
+    assert layer.effect == "karaoke-line"  # word display, but without the lime tint
+    highlight = layer.karaoke.highlight
+    assert highlight.red == pytest.approx(0x12 / 255)
+    assert highlight.green == pytest.approx(0x34 / 255)
+    assert highlight.blue == pytest.approx(0x56 / 255)
+
+
+# --- caption_look_from_variant (KRI-216) ---------------------------------------
+
+
+def test_caption_look_from_variant_empty_variant_is_the_default_look():
+    assert caption_look_from_variant({}) == PhoneCaptionLook()
+
+
+def test_caption_look_from_variant_captions_enabled_false():
+    assert caption_look_from_variant({"captions_enabled": False}).captions_enabled is False
+
+
+def test_caption_look_from_variant_valid_font_key_passes_through_raw():
+    look = caption_look_from_variant({"voiceover_caption_font": "Montserrat Bold"})
+    # NOT resolved to its ASS name ("Montserrat") -- see the module docstring
+    # on why the raw registry key must survive onto the phone overlay.
+    assert look.font_family == "Montserrat Bold"
+
+
+def test_caption_look_from_variant_unknown_font_falls_back():
+    look = caption_look_from_variant({"voiceover_caption_font": "Not A Real Font"})
+    assert look.font_family == CAPTION_FONT_FAMILY
+
+
+def test_caption_look_from_variant_deprecated_font_falls_back():
+    deprecated_key = next(k for k, v in _FONT_REGISTRY["fonts"].items() if v.get("deprecated"))
+    look = caption_look_from_variant({"voiceover_caption_font": deprecated_key})
+    assert look.font_family == CAPTION_FONT_FAMILY
+
+
+def test_caption_look_from_variant_size_px_is_clamped():
+    assert caption_look_from_variant({"caption_size_px": 10}).text_size_px == 36
+    assert caption_look_from_variant({"caption_size_px": 999}).text_size_px == 160
+    assert caption_look_from_variant({"caption_size_px": 92}).text_size_px == 92
+
+
+def test_caption_look_from_variant_stroke_width_is_clamped():
+    assert caption_look_from_variant({"caption_stroke_width": -1}).outline_px == 0
+    assert caption_look_from_variant({"caption_stroke_width": 99}).outline_px == 12
+
+
+def test_caption_look_from_variant_colors_override_and_invalid_falls_back():
+    look = caption_look_from_variant(
+        {"caption_text_color": "#112233", "caption_highlight_color": "#445566"}
+    )
+    assert look.text_color == "#112233"
+    assert look.highlight_color == "#445566"
+    assert caption_look_from_variant({"caption_text_color": "not-a-color"}).text_color == "#FFFFFF"
+
+
+def test_caption_look_from_variant_margin_v_absent_uses_legacy_default():
+    look = caption_look_from_variant({})
+    assert look.position_y_frac == pytest.approx(1 - SUBTITLED_CAPTION_MARGIN_V / 1920)
+
+
+def test_caption_look_from_variant_margin_v_valid_is_honored():
+    margin = y_frac_to_margin_v(0.5)
+    look = caption_look_from_variant({"caption_margin_v": margin})
+    assert look.position_y_frac == pytest.approx(1 - margin / 1920)
+
+
+def test_caption_look_from_variant_margin_v_out_of_band_falls_back():
+    look = caption_look_from_variant({"caption_margin_v": -100})
+    assert look.position_y_frac == pytest.approx(1 - SUBTITLED_CAPTION_MARGIN_V / 1920)
+
+
+def test_caption_look_from_variant_alignment_left():
+    look = caption_look_from_variant({"caption_editor_style": {"alignment": "left"}})
+    assert look.text_anchor == "left"
+    assert look.position_x_frac == pytest.approx(80 / 1080)
+
+
+def test_caption_look_from_variant_alignment_right():
+    look = caption_look_from_variant({"caption_editor_style": {"alignment": "right"}})
+    assert look.text_anchor == "right"
+    assert look.position_x_frac == pytest.approx(1 - 80 / 1080)
+
+
+def test_caption_look_from_variant_alignment_center_is_none():
+    look = caption_look_from_variant({"caption_editor_style": {"alignment": "center"}})
+    assert look.text_anchor is None
+    assert look.position_x_frac == pytest.approx(0.5)
+
+
+def test_caption_look_from_variant_highlight_spoken_word_passthrough():
+    on = caption_look_from_variant({"caption_editor_style": {"highlight_spoken_word": True}})
+    off = caption_look_from_variant({"caption_editor_style": {"highlight_spoken_word": False}})
+    absent = caption_look_from_variant({})
+    assert on.highlight_spoken_word is True
+    assert off.highlight_spoken_word is False
+    assert absent.highlight_spoken_word is None
+
+
+def test_caption_look_from_variant_shadow_enabled_top_level():
+    assert caption_look_from_variant({"caption_shadow_enabled": False}).shadow_enabled is False
+    assert caption_look_from_variant({"caption_shadow_enabled": True}).shadow_enabled is True
+
+
+def test_caption_look_from_variant_editor_style_shadow_enabled_wins_over_top_level():
+    look = caption_look_from_variant(
+        {
+            "caption_shadow_enabled": False,
+            "caption_editor_style": {"shadow_enabled": True},
+        }
+    )
+    assert look.shadow_enabled is True
+
+
+def test_caption_look_from_variant_stroke_and_shadow_from_editor_style():
+    look = caption_look_from_variant(
+        {
+            "caption_editor_style": {
+                "stroke_color": "#abcdef",
+                "shadow_color": "#000011",
+                "shadow_opacity": 0.4,
+            }
+        }
+    )
+    assert look.stroke_color == "#ABCDEF"
+    assert look.shadow_color == "#000011"
+    assert look.shadow_opacity == pytest.approx(0.4)
+
+
+def test_explicit_highlight_toggle_uses_the_editor_default_highlight_color():
+    """Parity with `captions._write_editor_caption_cues`: once the creator sets
+    `highlight_spoken_word`, an unset highlight color is #C5F82A, not the
+    legacy word-pop lime."""
+    from app.pipeline.phone_captions import caption_look_from_variant
+
+    assert caption_look_from_variant({}).highlight_color == "#84CC16"
+    toggled = {"caption_editor_style": {"highlight_spoken_word": True}}
+    assert caption_look_from_variant(toggled).highlight_color == "#C5F82A"
+    explicit = {**toggled, "caption_highlight_color": "#ff0000"}
+    assert caption_look_from_variant(explicit).highlight_color == "#FF0000"

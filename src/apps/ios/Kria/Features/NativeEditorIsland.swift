@@ -51,6 +51,9 @@ struct NativeEditorLayoutMetrics: Equatable {
     static let resizeHandleHeight: CGFloat = 44
     static let transportHeight: CGFloat = 54
     static let minPreviewHeight: CGFloat = 80
+    /// The preview's height while a text panel is being typed into: small enough to give the
+    /// box the room, big enough to still read the text being typed on the canvas.
+    static let typingPreviewHeight: CGFloat = 120
     static let defaultPanelCap: CGFloat = 284
     /// A strip of timeline that must stay visible however far the preview grows.
     static let minTimelineStrip: CGFloat = 96
@@ -64,6 +67,11 @@ struct NativeEditorLayoutMetrics: Equatable {
     var previewAspectRatio: CGFloat
     var keyboardVisible: Bool
     var isAccessibilitySize: Bool
+    /// A text panel that is being typed into gets the room the preview would otherwise
+    /// keep: with the keyboard up the preview shrinks to `typingPreviewHeight` and the
+    /// panel grows into the space (KRI-185). The preview never goes away, so it still sits
+    /// above the panel. Other panels keep today's split, so this is `false` unless opted in.
+    var shrinksPreviewWhileTyping = false
 
     private var referenceHeight: CGFloat {
         keyboardVisible ? viewportSize.height : viewportSize.height + safeAreaTop + safeAreaBottom
@@ -79,9 +87,9 @@ struct NativeEditorLayoutMetrics: Equatable {
         let preferred = previewAspectRatio > 1 ? min(124, budget) : budget
         // With the keyboard up, reserve room for the header, divider and usable
         // text controls rather than letting their minimum heights overflow.
-        return keyboardVisible
-            ? min(preferred, max(Self.minPreviewHeight, viewportSize.height - 320 - topChromeHeight))
-            : preferred
+        guard keyboardVisible else { return preferred }
+        if shrinksPreviewWhileTyping { return Self.typingPreviewHeight }
+        return min(preferred, max(Self.minPreviewHeight, viewportSize.height - 320 - topChromeHeight))
     }
 
     /// Largest preview the user can drag out to. Never below the default, and

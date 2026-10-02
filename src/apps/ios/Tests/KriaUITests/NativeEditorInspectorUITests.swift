@@ -557,6 +557,48 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(panel.frame.height, initial, accuracy: 2, "a reopened panel starts at its default height")
     }
 
+    /// KRI-235: the panel's whole header resizes it, not only the grabber line.
+    func testPanelHeaderDragsResizePanel() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        let captions = app.buttons["native-editor-tool-captions"]
+        XCTAssertTrue(captions.waitForExistence(timeout: 20))
+        captions.tap()
+        let panel = app.descendants(matching: .any)["native-editor-connected-panel"].firstMatch
+        let done = app.buttons["native-editor-captions-done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        let initial = panel.frame.height
+        // Blank header space between the title and Done, well clear of the grabber.
+        let start = done.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: -40, dy: 0))
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -160)))
+        XCTAssertGreaterThan(panel.frame.height, initial + 80, "dragging up from the header must raise the panel")
+        captions.tap() // close; the next panel starts at its default height
+        XCTAssertFalse(panel.waitForExistence(timeout: 2))
+
+        let text = app.buttons["native-editor-tool-text"]
+        text.tap()
+        let input = app.textViews["native-editor-new-text-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap()
+        input.typeText("Header drag")
+        app.buttons["native-editor-text-done"].tap()
+        let editTab = app.buttons["Edit text"]
+        let animationTab = app.buttons["Animation"]
+        let styleTab = app.buttons["Style"]
+        XCTAssertTrue(editTab.waitForExistence(timeout: 5))
+        animationTab.tap()
+        XCTAssertTrue(animationTab.isSelected, "header buttons must stay tappable")
+        styleTab.tap()
+        XCTAssertTrue(styleTab.isSelected, "header buttons must stay tappable")
+        let before = panel.frame.height
+        let tabStart = editTab.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        tabStart.press(forDuration: 0.1, thenDragTo: tabStart.withOffset(CGVector(dx: 0, dy: -160)))
+        XCTAssertGreaterThan(panel.frame.height, before + 80, "dragging up from the tab strip must raise the panel")
+        XCTAssertTrue(styleTab.isSelected, "a drag from a tab must not select it")
+    }
+
     func testPreviewResizeIsAvailableAcrossEditorPanels() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text", "-ui-testing-editor-analyzing-gallery"]
@@ -583,13 +625,25 @@ final class NativeEditorInspectorUITests: XCTestCase {
             XCTAssertTrue(handle.waitForExistence(timeout: 5), tool)
             XCTAssertTrue(panel.waitForExistence(timeout: 5), tool)
             XCTAssertTrue(handle.isHittable, tool)
+            // KRI-185: Edit text focuses its field, and a text panel being typed
+            // into starts the preview at its 120pt typing height, only 40pt above
+            // its 80pt floor (NativeEditorLayoutMetrics.typingPreviewHeight and
+            // .minPreviewHeight). There the drag must reach the floor; elsewhere
+            // it shrinks the preview by more than 40pt.
+            let typing = tool == "text-edit"
+            if typing { XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), tool) }
             let originalHeight = preview.frame.height
+            if typing { XCTAssertEqual(originalHeight, 120, accuracy: 1, tool) }
             let originalHeaderY = header.frame.minY
             let originalPanelHeight = panel.frame.height
             let originalBottom = panel.frame.maxY
             let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -100)))
-            XCTAssertLessThan(preview.frame.height, originalHeight - 40, tool)
+            if typing {
+                XCTAssertEqual(preview.frame.height, 80, accuracy: 1, tool)
+            } else {
+                XCTAssertLessThan(preview.frame.height, originalHeight - 40, tool)
+            }
             XCTAssertEqual(header.frame.minY, originalHeaderY, accuracy: 2, tool)
             // KRI-170: the panel is independent of the preview — it never
             // shrinks, and its bottom edge stays put.
@@ -631,12 +685,20 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let multiline = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Text: First\nSecond")).firstMatch
         XCTAssertTrue(multiline.waitForExistence(timeout: 3))
         let multilineHeight = multiline.frame.height
-        app.buttons["Edit text"].tap()
+        // "Done" leaves the text panel open on its Style tab. All three tab buttons share the
+        // container's identifier, so pick the Edit one by identifier AND label rather than leaning on
+        // a bare "Edit text" label that the context strip's button shares whenever it is on screen (KRI-213).
+        let editTab = app.buttons.matching(identifier: "native-editor-text-tabs")
+            .matching(NSPredicate(format: "label == %@", "Edit text")).firstMatch
+        XCTAssertTrue(editTab.waitForExistence(timeout: 3))
+        editTab.tap()
         let edit = app.textViews["native-editor-text-content"]
         XCTAssertTrue(edit.waitForExistence(timeout: 3))
-        // A center tap can place the caret inside the second line. Tap beyond
-        // its trailing text so deletion starts at the end on every screen size.
-        edit.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.95)).tap()
+        // Selecting the tab focuses the field with the caret at the end of the text. Wait for the
+        // keyboard instead of tapping: typeText on an unfocused field taps its centre, which can
+        // land the caret inside the second line, and a coordinate near the corner was not a stable
+        // target either (the field resizes as the keyboard rises).
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         edit.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 7))
         expectation(for: NSPredicate(format: "value == %@", "First"), evaluatedWith: edit)
         waitForExpectations(timeout: 5)
@@ -895,11 +957,36 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.descendants(matching: .any)["Video preview"].firstMatch.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["Showing finished render"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Showing your last finished video"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["native-editor-retry-source-preview"].exists)
+        XCTAssertTrue(app.buttons["native-editor-retry-source-preview"].isHittable, "Retry must not sit under the canvas")
         XCTAssertFalse(app.staticTexts["Preview unavailable"].exists)
         XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Text:")).firstMatch.exists,
                        "Fallback video is playback-only; canvas objects cannot be selected or manipulated")
+    }
+
+    /// KRI-211: a project made on another device has no originals here. Retry cannot fix that, so
+    /// the editor says so in plain words and offers the one thing that can: finding the files.
+    func testMissingOriginalsOffersFindingFilesInsteadOfRetry() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-missing-originals"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["Showing your last finished video"].waitForExistence(timeout: 8))
+        let copy = app.staticTexts["native-editor-originals-unavailable"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 3))
+        XCTAssertEqual(copy.label, "The original clips for this edit are on another device. Find the files to edit here.")
+        XCTAssertFalse(app.buttons["native-editor-retry-source-preview"].exists, "Retry can never make missing originals appear")
+        XCTAssertFalse(app.buttons["Retry"].exists)
+
+        let find = app.buttons["native-editor-find-originals"]
+        XCTAssertTrue(find.isHittable)
+        find.tap()
+        // The sheet lists the file the preview could not find (from the editor's own source pool),
+        // and never claims the originals are already here while the preview says they are not.
+        XCTAssertTrue(app.staticTexts["Find your originals"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Find original 1"].waitForExistence(timeout: 5), "A real relink target row is listed")
+        XCTAssertFalse(app.staticTexts["The original files are available on this iPhone."].exists)
     }
 
     func testHardSourcePreviewFailureShowsUnavailableStateWithoutFallbackPlayer() {
@@ -908,6 +995,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Preview unavailable"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Retry"].firstMatch.isHittable, "Retry must not sit under the canvas")
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-preview-fallback"].exists)
         XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Text:")).firstMatch.exists)
     }
@@ -988,12 +1076,18 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let second = app.buttons["native-editor-timeline-text-00000000-0000-4000-8000-000000000101"].firstMatch
         XCTAssertEqual(text.frame.midY, second.frame.midY, accuracy: 1)
         let originalTiming = text.value as? String ?? ""
+        let original = timingSeconds(originalTiming)
+        let pointsPerSecond = text.frame.width / max(0.1, (original?.end ?? 1.5) - (original?.start ?? 0))
         let start = text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         start.press(forDuration: 0.6, thenDragTo: start.withOffset(CGVector(dx: 35, dy: 0)))
         waitForStableRowRelation(text, second) { abs($0) > 30 }
         XCTAssertGreaterThan(abs(text.frame.midY - second.frame.midY), 30)
         let timing = text.value as? String ?? ""
         XCTAssertFalse(timing.hasPrefix("00:00.0 to"), timing)
+        // The block follows the finger's whole travel. The move used to drop
+        // the travel before the drag's first sample; on a busy runner this
+        // 70ms drag arrived as one sample and the block never moved.
+        XCTAssertEqual(timingSeconds(timing)?.start ?? -1, 35 / pointsPerSecond, accuracy: 0.1, timing)
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-text-panel"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-trim-trailing"].firstMatch.exists)
         let timeline = app.descendants(matching: .any)["native-editor-lane-scroll"].firstMatch
@@ -1006,9 +1100,8 @@ final class NativeEditorInspectorUITests: XCTestCase {
         reverse.press(forDuration: 0.05, thenDragTo: reverse.withOffset(CGVector(dx: 70, dy: 0)))
         XCTAssertEqual(time.value as? String, beforeSwipe)
         let moveBack = text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        // Synthetic drags lose part of their translation on a busy simulator.
-        // A -40pt reverse once left the text at 0.09s, still overlapping its
-        // neighbour, so two rows were correct. Overshoot: the move clamps at 0.
+        // Overshoot: the move clamps at 0, so the block lands exactly on its
+        // original timing instead of depending on the forward move's distance.
         moveBack.press(forDuration: 0.6, thenDragTo: moveBack.withOffset(CGVector(dx: -120, dy: 0)))
         waitForStableRowRelation(text, second) { abs($0) <= 1 }
         XCTAssertEqual(
@@ -1200,6 +1293,17 @@ final class NativeEditorInspectorUITests: XCTestCase {
             start.press(forDuration: 0.05, thenDragTo: end, withVelocity: 40, thenHoldForDuration: 0.1)
         }
         XCTFail("Could not reveal \(element.identifier) above the tool rail")
+    }
+
+    /// Start and end seconds of a timeline bar's value, e.g.
+    /// "00:00.7 to 00:02.2, selected".
+    private func timingSeconds(_ value: String) -> (start: Double, end: Double)? {
+        let stamps = (value.split(separator: ",").first ?? "").components(separatedBy: " to ").compactMap { stamp -> Double? in
+            let parts = stamp.split(separator: ":")
+            guard parts.count == 2, let minutes = Double(parts[0]), let seconds = Double(parts[1]) else { return nil }
+            return minutes * 60 + seconds
+        }
+        return stamps.count == 2 ? (stamps[0], stamps[1]) : nil
     }
 
     /// Lanes repack synchronously when a timing drag ends, so this only gives

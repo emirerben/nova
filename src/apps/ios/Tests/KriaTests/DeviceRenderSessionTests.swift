@@ -517,6 +517,15 @@ private actor RetryGate {
         XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .superseded), "Newer edit available")
     }
 
+    /// KRI-211: retrying can't conjure originals that are on another device, so the attention state hides
+    /// Try again then. A finished local render that only needs syncing keeps its retry.
+    func testMissingOriginalsHidesRetryOnlyForNeedsAttention() {
+        XCTAssertFalse(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: "export_failed", originalsMissing: true))
+        XCTAssertFalse(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: nil, originalsMissing: true))
+        XCTAssertTrue(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: "export_failed", originalsMissing: false))
+        XCTAssertTrue(DeviceRenderAttentionCopy.showsRetryButton(phase: .localReady, reasonCode: nil, originalsMissing: true))
+    }
+
     /// KRI-132 journey fix: `unsupported_recipe` is structural (the compiled
     /// recipe itself is outside what this renderer can produce), so a blind
     /// "Try again" is hidden and the copy says what to do instead. Every
@@ -532,6 +541,120 @@ private actor RetryGate {
         XCTAssertTrue(DeviceRenderAttentionCopy.showsRetryButton(phase: .cancelled, reasonCode: nil))
         XCTAssertTrue(DeviceRenderAttentionCopy.showsRetryButton(phase: .localReady, reasonCode: nil))
         XCTAssertFalse(DeviceRenderAttentionCopy.showsRetryButton(phase: .rendering, reasonCode: nil))
+    }
+
+    /// KRI-141: the server reaper's `timed_out` gets its own copy (not the reaper's
+    /// detail string or the generic line) and stays retryable -- it's transient.
+    func testTimedOutRenderHasSpecificCopyAndStaysRetryable() {
+        let message = DeviceRenderAttentionCopy.message(phase: .needsAttention, reasonCode: "timed_out", fallback: "server detail")
+        XCTAssertEqual(message, DeviceRenderAttentionCopy.reasonMessage["timed_out"])
+        XCTAssertTrue(message?.contains("a day") ?? false)
+        XCTAssertTrue(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: "timed_out"))
+    }
+
+    /// KRI-141: the mixed-sources message names the control that clears it.
+    func testMixedSourcesMessageNamesTheFootageRemovalStep() {
+        let message = ProjectUploadDestination.mixed.message ?? ""
+        XCTAssertTrue(message.contains("Remove the clips listed under Footage"), message)
+        XCTAssertFalse(message.contains("reconnect"), message)
+    }
+
+    /// KRI-141 item 5: the app is killed mid-export. On relaunch a FRESH `DeviceRenderSessions`
+    /// (the app model is rebuilt) builds a coordinator over the same directory, which loads the
+    /// persisted in-flight receipt. With the server still `awaiting_device` for the same request,
+    /// reconcile must resume that attempt through `recover()` -- not mint a new one via `start()`
+    /// -- and the presentation must carry on to synced without another reconcile.
+    func testRelaunchAfterKillMidExportRecoversPersistedAttempt() async throws {
+        let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let request = request(job)
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        let fetch: DeviceRenderSessions.Fetch = { _, _ in DeviceRenderStatusResponse(phase: "awaiting_device", request: request) }
+
+        // First launch: the export starts and never finishes (the app dies during it).
+        let stalled = PausedSessionExport()
+        let firstLaunch = DeviceRenderSessions(fetch: fetch, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: stalled, sources: SessionSources(), publisher: SessionPublisher())
+        })
+        await firstLaunch.reconcile(key, capabilities: enabled)
+        for _ in 0..<100 {
+            if await stalled.calls == 1 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        // Relaunch: the new process reads the receipt the killed one left on disk. Load it before
+        // tearing the first instance down, since housekeeping `cancel()` would rewrite that file.
+        let exporter = SessionExport()
+        let relaunched = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: SessionPublisher())
+        let persistedReceipt = await relaunched.snapshot()
+        let persisted = try XCTUnwrap(persistedReceipt)
+        XCTAssertEqual(persisted.phase, .rendering)
+        XCTAssertEqual(persisted.request, request)
+        XCTAssertNil(persisted.outputURL)
+        await firstLaunch.stopAll()
+        await stalled.release()
+
+        var factoryCalls = 0
+        let secondLaunch = DeviceRenderSessions(fetch: fetch, factory: { _, _ in factoryCalls += 1; return relaunched })
+        await secondLaunch.reconcile(key, capabilities: enabled)
+        // No further reconcile: recover()'s task and the observer must finish on their own.
+        for _ in 0..<200 {
+            if secondLaunch.presentations[key]?.phase == .synced { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(factoryCalls, 1)
+        XCTAssertEqual(secondLaunch.presentations[key]?.phase, .synced)
+        XCTAssertNotNil(secondLaunch.presentations[key]?.localFile)
+        let finalReceipt = await relaunched.snapshot()
+        let finished = try XCTUnwrap(finalReceipt)
+        XCTAssertEqual(finished.attemptID, persisted.attemptID, "recover() resumes the persisted attempt; start() would mint a new one")
+        XCTAssertEqual(finished.phase, .synced)
+        let calls = await exporter.calls
+        XCTAssertEqual(calls, 1, "the interrupted encode restarts once")
+        await secondLaunch.stopAll()
+    }
+
+    /// Same relaunch, but the app died after the MP4 was finished and while it was syncing:
+    /// recovery publishes the intact file without encoding it again.
+    func testRelaunchAfterKillMidSyncPublishesWithoutReExport() async throws {
+        let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let request = request(job)
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        let fetch: DeviceRenderSessions.Fetch = { _, _ in DeviceRenderStatusResponse(phase: "awaiting_device", request: request) }
+
+        let stalledPublisher = PausedSessionPublisher()
+        let firstLaunch = DeviceRenderSessions(fetch: fetch, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: SessionExport(), sources: SessionSources(), publisher: stalledPublisher)
+        })
+        await firstLaunch.reconcile(key, capabilities: enabled)
+        for _ in 0..<100 {
+            if await stalledPublisher.publishStarted { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let exporter = SessionExport()
+        let relaunched = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: SessionPublisher())
+        let persistedReceipt = await relaunched.snapshot()
+        let persisted = try XCTUnwrap(persistedReceipt)
+        XCTAssertEqual(persisted.phase, .syncing)
+        XCTAssertNotNil(persisted.outputURL)
+        await firstLaunch.stopAll()
+        await stalledPublisher.release()
+
+        let secondLaunch = DeviceRenderSessions(fetch: fetch, factory: { _, _ in relaunched })
+        await secondLaunch.reconcile(key, capabilities: enabled)
+        for _ in 0..<200 {
+            if secondLaunch.presentations[key]?.phase == .synced { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(secondLaunch.presentations[key]?.phase, .synced)
+        XCTAssertEqual(secondLaunch.presentations[key]?.localFile, persisted.outputURL)
+        let finalReceipt = await relaunched.snapshot()
+        XCTAssertEqual(finalReceipt?.attemptID, persisted.attemptID)
+        let calls = await exporter.calls
+        XCTAssertEqual(calls, 0, "an intact finished MP4 is published, not re-encoded")
+        await secondLaunch.stopAll()
     }
 
 }

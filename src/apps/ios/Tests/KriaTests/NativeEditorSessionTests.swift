@@ -110,6 +110,39 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.hasUnsavedChanges, "The source clip is server state, never a user edit to Save")
     }
 
+    /// KRI-211: a project whose originals aren't on this iPhone settles into its own state (no Retry
+    /// can help), the relink targets come from the source pool that failed, a wrong file is refused, and
+    /// the right one rebuilds the live preview.
+    func testMissingOriginalsSettleIntoOriginalsUnavailableAndRelinkRebuildsThePreview() async throws {
+        let (session, _) = try await Self.phoneTalkingSession(lanesEditable: true, bindOriginal: false)
+        XCTAssertEqual(session.sourcePreviewState, .originalsUnavailable)
+        XCTAssertTrue(session.sourcePreviewState.isFailure)
+
+        let targets = await session.originalsNeedingRelink()
+        XCTAssertEqual(targets.map(\.mediaID), ["source"])
+        XCTAssertEqual(targets.first?.title, "Original 1")
+        let target = try XCTUnwrap(targets.first)
+
+        let wrong = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+        try Data("not the approved original".utf8).write(to: wrong)
+        defer { try? FileManager.default.removeItem(at: wrong) }
+        do {
+            try await session.relinkOriginal(target, from: wrong)
+            XCTFail("A different file must not be accepted as the approved original")
+        } catch {}
+        let stillMissing = await session.originalsNeedingRelink()
+        XCTAssertEqual(stillMissing.count, 1)
+
+        let right = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+        try FileManager.default.copyItem(at: XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4")), to: right)
+        defer { try? FileManager.default.removeItem(at: right) }
+        try await session.relinkOriginal(target, from: right)
+        let remaining = await session.originalsNeedingRelink()
+        XCTAssertTrue(remaining.isEmpty)
+        await session.prepareSourcePreview()
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+    }
+
     /// Cards and sounds closed (their rollout flag off): the server sends no
     /// lanes, so a live preview would drop what the finished MP4 shows. The
     /// editor keeps playing the finished MP4.
@@ -138,14 +171,14 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNil(session.displayedSourcePreviewRecipe)
     }
 
-    private static func phoneTalkingSession(lanesEditable: Bool, card: Bool = false) async throws -> (NativeEditorSession, EditorCommitSpy) {
+    private static func phoneTalkingSession(lanesEditable: Bool, card: Bool = false, bindOriginal: Bool = true) async throws -> (NativeEditorSession, EditorCommitSpy) {
         let threadID = UUID(), jobID = UUID()
         let project = BackgroundUploadCoordinator.projectDirectory(threadID)
         let input = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
         try FileManager.default.copyItem(at: XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4")), to: input)
         defer { try? FileManager.default.removeItem(at: input) }
         let asset = try await AssetImportCoordinator(project: project).importAsset(from: input)
-        try SourceAssetStore(project: project).bind(mediaID: "source", original: asset)
+        if bindOriginal { try SourceAssetStore(project: project).bind(mediaID: "source", original: asset) }
         let descriptor = OriginalMediaDescriptor(sha256: try XCTUnwrap(asset.fingerprint).hex, byteCount: try XCTUnwrap(asset.fingerprint).byteCount,
             durationS: 1, width: 1080, height: 1920, orientationDegrees: 0, hasAudio: true)
         var nativeAssets: [NativeEditorAsset] = []
@@ -901,6 +934,127 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.loadState, .idle)
         XCTAssertNotNil(session.player, "The cached URL still seeds the player so playback can start the instant it's confirmed")
         XCTAssertFalse(session.canDisplayCurrentPlayer, "An unconfirmed cached seed must not display — it may already be stale")
+    }
+
+    // MARK: KRI-200 — a play tap must never be a silent no-op
+
+    private func waitUntil(timeout: Duration = .seconds(5), _ condition: () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        return condition()
+    }
+
+    private static func failedStateMessage(_ session: NativeEditorSession) -> String? {
+        if case .failed(let message) = session.sourcePreviewState { message } else { nil }
+    }
+
+    /// A finished render that cannot load used to leave a player that ignored `play()`: the icon flipped
+    /// straight back and nothing said why. With nobody to refresh the link it must say so.
+    func testUnplayableFinishedRenderSurfacesAMessageInsteadOfADeadPlayButton() async {
+        let missing = URL(fileURLWithPath: "/tmp/kria-missing-\(UUID().uuidString).mp4")
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText, initialPlaybackURL: missing)
+        let settled = await waitUntil { Self.failedStateMessage(session) != nil }
+        XCTAssertTrue(settled, "a failed item must surface, not sit silently paused")
+        XCTAssertEqual(Self.failedStateMessage(session), NativeEditorSession.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem))
+    }
+
+    /// The failed finished render gets exactly one fresh link, the failure is reported with its AVFoundation
+    /// identity, and the recovered player plays.
+    func testFailedFinishedRenderRefreshesItsLinkOnceReportsAndRecovers() async throws {
+        let jobID = UUID()
+        let good = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        var variant = Self.variant(duration: 2, generation: "g1")
+        variant["output_url"] = .string("file:///tmp/kria-missing-\(UUID().uuidString).mp4")
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1,
+            snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString,
+            baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: variant)
+        fake.playbackURLResult = good
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: UUID())
+
+        let recovered = await waitUntil { (session.player?.currentItem?.asset as? AVURLAsset)?.url == good }
+        XCTAssertTrue(recovered, "the refreshed link replaces the failed item")
+        XCTAssertEqual(fake.playbackURLCallCount, 1, "one refresh, not a retry loop")
+        let reported = await waitUntil { !fake.playbackFailureReports.isEmpty }
+        XCTAssertTrue(reported)
+        let report = try XCTUnwrap(fake.playbackFailureReports.first)
+        XCTAssertEqual(report.playerKind, .finished)
+        XCTAssertEqual(report.errorDomain, AVFoundationErrorDomain)
+        XCTAssertEqual(fake.playbackFailureReports.count, 1, "one report per failed item")
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying)
+        session.pausePlayback()
+    }
+
+    /// The editable live composition failing must hand over to the finished render, and the tap that
+    /// triggered it must not be lost.
+    func testLiveItemFailureFallsBackToTheFinishedRenderAndKeepsThePlayTap() async throws {
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText, initialPlaybackURL: url)
+        let finished = try XCTUnwrap(session.player)
+        await session.prepareFixtureSourcePreview(url: url)
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        let live = try XCTUnwrap(session.player)
+        XCTAssertFalse(live === finished)
+        session.togglePlayback()
+        XCTAssertTrue(session.isPlaying)
+
+        session.handlePlayerItemFailure(try XCTUnwrap(live.currentItem), error: NSError(domain: AVFoundationErrorDomain, code: -11800))
+
+        XCTAssertEqual(Self.failedStateMessage(session), NativeEditorSession.sourcePreviewMessage(for: NativeEditorPlaybackFailure.liveItem))
+        XCTAssertTrue(session.isShowingRenderedFallback)
+        XCTAssertTrue(session.canDisplayCurrentPlayer)
+        XCTAssertTrue(session.isPlaying, "the play tap carries over to the finished render")
+        session.pausePlayback()
+    }
+
+    /// While the editable preview builds against a render that predates the document, there is nothing
+    /// displayable. The tap is remembered and plays the moment a player can be shown.
+    func testPlayTapDuringPreparationPlaysOnceThePreviewSettles() async throws {
+        let session = try await Self.preparingSession()
+        XCTAssertEqual(session.session.sourcePreviewState, .preparing)
+        XCTAssertFalse(session.session.canDisplayCurrentPlayer)
+        session.session.togglePlayback()
+        XCTAssertFalse(session.session.isPlaying, "nothing to show yet")
+        session.spy.resumeSourcePool()
+        _ = await session.loading.value
+        let playing = await waitUntil { session.session.isPlaying }
+        XCTAssertTrue(playing, "the remembered tap starts playback once a player can be displayed")
+        session.session.pausePlayback()
+    }
+
+    func testPauseCancelsARememberedPlayTap() async throws {
+        let session = try await Self.preparingSession()
+        session.session.togglePlayback()
+        session.session.pausePlayback()
+        session.spy.resumeSourcePool()
+        _ = await session.loading.value
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(session.session.isPlaying)
+    }
+
+    private static func preparingSession() async throws -> (session: NativeEditorSession, spy: EditorCommitSpy, loading: Task<Void, Never>) {
+        let jobID = UUID()
+        let good = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        var stale = variant(duration: 2, generation: "g1")
+        stale["output_url"] = .string(good.absoluteString)
+        stale["render_status"] = .string("rendering")  // the render predates the loaded document → not displayable
+        let spy = EditorCommitSpy(draftSnapshot: DraftSnapshot(
+            draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1,
+            snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString,
+            baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: stale)
+        spy.suspendNextSourcePool = true
+        let session = NativeEditorSession()
+        let loading = Task { @MainActor in await session.load(api: spy, threadID: UUID()) }
+        for _ in 0..<200 where !spy.sourcePoolIsSuspended { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertTrue(spy.sourcePoolIsSuspended)
+        return (session, spy, loading)
     }
 
     func testNeedsReloadIsTrueBeforeAnyLoadAndFalseAfterMatchingRevision() async {
@@ -1722,7 +1876,8 @@ final class NativeEditorSessionTests: XCTestCase {
 
         await session.load(project: project, api: fake)
 
-        XCTAssertEqual(fake.draftCallCount, 0, "ready projects must not depend on the rollout-gated runtime draft")
+        XCTAssertLessThanOrEqual(fake.draftCallCount, 1, "the runtime draft is best-effort (staging only); its failure must never block opening")
+        XCTAssertEqual(session.loadState, .loaded)
         XCTAssertEqual(fake.projectCallCount, 1, "URL-free project-list summaries must hydrate before editor loading")
         XCTAssertNil(fake.openedJobID, "creation projects already own a plan item and must not be promoted again")
         XCTAssertEqual(fake.editorVariantsCallCount, 1, "the job status is authoritative when project projections omit variant identity")
@@ -2026,6 +2181,14 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.hasUnsavedChanges)
     }
 
+    /// KRI-227: a save acknowledgement moves the document to the commit generation (`g2`) before the
+    /// phone publishes under its own id (`published-g2`). Device narration is a generation-owned input,
+    /// so the check must stay keyed on the generation the preview was prepared for.
+    func testNarrationCheckStaysOnPreviewGenerationWhileSaveRenderPends() {
+        XCTAssertEqual(NativeEditorSession.narrationOwnerGeneration(previewGeneration: "g1", documentGeneration: "g2"), "g1")
+        XCTAssertEqual(NativeEditorSession.narrationOwnerGeneration(previewGeneration: nil, documentGeneration: "g2"), "g2")
+    }
+
     func testDevicePublishedGenerationAndIdentityFenceReadyPreview() async throws {
         let threadID = UUID(), jobID = UUID()
         let request = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
@@ -2056,6 +2219,7 @@ final class NativeEditorSessionTests: XCTestCase {
         await renderSessions.reconcile(key, capabilities: .disabled)
         XCTAssertFalse(session.applyPreviewVariant(["render_generation_id": .string("published-g2"), "render_status": .string("ready"), "output_url": .string("https://storage.example/g2.mp4")], generation: "g2"))
         XCTAssertEqual(session.saveState, .previewPending)
+        XCTAssertFalse(session.showsEditApplied, "Edit applied only appears once the render lands")
         await statusBox.set(DeviceRenderStatusResponse(phase: "published", request: request, publishedGeneration: "published-g2"))
         await renderSessions.reconcile(key, capabilities: .disabled)
         session.trimSelected(edge: .trailing, to: 1.25)
@@ -2064,6 +2228,7 @@ final class NativeEditorSessionTests: XCTestCase {
         fake.sourcePoolExpectation = refreshedSources
         XCTAssertTrue(session.applyPreviewVariant(["render_generation_id": .string("published-g2"), "render_status": .string("ready"), "output_url": .string("https://storage.example/g2.mp4")], generation: "g2"))
         XCTAssertEqual(session.saveState, .saved)
+        XCTAssertTrue(session.showsEditApplied, "KRI-227: a pending save that lands confirms the edit")
         XCTAssertEqual(session.document.revision.baseGeneration, "published-g2")
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertEqual(session.document.clips.first?.durationS, localDuration, "Refreshing generation-owned inputs must retain the follow-up edit")
@@ -2538,6 +2703,168 @@ final class NativeEditorSessionTests: XCTestCase {
         }
     }
 
+    // KRI-216: phone (`render_destination == "device"`) renders never carry
+    // `base_video_path`, so the legacy archetype allowlist in
+    // `configureCapabilities` always read a device subtitled variant as
+    // caption-closed. The server now sends explicit `caption_cues`/
+    // `caption_meta` capability objects, which must take priority over that
+    // heuristic and open both line editing and appearance editing.
+    func testDeviceSubtitledVariantWithExplicitCaptionCapabilitiesOpensCaptionEditing() async {
+        let threadID = UUID()
+        let cue: JSONValue = .object([
+            "id": .string("cue-1"), "text": .string("Hello"), "start_s": .number(0), "end_s": .number(2),
+        ])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: [
+                "render_destination": .string("device"),
+                "resolved_archetype": .string("subtitled"),
+                "caption_cues": .array([cue]),
+                "editor_capabilities": .object([
+                    "caption_cues": .object(["editable": .bool(true)]),
+                    "caption_meta": .object(["editable": .bool(true)]),
+                    "caption_editor_style": .bool(true),
+                ]),
+            ]
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        XCTAssertTrue(session.canEditCaptions)
+        XCTAssertTrue(session.canEditCaptionLines)
+        XCTAssertTrue(session.canEditCaptionMeta)
+        XCTAssertTrue(session.canEditCaptionAppearance)
+    }
+
+    // KRI-216: cues open, meta closed — line edits stay available while the
+    // Style/Settings writes (`caption_meta`) are locked, even though the
+    // coarse `canEditCaptions` is true from the cues lane alone.
+    func testExplicitCaptionCuesOnlyKeepsCaptionMetaLocked() async {
+        let threadID = UUID()
+        let cue: JSONValue = .object([
+            "id": .string("cue-1"), "text": .string("Hello"), "start_s": .number(0), "end_s": .number(2),
+        ])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: [
+                "render_destination": .string("device"),
+                "resolved_archetype": .string("subtitled"),
+                "caption_cues": .array([cue]),
+                "editor_capabilities": .object([
+                    "caption_cues": .object(["editable": .bool(true)]),
+                    "caption_meta": .object(["editable": .bool(false), "reason": .string("device_render_locked")]),
+                    "caption_editor_style": .bool(false),
+                ]),
+            ]
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        XCTAssertTrue(session.canEditCaptions)
+        XCTAssertTrue(session.canEditCaptionLines)
+        XCTAssertFalse(session.canEditCaptionMeta)
+        XCTAssertFalse(session.canEditCaptionAppearance)
+    }
+
+    // KRI-216: Show captions and the display style write `caption_meta`, not
+    // the appearance keys, so they stay open without `caption_editor_style`.
+    func testCaptionMetaOpensWithoutCaptionEditorStyle() async {
+        let threadID = UUID()
+        let cue: JSONValue = .object([
+            "id": .string("cue-1"), "text": .string("Hello"), "start_s": .number(0), "end_s": .number(2),
+        ])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: [
+                "render_destination": .string("device"),
+                "resolved_archetype": .string("subtitled"),
+                "caption_cues": .array([cue]),
+                "editor_capabilities": .object([
+                    "caption_cues": .object(["editable": .bool(true)]),
+                    "caption_meta": .object(["editable": .bool(true)]),
+                ]),
+            ]
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        XCTAssertTrue(session.canEditCaptionMeta)
+        XCTAssertFalse(session.canEditCaptionAppearance)
+        session.setCaptionEnabled(false)
+        XCTAssertEqual(session.document.captionMeta["enabled"], .bool(false))
+    }
+
+    // KRI-216: the same device subtitled shape, but the server explicitly
+    // closes both lanes — must not fall back to any legacy heuristic.
+    func testDeviceSubtitledVariantWithExplicitCaptionCapabilitiesBothFalseClosesCaptionEditing() async {
+        let threadID = UUID()
+        let cue: JSONValue = .object([
+            "id": .string("cue-1"), "text": .string("Hello"), "start_s": .number(0), "end_s": .number(2),
+        ])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: [
+                "render_destination": .string("device"),
+                "resolved_archetype": .string("subtitled"),
+                "caption_cues": .array([cue]),
+                "editor_capabilities": .object([
+                    "caption_cues": .object(["editable": .bool(false), "reason": .string("device_render_locked")]),
+                    "caption_meta": .object(["editable": .bool(false), "reason": .string("device_render_locked")]),
+                ]),
+            ]
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        XCTAssertFalse(session.canEditCaptions)
+        XCTAssertFalse(session.canEditCaptionLines)
+        XCTAssertFalse(session.canEditCaptionMeta)
+        XCTAssertFalse(session.canEditCaptionAppearance)
+    }
+
+    // KRI-216: a legacy cloud variant that never sends the new capability
+    // keys must keep working off the old base_video_path heuristic.
+    func testLegacyCloudVariantWithBaseVideoPathAndNoExplicitCaptionKeysStillOpensCaptionEditing() async {
+        let threadID = UUID()
+        let cue: JSONValue = .object([
+            "id": .string("cue-1"), "text": .string("Hello"), "start_s": .number(0), "end_s": .number(2),
+        ])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: [
+                "resolved_archetype": .string("subtitled"),
+                "base_video_path": .string("base.mp4"),
+                "caption_cues": .array([cue]),
+                "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true)]),
+            ]
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        XCTAssertTrue(session.canEditCaptions)
+        XCTAssertTrue(session.canEditCaptionLines)
+        XCTAssertTrue(session.canEditCaptionMeta)
+    }
+
+    // KRI-216: a device variant from an old server that never sends the new
+    // capability keys must stay closed (the pre-fix, still-correct behavior
+    // for a server that genuinely cannot honor a phone caption edit).
+    func testDeviceVariantWithNoExplicitCaptionKeysFromOldServerClosesCaptionEditing() async {
+        let threadID = UUID()
+        let cue: JSONValue = .object([
+            "id": .string("cue-1"), "text": .string("Hello"), "start_s": .number(0), "end_s": .number(2),
+        ])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: [
+                "render_destination": .string("device"),
+                "resolved_archetype": .string("subtitled"),
+                "caption_cues": .array([cue]),
+                "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true)]),
+            ]
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        XCTAssertFalse(session.canEditCaptions)
+        XCTAssertFalse(session.canEditCaptionLines)
+        XCTAssertFalse(session.canEditCaptionMeta)
+    }
+
     // KRI-110: a variant that never carries the narrated-only
     // `captions_enabled` field (guided_story never does) must not load as
     // captions-off. The backend treats missing as enabled; deriving `false`
@@ -2971,7 +3298,7 @@ private actor SessionTestStatus {
 }
 
 final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
-    let draftSnapshot: DraftSnapshot
+    var draftSnapshot: DraftSnapshot
     var draftError: APIError?
     let openReceipt: OpenInEditorResponse?
     var authoritativeVariant: [String: JSONValue]?
@@ -2997,6 +3324,8 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     var lastItemID: String?
     var draftCallCount = 0
     var lastVariantID: String?
+    var editorVariantJobIDs: [UUID] = []
+    var supersededJobIDs: Set<UUID> = []
     var projectCallCount = 0
     var editorVariantsCallCount = 0
     var sourcePoolCallCount = 0
@@ -3048,7 +3377,8 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
         return openReceipt
     }
     func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue] {
-        lastVariantID = variantID
+        lastVariantID = variantID; editorVariantJobIDs.append(jobID)
+        if supersededJobIDs.contains(jobID) { throw APIError.contentPlanUnavailable }
         if let editorVariantError { throw editorVariantError }
         return authoritativeVariant ?? ["editor_revision_number": phoneDestination ? .number(7) : .null, "render_destination": .string(phoneDestination ? "device" : "cloud"), "variant_id": .string(variantID), "render_generation_id": .string("generation-1"), "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false)]), "user_timeline": .object(["slots": .array([.object(["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(2), "removed": .bool(false)])])])]
     }
@@ -3116,8 +3446,16 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     }
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot { throw APIError.unsupported }
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { throw APIError.unsupported }
-    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws { throw APIError.unsupported }
-    func playbackURL(jobID: UUID) async throws -> URL { throw APIError.unsupported }
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?) async throws { throw APIError.unsupported }
+    var playbackURLResult: URL?
+    var playbackURLCallCount = 0
+    var playbackFailureReports: [PlaybackFailureReport] = []
+    func playbackURL(jobID: UUID) async throws -> URL {
+        playbackURLCallCount += 1
+        guard let playbackURLResult else { throw APIError.unsupported }
+        return playbackURLResult
+    }
+    func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws { playbackFailureReports.append(report) }
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse {
         deviceRenderCallCount += 1
         guard let deviceRenderResponse else { throw APIError.unsupported }

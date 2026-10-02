@@ -622,8 +622,14 @@ DispatchOutcome = Literal[
     # montage fallback) checked zero registered pool assets in a SEPARATE
     # transaction; this lock re-asserts it and refuses the bypass if a pool
     # asset appeared in the gap (P2-4, 2026-08-18 adversarial review) —
-    # never silently drop pool media behind a montage.
+    # never silently drop pool media behind a montage. Runtime v2 bypasses
+    # every approval (KRI-217): only the creator's Visuals count there, and its
+    # unified phone montage places ready ones itself, refusing only a kind the
+    # phone cannot draw.
     "guided_edit_bypass_unsafe",
+    # KRI-217: a Visual the creator added (and the planner saw) is still being
+    # uploaded or analysed, so the unified phone montage cannot place it yet.
+    "visuals_processing",
     # The approved plan already failed to render non-transiently (see
     # services/edit_proposals.guided_render_is_blocked); Generate is refused
     # until the user revises it in the planner.
@@ -912,13 +918,29 @@ def _speech_cleanup_dispatch_snapshot(
         # voiceover (when audio_mode == "voiceover") is a normal, fully
         # uploaded audio file, never an analysis proxy, even though this
         # same item's VIDEO clips are proxies; only the source cleanup would
-        # actually touch matters here. `preflight_enabled_for_source`
-        # already stops such a source from ever being scheduled (no
-        # analysis row -> no offered choice), but a stale/forged client
-        # request could still submit `choice == "clean"` against a row that
-        # predates the item becoming phone-sourced -- refuse explicitly
-        # here, before any Job row exists.
-        if resolution.source is not None and is_analysis_proxy_path(resolution.source.storage_path):
+        # actually touch matters here. Since KRI-205, `preflight_enabled_for_source`
+        # deliberately DOES schedule analysis and offer this choice for a
+        # phone (analysis-proxy) source -- detection only needs the proxy's
+        # audio, which is already a faithful full copy.
+        #
+        # Applying "clean" against the ACTIVE VIDEO source (a proxy) used to
+        # be refused outright: it requires cutting real video frames, and a
+        # phone-rendered project never uploads the full-resolution video.
+        # `app.pipeline.phone_subtitled_plan.compile_phone_subtitled_plan`'s
+        # `cut_plan` param now lets `_run_phone_subtitled_job` apply a
+        # CutPlan's keep segments directly against the analysis proxy itself
+        # (no full-resolution video needed -- the proxy IS what renders), but
+        # ONLY for the single-clip "Talking to camera" shape that compiler
+        # requires. A self-narrated item still carrying 2+ clips routes to
+        # the montage/self_narration_multi_clip phone family instead, which
+        # has no timeline-reshaping primitive at all, so THAT shape keeps the
+        # refusal (surfaced to the creator as
+        # `speech_cleanup_unavailable_on_phone`, not a generic failure).
+        if (
+            resolution.source is not None
+            and is_analysis_proxy_path(resolution.source.storage_path)
+            and len(item.clip_gcs_paths or []) != 1
+        ):
             return DispatchResult("speech_cleanup_unavailable_on_phone")
     try:
         identifier = uuid.UUID(str(analysis_id))
@@ -1282,6 +1304,80 @@ def _phone_unrenderable_reason(approved_snapshot: dict, owner_id: uuid.UUID) -> 
     return None
 
 
+# KRI-217: Visuals the creator manifest shows (`creator_sessions.
+# CREATOR_VISIBLE_ASSET_STATES`) that cannot be placed yet. `preparing` and
+# `promoting` rows are upload reservations the planner never saw (an abandoned
+# one lingers until maintenance reaps it), and a `failed` row never reaches a plan.
+_VISUALS_IN_FLIGHT_STATES = ("uploaded", "queued", "analyzing")
+
+
+def _lands_on_unified_phone_montage(
+    item: PlanItem, plan: ContentPlan, *, allow_phone_unapproved_montage: bool
+) -> bool:
+    """Whether a bypassed montage dispatch renders as the unified phone montage.
+
+    Mirrors the worker's fork in `generative_build`: a runtime-v2 approval
+    (the only caller of `allow_phone_unapproved_montage`) of a montage-family
+    item whose footage is on the phone, for an account with phone rendering and
+    runtime v2 for phones. Every such montage without a recorded voiceover is
+    planned by the KRI-190 unified planner (KRI-220), which places the item's
+    ready Visuals itself (KRI-217); a voiceover item is not guided-applicable
+    and never reaches this gate.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
+
+    return bool(
+        allow_phone_unapproved_montage
+        and any(is_analysis_proxy_path(path) for path in item.clip_gcs_paths or [])
+        and settings.phone_rendering_for(plan.user_id)
+        and settings.kria_runtime_v2_phone_for(plan.user_id)
+    )
+
+
+def _v2_visuals_refusal(
+    session,  # noqa: ANN001
+    item: PlanItem,
+    creator_strategy: dict | None,
+    *,
+    unified_phone_montage: bool,
+) -> DispatchOutcome | None:
+    """Why a runtime-v2 montage cannot render with this item's Visuals, if so.
+
+    Only the creator's Visuals count: rows the manifest shows, not a dedupe
+    receipt, narrowed to an explicit `selected` scope, the same rows the unified
+    worker places (`_load_unified_montage_visuals`). The unified phone montage
+    waits for one still being prepared and refuses a kind the phone cannot draw;
+    every other v2 montage lane is clip-only, so it refuses any.
+    """
+    from app.models import PlanItemAsset  # noqa: PLC0415
+    from app.pipeline.unified_montage import selected_visual_ids  # noqa: PLC0415
+    from app.services.phone_destination import phone_drawable_visual_kinds  # noqa: PLC0415
+
+    selected = selected_visual_ids(creator_strategy)
+    rows = [
+        row
+        for row in session.execute(
+            select(PlanItemAsset.id, PlanItemAsset.kind, PlanItemAsset.status).where(
+                PlanItemAsset.plan_item_id == item.id,
+                PlanItemAsset.deduplicated_to_asset_id.is_(None),
+                PlanItemAsset.status.in_(("ready", *_VISUALS_IN_FLIGHT_STATES)),
+            )
+        ).all()
+        if selected is None or f"asset-{row.id}" in selected
+    ]
+    if not rows:
+        return None
+    if not unified_phone_montage:
+        return "guided_edit_bypass_unsafe"
+    if any(row.status in _VISUALS_IN_FLIGHT_STATES for row in rows):
+        return "visuals_processing"
+    drawable = phone_drawable_visual_kinds()
+    if any(row.kind not in drawable for row in rows):
+        return "guided_edit_bypass_unsafe"
+    return None
+
+
 def _dispatch_item_render(
     session,  # noqa: ANN001
     item: PlanItem,
@@ -1291,6 +1387,7 @@ def _dispatch_item_render(
     ownership_epoch: int,
     bypass_guided_edit_gate: bool = False,
     allow_phone_unapproved_montage: bool = False,
+    phone_speech_cleanup_unattended: bool = False,
     creator_strategy: dict | None = None,
     creator_clip_order: list[int] | None = None,
     creator_request: str = "",
@@ -1321,15 +1418,26 @@ def _dispatch_item_render(
     confirmed native Creator plan, runtime-v2 native execution, or
     draft_edit_proposal's GUIDED_AUTO_DESIGN_ENABLED fallback. These paths have
     no approved guided proposal. Zero registered pool assets is rechecked under
-    the item lock; ordinary Generate callers must leave this False.
+    the item lock, except on the unified phone montage, which places ready
+    Visuals itself (KRI-217); ordinary Generate callers must leave this False.
 
     ``allow_phone_unapproved_montage`` (KRI-187): the runtime-v2 approval path
     has no approved guided proposal to hand a phone job, so without this a
     montage-family phone dispatch is refused as ``unapproved_guided``. True
     (with ``bypass_guided_edit_gate`` and the account covered by
     ``settings.kria_runtime_v2_phone_for``) lets that one shape through to the
-    worker's decisions-only ``_run_phone_montage_job``. False (default) keeps
+    worker's decisions-only ``_run_phone_voiceover_montage_job``. False (default) keeps
     every other caller's gate byte-identical.
+
+    ``phone_speech_cleanup_unattended``: runtime-v2 approval has no creator
+    choice surface to offer the speech-cleanup card that v1's chat route
+    presents, so an undecided narration source would otherwise refuse here
+    under the enforce guard. True lets an undecided **analysis-proxy** phone
+    source dispatch without cleanup instead of refusing -- "clean" can never
+    apply to a phone proxy (see ``_speech_cleanup_dispatch_snapshot``), so
+    this just restores the pre-KRI-205 phone dispatch behaviour. A non-proxy
+    (cloud) source, or this flag left False, still refuses. False (default)
+    keeps every other caller's gate byte-identical.
     """
     from app.agents._schemas.edit_format import (  # noqa: PLC0415
         coerce_edit_format,
@@ -1448,7 +1556,27 @@ def _dispatch_item_render(
             .where(PlanItemAsset.plan_item_id == item.id)
         ).scalar_one()
         if pool_count > 0:
-            return DispatchResult("guided_edit_bypass_unsafe")
+            if not allow_phone_unapproved_montage:
+                return DispatchResult("guided_edit_bypass_unsafe")
+            # KRI-217: a runtime-v2 approval. Its unified phone montage places
+            # the item's ready Visuals itself, and on any v2 lane an upload
+            # reservation or a failed Visual (never in the plan) must not
+            # refuse the render forever.
+            refusal = _v2_visuals_refusal(
+                session,
+                item,
+                creator_strategy,
+                unified_phone_montage=_lands_on_unified_phone_montage(
+                    item, plan, allow_phone_unapproved_montage=allow_phone_unapproved_montage
+                ),
+            )
+            if refusal is not None:
+                log.info(
+                    "plan_item_render.v2_visuals_refused",
+                    plan_item_id=str(item.id),
+                    outcome=refusal,
+                )
+                return DispatchResult(refusal)
     elif guided_applicable and (
         settings.guided_edit_capability_enabled
         or settings.guided_edit_enforcement_enabled
@@ -1562,9 +1690,24 @@ def _dispatch_item_render(
             resolution.source.source_policy_fingerprint,
             mode=settings.speech_cleanup_preflight_mode,
             rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
-            storage_path=resolution.source.storage_path,
         ):
-            return DispatchResult("speech_cleanup_analysis_conflict")
+            from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
+
+            if phone_speech_cleanup_unattended and is_analysis_proxy_path(
+                resolution.source.storage_path
+            ):
+                # Runtime-v2 approval has no choice surface to offer here, and
+                # "clean" could never apply to a phone proxy anyway (see the
+                # `is_analysis_proxy_path` gate in
+                # `_speech_cleanup_dispatch_snapshot` above) -- so an
+                # undecided phone source dispatches without cleanup instead
+                # of refusing, exactly as it did before KRI-205.
+                log.info(
+                    "plan_item_render.speech_cleanup_phone_unattended",
+                    plan_item_id=str(item.id),
+                )
+            else:
+                return DispatchResult("speech_cleanup_analysis_conflict")
     if speech_cleanup_analysis_id is not None or speech_cleanup_choice is not None:
         preflight = _speech_cleanup_dispatch_snapshot(
             session,
@@ -1723,6 +1866,7 @@ def _dispatch_item_render(
         from app.services.phone_rollout import (  # noqa: PLC0415
             phone_guided_narration_supported,
             phone_render_supported_formats,
+            phone_talking_head_supported,
         )
         from app.services.phone_sources import bind_phone_sources  # noqa: PLC0415
 
@@ -1805,19 +1949,26 @@ def _dispatch_item_render(
                         # off) fails closed instead of binding phone sources
                         # for an edit that might resolve to `talking_head`.
                         if len(clip_paths) >= 2:
-                            # KRI-118 L1 item 3: defense-in-depth mirror of
-                            # `creator_capabilities.resolve_creator_manifest`'s
+                            # KRI-136: 2+ clips resolve to `talking_head`,
+                            # which now renders on the phone (speaker clip +
+                            # muted full-frame cutaways) when
+                            # `phone_talking_head_supported()`; the worker
+                            # re-verifies the real archetype post-ingest.
+                            # Otherwise (KRI-118 L1 item 3): defense-in-depth
+                            # mirror of `creator_capabilities.
+                            # resolve_creator_manifest`'s
                             # `phone_format:{format}` gate -- that check
                             # already refuses this at planning time, before a
                             # Job is minted; this catches a stale client or a
                             # replan race with a distinct reason/message
                             # rather than the generic `unsupported_format`.
-                            phone_gate = "self_narration_multi_clip"
-                            raise ValueError(
-                                f"analysis proxies cannot self-narrate '{fmt}' across "
-                                "multiple clips on iPhone yet"
-                            )
-                        if not (
+                            if not phone_talking_head_supported():
+                                phone_gate = "self_narration_multi_clip"
+                                raise ValueError(
+                                    f"analysis proxies cannot self-narrate '{fmt}' across "
+                                    "multiple clips on iPhone yet"
+                                )
+                        elif not (
                             settings.narrated_self_narration_enabled
                             and "subtitled" in supported_now
                             and len(clip_paths) == 1
@@ -1860,7 +2011,7 @@ def _dispatch_item_render(
                     fmt in NARRATED_EDIT_FORMATS and not has_recorded_voiceover
                 )
             # KRI-132: a recorded voiceover must never dispatch a phone job
-            # doomed to fail in the worker (`_run_phone_montage_job` raises
+            # doomed to fail in the worker (`_run_phone_voiceover_montage_job` raises
             # "Phone rendering does not yet support voiceover edits" when the
             # flag is off, or when the compiled recipe needs a capability the
             # device hasn't verified). Fail closed HERE instead, before a Job
@@ -2223,6 +2374,7 @@ def dispatch_item_render_for(
     *,
     bypass_guided_edit_gate: bool = False,
     allow_phone_unapproved_montage: bool = False,
+    phone_speech_cleanup_unattended: bool = False,
     creator_strategy: dict | None = None,
     creator_clip_order: list[int] | None = None,
     creator_request: str = "",
@@ -2550,6 +2702,7 @@ def dispatch_item_render_for(
             ownership_epoch=ownership_epoch,
             bypass_guided_edit_gate=bypass_guided_edit_gate,
             allow_phone_unapproved_montage=allow_phone_unapproved_montage,
+            phone_speech_cleanup_unattended=phone_speech_cleanup_unattended,
             creator_strategy=creator_strategy,
             creator_clip_order=creator_clip_order,
             creator_request=creator_request,

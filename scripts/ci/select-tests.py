@@ -88,7 +88,11 @@ def affected(path):
         path.startswith(
             ("src/apps/ios/Tests/KriaTests/", "src/apps/ios/Kria/Generated/")
         )
-        or path == "src/apps/ios/Tests/Fixtures/editor-commit-picker-contract.json"
+        or path
+        in (
+            "src/apps/ios/Tests/Fixtures/editor-commit-picker-contract.json",
+            "src/apps/ios/Tests/Fixtures/guided_label_rebase_vectors.json",
+        )
     ):
         return {"ios"}
     # Check runtime trees before documentation: prompts and fixtures can be .md.

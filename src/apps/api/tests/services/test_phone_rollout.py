@@ -11,10 +11,12 @@ from app.services.phone_rollout import (
     PHONE_SUBTITLED_OVERLAY_FEATURES,
     PHONE_SUBTITLED_SFX_FEATURES,
     PHONE_SUBTITLED_VIDEO_OVERLAY_FEATURES,
+    PHONE_TALKING_HEAD_FEATURES,
     phone_subtitled_editor_lanes_supported,
     phone_subtitled_overlays_supported,
     phone_subtitled_reaction_beats_supported,
     phone_subtitled_video_overlays_supported,
+    phone_talking_head_supported,
     validate_phone_pilot_recipe,
 )
 from tests.pipeline.test_phone_guided_plan import fixture
@@ -552,9 +554,9 @@ def test_narration_audio_requires_the_capability_to_be_verified(monkeypatch):
     phone_render_verified_features, same gating pattern as stillImages/
     visualVideos -- follow how those are gated (see docs/reviews/kri-29
     /capability-matrix.md's "narrationAudio" row)."""
-    from app.pipeline.phone_montage_plan import compile_phone_montage_plan
-    from tests.pipeline.test_phone_montage_plan import _narration
-    from tests.pipeline.test_phone_montage_plan import fixture as montage_fixture
+    from app.pipeline.phone_voiceover_montage_plan import compile_phone_voiceover_montage_plan
+    from tests.pipeline.test_phone_voiceover_montage_plan import _narration
+    from tests.pipeline.test_phone_voiceover_montage_plan import fixture as montage_fixture
 
     decision, bindings = montage_fixture(
         voiceover_gcs_path="voiceover-uploads/direct/u/i/voice.m4a",
@@ -562,7 +564,9 @@ def test_narration_audio_requires_the_capability_to_be_verified(monkeypatch):
         mix=1.0,
     )
     narration = _narration()
-    recipe = compile_phone_montage_plan(decision, bindings, music=None, narration=narration)
+    recipe = compile_phone_voiceover_montage_plan(
+        decision, bindings, music=None, narration=narration
+    )
     assert "narrationAudio" in recipe.required_capabilities
 
     monkeypatch.setattr(
@@ -766,3 +770,41 @@ def test_phone_subtitled_video_overlays_requires_visual_videos_verified(monkeypa
 
 def test_phone_subtitled_video_overlays_defaults_to_unsupported(monkeypatch):
     assert phone_subtitled_video_overlays_supported() is False
+
+
+# --- KRI-136: multi-clip Talking head --------------------------------------
+
+
+def _enable_talking_head(monkeypatch):
+    monkeypatch.setattr(settings, "phone_talking_head_rendering_enabled", True)
+    monkeypatch.setattr(settings, "narrated_self_narration_enabled", True)
+    monkeypatch.setattr(settings, "phone_subtitled_rendering_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(PHONE_TALKING_HEAD_FEATURES)
+    )
+
+
+def test_phone_talking_head_supported_when_all_conditions_hold(monkeypatch):
+    _enable_talking_head(monkeypatch)
+    assert phone_talking_head_supported() is True
+
+
+@pytest.mark.parametrize(
+    "setting, value",
+    [
+        ("phone_talking_head_rendering_enabled", False),
+        ("narrated_self_narration_enabled", False),
+        ("phone_subtitled_rendering_enabled", False),
+        ("subtitled_archetype_enabled", False),
+        ("phone_render_verified_features", ["visualBlocks", "audioMix"]),
+    ],
+)
+def test_phone_talking_head_unsupported_when_any_condition_fails(monkeypatch, setting, value):
+    _enable_talking_head(monkeypatch)
+    monkeypatch.setattr(settings, setting, value)
+    assert phone_talking_head_supported() is False
+
+
+def test_phone_talking_head_off_by_default():
+    assert type(settings).model_fields["phone_talking_head_rendering_enabled"].default is False

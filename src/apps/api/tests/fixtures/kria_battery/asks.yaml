@@ -1,0 +1,174 @@
+# KRI-219 ask battery: python -m app.cli.kria_ask --thread <id> --battery <this file>
+# Seed a guided thread first: python -m app.cli.kria_dev seed --guided
+# expect_ops: every listed v2 op name must appear in the copilot's ops (all-of).
+# expect_error: substring the compile error or reply must contain (honesty cases).
+# turns: prior chat turns fed to the copilot for multi-turn asks.
+asks:
+  - id: rewrite-labels-en
+    ask: "make all Arnavutköy labels just say Arnavutköy"
+    expect_ops: [rewrite_text]
+  - id: rewrite-labels-tr
+    ask: "tüm Arnavutköy etiketleri sadece Arnavutköy yazsın"
+    expect_ops: [rewrite_text]
+  - id: replace-everywhere
+    ask: "replace Sahili with Sahil everywhere"
+    expect_ops: [rewrite_text]
+  - id: labels-yellow
+    ask: "make all the labels yellow"
+    expect_ops: [patch_text]
+  - id: labels-bigger
+    ask: "make the labels bigger"
+    expect_ops: [patch_text]
+  - id: labels-background
+    ask: "add a background behind all the labels"
+    expect_ops: [patch_text]
+  - id: labels-pop-in
+    ask: "make all the labels pop in"
+    expect_ops: [patch_text]
+  - id: title-to-top
+    ask: "move the title to the top of the screen"
+    expect_ops: [patch_text]
+  - id: delete-all-labels
+    ask: "delete all the labels"
+    expect_ops: [remove_texts]
+  - id: remove-galata-tr
+    ask: "içinde 'Galata' geçen tüm yazıları kaldır"
+    expect_ops: [remove_texts]
+  - id: add-end-text
+    ask: "add an end text that says see you soon, in the same style as the title"
+    expect_ops: [add_text]
+  - id: label-clip-3
+    ask: "add a separate caption saying golden hour during clip 3, keep the existing label"
+    expect_ops: [add_text]
+  - id: total-20s
+    ask: "make it 20 seconds"
+    expect_ops: [set_total_duration]
+  - id: total-15s
+    ask: "trim it down to 15s"
+    expect_ops: [set_total_duration]
+  - id: all-clips-2s
+    ask: "make all the clips 2 seconds"
+    expect_ops: [patch_slots]
+  # KRI-219 phone-commit coverage (tests/routes/test_phone_guided_timeline_commit.py): the two
+  # natural ways to ask for a shorter guided edit. Live model only. A number-less ask never
+  # guesses a length (prompt v64): it asks ONE follow-up with examples and emits no ops; an
+  # explicit total => set_total_duration.
+  - id: shorter-all-videos
+    ask: "make all the videos shorter"
+    expect_ops: []
+  - id: longer-no-number
+    ask: "make it longer"
+    expect_ops: []
+  - id: total-15s-natural
+    ask: "make it 15 seconds"
+    expect_ops: [set_total_duration]
+  - id: speed-up-clip-2
+    ask: "speed up clip 2"
+    # GAP: device (phone) recipes do not render playback_rate; compile refuses honestly.
+    expect_ops: []
+    expect_error: "Speed changes are not available"
+  - id: slowmo-last
+    ask: "slow motion on the last clip"
+    # GAP: same as speed-up-clip-2.
+    expect_ops: []
+    expect_error: "Speed changes are not available"
+  - id: crossfade-all
+    ask: "add a crossfade between all the clips"
+    expect_ops: [patch_slots]
+  - id: no-transitions
+    ask: "remove all the transitions"
+    # The seeded fast-montage plan is all hard cuts, so the honest answer is "already cuts".
+    expect_ops: []
+    expect_error: "already|hard cut|no transition|cuts"
+  - id: bw-all
+    ask: "make everything black and white"
+    # GAP: looks are not rendered on device recipes (and EDIT_WIDE_LOOKS_ENABLED is off in prod).
+    expect_ops: []
+    expect_error: "available"
+  - id: move-shot-first
+    ask: "move the Galata Bridge shot to the start, the labels should follow"
+    expect_ops: [reorder_clip]
+  - id: cut-first-2s
+    ask: "cut the first 2 seconds"
+    expect_ops: [trim_output_start]
+  - id: remove-clip-4
+    ask: "remove clip 4"
+    expect_ops: [remove_clip]
+  - id: music-quieter
+    ask: "make the music quieter"
+    # GAP by design: the guided song is reference-only (added when posting); no music in the render.
+    expect_ops: []
+    expect_error: "post|paylaş"
+  - id: mute-original
+    ask: "mute the original sound"
+    # GAP: guided-native saves persist only music_level; no original-sound lane exists.
+    expect_ops: []
+    expect_error: "sound"
+  - id: remove-music-tr
+    ask: "müziği kaldır"
+    # GAP by design: reference-only song, nothing to remove.
+    expect_ops: []
+    expect_error: "post|paylaş"
+  - id: whoosh-at-3s
+    ask: "add a whoosh at 3 seconds"
+    # GAP: phone recipes do not render the SFX lane (KRI-114 Phase 4); family withheld on device.
+    expect_ops: []
+    expect_error: "available"
+  - id: multi-turn-same-for-title
+    ask: "same for the title"
+    turns:
+      - {role: user, content: "make all the labels yellow"}
+      - {role: assistant, content: "Done: the labels are yellow."}
+    expect_ops: [patch_text]
+  - id: zero-match-honesty
+    ask: "delete all the labels that say Atlantis"
+    expect_ops: []
+    expect_error: "Atlantis|no label|none of|couldn't find"
+  - id: labels-yellow-bigger-tr
+    ask: "etiketleri sarı yap ve büyüt"
+    expect_ops: [patch_text]
+  # KRI-219 filming-time asks (seeded clips carry capture times; clip 3 has none, Istanbul zone).
+  - id: capture-order-en
+    ask: "order the videos by the time they were filmed"
+    expect_ops: [reorder_clips_by]
+  - id: capture-order-tr
+    ask: "videoları çekildiği zamana göre sırala"
+    expect_ops: [reorder_clips_by]
+  - id: capture-order-newest-first
+    ask: "newest first, based on when they were filmed"
+    expect_ops: [reorder_clips_by]
+  - id: capture-hour-en
+    ask: "add the hour to each video"
+    expect_ops: [label_each_clip]
+  - id: capture-hour-tr
+    ask: "her videoya saat bilgisini de ekle"
+    expect_ops: [label_each_clip]
+  - id: capture-order-and-hour
+    ask: "Order the videos based on the time they were filmed. Add the hour as well to each video"
+    expect_ops: [reorder_clips_by, label_each_clip]
+  - id: capture-hour-only-en
+    ask: "change the timestamps to just the hour, not the minutes"
+    turns:
+      - {role: user, content: "add the hour to each video"}
+      - {role: assistant, content: "Added the filming hour to 5 clips."}
+    expect_ops: [label_each_clip]
+  - id: capture-hour-only-tr
+    ask: "saatleri sadece saat olarak göster"
+    turns:
+      - {role: user, content: "her videoya saat bilgisini ekle"}
+      - {role: assistant, content: "Her videoya saati ekledim."}
+    expect_ops: [label_each_clip]
+  - id: capture-hour-topleft-smaller
+    ask: "Move the timestamps to the top left, make them smaller. Remove everything after the hours, don’t include minutes"
+    turns:
+      - {role: user, content: "add the hour to each video"}
+      - {role: assistant, content: "Added the filming hour to 5 clips."}
+    expect_ops: [label_each_clip, patch_text]
+  - id: descriptive-captions-from-seen
+    ask: "Add a text to each clip explaining the part of the wedding (could be airport pickup, pre wedding etc)"
+    # The seed stores vision understanding for 5 of 6 clips: captions are written from it
+    # (add_text), never place names. `kria_dev seed --guided --no-seen` exercises the clarify path.
+    expect_ops: [add_text]
+  - id: descriptive-captions-tr
+    ask: "her klibede neler olduğunu kısaca yaz"
+    expect_ops: [add_text]

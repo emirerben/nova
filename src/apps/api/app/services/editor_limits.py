@@ -11,6 +11,10 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
+# One draft bundle holds at most this many operations (`ApplyEditorOpsArguments`
+# enforces the same bound at the tool boundary; imported, never a literal).
+MAX_EDITOR_OPS = 16
+
 
 def _source_tree_limits_path(source: Path) -> Path | None:
     for parent in source.parents:

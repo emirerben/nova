@@ -160,6 +160,12 @@ struct ChatMessageRow: View {
     let message: ChatTranscriptMessage
     var onSelectOption: ((String) -> Void)? = nil
     var responseStartedAt: Date? = nil
+    /// KRI-207: names for the receipt chips, keyed by requirement id (the brief, once loaded).
+    var requirements: [String: CreativeBriefRequirement] = [:]
+    /// The brief has loaded, or its fetch definitively failed; until then the chips wait.
+    var briefSettled = false
+    /// Starts a correction for a guessed name; nil hides the "Guessed names" row.
+    var onCorrectGuess: ((InferredLabel) -> Void)? = nil
 
     private static let userBubbleShape = UnevenRoundedRectangle(
         topLeadingRadius: 18,
@@ -209,6 +215,9 @@ struct ChatMessageRow: View {
                         recommendedOption: message.recommendedOption,
                         select: onSelectOption
                     )
+                }
+                if !message.receipts.isEmpty {
+                    RequirementChipsView(receipts: message.receipts, requirements: requirements, titlesReady: briefSettled, correct: onCorrectGuess)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -389,6 +398,8 @@ struct FootageStage: View {
     /// the user chose.
     var failures: [UploadFailure] = []
     var dismissFailure: (UUID) -> Void = { _ in }
+    /// Retries the upload behind a failure that still has its record (`cause == .uploadFailed`).
+    var retryFailure: (UUID) -> Void = { _ in }
     /// Ready photos and videos in the PlanItemAsset Visuals pool.
     var visualCount = 0
 
@@ -442,19 +453,31 @@ struct FootageStage: View {
             .accessibilityIdentifier(format.usesVisualPool ? "choose-photos-videos" : "choose-videos")
 
             if !failures.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(failures) { failure in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text("\(failure.filename) wasn’t added. \(failure.message)")
-                                .font(KriaFont.body(12))
-                                .foregroundStyle(KriaColor.failureText)
-                            Spacer(minLength: 4)
-                            Button("Dismiss") { dismissFailure(failure.id) }
-                                .font(KriaFont.body(12).weight(.medium))
-                                .frame(minHeight: 44)
+                // One line, not one per file (KRI-211): a file that couldn't be sent never holds up the
+                // rest. The wording follows the cause: a file that couldn't be read is simply left out,
+                // while an upload that failed on the way can still be retried.
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(UploadFailureBanner.message(for: failures))
+                            .font(KriaFont.body(12))
+                            .foregroundStyle(KriaColor.failureText)
+                            .accessibilityIdentifier("footage-upload-failures-message")
+                        Spacer(minLength: 4)
+                        Button("Dismiss") { failures.forEach { dismissFailure($0.id) } }
+                            .font(KriaFont.body(12).weight(.medium))
+                            .frame(minHeight: 44)
+                            .accessibilityIdentifier("footage-upload-failures-dismiss")
+                    }
+                    if UploadFailureBanner.canRetry(failures) {
+                        Button("Retry") {
+                            for failure in failures where failure.cause == .uploadFailed { retryFailure(failure.id) }
                         }
+                        .font(KriaFont.body(12).weight(.semibold))
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("footage-upload-failures-retry")
                     }
                 }
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("footage-upload-failures")
             }
 
@@ -563,14 +586,29 @@ private struct FootageThumbnail: View {
 struct DirectionStage: View {
     let approval: ApprovalSnapshot
     let format: CreationFormat?
+    /// The v2 thread's `speech_cleanup` projection (`CreationThread.speechCleanup`).
+    /// Nil for a thread that predates the field or hasn't loaded it yet, which
+    /// resolves to the same plain "Create this video" flow as `applicable: false`.
+    var speechCleanup: [String: JSONValue]? = nil
     let isBusy: Bool
     var responseStartedAt: Date? = nil
-    let decide: (String) -> Void
+    /// `decision` is "approve" or "deny". `cleanupChoice` is only meaningful on
+    /// "approve" -- "clean" / "keep_original" / "create_without_cleanup" -- and
+    /// nil otherwise. `analysisID`, when known, always rides along so the
+    /// server can match the decision to the analysis it answered about.
+    let decide: (_ decision: String, _ cleanupChoice: String?, _ analysisID: String?) -> Void
+    /// Posts the v1-style `retry_speech_cleanup` thread action (shared endpoint,
+    /// not the approval decision) when the analysis itself failed.
+    let retrySpeechCheck: (_ analysisID: String?) -> Void
 
     private var directionTitle: String {
         approval.consequenceSummary
             .replacingOccurrences(of: "Render this draft:", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var cleanupResolution: (offer: SpeechCleanupOffer, analysisID: String?) {
+        SpeechCleanupOffer.resolve(speechCleanup)
     }
 
     var body: some View {
@@ -608,12 +646,43 @@ struct DirectionStage: View {
                 .font(KriaFont.body(12))
                 .foregroundStyle(KriaColor.zinc)
 
-            Button("Create this video") { decide("approve") }
-                .buttonStyle(CanonicalPrimaryButtonStyle())
-                .disabled(isBusy)
-            Button("Change direction") { decide("deny") }
+            cleanupActions
+
+            Button("Change direction") { decide("deny", nil, nil) }
                 .buttonStyle(CanonicalSecondaryButtonStyle())
                 .disabled(isBusy)
+        }
+        .accessibilityIdentifier("direction-stage")
+    }
+
+    @ViewBuilder private var cleanupActions: some View {
+        let resolution = cleanupResolution
+        switch resolution.offer {
+        case .plain:
+            Button("Create this video") { decide("approve", nil, nil) }
+                .buttonStyle(CanonicalPrimaryButtonStyle())
+                .disabled(isBusy)
+        case .checking:
+            ProgressView("Checking speech…")
+                .accessibilityIdentifier("speech-cleanup-checking")
+            Button("Create without cleanup") { decide("approve", "create_without_cleanup", resolution.analysisID) }
+                .buttonStyle(CanonicalSecondaryButtonStyle())
+                .disabled(isBusy)
+        case .failed:
+            Text("The speech check couldn’t finish.")
+                .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+            Button("Retry speech check") { retrySpeechCheck(resolution.analysisID) }
+                .disabled(isBusy)
+            Button("Create without cleanup") { decide("approve", "create_without_cleanup", resolution.analysisID) }
+                .buttonStyle(CanonicalPrimaryButtonStyle())
+                .disabled(isBusy)
+        case let .choice(stats):
+            SpeechCleanupChoiceButtons(
+                stats: stats,
+                isDisabled: isBusy,
+                clean: { decide("approve", "clean", resolution.analysisID) },
+                keepOriginal: { decide("approve", "keep_original", resolution.analysisID) }
+            )
         }
     }
 }
@@ -902,7 +971,7 @@ struct FailedStage: View {
     var nonRetryableReasonCode: String? = nil
 
     private var isNonRetryable: Bool {
-        nonRetryableReasonCode.map(nonRetryablePhoneGateErrorCodes.contains) == true
+        isNonRetryableFailureCode(nonRetryableReasonCode)
     }
 
     var body: some View {
@@ -983,6 +1052,32 @@ struct RecoveryCard: View {
     }
 }
 
+/// Copy for the "some files weren't sent" banner (KRI-211). Says what actually happened: never
+/// "couldn't be read" for a network failure, and only "won't be sent" where that is true.
+enum UploadFailureBanner {
+    static func message(for failures: [UploadFailure]) -> String {
+        let unreadable = failures.filter { $0.cause == .unreadable }.count
+        let failedUpload = failures.filter { $0.cause == .uploadFailed }.count
+        let cannotResume = failures.filter { $0.cause == .cannotResume }.count
+        func files(_ n: Int) -> String { n == 1 ? "1 file" : "\(n) files" }
+        switch (unreadable > 0, failedUpload > 0, cannotResume > 0) {
+        case (true, false, false):
+            return "\(files(unreadable)) couldn’t be read and won’t be sent"
+        case (false, true, false):
+            return "\(files(failedUpload)) didn’t upload and won’t be sent unless you retry"
+        case (false, false, true):
+            return "\(files(cannotResume)) couldn’t be resumed and won’t be sent"
+        default:
+            return "\(files(failures.count)) won’t be sent"
+        }
+    }
+
+    /// Only an upload that failed on the way still has its record, so only that can be retried.
+    static func canRetry(_ failures: [UploadFailure]) -> Bool {
+        failures.contains { $0.cause == .uploadFailed }
+    }
+}
+
 struct ChatComposer: View {
     @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     @Binding var text: String
@@ -997,6 +1092,7 @@ struct ChatComposer: View {
 
     private var canSend: Bool {
         (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || canSendWithoutText) && !isSending && !blocksSubmission
+            && !ChatSubmission.isBareCorrectionStub(text)
     }
 
     var body: some View {

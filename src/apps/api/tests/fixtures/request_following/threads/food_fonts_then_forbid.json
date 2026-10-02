@@ -1,0 +1,185 @@
+{
+  "fixture_id": "food_fonts_then_forbid",
+  "provenance": "authored",
+  "footage": "food_day",
+  "description": "Three turns: captions, a bulk font change, then a standing font ban that the final edit must still honour.",
+  "turns": [
+    {
+      "turn_id": "t0",
+      "user_message": "Caption every clip with what it is.",
+      "engine": "recorded"
+    },
+    {
+      "turn_id": "t1",
+      "user_message": "Change all fonts to Playfair Display.",
+      "engine": "recorded"
+    },
+    {
+      "turn_id": "t2",
+      "user_message": "And never use Inter again.",
+      "engine": "recorded"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "captioned",
+      "kind": "text",
+      "scope": "per_clip",
+      "request_type": "label_described",
+      "checker": "label_coverage",
+      "params": {
+        "min_frac": 1.0
+      },
+      "source": "Caption every clip with what it is.",
+      "introduced_in_turn": 0
+    },
+    {
+      "id": "all-playfair",
+      "kind": "style",
+      "scope": "global",
+      "request_type": "style",
+      "checker": "font_all_equal",
+      "params": {
+        "font": "Playfair Display"
+      },
+      "source": "Change all fonts to Playfair Display.",
+      "introduced_in_turn": 1
+    },
+    {
+      "id": "no-inter",
+      "kind": "style",
+      "scope": "global",
+      "request_type": "style",
+      "checker": "font_forbidden",
+      "params": {
+        "fonts": [
+          "Inter"
+        ]
+      },
+      "source": "And never use Inter again.",
+      "introduced_in_turn": 2
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "F1",
+          "start_s": 0.0,
+          "end_s": 3.0
+        },
+        {
+          "clip_id": "F2",
+          "start_s": 3.0,
+          "end_s": 5.5
+        },
+        {
+          "clip_id": "F3",
+          "start_s": 5.5,
+          "end_s": 9.0
+        },
+        {
+          "clip_id": "F4",
+          "start_s": 9.0,
+          "end_s": 12.0
+        },
+        {
+          "clip_id": "F5",
+          "start_s": 12.0,
+          "end_s": 14.5
+        },
+        {
+          "clip_id": "F6",
+          "start_s": 14.5,
+          "end_s": 16.5
+        },
+        {
+          "clip_id": "F7",
+          "start_s": 16.5,
+          "end_s": 20.0
+        },
+        {
+          "clip_id": "F8",
+          "start_s": 20.0,
+          "end_s": 23.0
+        }
+      ],
+      "texts": [
+        {
+          "id": "label-0",
+          "role": "label",
+          "text": "Simit & tea",
+          "start_s": 0.0,
+          "end_s": 3.0,
+          "font_family": "Playfair Display",
+          "clip_id": "F1"
+        },
+        {
+          "id": "label-1",
+          "role": "label",
+          "text": "Turkish coffee",
+          "start_s": 3.0,
+          "end_s": 5.5,
+          "font_family": "Playfair Display",
+          "clip_id": "F2"
+        },
+        {
+          "id": "label-2",
+          "role": "label",
+          "text": "Spice market",
+          "start_s": 5.5,
+          "end_s": 9.0,
+          "font_family": "Playfair Display",
+          "clip_id": "F3"
+        },
+        {
+          "id": "label-3",
+          "role": "label",
+          "text": "Fresh lahmacun",
+          "start_s": 9.0,
+          "end_s": 12.0,
+          "font_family": "Playfair Display",
+          "clip_id": "F4"
+        },
+        {
+          "id": "label-4",
+          "role": "label",
+          "text": "Baklava",
+          "start_s": 12.0,
+          "end_s": 14.5,
+          "font_family": "Playfair Display",
+          "clip_id": "F5"
+        },
+        {
+          "id": "label-5",
+          "role": "label",
+          "text": "Ferry snack",
+          "start_s": 14.5,
+          "end_s": 16.5,
+          "font_family": "Playfair Display",
+          "clip_id": "F6"
+        },
+        {
+          "id": "label-6",
+          "role": "label",
+          "text": "Meze spread",
+          "start_s": 16.5,
+          "end_s": 20.0,
+          "font_family": "Playfair Display",
+          "clip_id": "F7"
+        },
+        {
+          "id": "label-7",
+          "role": "label",
+          "text": "Dondurma",
+          "start_s": 20.0,
+          "end_s": 23.0,
+          "font_family": "Playfair Display",
+          "clip_id": "F8"
+        }
+      ],
+      "total_duration_s": 23.0
+    },
+    "reply": "Done, and Inter is off the list."
+  }
+}

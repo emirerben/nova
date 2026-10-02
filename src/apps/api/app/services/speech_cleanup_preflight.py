@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+import structlog
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
@@ -18,6 +19,8 @@ from app.models import ContentPlan, Job, Persona, PlanItem, SpeechCleanupAnalysi
 from app.services.active_narration_source import ActiveNarrationResolution, ActiveNarrationSource
 from app.services.job_status import PLAN_ITEM_JOB_FAILED
 from app.services.speech_cleanup_selection import DETECTOR_VERSION
+
+log = structlog.get_logger()
 
 SPEECH_CLEANUP_ENGINE_VERSION = "preflight-v1-2026-09-05"
 SPEECH_CLEANUP_PAYLOAD_VERSION = "1"
@@ -114,26 +117,24 @@ def preflight_enabled_for_source(
     *,
     mode: str,
     rollout_percent: int,
-    storage_path: str | None = None,
 ) -> bool:
     """Whether media writers should schedule/offer a speech-cleanup decision.
 
-    ``storage_path``, when given, gates out phone-rendered projects (KRI-118
-    L1 item 1): a phone project uploads only a small analysis proxy for the
-    server-side agents to look at -- the original bytes never leave the
-    device, so speech cleanup (which needs the real audio) can never run
-    there. Returning False here means no `SpeechCleanupAnalysis` row is ever
-    scheduled for such a source (`schedule_item_preflight_async`/`_sync`
-    return `None`), so the clean/keep_original choice is never offered in the
-    first place -- `content_plan_build._speech_cleanup_dispatch_snapshot`
-    additionally refuses `choice == "clean"` explicitly, in case a stale
-    client still tries to submit one.
+    KRI-118 L1 item 1 originally rejected every phone (analysis-proxy) source
+    here on the theory that "speech cleanup needs the real audio, and a phone
+    project never uploads it." KRI-205 found that premise only half true: the
+    *detector* only ever reads a downmixed 16kHz mono WAV -- it never touches
+    video -- and a phone analysis proxy's audio track is already a faithful,
+    full-duration copy of the original (the upload contract rejects a
+    duration/audio-presence mismatch before it ever reaches the server, and
+    the phone-subtitled caption pipeline already trusts this exact file for
+    word-level Whisper transcription). So scheduling/offering the decision is
+    now allowed for phone sources too -- only *applying* `choice == "clean"`
+    still needs the real, full-resolution video to cut actual frames, which a
+    phone-rendered project never uploads. That half of the KRI-118 invariant
+    is unchanged and enforced independently, at consent time, by
+    `content_plan_build._speech_cleanup_dispatch_snapshot`.
     """
-    if storage_path is not None:
-        from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
-
-        if is_analysis_proxy_path(storage_path):
-            return False
     if mode == "off" or rollout_percent <= 0:
         return False
     if mode not in {"shadow", "enforce"}:
@@ -355,6 +356,83 @@ def _reset_analysis_for_dispatch(
     row.failure_retryable = None
 
 
+def reference_transcript_for_source(
+    item: PlanItem,
+    *,
+    storage_path: str,
+    generation: str,
+) -> str | None:
+    """Gemini's transcript of the exact clip bytes a preflight analyzes.
+
+    Read from the clip assignment's clip_metadata analysis once it has landed
+    for this generation; None for a voiceover, a pending/stale analysis, or
+    other bytes at the same path. The engine uses it only to cross-check
+    whisper's detected language (`_crosschecked_transcript`).
+    """
+
+    from app.services.clip_understanding import clip_record  # noqa: PLC0415
+    from app.services.creator_clip_analysis import clip_analysis_ready  # noqa: PLC0415
+
+    for raw in getattr(item, "clip_assignments", None) or []:
+        if not isinstance(raw, dict) or str(raw.get("gcs_path") or "") != storage_path:
+            continue
+        if clip_analysis_ready(raw, kind="video", current_generation=generation):
+            transcript = clip_record(raw.get("analysis"), kind="video").speech.transcript
+            if transcript.strip():
+                return transcript
+    return None
+
+
+def _redo_for_misheard_language(
+    row: SpeechCleanupAnalysis,
+    item: PlanItem,
+    source: ActiveNarrationSource,
+    *,
+    now: datetime,
+) -> bool:
+    """Reset a settled analysis whose language Gemini's late transcript contradicts.
+
+    Preflight usually runs before the clip's Gemini analysis lands, so its
+    filler/pause decisions can rest on a whisper TRANSLATION of accented speech.
+    Every writer of that analysis reschedules preflight, which lands here: an
+    undecided ready/no_findings run that had no reference is analyzed again
+    under the same identity (the worker then reads the reference). A creator's
+    decision is never revoked, and a run that already had a reference is never
+    repeated, so this cannot loop.
+    """
+
+    from app.pipeline.caption_language import crosscheck_detected_language  # noqa: PLC0415
+
+    if row.status not in {"ready", "no_findings"} or row.decision is not None:
+        return False
+    payload = row.analysis_payload
+    if not isinstance(payload, dict):
+        return False
+    diagnostics = payload.get("diagnostics")
+    if isinstance(diagnostics, dict) and "language_crosscheck" in diagnostics:
+        return False
+    reference = reference_transcript_for_source(
+        item,
+        storage_path=source.storage_path,
+        generation=source.generation,
+    )
+    heard_language = crosscheck_detected_language(
+        str(payload.get("language") or ""), reference_text=reference
+    )
+    if heard_language is None:
+        return False
+    log.info(
+        "speech_cleanup_analysis.language_redo",
+        analysis_id=str(row.id),
+        whisper_language=str(payload.get("language") or ""),
+        reference_language=heard_language,
+        previous_status=row.status,
+    )
+    _reset_analysis_for_dispatch(row, source, now=now)
+    _clear_item_cleanup_choice(item)
+    return True
+
+
 def _reactivate_historical_analysis(
     row: SpeechCleanupAnalysis,
     item: PlanItem,
@@ -461,7 +539,8 @@ async def ensure_current_analysis_async(
             current.source_policy_fingerprint == source.source_policy_fingerprint
             and current.engine_version == SPEECH_CLEANUP_ENGINE_VERSION
         ):
-            return SpeechCleanupSchedulingIntent(current.id, False)
+            redo = _redo_for_misheard_language(current, item, source, now=current_time)
+            return SpeechCleanupSchedulingIntent(current.id, redo)
         current.superseded_at = current_time
         _clear_item_cleanup_choice(item)
         # Release the partial current-row unique key before reactivating a
@@ -480,6 +559,10 @@ async def ensure_current_analysis_async(
             source,
             now=current_time,
         )
+        if not intent.created and _redo_for_misheard_language(
+            historical, item, source, now=current_time
+        ):
+            intent = SpeechCleanupSchedulingIntent(historical.id, True)
         await db.flush()
         return intent
     analysis = _new_analysis(item.id, source, now=current_time)
@@ -531,7 +614,6 @@ async def refresh_policy_stale_analysis_async(
         source.source_policy_fingerprint,
         mode=settings.speech_cleanup_preflight_mode,
         rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
-        storage_path=source.storage_path,
     ):
         # One owner for supersede + consent reset + queueing, so a policy
         # refresh cannot drift from the media-mutation path it mirrors.
@@ -569,7 +651,6 @@ async def schedule_item_preflight_async(
         resolution.source.source_policy_fingerprint,
         mode=settings.speech_cleanup_preflight_mode,
         rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
-        storage_path=resolution.source.storage_path,
     ):
         return None
     intent = await ensure_current_analysis_async(db, item, resolution)
@@ -595,7 +676,6 @@ def schedule_item_preflight_sync(
         resolution.source.source_policy_fingerprint,
         mode=settings.speech_cleanup_preflight_mode,
         rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
-        storage_path=resolution.source.storage_path,
     ):
         return None
     intent = ensure_current_analysis_sync(db, item, resolution)
@@ -617,7 +697,8 @@ def ensure_current_analysis_sync(
             current.source_policy_fingerprint == source.source_policy_fingerprint
             and current.engine_version == SPEECH_CLEANUP_ENGINE_VERSION
         ):
-            return SpeechCleanupSchedulingIntent(current.id, False)
+            redo = _redo_for_misheard_language(current, item, source, now=current_time)
+            return SpeechCleanupSchedulingIntent(current.id, redo)
         current.superseded_at = current_time
         _clear_item_cleanup_choice(item)
         # See the async twin: the current-key release must reach PostgreSQL
@@ -635,6 +716,10 @@ def ensure_current_analysis_sync(
             source,
             now=current_time,
         )
+        if not intent.created and _redo_for_misheard_language(
+            historical, item, source, now=current_time
+        ):
+            intent = SpeechCleanupSchedulingIntent(historical.id, True)
         db.flush()
         return intent
     analysis = _new_analysis(item.id, source, now=current_time)

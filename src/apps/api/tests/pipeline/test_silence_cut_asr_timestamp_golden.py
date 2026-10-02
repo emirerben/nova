@@ -508,7 +508,7 @@ def test_analysis_payload_carries_token_adjustments_and_round_trips():
 def test_detector_version_was_bumped_with_the_detector():
     # Snapshot reuse and the render-side cut cache key on this string; an
     # un-bumped detector change would keep serving pre-fix plans forever.
-    assert DETECTOR_VERSION == "mixed-gap-v2"
+    assert DETECTOR_VERSION == "mixed-gap-v4"
     assert Removal(0.0, 1.0, "silence").reason == "silence"  # import kept intentional
 
 
@@ -597,3 +597,150 @@ class TestRuleZeroCannotCutRealSpeech:
                 (start_s, end_s),
                 candidate.keep_segments,
             )
+
+    def test_sentence_punctuation_does_not_unlock_an_under_read_word(self):
+        # The sentence-final tail carve (KRI-236) must not reopen this hole: a
+        # "word." whose quiet patch sits in its MIDDLE, with voice after it,
+        # is still a word the mic under-read.
+        words, silences, duration = self._soft_spoken_clip()
+        punctuated = [{**word, "text": word["text"] + "."} for word in words]
+        plan = build_cut_plan(
+            punctuated, silences, duration, mixed_gap_enabled=True, over_budget_policy="clamp"
+        )
+        assert sum(_covered(plan, word["start_s"], word["end_s"]) for word in words) == (
+            pytest.approx(0.0, abs=1e-6)
+        )
+        assert plan.diagnostics is not None
+        assert plan.diagnostics.token_adjustments_total == 0
+
+
+# KRI-236 golden (job 62716037, night-rain TR Talking take). Words are the
+# source-timeline whisper tokens rebuilt from the job's caption_cues (each
+# word shifted back by the removed spans before it; the caption pass had
+# already dropped the opening "Amına koyayım," and "Evet."). Silences are
+# clip_speech.detect_silences(min_silence_s=0.1, ambient_adaptive=True) over
+# the analysis proxy: ambient floor -39.9 dB, threshold -32.7 dB. The 50 ms
+# RMS envelope puts the end of "alakalı." at ~6.15-6.20 s; whisper stamped it
+# to 6.86 s, so the 0.40 s stamped gap to "Abi" hid ~1.0 s of dead air.
+TAIL_DURATION_S = 14.8
+TAIL_WORDS = [
+    w(text, start, end)
+    for text, start, end in [
+        ("2", 0.74, 1.08),
+        ("saniye", 1.08, 1.62),
+        ("sigara", 1.62, 2.16),
+        ("içiyoruz.", 2.16, 2.4),
+        ("Düşüncelerinizi", 3.12, 3.8),
+        ("alalım.", 3.8, 4.24),
+        ("Bu", 4.94, 4.94),
+        ("İstanbul", 4.94, 5.28),
+        ("gezisiyle", 5.28, 5.84),
+        ("alakalı.", 5.84, 6.86),
+        ("Abi", 7.26, 7.4),
+        ("çok", 7.4, 7.58),
+        ("güzeldi.", 7.58, 8.08),
+        ("Her", 9.54, 9.74),
+        ("yıl", 9.74, 9.88),
+        ("bunu", 9.88, 10.08),
+        ("en", 10.08, 10.18),
+        ("az", 10.18, 10.26),
+        ("bir", 10.26, 10.42),
+        ("kere", 10.42, 10.5),
+        ("yapalım.", 10.5, 10.82),
+        ("Yılda", 11.48, 11.64),
+        ("bir", 11.64, 11.84),
+        ("kere.", 11.84, 12.02),
+    ]
+]
+TAIL_SILENCES = [
+    (4.28, 4.57),
+    (6.23, 7.12),
+    (8.18, 8.92),
+    (10.88, 11.07),
+    (12.13, 12.57),
+    (12.83, 13.72),
+    (14.43, 14.8),
+]
+TAIL_VOICE_END_S = 6.15
+TAIL_NEXT_WORD_S = 7.26
+
+
+def _tail_plan(words=TAIL_WORDS, silences=TAIL_SILENCES):
+    return build_cut_plan(
+        words, silences, TAIL_DURATION_S, mixed_gap_enabled=True, over_budget_policy="clamp"
+    )
+
+
+def _retext(old: str, new: str) -> list[dict]:
+    return [{**word, "text": new} if word["text"] == old else word for word in TAIL_WORDS]
+
+
+class TestSentenceFinalTailTrim:
+    def test_stretched_sentence_final_token_pause_is_tightened(self):
+        plan = _tail_plan()
+        _assert_partition(plan, TAIL_DURATION_S)
+        kept_pause = (TAIL_NEXT_WORD_S - TAIL_VOICE_END_S) - _covered(
+            plan, TAIL_VOICE_END_S, TAIL_NEXT_WORD_S
+        )
+        assert kept_pause <= 0.4 + 1e-6, _rounded(plan)
+        # Nothing voiced goes: the token keeps everything up to its silence.
+        assert _covered(plan, 5.84, TAIL_VOICE_END_S) == pytest.approx(0.0, abs=1e-9)
+        assert (6.355, 7.12, "silence") in _rounded(plan)
+        assert plan.diagnostics is not None
+        (adjustment,) = plan.diagnostics.token_adjustments
+        assert adjustment.kind == "trim_sentence_tail"
+        assert adjustment.pieces == ((5.84, 6.23),)
+
+    def test_caption_word_shrinks_to_its_voice(self):
+        remapped = {item["text"]: item for item in remap_words(TAIL_WORDS, _tail_plan())}
+        abi_gap = remapped["Abi"]["start_s"] - remapped["alakalı."]["end_s"]
+        assert abi_gap < 0.4, remapped
+
+    def test_v1_is_untouched(self):
+        plan = build_cut_plan(
+            TAIL_WORDS, TAIL_SILENCES, TAIL_DURATION_S, over_budget_policy="clamp"
+        )
+        assert plan.version == 1
+        assert _covered(plan, 5.84, TAIL_NEXT_WORD_S) == pytest.approx(0.0, abs=1e-9)
+
+    @pytest.mark.parametrize(
+        ("words", "silences", "why"),
+        [
+            (_retext("alakalı.", "alakalı"), TAIL_SILENCES, "not sentence-final"),
+            (_retext("alakalı.", "alakalı..."), TAIL_SILENCES, "ellipsis trails off"),
+            (_retext("alakalı.", "alakalı…"), TAIL_SILENCES, "ellipsis trails off"),
+            (
+                TAIL_WORDS,
+                [(lo, hi) if lo != 6.23 else (6.0, 7.12) for lo, hi in TAIL_SILENCES],
+                "silence starts under MIN_VOICED_S into the token",
+            ),
+            (
+                TAIL_WORDS,
+                [(lo, hi) if lo != 6.23 else (6.23, 6.95) for lo, hi in TAIL_SILENCES],
+                "a quiet trailing syllable sounds between the silence and the next word",
+            ),
+            (
+                TAIL_WORDS,
+                [
+                    *[span for span in TAIL_SILENCES if span[0] != 6.23],
+                    (5.5, 6.2),
+                    (6.3, 7.2),
+                ],
+                "two long quiet patches are a mumbled word",
+            ),
+        ],
+    )
+    def test_quiet_trailing_speech_is_kept(self, words, silences, why):
+        plan = _tail_plan(words, sorted(silences))
+        assert _covered(plan, 5.84, 6.86) == pytest.approx(0.0, abs=1e-9), (why, _rounded(plan))
+        assert plan.diagnostics is not None
+        assert all(
+            item.kind != "trim_sentence_tail" for item in plan.diagnostics.token_adjustments
+        ), why
+
+    def test_last_token_is_left_to_the_trailing_trim(self):
+        # No next word means no pause to tighten; the tail trim owns the end.
+        words = [word for word in TAIL_WORDS if word["start_s"] < 7.0]
+        plan = _tail_plan(words)
+        assert plan.diagnostics is not None
+        assert all(item.kind != "trim_sentence_tail" for item in plan.diagnostics.token_adjustments)

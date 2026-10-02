@@ -145,18 +145,50 @@ struct NativeEditorBaseSource: Sendable {
     }
 }
 
-/// A phone-rendered Talking (subtitled) edit plays its one source clip whole,
-/// with its own audio, and the server keeps no timeline slots for it. Without
+/// A phone-rendered Talking (subtitled) edit plays its one source clip, with
+/// its own audio, and the server keeps no timeline slots for it. Without
 /// that clip the preview has no video track: photo cards once made that recipe
 /// validate as a black canvas (the compiler now rejects it, `missingVideoTrack`,
 /// so it falls back to the finished MP4). The source becomes the same locked
 /// composite clip a talking-head base uses, so the preview stays live.
+///
+/// Speech cleanup (KRI-232): the server's cues, words, cards and sounds are all
+/// on the CUT timeline, and its recipe plays one hard-cut clip per kept
+/// segment (`compile_phone_subtitled_plan`). The source is split the same way,
+/// from `silence_cut.removed` (the exact complement of the kept segments), so
+/// captions stay on the words instead of drifting early by every removed span.
 ///
 /// Only when the edit's cards and sounds are editable (`lanesEditable`): with
 /// them closed the server doesn't send those lanes, so a live preview would
 /// drop what the finished MP4 shows.
 enum NativePhoneTalkingSource {
     static let slotID = "native-phone-talking-source"
+
+    /// Source spans speech cleanup removed from this variant, sorted. Empty
+    /// when no cleanup was applied.
+    static func removedSpans(variant: [String: JSONValue]) -> [(start: Double, end: Double)] {
+        guard case .array(let rows)? = variant["silence_cut"]?.objectValue?["removed"] else { return [] }
+        return rows.compactMap { row -> (start: Double, end: Double)? in
+            guard let span = row.objectValue, let start = span["start_s"]?.numberValue,
+                  let end = span["end_s"]?.numberValue, start.isFinite, end.isFinite, end > start else { return nil }
+            return (start, end)
+        }.sorted { $0.start < $1.start }
+    }
+
+    /// Kept source segments: `[0, duration]` minus `removed`.
+    static func keptSegments(duration: Double, removed: [(start: Double, end: Double)]) -> [(start: Double, end: Double)] {
+        var kept: [(start: Double, end: Double)] = []
+        var cursor = 0.0
+        for span in removed {
+            let start = min(max(span.start, 0), duration), end = min(max(span.end, 0), duration)
+            if start > cursor { kept.append((cursor, start)) }
+            cursor = max(cursor, end)
+        }
+        if duration > cursor { kept.append((cursor, duration)) }
+        // Sub-millisecond slivers are rounding residue from the persisted
+        // 3-decimal summary, not footage.
+        return kept.filter { $0.end - $0.start > 0.001 }
+    }
 
     static func sourceIndex(variant: [String: JSONValue], document: EditorDocument,
                             pool: NativeEditorSourcePool, lanesEditable: Bool) -> Int? {
@@ -170,12 +202,18 @@ enum NativePhoneTalkingSource {
         return pool.clips[0].clipIndex
     }
 
-    static func hydrate(_ document: EditorDocument, clipIndex: Int, duration: Double) throws -> EditorDocument {
+    static func hydrate(_ document: EditorDocument, clipIndex: Int, duration: Double,
+                        removed: [(start: Double, end: Double)] = []) throws -> EditorDocument {
         guard duration.isFinite, duration > 0 else { throw APIError.invalidResponse }
         guard document.clips.isEmpty || document.clips.allSatisfy({ $0.raw["native_composite_source"] == .bool(true) }) else { return document }
+        let kept = keptSegments(duration: duration, removed: removed)
+        guard !kept.isEmpty else { throw RecipeError.invalidTimeline }
         var result = document
-        result.clips = [.init(id: slotID, clipIndex: clipIndex, inS: 0, durationS: duration,
-            raw: ["native_composite_source": .bool(true), "source_duration_s": .number(duration)])]
+        result.clips = kept.enumerated().map { index, segment in
+            .init(id: index == 0 ? slotID : slotID + "-\(index)", clipIndex: clipIndex, inS: segment.start,
+                  durationS: segment.end - segment.start,
+                  raw: ["native_composite_source": .bool(true), "source_duration_s": .number(duration)])
+        }
         return result
     }
 }
@@ -536,6 +574,25 @@ enum NativePreviewDiagnostics {
         events.append(fields.merging(["stage": stage, "time": ISO8601DateFormatter().string(from: Date())]) { _, value in value })
         if let data = try? JSONEncoder().encode(Array(events.suffix(40))) { try? data.write(to: url, options: .atomic) }
     }
+    /// Recorded from every build (unlike `failure`, which is DEBUG-only): a TestFlight phone is exactly where a
+    /// player item fails with nobody attached. Numeric AVFoundation identity only, so it is safe to upload.
+    static func playerItemFailure(kind: PlaybackFailureReport.PlayerKind, error: Error?, sourceState: String) -> PlaybackFailureReport {
+        let nsError = error.map { $0 as NSError }
+        let underlying = nsError?.userInfo[NSUnderlyingErrorKey] as? NSError
+        let report = PlaybackFailureReport(
+            playerKind: kind,
+            errorDomain: nsError?.domain ?? "unknown",
+            errorCode: nsError?.code ?? 0,
+            underlyingDomain: underlying?.domain,
+            underlyingCode: underlying.map(\.code),
+            sourceState: sourceState,
+            appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)
+        var fields = ["kind": kind.rawValue, "domain": report.errorDomain, "code": String(report.errorCode), "state": sourceState]
+        if let domain = report.underlyingDomain { fields["underlyingDomain"] = domain }
+        if let code = report.underlyingCode { fields["underlyingCode"] = String(code) }
+        record("player-item-failed", fields: fields)
+        return report
+    }
     #if DEBUG
     static func failure(_ stage: String, error: Error) {
         var fields = ["type": String(describing: type(of: error)), "domain": (error as NSError).domain, "code": String((error as NSError).code)]
@@ -706,7 +763,7 @@ enum NativePreviewDiagnostics {
                             "cuts": String(editor.document.clips.count),
                             "looks": Array(Set(editor.document.clips.compactMap(\.lookPreset))).sorted().joined(separator: ",")])
                         save()
-                        if case .failed = editor.sourcePreviewState,
+                        if editor.sourcePreviewState.isFailure,
                            let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first,
                            let data = try? Data(contentsOf: cache.appendingPathComponent("native-preview-diagnostics.json")),
                            let events = try? JSONDecoder().decode([[String: String]].self, from: data),

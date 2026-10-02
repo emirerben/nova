@@ -918,7 +918,6 @@ def test_photo_output_window_must_still_match_the_approved_timeline(change):
         ("look_preset", "golden_hour"),
         ("look_preset", "warm"),
         ("look_adjustments", {"brightness": 0.1}),
-        ("source_crop", {"x": 0, "y": 0, "width": 0.5, "height": 0.5}),
         ("playback_rate", 2),
     ],
 )
@@ -1290,7 +1289,6 @@ def test_golden_hour_pool_video_compiles_only_exact_canvas_unrotated():
         ("image_motion", "subtle_zoom_in"),
         ("look_preset", "warm"),
         ("look_adjustments", {"brightness": 0.1}),
-        ("source_crop", {"x": 0, "y": 0, "width": 0.5, "height": 0.5}),
         ("playback_rate", 2),
     ],
 )
@@ -1307,16 +1305,79 @@ def test_explicit_unit_playback_rate_is_not_a_video_treatment():
     assert recipe_digest(recipe) == recipe_digest(compile_phone_guided_plan(*pool_video_fixture()))
 
 
-@pytest.mark.parametrize(
-    "field,value",
-    [("source_crop", {"x": 0, "y": 0, "width": 0.5, "height": 0.5}), ("playback_rate", 2)],
-)
-def test_bound_footage_crop_and_retime_fail_closed_instead_of_silently_dropping(field, value):
-    # Both compiled before, rendering uncropped 1x footage the creator never approved.
+def test_bound_footage_retime_fails_closed_instead_of_silently_dropping():
+    # Compiled before, rendering 1x footage the creator never approved.
     plan, bindings = fixture()
-    plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={field: value})
+    plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={"playback_rate": 2})
     with pytest.raises(UnsupportedPhonePlan, match="unsupported phone moment treatment"):
         compile_phone_guided_plan(plan, bindings)
+
+
+CROP = {"x": 0.1, "y": 0.2, "width": 0.5, "height": 0.6}
+
+
+def test_bound_footage_crop_rides_on_the_clip_and_requires_the_source_crop_capability():
+    plan, bindings = fixture()
+    plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={"source_crop": CROP})
+    recipe = compile_phone_guided_plan(plan, bindings)
+    clips = recipe.tracks[0].clips
+    assert clips[0].source_crop is not None
+    assert clips[0].source_crop.model_dump() == CROP
+    assert all(clip.source_crop is None for clip in clips[1:])
+    assert "sourceCrop" in recipe.required_capabilities
+    serialized = recipe.model_dump(mode="json", by_alias=False)["tracks"][0]["clips"]
+    assert serialized[0]["source_crop"] == CROP
+    assert all("source_crop" not in clip for clip in serialized[1:])
+
+
+def test_uncropped_plan_recipe_is_unchanged_and_needs_no_crop_capability():
+    plan, bindings = fixture()
+    recipe = compile_phone_guided_plan(plan, bindings)
+    assert "sourceCrop" not in recipe.required_capabilities
+    clips = recipe.model_dump(mode="json")["tracks"][0]["clips"]
+    assert all("source_crop" not in clip for clip in clips)
+
+
+def test_crop_is_refused_by_the_pilot_gate_until_the_device_verifies_it(monkeypatch):
+    plan, bindings = fixture()
+    plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={"source_crop": CROP})
+    recipe = compile_phone_guided_plan(plan, bindings)
+    others = sorted(recipe.required_capabilities - {"sourceCrop"})
+    monkeypatch.setattr(settings, "phone_render_verified_features", others)
+    with pytest.raises(ValueError, match="Cropped clips"):
+        validate_phone_pilot_recipe(recipe)
+    monkeypatch.setattr(settings, "phone_render_verified_features", [*others, "sourceCrop"])
+    validate_phone_pilot_recipe(recipe)
+
+
+def test_pool_video_crop_compiles():
+    plan, bindings, visuals = pool_video_fixture(source_crop=CROP)
+    recipe = compile_phone_guided_plan(plan, bindings, visuals)
+    assert recipe.tracks[0].clips[1].source_crop.model_dump() == CROP
+    assert {"sourceCrop", "visualVideos"} <= recipe.required_capabilities
+
+
+def test_fullscreen_photo_crop_compiles():
+    plan, bindings, visuals = photo_fixture(source_crop=CROP)
+    recipe = compile_phone_guided_plan(plan, bindings, visuals)
+    photo = next(clip for clip in recipe.tracks[0].clips if clip.source_crop is not None)
+    assert photo.still_layout is None and photo.source_crop.model_dump() == CROP
+
+
+@pytest.mark.parametrize(
+    "crop",
+    [
+        {"x": 0.6, "y": 0, "width": 0.6, "height": 1},
+        {"x": 0, "y": 0, "width": 0, "height": 1},
+        {"x": 0, "y": 0},
+    ],
+)
+def test_malformed_crop_fails_closed_with_the_capability_named(crop):
+    plan, bindings = fixture()
+    plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={"source_crop": crop})
+    with pytest.raises(UnsupportedPhonePlan, match="unsupported phone crop") as excinfo:
+        compile_phone_guided_plan(plan, bindings)
+    assert excinfo.value.capability == "sourceCrop"
 
 
 @pytest.mark.parametrize(
@@ -2126,3 +2187,80 @@ def test_labels_draw_below_genuine_sequence_blocks_like_cloud():
         layer_id for layer_id, overlay in cloud if overlay["role"] != "generative_sequence"
     ] + [layer_id for layer_id, overlay in cloud if overlay["role"] == "generative_sequence"]
     assert phone_order == cloud_order
+
+
+def test_a_label_ending_at_the_nominal_end_survives_float_noise_in_the_summed_timeline():
+    """KRI-190 device test (job 5df2e3ec): the millisecond-rounded cuts sum to
+    23.531 + 1.467 == 24.997999999999998, just under a label that ends at the plan's
+    24.998, and `EditRecipeV2` rejected the recipe with "text layer exceeds the timeline"."""
+    plan, (binding,) = fixture()
+    cuts = [
+        1.333,
+        1.333,
+        2.233,
+        1.7,
+        2.233,
+        2.0,
+        1.9,
+        2.333,
+        1.9,
+        1.833,
+        1.433,
+        1.833,
+        1.467,
+        1.467,
+    ]
+    starts, cursor = [], 0.0
+    for cut in cuts:
+        starts.append(round(cursor, 3))
+        cursor += cut
+    ends = [round(start + cut, 3) for start, cut in zip(starts, cuts, strict=True)]
+    assert ends[-1] == 24.998
+    payload = plan.model_dump(mode="json")
+    payload["approved_duration_s"] = payload["resolved_duration_s"] = ends[-1]
+    payload["story_timeline"] = [
+        {
+            **payload["story_timeline"][0],
+            "moment_id": f"cut-{i}",
+            "beat_id": f"cut-{i}",
+            "source_start_s": 0,
+            "source_end_s": cut,
+            "output_start_s": start,
+            "output_end_s": end,
+            "duration_s": cut,
+        }
+        for i, (start, end, cut) in enumerate(zip(starts, ends, cuts, strict=True))
+    ]
+    payload["beat_windows"] = [
+        {
+            "beat_id": f"cut-{i}",
+            "approved_duration_s": cut,
+            "resolved_duration_s": cut,
+            "start_s": start,
+            "end_s": end,
+        }
+        for i, (start, end, cut) in enumerate(zip(starts, ends, cuts, strict=True))
+    ]
+    payload["text_elements"] = [
+        TextElement(
+            id=f"clip-label-{i}",
+            text=f"Place {i}",
+            start_s=start,
+            end_s=end,
+            role="generative_intro",
+            position="custom",
+            x_frac=0.5,
+            y_frac=0.78,
+            size_px=58,
+            effect="static",
+        ).model_dump(mode="json", exclude_none=True)
+        for i, (start, end) in enumerate(zip(starts, ends, strict=True))
+    ]
+    recipe = compile_phone_guided_plan(GuidedStoryExecutionPlan.model_validate(payload), (binding,))
+
+    # The premise: the recipe really does report a hair less than the plan's end.
+    assert recipe.duration < ends[-1]
+    assert all(layer.end <= recipe.duration for layer in recipe.text_layers)
+    # Only the overshoot moves, and only by float noise; every other layer is untouched.
+    assert recipe.text_layers[-1].end == pytest.approx(ends[-1], abs=1e-9)
+    assert [layer.end for layer in recipe.text_layers[:-1]] == ends[:-1]

@@ -62,7 +62,7 @@ def test_reaps_a_record_stale_past_pinned_at():
     assert summary == {"reaped_jobs": 1, "reaped_records": 1, "scanned_jobs": 1}
     record = device_record(job, "original_text")
     assert record["status"]["phase"] == "needs_attention"
-    assert record["status"]["reason_code"] == "unknown"
+    assert record["status"]["reason_code"] == "timed_out"
     assert record["reaped_at"]
     assert job.assembly_plan["variants"][0]["render_status"] == "needs_attention"
     assert job.assembly_plan["variants"][0]["ok"] is False

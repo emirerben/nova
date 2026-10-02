@@ -14,6 +14,7 @@ from app.kria.recipes import (
     Canvas,
     MediaAsset,
     MediaSize,
+    NormalizedSourceCrop,
     TimelineClip,
     TimelineTrack,
     Transition,
@@ -26,7 +27,11 @@ from app.pipeline.guided_story import (
     _story_canvas,
     plan_preserves_source_audio,
 )
-from app.pipeline.phone_recipe_shared import PhoneNarrationBed
+from app.pipeline.phone_recipe_shared import (
+    PhoneNarrationBed,
+    snap_text_overshoot,
+    timeline_end_s,
+)
 from app.schemas.guided_edit_revision import GUIDED_EDITOR_FPS
 from app.services.phone_sources import (
     PhoneSourceBinding,
@@ -104,6 +109,16 @@ def _clock_aligned(value: float) -> bool:
 # The device recipe's source bound (EditRecipeV2 and Models.swift reject a
 # clip starting past it). Footage originals can't exceed it; pool videos can.
 _DEVICE_SOURCE_LIMIT_S = 1800
+
+
+def _phone_source_crop(crop: dict[str, float] | None) -> NormalizedSourceCrop | None:
+    """The plan's re-frame as a recipe crop; a malformed one fails closed."""
+    if crop is None:
+        return None
+    try:
+        return NormalizedSourceCrop.model_validate(crop)
+    except ValueError as exc:
+        raise UnsupportedPhonePlan("unsupported phone crop", capability="sourceCrop") from exc
 
 
 def compile_phone_guided_plan(
@@ -231,20 +246,22 @@ def compile_phone_guided_plan(
                 or moment.image_motion is not None
                 or moment.look_preset != "none"
                 or moment.look_adjustments
-                or moment.source_crop is not None
                 or moment.playback_rate not in {None, 1}
+                # A re-frame is applied to the whole photo; a card draws the
+                # photo whole, so the two contradict each other.
+                or (moment.source_crop is not None and moment.layout != "fullscreen")
             ):
                 raise UnsupportedPhonePlan("unsupported phone photo treatment")
         else:
-            # The recipe has no crop or retime for story footage; dropping
-            # either silently would render something the creator didn't approve.
+            # The recipe has no retime for story footage; dropping it silently
+            # would render something the creator didn't approve. A crop rides
+            # on the clip (`source_crop`, `sourceCrop` capability).
             if (
                 moment.kind != "video"
                 or moment.layout != "fullscreen"
                 or moment.image_motion is not None
                 or moment.look_preset not in {"none", "golden_hour"}
                 or moment.look_adjustments
-                or moment.source_crop is not None
                 or moment.playback_rate not in {None, 1}
             ):
                 raise UnsupportedPhonePlan("unsupported phone moment treatment")
@@ -329,6 +346,7 @@ def compile_phone_guided_plan(
                     rate=1,
                     transition=incoming,
                     still_layout="supporting_card" if moment.layout == "supporting_card" else None,
+                    source_crop=_phone_source_crop(moment.source_crop),
                 )
             )
             cursor = moment.output_end_s
@@ -407,6 +425,7 @@ def compile_phone_guided_plan(
                 rate=1,
                 transition=incoming,
                 look="golden_hour" if moment.look_preset == "golden_hour" else None,
+                source_crop=_phone_source_crop(moment.source_crop),
             )
         )
         cursor = moment.output_end_s
@@ -535,6 +554,14 @@ def compile_phone_guided_plan(
                 layer.end = text_bound_s
                 if layer.end - layer.start < _FRAME_S:
                     layer.start = max(0.0, layer.end - _FRAME_S)
+    else:
+        # No refit shrink, but a layer that ends at the plan's nominal end can still
+        # overshoot the recipe's own duration by float noise: the millisecond-rounded
+        # cuts 23.531 + 1.467 sum to 24.997999999999998, just under a layer that ends
+        # at 24.998, and `EditRecipeV2` compares with a strict `>` (KRI-190 device
+        # test, job 5df2e3ec). Snap only such an overshoot, so every layer that
+        # already fits stays byte-identical.
+        snap_text_overshoot(layers, timeline_end_s(clips))
     tracks = [TimelineTrack(id="story", kind="video", clips=clips)]
     if plan.editor_visual_blocks:
         from app.pipeline.phone_editor_visuals import (  # noqa: PLC0415
@@ -596,7 +623,7 @@ def compile_phone_guided_plan(
             duration=narration.duration_s,
         )
         # Bound to the timeline this recipe actually compiled (mirrors
-        # `compile_phone_montage_plan`'s `total_duration_s` clamp): an
+        # `compile_phone_voiceover_montage_plan`'s `total_duration_s` clamp): an
         # on-device refit can shrink `compiled_duration` below the plan's
         # nominal `resolved_duration_s`, and the audio must never outlast the
         # video track it plays under.

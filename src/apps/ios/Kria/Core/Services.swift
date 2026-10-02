@@ -94,6 +94,8 @@ protocol KriaAPIClient: Sendable {
     func projects() async throws -> [ProjectSummary]
     func project(threadID: UUID) async throws -> CreationThread
     func creationCapabilities() async throws -> CreationCapabilities
+    /// KRI-207: the creator's current requirements and how each was handled.
+    func creationBrief(threadID: UUID) async throws -> CreativeBrief
     func sendCreationMessage(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
     func creationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int, clientActionID: String) async throws -> CreationThread
     func reserveVisualUpload(itemID: String, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> VisualUploadTarget
@@ -118,6 +120,8 @@ protocol KriaAPIClient: Sendable {
     func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int) async throws -> TurnAccepted
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted
+    /// `editorState` is the editor's unsaved state (server capability `editor_state_turns`); nil = omitted.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?) async throws -> TurnAccepted
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread
     func threadDelta(threadID: UUID, afterSequence: Int) async throws -> ThreadDelta
     func draft(threadID: UUID) async throws -> DraftSnapshot
@@ -133,8 +137,16 @@ protocol KriaAPIClient: Sendable {
     func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot
-    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws
+    /// `speechCleanupAware` must always be sent `true` from this client build --
+    /// it tells the server this decision understands the `speech_cleanup_*` 409
+    /// codes and the `speech_cleanup` thread projection, so gating the decision
+    /// on them is safe. `speechCleanupAnalysisID`/`speechCleanupChoice` are only
+    /// meaningful on "approve" ("clean" / "keep_original" / "create_without_cleanup")
+    /// and are encoded absent, never null, when nil.
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?) async throws
     func playbackURL(jobID: UUID) async throws -> URL
+    /// KRI-200: best-effort report of an editor player item that failed on this phone.
+    func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws
     func editRecipe(jobID: UUID, variantID: String?) async throws -> EditRecipe
     func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose?) async throws -> UploadReservation
     func cancelUpload(reservationID: UUID) async throws
@@ -169,6 +181,7 @@ extension KriaAPIClient {
     func requestAccountDeletion() async throws -> AccountDeletionRequest { throw APIError.unsupported }
     func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws { throw APIError.unsupported }
     func currentUser() async throws -> MobileUser { throw APIError.unsupported }
+    func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws { throw APIError.unsupported }
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation { throw APIError.invalidResponse }
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread {
         try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID)
@@ -188,8 +201,12 @@ extension KriaAPIClient {
         _ = clientEventID
         return try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision)
     }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID)
+    }
 
     func creationCapabilities() async throws -> CreationCapabilities { throw APIError.unsupported }
+    func creationBrief(threadID: UUID) async throws -> CreativeBrief { throw APIError.unsupported }
 
     func openJobInEditor(jobID: UUID) async throws -> OpenInEditorResponse {
         _ = jobID
@@ -757,6 +774,7 @@ struct KriaAPI: KriaAPIClient {
         Operations.reserveDeviceExport.id,
         Operations.completeDeviceExport.id,
         Operations.getCreationCapabilities.id,
+        Operations.getCreationBrief.id,
         Operations.applyCreationAction.id,
         Operations.sendCreationMessage.id,
         Operations.reserveCreationVisualUploads.id,
@@ -786,6 +804,7 @@ struct KriaAPI: KriaAPIClient {
     func projects() async throws -> [ProjectSummary] { try await request(path: "creation-threads", method: "GET", bodyData: nil, decode: [CreationThread].self).map(\.summary) }
     func project(threadID: UUID) async throws -> CreationThread { try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self) }
     func creationCapabilities() async throws -> CreationCapabilities { try await request(path: "creation-threads/capabilities", method: "GET", bodyData: nil, decode: CreationCapabilities.self) }
+    func creationBrief(threadID: UUID) async throws -> CreativeBrief { try await request(path: "creation-threads/\(threadID.uuidString)/brief", method: "GET", bodyData: nil, decode: CreativeBrief.self) }
     func library() async throws -> [ProjectSummary] {
         var summaries: [ProjectSummary] = []
         var seenJobIDs = Set<String>()
@@ -832,7 +851,10 @@ struct KriaAPI: KriaAPIClient {
         try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: UUID().uuidString)
     }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted {
-        try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision)), decode: TurnAccepted.self)
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: nil)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?) async throws -> TurnAccepted {
+        try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState)), decode: TurnAccepted.self)
     }
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread {
         try await request(
@@ -892,8 +914,11 @@ struct KriaAPI: KriaAPIClient {
     }
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/draft/undo", method: "POST", bodyData: try JSONEncoder().encode(DraftUndoRequest(expectedRevision: expectedRevision)), decode: DraftSnapshot.self) }
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)", method: "GET", bodyData: nil, decode: ApprovalSnapshot.self) }
-    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint)), decode: ApprovalResponse.self) }
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice)), decode: ApprovalResponse.self) }
     func playbackURL(jobID: UUID) async throws -> URL { let response = try await request(path: "me/jobs/\(jobID.uuidString)/playback-url", method: "GET", bodyData: nil, decode: PlaybackResponse.self); guard let url = URL(string: response.videoURL) else { throw APIError.invalidResponse }; return url }
+    func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws {
+        _ = try await request(path: "me/jobs/\(jobID.uuidString)/playback-diagnostics", method: "POST", bodyData: try JSONEncoder().encode(report), decode: EmptyProjectResponse.self)
+    }
     func currentUser() async throws -> MobileUser { try await request(path: "auth/mobile/me", method: "GET", bodyData: nil, decode: MobileUser.self) }
     func editRecipe(jobID: UUID, variantID: String?) async throws -> EditRecipe { try await request(path: "me/jobs/\(jobID.uuidString)/edit-recipe", method: "GET", query: variantID.map { [URLQueryItem(name: "variant_id", value: $0)] } ?? [], bodyData: nil, decode: EditRecipe.self) }
     func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose?) async throws -> UploadReservation { try await request(path: "generative-jobs/upload-url", method: "POST", bodyData: try JSONEncoder().encode(UploadReservationRequest(filename: filename, contentType: contentType, fileSizeBytes: size, purpose: purpose)), decode: UploadReservation.self) }
@@ -1000,7 +1025,14 @@ struct KriaAPI: KriaAPIClient {
             #endif
             if detail == "Content plan is unavailable" { throw APIError.contentPlanUnavailable }
             if detail == "Video is not ready to open in the editor." { throw APIError.editorNotReady }
-            throw APIError.conflict(detail: ConflictDetail(detail))
+            // runtime-v2 routes (`kria_runtime.py`, e.g. the approval decision
+            // endpoint) answer a conflict with `KriaProblem`'s own envelope --
+            // `{"problem": {"code", "message", "recovery", ...}}` -- instead of
+            // the legacy `{"detail": "..."}` string `decodeDetail` reads above.
+            // Surface that machine code too, so a caller can distinguish e.g.
+            // `speech_cleanup_pending` from an ordinary revision conflict.
+            let problem = Self.decodeProblem(from: data)
+            throw APIError.conflict(detail: ConflictDetail(detail ?? problem?.message, code: problem?.code))
         }
         guard (200..<300).contains(http.statusCode) else {
             if http.statusCode == 422, path.hasSuffix("/editor-commit") {
@@ -1064,6 +1096,14 @@ struct KriaAPI: KriaAPIClient {
     private static func decodeDetail(from data: Data) -> String? {
         guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
         return body["detail"] as? String
+    }
+    /// Decodes the runtime-v2 `KriaProblemOut` envelope (`{"problem": {"code",
+    /// "message", ...}}`). Nil when the body isn't shaped that way, e.g. the
+    /// legacy `{"detail": "..."}` string every other route still sends.
+    private static func decodeProblem(from data: Data) -> (code: String?, message: String?)? {
+        guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let problem = body["problem"] as? [String: Any] else { return nil }
+        return (problem["code"] as? String, problem["message"] as? String)
     }
 }
 enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
@@ -1211,6 +1251,22 @@ private struct LibraryPosterRequest: Encodable {
     let brokenJobIDs: [UUID]
     enum CodingKeys: String, CodingKey { case jobIDs = "job_ids"; case brokenJobIDs = "broken_job_ids" }
 }
+/// Identity of a failed editor player item: numeric AVFoundation codes and domains only, never URLs or error text.
+struct PlaybackFailureReport: Encodable, Equatable, Sendable {
+    enum PlayerKind: String, Encodable, Sendable { case live, finished }
+    let playerKind: PlayerKind
+    let errorDomain: String
+    let errorCode: Int
+    let underlyingDomain: String?
+    let underlyingCode: Int?
+    let sourceState: String
+    let appBuild: String?
+    enum CodingKeys: String, CodingKey {
+        case playerKind = "player_kind", errorDomain = "error_domain", errorCode = "error_code"
+        case underlyingDomain = "underlying_domain", underlyingCode = "underlying_code"
+        case sourceState = "source_state", appBuild = "app_build"
+    }
+}
 private struct PlaybackResponse: Decodable { let videoURL: String; enum CodingKeys: String, CodingKey { case videoURL = "video_url" } }
 private struct ApprovalResponse: Decodable {}
 private struct RevokeResponse: Decodable { let revoked: Bool? }
@@ -1225,9 +1281,46 @@ private enum ServerDateCoding {
         throw DecodingError.dataCorruptedError(in: try decoder.singleValueContainer(), debugDescription: "Expected ISO-8601 date")
     }
 }
-private struct SubmitTurnRequest: Encodable { let message: String; let clientEventID: String; let expectedThreadRevision: Int; enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision" } }
+private struct SubmitTurnRequest: Encodable {
+    let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil
+    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state" }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(message, forKey: .message); try c.encode(clientEventID, forKey: .clientEventID)
+        try c.encode(expectedThreadRevision, forKey: .expectedThreadRevision)
+        try c.encodeIfPresent(editorState, forKey: .editorState)
+    }
+}
+
+/// The editor's CURRENT UNSAVED state sent with a chat turn (server `EditorStateIn`).
+/// `lanes` reuses the Save commit lane encoding; Save-only fields are never set.
+struct EditorStateRequest: Codable, Sendable, Equatable {
+    var version = 1
+    var baseGeneration: String
+    var clientStateID: String
+    var lanes: EditorCommitRequest
+    enum CodingKeys: String, CodingKey { case version; case baseGeneration = "base_generation"; case clientStateID = "client_state_id"; case lanes }
+}
+extension EditorCommitRequest: Equatable {
+    static func == (l: Self, r: Self) -> Bool { (try? JSONEncoder().encode(l)) == (try? JSONEncoder().encode(r)) }
+}
 private struct CreationActionRequest: Encodable { let action: String; let payload: [String: JSONValue]; let clientActionID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case action, payload; case clientActionID = "client_action_id"; case expectedRevision = "expected_revision" } }
-private struct ApprovalDecisionRequest: Encodable { let expectedThreadRevision: Int; let expectedDraftRevision: Int; let fingerprint: String; enum CodingKeys: String, CodingKey { case expectedThreadRevision = "expected_thread_revision"; case expectedDraftRevision = "expected_draft_revision"; case fingerprint = "expected_approval_fingerprint" } }
+private struct ApprovalDecisionRequest: Encodable {
+    let expectedThreadRevision: Int
+    let expectedDraftRevision: Int
+    let fingerprint: String
+    let speechCleanupAware: Bool
+    let speechCleanupAnalysisID: String?
+    let speechCleanupChoice: String?
+    enum CodingKeys: String, CodingKey {
+        case expectedThreadRevision = "expected_thread_revision"
+        case expectedDraftRevision = "expected_draft_revision"
+        case fingerprint = "expected_approval_fingerprint"
+        case speechCleanupAware = "speech_cleanup_aware"
+        case speechCleanupAnalysisID = "speech_cleanup_analysis_id"
+        case speechCleanupChoice = "speech_cleanup_choice"
+    }
+}
 private struct UploadCancellation: Decodable { let reservationID: String; let status: String; enum CodingKeys: String, CodingKey { case status; case reservationID = "reservation_id" } }
 private struct UploadReservationRequest: Encodable { let filename: String; let contentType: String; let fileSizeBytes: Int64; let purpose: UploadPurpose?; enum CodingKeys: String, CodingKey { case filename, purpose; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes" } }
 private struct AddClipRequestBody: Encodable { let gcsPath: String; enum CodingKeys: String, CodingKey { case gcsPath = "gcs_path" } }
@@ -1268,6 +1361,10 @@ enum APIError: Error, LocalizedError, Equatable {
     static let conflict = APIError.conflict(detail: ConflictDetail(nil))
     /// The server's human-readable reason for a conflict, if it sent one.
     var conflictDetail: String? { if case let .conflict(detail) = self { detail.message } else { nil } }
+    /// The runtime-v2 `KriaProblem.code` for this conflict, if the server sent
+    /// that envelope (e.g. `speech_cleanup_pending` from the approval decision
+    /// endpoint). Nil for the legacy `{"detail": "..."}` string shape.
+    var conflictCode: String? { if case let .conflict(detail) = self { detail.code } else { nil } }
     /// The server's human-readable reason for a non-2xx failure, if it sent
     /// one. Additive: most call sites still only care about `status`.
     var requestFailureDetail: String? { if case let .requestFailed(_, detail) = self { detail.message } else { nil } }
@@ -1304,13 +1401,17 @@ struct RequestFailureDetail: Equatable, Sendable, CustomStringConvertible {
 /// the detail is context for the UI and never changes which conflict checks match.
 struct ConflictDetail: Equatable, Sendable, CustomStringConvertible {
     let message: String?
-    init(_ message: String?) {
+    /// The runtime-v2 `KriaProblem.code`, when the server sent that envelope
+    /// instead of the legacy `detail` string. See `decodeProblem`.
+    let code: String?
+    init(_ message: String?, code: String? = nil) {
         let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.message = trimmed?.isEmpty == false ? trimmed : nil
+        self.code = code
     }
     static func == (_: ConflictDetail, _: ConflictDetail) -> Bool { true }
     /// Diagnostics print errors with `String(describing:)`; keep server text out of them.
-    var description: String { message == nil ? "none" : "present" }
+    var description: String { message == nil && code == nil ? "none" : "present" }
 }
 
 /// Where a failed request broke. Copy may blame the connection only when no
@@ -1520,6 +1621,14 @@ extension DraftSnapshot {
                 "sound_effects", "media_overlays", "visual_blocks", "motion_scenes",
                 "motion_runtime_hash", "camera_effects", "carousel_moment",
             ]
+            // A chat-authored editor draft (kind `editor`, flat commit-shaped
+            // lane keys) carries its edited lanes in `sections`. The rendered
+            // variant is the clean baseline, so drop those lane copies unless
+            // the variant supplies them; `stagedChatEdit` re-applies them as
+            // unsaved edits when the draft is current.
+            for lane in Self.stagedLaneKeys where lane.section != .timeline && editorPayload[lane.key] != nil {
+                for key in lane.sectionKeys where authoritativeVariant[key] == nil { sections[key] = nil }
+            }
             for key in directKeys where authoritativeVariant[key] != nil {
                 sections[key] = authoritativeVariant[key]
             }
@@ -1629,6 +1738,111 @@ extension DraftSnapshot {
             etag: etag,
             serverSnapshot: document
         )
+    }
+
+    /// Chat-authored editor changes staged on top of the rendered variant.
+    struct StagedChatEdit: Equatable {
+        /// Lanes whose overlaid content differs from `base` and must be saved.
+        var sections: Set<EditorSection>
+        /// `base` with the chat-changed lanes overlaid (decode with `EditorDocument`).
+        var snapshot: [String: JSONValue]
+    }
+
+    /// Editor-commit key (flat draft key) -> lane. The server keeps the lanes a
+    /// chat turn touched as flat commit-shaped keys beside the nested `sections`
+    /// copy (`kria_editor_ops.merge_editor_draft`), so the flat keys identify
+    /// the changed lanes and `sections` carries their full content.
+    private static let stagedLaneKeys: [(key: String, section: EditorSection, sectionKeys: [String])] = [
+        ("timeline_slots", .timeline, ["timeline_slots"]), ("text_elements", .text, ["text_elements"]),
+        ("caption_cues", .captions, ["caption_cues"]), ("caption_meta", .captionMeta, ["caption_meta"]),
+        ("mix", .mix, ["mix"]), ("music_track_id", .music, ["music_track_id", "music_window"]),
+        ("music_window", .music, ["music_track_id", "music_window"]), ("remove_music", .music, ["music_track_id", "music_window"]),
+        ("background_music", .backgroundMusic, ["background_music"]), ("lyrics", .lyrics, ["lyrics"]),
+        ("orientation", .orientation, ["orientation"]), ("sound_effects", .soundEffects, ["sound_effects"]),
+        ("media_overlays", .mediaOverlays, ["media_overlays"]), ("visual_blocks", .visualBlocks, ["visual_blocks"]),
+        ("motion_scenes", .motionScenes, ["motion_scenes", "motion_runtime_hash"]),
+        ("camera_effects", .cameraEffects, ["camera_effects"]),
+        ("carousel_moment", .carouselMoment, ["carousel_moment"]), ("title", .title, ["title"]),
+    ]
+
+    /// Overlay a runtime-v2 chat draft (`draft.apply_editor_ops`, kind `editor`)
+    /// onto `base`, the rendered-variant-authoritative snapshot. Chat edits are
+    /// UNSAVED: nothing renders until the creator saves. Returns nil when the
+    /// draft is not an editor head, is stale (its `base_generation` is not the
+    /// variant's current `render_generation_id` — a save/render happened since),
+    /// was already applied (`appliedRevision`), or changes nothing.
+    func stagedChatEdit(over base: [String: JSONValue], variant: [String: JSONValue]?, appliedRevision: Int?) -> StagedChatEdit? {
+        guard let variant, snapshot["kind"]?.stringValue == "editor" else { return nil }
+        if let appliedRevision, draftRevision <= appliedRevision { return nil }
+        guard let draftPayload = Self.object(snapshot["editor_payload"]),
+              let draftBase = draftPayload["base_generation"]?.stringValue, !draftBase.isEmpty,
+              draftBase == variant["render_generation_id"]?.stringValue else { return nil }
+        // The flat keys are the complete compiled lane values; `sections` may be
+        // absent (first chat edit on a non-editor head) or stale for a lane, so
+        // the flat value wins and `sections` only fills lanes it does not carry.
+        let draftSections = Self.object(draftPayload["sections"]) ?? [:]
+        func draftValue(_ key: String) -> JSONValue? { draftPayload[key] ?? draftSections[key] }
+        var payload = Self.object(base["editor_payload"]) ?? [:]
+        let baseSections = Self.object(payload["sections"]) ?? [:]
+        var sections = baseSections
+        var changed: Set<EditorSection> = []
+        for lane in Self.stagedLaneKeys where draftPayload[lane.key] != nil && !changed.contains(lane.section) {
+            var candidate = sections
+            if lane.section == .timeline {
+                guard let merged = Self.mergedTimeline(draft: Self.array(draftValue("timeline_slots")), base: Self.array(baseSections["timeline_slots"])) else { continue }
+                candidate["timeline_slots"] = .array(merged)
+            } else {
+                for key in lane.sectionKeys {
+                    if key == "music_track_id", draftPayload["remove_music"] == .bool(true) { candidate[key] = .null }
+                    else if let value = draftValue(key) { candidate[key] = value }
+                }
+            }
+            let differs = lane.sectionKeys.contains { Self.strippingNulls(candidate[$0]) != Self.strippingNulls(baseSections[$0]) }
+            guard differs else { continue }
+            sections = candidate; changed.insert(lane.section)
+        }
+        guard !changed.isEmpty else { return nil }
+        payload["sections"] = .object(sections)
+        var next = base; next["editor_payload"] = .object(payload)
+        return StagedChatEdit(sections: changed, snapshot: next)
+    }
+
+    /// Merge chat `TimelineSlotEdit` rows (wire shape) onto the editor's richer
+    /// slot rows by identity (`slot_id`, else `clip_index`) so media/asset
+    /// metadata survives. Draft order wins (reorder); base slots the draft does
+    /// not mention keep their place at the end. Nil when nothing changed.
+    private static func mergedTimeline(draft: [JSONValue], base: [JSONValue]) -> [JSONValue]? {
+        guard !draft.isEmpty else { return nil }
+        var unmatched = base.compactMap(object)
+        func take(_ row: [String: JSONValue]) -> [String: JSONValue]? {
+            let index = row["slot_id"]?.stringValue.flatMap { id in unmatched.firstIndex { $0["slot_id"]?.stringValue == id } }
+                ?? (row["slot_id"] == nil ? unmatched.firstIndex { $0["clip_index"] == row["clip_index"] } : nil)
+            return index.map { unmatched.remove(at: $0) }
+        }
+        var merged: [[String: JSONValue]] = []
+        for value in draft {
+            guard let row = object(value) else { continue }
+            var slot = take(row) ?? [:]
+            for (key, field) in row { slot[key] = field }
+            merged.append(slot)
+        }
+        merged.append(contentsOf: unmatched)
+        // A tombstone for a slot the base never listed is not a change.
+        let baseIDs = Set(base.compactMap { object($0)?["slot_id"]?.stringValue })
+        let effective = merged.filter { $0["removed"] != .bool(true) || baseIDs.contains($0["slot_id"]?.stringValue ?? "") }
+        guard strippingNulls(.array(effective.map(JSONValue.object))) != strippingNulls(.array(base)) else { return nil }
+        return merged.map(JSONValue.object)
+    }
+
+    /// Structural comparison key that treats absent and null fields alike (the
+    /// server projects full nullable rows; the phone's rows omit unset fields).
+    private static func strippingNulls(_ value: JSONValue?) -> JSONValue? {
+        switch value {
+        case let .object(object): return .object(object.compactMapValues { strippingNulls($0) })
+        case let .array(array): return .array(array.compactMap { strippingNulls($0) })
+        case .some(.null), .none: return nil
+        default: return value
+        }
     }
 
     fileprivate static func object(_ value: JSONValue?) -> [String: JSONValue]? { if case let .object(object) = value { object } else { nil } }

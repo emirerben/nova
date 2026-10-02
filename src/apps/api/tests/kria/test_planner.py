@@ -17,12 +17,14 @@ from app.agents._schemas.creator_agent import (
 from app.kria import planner
 from app.kria.planner import (
     _full_creator_request,
+    _phone_editor_reply,
     _plan_editor_revision,
     adapt_creator_action,
     adapt_editor_action,
     plan_live_turn,
 )
 from app.kria.registry import KRIA_TOOLS
+from app.kria.strategy_policy import CheckedStrategy
 from app.models import ContentPlan, CreationThread, CreatorAgentSession, Job, Persona, PlanItem
 from app.schemas.clip_intents import ClipAssignment, ClipIntent, ResolvedClipIntent
 from app.services.clip_intent_planning import PlannedIntentResolution
@@ -161,6 +163,13 @@ def test_full_creator_request_preserves_all_user_messages_and_current_message_la
     )
 
 
+def test_phone_editor_reply_replaces_web_validate_and_stage_wording() -> None:
+    assert "validate and stage" not in _phone_editor_reply(
+        "I prepared this edit for the editor to validate and stage."
+    )
+    assert _phone_editor_reply("I prepared a tighter opening.") == "I prepared a tighter opening."
+
+
 def test_model_cannot_author_render_target_pins() -> None:
     arguments = KRIA_TOOLS.get("render.request", 1).arguments_model
 
@@ -208,8 +217,8 @@ async def test_editor_revision_copies_orm_values_before_releasing_read_transacti
 
     job_id = uuid.uuid4()
     session_id = uuid.uuid4()
-    item = SimpleNamespace(current_job_id=job_id)
-    thread = SimpleNamespace(active_creator_agent_session_id=session_id)
+    item = SimpleNamespace(current_job_id=job_id, clip_assignments=[])
+    thread = SimpleNamespace(active_creator_agent_session_id=session_id, creator_id=uuid.uuid4())
     session = SimpleNamespace(
         target_job_id=job_id,
         target_variant_id="original_text",
@@ -218,6 +227,7 @@ async def test_editor_revision_copies_orm_values_before_releasing_read_transacti
     )
     job = SimpleNamespace(
         id=job_id,
+        user_id=uuid.uuid4(),
         assembly_plan={
             "variants": [
                 {"variant_id": "original_text", "render_status": "ready"},
@@ -256,7 +266,7 @@ async def test_editor_revision_copies_orm_values_before_releasing_read_transacti
     monkeypatch.setattr(
         planner,
         "build_editor_snapshot",
-        lambda *_args: {"allowed_op_families": ["trim_output_start"]},
+        lambda *_args, **_kwargs: {"allowed_op_families": ["trim_output_start"]},
     )
     monkeypatch.setattr(planner, "run_copilot_turn", copilot)
 
@@ -465,6 +475,13 @@ async def test_live_creator_clip_intent_resolution_is_server_owned_and_fails_clo
         side_effect=RuntimeError("cache write failed") if outcome == "cache_failure" else None
     )
     monkeypatch.setattr(planner, "persist_clip_intent_vision_answers", persist_answers)
+    # This test pins the clip-intent flow over a bare manifest; the server
+    # strategy check (KRI-142) has its own tests in test_strategy_policy.py.
+    monkeypatch.setattr(
+        planner,
+        "check_strategy_for_runtime_v2",
+        lambda _manifest, strategy: CheckedStrategy(strategy=strategy, notices=()),
+    )
 
     class FakeAgent:
         def __init__(self, _client) -> None:  # noqa: ANN001
@@ -604,6 +621,77 @@ async def test_live_creator_clip_intent_resolution_is_server_owned_and_fails_clo
     else:
         assert result.plan.intents == []
         persist_answers.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_generic_montage_context_with_empty_inventory_stays_actionable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-244: context-only chronology must not become a resolver question."""
+    request = (
+        "I took the sunset pictures walking to the bus to go to the pub and the night ones "
+        "cycling to go back home in London. Come up with crative ideas"
+    )
+    creator_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    thread_id = uuid.uuid4()
+    manifest = ResolvedCreatorManifest(
+        item_id=str(item_id),
+        edit_format="montage",
+        render_program="guided",
+        capabilities={"dispatch_render": CapabilityAvailability(available=True)},
+        context_hash="a" * 64,
+        manifest_hash="b" * 64,
+    )
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            direction="guided_story",
+            edit_format="montage",
+            audio_strategy="licensed_music",
+            pacing="fast",
+            render_program="guided",
+            selected_media_ids=[],
+            rationale="Build a London evening story from the strongest moments.",
+        ),
+        summary="A London sunset-to-night montage.",
+    )
+    inventory = AsyncMock(return_value=PlannedIntentResolution([], IntentResolution()))
+    monkeypatch.setattr(planner.settings, "clip_intents_enabled", True)
+    monkeypatch.setattr(planner, "plan_and_resolve_clip_intents", inventory)
+    monkeypatch.setattr(
+        planner,
+        "check_strategy_for_runtime_v2",
+        lambda _manifest, strategy: CheckedStrategy(strategy=strategy, notices=()),
+    )
+
+    result = await planner._plan_from_creator_output(
+        SimpleNamespace(),
+        thread_id=thread_id,
+        item_id=item_id,
+        creator_id=creator_id,
+        user_message=request,
+        manifest=manifest,
+        inputs=planner._CreatorInputs(
+            agent_input=SimpleNamespace(), intent_clips=[], creator_request=request
+        ),
+        output=SimpleNamespace(action=action),
+        brief_request=(
+            "Creative brief (everything the creator has asked for, still in force):\n"
+            "- [order/global] chronological order from sunset walk to night cycle\n"
+            f"Latest message: {request}"
+        ),
+    )
+
+    assert result.plan.turn_value == "action"
+    assert [intent.tool_name for intent in result.plan.intents] == [
+        "draft.apply_strategy",
+        "render.request",
+    ]
+    inventory.assert_awaited_once()
+    assert inventory.await_args.kwargs["creator_request"] == request
+    assert inventory.await_args.kwargs["latest_user_message"] == request
+    assert "[order/global]" in inventory.await_args.kwargs["generated_brief"]
 
 
 def test_explicit_server_editor_action_retains_exact_render_approval() -> None:

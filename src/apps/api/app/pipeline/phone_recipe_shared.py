@@ -2,16 +2,20 @@
 
 `app.pipeline.phone_guided_plan` was the first phone compiler
 (`compile_phone_guided_plan`) and keeps its own inline copies of the
-export-safety-margin refit math and its rounding tolerance -- it is left
-untouched here (byte-identical behavior, its test suite unmodified) since its
-logic is already load-bearing and verified. This module exists so the SECOND
-compiler (`app.pipeline.phone_montage_plan`, for the montage/day_vlog/
+export-safety-margin refit math and its rounding tolerance -- those stay
+untouched (byte-identical behavior) since that logic is already load-bearing
+and verified; only the float-noise text snap below is shared with it. This
+module exists so the SECOND
+compiler (`app.pipeline.phone_voiceover_montage_plan`, for the montage/day_vlog/
 single_hero archetypes) doesn't have to reinvent that math, and so a THIRD
 compiler (voiceover/subtitled/etc., future phases) has somewhere to import it
 from instead of copy-pasting again.
 """
 
 from __future__ import annotations
+
+from collections.abc import Iterable
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -27,6 +31,48 @@ EXPORT_SAFETY_MARGIN_S = 0.05
 # by a couple of milliseconds without that being a real timing-program
 # mismatch.
 TIMING_ROUNDING_TOLERANCE_S = 0.005
+
+# Mirrors the cloud's `afade=t=out:d=0.5` on a recorded voiceover
+# (`_mix_user_voiceover`) and on a song bed (`_mix_template_audio`); the phone
+# expresses it as a per-clip `TimelineClip.audio_fade_out` (KRI-139).
+PHONE_AUDIO_FADE_S = 0.5
+
+# Mirrors `app.tasks.template_orchestrate._NARRATED_FOOTAGE_BED_MAX_GAIN`: the
+# resting level of a side-chain ducked footage bed. Only applied together with
+# the native duck -- the flat (un-ducked) approximation keeps its shipped gain.
+NARRATED_FOOTAGE_BED_MAX_GAIN = 0.6
+
+
+def audio_fade(clip_duration_s: float) -> float:
+    """`PHONE_AUDIO_FADE_S`, shortened so a fade never covers half a short clip."""
+    return round(max(0.0, min(PHONE_AUDIO_FADE_S, clip_duration_s / 2)), 6)
+
+
+def snap_text_overshoot(layers: Iterable[Any], timeline_end_s: float) -> None:
+    """Snap a text layer that overshoots the timeline by float noise back onto it.
+
+    ``EditRecipeV2`` (and the Swift twin) reject ``layer.end > duration`` with a
+    strict compare, so a layer that ends at a plan's nominal end can trip it when
+    the summed millisecond-rounded cuts (or a ``usable / (usable / target)`` slow-
+    down) land 1 ULP short: 23.531 + 1.467 == 24.997999999999998 < 24.998 (KRI-190
+    device test, job 5df2e3ec). Only an overshoot of at most
+    ``TIMING_ROUNDING_TOLERANCE_S`` moves, so every layer that already fits stays
+    byte-identical and a real overrun is still rejected by the recipe validator.
+    """
+    for layer in layers:
+        if 0 < layer.end - timeline_end_s <= TIMING_ROUNDING_TOLERANCE_S:
+            layer.end = timeline_end_s
+
+
+def timeline_end_s(clips: Iterable[Any]) -> float:
+    """Where these clips end: ``EditRecipeV2.duration``'s formula over ``clips``."""
+    return max(
+        (
+            clip.timeline_start + clip.source_duration / clip.rate + (clip.hold_duration or 0)
+            for clip in clips
+        ),
+        default=0.0,
+    )
 
 
 def refit_source_window(
@@ -61,7 +107,7 @@ class PhoneMusicBed(BaseModel):
     publish/ready/path-prefix contract directly against a sync DB session
     instead of calling that async function. `inspect_library_asset` (already
     sync) then pins the exact generation + fingerprint. Consumed by
-    `compile_phone_montage_plan`, which never touches the database or GCS
+    `compile_phone_voiceover_montage_plan`, which never touches the database or GCS
     itself -- it only reads this already-verified value.
     """
 
@@ -93,7 +139,7 @@ class PhoneNarrationBed(BaseModel):
     media addressed by plan item, not catalog id -- see
     `app.kria.render_assets.VoiceoverRenderAsset`.
 
-    Consumed by `compile_phone_montage_plan`, which never touches the
+    Consumed by `compile_phone_voiceover_montage_plan`, which never touches the
     database or GCS itself -- it only reads this already-verified value.
     """
 

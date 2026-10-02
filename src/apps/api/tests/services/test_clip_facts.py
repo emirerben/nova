@@ -89,6 +89,37 @@ def test_malformed_stored_capture_is_no_capture(bad: object) -> None:
     assert cf.assignment_facts({"capture": bad}) == []
 
 
+@pytest.mark.parametrize(
+    "place",
+    [
+        {"country": "Türkiye"},
+        {"country": "Turquia"},
+        {"country": "  Türkiye  "},
+        {"sub_locality": "", "locality": "  ", "country": "Türkiye"},
+    ],
+)
+def test_a_country_alone_is_not_a_place_fact(place) -> None:
+    """KRI-190 simulator test: two clips were captioned "Türkiye" because the geocoder
+    found nothing finer. A country says nothing about the clip, so it is not a place fact."""
+    capture = cf.capture_from_assignment({"capture": {**_CAPTURE, "place": place}})
+    assert [f.kind for f in cf.capture_facts(capture)] == ["capture_time"]
+
+
+@pytest.mark.parametrize(
+    ("place", "expected"),
+    [
+        # A city-state: the locality shares the country's name, and is a real place.
+        ({"locality": "Singapore", "country": "Singapore"}, "Singapore"),
+        ({"locality": "İstanbul", "country": "Türkiye"}, "İstanbul, Türkiye"),
+        ({"sub_locality": "Arnavutköy", "country": "Türkiye"}, "Arnavutköy, Türkiye"),
+        ({"locality": "Sarıyer"}, "Sarıyer"),
+    ],
+)
+def test_any_finer_part_keeps_the_place_fact(place, expected) -> None:
+    capture = cf.capture_from_assignment({"capture": {**_CAPTURE, "place": place}})
+    assert {f.kind: f.value for f in cf.capture_facts(capture)}["place"] == expected
+
+
 def test_assignment_facts_dedupe_stored_copies_of_capture_facts() -> None:
     assignment = cf.with_capture_facts({"capture": _CAPTURE, "generation": "1"})
     assignment = cf.with_landmark_fact(

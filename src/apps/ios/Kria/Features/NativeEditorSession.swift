@@ -1,11 +1,34 @@
 import AVFoundation
 import KriaMediaEngine
+import os
 import SwiftUI
 import ImageIO
 import UIKit
 
 enum NativeSourcePreviewState: Equatable {
     case idle, preparing, ready, failed(String)
+    /// KRI-211: the project's original clips are not on this iPhone (made on
+    /// another device, or the file changed). Retrying cannot fix it — only
+    /// finding the files can — so it is its own state with its own copy.
+    case originalsUnavailable
+
+    /// Both settle on the finished render (when there is one); only the way
+    /// out differs (Retry versus finding the originals).
+    var isFailure: Bool {
+        switch self {
+        case .failed, .originalsUnavailable: true
+        case .idle, .preparing, .ready: false
+        }
+    }
+}
+
+/// A player item that built fine but failed while loading or playing (KRI-200). Before this, a failed
+/// item left `play()` a silent no-op: the button flipped straight back and nothing explained why.
+enum NativeEditorPlaybackFailure: Error, Equatable {
+    /// The editable source composition failed; the finished render takes over.
+    case liveItem
+    /// The finished render itself could not be loaded, even after a fresh link.
+    case finishedItem
 }
 
 enum NativeTrimEdge: Sendable { case leading, trailing }
@@ -301,6 +324,10 @@ struct NativeEditorTemporaryVideo {
     }
     private var sourceAudioPreserved: Bool { previewVariant["source_audio_preserved"]?.boolValue ?? true }
     private var sourcePool: NativeEditorSourcePool?
+    /// The source pool the last preview attempt asked for. `sourcePool` is only set once every source
+    /// resolves, so a preview that fails on a missing original has no pool there; this one stays, and
+    /// is what "Find original files" derives its targets from (KRI-211).
+    private var originalsRecoveryPool: NativeEditorSourcePool?
     private var resolvedMedia: [String: ResolvedEditorSource] = [:]
     private var resolvedSources: [Int: ResolvedEditorSource]?
     private var sourcePreviewTask: Task<Void, Never>?
@@ -312,13 +339,17 @@ struct NativeEditorTemporaryVideo {
     /// nil`) is the only reliable "is a rebuild still pending" signal.
     private var sourcePreviewSettledSequence = 0
     private var sourcePreviewGeneration: String?
+    /// True for ~3 s after a pending save's render lands (KRI-227), so the
+    /// creator sees the edit was applied. Never set on editor open.
+    @Published private(set) var showsEditApplied = false
+    private var editAppliedTask: Task<Void, Never>?
     private var sourcePreviewUpdateDeferred = false
     var hasSourcePreview: Bool { sourcePreviewState == .ready }
     /// A source-composited player is editable. A failed source preparation can
     /// instead show only the server-rendered video, with canvas interaction
     /// deliberately disabled until a retry produces a source preview.
     var isShowingRenderedFallback: Bool {
-        guard case .failed = sourcePreviewState else { return false }
+        guard sourcePreviewState.isFailure else { return false }
         return player != nil && player === finishedRenderPlayer
     }
 
@@ -347,7 +378,7 @@ struct NativeEditorTemporaryVideo {
             // surface is the honest state until the source preview, built
             // straight from the current document, is ready.
             return player === finishedRenderPlayer && finishedRenderIsCurrent
-        case .failed:
+        case .failed, .originalsUnavailable:
             // Once source-preview construction has genuinely failed (not
             // merely still preparing), a stale finished render is still
             // strictly better than nothing — the user can at least see and
@@ -472,6 +503,90 @@ struct NativeEditorTemporaryVideo {
     private var pendingPreviewGeneration: String?
     private var changedSections: Set<EditorSection> = []
     private var explicitlyDirtySections: Set<EditorSection> = []
+    /// Highest chat-draft revision already staged (or deliberately left to the
+    /// conflict path) so an undo/discard is not re-applied by the next sync.
+    private var appliedChatDraftRevision: Int?
+    /// The document exactly as staged from a chat draft, and its lanes. While
+    /// the live document still matches it lane-for-lane the only unsaved edits
+    /// are the chat's, which the server already holds in its draft head, so
+    /// they need no editor-commit before the next chat message.
+    private var chatStagedDocument: EditorDocument?
+    private var chatStagedSections: Set<EditorSection> = []
+
+    /// Editor documents submitted with a chat turn, keyed by the `client_state_id`
+    /// the server echoes on the draft it builds from them. The apply path uses the
+    /// submitted document as the three-way merge base. In-memory only; bounded.
+    private struct SubmittedEditorState { let document: EditorDocument; let sections: Set<EditorSection> }
+    private var submittedEditorStates: [String: SubmittedEditorState] = [:]
+    private var submittedEditorStateOrder: [String] = []
+    private static let submittedEditorStateLimit = 8
+
+    /// The editor's current UNSAVED state for a chat turn, or nil when it cannot be
+    /// sent (not loaded, no baseline generation, or over `maxBytes`) and the caller
+    /// must fall back to the legacy save-then-send flow. A clean editor exports an
+    /// EMPTY `lanes` object, which the server reads as "no unsaved edits".
+    func exportEditorState(maxBytes: Int? = nil) -> EditorStateRequest? {
+        guard loadState == .loaded, !isSaving else { return nil }
+        // A text field still being typed is part of the creator's current state.
+        _ = finishTextCreation()
+        refreshDirtyState()
+        let payload = Self.object(document.encodeSnapshot()["editor_payload"])
+        let sections = Self.object(payload?["sections"])
+        let generation = payload?["base_generation"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
+            ?? document.revision.baseGeneration.nilIfEmpty ?? cleanDocument.revision.baseGeneration.nilIfEmpty
+        guard let generation else { return nil }
+        var lanes = commitRequest(sections: sections, baseGeneration: generation)
+        // Save-only: the server rejects these on a turn's editor state.
+        lanes.guidedRevisionNumber = nil; lanes.guidedRevision = nil
+        lanes.acceptedSuggestionIDs = nil; lanes.copilotReceiptIDs = []; lanes.retryGuidedRevision = false
+        let request = EditorStateRequest(baseGeneration: generation, clientStateID: UUID().uuidString, lanes: lanes)
+        if let maxBytes, let encoded = try? JSONEncoder().encode(request), encoded.count > maxBytes {
+            Self.stagingLog.debug("editor_state over cap bytes=\(encoded.count, privacy: .public) max=\(maxBytes, privacy: .public); legacy flush")
+            return nil
+        }
+        submittedEditorStates[request.clientStateID] = SubmittedEditorState(document: document, sections: changedSections)
+        submittedEditorStateOrder.append(request.clientStateID)
+        while submittedEditorStateOrder.count > Self.submittedEditorStateLimit {
+            submittedEditorStates[submittedEditorStateOrder.removeFirst()] = nil
+        }
+        return request
+    }
+
+    /// Lane equality without comparing whole documents (revision metadata differs).
+    private func lanesEqual(_ section: EditorSection, _ a: EditorDocument, _ b: EditorDocument) -> Bool {
+        var probe = a
+        copy(section, from: b, into: &probe)
+        return probe == a
+    }
+
+    /// Three-way per-lane merge of a chat draft built on `submitted`. Returns nil
+    /// when some lane changed on BOTH sides (caller raises `.conflict`).
+    private func mergeChatDraft(_ staged: (document: EditorDocument, sections: Set<EditorSection>), over submitted: EditorDocument) -> (document: EditorDocument, taken: Set<EditorSection>)? {
+        var merged = document
+        var taken: Set<EditorSection> = []
+        for section in staged.sections {
+            let localUntouched = lanesEqual(section, document, submitted)
+            let serverUntouched = lanesEqual(section, staged.document, submitted)
+            if localUntouched {
+                if !serverUntouched { copy(section, from: staged.document, into: &merged); taken.insert(section) }
+            } else if !serverUntouched, !lanesEqual(section, document, staged.document) {
+                return nil
+            }
+        }
+        merged.revision.number = staged.document.revision.number ?? merged.revision.number
+        return (merged, taken)
+    }
+
+    var hasOnlyChatStagedChanges: Bool {
+        guard hasUnsavedChanges, let staged = chatStagedDocument, !changedSections.isEmpty,
+              changedSections.isSubset(of: chatStagedSections), pendingText == nil else { return false }
+        for section in changedSections {
+            var probe = document
+            copy(section, from: staged, into: &probe)
+            if probe != document { return false }
+        }
+        return true
+    }
     private var pendingRenderRetrySections: Set<EditorSection> = []
     private var clipIDsBySlot: [String: UUID] = [:]
     private var compatibilityClipMetadata: [UUID: (sourceClipIndex: Int?, slotID: String?)] = [:]
@@ -502,6 +617,16 @@ struct NativeEditorTemporaryVideo {
     nonisolated(unsafe) private var observingPlayer: AVPlayer?
     nonisolated(unsafe) private var endObserver: NSObjectProtocol?
     private var playbackStateObserver: NSKeyValueObservation?
+    private var itemStatusObserver: NSKeyValueObservation?
+    nonisolated(unsafe) private var itemFailureObserver: NSObjectProtocol?
+    /// The item whose failure was already reported, so status + failed-to-end (which can both fire for one
+    /// failure) produce one diagnostic and one recovery.
+    private weak var failureHandledItem: AVPlayerItem?
+    /// A play tap that arrived while the editable preview was still building. Played as soon as a
+    /// displayable player exists (the ready preview, or the finished-render fallback).
+    private var pendingPlayRequest = false
+    private var finishedRenderRefreshAttempted = false
+    private var finishedRenderRecoveryTask: Task<Void, Never>?
     private var durationLoadTask: Task<Void, Never>?
     private var promptRefreshSequence: UInt64 = 0
     private let playbackEndTolerance: TimeInterval = 0.05
@@ -522,7 +647,7 @@ struct NativeEditorTemporaryVideo {
         switch sourcePreviewState {
         case .ready:
             displayedVideoIsCurrent = sourcePreview.map { player?.currentItem === $0.preview.playerItem } ?? false
-        case .failed:
+        case .failed, .originalsUnavailable:
             displayedVideoIsCurrent = player != nil && player === finishedRenderPlayer
         case .idle, .preparing:
             displayedVideoIsCurrent = false
@@ -542,7 +667,7 @@ struct NativeEditorTemporaryVideo {
         switch sourcePreviewState {
         case .idle, .preparing:
             return "Preparing the preview…"
-        case .failed, .ready:
+        case .failed, .originalsUnavailable, .ready:
             // The source preview is ready or has fallen back to the rendered
             // video, but the player hasn't caught up yet (a brief window
             // during a rebuild) or the session has no job to export from.
@@ -558,7 +683,7 @@ struct NativeEditorTemporaryVideo {
                 throw NativeEditorVideoDownloadError.unavailable
             }
             return .sourcePreview
-        case .failed:
+        case .failed, .originalsUnavailable:
             break
         case .idle, .preparing:
             throw NativeEditorVideoDownloadError.unavailable
@@ -684,6 +809,18 @@ struct NativeEditorTemporaryVideo {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-device") {
             rendersOnDevice = true
         }
+        // KRI-211: a project whose originals live on another device. The recovery sheet derives its
+        // targets from the source pool the preview tried to resolve, so the fixture supplies one.
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-missing-originals") {
+            let indices = Set(timelineClips.compactMap(\.sourceClipIndex)).union([0]).sorted()
+            originalsRecoveryPool = NativeEditorSourcePool(clips: indices.map { index in
+                .init(clipIndex: index, nativeSource: .init(
+                    mediaID: "fixture-source-\(index)", sourceURL: nil,
+                    original: OriginalMediaDescriptor(sha256: String(repeating: "ab", count: 32), byteCount: 4096,
+                        durationS: 3, width: 1080, height: 1920, orientationDegrees: 0, hasAudio: true),
+                    localRequired: true))
+            }, baseGeneration: "fixture", nativeAssets: [])
+        }
         // KRI-167: no existing shape fixture closes `clips.transitions`, and
         // UI tests can't construct an EditorDocument directly -- they only
         // get a process launch arg.
@@ -729,6 +866,8 @@ struct NativeEditorTemporaryVideo {
         observingPlayer?.pause()
         if let timeObserver, let observingPlayer { observingPlayer.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        if let itemFailureObserver { NotificationCenter.default.removeObserver(itemFailureObserver) }
+        finishedRenderRecoveryTask?.cancel()
     }
 
     var canUndo: Bool { !undoStack.isEmpty }
@@ -858,7 +997,10 @@ struct NativeEditorTemporaryVideo {
                 sourceIndex: sourceIndex
             )
         }
-        items += document.textElements.enumerated().map { index, item in projected(EditorSelection(kind: .text, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 300 + index), sourceIndex: index) }
+        // A mirrored caption is its cue's sentence again (`isCaptionCueMirror`).
+        // Listing both stacked every caption into a second CAPTIONS row and
+        // left an unrendered tap target over the burned caption.
+        items += document.textElements.enumerated().filter { !document.isCaptionCueMirror($0.element) }.map { index, item in projected(EditorSelection(kind: .text, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 300 + index), sourceIndex: index) }
         items += document.captionCues.enumerated().map { index, item in projected(EditorSelection(kind: .captionCue, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 400 + index), sourceIndex: index) }
         items += document.soundEffects.enumerated().map { index, item in projected(EditorSelection(kind: .soundEffect, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 100 + index), sourceIndex: index) }
         items += document.mediaOverlays.enumerated().map { index, item in projected(EditorSelection(kind: .mediaOverlay, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 200 + index), sourceIndex: index) }
@@ -956,12 +1098,18 @@ struct NativeEditorTemporaryVideo {
             let requestedVariantKey = variantID ?? snapshot.variantKey
             if let jobID { authoritativeVariant = try await api.editorVariant(jobID: jobID, variantID: requestedVariantKey) }
             else { authoritativeVariant = nil }
-            draft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: authoritativeVariant)
+            let loadedDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: authoritativeVariant)
+            draft = loadedDraft
             configureCapabilities(from: authoritativeVariant)
             cleanDocument = document; undoStack.removeAll(); redoStack.removeAll(); changedSections.removeAll(); explicitlyDirtySections.removeAll(); pendingRenderRetrySections.removeAll(); hasUnsavedChanges = false; saveState = .idle
+            appliedChatDraftRevision = nil; chatStagedDocument = nil; chatStagedSections = []
             itemID = snapshot.itemID; variantKey = requestedVariantKey
             durationSourcesInvalidated = false
             setAuthoritativeDuration(Self.number(authoritativeVariant?["duration_s"]))
+            if conversationRuntimeVersion == 2,
+               let staged = stagedChatDocument(snapshot: snapshot, draft: loadedDraft, variant: authoritativeVariant) {
+                applyStagedChatDocument(staged, revision: snapshot.draftRevision)
+            }
             refreshDuration()
             if let output = authoritativeVariant?["output_url"]?.stringValue, let url = URL(string: output) {
                 // See installPlayer's isCurrent doc comment: render_status
@@ -985,9 +1133,58 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    /// True when the rendered variant is the generation this editor's clean
+    /// baseline was built from. Documents cannot be compared directly: each
+    /// fetch mints fresh placeholder asset ids for slots that lack one.
+    private func variantUnchanged(_ variant: [String: JSONValue]?) -> Bool {
+        guard let generation = variant?["render_generation_id"]?.stringValue, !generation.isEmpty else { return false }
+        return generation == cleanDocument.revision.baseGeneration
+    }
+
+    /// The chat draft's staged lanes as a document, or nil when the draft is
+    /// stale/absent/already applied (see `DraftSnapshot.stagedChatEdit`).
+    private func stagedChatDocument(snapshot: DraftSnapshot, draft: EditorDraft, variant: [String: JSONValue]?) -> (document: EditorDocument, sections: Set<EditorSection>)? {
+        let edit = snapshot.stagedChatEdit(over: Self.snapshotPreservingClipMetadata(draft), variant: variant, appliedRevision: appliedChatDraftRevision)
+        Self.stagingLog.debug("draft received rev=\(snapshot.draftRevision, privacy: .public) applied=\(self.appliedChatDraftRevision ?? -1, privacy: .public) gen=\(variant?["render_generation_id"]?.stringValue ?? "-", privacy: .public) staged=\(edit.map { $0.sections.map(\.rawValue).sorted().joined(separator: ",") } ?? "skipped", privacy: .public)")
+        guard let edit else { return nil }
+        var value = EditorDocument(snapshot: edit.snapshot)
+        value.revision.number = draft.revision
+        return (value, edit.sections)
+    }
+
+    /// Show a staged chat edit as unsaved changes on top of the clean document.
+    /// The clean baseline stays on the undo stack, so one Undo discards it.
+    private func applyStagedChatDocument(_ staged: (document: EditorDocument, sections: Set<EditorSection>), revision: Int) {
+        appendUndo(document); redoStack.removeAll()
+        document = staged.document
+        changedSections.formUnion(staged.sections)
+        appliedChatDraftRevision = revision
+        refreshDirtyState()
+        chatStagedDocument = staged.document
+        chatStagedSections = staged.sections
+        Self.stagingLog.debug("staged applied rev=\(revision, privacy: .public) dirty=\(self.changedSections.map(\.rawValue).sorted().joined(separator: ","), privacy: .public); preview rebuild scheduled")
+        // Same path a local edit takes: make sure the live preview recompiles now.
+        scheduleSourcePreviewUpdate()
+    }
+
     /// Reconcile the same project after an agent turn. A response that arrives
     /// after a manual edit cannot replace it; conflict resolution remains explicit.
+    private static let stagingLog = Logger(subsystem: "com.kria.app", category: "chat-staging")
+    private var syncNeedsRetry = false
+
     func synchronizePromptRevision() async {
+        // A concurrent save/hydration can change the clean baseline while this
+        // suspends; a dropped sync would otherwise leave a chat edit invisible
+        // until the editor is reloaded (nothing else re-polls without new events).
+        for attempt in 0..<3 {
+            syncNeedsRetry = false
+            await runPromptRevisionSync()
+            guard syncNeedsRetry, !Task.isCancelled else { return }
+            Self.stagingLog.debug("sync retry attempt=\(attempt + 1, privacy: .public)")
+        }
+    }
+
+    private func runPromptRevisionSync() async {
         guard loadState == .loaded, !isSaving, let api, let threadID else { return }
         promptRefreshSequence &+= 1
         let sequence = promptRefreshSequence
@@ -1038,25 +1235,76 @@ struct NativeEditorTemporaryVideo {
             let nextVariantKey = snapshot.variantKey
             let nextDraft = snapshot.editorDraft(projectID: threadID, authoritativeVariant: variant)
             let sameTarget = nextJobID == jobID && nextVariantKey == variantKey && snapshot.itemID == itemID
+            // A different job needs its video reloaded: adoptLatestJob owns that.
+            if conversationRuntimeVersion == 2, nextJobID != jobID {
+                await adoptActiveJobFromThread(api: api, threadID: threadID)
+                return
+            }
             if conversationRuntimeVersion == 1, sameTarget, nextDraft.serverSnapshot == legacyPromptSnapshot,
                sequence == promptRefreshSequence, cleanDocument == baseline, !Task.isCancelled {
                 if let previous = saveStateBeforePromptFailure { saveState = previous }
                 return
             }
             let nextDocument = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(nextDraft))
+            // A runtime-v2 chat turn parks its editor edit in the draft head
+            // (never rendered); show it as unsaved edits instead of ignoring it.
+            let staged = conversationRuntimeVersion == 2 && sameTarget
+                ? stagedChatDocument(snapshot: snapshot, draft: nextDraft, variant: variant) : nil
             guard sequence == promptRefreshSequence, !Task.isCancelled else { return }
             // A save/load completed while this request was suspended. Its newer
             // authority wins, even when the local document is now clean.
-            guard cleanDocument == baseline else { return }
+            guard cleanDocument == baseline else { syncNeedsRetry = true; return }
             if let previous = saveStateBeforePromptFailure { saveState = previous }
-            guard !sameTarget || nextDocument != cleanDocument else { return }
-            guard !hasUnsavedChanges, pendingText == nil, !isSaving else {
+            guard !sameTarget || nextDocument != cleanDocument || staged != nil else { return }
+            // Only the previous chat draft is unsaved: the newer cumulative
+            // head replaces it wholesale instead of conflicting with it.
+            // Editor-state turn: the draft says which submitted state it was built on,
+            // so merge three-way against THAT instead of guessing from the head.
+            if let staged, sameTarget, variantUnchanged(variant), pendingText == nil, !isSaving,
+               let stateID = snapshot.snapshot["client_state_id"]?.stringValue,
+               let submitted = submittedEditorStates[stateID] {
+                guard let result = mergeChatDraft(staged, over: submitted.document) else {
+                    Self.stagingLog.debug("sync conflict: same lane edited locally and by chat rev=\(snapshot.draftRevision, privacy: .public)")
+                    saveState = .conflict
+                    return
+                }
+                // One Undo restores the creator's own pre-chat UNSAVED state. The clean
+                // baseline (the rendered variant) is deliberately left untouched.
+                appendUndo(document); redoStack.removeAll()
+                document = result.document
+                changedSections.formUnion(staged.sections)
+                appliedChatDraftRevision = snapshot.draftRevision
+                chatStagedDocument = nil; chatStagedSections = []
+                refreshDirtyState(); refreshDuration()
+                scheduleSourcePreviewUpdate()
+                return
+            }
+            let onlyChatStaged = hasOnlyChatStagedChanges
+            if onlyChatStaged, staged == nil, sameTarget, variantUnchanged(variant) { return }
+            guard !hasUnsavedChanges || onlyChatStaged, pendingText == nil, !isSaving else {
+                // Unsaved local edits. When the rendered variant is unchanged
+                // and the chat touched only lanes the creator has not, both
+                // sides can be kept lane-by-lane; otherwise stay explicit.
+                if let staged, variantUnchanged(variant), pendingText == nil, !isSaving,
+                   staged.sections.isDisjoint(with: changedSections.union(explicitlyDirtySections)) {
+                    appendUndo(document); redoStack.removeAll()
+                    var merged = document
+                    for section in staged.sections { copy(section, from: staged.document, into: &merged) }
+                    document = merged
+                    changedSections.formUnion(staged.sections)
+                    appliedChatDraftRevision = snapshot.draftRevision
+                    chatStagedDocument = nil
+                    refreshDirtyState(); refreshDuration()
+                    return
+                }
+                Self.stagingLog.debug("sync conflict: local edits overlap chat draft rev=\(snapshot.draftRevision, privacy: .public)")
                 saveState = .conflict
                 return
             }
             let selected = selection
             let time = currentTime
             draft = nextDraft
+            if !sameTarget { appliedChatDraftRevision = nil }
             if conversationRuntimeVersion == 1 { legacyPromptSnapshot = nextDraft.serverSnapshot }
             cleanDocument = document
             jobID = nextJobID; variantKey = nextVariantKey; itemID = snapshot.itemID
@@ -1065,6 +1313,7 @@ struct NativeEditorTemporaryVideo {
             changedSections.removeAll(); explicitlyDirtySections.removeAll()
             durationSourcesInvalidated = false
             setAuthoritativeDuration(Self.number(variant?["duration_s"]))
+            if let staged { applyStagedChatDocument(staged, revision: snapshot.draftRevision) }
             refreshDuration()
             if let selected, selectionExists(selected) { select(selected, seekToStart: false) }
             else { select(nil) }
@@ -1072,6 +1321,15 @@ struct NativeEditorTemporaryVideo {
             await prepareSourcePreview()
         } catch {
             guard sequence == promptRefreshSequence, cleanDocument == baseline, !Task.isCancelled else { return }
+            // The loaded job was superseded by a re-plan render (its editor
+            // routes now answer "content plan unavailable"/409): follow the
+            // thread to its current job instead of reporting a refresh failure.
+            if conversationRuntimeVersion == 2,
+               let apiError = error as? APIError, apiError == .contentPlanUnavailable || apiError == .conflict {
+                let before = jobID
+                await adoptActiveJobFromThread(api: api, threadID: threadID)
+                if jobID != before || newerJobPrompt != nil { return }
+            }
             // A refresh error temporarily owns the banner. Any intervening
             // save/render status assignment relinquishes that ownership.
             let previous = saveStateBeforePromptFailure ?? saveState
@@ -1091,6 +1349,9 @@ struct NativeEditorTemporaryVideo {
 
     func needsReload(for project: ProjectSummary) -> Bool {
         guard loadState == .loaded else { return true }
+        // A re-plan can render a NEW job for the same thread; the loaded
+        // session then still shows the old job's video.
+        if let target = project.activeJobID, let jobID, target != jobID { return true }
         guard let loadedServerRevision else { return false }
         return loadedServerRevision != project.serverRevision
     }
@@ -1133,6 +1394,58 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    /// A newer render job than the one loaded is waiting on a manual-edit decision.
+    @Published private(set) var newerJobPrompt: ProjectSummary?
+
+    func isBehindActiveJob(_ project: ProjectSummary) -> Bool {
+        guard loadState == .loaded, let target = project.activeJobID, let jobID else { return false }
+        return target != jobID
+    }
+
+    /// The thread's active job changed (a re-plan rendered a new video). Edits
+    /// staged from chat belong to the old job and are obsolete, so they are
+    /// dropped and the new job loads automatically. The creator's own unsaved
+    /// edits are never discarded silently: they raise `newerJobPrompt` instead.
+    func adoptLatestJob(_ project: ProjectSummary, api: any KriaAPIClient) async {
+        guard isBehindActiveJob(project), !isSaving else { return }
+        if hasUnsavedChanges, !hasOnlyChatStagedChanges {
+            newerJobPrompt = project
+            return
+        }
+        await switchToLatestJob(project, api: api)
+    }
+
+    /// Switch now; discards any unsaved edits (caller has decided).
+    func switchToLatestJob(_ project: ProjectSummary, api: any KriaAPIClient) async {
+        newerJobPrompt = nil
+        await load(project: project, api: api)
+        await refreshDeviceRender()
+    }
+
+    /// Ask the server which job the thread points at now, then run the adopt decision.
+    func adoptActiveJobFromThread(api: any KriaAPIClient, threadID: UUID) async {
+        guard let thread = try? await api.project(threadID: threadID) else { return }
+        await adoptLatestJob(thread.summary, api: api)
+    }
+
+    func keepEditingCurrentJob() { newerJobPrompt = nil }
+
+    /// The thread now points at a different render job: the old job's player,
+    /// source composition and device-render identity must not keep showing.
+    private func discardPlaybackForNewJob() {
+        sourcePreviewTask?.cancel()
+        previewRefreshTask?.cancel(); pendingPreviewGeneration = nil
+        promptRefreshSequence &+= 1
+        sourcePreviewSequence += 1
+        player?.pause()
+        player = nil
+        finishedRenderURL = nil; finishedRenderPlayer = nil; finishedRenderIsCurrent = true
+        sourcePreview = nil; sourceCompiler = nil; sourcePool = nil; resolvedSources = nil
+        sourcePreviewState = .idle; sourcePreviewGeneration = nil
+        previewVariant = [:]
+        pendingDeviceRenderIdentity = nil
+    }
+
     /// Gallery rows are render jobs, not creation-thread IDs. Promote the job
     /// through the server's idempotent editor route, then project its live
     /// variant into the same local draft model used by conversation projects.
@@ -1149,6 +1462,7 @@ struct NativeEditorTemporaryVideo {
     ) async {
         self.api = api
         self.threadID = threadID
+        if let previous = jobID, previous != editorJobID { discardPlaybackForNewJob() }
         jobID = editorJobID
         isSaving = true
         saveState = .saving
@@ -1231,6 +1545,16 @@ struct NativeEditorTemporaryVideo {
             } else if let url = try? await api.playbackURL(jobID: editorJobID) {
                 installPlayer(url: url, preferredDuration: authoritativeDuration)
             }
+            // A chat turn may already have drafted edits for this render:
+            // stage them as unsaved. Never let this block opening the editor.
+            appliedChatDraftRevision = nil; chatStagedDocument = nil; chatStagedSections = []
+            if conversationRuntimeVersion == 2, let threadID, let head = try? await api.draft(threadID: threadID),
+               head.itemID == resolvedPlanItemID, head.variantKey == resolved.variantID,
+               head.baseJobID.flatMap(UUID.init) == editorJobID,
+               let staged = stagedChatDocument(snapshot: head, draft: loadedDraft, variant: variant) {
+                applyStagedChatDocument(staged, revision: head.draftRevision)
+                refreshDuration()
+            }
             loadState = .loaded
             await prepareSourcePreview()
         } catch {
@@ -1245,14 +1569,13 @@ struct NativeEditorTemporaryVideo {
 
     #if DEBUG
     /// Account-free verification still uses the production compiler and compositor.
-    func prepareFixtureSourcePreview(url: URL, delayedLoad: Bool = false, mediaSources: [String: ResolvedEditorSource] = [:], forceFailure: Bool = false) async {
+    func prepareFixtureSourcePreview(url: URL, delayedLoad: Bool = false, mediaSources: [String: ResolvedEditorSource] = [:], forceFailure: Bool = false,
+                                      failure: Error = NativeEditorRenderError.missingVideoTrack) async {
         sourcePreviewSequence += 1
         let sequence = sourcePreviewSequence
         sourcePreviewState = .preparing
         do {
-            if forceFailure {
-                throw SourceAssetError.missingOriginal("fixture-source")
-            }
+            if forceFailure { throw failure }
             if delayedLoad {
                 loadState = .loaded
                 try await Task.sleep(for: .milliseconds(600))
@@ -1292,10 +1615,75 @@ struct NativeEditorTemporaryVideo {
     }
     #endif
 
+    /// An original this edit needs that isn't on this iPhone (or no longer matches the approved file).
+    struct OriginalRelinkTarget: Identifiable, Equatable, Sendable {
+        let mediaID: String
+        let descriptor: OriginalMediaDescriptor
+        let title: String
+        var id: String { mediaID }
+    }
+
+    /// The local-required sources the preview needs whose bound file is absent or doesn't match the
+    /// approved descriptor — exactly what `SourceAssetStore.resolve` fails on (KRI-211). Empty when the
+    /// preview never got as far as asking for a pool.
+    func originalsNeedingRelink() async -> [OriginalRelinkTarget] {
+        guard let pool = originalsRecoveryPool else { return [] }
+        let required = Set(timelineClips.compactMap(\.sourceClipIndex))
+        var seen = Set<String>()
+        var wanted: [(mediaID: String, descriptor: OriginalMediaDescriptor)] = []
+        for clip in pool.clips where required.isEmpty || required.contains(clip.clipIndex) {
+            guard let source = clip.nativeSource, source.localRequired, let original = source.original,
+                  seen.insert(source.mediaID).inserted else { continue }
+            wanted.append((source.mediaID, original))
+        }
+        let store = SourceAssetStore(project: BackgroundUploadCoordinator.projectDirectory(threadID ?? projectID))
+        return await Task.detached {
+            var missing: [OriginalRelinkTarget] = []
+            for (mediaID, descriptor) in wanted {
+                let binding = try? store.bindings().first { $0.mediaID == mediaID }
+                let matches = binding?.original.fingerprint?.hex == descriptor.sha256
+                    && binding?.original.fingerprint?.byteCount == descriptor.byteCount
+                if !matches || (try? store.resolve(mediaIDs: [mediaID])) == nil {
+                    missing.append(OriginalRelinkTarget(mediaID: mediaID, descriptor: descriptor, title: "Original \(missing.count + 1)"))
+                }
+            }
+            return missing
+        }.value
+    }
+
+    /// Verifies a creator-chosen file is the exact approved original, then binds it to this project.
+    /// Throws when it isn't; the caller says so and leaves the target listed.
+    func relinkOriginal(_ target: OriginalRelinkTarget, from file: URL) async throws {
+        let project = BackgroundUploadCoordinator.projectDirectory(threadID ?? projectID)
+        let original = try await AssetImportCoordinator(project: project).importAsset(from: file)
+        let imported = project.root.appendingPathComponent(original.relativePath)
+        let reference = RenderAssetReference(
+            id: target.mediaID,
+            fingerprint: RenderFingerprint(sha256: target.descriptor.sha256, byteCount: target.descriptor.byteCount),
+            source: .original(mediaID: target.mediaID))
+        do {
+            try await Task.detached { try SourceAssetStore(project: project).relink(reference, original: original) }.value
+        } catch {
+            try? FileManager.default.removeItem(at: imported)
+            throw error
+        }
+    }
+
+    /// KRI-211: plain words for "the originals live somewhere else", shared by the preview and
+    /// the device-render panel so both explain the same thing the same way.
+    static let originalsUnavailableMessage = "The original clips for this edit are on another device. Find the files to edit here."
+
+    static func isMissingOriginals(_ error: Error) -> Bool {
+        switch error {
+        case SourceAssetError.missingOriginal, SourceAssetError.changedOriginal: true
+        default: false
+        }
+    }
+
     static func sourcePreviewMessage(for error: Error) -> String {
         switch error {
         case APIError.conflict:
-            return "This video changed. Close and reopen the editor to load the latest version."
+            return "A newer version of this video exists. Close and reopen the editor to see it."
         case APIError.sessionExpired:
             return "Sign in again to load the source videos."
         case NativeEditorRenderError.unsupportedLane:
@@ -1304,8 +1692,12 @@ struct NativeEditorTemporaryVideo {
             return "A required font is missing from this app build. Update the app and try again."
         case NativeEditorRenderError.missingVideoTrack:
             return "This edit’s video can’t be previewed on iPhone yet."
+        case NativeEditorPlaybackFailure.liveItem:
+            return "The editable preview couldn’t play on this iPhone, so the finished video is shown. Retry to rebuild it."
+        case NativeEditorPlaybackFailure.finishedItem:
+            return "The video couldn’t be loaded. Check your connection and retry."
         case SourceAssetError.missingOriginal, SourceAssetError.changedOriginal:
-            return "The original video is unavailable on this iPhone. Open the edit on the device that imported it."
+            return Self.originalsUnavailableMessage
         default:
             return RequestFailureCause(error) == .connection
                 ? "A source video or edit asset could not be loaded. Check your connection and retry."
@@ -1349,6 +1741,7 @@ struct NativeEditorTemporaryVideo {
             let resolver = sourceResolver ?? NativeEditorSourceResolver(project: BackgroundUploadCoordinator.projectDirectory(threadID ?? projectID), jobID: jobID)
             sourceResolver = resolver
             guard !generation.isEmpty, pool.baseGeneration == generation else { throw APIError.conflict }
+            originalsRecoveryPool = pool
             let sources: [Int: ResolvedEditorSource]
             var phoneTalkingIndex: Int?
             if let base = NativeEditorBaseSource(variant: previewVariant, document: document) {
@@ -1363,6 +1756,7 @@ struct NativeEditorTemporaryVideo {
                 // created while media downloaded and keep Undo's base consistent.
                 document = try base.hydrate(document, duration: duration)
                 cleanDocument = try base.hydrate(cleanDocument, duration: duration)
+                chatStagedDocument = try chatStagedDocument.map { try base.hydrate($0, duration: duration) }
                 undoStack = try undoStack.map { try base.hydrate($0, duration: duration) }
                 redoStack = try redoStack.map { try base.hydrate($0, duration: duration) }
                 let source = NativeTimelineSource(mediaID: base.mediaID, sourceURL: base.url, original: nil, localRequired: false)
@@ -1380,18 +1774,22 @@ struct NativeEditorTemporaryVideo {
                   document.revision.baseGeneration == generation else { return }
             if let phoneTalkingIndex {
                 guard let duration = sources[phoneTalkingIndex]?.asset.duration else { throw APIError.invalidResponse }
+                // Captions/lanes are on the speech-cleanup cut timeline (KRI-232).
+                let removed = NativePhoneTalkingSource.removedSpans(variant: previewVariant)
                 #if DEBUG
-                NativePreviewDiagnostics.record("phone-talking-source", fields: ["index": String(phoneTalkingIndex), "duration": String(duration)])
+                NativePreviewDiagnostics.record("phone-talking-source", fields: ["index": String(phoneTalkingIndex), "duration": String(duration), "removed": String(removed.count)])
                 #endif
-                document = try NativePhoneTalkingSource.hydrate(document, clipIndex: phoneTalkingIndex, duration: duration)
-                cleanDocument = try NativePhoneTalkingSource.hydrate(cleanDocument, clipIndex: phoneTalkingIndex, duration: duration)
-                undoStack = try undoStack.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration) }
-                redoStack = try redoStack.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration) }
+                document = try NativePhoneTalkingSource.hydrate(document, clipIndex: phoneTalkingIndex, duration: duration, removed: removed)
+                cleanDocument = try NativePhoneTalkingSource.hydrate(cleanDocument, clipIndex: phoneTalkingIndex, duration: duration, removed: removed)
+                chatStagedDocument = try chatStagedDocument.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration, removed: removed) }
+                undoStack = try undoStack.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration, removed: removed) }
+                redoStack = try redoStack.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration, removed: removed) }
                 refreshDuration()
             }
             if previewVariant["resolved_archetype"] == .string("narrated") {
                 document = try NativeNarratedSourceTiming.hydrate(document, sources: sources)
                 cleanDocument = try NativeNarratedSourceTiming.hydrate(cleanDocument, sources: sources)
+                chatStagedDocument = try chatStagedDocument.map { try NativeNarratedSourceTiming.hydrate($0, sources: sources) }
                 undoStack = try undoStack.map { try NativeNarratedSourceTiming.hydrate($0, sources: sources) }
                 redoStack = try redoStack.map { try NativeNarratedSourceTiming.hydrate($0, sources: sources) }
                 refreshDuration()
@@ -1480,6 +1878,17 @@ struct NativeEditorTemporaryVideo {
         return status.request.recipe.audio.narrationAssetID == nil ? nil : status.request
     }
 
+    /// Narration is a generation-owned preview input: it belongs to the
+    /// generation the preview was prepared for, not to a save acknowledgement
+    /// whose render is still pending (the phone publishes under its own id).
+    private func narrationOwnerGeneration(_ document: EditorDocument) -> String {
+        Self.narrationOwnerGeneration(previewGeneration: sourcePreviewGeneration, documentGeneration: document.revision.baseGeneration)
+    }
+
+    static func narrationOwnerGeneration(previewGeneration: String?, documentGeneration: String) -> String {
+        previewGeneration ?? documentGeneration
+    }
+
     private func resolveDeviceNarration(document: EditorDocument, sequence: Int) async throws -> ResolvedEditorSource? {
         guard let api, let jobID, let variantKey else { throw APIError.invalidResponse }
         let status = try await api.deviceRender(jobID: jobID, variantID: variantKey)
@@ -1488,7 +1897,7 @@ struct NativeEditorTemporaryVideo {
             throw CancellationError()
         }
         guard let request = try Self.currentDeviceNarrationRequest(
-            status, jobID: jobID, variantID: variantKey, generation: document.revision.baseGeneration
+            status, jobID: jobID, variantID: variantKey, generation: narrationOwnerGeneration(document)
         ) else { return nil }
         guard let narrationID = request.recipe.audio.narrationAssetID,
               var asset = request.recipe.assets.first(where: { $0.id == narrationID }) else {
@@ -1520,14 +1929,14 @@ struct NativeEditorTemporaryVideo {
             // launch. A missing or stale required asset fails the preview
             // visibly instead of silently exporting an AAC silence track.
             if resolvedAudio["narration"] == nil,
-               deviceNarrationResolutionGeneration != document.revision.baseGeneration {
+               deviceNarrationResolutionGeneration != narrationOwnerGeneration(document) {
                 let narration = try await resolveDeviceNarration(document: document, sequence: sequence)
                 guard sequence == sourcePreviewSequence, !Task.isCancelled,
                       document.revision.baseGeneration == self.document.revision.baseGeneration else {
                     throw CancellationError()
                 }
                 if let narration { resolvedAudio["narration"] = narration }
-                deviceNarrationResolutionGeneration = document.revision.baseGeneration
+                deviceNarrationResolutionGeneration = narrationOwnerGeneration(document)
             }
         } else if Self.usesRenderedNarration(previewVariant), resolvedAudio["narration"] == nil {
             // Legacy narrated renders persist the exact cleaned voice + bed in
@@ -1714,6 +2123,7 @@ struct NativeEditorTemporaryVideo {
                 sourcePreviewSettledSequence = sequence
                 if !isPlaying { seek(to: currentTime) }
                 prepareInteractionLayers()
+                startPendingPlaybackIfPossible()
                 return
             }
             #if DEBUG
@@ -1735,6 +2145,7 @@ struct NativeEditorTemporaryVideo {
                 seek(to: latestTime)
             }
             prepareInteractionLayers()
+            startPendingPlaybackIfPossible()
             #if DEBUG
             NativePreviewDiagnostics.record("preview-ready")
             #endif
@@ -1765,10 +2176,14 @@ struct NativeEditorTemporaryVideo {
 
     func togglePlayback() {
         guard canDisplayCurrentPlayer, let player else {
+            // While the editable preview is still building there is nothing to play yet. Remember the tap
+            // instead of dropping it, so play starts the moment the preview (or its fallback) is ready.
+            pendingPlayRequest = sourcePreviewState == .preparing && !isPlaying
             player?.pause()
             isPlaying = false
             return
         }
+        pendingPlayRequest = false
         if isPlaying {
             pausePlayback()
             return
@@ -1815,6 +2230,7 @@ struct NativeEditorTemporaryVideo {
     }
 
     func pausePlayback() {
+        pendingPlayRequest = false
         player?.pause()
         isPlaying = false
         // Preserve a scrub target while its seek is still pending. Otherwise
@@ -2109,7 +2525,9 @@ struct NativeEditorTemporaryVideo {
             slot.durationS = nextOut - sourceIn
         }
         slot.durationBeats = nil; next.clips[index] = slot
-        reflowSlots(&next.clips, from: index + 1)
+        // Later clips ripple by construction (windows are a walk of the slot durations); the
+        // per-clip labels must ripple with them, derived from the gesture baseline every update.
+        rebaseGuidedLabels(&next, from: active.baseline)
 
         if next == active.baseline {
             if active.recordedUndo {
@@ -2320,7 +2738,10 @@ struct NativeEditorTemporaryVideo {
                 return
             }
             transactDocument(section: .timeline) { doc in
-                doc.clips.append(EditorTimelineSlot(clipIndex: result.clipIndex, inS: 0, durationS: Self.addedClipDurationS))
+                // `media_kind` lets a chat turn's editor state name an UNSAVED added clip whose
+                // clip_index the server may not resolve from persisted sources yet.
+                let kind: [String: JSONValue] = ["video", "image"].contains(result.kind) ? ["media_kind": .string(result.kind)] : [:]
+                doc.clips.append(EditorTimelineSlot(clipIndex: result.clipIndex, inS: 0, durationS: Self.addedClipDurationS, raw: kind))
             }
             addClipError = nil
         } catch is AddClipSourceUnreadable {
@@ -3117,6 +3538,35 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    /// Whether a standalone text bar may be deleted from the editor, and why not.
+    /// Caption cues belong to the Captions panel; bars linked to a card go with the
+    /// card; lyric lines are generated. Everything else (title, clip labels, closing,
+    /// the creator's own text) drops out of `text_elements`, which the server treats
+    /// as a user deletion (full-replacement; guided tombstone `user_removed`).
+    enum TextDeletion: Equatable {
+        case allowed
+        case blocked(String)
+        var isAllowed: Bool { self == .allowed }
+    }
+
+    func textDeletion(id: String) -> TextDeletion {
+        guard let element = document.textElements.first(where: { $0.id == id }) else { return .blocked("This text no longer exists.") }
+        guard canEditSection(.text) else { return .blocked("Text is locked for this render.") }
+        if element.isCaption { return .blocked("Captions are managed in the Captions panel.") }
+        if element.role == "lyric_line" { return .blocked("Lyric lines follow the song’s lyrics.") }
+        if let link = element.raw["visual_block_id"], link != .null { return .blocked("This text belongs to a card. Delete the card instead.") }
+        return .allowed
+    }
+
+    /// One undo step; the live preview recompiles through the document change.
+    @discardableResult
+    func deleteText(id: String) -> Bool {
+        guard textDeletion(id: id).isAllowed else { return false }
+        transactDocument(section: .text) { $0.textElements.removeAll { $0.id == id } }
+        if selection?.id == id { select(nil) }
+        return true
+    }
+
     func removeVisualSelection(_ selected: EditorSelection) {
         switch selected.kind {
         case .mediaOverlay: removeMediaOverlay(id: selected.id)
@@ -3156,6 +3606,22 @@ struct NativeEditorTemporaryVideo {
         transactDocument(section: .captionMeta) { $0.captionMeta[key] = value ?? .null }
     }
     var canEditCaptionAppearance: Bool { canEditCaptions && canEdit("caption_editor_style") }
+    /// Line-level caption edits (text/timing of individual cues) are gated by
+    /// the `caption_cues` capability specifically (KRI-216) — a phone
+    /// subtitled variant can have cues editable while style/settings
+    /// (`caption_meta`) stay locked, or vice versa. Falls back to the
+    /// coarse `canEditCaptions` when the server hasn't sent a `caption_cues`
+    /// key (older servers, or the guided-story text-lane path).
+    var canEditCaptionLines: Bool { canEditSection(.captions) }
+    /// Caption on/off, style, font, color and size writes land in
+    /// `caption_meta`, so their controls are gated by the `caption_meta`
+    /// capability (KRI-216) — the same guard `setCaptionEnabled`,
+    /// `toggleCaptions`, `setCaptionStyle`, `setCaptionFont` and
+    /// `setCaptionMeta` apply. Unlike `canEditCaptionAppearance`, this does not
+    /// also require `caption_editor_style`, which only the `appearance` keys
+    /// need. Falls back to `canEditCaptions` when the server hasn't sent the
+    /// key (older servers, deterministic UI fixtures).
+    var canEditCaptionMeta: Bool { canEditCaptions && canEditSection(.captionMeta) }
 
     func setCaptionAppearance(key: String, value: JSONValue) {
         guard canEditCaptionAppearance else { return }
@@ -3493,6 +3959,7 @@ struct NativeEditorTemporaryVideo {
                 refreshDuration()
             }
             acknowledge(acknowledged, generation: response.generation, submittedDocument: submittedDocument)
+            chatStagedDocument = nil; chatStagedSections = []
             if hasPostSubmitEdits {
                 let acknowledgedRevision = document.revision
                 undoStack = postSubmitUndo.map { value in
@@ -3581,8 +4048,11 @@ struct NativeEditorTemporaryVideo {
     private func transact(section: EditorSection, _ body: (inout EditorDraft) -> Void) {
         var next = draft; body(&next); guard next != draft else { return }
         invalidateDurationSources(for: Set([section]))
+        let before = document
         if transactionBaseline == nil { appendUndo(document); redoStack.removeAll() }
-        replace(with: next); changedSections.insert(section); refreshDirtyState(); refreshDuration()
+        replace(with: next)
+        if section == .timeline { var rebased = document; rebaseGuidedLabels(&rebased, from: before); if rebased != document { document = rebased } }
+        changedSections.insert(section); refreshDirtyState(); refreshDuration()
     }
 
     func transactDocument(section: EditorSection, _ body: (inout EditorDocument) -> Void) {
@@ -3591,6 +4061,7 @@ struct NativeEditorTemporaryVideo {
 
     private func transactDocument(sections: Set<EditorSection>, _ body: (inout EditorDocument) -> Void) {
         var next = document; body(&next); guard next != document else { return }
+        rebaseGuidedLabels(&next, from: document)
         invalidateDurationSources(for: sections)
         if transactionBaseline == nil { appendUndo(document); redoStack.removeAll() }
         document = next; changedSections.formUnion(sections); refreshDirtyState(); refreshDuration()
@@ -3838,6 +4309,13 @@ struct NativeEditorTemporaryVideo {
         case .motionScenes: return ["motion_scenes", "lanes.motion_scenes"]
         case .cameraEffects: return ["camera_effects", "lanes.camera_effects"]
         case .carouselMoment: return ["carousel_moment", "carousel"]
+        // KRI-216: line edits (caption_cues) and style/settings (caption_meta)
+        // are separate server capabilities — `.captions` must prefer
+        // `caption_cues` over the coarser legacy `captions` key so a phone
+        // variant with cues editable but meta locked (or vice versa) gates
+        // correctly. `.captionMeta`'s rawValue already equals `caption_meta`.
+        case .captions: return ["caption_cues", "captions"]
+        case .captionMeta: return ["caption_meta", "captions"]
         default: return [section.rawValue, sectionCapabilityKey(section)]
         }
     }
@@ -3977,6 +4455,10 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    private var carriesGuidedLabelsWithTimeline: Bool {
+        changedSections.contains(.timeline) && canEditSection(.text) && GuidedLabelRebase.hasLabels(document.textElements)
+    }
+
     private func commitRequest(sections: [String: JSONValue]?, baseGeneration: String) -> EditorCommitRequest {
         let value = sections ?? [:]
         func array(_ key: String, _ section: EditorSection) -> [JSONValue]? {
@@ -3991,7 +4473,11 @@ struct NativeEditorTemporaryVideo {
         let carouselObject = Self.object(value["carousel_moment"])
         return EditorCommitRequest(
             timelineSlots: array("timeline_slots", .timeline),
-            textElements: array("text_elements", .text),
+            // A guided timeline commit always carries the rebased label lane, like the server's
+            // copilot path: the server then treats text as authored and skips its own
+            // (right-biased, label-unaware) projection.
+            textElements: changedSections.contains(.text) || carriesGuidedLabelsWithTimeline
+                ? Self.array(value["text_elements"]) : nil,
             captionCues: array("caption_cues", .captions),
             captionMeta: object("caption_meta", .captionMeta),
             mix: changedSections.contains(.mix) ? (Self.object(value["mix"]) ?? Self.object(value["audio_mix"]) ?? [:]) : nil,
@@ -4073,8 +4559,16 @@ struct NativeEditorTemporaryVideo {
         let start = min(max(0, index), clips.count - 1)
         for i in start..<clips.count { let length = max(minimumClipDuration, clips[i].end - clips[i].start); let previousEnd = i == 0 ? 0 : clips[i - 1].end; clips[i].start = previousEnd; clips[i].end = previousEnd + length }
     }
-    private func reflowSlots(_ clips: inout [EditorTimelineSlot], from index: Int) {
-        _ = clips; _ = index
+    /// Retimes the per-clip label bars onto their clips after any change to clip
+    /// timing (trim, extend, reorder, delete, transition overlap, add). Runs inside the
+    /// same transaction as the timeline edit, so one Undo reverts both, and the text lane
+    /// then differs from the clean document and is saved alongside `timeline_slots`.
+    /// No-op unless a window actually moved and the text lane is editable.
+    private func rebaseGuidedLabels(_ next: inout EditorDocument, from previous: EditorDocument) {
+        guard GuidedLabelRebase.hasLabels(next.textElements), canEditSection(.text),
+              previous.clips != next.clips,
+              GuidedLabelRebase.windows(of: previous.clips) != GuidedLabelRebase.windows(of: next.clips) else { return }
+        next.textElements = GuidedLabelRebase.rebase(next.textElements, oldSlots: previous.clips, newSlots: next.clips)
     }
     private func installPlayer(url: URL, preferredDuration: TimeInterval? = nil, isCurrent: Bool = true) {
         // A completed cloud render remains a useful, non-editable fallback
@@ -4096,9 +4590,7 @@ struct NativeEditorTemporaryVideo {
         // preview construction genuinely fails, same as before — stale is
         // still better than nothing once every other option is exhausted.
         finishedRenderIsCurrent = isCurrent
-        let previewFailed: Bool
-        if case .failed = sourcePreviewState { previewFailed = true } else { previewFailed = false }
-        guard sourcePreviewState == .idle || previewFailed || player == nil else { return }
+        guard sourcePreviewState == .idle || sourcePreviewState.isFailure || player == nil else { return }
         installPlayer(item: AVPlayerItem(url: url), preferredDuration: preferredDuration)
         finishedRenderPlayer = player
     }
@@ -4116,7 +4608,73 @@ struct NativeEditorTemporaryVideo {
 
     private func failSourcePreview(_ error: Error) {
         restoreFinishedRenderFallback()
-        sourcePreviewState = .failed(Self.sourcePreviewMessage(for: error))
+        sourcePreviewState = Self.isMissingOriginals(error)
+            ? .originalsUnavailable
+            : .failed(Self.sourcePreviewMessage(for: error))
+        // A queued play tap follows the fallback; with nothing to show it is dropped, not left armed.
+        if canDisplayCurrentPlayer { startPendingPlaybackIfPossible() } else { pendingPlayRequest = false }
+    }
+
+    private func startPendingPlaybackIfPossible() {
+        guard pendingPlayRequest, canDisplayCurrentPlayer, !isPlaying else { return }
+        togglePlayback()
+    }
+
+    private var sourcePreviewStateLabel: String {
+        switch sourcePreviewState {
+        case .idle: "idle"
+        case .preparing: "preparing"
+        case .ready: "ready"
+        case .failed: "failed"
+        case .originalsUnavailable: "originals_unavailable"
+        }
+    }
+
+    /// One place for "the item AVPlayer is holding cannot play". Reports the error identity from every
+    /// build, then recovers: a failed editable preview hands over to the finished render, and a failed
+    /// finished render gets one fresh link before the failure is surfaced.
+    func handlePlayerItemFailure(_ item: AVPlayerItem, error: Error?) {
+        guard let failedPlayer = player, failedPlayer.currentItem === item, failureHandledItem !== item else { return }
+        failureHandledItem = item
+        let kind: PlaybackFailureReport.PlayerKind = failedPlayer === finishedRenderPlayer ? .finished : .live
+        let report = NativePreviewDiagnostics.playerItemFailure(kind: kind, error: error, sourceState: sourcePreviewStateLabel)
+        if let api, let jobID {
+            Task { try? await api.reportPlaybackFailure(jobID: jobID, report: report) }
+        }
+        let wantsPlayback = isPlaying || pendingPlayRequest
+        failedPlayer.pause()
+        isPlaying = false
+        switch kind {
+        case .live:
+            pendingPlayRequest = wantsPlayback
+            failSourcePreview(NativeEditorPlaybackFailure.liveItem)
+        case .finished:
+            pendingPlayRequest = wantsPlayback
+            recoverFinishedRender(failedPlayer: failedPlayer)
+        }
+    }
+
+    private func recoverFinishedRender(failedPlayer: AVPlayer) {
+        guard !finishedRenderRefreshAttempted, let api, let jobID else {
+            surfaceUnplayableFinishedRender()
+            return
+        }
+        finishedRenderRefreshAttempted = true
+        finishedRenderRecoveryTask?.cancel()
+        finishedRenderRecoveryTask = Task { @MainActor [weak self, weak failedPlayer] in
+            let fresh = try? await api.playbackURL(jobID: jobID)
+            guard let self, !Task.isCancelled, let failedPlayer, self.player === failedPlayer else { return }
+            guard let fresh else { self.surfaceUnplayableFinishedRender(); return }
+            self.installFinishedRenderPlayer(url: fresh, preferredDuration: self.finishedRenderDuration)
+            self.startPendingPlaybackIfPossible()
+        }
+    }
+
+    private func surfaceUnplayableFinishedRender() {
+        // An editable preview still building will take over by itself; only a settled state needs a message.
+        guard sourcePreviewState != .preparing else { return }
+        sourcePreviewState = .failed(Self.sourcePreviewMessage(for: NativeEditorPlaybackFailure.finishedItem))
+        pendingPlayRequest = false
     }
 
     private func restoreFinishedRenderFallback() {
@@ -4139,6 +4697,8 @@ struct NativeEditorTemporaryVideo {
         durationSourcesInvalidated = false
 
         playbackStateObserver?.invalidate()
+        itemStatusObserver?.invalidate()
+        if let itemFailureObserver { NotificationCenter.default.removeObserver(itemFailureObserver) }
         // SwiftUI may retain the outgoing VideoPlayer after this replacement.
         // Stop and detach it first so its audio cannot outlive the visible player.
         player?.pause()
@@ -4150,6 +4710,28 @@ struct NativeEditorTemporaryVideo {
             Task { @MainActor [weak self, weak next] in
                 guard let self, let next, self.player === next else { return }
                 self.reconcilePlaybackState(next.timeControlStatus)
+            }
+        }
+        // timeControlStatus alone cannot tell "buffering" from "this item will never play": a failed item
+        // just sits paused and the play button snaps back (KRI-200).
+        itemStatusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self, weak item] observed, _ in
+            let status = observed.status
+            let error = observed.error
+            Task { @MainActor [weak self, weak item] in
+                guard let self, let item else { return }
+                if status == .failed { self.handlePlayerItemFailure(item, error: error) }
+                else if status == .readyToPlay, self.player?.currentItem === item, self.player === self.finishedRenderPlayer {
+                    self.finishedRenderRefreshAttempted = false
+                }
+            }
+        }
+        itemFailureObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main
+        ) { [weak self, weak item] note in
+            let error = note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
+            Task { @MainActor [weak self, weak item] in
+                guard let self, let item else { return }
+                self.handlePlayerItemFailure(item, error: error)
             }
         }
         if let preferredDuration, preferredDuration.isFinite, preferredDuration > 0 {
@@ -4209,6 +4791,16 @@ struct NativeEditorTemporaryVideo {
     private static func array(_ value: JSONValue?) -> [JSONValue] { if case let .array(value) = value { value } else { [] } }
     private static func number(_ value: JSONValue?) -> Double? { if case let .number(value) = value { value } else { nil } }
     private static func bool(_ value: JSONValue?) -> Bool? { if case let .bool(value) = value { value } else { nil } }
+    /// Reads an `editor_capabilities` entry that may arrive as a bare bool
+    /// (legacy) or as `{"editable": Bool, "reason": String?}` (KRI-216).
+    /// Returns nil when the key itself is absent, so callers can distinguish
+    /// "server didn't send this capability" from "server sent it as false".
+    private static func capabilityEditable(_ value: JSONValue?) -> Bool? {
+        guard let value else { return nil }
+        if let flag = bool(value) { return flag }
+        if let object = object(value) { return bool(object["editable"]) ?? false }
+        return nil
+    }
     private static func roundToMotionFrame(_ value: TimeInterval) -> TimeInterval {
         (value * 30).rounded() / 30
     }
@@ -4283,8 +4875,22 @@ struct NativeEditorTemporaryVideo {
         // never see them, so fall back to `text_elements` — the backend has
         // no dedicated "captions" capability key; a caption-tagged element
         // is only ever mutable through the same permission as ordinary text.
+        // Always OR'd in below, independent of the explicit-key branch, since
+        // no server ever emits a dedicated capability for this lane.
         let textLaneCaptions = canEditText && document.textElements.contains(where: \.isCaption)
-        canEditCaptions = cueNativeCaptions || textLaneCaptions
+        // KRI-216: phone (`render_destination == "device"`) renders never have
+        // `base_video_path`, so the legacy allowlist above always reads them
+        // as not caption-editable even when the server's `caption_cues`/
+        // `caption_meta` keys say otherwise. Prefer those explicit per-lane
+        // capabilities when the server sends them; only fall back to the
+        // base_video_path heuristic for older servers that omit both keys.
+        let explicitCaptionCues = Self.capabilityEditable(capabilities?["caption_cues"])
+        let explicitCaptionMeta = Self.capabilityEditable(capabilities?["caption_meta"])
+        if explicitCaptionCues != nil || explicitCaptionMeta != nil {
+            canEditCaptions = (explicitCaptionCues ?? false) || (explicitCaptionMeta ?? false) || textLaneCaptions
+        } else {
+            canEditCaptions = cueNativeCaptions || textLaneCaptions
+        }
         canEditMix = capabilities?["mix"] == .bool(true) && draft.music != nil
     }
 
@@ -4345,6 +4951,16 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    private func announceEditApplied() {
+        showsEditApplied = true
+        editAppliedTask?.cancel()
+        editAppliedTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            self?.showsEditApplied = false
+        }
+    }
+
     func retryPreviewRefresh() {
         guard let generation = pendingPreviewGeneration else { return }
         saveState = .previewPending
@@ -4384,6 +5000,7 @@ struct NativeEditorTemporaryVideo {
             pendingRenderRetrySections.removeAll()
             pendingPreviewGeneration = nil
             saveState = .saved
+            announceEditApplied()
             return true
         }
         if status == "failed" {

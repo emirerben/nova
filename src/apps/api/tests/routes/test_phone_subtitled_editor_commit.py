@@ -7,8 +7,10 @@ from fastapi import HTTPException
 from app.kria.device_render import make_device_request
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes
 from app.pipeline.phone_subtitled_plan import (
+    CUTAWAY_TRACK_ID,
     SFX_DUCK_RECEIPT_FIELD,
     SFX_SPEECH_DUCK_GAIN,
+    PhoneCutaway,
     compile_phone_subtitled_plan,
     sfx_duck_receipt,
 )
@@ -322,6 +324,191 @@ def test_ducked_pin_projects_the_creators_volume_not_the_ducked_one(monkeypatch)
     assert sections["sound_effects"][0]["gain"] == pytest.approx(1.0)
 
 
+# --- captions (KRI-216) -------------------------------------------------------
+
+
+def test_caption_fields_422_when_rollout_flag_is_off(monkeypatch):
+    job = phone_job(monkeypatch, enable=False)
+    with pytest.raises(HTTPException) as error:
+        save(job, caption_cues=[{"text": "x", "start_s": 0.0, "end_s": 1.0}])
+    assert error.value.status_code == 422
+
+    job2 = phone_job(monkeypatch, enable=False)
+    with pytest.raises(HTTPException) as error2:
+        save(job2, caption_meta=gj.EditorCommitCaptionMeta(enabled=False))
+    assert error2.value.status_code == 422
+
+
+def test_caption_cues_save_updates_text_and_bumps_revision(monkeypatch):
+    job = phone_job(monkeypatch)
+    old = device_status(job, "subtitled").request
+    new_cues = [
+        {"text": "Updated caption text", "start_s": 0.0, "end_s": 1.5},
+        {"text": "welcome back", "start_s": 1.5, "end_s": 3.0},
+    ]
+
+    prep = save(job, caption_cues=new_cues)
+
+    assert prep["render_destination"] == "device"
+    new = device_status(job, "subtitled").request
+    assert new.identity.recipe_revision == old.identity.recipe_revision + 1
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["render_status"] == "awaiting_device"
+    assert variant["caption_cues"] == new_cues
+
+    layer_texts = [run.text for layer in new.recipe.text_layers for run in layer.runs]
+    assert "Updated caption text" in layer_texts
+
+
+def test_caption_meta_save_applies_every_field_to_the_compiled_recipe(monkeypatch):
+    job = phone_job(monkeypatch)
+
+    prep = save(
+        job,
+        caption_meta=gj.EditorCommitCaptionMeta(
+            style="word",
+            font="Montserrat Bold",
+            font_set=True,
+            y_frac=0.5,
+            size_px=96,
+            color="#112233",
+            highlight_color="#A3E635",
+            stroke_width=7,
+            shadow_enabled=False,
+            appearance=gj.EditorCaptionAppearance(alignment="left"),
+        ),
+    )
+    assert prep["render_destination"] == "device"
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["voiceover_caption_font"] == "Montserrat Bold"
+    assert variant["caption_size_px"] == 96
+    assert variant["caption_text_color"] == "#112233"
+    assert variant["caption_highlight_color"] == "#A3E635"
+    assert variant["caption_stroke_width"] == 7
+    assert variant["caption_shadow_enabled"] is False
+    assert variant["voiceover_caption_style"] == "word"
+    assert variant["caption_editor_style"]["alignment"] == "left"
+
+    request = device_status(job, "subtitled").request
+    layers = request.recipe.text_layers
+    assert layers, "expected caption layers to compile"
+    run = layers[0].runs[0]
+    assert run.font_asset_id == "font-Montserrat-Bold.ttf"
+    assert run.font_size == pytest.approx(96)
+    assert run.fill.red == pytest.approx(0x11 / 255)
+    assert run.fill.green == pytest.approx(0x22 / 255)
+    assert run.fill.blue == pytest.approx(0x33 / 255)
+    assert run.stroke_width == pytest.approx(14)  # outline_px(7) * 2
+    assert run.blur_layers == []  # shadow_enabled False, no competing override
+    assert layers[0].anchor_x == pytest.approx(80.0)  # alignment=left safe margin
+
+
+def test_caption_meta_enabled_false_compiles_no_caption_layers(monkeypatch):
+    job = phone_job(monkeypatch)
+
+    save(job, caption_meta=gj.EditorCommitCaptionMeta(enabled=False))
+
+    request = device_status(job, "subtitled").request
+    assert request.recipe.text_layers == []
+    variant = job.assembly_plan["variants"][0]
+    assert variant["captions_enabled"] is False
+
+
+def _cut_phone_job(monkeypatch, *, enable=True):
+    """A phone `subtitled` variant already pinned with a speech-cleanup cut
+    (two kept segments, [0, 4) and [5, 10) of a 10s clip) -- mirrors
+    `phone_job`'s pattern but exercises `compile_phone_subtitled_plan`'s
+    `cut_plan` param so the pinned recipe's main track carries TWO
+    `TimelineClip`s instead of one."""
+    from app.pipeline.silence_cut import CutPlan, Removal
+
+    _enable_subtitled_editor(monkeypatch, editor_flag=enable)
+    monkeypatch.setattr(gj.settings, "phone_sfx_speech_duck_enabled", False)
+    bindings = (_binding(duration_s=10.0),)
+    cut_plan = CutPlan(
+        keep_segments=[(0.0, 4.0), (5.0, 10.0)],
+        removed=[Removal(start_s=4.0, end_s=5.0, reason="test")],
+        time_saved_s=1.0,
+    )
+    cues = [{"text": "Hello everyone", "start_s": 0.0, "end_s": 1.5}]
+    recipe = compile_phone_subtitled_plan(bindings, caption_cues=cues, cut_plan=cut_plan)
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        status="awaiting_device",
+        current_phase=None,
+        assembly_plan={
+            PHONE_SOURCES_FIELD: [b.model_dump(mode="json") for b in bindings],
+            PHONE_VISUALS_FIELD: [],
+            "variants": [
+                {
+                    "variant_id": "subtitled",
+                    "resolved_archetype": "subtitled",
+                    "render_destination": "device",
+                    "render_status": "awaiting_device",
+                    "render_generation_id": "first",
+                    "duration_s": recipe.duration,
+                    "caption_cues": cues,
+                    "voiceover_caption_style": "sentence",
+                }
+            ],
+        },
+    )
+    pin_device_request(
+        job,
+        make_device_request(job_id=job.id, variant_id="subtitled", revision=1, recipe=recipe),
+        base_generation="first",
+    )
+    return job
+
+
+def _main_track_segments(request) -> list[tuple[float, float]]:
+    track = next(t for t in request.recipe.tracks if t.id == "subtitled")
+    return sorted(
+        (clip.source_start, clip.source_start + clip.source_duration) for clip in track.clips
+    )
+
+
+def test_pinned_speech_cleanup_cut_is_preserved_across_an_unrelated_save(monkeypatch):
+    job = _cut_phone_job(monkeypatch)
+    baseline = _main_track_segments(device_status(job, "subtitled").request)
+    assert baseline == [(0.0, 4.0), (5.0, 10.0)]  # sanity: the fixture is actually cut
+
+    # An empty sfx section is a real "unrelated" commit (no lane content to
+    # resolve, unlike adding a brand new catalog effect) that still runs the
+    # full `_compile_subtitled_editor_commit` recompile path.
+    save(job, sound_effects=[])
+
+    segments = _main_track_segments(device_status(job, "subtitled").request)
+    assert segments == baseline
+
+
+def test_pinned_speech_cleanup_cut_is_preserved_across_a_caption_cues_save(monkeypatch):
+    job = _cut_phone_job(monkeypatch)
+    baseline = _main_track_segments(device_status(job, "subtitled").request)
+
+    save(job, caption_cues=[{"text": "Still cut", "start_s": 0.0, "end_s": 1.0}])
+
+    segments = _main_track_segments(device_status(job, "subtitled").request)
+    assert segments == baseline
+
+
+def test_uncut_variant_stays_single_full_duration_clip_after_a_save(monkeypatch):
+    """The `keep_segments` reconstruction must be a no-op for a variant that
+    was never cut -- `phone_job`'s fixture recipe is a single full-duration
+    clip; a Save must not turn it into anything else."""
+    job = phone_job(monkeypatch)
+    baseline = _main_track_segments(device_status(job, "subtitled").request)
+    assert len(baseline) == 1
+
+    save(job, sound_effects=[_sfx_payload(at_s=4.0)])
+
+    segments = _main_track_segments(device_status(job, "subtitled").request)
+    assert segments == baseline
+
+
 def test_first_save_does_not_duck_a_carried_forward_effect_twice(monkeypatch):
     job = phone_job(monkeypatch, duck=True)
     # Only overlays are committed: the sound lane is derived from the ducked pin.
@@ -351,3 +538,61 @@ def test_duck_off_editor_save_writes_no_receipt(monkeypatch):
     save(job, sound_effects=[_sfx_payload(at_s=1.0, gain=1.0)])
     assert _sfx_volumes(job) == {"sfx-sfx-1": pytest.approx(1.0)}
     assert SFX_DUCK_RECEIPT_FIELD not in job.assembly_plan["variants"][0]
+
+
+# --- KRI-136: multi-clip Talking head keeps its speaker + cutaways ------------
+
+
+def talking_head_job(monkeypatch):
+    """A phone Talking variant pinned as the worker pins a multi-clip Talking
+    head: every clip is a phone source, only the speaker plays on the main
+    track, the others are cutaways."""
+    _enable_subtitled_editor(monkeypatch)
+    monkeypatch.setattr(gj.settings, "phone_sfx_speech_duck_enabled", False)
+    speaker = _binding("speaker", duration_s=20.0)
+    cutaways = (
+        PhoneCutaway(binding=_binding("broll-a", duration_s=6.0), start_s=1.5, end_s=4.5),
+        PhoneCutaway(binding=_binding("broll-b", duration_s=2.0), start_s=10.0, end_s=12.0),
+    )
+    recipe = compile_phone_subtitled_plan((speaker,), caption_cues=_CUES, cutaways=cutaways)
+    bindings = (cutaways[0].binding, speaker, cutaways[1].binding)
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        status="awaiting_device",
+        current_phase=None,
+        assembly_plan={
+            PHONE_SOURCES_FIELD: [b.model_dump(mode="json") for b in bindings],
+            "variants": [
+                {
+                    "variant_id": "subtitled",
+                    "resolved_archetype": "subtitled",
+                    "render_destination": "device",
+                    "render_status": "awaiting_device",
+                    "render_generation_id": "first",
+                    "duration_s": recipe.duration,
+                    "caption_cues": _CUES,
+                    "voiceover_caption_style": "sentence",
+                }
+            ],
+        },
+    )
+    pin_device_request(
+        job,
+        make_device_request(job_id=job.id, variant_id="subtitled", revision=1, recipe=recipe),
+        base_generation="first",
+    )
+    return job, recipe
+
+
+def test_talking_head_caption_save_keeps_speaker_and_cutaways(monkeypatch):
+    job, old_recipe = talking_head_job(monkeypatch)
+    save(job, caption_cues=[{"text": "Updated caption", "start_s": 0.0, "end_s": 1.5}])
+
+    new = device_status(job, "subtitled").request
+    assert new.identity.recipe_revision == 2
+    tracks = {track.id: track for track in new.recipe.tracks}
+    assert [c.source_asset_id for c in tracks["subtitled"].clips] == ["speaker"]
+    old_cutaways = next(t for t in old_recipe.tracks if t.id == CUTAWAY_TRACK_ID)
+    assert tracks[CUTAWAY_TRACK_ID].model_dump() == old_cutaways.model_dump()
+    assert new.recipe.duration == pytest.approx(20.0)

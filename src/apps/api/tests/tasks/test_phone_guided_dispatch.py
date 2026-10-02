@@ -198,7 +198,7 @@ def test_dispatcher_rejects_phone_snapshot_without_a_registered_renderer(monkeyp
     phone_runner = Mock()
     montage_runner = Mock()
     monkeypatch.setattr(gb, "_run_phone_guided_job", phone_runner)
-    monkeypatch.setattr(gb, "_run_phone_montage_job", montage_runner)
+    monkeypatch.setattr(gb, "_run_phone_voiceover_montage_job", montage_runner)
     monkeypatch.setattr("app.services.pipeline_trace.pipeline_trace_for", lambda _: nullcontext())
     monkeypatch.setattr(gb, "job_heartbeat", lambda _: nullcontext())
     monkeypatch.setattr(gb, "mark_finished", Mock())

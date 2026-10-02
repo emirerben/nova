@@ -2540,3 +2540,173 @@ Behaviour change vs the plain lane: no matched music bed, beat-snap or hero intr
 render keeps source audio only. Fraunces lacks
 "→", so the planner selects a font that covers every string. Old lane deletion is a
 follow-up after a device visual comparison.
+
+## [2026-09-25] Draft-time receipts defer to the unified montage planner; a country alone is not a place (KRI-190)
+
+Context. The first simulator and phone runs of the unified montage both rendered well, but the
+chat showed "Not everything you asked for made it in: Couldn't: the name of the place as text
+(None of the 14 clips got its own text in this draft)" before the render, and it stayed on
+screen after the video had 14 labels. The strategy draft is checked by
+`plan_facts_from_strategy`, which has no per-clip text, order or timing, because the unified
+planner writes those at render time. The render's own `assistant_review` already carries the
+true receipts and the "I guessed these, tell me if any is wrong" list. Separately, two clips were
+captioned "Türkiye": a geocode that found nothing finer than the country became a place fact.
+
+Decision. (1) `requirements_to_check_at_draft` leaves `text`, `order` and `timing` out of the
+draft-time check when the render will go through the unified planner, so the draft reply is the
+plain summary. The test (`defers_to_unified_montage`) mirrors the worker's fork, not the item
+row: some clip is a phone analysis proxy, the account is enrolled, `montage_unified_plan_for`,
+a montage-family format, and `audio_strategy` is `original_audio` or `licensed_music`
+(approval sends anything else down the voiceover lane, which builds no render receipts, so it
+must still be judged at draft time; an absent strategy also is). `audio`/`style`/`select` are
+still judged at draft time and every flag-off path is unchanged. (2) `capture_facts` no longer
+emits a place fact for a country alone (no `sub_locality` and no `locality`). It is decided
+there, where the parts are still separate, so a city-state whose locality shares its country's
+name ("Singapore") keeps its label; the planner's `_place_label` is unchanged.
+
+Consequences. The only receipts the creator sees for a unified montage are the render's. A clip
+whose only place was a country now goes through the existing unlabelled-clip handling (dropped,
+receipt says partial). Facts already stored on earlier threads still hold the country-only place
+until those clips are re-attached. If the render's brief version changes after planning, its
+receipts are discarded (`_unified_montage_review`), which now leaves nothing at all for the
+deferred kinds; that needs a brief update between plan and review and is rare.
+
+## [2026-09-25] Speech cleanup's phone gate narrows to apply-only (KRI-205)
+
+Context. Talking-to-camera (`subtitled`/`talking_head`) never showed the speech cleanup
+question or check on iPhone. `preflight_enabled_for_source` (KRI-118 L1 item 1) refused to
+even schedule a `SpeechCleanupAnalysis` whenever the resolved narration source's storage path
+was a phone `analysis-proxy-*` object, on the premise that "speech cleanup needs the real
+audio, and a phone project never uploads it." That premise only ever held for *applying* a
+cut: the detector (`analyze_speech_cleanup`) reads nothing but a downmixed 16kHz mono WAV, and
+an iOS analysis-proxy's audio track is already a faithful, full-duration copy of the original
+(`MediaSourceContract.analysisProxy` rejects a duration/audio-presence mismatch before upload;
+`_run_phone_subtitled_job` already trusts this exact file for word-level Whisper caption
+transcription in production). So the one iOS journey whose narration source is always an
+embedded, phone-proxied clip — Talking-to-camera — could never enter the cohort, while a
+Narrated item with a fully-uploaded recorded voiceover could.
+
+Decision. `preflight_enabled_for_source` no longer takes a `storage_path`/no longer branches on
+source type at all — a phone source is scheduled, projected as `applicable`, and enforced on
+generate exactly like a cloud one. The other half of KRI-118 is untouched and now carries the
+whole invariant on its own: `content_plan_build._speech_cleanup_dispatch_snapshot` still refuses
+`choice == "clean"` outright whenever the active source is an analysis proxy, because applying a
+cut on an embedded-spine source means re-encoding real video frames
+(`generative_build.py`'s `reframe_and_export` cut path), and a phone-rendered project never
+uploads the full-resolution video — only its audio, via the proxy. That refusal is no longer a
+defense against a stale/forged request; it is the first-class, expected outcome the very first
+time a phone Talking-to-camera creator taps "Clean up speech and create". Both clients already
+had a graceful path for it before this shipped: iOS's `nonRetryablePhoneGateErrorCodes` already
+listed `speech_cleanup_unavailable_on_phone` and renders the server's own sentence instead of a
+generic error, and web's generic mutation-failure copy ("I couldn't start that video. Your
+project and speech choice are safe—try again.") is safe, non-crashy, and leaves the decision
+card's "Keep original speech" option live to retry with. Neither needed a code change.
+
+Consequences. A phone Talking-to-camera creator now sees real findings and can pick "Keep
+original speech" to proceed, or "Clean up speech" to learn (via the existing message) that it
+can't run on iPhone yet and fall back to the same card. No cut is ever actually applied for a
+phone-sourced item — that remains a real, separate gap: applying one would need either a new
+on-device frame-accurate trim in `KriaMediaEngine` (there is none today) or uploading the
+full-resolution video, which would break the "phone renders stay on device" rule this project
+already treats as non-negotiable. That's tracked as a distinct follow-up, not attempted here.
+Self-narration phone journeys (narrated format, no separate voiceover, multi-clip embedded
+audio) go through the identical `embedded_spine` path and get the same benefit/limit, though
+KRI-205 was reported specifically for Talking-to-camera.
+
+## [2026-09-28] Runtime-v2 montage with Visuals: the unified phone montage places them instead of refusing (KRI-217)
+
+Context. Every iOS montage that included a Visuals photo answered "I couldn't start the
+render. Your draft is still saved, so you can retry..." (thread 6BF1213E: 6 phone videos,
+2 ready photos, 1 abandoned upload reservation). `execute_kria_approval` dispatches every
+v2 approval with `bypass_guided_edit_gate=True`, and the bypass re-count from P2-4
+(2026-08-18) refuses any item with a pool row, because its original caller
+(draft_edit_proposal's fallback) renders a clip-only montage. The KRI-190 unified plan was
+clip-only too, so the refusal was correct about the renderer, but the planner had already
+promised the photos and the reply offered a retry that could never pass. iOS picks v2
+whenever offered and the server offers it to every account. No v2 test had Visuals, and
+`tests/_prod_profile.py` predated the v2 and unified-plan flags.
+
+Decision. Extend the unified planner rather than add a guided-proposal step to v2: ready
+Visuals become `lane="asset"` fast cuts spread between the clips (the montage opens on a
+clip), which `_run_phone_guided_job` already binds and draws (KRI-121). The dispatcher
+counts only the creator's Visuals for a v2 approval (manifest-visible states; a
+reservation or a failed photo never reached a plan), lets the unified lane through,
+refuses while one is still uploaded/queued/analyzing (`visuals_processing`), and keeps
+refusing on clip-only lanes. Both refusals get their own copy and `recovery: ask_user`.
+The non-v2 bypass callers stay byte-identical (any pool row refuses).
+
+Replaying the thread's real media through the planner then found a second, older bug
+on the same path: whole frames stop a fraction of a frame short of a clip under 0.4s
+(the thread's 0.298s IMG_4327), and the strict snapshot only accepts such a clip shown
+whole, so the unified plan raised. A clip under `MIN_VIDEO_CUT_S` is now shown whole.
+
+Consequences. Photos keep upload order and hold 1.2s (3s cap); they carry no capture time,
+so a "filmed order" brief lists them as fallback. Positional `shot_labels` follow
+on-screen order, photos included. A cloud-rendered v2 montage still cannot place Visuals;
+that needs v2 guided execution in the cloud worker (follow-up on KRI-217). The unified
+lane still renders source audio only (KRI-190), so a plan that promises "an upbeat track"
+does not get one on the phone. Still open on the unified planner: per-cut rounding can
+leave a montage that lands exactly on the 3s floor at 2.999s, which the snapshot refuses.
+
+## [2026-09-29] Two montage writers by design: voiceover montages -> voiceover montage writer; everything else -> unified (KRI-220)
+
+Context. KRI-190 put every non-voiceover phone montage on the unified planner behind
+`MONTAGE_UNIFIED_PLAN_ENABLED` (ON in prod) and left the plain lane in place, with a
+follow-up to delete `compile_phone_montage_plan`. Inspection showed it was not dead code:
+it is the only phone writer for a montage with a recorded voiceover.
+
+Decision (founder, 2026-09-29). Keep it, rename and narrow it. `compile_phone_voiceover_montage_plan`
+(`app/pipeline/phone_voiceover_montage_plan.py`) and `_run_phone_voiceover_montage_job` handle ONLY the
+montage-family `voiceover` archetype (`voiceover_only` / `voiceover_music`) and fail closed
+(`narrationAudio`) without a narration bed. The worker forks on `voiceover_gcs_path`; every
+other montage goes to the unified planner with no flag. `MONTAGE_UNIFIED_PLAN_ENABLED`, the user
+allowlist and `montage_unified_plan_for` are removed (prod value confirmed `true` via
+`GET /admin/kria/phone-render-config` before removal, so there is no behaviour change in prod).
+
+Why two writers. The unified planner cannot yet mix a recorded voice with a low music bed,
+trim to a long voice, or carry the intro hook; the voiceover writer does all three.
+
+Reversal condition. Delete the voiceover writer once the unified planner gains voice + music
+mix and long-voice trimming and a device comparison shows parity.
+
+
+## [2026-10-01] Rule 0 may carve the stretched tail of a sentence-final token — the one edge trim (KRI-236, job 62716037)
+
+Context. After KRI-234 (`mixed-gap-v3`) the night-rain TR Talking take still kept ~1.0 s
+of dead air after "alakalı.". whisper stamped the token 5.84 → 6.86 s; the 50 ms RMS
+envelope puts the voice end at ~6.15–6.20 s, and the ambient span is 6.23 → 7.12 s with
+"Abi" at 7.26 s. The stamped word gap (0.40 s) is under `MAX_PAUSE_S`, so rule 3 never
+looked, and rule 0 refused the carve because it sits on the token's edge. Edge trims are
+refused on purpose: they were ~94% of the real speech an earlier, looser guard destroyed
+(2026-09-08 entries above).
+
+Decision (2026-10-01, proposed in KRI-236). Allow exactly one edge-trim shape, V2 only
+(`_sentence_final_tail_carve` in `app/pipeline/silence_cut.py`, diagnostic kind
+`trim_sentence_tail`). All of these must hold:
+the token ends in `. ? !` and not in an ellipsis (`a...` is a trailing-off hesitation);
+it overlaps exactly ONE long (>= `TOKEN_SILENCE_MIN_S`) silence span, by at least
+`TOKEN_SILENCE_MIN_OVERLAP_S`; that span starts >= `SENTENCE_TAIL_MIN_VOICED_S` (0.3 s)
+after the token's start (start times are reliable, D16); and it covers the whole stamped
+tail and ends within `SENTENCE_TAIL_REACH_S` (PAD_S + the 80 ms ambient edge guard) of the
+next word's start, without overlapping it. The token is shortened to the silence start, and
+rule 3 then tightens the pause like any other, keeping `KEPT_GAP_S/2` on each side.
+`DETECTOR_VERSION` → `mixed-gap-v4`.
+
+Why it is safe enough. A quiet trailing syllable that the floor still hears leaves sound
+between the silence and the next word, so the reach check refuses it. Several quiet
+patches mean a mumbled word, which is refused. Starting the silence close to the token's
+start means the word has no real voiced length, which is also refused. The residual risk
+is a final syllable that is quieter than the floor all the way to the next word. That
+syllable sits inside a span of at least 0.6 s and is followed by a sentence boundary, and
+the kept `KEPT_GAP_S/2` pre-roll still covers its first 125 ms.
+
+Evidence. On the job 62716037 source the V2 plan now removes 6.355 → 7.12 s. The kept
+"alakalı." → "Abi" pause is 0.35 s from the voice end, and no audio before 6.355 s is cut.
+Every RMS frame inside the cut is at the −40 to −43 dB ambient floor. Guards:
+`TestSentenceFinalTailTrim` + the punctuated case in `TestRuleZeroCannotCutRealSpeech`
+(`tests/pipeline/test_silence_cut_asr_timestamp_golden.py`), plus the seeded rule-0
+property test, which now has to produce this kind.
+
+Reversal condition. If a "cleanup clipped the end of my sentence" report traces to a
+`trim_sentence_tail` adjustment, return `None` from `_sentence_final_tail_carve` and bump
+`DETECTOR_VERSION`. For an immediate stop, the kill switch is `SILENCE_CUT_ENABLED=false`.

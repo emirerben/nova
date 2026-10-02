@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -4865,3 +4866,236 @@ async def test_run_copilot_turn_threads_memory_and_unmet_requests(monkeypatch) -
     assert seen["input"].original_request == "20K run"
     assert seen["input"].prior_turns == [{"role": "user", "content": "hi"}]
     assert response.unmet_requests == [{"request": "label each clip", "reason": "no place data"}]
+
+
+# ── Vague "make it shorter" (no number) asks one question with examples ──────
+
+
+def _shorter_snapshot(durations: list[float], source_s: float = 12.0) -> dict:
+    t = 0.0
+    slots = []
+    for i, d in enumerate(durations):
+        slots.append(
+            {
+                "key": f"s{i + 1}",
+                "slot_id": f"s{i + 1}",
+                "clip_index": i,
+                "media_id": f"m{i}",
+                "in_s": 0.0,
+                "duration_s": d,
+                "source_duration_s": source_s,
+                "output_start_s": t,
+                "output_end_s": t + d,
+                "removed": False,
+                "transition_after": "cut",
+                "look_preset": "none",
+                "media_kind": "video",
+            }
+        )
+        t += d
+    return {
+        "allowed_op_families": ["clip", "text", "transition"],
+        "editor_ops_version": 2,
+        "slots": slots,
+        "text_bars": [],
+        "total_duration_s": t,
+        "max_duration_s": 120,
+        "remaining_duration_s": 120 - t,
+    }
+
+
+def test_vague_shorter_without_number_clarifies_with_examples() -> None:
+    reply = (
+        "It's 32 seconds right now. How short should it be: 25 seconds, "
+        "20 seconds, or 15 seconds? Or tell me a number of seconds."
+    )
+    out = _agent().parse(
+        json.dumps(
+            {
+                "intent": "clarify",
+                "ops": [],
+                "confidence": 0.9,
+                "reply": reply,
+                "suggestions": ["Make it 25 seconds", "Make it 20 seconds"],
+                "needs_clarification": True,
+            }
+        ),
+        EditCopilotInput(
+            utterance="make it shorter",
+            prior_turns=[],
+            variant_snapshot=_shorter_snapshot([8, 8, 8, 8]),
+        ),
+    )
+    assert out.needs_clarification
+    assert out.ops == []
+    assert out.outcome == "clarification"
+    assert "32 seconds" in out.reply and "20 seconds" in out.reply
+
+
+def test_vague_shorter_answer_turn_resolves_to_set_total_duration() -> None:
+    out = _agent().parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "ops": [{"op": "set_total_duration", "target_s": 15, "strategy": "proportional"}],
+                "confidence": 0.9,
+                "reply": "Shortened the edit from 32s to 15s.",
+                "suggestions": [],
+                "needs_clarification": False,
+            }
+        ),
+        EditCopilotInput(
+            utterance="15 seconds",
+            prior_turns=[
+                {"role": "user", "content": "make it shorter"},
+                {
+                    "role": "assistant",
+                    "content": "It's 32 seconds right now. How short should it be: "
+                    "25 seconds, 20 seconds, or 15 seconds?",
+                },
+            ],
+            variant_snapshot=_shorter_snapshot([8, 8, 8, 8]),
+        ),
+    )
+    assert not out.needs_clarification
+    assert [op["op"] for op in out.ops] == ["set_total_duration"]
+    assert out.ops[0]["target_s"] == 15.0
+
+
+def _longer_clarify(reply: str, snapshot: dict, utterance: str = "make it longer"):
+    return _agent().parse(
+        json.dumps(
+            {
+                "intent": "clarify",
+                "ops": [],
+                "confidence": 0.9,
+                "reply": reply,
+                "suggestions": [],
+                "needs_clarification": True,
+            }
+        ),
+        EditCopilotInput(utterance=utterance, prior_turns=[], variant_snapshot=snapshot),
+    )
+
+
+def test_vague_longer_without_number_clarifies_with_reachable_examples() -> None:
+    out = _longer_clarify(
+        "It's 20 seconds right now. How long should it be: 25 seconds, 30 seconds, "
+        "or 40 seconds? Or tell me a number of seconds.",
+        _shorter_snapshot([5, 5, 5, 5]),
+    )
+    assert out.needs_clarification
+    assert out.ops == []
+    assert out.outcome == "clarification"
+    assert "20 seconds" in out.reply and "30 seconds" in out.reply
+
+
+def test_vague_longer_answer_turn_resolves_to_set_total_duration() -> None:
+    out = _agent().parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "ops": [{"op": "set_total_duration", "target_s": 30, "strategy": "proportional"}],
+                "confidence": 0.9,
+                "reply": "Lengthened the edit from 20s to 30s.",
+                "suggestions": [],
+                "needs_clarification": False,
+            }
+        ),
+        EditCopilotInput(
+            utterance="30 seconds",
+            prior_turns=[
+                {"role": "user", "content": "make it longer"},
+                {"role": "assistant", "content": "It's 20 seconds right now. 25, 30 or 40?"},
+            ],
+            variant_snapshot=_shorter_snapshot([5, 5, 5, 5]),
+        ),
+    )
+    assert not out.needs_clarification
+    assert [op["op"] for op in out.ops] == ["set_total_duration"]
+    assert out.ops[0]["target_s"] == 30.0
+
+
+def _golden(name: str) -> dict:
+    path = Path(__file__).parent / "fixtures/agent_evals/edit_copilot/golden" / f"{name}.json"
+    return json.loads(path.read_text())
+
+
+def _longest_possible_s(snapshot: dict) -> float:
+    cap = float(snapshot["max_duration_s"])
+    room = sum(
+        float(s["source_duration_s"]) - float(s["in_s"])
+        for s in snapshot["slots"]
+        if not s.get("removed")
+    )
+    # Slots already count their current duration; footage room is source - in.
+    return min(cap, room)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["kria_v2_timeline_longer_no_number", "kria_v2_timeline_longer_limited"],
+)
+def test_vague_longer_goldens_offer_only_reachable_lengths(name: str) -> None:
+    golden = _golden(name)
+    snap = golden["input"]["variant_snapshot"]
+    current = float(snap["total_duration_s"])
+    longest = _longest_possible_s(snap)
+    assert golden["output"]["ops"] == []
+    offered = [float(n) for n in re.findall(r"(\d+(?:\.\d+)?) seconds", golden["output"]["reply"])]
+    options = [n for n in offered if n != current]
+    assert options, "reply must state the current length and offer a longer one"
+    assert all(current < n <= longest for n in options)
+    for suggestion in golden["output"]["suggestions"]:
+        for n in re.findall(r"(\d+(?:\.\d+)?)", suggestion):
+            assert float(n) <= longest
+
+
+def test_vague_shorter_goldens_respect_floor_and_current_length() -> None:
+    golden = _golden("kria_v2_timeline_shorter_12s")
+    assert golden["output"]["ops"] == []
+    assert "12 seconds" in golden["output"]["reply"]
+    assert "8 seconds" in golden["output"]["reply"]
+    alln = _golden("kria_v2_timeline_shorter_all_clips")
+    assert alln["output"]["ops"] == []
+    assert "5 seconds" in alln["output"]["reply"]
+
+
+def test_image_stack_followup_still_clarifies_with_typed_pending() -> None:
+    out = _agent().parse(
+        json.dumps(
+            {
+                "intent": "clarify",
+                "ops": [],
+                "confidence": 0.9,
+                "reply": "How many seconds should each image be?",
+                "needs_clarification": True,
+                "pending_actions": [{"op": "stack_images"}, {"op": "set_media_duration"}],
+            }
+        ),
+        EditCopilotInput(
+            utterance="stack the images together and make them shorter",
+            prior_turns=[],
+            variant_snapshot=_bulk_snapshot(),
+        ),
+    )
+    assert out.needs_clarification
+    assert out.ops == []
+    assert out.pending_actions
+
+
+def test_alignment_asks_are_recognised_and_prompt_routes_them_to_realign_labels() -> None:
+    from app.agents import editor_ops_v2
+    from app.agents.edit_copilot import _ALIGNMENT_ASK_RE
+
+    for text in (
+        "i extended the first clip, readjust all texts to fit the shift properly",
+        "the texts aren't aligned with their respective videos",
+        "the labels are too early",
+    ):
+        assert _ALIGNMENT_ASK_RE.search(text), text
+    for text in ("label each clip with the place", "add the hour to each video"):
+        assert not _ALIGNMENT_ASK_RE.search(text), text
+    fragments = editor_ops_v2.prompt_fragments()
+    assert '"op":"realign_labels"' in fragments
+    assert "do NOT re-time labels yourself" not in fragments

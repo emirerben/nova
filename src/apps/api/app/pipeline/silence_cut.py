@@ -146,7 +146,8 @@ TOKEN_PIECE_MIN_S = 0.05
 # inside the ORIGINAL token is structurally invisible to it. Rule 0 is
 # therefore the only place that can protect the speech, and it does so by
 # refusing every ambiguous shape:
-#   * no EDGE trims — a carve at a token boundary is indistinguishable from a
+#   * no EDGE trims (one narrow exception: SENTENCE_TAIL_* below) — a carve at
+#     a token boundary is indistinguishable from a
 #     quiet onset or a trailing-off word, and edge trims were empirically the
 #     source of ~94% of the real-word audio a review measured being destroyed;
 #   * one carve per token — several quiet patches in one span is a mumbled
@@ -158,6 +159,26 @@ TOKEN_PIECE_MIN_S = 0.05
 # keeps 0.6 s on each side and is left whole.
 TOKEN_SPLIT_VOICE_RATIO = 0.5
 TOKEN_SPLIT_PIECE_MAX_S = 0.35
+# The ONE edge trim rule 0 allows (KRI-236, decision in agents/DECISIONS.md):
+# whisper stretches a sentence-final token's END across the pause after it
+# ("alakalı." stamped 5.84–6.86 s, voice stops ~6.15 s, "Abi" at 7.26 s), so the
+# stamped word gap falls under MAX_PAUSE_S and rule 3 never sees ~1 s of dead
+# air. The tail is carved only when every condition makes a quiet trailing
+# syllable implausible:
+#   * the token ends a sentence (". ? !", never an ellipsis — "a..." is a
+#     trailing-off hesitation, exactly the shape the no-edge-trim rule guards);
+#   * ONE long span (>= TOKEN_SILENCE_MIN_S) starts at least
+#     SENTENCE_TAIL_MIN_VOICED_S after the token's reliable start (D16), so
+#     the word keeps a real voiced length;
+#   * that span runs on to within SENTENCE_TAIL_REACH_S of the next word's
+#     start — no unexplained sound between the silence and the next word that
+#     could be the word's own tail. The reach is PAD_S plus the 80 ms edge
+#     guard ambient spans keep from sound (clip_speech._ENERGY_EDGE_GUARD_S).
+# Rule 3 then tightens the pause from the silence start, keeping KEPT_GAP_S/2
+# on both sides like any other pause.
+SENTENCE_TAIL_MIN_VOICED_S = 0.3
+SENTENCE_TAIL_REACH_S = PAD_S + 0.08
+_SENTENCE_FINAL_MARKS = (".", "?", "!")
 # A surviving speech fragment shorter than this reads as a stutter between two
 # jump cuts rather than a shot. Hygiene widens it by retreating a neighbouring
 # silence carrier; it is never absorbed, because the fragment is audio.
@@ -317,9 +338,10 @@ class TokenAdjustment:
     original_end_s: float
     pieces: tuple[tuple[float, float], ...]
     carved_s: float
-    # Only an interior carve is ever performed, so the token either keeps both
-    # slivers ("split") or loses one of them to TOKEN_PIECE_MIN_S absorption.
-    kind: Literal["trim_head", "trim_tail", "split"]
+    # An interior carve keeps both slivers ("split") or loses one of them to
+    # TOKEN_PIECE_MIN_S absorption ("trim_head"/"trim_tail"). The only edge
+    # carve is the sentence-final tail (SENTENCE_TAIL_* above).
+    kind: Literal["trim_head", "trim_tail", "split", "trim_sentence_tail"]
 
 
 @dataclass(frozen=True)
@@ -591,6 +613,37 @@ def _subtract_intervals(
     return out
 
 
+def _is_sentence_final(text: str) -> bool:
+    stripped = text.strip().rstrip("\"'”’»)")
+    if stripped.endswith(("...", "…")):
+        return False
+    return stripped.endswith(_SENTENCE_FINAL_MARKS)
+
+
+def _sentence_final_tail_carve(
+    word: _CutWord,
+    span: tuple[float, float],
+    next_word: _CutWord | None,
+) -> float | None:
+    """New token end when ``span`` is a pause whisper stamped onto the token.
+
+    Returns the silence start (the token's voiced end) only for the KRI-236
+    shape documented at ``SENTENCE_TAIL_MIN_VOICED_S``; ``None`` otherwise.
+    """
+    if next_word is None or not _is_sentence_final(word.text):
+        return None
+    span_lo, span_hi = span
+    if span_lo < word.start + SENTENCE_TAIL_MIN_VOICED_S - _EPS:
+        return None
+    # The span must swallow the whole stamped tail and stop short of the next
+    # word: silence that ends inside the token leaves sound we cannot explain.
+    if span_hi < word.end - _EPS or span_hi > next_word.start + _EPS:
+        return None
+    if next_word.start - span_hi > SENTENCE_TAIL_REACH_S + _EPS:
+        return None
+    return span_lo
+
+
 def _reconcile_words_with_silence(
     words: list[_CutWord],
     silence_spans: list[tuple[float, float]],
@@ -615,7 +668,9 @@ def _reconcile_words_with_silence(
     ``TOKEN_SPLIT_VOICE_RATIO`` of the carve. Anything else — an edge trim,
     several quiet patches, substantial voice either side — is left alone,
     because it is indistinguishable from a quiet onset or a mumbled word and
-    the cut would delete real speech. Tokens are never dropped either (a
+    the cut would delete real speech. The single exception is a sentence-final
+    token whose stamped tail lies wholly in a pause that runs on to the next
+    word (``_sentence_final_tail_carve``, KRI-236). Tokens are never dropped either (a
     mis-stamped filler inside silence is handled by rule 2's full-span flanks),
     so a very quiet clip behaves exactly as before. Text and order are
     preserved. ``retake_spans`` keep indexing the ORIGINAL list, so the caller
@@ -630,18 +685,33 @@ def _reconcile_words_with_silence(
 
     reconciled: list[_CutWord] = []
     adjustments: list[TokenAdjustment] = []
-    for word in words:
-        carve = [
-            (max(word.start, lo), min(word.end, hi))
+    for index, word in enumerate(words):
+        overlapping = [
+            (lo, hi)
             for lo, hi in long_spans
             if min(word.end, hi) - max(word.start, lo) >= TOKEN_SILENCE_MIN_OVERLAP_S - _EPS
         ]
         # Exactly one carve, strictly interior: an edge carve is a quiet onset
         # or a trailing-off word, and several carves are a mumbled word.
-        if len(carve) != 1:
+        if len(overlapping) != 1:
             reconciled.append(word)
             continue
-        carve_lo, carve_hi = carve[0]
+        next_word = words[index + 1] if index + 1 < len(words) else None
+        tail_lo = _sentence_final_tail_carve(word, overlapping[0], next_word)
+        if tail_lo is not None:
+            reconciled.append(word._replace(end=tail_lo))
+            adjustments.append(
+                TokenAdjustment(
+                    original_start_s=word.start,
+                    original_end_s=word.end,
+                    pieces=((word.start, tail_lo),),
+                    carved_s=word.end - tail_lo,
+                    kind="trim_sentence_tail",
+                )
+            )
+            continue
+        carve_lo = max(word.start, overlapping[0][0])
+        carve_hi = min(word.end, overlapping[0][1])
         if carve_lo <= word.start + _EPS or carve_hi >= word.end - _EPS:
             reconciled.append(word)
             continue
@@ -2607,6 +2677,45 @@ def build_cut_plan_comparison(
 def _removed_before(t: float, removals: list[Removal]) -> float:
     """Total removed time strictly before ``t`` (clamped for robustness)."""
     return sum(max(0.0, min(r.end_s, t) - r.start_s) for r in removals)
+
+
+def remap_time(t: float, plan: CutPlan) -> float:
+    """Map one source-timeline instant into cut-timeline time.
+
+    The shared primitive behind `remap_words`/`remap_range`: shift ``t`` left
+    by the cumulative removed time strictly before it. An instant that falls
+    INSIDE a removal maps to that removal's cut-timeline edge (the same
+    clamp `remap_words` applies to a word endpoint straddling a removal),
+    which is exactly what a single placement point (an SFX `at_s`, a beat
+    trigger) wants: it lands at the nearest surviving moment rather than
+    raising or silently keeping stale source-time coordinates.
+    """
+    removals = sorted(plan.removed, key=lambda r: (r.start_s, r.end_s))
+    return float(t) - _removed_before(float(t), removals)
+
+
+def remap_range(start: float, end: float, plan: CutPlan) -> tuple[float, float] | None:
+    """Map one source-timeline window ``[start, end)`` into cut-timeline time.
+
+    Mirrors `remap_words`' per-word logic for an arbitrary window (a phone
+    lane's overlay card, a caption cue's span): both endpoints shift left by
+    the cumulative removed time before them, so a window straddling a
+    removal shrinks by exactly the removed time inside it (the same
+    behavior a stretched word gets under V2 rule 0). Returns ``None`` when
+    the window is entirely covered by removals -- fully collapsed, not a
+    zero-width edge case the caller must special-case.
+    """
+    if end <= start:
+        return None
+    removals = sorted(plan.removed, key=lambda r: (r.start_s, r.end_s))
+    covered = sum(max(0.0, min(end, r.end_s) - max(start, r.start_s)) for r in removals)
+    if covered >= (end - start) - _EPS:
+        return None
+    new_start = start - _removed_before(start, removals)
+    new_end = end - _removed_before(end, removals)
+    if new_end <= new_start + _EPS:
+        return None
+    return new_start, new_end
 
 
 def remap_words(words: Sequence[Any] | None, plan: CutPlan) -> list[dict]:

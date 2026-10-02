@@ -16,6 +16,8 @@ enum NativeEditorUITestFixtures {
         case stress = "stress-71"
         case unknown = "unknown-sections"
         case autoScrollExtend = "autoscroll-extend"
+        case guidedText = "guided-text"
+        case talkingCaptions = "talking-captions"
     }
 
     struct Fixture: Sendable {
@@ -44,6 +46,8 @@ enum NativeEditorUITestFixtures {
         case .stress: stress
         case .unknown: unknownSections
         case .autoScrollExtend: autoScrollExtend
+        case .guidedText: guidedText
+        case .talkingCaptions: talkingCaptions
         }
     }
 
@@ -108,6 +112,36 @@ enum NativeEditorUITestFixtures {
                             textRecord(second, start: 1.5, end: 3, z: 1),
                         ]),
                      ])
+    }()
+
+    /// A unified montage's text lane (KRI-185): the title and a label per clip, plus
+    /// a caption, a removed label and the creator's own text. The Text tab lists
+    /// the title, both labels and the creator's text, in that order.
+    static let guidedText: EditorDraft = {
+        let clips = [clip(4, start: 0, duration: 2), clip(5, start: 2, duration: 2)]
+        func record(_ id: String, _ text: String, _ start: Double, _ end: Double, y: Double,
+                    extra: [String: JSONValue] = [:]) -> JSONValue {
+            var value: [String: JSONValue] = [
+                "id": .string(id), "text": .string(text), "start_s": .number(start), "end_s": .number(end),
+                "x_frac": .number(0.5), "y_frac": .number(y), "font_family": .string("Inter"),
+                "size_px": .number(58), "z": .number(1),
+            ]
+            value.merge(extra) { _, new in new }
+            return .object(value)
+        }
+        return draft(clips: clips, text: [], captions: false, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "text_elements": .array([
+                record("clip-label-unified-cut-2", "Dolmabahçe Palace", 2, 4, y: 0.78),
+                record("clip-label-unified-cut-1", "Galata Tower", 0, 2, y: 0.78),
+                record("guided-title", "20K Run · Arnavutkoy → Eminonu", 0, 2.2, y: 0.16),
+                record("creator-note", "My note", 1, 3, y: 0.5),
+                record("caption-1", "Spoken words", 0.5, 1.5, y: 0.85,
+                       extra: ["source_params": .object(["source": .string("caption_cue")])]),
+                record("clip-label-unified-cut-3", "Removed label", 3, 4, y: 0.78,
+                       extra: ["removed": .bool(true)]),
+            ]),
+        ], rootExtras: ["editor_capabilities": .object(["text_elements": .bool(true), "timeline": .bool(true)])])
     }()
 
     static let boundary: EditorDraft = {
@@ -250,6 +284,37 @@ enum NativeEditorUITestFixtures {
                 "sound_effects": .object(["editable": .bool(true)]),
                 "overlays": .object(["editable": .bool(true)]),
                 "media_overlays": .object(["editable": .bool(true)]),
+                "text_elements": .object(["editable": .bool(false), "reason": .string("Text isn’t editable for this edit on this iPhone.")]),
+            ]),
+        ])
+    }()
+
+    /// A Talking (subtitled) edit rendered on this iPhone, shaped like the
+    /// API's payload: each `caption_cues` row also comes back in
+    /// `text_elements` as a `caption_cue`-tagged mirror with its own hex id
+    /// and the cue's window (`_base_text_elements_for_variant`, CAPTION path).
+    /// The timeline must still show one CAPTIONS row.
+    static let talkingCaptions: EditorDraft = {
+        let clips = [clip(900, start: 0, duration: 6)]
+        let cues: [(text: String, start: Double, end: Double)] = [("Bu alan var mı?", 1.2, 3.7), ("Evet, boş.", 3.7, 5.6)]
+        return draft(clips: clips, text: [], captions: true, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "caption_cues": .array(cues.map { .object(["text": .string($0.text), "start_s": .number($0.start), "end_s": .number($0.end)]) }),
+            "caption_meta": .object(["enabled": .bool(true), "style": .string("sentence")]),
+            "text_elements": .array(cues.enumerated().map { index, cue in .object([
+                "id": .string(String(format: "%032x", 0x901 + index)), "text": .string(cue.text),
+                "start_s": .number(cue.start), "end_s": .number(cue.end), "role": .string("generative_sequence"),
+                "position": .string("bottom"), "alignment": .string("center"), "effect": .string("static"),
+                "source_params": .object(["source": .string("caption_cue"), "key": .string(String(index)),
+                                          "source_text": .string(cue.text)]),
+            ]) }),
+        ], rootExtras: [
+            "render_destination": .string("device"),
+            "resolved_archetype": .string("subtitled"),
+            "editor_capabilities": .object([
+                "timeline": .bool(true),
+                "caption_cues": .object(["editable": .bool(true)]),
+                "caption_meta": .object(["editable": .bool(true)]),
                 "text_elements": .object(["editable": .bool(false), "reason": .string("Text isn’t editable for this edit on this iPhone.")]),
             ]),
         ])

@@ -63,8 +63,14 @@ from app.agents._schemas.creator_policy import (
     normalize_creator_strategy_media,
     states_explicit_media_narrowing_cue,
 )
+from app.agents._schemas.edit_format import CLIP_INTENT_FREE_EDIT_FORMATS
 from app.agents._schemas.sfx_intent import LicensedSfxIntent
-from app.agents.main_creator import MainCreatorAgent, MainCreatorInput, MainCreatorOutput
+from app.agents.main_creator import (
+    MAIN_CREATOR_CONVERSATION_MAX,
+    MainCreatorAgent,
+    MainCreatorInput,
+    MainCreatorOutput,
+)
 from app.auth import CurrentUser
 from app.config import settings
 from app.database import get_db
@@ -460,19 +466,26 @@ def _carried_brief_seed(previous_active_plan: dict[str, Any] | None, message: st
     return "\n".join(lines)[: max(budget, 0)].strip()
 
 
+# Session-event rows here carry up to CREATOR_REQUEST_MAX_CHARS each (the planner
+# truncates to 1000), so this builder keeps its own, smaller window; it must never
+# exceed the MainCreatorInput schema cap.
+_ROUTE_CONVERSATION_WINDOW = min(20, MAIN_CREATOR_CONVERSATION_MAX)
+
+
 def _conversation(events: list[CreatorAgentEvent]) -> list[dict[str, str]]:
     turns = [
         {
             "role": event.role,
             "content": str((event.payload or {}).get("message") or "")[:CREATOR_REQUEST_MAX_CHARS],
         }
-        for event in sorted(events, key=lambda value: value.sequence)[-20:]
+        for event in sorted(events, key=lambda value: value.sequence)[-_ROUTE_CONVERSATION_WINDOW:]
         if (event.payload or {}).get("message")
     ]
     carried = _carried_brief(events)
     if carried:
         # The failed session's brief opens a fresh session's history.
-        return [{"role": "user", "content": carried}, *turns[-19:]]
+        keep = _ROUTE_CONVERSATION_WINDOW - 1
+        return [{"role": "user", "content": carried}, *turns[-keep:]]
     return turns
 
 
@@ -3151,10 +3164,17 @@ async def _run_planning_turn(
                 for intent in (strategy.clip_intents or [])
                 if intent.label_source == "transcript"
             ]
-            if settings.clip_intents_enabled or transcript_intents:
+            # A Talking edit renders no clip intents and its "captions" are speech
+            # captions, so never inventory them there; `compile_active_plan`
+            # strips any footage intents the model proposed, with a notice.
+            run_clip_intent_inventory = (
+                settings.clip_intents_enabled
+                and strategy.edit_format not in CLIP_INTENT_FREE_EDIT_FORMATS
+            )
+            if run_clip_intent_inventory or transcript_intents:
                 intent_clips = (
                     await load_intent_clips_for_item(db, item, persona)
-                    if settings.clip_intents_enabled
+                    if run_clip_intent_inventory
                     else []
                 )
                 requested_intents = transcript_intents
@@ -3184,7 +3204,7 @@ async def _run_planning_turn(
                     )
 
                 try:
-                    if settings.clip_intents_enabled:
+                    if run_clip_intent_inventory:
                         planned_intents = await plan_and_resolve_clip_intents(
                             **(
                                 {"background": True, "checkpoint": save_answers}

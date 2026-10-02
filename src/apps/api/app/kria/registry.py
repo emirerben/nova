@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.kria.contracts import KriaToolDefinition
+from app.services.editor_limits import MAX_EDITOR_OPS
 
 
 class EmptyArguments(BaseModel):
@@ -46,7 +47,7 @@ class ApplyEditorOpsArguments(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    operations: list[dict[str, Any]] = Field(min_length=1, max_length=8)
+    operations: list[dict[str, Any]] = Field(min_length=1, max_length=MAX_EDITOR_OPS)
     summary: str = Field(min_length=1, max_length=1000)
 
 

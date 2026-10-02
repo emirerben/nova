@@ -217,6 +217,11 @@ def test_edit_copilot_eval(
                 for target in inventory
                 if ("category" not in selector or target["kind"] == selector["category"])
                 and ("target_ids" not in selector or target["id"] in selector["target_ids"])
+                and (
+                    "group" not in selector
+                    or target.get("group")
+                    == {"titles": "title", "labels": "label"}[selector["group"]]
+                )
             ]
             assert set(op["target_ids"]) == {target["id"] for target in targets}
             assert len(op["target_ids"]) == len(targets)
@@ -272,3 +277,11 @@ def test_edit_copilot_eval(
         assert deltas(result.output["ops"]) == deltas(expected)
         for phrase in fixture.meta.get("reply_contains", []):
             assert phrase.lower() in result.output["reply"].lower()
+
+
+def test_capability_unavailable_detail_is_user_readable() -> None:
+    """The rejection detail is shown verbatim as the reply; it must be plain language."""
+    from app.agents.edit_copilot import CAPABILITY_UNAVAILABLE_DETAIL
+
+    assert CAPABILITY_UNAVAILABLE_DETAIL == "I can't change that on this edit yet."
+    assert "operation" not in CAPABILITY_UNAVAILABLE_DETAIL

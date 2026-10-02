@@ -40,6 +40,7 @@ from app.agents._schemas.creator_policy import (
     repair_creator_strategy_shape,
 )
 from app.agents._schemas.edit_format import (
+    CLIP_INTENT_FREE_EDIT_FORMATS,
     EDIT_FORMATS,
     GUIDED_EDIT_FORMATS,
     NARRATED_EDIT_FORMATS,
@@ -56,6 +57,7 @@ from app.services.phone_rollout import (
     phone_subtitled_overlays_supported,
     phone_subtitled_reaction_beats_supported,
     phone_subtitled_video_overlays_supported,
+    phone_talking_head_supported,
 )
 
 CAPABILITY_SET_ITEM_INTENT = "set_item_intent"
@@ -75,6 +77,10 @@ CAPABILITY_REACTION_BEATS = "reaction_beats"
 # in `resolve_creator_manifest` for why it is omitted, not `_unavailable`,
 # otherwise.
 CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS = "media_overlays:video_cards"
+TALKING_CLIP_INTENTS_DROPPED_NOTICE = (
+    "Talking edits caption what you say, so I didn't add separate labels or captions "
+    "to individual clips."
+)
 
 
 class CreatorSfxUnavailableError(CreatorStrategyError):
@@ -613,6 +619,11 @@ def resolve_creator_manifest(
                                 f"{candidate_format} does not render on this iPhone yet",
                             )
                         )
+                    elif clip_count >= 2 and phone_talking_head_supported():
+                        # KRI-136: 2+ clips resolve to `talking_head`, which
+                        # renders on the phone as the speaker clip plus
+                        # muted full-frame cutaways.
+                        phone_format_capability = _available()
                     elif clip_count >= 2:
                         # KRI-118 L1 item 3: self-narration (no recorded
                         # voiceover) across 2+ clips would need
@@ -817,6 +828,30 @@ def _repair_creator_reaction_beats(
     )
 
 
+def _drop_talking_clip_intents(strategy: CreativeStrategy) -> tuple[CreativeStrategy, list[str]]:
+    """Strip footage clip intents from a Talking edit, saying so once.
+
+    Its renderers never draw them (`CLIP_INTENT_FREE_EDIT_FORMATS`), so keeping
+    them would approve labels or chapter captions the render silently drops.
+    Transcript labels stay for the narration check below. Flag off, visual
+    intents are already discarded at the model boundary, so this stays
+    byte-identical there.
+    """
+
+    if not settings.clip_intents_enabled or strategy.edit_format not in (
+        CLIP_INTENT_FREE_EDIT_FORMATS
+    ):
+        return strategy, []
+    intents = strategy.clip_intents or []
+    kept = [intent for intent in intents if intent.label_source == "transcript"]
+    if len(kept) == len(intents) and not strategy.resolved_clip_intents:
+        return strategy, []
+    stripped = strategy.model_copy(
+        update={"clip_intents": kept or None, "resolved_clip_intents": None}
+    )
+    return stripped, ([TALKING_CLIP_INTENTS_DROPPED_NOTICE] if len(kept) != len(intents) else [])
+
+
 def compile_strategy_to_plan(
     manifest: ResolvedCreatorManifest,
     strategy: CreativeStrategy,
@@ -858,6 +893,8 @@ def compile_strategy_to_plan(
                 edit_format=strategy.edit_format,
             ) from exc
         raise CreatorStrategyError(str(exc)) from exc
+    strategy, talking_notices = _drop_talking_clip_intents(strategy)
+    shape_notices = [*shape_notices, *talking_notices]
     if any(intent.label_source == "transcript" for intent in (strategy.clip_intents or [])) and (
         strategy.execution_contract != "guided_voiceover_v1" or manifest.narration is None
     ):
@@ -910,6 +947,21 @@ def compile_strategy_to_plan(
         # at the plan boundary rather than silently dropping confirmed copy.
         raise CreatorStrategyError(
             f"opening_title is not supported by the {strategy.edit_format} renderer",
+            code="unsupported_treatment",
+            edit_format=strategy.edit_format,
+        )
+    phone_capability = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    if (
+        strategy.opening_title
+        and strategy.edit_format in NARRATED_EDIT_FORMATS
+        and strategy.render_program != "guided"
+        and phone_capability is not None
+        and phone_capability.available
+    ):
+        # KRI-142: the phone voiceover compiler (`compile_phone_narrated_plan`)
+        # has no title lane; only the cloud narrated render burns one.
+        raise CreatorStrategyError(
+            f"opening_title is not supported by the phone {strategy.edit_format} renderer",
             code="unsupported_treatment",
             edit_format=strategy.edit_format,
         )
@@ -1076,6 +1128,9 @@ def resolve_creator_image_media_ref(
 
 # Readable alias for callers that build rather than resolve a manifest.
 build_creator_manifest = resolve_creator_manifest
+# Public name for the Creative Brief checks (KRI-188), which must judge reaction
+# beats exactly as approval will keep them.
+repair_creator_reaction_beats = _repair_creator_reaction_beats
 
 
 __all__ = [
@@ -1096,6 +1151,7 @@ __all__ = [
     "compile_strategy_to_plan",
     "effective_render_program",
     "normalize_creator_strategy_media",
+    "repair_creator_reaction_beats",
     "resolve_creator_image_media_ref",
     "resolve_creator_manifest",
     "resolve_creator_sfx_catalog_ref",

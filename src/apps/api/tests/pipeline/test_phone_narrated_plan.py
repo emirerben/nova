@@ -247,3 +247,101 @@ def test_caption_recipe_passes_phone_pilot_validation(monkeypatch):
         settings, "phone_render_verified_features", list(recipe.required_capabilities)
     )
     validate_phone_pilot_recipe(recipe)
+
+
+def test_a_caption_at_the_nominal_end_survives_float_noise_from_a_slowed_clip():
+    """KRI-209: the sibling of KRI-190's guided fix. A slowed-down clip plays
+    3.394 / (3.394 / 11.398) == 11.397999999999998 s, and the narration bed measures a
+    millisecond shorter than the voiceover, so the recipe's own duration is a hair under
+    a caption that ends at the voiceover's nominal 11.398; `EditRecipeV2` rejects
+    `layer.end > duration` with a strict compare."""
+    steps = [_step("s0", "c0", start_s=0.0, end_s=11.398)]
+    bindings = (_binding("c0", duration_s=3.444),)
+    narration = _narration(duration_s=11.397)
+    cues = [{"text": "Hello there", "start_s": 9.0, "end_s": 11.398}]
+
+    recipe = compile_phone_narrated_plan(
+        steps, bindings, narration, voiceover_duration_s=11.398, caption_cues=cues
+    )
+
+    # The premise: the recipe really does report a hair less than the caption's end.
+    assert recipe.duration < 11.398
+    assert recipe.text_layers
+    assert all(layer.end <= recipe.duration for layer in recipe.text_layers)
+    assert recipe.text_layers[-1].end == pytest.approx(11.398, abs=1e-6)
+
+
+def test_a_caption_that_fits_the_narrated_timeline_is_untouched():
+    steps = _three_steps()
+    cues = [{"text": "Hello there", "start_s": 0.0, "end_s": 2.0}]
+    recipe = compile_phone_narrated_plan(
+        steps,
+        _three_bindings(),
+        _narration(duration_s=12.0),
+        voiceover_duration_s=12.0,
+        caption_cues=cues,
+    )
+    assert recipe.text_layers[0].end == pytest.approx(2.0)
+
+
+def test_voice_fades_out_like_the_cloud_and_loudness_target_rides_the_recipe():
+    """KRI-139: `_mix_user_voiceover`'s 0.5s voice fade-out + final loudnorm."""
+    recipe = compile_phone_narrated_plan(
+        _three_steps(),
+        _three_bindings(),
+        _narration(duration_s=12.0),
+        voiceover_duration_s=12.0,
+        target_lufs=-14.0,
+    )
+    voice = next(t for t in recipe.tracks if t.id == "narration").clips[0]
+    assert voice.audio_fade_out == pytest.approx(0.5)
+    assert voice.audio_fade_in is None
+    assert recipe.audio.target_lufs == pytest.approx(-14.0)
+    payload = recipe.model_dump(mode="json")
+    assert payload["audio"]["target_lufs"] == -14.0
+    assert recipe.model_validate(payload) == recipe
+
+
+def test_loudness_target_is_omitted_when_unset():
+    """Digest stability: a recipe without a target serializes exactly as before."""
+    recipe = compile_phone_narrated_plan(
+        _three_steps(), _three_bindings(), _narration(duration_s=12.0), voiceover_duration_s=12.0
+    )
+    assert "target_lufs" not in recipe.model_dump(mode="json")["audio"]
+    video = next(t for t in recipe.tracks if t.kind == "video")
+    assert all("audio_fade_in" not in clip.model_dump() for clip in video.clips)
+
+
+@pytest.mark.parametrize("mix,expected_gain", [(0.75, 0.15), (0.0, 0.6)])
+def test_ducked_bed_matches_the_cloud_sidechain_resting_level(mix, expected_gain):
+    recipe = compile_phone_narrated_plan(
+        _three_steps(),
+        _three_bindings(),
+        _narration(duration_s=12.0),
+        voiceover_duration_s=12.0,
+        mix=mix,
+        duck_footage_bed=True,
+    )
+    # `_NARRATED_FOOTAGE_BED_MAX_GAIN` x bed level, keyed by the voice.
+    assert recipe.audio.original_volume == pytest.approx(expected_gain)
+    assert recipe.audio.duck_original_during_music is True
+    assert "audioDucking" in recipe.required_capabilities
+
+
+def test_no_duck_without_the_gate_or_without_a_bed():
+    ungated = compile_phone_narrated_plan(
+        _three_steps(), _three_bindings(), _narration(), voiceover_duration_s=12.0, mix=0.75
+    )
+    assert ungated.audio.original_volume == pytest.approx(0.25)
+    assert ungated.audio.duck_original_during_music is False
+    assert "audioDucking" not in ungated.required_capabilities
+    silent_bed = compile_phone_narrated_plan(
+        _three_steps(),
+        _three_bindings(),
+        _narration(),
+        voiceover_duration_s=12.0,
+        mix=1.0,
+        duck_footage_bed=True,
+    )
+    assert silent_bed.audio.duck_original_during_music is False
+    assert "audioDucking" not in silent_bed.required_capabilities

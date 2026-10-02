@@ -43,7 +43,7 @@ from app.db_locks import (
     acquire_locked_rows,
     transient_sqlstate,
 )
-from app.kria.api_schemas import KriaProblemOut, ThreadDeltaOut
+from app.kria.api_schemas import EDITOR_STATE_MAX_BYTES, KriaProblemOut, ThreadDeltaOut
 from app.kria.device_render import DeviceRenderCapabilities
 from app.kria.http import KriaFailureRoute, problem_response
 from app.kria.media_sources import (
@@ -119,6 +119,10 @@ from app.services.phone_destination import (
     has_device_intent,
     item_visuals_only_on_device,
     with_device_intent,
+)
+from app.services.speech_cleanup_decision import (
+    SpeechCleanupDecisionConflict,
+    evaluate_enforce_mode_decision,
 )
 
 log = structlog.get_logger()
@@ -315,6 +319,10 @@ class CreationCapabilitiesOut(BaseModel):
     runtime_versions: list[Literal[1, 2]] = Field(default_factory=lambda: [1])
     visuals_enabled: bool = False
     phone_rendering: DeviceRenderCapabilities = Field(default_factory=DeviceRenderCapabilities)
+    # The chat copilot continues on the editor's unsaved state when the turn body
+    # carries `editor_state` (KRIA_EDITOR_STATE_TURNS_ENABLED); max serialized size.
+    editor_state_turns: bool = False
+    editor_state_max_bytes: int = EDITOR_STATE_MAX_BYTES
 
 
 class CreateBody(StrictBody):
@@ -631,7 +639,19 @@ async def _renders_visuals_on_device(db: AsyncSession, thread: CreationThread, u
 
 
 _RUNTIME_V2_SHARED_ACTIONS = frozenset(
-    {"select_format", "select_edit_format", "remove_media", "select_variant"}
+    {
+        "select_format",
+        "select_edit_format",
+        "remove_media",
+        "select_variant",
+        # KRI-205: re-queues the source speech-cleanup analysis -- source
+        # configuration, not render authority, so it stays shared exactly
+        # like the other actions here. A v2 thread's `decide_approval` reads
+        # whatever this leaves as the item's current analysis at approval
+        # time; it does not touch the v1-only CreatorAgentSession/confirm flow
+        # (see the dedicated `retry_speech_cleanup` branch below).
+        "retry_speech_cleanup",
+    }
 )
 
 
@@ -3074,12 +3094,15 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                 detector_policy=current_detector_policy(),
             )
             row = await current_analysis_async(db, item.id)
-            # `storage_path` MUST ride along: it is what excludes a phone
-            # (analysis-proxy) source, exactly as `schedule_item_preflight_*`
-            # does. Without it this projection said "applicable" for a phone
-            # Talking item while no analysis row could ever be scheduled, so
-            # the iOS confirmation stage spun on "Preparing the speech check"
-            # forever with no Create button (2026-09-24, thread f249fb29).
+            # Historical note (2026-09-24, thread f249fb29): this projection
+            # once passed a `storage_path` that `schedule_item_preflight_*`
+            # did not, so a phone Talking item could show "applicable" with
+            # no analysis row ever scheduled, stranding the iOS confirmation
+            # stage on "Preparing the speech check" forever. Since KRI-205,
+            # `preflight_enabled_for_source` no longer branches on source
+            # type at all -- a phone (analysis-proxy) source is scheduled and
+            # projected exactly like a cloud one -- so this call and
+            # `schedule_item_preflight_*` structurally cannot disagree again.
             in_cohort = bool(
                 cleanup_enforced
                 and resolution.source
@@ -3087,7 +3110,6 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                     resolution.source.source_policy_fingerprint,
                     mode=settings.speech_cleanup_preflight_mode,
                     rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
-                    storage_path=getattr(resolution.source, "storage_path", None),
                 )
             )
             speech_cleanup = public_projection(
@@ -3305,6 +3327,8 @@ async def capabilities(user: CurrentUser, native_client: NativeClient = False) -
         "visuals_enabled": bool(
             settings.overlay_autoplace_enabled or settings.guided_edit_capability_enabled
         ),
+        "editor_state_turns": bool(settings.kria_editor_state_turns_enabled),
+        "editor_state_max_bytes": EDITOR_STATE_MAX_BYTES,
         "formats": [
             {
                 "id": key,
@@ -4836,96 +4860,33 @@ async def action_thread(
                     cleanup_choice = recorded[1]
 
             if settings.speech_cleanup_preflight_mode == "enforce":
-                from app.services.plan_item_media import (  # noqa: PLC0415
-                    current_detector_policy,
-                    resolve_item_narration,
-                )
-                from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
-                    current_analysis_async,
-                    preflight_enabled_for_source,
-                )
-
+                # Same gate as the projection above and the scheduler (KRI-205:
+                # a phone/analysis-proxy source is enforced exactly like a
+                # cloud one now, so `generate` correctly 409s
+                # `speech_cleanup_pending` until the creator answers the
+                # question -- the analysis this waits on really is scheduled).
+                # Extracted (2026-09, KRI-205) into
+                # `app.services.speech_cleanup_decision.evaluate_enforce_mode_decision`
+                # so this fence and the Kria runtime-v2 approval path can never
+                # diverge; the mapping to this route's `HTTPException` stays
+                # here, byte-identical to before the extraction.
                 item = await db.get(PlanItem, thread.active_plan_item_id)
-                current_cleanup = (
-                    await current_analysis_async(db, item.id) if item is not None else None
-                )
-                resolution = (
-                    resolve_item_narration(
-                        item,
-                        detector_policy=current_detector_policy(),
-                    )
-                    if item is not None
-                    else None
-                )
-                # Same `storage_path` gate as the projection above and the
-                # scheduler: a phone (analysis-proxy) source is never enforced,
-                # otherwise `generate` 409s `speech_cleanup_pending` for an
-                # analysis that will never exist.
-                enforced_for_source = bool(
-                    resolution
-                    and resolution.source
-                    and preflight_enabled_for_source(
-                        resolution.source.source_policy_fingerprint,
-                        mode=settings.speech_cleanup_preflight_mode,
-                        rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
-                        storage_path=getattr(resolution.source, "storage_path", None),
-                    )
-                )
-                if (
-                    current_cleanup is not None
-                    and resolution is not None
-                    and resolution.source is not None
-                    and current_cleanup.source_policy_fingerprint
-                    != resolution.source.source_policy_fingerprint
-                ):
-                    # A deploy that bumps the detector/engine restamps every
-                    # fingerprint, so this row can be stale for media that never
-                    # moved. Replace it here -- nothing else on the generation
-                    # path reschedules -- and keep the conflict, which the chat
-                    # client already answers by re-reading the fresh card.
-                    refreshed, refreshed_analysis_id = await _refresh_stale_cleanup_policy(
+                if item is not None:
+                    result = await evaluate_enforce_mode_decision(
                         db,
                         item,
-                        resolution=resolution,
+                        cleanup_analysis_id=cleanup_analysis_id,
+                        cleanup_choice=cleanup_choice,
                     )
-                    if refreshed:
-                        await _commit_refreshed_cleanup_policy(db, refreshed_analysis_id)
-                        raise HTTPException(
-                            status_code=409,
-                            detail="speech_cleanup_analysis_changed",
-                        )
-                if enforced_for_source and current_cleanup is None:
-                    raise HTTPException(status_code=409, detail="speech_cleanup_pending")
-                if current_cleanup is not None and (
-                    resolution is None
-                    or resolution.source is None
-                    or current_cleanup.source_policy_fingerprint
-                    != resolution.source.source_policy_fingerprint
-                ):
-                    raise HTTPException(
-                        status_code=409,
-                        detail="speech_cleanup_analysis_changed",
-                    )
-                if enforced_for_source and current_cleanup is not None:
-                    if cleanup_analysis_id != current_cleanup.id:
-                        raise HTTPException(
-                            status_code=409,
-                            detail="speech_cleanup_analysis_changed",
-                        )
-                    if current_cleanup.status in {"queued", "running"}:
-                        raise HTTPException(status_code=409, detail="speech_cleanup_pending")
-                    if current_cleanup.status == "failed":
-                        raise HTTPException(status_code=409, detail="speech_cleanup_failed")
-                    if current_cleanup.status == "no_findings" and cleanup_choice is not None:
-                        raise HTTPException(
-                            status_code=409,
-                            detail="speech_cleanup_choice_not_allowed",
-                        )
-                    if current_cleanup.status == "ready" and cleanup_choice is None:
-                        raise HTTPException(
-                            status_code=409,
-                            detail="speech_cleanup_choice_required",
-                        )
+                    if isinstance(result, SpeechCleanupDecisionConflict):
+                        if result.refreshed:
+                            # A deploy that bumps the detector/engine restamps
+                            # every fingerprint, so this row can be stale for
+                            # media that never moved. The identity refresh must
+                            # outlive this 409, or the item dead-ends on the
+                            # same superseded row next attempt.
+                            await _commit_refreshed_cleanup_policy(db, result.refreshed_analysis_id)
+                        raise HTTPException(status_code=409, detail=result.code)
         if body.action in {"generate", "confirm_generation"}:
             from app.services.creator_direction_receipts import (  # noqa: PLC0415
                 stamp_private_receipt,
@@ -5703,6 +5664,7 @@ async def attach_media(
     )
 
     current_cleanup = await mutation_current_analysis_async(db, item.id, for_update=True)
+    item_id_for_analysis = item.id  # read now: the commit below expires `item`
     mutation_kwargs: dict[str, Any] = {"clip_assignments": assignments}
     if any(source["kind"] == "audio" for source in verified):
         audio = next(source for source in reversed(verified) if source["kind"] == "audio")
@@ -5761,6 +5723,11 @@ async def attach_media(
         from app.services.plan_item_media import publish_preflight_after_commit  # noqa: PLC0415
 
         await asyncio.to_thread(publish_preflight_after_commit, preflight_analysis_id)
+    # KRI-219: describe what the new clips show, in the background (never blocks attach).
+    if any(source["kind"] == "video" for source in verified):
+        from app.tasks.kria_clip_understanding import enqueue_clip_understanding  # noqa: PLC0415
+
+        await asyncio.to_thread(enqueue_clip_understanding, item_id_for_analysis)
     return await _response(db, thread)
 
 

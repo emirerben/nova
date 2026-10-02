@@ -289,7 +289,12 @@ public enum MediaEngineError: Error, Equatable, Sendable, LocalizedError {
 
 public struct NativePreviewFeatureError: Error, Sendable, LocalizedError {
     public let feature: String
-    public init(_ feature: String) { self.feature = feature }
+    /// True when the refusal is decided by the recipe and its sources alone (for
+    /// example an HDR or HEVC original under a look that only grades SDR H.264), so
+    /// rendering the same edit again fails the same way. Device renders report
+    /// these as `unsupported_recipe`, which hides the pointless "Try again".
+    public let isStructural: Bool
+    public init(_ feature: String, isStructural: Bool = false) { self.feature = feature; self.isStructural = isStructural }
 
     public var errorDescription: String? {
         "This video uses a preview feature (\(feature)) that isn’t supported yet."

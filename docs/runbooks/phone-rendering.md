@@ -111,11 +111,11 @@ Enrollment (`phone_rendering_for`) is checked first regardless of format.
 
 `montage`/`day_vlog`/`single_hero` items **without a voiceover** compile
 straight from the analysis proxies: `app.tasks.generative_build
-._run_phone_montage_job` runs the SAME ingest → text agents → style selector
+._run_phone_voiceover_montage_job` runs the SAME ingest → text agents → style selector
 → music matcher → `_resolve_archetype` → `_specs_for_archetype` prework the
 cloud path uses, then hands the top-ranked spec to `_decide_generative_variant`
-(pure — no media I/O) and `app.pipeline.phone_montage_plan
-.compile_phone_montage_plan` (also pure — no media I/O, no DB). The compiler
+(pure — no media I/O) and `app.pipeline.phone_voiceover_montage_plan
+.compile_phone_voiceover_montage_plan` (also pure — no media I/O, no DB). The compiler
 maps each decided `AssemblyStep` to a `TimelineClip` (crossfade/fade-to-black/
 fade-to-white transitions; the on-device refit math shared with the guided
 compiler via `app.pipeline.phone_recipe_shared` when a step's proxy-measured
@@ -133,13 +133,17 @@ not the sequence/rhythm upgrade), crossfade/fade-to-black/fade-to-white
 transitions, variable speed, the `golden_hour` look on exact-canvas
 unrotated sources, a licensed music bed at its matched offset.
 
-**Deferred, fails closed via `UnsupportedPhonePlan`:** every variant but the
-top-ranked one (the rest are recorded under
-`assembly_plan["phone_deferred_variants"]` so nothing is silently lost —
-multi-variant phone rendering is a follow-up), SFX/media-overlay lanes,
+**One variant:** only the top-ranked spec renders on the phone; any others
+are dropped (logged as `phone_render_variants_dropped`, not stored). Plan items
+are single-variant in the cloud too, except a voiceover with a matched track
+under the original-audio policy (KRI-141 chose dropping over telling the
+creator about a version they can't get).
+
+**Deferred, fails closed via `UnsupportedPhonePlan`:** SFX/media-overlay lanes,
 masonry/collage presets, lyric overlays, carousel-moment splices, letterboxed
 landscape fit, the editorial sequence/rhythm typographic upgrade, non-
-`golden_hour`/`none` color grades, and audio ducking.
+`golden_hour`/`none` color grades, and ducking footage under a music bed
+(no cloud producer sets it).
 
 #### Recorded voiceover (KRI-132)
 
@@ -173,19 +177,72 @@ variant was decided — is attenuated by `1 - mix` (`mix=1.0`, the
 `voiceover_only` default, fully ducks the bed; a matched-track bed is
 additionally capped at 0.5 so it can never bury the voice; a matched-track
 bed also means footage audio is never referenced at all, matching the
-cloud's `music_gcs_path` branch). **Known phone/cloud difference:** the cloud
-additionally runs `loudnorm` on the final mix; there is no phone equivalent —
-this is intentional, not a gap to close in this phase. The narration audio
+cloud's `music_gcs_path` branch). The cloud's final `loudnorm` and 0.5s voice
+fade-out now have phone equivalents — see "Audio mix parity (KRI-139)" below.
+The narration audio
 clip is capped to `voiceover_target_s` (min of footage/voice/short-form
 ceiling — the same value the decide phase already sized the footage montage
 to), further bounded by the timeline's own assembled duration; a real
 mismatch leaves trailing silence rather than truncating video, since the
 video timeline is already ~that long by construction and the phone recipe
-schema has no whole-timeline truncation primitive today. The cloud's 0.5s
-voice fade-out at the end has no phone expression yet — `TimelineClip`/
-`AudioMixRecipe` have no fade field scoped to one clip (`AudioMixRecipe.fade_in`
-/`fade_out` exist but are unused by the V2 native-track mixing path; adding a
-narration-specific fade needs schema work, a follow-up).
+schema has no whole-timeline truncation primitive today.
+
+#### Audio mix parity (KRI-139)
+
+The phone mix now reproduces the cloud's audio chain for the voiceover
+montage (`compile_phone_voiceover_montage_plan`) and narrated
+(`compile_phone_narrated_plan`) lanes:
+
+- **Fades** ride the audio clip: `TimelineClip.audio_fade_in`/`audio_fade_out`
+  (seconds, omitted when unset so older recipe digests are unchanged). The voice
+  fades out over 0.5s (`_mix_user_voiceover`'s `afade`); a matched music bed
+  fades in and out over 0.5s. The cloud trims that bed hard at `-t`, so this
+  one is a deliberate improvement rather than parity. `applyAudioGain` uses an
+  authored fade in place of its 25ms declick edge when it is longer.
+- **Loudness**: `AudioMixRecipe.target_lufs` (the worker passes
+  `settings.output_target_lufs`, -14). Before writing, the exporter reads the
+  whole mix once, measures its BS.1770 integrated loudness
+  (`LoudnessMeter`), then applies one gain (bounded to -30…+20 dB) plus an
+  instant-attack/50ms-release sample-peak limiter at -1.5 dBFS
+  (`LoudnessNormalizer`, `RecipeWriter`). Preview playback is not normalized:
+  AVAudioMix cannot boost.
+- **Ducking** (narrated only): `duck_original_during_music` asks the composer
+  to side-chain duck the footage's own audio under the audio-kind tracks (the
+  voice), using ffmpeg's `sidechaincompress` gain computer with the cloud's
+  settings (threshold 0.03, ratio 8, attack 15ms, release 300ms), applied as
+  volume ramps (`AudioDuckEnvelope`). Only then does the bed take the cloud's
+  0.6 resting cap. It requires the `audioDucking` capability, which the worker
+  requests only when it is in `phone_render_verified_features`. Without it the
+  narrated bed stays the shipped flat gain.
+
+Old app builds ignore the new keys (clip and mix decoding tolerate unknown
+fields), so they keep rendering exactly as before; only `audioDucking` needs a
+rollout step. After an app build carrying KRI-139 reaches the pilot devices, add
+`audioDucking` to `PHONE_RENDER_VERIFIED_FEATURES` on Fly (api + worker).
+Rollback is removing it again.
+
+Parity check: `scripts/ios/phone-audio-parity.py` compiles real recipes, renders
+them through `KriaMediaEngine` (`AudioParityFixtureTests`, host or simulator),
+mixes the same inputs with the real `_mix_user_voiceover`, and compares
+`ebur128` loudness, true peak, end levels and the 400ms loudness curve.
+Measured 2026-09-30 on the iPhone 17 Pro simulator (iOS 26.5; the macOS host
+run gave identical numbers), with a macOS `say` voice, a synthetic music bed
+and pink-noise footage. Phone vs cloud:
+
+| Case | Cloud LUFS | Phone LUFS | Δ | Short-term Δ median / p90 |
+| --- | --- | --- | --- | --- |
+| voiceover + music bed | -14.4 | -14.0 | +0.4 LU | 0.36 / 0.79 dB |
+| voiceover + footage bed (mix 0.4) | -13.9 | -14.0 | -0.1 LU | 0.18 / 1.12 dB |
+| narrated, ducked bed | -14.1 | -14.0 | +0.1 LU | 0.18 / 0.63 dB |
+
+Tolerance: ±1 LU integrated, true peak at or below -1 dBTP. The music bed now
+ends at -58 dB where the cloud cuts at -23 dB.
+
+Not covered yet: the guided-story narration lane (the cloud's
+`_mix_pinned_narration` has no fade or loudnorm either, so there is nothing
+to match), the subtitled/talking lanes, and the native editor's re-render
+(`NativeEditorRenderCompiler`), which does not carry fades, loudness or
+ducking into a re-render.
 
 **Fails closed BEFORE a Job is minted**, not merely in the worker: the
 dispatch gate (`app.tasks.content_plan_build._dispatch_item_render`) checks
@@ -249,7 +306,7 @@ branch is reached, mirroring `_dispatch_item_render`'s own
 has_voiceover=True)` (always `False`) and `routes/creator_agent.py`'s
 `bypass_guided_edit_gate = render_program == "native"`. Guarded so nothing
 silently drops creator media: the montage-family phone compiler
-(`compile_phone_montage_plan`) only ever binds clip-lane sources, never
+(`compile_phone_voiceover_montage_plan`) only ever binds clip-lane sources, never
 Visuals-pool ("asset-*") media, so an explicit pool-media selection
 alongside a voiceover fails closed with `PhoneMediaUnavailableError` instead
 of resolving native and dropping it; `media_scope == "all"` with a
@@ -450,9 +507,9 @@ deliberately format-agnostic now that the allowlist grows with rollout.
 
 **Known divergences from the cloud path (v1, accepted):** no silence-cut/
 speech-cleanup on either phone lane; no agentic storyboard re-ranking for
-narrated clip assignment (script/guide order only); no side-chain ducking,
-`loudnorm`, or voice fade-out (flat bed gain, same approximation the
-montage-family voiceover render already ships); no face-tracked crop
+narrated clip assignment (script/guide order only); side-chain ducking is
+gated on `audioDucking` being verified (flat bed gain until then; `loudnorm`
+and the voice fade-out ship ungated — see "Audio mix parity (KRI-139)"); no face-tracked crop
 (`subtitled` requires an already-portrait source clip instead of cropping);
 word-style captions use the device `karaoke-line` fill, so already-spoken
 words stay highlighted where the cloud ASS path recolours only the current
@@ -1212,7 +1269,8 @@ app or a missed push notification otherwise leaves a job `awaiting_device` (or
 - **Client-driven failure report** — `POST /me/jobs/{job_id}/device-render/failures`
   (10/min): body `{identity, reason_code, detail}` where `reason_code` is one
   of `export_failed`, `insufficient_storage`, `thermal`, `unsupported_recipe`,
-  `cancelled_by_user`, `unknown`; `detail` is an optional free-text string
+  `cancelled_by_user`, `timed_out` (the reaper's code; phones don't send it),
+  `unknown`; `detail` is an optional free-text string
   (≤2000 chars). Valid only from `awaiting_device`/`syncing`; a repeat report
   against an already-`needs_attention` identity returns 200 idempotently
   (current state, original reason preserved); against a `published` record it
@@ -1243,7 +1301,9 @@ app or a missed push notification otherwise leaves a job `awaiting_device` (or
   polled `GET /device-render` — throttled to one write per 60s — else
   `pinned_at`, stamped at pin time, else `job.updated_at`) is older than
   `settings.device_render_stale_after_s` (default 86400s = 24h). Reaping calls
-  `mark_device_failed(reason_code="unknown", ...)`, sets
+  `mark_device_failed(reason_code="timed_out", ...)` (its own code since
+  KRI-141, so the phone shows timeout-specific copy; older records keep
+  `unknown`), sets
   `job.failure_reason="device_render_stale"`, and stamps `reaped_at` on the
   record so it is never re-reaped.
 
@@ -1751,7 +1811,7 @@ existing v1 threads stay v1 in both directions.
 allow_phone_unapproved_montage=True)`. A v2 approval has no approved guided
 proposal, which the phone gate normally requires (`unapproved_guided`). For a
 montage-family format on a covered account the gate lets it through and the
-worker runs `_run_phone_montage_job` (decisions-only, pins the device request,
+worker runs `_run_phone_voiceover_montage_job` (decisions-only, pins the device request,
 `Job.status = awaiting_device`). Any other caller, an uncovered account, or the
 flag off keeps the refusal byte-identically. A refused dispatch records its
 `phone_gate` reason on the execution error (`reason`). Formats that still need
@@ -1797,24 +1857,86 @@ account: new phone thread -> brief -> approve plan -> device render -> chat edit
 
 ## One montage plan on the phone (KRI-190)
 
-`MONTAGE_UNIFIED_PLAN_ENABLED` (or `MONTAGE_UNIFIED_PLAN_USER_IDS`, comma-separated
-or JSON) routes a phone montage-family job with no approved proposal through the
-guided fast-montage plan instead of `_run_phone_montage_job`. Design and decisions:
+Every phone montage-family job with no approved proposal and no recorded voiceover
+goes through the guided fast-montage plan (KRI-220: no flag; the former
+`MONTAGE_UNIFIED_PLAN_ENABLED`/`_USER_IDS` were removed). A montage WITH a recorded
+voiceover runs `_run_phone_voiceover_montage_job`, the only remaining montage writer. Design and decisions:
 `docs/pipelines/kria-agent-runtime.md` ("One montage plan"). The worker needs no
 capability beyond what any guided phone edit with text already needs (`authoredText`
 must be in `PHONE_RENDER_VERIFIED_FEATURES`, since the guided title and label fonts
 are variable fonts); a montage missing it fails as `phone_plan_unsupported`, exactly
 like an approved guided edit would.
 
-**Device check (human).** Allowlist your account, start a phone thread on v2, send
+**Device check (human).** Start a phone thread on v2, send
 one East Run message ("20K from Arnavutköy to Eminönü, name the landmark on each
 clip, in the order I filmed, fast but readable") with clips whose Photos capture
 time/location are on. Expect: clips in filming order, a label on every clip that has
 a place or a landmark, each label on screen for its reading time, the title
 `20K Run · Arnavutköy → Eminönü`, a review message that says what is partial, and a
-working chat text edit afterwards. Compare against the plain lane before the old
-lane is deleted.
+working chat text edit afterwards. Also send a montage WITH a recorded voiceover
+and confirm it still renders through the voiceover writer.
 
-**Rollback.** `fly secrets set MONTAGE_UNIFIED_PLAN_ENABLED=false
-MONTAGE_UNIFIED_PLAN_USER_IDS= --app nova-video` + restart the worker. New jobs use
-the plain lane again; a job already planned keeps its pinned guided plan.
+**Rollback.** No flag; revert the PR. A job already planned keeps its pinned guided plan.
+
+**Visuals in the montage (KRI-217).** Ready Visuals-pool photos (and Visuals
+videos) are spread between the clips and drawn by the device like any guided
+story's photos (`stillImages` / `visualVideos` must stay verified). Triage a v2
+montage reply with `python3 scripts/admin.py --prod GET
+/admin/creation-threads/<ID>/events`; the `assistant_render_failed` payload's
+`dispatch_outcome` names the gate:
+
+- `visuals_processing` ("A photo or video you added to Visuals is still being
+  prepared."): a creator Visual is `uploaded`/`queued`/`analyzing`. Refresh
+  project once it is `ready` (`/admin/plan-items/<item>/debug` → `pool_assets`).
+- `guided_edit_bypass_unsafe` ("I can't put your Visuals into this montage
+  yet."): the lane is clip-only (a cloud-rendered account) or the phone cannot
+  draw that kind. Removing the Visuals and refreshing renders the videos.
+
+An abandoned upload reservation (`preparing`, reaped after about 30 minutes) or a
+`failed` Visual never blocks a v2 montage and never reaches the plan.
+
+## Crop, face-aware text, and SFX outside Talking (KRI-140)
+
+**Crop / re-frame.** `compile_phone_guided_plan` now carries a moment's
+`source_crop` on the recipe clip (`TimelineClip.source_crop`, normalized
+top-left-origin rectangle) for bound footage, Visuals videos, and fullscreen
+photos; a `supporting_card` photo (drawn whole) still refuses. A cropped clip adds
+the new **`sourceCrop`** capability (Python `MediaCapability` + Swift enum +
+`effectiveCapabilities`, kept in step by `tests/kria/test_capability_matrix.py`),
+and `validate_phone_pilot_recipe` refuses it ("Cropped clips await native parity…")
+until the device verifies it. The editor's footage-crop control stays closed on a
+phone guided story until then (`_clamp_phone_editor_capabilities(source_crop=…)`).
+The device applies the crop, then cover-fits it — same order as the cloud's
+`reframe` `source_crop`.
+
+**Rollout order (the capability is new vocabulary, so builds matter).**
+1. Ship a TestFlight build containing the Swift `sourceCrop` case (an older build
+   cannot decode `required_capabilities: ["sourceCrop"]`, so never flip first).
+2. Verify on a device: a guided story with a cropped clip renders and matches the
+   cloud framing.
+3. Append `sourceCrop` to `PHONE_RENDER_VERIFIED_FEATURES`
+   (`fly secrets set …` + restart api and worker). Rollback: remove it.
+
+**Face-aware guided text.** The cloud burn's `_apply_guided_text_face_placement`
+needs decoded frames; a phone render has none. With
+`PHONE_GUIDED_TEXT_FACE_PLACEMENT_ENABLED=true`, `_run_phone_guided_job` samples
+faces from each footage moment's analysis proxy
+(`app.pipeline.phone_guided_text_placement`), maps them through the moment's crop
+and the cover-fit into canvas coordinates, reuses the cloud ladder
+(`choose_guided_text_y_frac`), and bakes the chosen `y_frac` into the variant's
+`text_elements` before the recipe compiles — so the device and a later text-only
+Save keep it. Pool photos/videos have no proxy and are not sampled; fail-open
+(download/sampling errors keep the authored position). Limitation: a Save that
+recompiles the whole plan from the approved plan (timeline edits) re-derives the
+authored position. Server-only; rollback `fly secrets set
+PHONE_GUIDED_TEXT_FACE_PLACEMENT_ENABLED=false --app nova-video` + worker restart.
+Pins: `tests/pipeline/test_phone_guided_text_placement.py`.
+
+**SFX outside Talking — decision: stays cloud-only.** `licensed_sfx_intent` and
+`editor_sound_effects` on guided-story / montage plans keep failing closed
+(`soundEffects`), and the planner refuses the request up front
+(`unsupported_on_phone`, "sound_effects cannot render on the iPhone yet") instead
+of failing at render. The Talking lane is timed to a transcript and ducked under
+speech (KRI-174/181); guided stories and montages have no equivalent grounding, so
+a naive port would place effects blindly. Revisit only with a design for
+transcript-free placement.

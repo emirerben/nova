@@ -122,11 +122,34 @@ bailout rail.
 — unintentionally — what stopped the detector cutting quiet speech that silencedetect's
 absolute −30 dBFS floor mis-reports as silence on soft-spoken and lapel-mic takes. That
 job now belongs to two guards in `app/pipeline/silence_cut.py`:
-`TOKEN_SPLIT_VOICE_RATIO = 0.5` + `TOKEN_SPLIT_PIECE_MAX_S = 0.35` (rule 0 carves ONE interior span per token, and only when both remnants are slivers whose total is at most half the carve; edge trims are refused outright — a carve at a token boundary is indistinguishable from a quiet onset, and edge trims were ~94% of the real speech an earlier, looser guard still destroyed) and `MIN_KEEP_SPEECH_SEGMENT_S = 0.6` (a short word-bearing
+`TOKEN_SPLIT_VOICE_RATIO = 0.5` + `TOKEN_SPLIT_PIECE_MAX_S = 0.35` (rule 0 carves ONE interior span per token, and only when both remnants are slivers whose total is at most half the carve; edge trims are refused — a carve at a token boundary is indistinguishable from a quiet onset, and edge trims were ~94% of the real speech an earlier, looser guard still destroyed; the one exception is `mixed-gap-v4`'s sentence-final tail carve, below) and `MIN_KEEP_SPEECH_SEGMENT_S = 0.6` (a short word-bearing
 keep segment is widened, never absorbed). So triage a report accordingly:
 
 - "cleanup left a pause in" → budget. Read the receipt: `clamped=true` with the span in
   `proposed_removals` and absent from `removed` is a `MIN_OUTPUT_S` decline.
+- "cleanup left a pause / silent tail in on noisy footage" (rain, wind, traffic) → the
+  detector, not the budget. silencedetect's per-sample −30 dBFS floor sees no silence
+  when ambient transients peak above it, so `mixed-gap-v3` (KRI-234) unions in
+  noise-relative RMS spans (`_ambient_energy_silences` in `app/services/clip_speech.py`,
+  log event `ambient_silence_spans` with `floor_db`/`threshold_db`). They activate only
+  above a −50 dB ambient floor with ≥12 dB speech SNR and stay 80 ms clear of sound, which
+  is the cut's pre/post-roll.
+- "cleanup left ~1 s of dead air after a sentence" where the stamped word gap is under
+  0.6 s → whisper stretched the sentence-final token's END over the pause. `mixed-gap-v4`
+  (KRI-236) carves that tail (`_sentence_final_tail_carve`, diagnostic kind
+  `trim_sentence_tail`) only when the token ends in `. ? !` (never `...`), one long span
+  starts ≥0.3 s into it, and the span runs to within 0.2 s of the next word. If a report
+  says a sentence's LAST syllable was clipped, check `token_adjustments` for that kind
+  first; it is the only edge trim rule 0 performs.
+- "the cuts sound jumpy / the background drops out at every cut" on noisy footage →
+  the render, not the detector. Cloud cuts crossfade up to 25 ms of removed audio
+  from each side and cut audio on the video frame grid (`_CUT_CROSSFADE_HANDLE_S`,
+  `_build_keep_segments_cmd` in `app/pipeline/reframe.py`). Renders made before that
+  change reached the Fly workers dipped 15-20 dB at every cut, plus up to a frame of
+  digital silence where a cut fell between frames. Only a full re-render (new
+  generation) picks up the fix: a caption or text edit fast-reburns onto the stored
+  base video and keeps its old cut audio. Nothing to flip, and no fingerprint is
+  involved.
 - "cleanup is too aggressive for my taste" → this lever.
 - **"cleanup cut a word / clipped my speech" → a guard bug, NOT this lever.** Do not
   reach for `=0.55` to make it stop; that only hides it again, on some clips, by
@@ -140,6 +163,37 @@ still uses its exact snapshot, then restore the prior 50% settings. Record compl
 time and `inflight_contracts_preserved=true` in the evidence. If any observation is
 unknown, leave the rollout at the prior stage (or off/0) and investigate; unknown is
 never treated as healthy.
+
+### Accented speech: whisper's language vs Gemini's
+
+whisper-1 auto-detects the language from audio alone and misreads accented speech
+(Turkish-accented English -> `tr`), then writes a TRANSLATION, so fillers and word
+timings come from text nobody said. Preflight cross-checks its detection against an
+independent Gemini transcript and, on a clear EN/TR disagreement, re-transcribes in
+the language Gemini heard before building the cut plan. The reference comes from:
+
+- **The plan item**: the clip assignment's `analysis.transcript` (exact generation
+  only). Only the v1 flows save one (creator preparation, guided edit proposals).
+  - Present at claim, or landed mid-run: the worker cross-checks before persisting.
+  - Lands after a settled, undecided run: the next preflight schedule logs
+    `speech_cleanup_analysis.language_redo` and re-queues the same row. A creator
+    decision is never revoked; a run that already had a reference is never repeated.
+- **The worker**, when the item has none: every Kria v2 project (v2 only runs
+  Gemini inside the render job) and every recorded voiceover. It sends the
+  narration's first 30 s (whisper detects its language from the same opening) to
+  `nova.audio.transcript`: one upload attempt, a 20 s wait for ACTIVE, billed to the
+  plan owner as `optional_background`. Logs `speech_cleanup_analysis.gemini_reference`
+  (`found`, `run_duration_ms`) or `speech_cleanup_analysis.gemini_reference_unavailable`
+  (`error_class`); any failure keeps the single-listener analysis.
+
+Evidence: the private payload's `diagnostics.language_crosscheck` (`whisper_language`,
+`reference_language`, `applied`, `reference_source`: `clip_analysis` | `gemini_audio`);
+absent means that run had no reference.
+
+Kill switch: `SPEECH_CLEANUP_GEMINI_REFERENCE_ENABLED=false` + worker restart skips
+the worker's Gemini call; the plan-item path keeps working. Neither path changes the
+fingerprint, so nothing reshuffles cohorts or consent, and extra whisper work happens
+only on a disagreement.
 
 ## Local verification
 

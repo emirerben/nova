@@ -127,6 +127,29 @@
             "minimum": 0,
             "title": "Expected Thread Revision",
             "type": "integer"
+          },
+          "speech_cleanup_analysis_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Speech Cleanup Analysis Id",
+            "type": "string"
+          },
+          "speech_cleanup_aware": {
+            "default": false,
+            "title": "Speech Cleanup Aware",
+            "type": "boolean"
+          },
+          "speech_cleanup_choice": {
+            "default": null,
+            "enum": [
+              "clean",
+              "keep_original",
+              "create_without_cleanup"
+            ],
+            "nullable": true,
+            "title": "Speech Cleanup Choice",
+            "type": "string"
           }
         },
         "required": [
@@ -400,6 +423,14 @@
             "maximum": 2,
             "minimum": 0,
             "title": "Original Volume",
+            "type": "number"
+          },
+          "target_lufs": {
+            "default": null,
+            "maximum": -5,
+            "minimum": -40,
+            "nullable": true,
+            "title": "Target Lufs",
             "type": "number"
           }
         },
@@ -753,6 +784,16 @@
       },
       "CreationCapabilitiesOut": {
         "properties": {
+          "editor_state_max_bytes": {
+            "default": 262144,
+            "title": "Editor State Max Bytes",
+            "type": "integer"
+          },
+          "editor_state_turns": {
+            "default": false,
+            "title": "Editor State Turns",
+            "type": "boolean"
+          },
           "formats": {
             "items": {
               "$ref": "#/components/schemas/CreationFormatCapabilityOut"
@@ -1451,6 +1492,7 @@
               "thermal",
               "unsupported_recipe",
               "cancelled_by_user",
+              "timed_out",
               "unknown"
             ],
             "title": "Reason Code",
@@ -1484,6 +1526,7 @@
               "thermal",
               "unsupported_recipe",
               "cancelled_by_user",
+              "timed_out",
               "unknown"
             ],
             "title": "Reason Code",
@@ -1876,6 +1919,7 @@
                 "local1080Export",
                 "stillImages",
                 "visualVideos",
+                "sourceCrop",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -1986,6 +2030,7 @@
                 "local1080Export",
                 "stillImages",
                 "visualVideos",
+                "sourceCrop",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -2697,6 +2742,391 @@
         "title": "EditorSourceRequest",
         "type": "object"
       },
+      "EditorStateIn": {
+        "additionalProperties": false,
+        "description": "The editor's CURRENT UNSAVED state, sent with a chat turn.\n\nA lane present is the client's full current value; absent equals the saved variant.\nA present-but-empty ``lanes`` is still authoritative: \"no unsaved edits\".\nThe server never recomputes a hash; ``client_state_id`` is echoed verbatim.",
+        "properties": {
+          "base_generation": {
+            "maxLength": 128,
+            "title": "Base Generation",
+            "type": "string"
+          },
+          "client_state_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Client State Id",
+            "type": "string"
+          },
+          "lanes": {
+            "$ref": "#/components/schemas/EditorStateLanes"
+          },
+          "version": {
+            "default": 1,
+            "enum": [
+              1
+            ],
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base_generation",
+          "client_state_id",
+          "lanes"
+        ],
+        "title": "EditorStateIn",
+        "type": "object"
+      },
+      "EditorStateLanes": {
+        "description": "``EditorCommitRequest`` as a turn's editor state (adds list caps).",
+        "properties": {
+          "accepted_suggestion_ids": {
+            "default": null,
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "title": "Accepted Suggestion Ids",
+            "type": "array"
+          },
+          "background_music": {
+            "$ref": "#/components/schemas/EditorCommitBackgroundMusic",
+            "default": null,
+            "nullable": true
+          },
+          "base_generation": {
+            "default": "",
+            "title": "Base Generation",
+            "type": "string"
+          },
+          "camera_effects": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 200,
+            "nullable": true,
+            "title": "Camera Effects",
+            "type": "array"
+          },
+          "caption_cues": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 200,
+            "nullable": true,
+            "title": "Caption Cues",
+            "type": "array"
+          },
+          "caption_meta": {
+            "$ref": "#/components/schemas/EditorCommitCaptionMeta",
+            "default": null,
+            "nullable": true
+          },
+          "carousel_moment": {
+            "$ref": "#/components/schemas/CarouselMomentEditRequest",
+            "default": null,
+            "nullable": true
+          },
+          "copilot_receipt_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Copilot Receipt Ids",
+            "type": "array"
+          },
+          "guided_revision": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Guided Revision",
+            "type": "object"
+          },
+          "guided_revision_number": {
+            "default": null,
+            "minimum": 1,
+            "nullable": true,
+            "title": "Guided Revision Number",
+            "type": "integer"
+          },
+          "lyrics": {
+            "$ref": "#/components/schemas/LyricsSectionRequest",
+            "default": null,
+            "nullable": true
+          },
+          "media_overlays": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 100,
+            "nullable": true,
+            "title": "Media Overlays",
+            "type": "array"
+          },
+          "mix": {
+            "$ref": "#/components/schemas/EditorCommitMix",
+            "default": null,
+            "nullable": true
+          },
+          "motion_runtime_hash": {
+            "default": null,
+            "nullable": true,
+            "title": "Motion Runtime Hash",
+            "type": "string"
+          },
+          "motion_scenes": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 200,
+            "nullable": true,
+            "title": "Motion Scenes",
+            "type": "array"
+          },
+          "music_track_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Music Track Id",
+            "type": "string"
+          },
+          "music_window": {
+            "$ref": "#/components/schemas/EditorCommitMusicWindow",
+            "default": null,
+            "nullable": true
+          },
+          "orientation": {
+            "default": null,
+            "nullable": true,
+            "title": "Orientation",
+            "type": "string"
+          },
+          "remove_music": {
+            "default": false,
+            "title": "Remove Music",
+            "type": "boolean"
+          },
+          "retry_guided_revision": {
+            "default": false,
+            "title": "Retry Guided Revision",
+            "type": "boolean"
+          },
+          "sound_effects": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 100,
+            "nullable": true,
+            "title": "Sound Effects",
+            "type": "array"
+          },
+          "text_elements": {
+            "default": null,
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 200,
+            "nullable": true,
+            "title": "Text Elements",
+            "type": "array"
+          },
+          "timeline_slots": {
+            "default": null,
+            "items": {
+              "$ref": "#/components/schemas/EditorStateTimelineSlot"
+            },
+            "nullable": true,
+            "title": "Timeline Slots",
+            "type": "array"
+          },
+          "title": {
+            "default": null,
+            "maxLength": 300,
+            "nullable": true,
+            "title": "Title",
+            "type": "string"
+          },
+          "visual_blocks": {
+            "default": null,
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "media": "#/components/schemas/MediaBlock",
+                  "montage": "#/components/schemas/MontageBlock",
+                  "text_card": "#/components/schemas/TextCardBlock"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/MontageBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/TextCardBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/MediaBlock"
+                }
+              ]
+            },
+            "maxItems": 200,
+            "nullable": true,
+            "title": "Visual Blocks",
+            "type": "array"
+          }
+        },
+        "title": "EditorStateLanes",
+        "type": "object"
+      },
+      "EditorStateTimelineSlot": {
+        "description": "A Save timeline row plus the media identity of an UNSAVED added clip.\n\nA saved row's media is recoverable from ``clip_index`` against the persisted\nsources; a clip the creator just added is not in them yet, so the client names it\nhere (all optional, ignored by the Save route which uses ``TimelineSlotEdit``).",
+        "properties": {
+          "clip_index": {
+            "title": "Clip Index",
+            "type": "integer"
+          },
+          "duration_beats": {
+            "default": null,
+            "nullable": true,
+            "title": "Duration Beats",
+            "type": "integer"
+          },
+          "duration_s": {
+            "default": null,
+            "nullable": true,
+            "title": "Duration S",
+            "type": "number"
+          },
+          "in_s": {
+            "title": "In S",
+            "type": "number"
+          },
+          "layout": {
+            "default": null,
+            "enum": [
+              "fullscreen",
+              "supporting_card"
+            ],
+            "nullable": true,
+            "title": "Layout",
+            "type": "string"
+          },
+          "look_adjustments": {
+            "$ref": "#/components/schemas/LookAdjustments",
+            "default": null,
+            "nullable": true
+          },
+          "look_preset": {
+            "default": null,
+            "enum": [
+              "none",
+              "stadium_diffusion",
+              "olive_film",
+              "smoky_split_tone",
+              "golden_hour",
+              "faded_analog"
+            ],
+            "nullable": true,
+            "title": "Look Preset",
+            "type": "string"
+          },
+          "media_id": {
+            "default": null,
+            "maxLength": 128,
+            "nullable": true,
+            "title": "Media Id",
+            "type": "string"
+          },
+          "media_kind": {
+            "default": null,
+            "enum": [
+              "image",
+              "video"
+            ],
+            "nullable": true,
+            "title": "Media Kind",
+            "type": "string"
+          },
+          "parent_segment_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Parent Segment Id",
+            "type": "string"
+          },
+          "playback_rate": {
+            "default": null,
+            "maximum": 4.0,
+            "minimum": 0.25,
+            "nullable": true,
+            "title": "Playback Rate",
+            "type": "number"
+          },
+          "removed": {
+            "default": false,
+            "title": "Removed",
+            "type": "boolean"
+          },
+          "slot_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Slot Id",
+            "type": "string"
+          },
+          "source_crop": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "default": null,
+            "nullable": true,
+            "title": "Source Crop",
+            "type": "object"
+          },
+          "source_duration_s": {
+            "default": null,
+            "maximum": 36000.0,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Source Duration S",
+            "type": "number"
+          },
+          "transition_after": {
+            "default": "cut",
+            "enum": [
+              "cut",
+              "crossfade",
+              "dip_to_black",
+              "flash"
+            ],
+            "title": "Transition After",
+            "type": "string"
+          },
+          "transition_duration_s": {
+            "default": null,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Transition Duration S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "clip_index",
+          "in_s"
+        ],
+        "title": "EditorStateTimelineSlot",
+        "type": "object"
+      },
       "EventOut": {
         "properties": {
           "client_event_id": {
@@ -3147,6 +3577,37 @@
           "outline_width"
         ],
         "title": "HandwritingContent",
+        "type": "object"
+      },
+      "InferredLabel": {
+        "additionalProperties": false,
+        "description": "One name the server guessed for one clip (KRI-207), so the creator can correct it.\n\n``clip_index`` is the clip's zero-based position in the plan's own clip order (what\nthe creator sees as \"clip 4\" is index 3); ``media_id`` is its stable identity.",
+        "properties": {
+          "clip_index": {
+            "default": null,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Clip Index",
+            "type": "integer"
+          },
+          "media_id": {
+            "default": null,
+            "maxLength": 160,
+            "nullable": true,
+            "title": "Media Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "InferredLabel",
         "type": "object"
       },
       "KaraokeContent": {
@@ -4450,6 +4911,46 @@
         "title": "MotionSceneProgram",
         "type": "object"
       },
+      "NormalizedSourceCrop": {
+        "additionalProperties": false,
+        "description": "A source rectangle in normalized, top-left-origin coordinates.\n\nMirrors ``KriaMediaEngine.NormalizedSourceRect`` (same bounds and 1e-6\nslack) so a crop that validates here validates on the device.",
+        "properties": {
+          "height": {
+            "exclusiveMinimum": true,
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Height",
+            "type": "number"
+          },
+          "width": {
+            "exclusiveMinimum": true,
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Width",
+            "type": "number"
+          },
+          "x": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "title": "NormalizedSourceCrop",
+        "type": "object"
+      },
       "NovaStep": {
         "description": "One user-facing row in the Nova activity feed.\n\n``id`` is derived from ``stage:event:index`` (or ``agent:<name>:<run\nid>`` for agent milestones) -- NEVER random -- so it stays stable across\npolls of the same, append-only ``pipeline_trace``/``phase_log``/\n``AgentRun`` sources.",
         "properties": {
@@ -5520,7 +6021,7 @@
       },
       "RequirementReceipt": {
         "additionalProperties": false,
-        "description": "One deterministic outcome per Creative Brief requirement (KRI-188).\n\n``inferred`` lists values the server guessed rather than read from the\ncreator or the footage (for example a landmark name), so the client can show\nthem and let the creator correct one.",
+        "description": "One deterministic outcome per Creative Brief requirement (KRI-188).\n\n``inferred`` lists values the server guessed rather than read from the\ncreator or the footage (for example a landmark name), so the client can show\nthem and let the creator correct one. ``inferred_labels`` is the same list with\nthe clip each guess belongs to (additive, KRI-207); ``inferred`` stays for\nclients that only read strings.",
         "properties": {
           "inferred": {
             "items": {
@@ -5528,6 +6029,14 @@
             },
             "maxItems": 24,
             "title": "Inferred",
+            "type": "array"
+          },
+          "inferred_labels": {
+            "items": {
+              "$ref": "#/components/schemas/InferredLabel"
+            },
+            "maxItems": 24,
+            "title": "Inferred Labels",
             "type": "array"
           },
           "reason": {
@@ -6344,6 +6853,11 @@
             "title": "Client Event Id",
             "type": "string"
           },
+          "editor_state": {
+            "$ref": "#/components/schemas/EditorStateIn",
+            "default": null,
+            "nullable": true
+          },
           "expected_thread_revision": {
             "minimum": 0,
             "title": "Expected Thread Revision",
@@ -7103,6 +7617,22 @@
       "TimelineClip": {
         "additionalProperties": false,
         "properties": {
+          "audio_fade_in": {
+            "default": null,
+            "maximum": 60,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Audio Fade In",
+            "type": "number"
+          },
+          "audio_fade_out": {
+            "default": null,
+            "maximum": 60,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Audio Fade Out",
+            "type": "number"
+          },
           "hold_duration": {
             "default": null,
             "maximum": 1800,
@@ -7164,6 +7694,11 @@
             "minLength": 1,
             "title": "Source Asset Id",
             "type": "string"
+          },
+          "source_crop": {
+            "$ref": "#/components/schemas/NormalizedSourceCrop",
+            "default": null,
+            "nullable": true
           },
           "source_duration": {
             "exclusiveMinimum": true,

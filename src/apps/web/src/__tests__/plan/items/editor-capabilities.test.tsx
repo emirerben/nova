@@ -346,6 +346,49 @@ describe("captionToolState", () => {
     expect(captionToolState(null)).toBe("unavailable");
     expect(captionToolState(undefined)).toBe("unavailable");
   });
+
+  // KRI-201: guided-story is neither `narrated` nor `subtitled`, and its
+  // captions persist as `TextElement`s (role "generative_sequence",
+  // `source_params.source === "caption_cue"`), not `caption_cues` rows — so
+  // neither branch above ever fires for it. Without this branch the Captions
+  // rail stayed greyed out for the dominant chat-first archetype.
+  it("is editable for a guided-story variant carrying narration-caption text elements", () => {
+    expect(
+      captionToolState({
+        resolved_archetype: "guided_story",
+        text_elements: [
+          {
+            id: "narration-caption-0",
+            text: "we flew to Turkey",
+            start_s: 0,
+            end_s: 1,
+            role: "generative_sequence",
+            source_params: { source: "caption_cue", key: "0" },
+          },
+        ],
+      } as unknown as PlanItemVariant),
+    ).toBe("editable");
+  });
+
+  it("is unavailable for a guided-story variant with no narration-caption text elements", () => {
+    expect(
+      captionToolState({
+        resolved_archetype: "guided_story",
+        text_elements: [
+          {
+            id: "title-1",
+            text: "Big title",
+            start_s: 0,
+            end_s: 2,
+            role: "generative_intro",
+          },
+        ],
+      } as unknown as PlanItemVariant),
+    ).toBe("unavailable");
+    expect(
+      captionToolState({ resolved_archetype: "guided_story" } as PlanItemVariant),
+    ).toBe("unavailable");
+  });
 });
 
 describe("computeToolDisabledReasons — captions branch", () => {

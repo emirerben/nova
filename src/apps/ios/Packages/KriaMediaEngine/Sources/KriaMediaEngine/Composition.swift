@@ -25,6 +25,12 @@ public struct PreviewComposition: @unchecked Sendable {
     public let description: CompositionDescription
 #if canImport(AVFoundation)
     var audioBindings: [PreviewAudioBinding] = []
+    /// The footage bed's side-chain duck, kept so a live gain edit rebuilds the
+    /// same curve instead of re-reading the key (KRI-139).
+    var duckEnvelope: AudioDuckEnvelope?
+    /// `AudioMixRecipe.targetLUFS`: the exporter normalizes the mix to it.
+    /// Playback stays at the mixed level (AVAudioMix cannot boost).
+    var loudnessTargetLUFS: Double?
     public let playerItem: AVPlayerItem
     public init(description: CompositionDescription, playerItem: AVPlayerItem) { self.description = description; self.playerItem = playerItem }
 #else
@@ -50,7 +56,7 @@ struct PreviewAudioBinding: Sendable {
     public init(branding: KriaBranding.Options = .none) { self.branding = branding }
     public func makePreview(recipe: EditRecipe, assetURLs: [String: URL]) async throws -> PreviewComposition {
         try recipe.validate()
-        guard recipe.rendererVersion == "kria-ios-\(recipe.schemaVersion)", !recipe.audio.duckOriginalDuringMusic else {
+        guard recipe.rendererVersion == "kria-ios-\(recipe.schemaVersion)" else {
             throw NativePreviewFeatureError("Composition-47")
         }
         // Ahead of any asset loading: a branding file missing from the bundle
@@ -74,6 +80,14 @@ struct PreviewAudioBinding: Sendable {
         var audioBindings: [PreviewAudioBinding] = []
         var stillClock: StillTimelineClock?
         func time(_ seconds: Double) -> CMTime { CMTime(value: Int64((seconds * 60_000).rounded()), timescale: 60_000) }
+        // KRI-139: the footage's own audio ducks under every audio-kind track (the
+        // narration voice), computed once from the key's real samples.
+        let duck: AudioDuckEnvelope? = recipe.audio.duckOriginalDuringMusic
+            ? try await AudioDuckEnvelope.sidechain(keys: recipe.tracks.filter { $0.kind == .audio }.flatMap(\.clips).map { clip in
+                guard let url = assetURLs[clip.sourceAssetID] else { throw MediaEngineError.missingAsset(clip.sourceAssetID) }
+                return (clip, url)
+            }, duration: total)
+            : nil
         func addAudio(asset: AVURLAsset, clip: TimelineClip, gain: Double, originalGain: Bool = false) async throws {
             guard let source = try await asset.loadTracks(withMediaType: .audio).first else { return }
             guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw MediaEngineError.exportUnavailable }
@@ -85,7 +99,7 @@ struct PreviewAudioBinding: Sendable {
             track.scaleTimeRange(CMTimeRange(start: time(clip.timelineStart), duration: sourceRange.duration),
                                  toDuration: time(clip.sourceDuration / clip.rate))
             let parameter = AVMutableAudioMixInputParameters(track: track)
-            applyAudioGain(parameter, clip: clip, gain: gain, windows: recipe.audio.muteWindows)
+            applyAudioGain(parameter, clip: clip, gain: gain, windows: recipe.audio.muteWindows, duck: originalGain ? duck : nil)
             audioParameters.append(parameter)
             audioBindings.append(PreviewAudioBinding(trackID: track.trackID, clipID: clip.id, usesOriginalGain: originalGain))
         }
@@ -221,13 +235,17 @@ struct PreviewAudioBinding: Sendable {
                     let size = try await source.load(.naturalSize)
                     let preferred = Self.coreImagePreferredTransform(try await source.load(.preferredTransform))
                     if clip.look != nil {
+                        // The one path that refuses HEVC/HDR originals on purpose (KRI-141):
+                        // everywhere else the SDR Rec.709 video composition has AVFoundation
+                        // decode and tone-map them. Structural, so the device render reports
+                        // `unsupported_recipe` instead of offering a retry that can't work.
                         // Cloud scales/crops before grading. Until native YUV
                         // resize parity is verified, accept exact-canvas footage
                         // only; grading at source resolution would change pixels.
                         guard recipeTrack.kind == .video, size == canvas, preferred.isIdentity,
-                              clip.transform == .identity else { throw NativePreviewFeatureError("Composition-135") }
+                              clip.transform == .identity else { throw NativePreviewFeatureError("Composition-135", isStructural: true) }
                         let formats = try await source.load(.formatDescriptions)
-                        guard !formats.isEmpty else { throw NativePreviewFeatureError("Composition-137") }
+                        guard !formats.isEmpty else { throw NativePreviewFeatureError("Composition-137", isStructural: true) }
                         for format in formats {
                             let extensions = CMFormatDescriptionGetExtensions(format) as NSDictionary? ?? [:]
                             let transfer = extensions[kCMFormatDescriptionExtension_TransferFunction] as? String
@@ -238,7 +256,7 @@ struct PreviewAudioBinding: Sendable {
                                   depth == nil || depth == 8,
                                   transfer == nil || transfer == kCMFormatDescriptionTransferFunction_ITU_R_709_2 as String,
                                   primaries == nil || primaries == kCMFormatDescriptionColorPrimaries_ITU_R_709_2 as String else {
-                                throw NativePreviewFeatureError("Composition-148")
+                                throw NativePreviewFeatureError("Composition-148", isStructural: true)
                             }
                         }
                     }
@@ -406,6 +424,8 @@ struct PreviewAudioBinding: Sendable {
         item.audioMix = audioMix
         var result = PreviewComposition(description: CompositionDescription(duration: brandedTotal, canvas: recipe.canvas, hasVideo: true, hasAudio: !audioParameters.isEmpty), playerItem: item)
         result.audioBindings = audioBindings
+        result.duckEnvelope = duck
+        result.loudnessTargetLUFS = recipe.audio.targetLUFS
         return result
     }
 

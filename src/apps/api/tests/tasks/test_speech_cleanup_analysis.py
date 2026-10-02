@@ -7,6 +7,7 @@ import subprocess
 import uuid
 import wave
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -26,6 +27,12 @@ from app.services.speech_cleanup_preflight import (
 )
 from app.services.speech_cleanup_selection import DETECTOR_VERSION
 from app.tasks import speech_cleanup_analysis as task_module
+
+
+@pytest.fixture(autouse=True)
+def _no_gemini_reference(monkeypatch) -> None:
+    """Unit tests never reach Gemini; the second-opinion tests opt back in."""
+    monkeypatch.setattr(task_module.settings, "speech_cleanup_gemini_reference_enabled", False)
 
 
 def _work(**overrides) -> task_module._ClaimedWork:
@@ -540,8 +547,9 @@ def test_reconciler_marks_broker_failure_retryable_and_continues(monkeypatch) ->
 class _ClaimSession:
     """Minimal row-locked session for the real claim path."""
 
-    def __init__(self, row: SpeechCleanupAnalysis) -> None:
+    def __init__(self, row: SpeechCleanupAnalysis, *related) -> None:
         self.row = row
+        self.related = {value.id: value for value in related}
         self.flushed = 0
         self.committed = 0
 
@@ -552,7 +560,7 @@ class _ClaimSession:
         return None
 
     def get(self, _model, identifier, **_kwargs):
-        return self.row if identifier == self.row.id else None
+        return self.row if identifier == self.row.id else self.related.get(identifier)
 
     def flush(self):
         self.flushed += 1
@@ -627,3 +635,288 @@ def test_validate_work_fails_closed_on_a_detector_label_the_engine_will_not_prod
     assert raised.value.code == "snapshot_mismatch"
     assert raised.value.private_detail == "detector_version"
     assert raised.value.retryable is False
+
+
+# ── Gemini reference transcript (language cross-check) ──────────────────────
+# The engine behavior itself is pinned in
+# tests/services/test_speech_cleanup_language_crosscheck.py.
+
+_GEMINI_EN = "So today we built the thing, and here is how it went for everyone."
+
+
+def _misheard_result(language: str) -> SpeechCleanupAnalysisResult:
+    return _result(candidate_count=0).model_copy(update={"language": language})
+
+
+def test_reference_transcript_is_read_for_clip_audio_only(monkeypatch) -> None:
+    row = _queued_row(DETECTOR_VERSION)
+    item = object()
+    db = Mock()
+    db.get.return_value = item
+    lookup = Mock(return_value=_GEMINI_EN)
+    monkeypatch.setattr(task_module, "reference_transcript_for_source", lookup)
+
+    assert task_module._reference_transcript(db, row) is None  # a voiceover row
+    db.get.assert_not_called()
+
+    row.source_kind = "embedded_spine"
+    assert task_module._reference_transcript(db, row) == _GEMINI_EN
+    lookup.assert_called_once_with(
+        item, storage_path=row.source_storage_path, generation=row.source_generation
+    )
+
+
+def test_engine_receives_the_reference_read_at_claim(monkeypatch) -> None:
+    captured: list[SpeechCleanupAnalysisInput] = []
+    monkeypatch.setattr(
+        task_module,
+        "run_speech_cleanup_engine",
+        lambda analysis_input: captured.append(analysis_input) or _misheard_result("tr"),
+    )
+    late = Mock()
+    monkeypatch.setattr(task_module, "_late_reference_transcript", late)
+
+    work = _work(source_kind="embedded_spine", reference_transcript=_GEMINI_EN)
+    task_module._run_engine(work, Path("narration.wav"))
+
+    assert [value.reference_transcript for value in captured] == [_GEMINI_EN]
+    late.assert_not_called()  # the engine already had its reference
+
+
+def test_a_reference_that_lands_mid_run_reruns_a_misheard_analysis(monkeypatch) -> None:
+    captured: list[SpeechCleanupAnalysisInput] = []
+    rerun = _misheard_result("en")
+
+    def run_engine(analysis_input):
+        captured.append(analysis_input)
+        return rerun if analysis_input.reference_transcript else _misheard_result("tr")
+
+    monkeypatch.setattr(task_module, "run_speech_cleanup_engine", run_engine)
+    monkeypatch.setattr(task_module, "_late_reference_transcript", lambda _work: _GEMINI_EN)
+
+    result = task_module._run_engine(_work(source_kind="embedded_spine"), Path("narration.wav"))
+
+    assert [value.reference_transcript for value in captured] == [None, _GEMINI_EN]
+    assert result is rerun
+
+
+@pytest.mark.parametrize(
+    ("source_kind", "late_reference"),
+    [
+        ("embedded_spine", None),  # Gemini has still not landed
+        ("embedded_spine", "Bu videoyu çok güzel çektim bugün, hadi bakalım"),  # agrees
+        ("voiceover", _GEMINI_EN),  # a voiceover never has one: not even read
+    ],
+)
+def test_first_result_stands_without_a_contradicting_late_reference(
+    monkeypatch, source_kind: str, late_reference: str | None
+) -> None:
+    first = _misheard_result("tr")
+    engine = Mock(return_value=first)
+    monkeypatch.setattr(task_module, "run_speech_cleanup_engine", engine)
+    late = Mock(return_value=late_reference)
+    monkeypatch.setattr(task_module, "_late_reference_transcript", late)
+
+    result = task_module._run_engine(_work(source_kind=source_kind), Path("narration.wav"))
+
+    assert result is first
+    assert engine.call_count == 1
+    assert late.call_count == (0 if source_kind == "voiceover" else 1)
+
+
+def test_late_reference_read_fails_open_on_a_database_error(monkeypatch) -> None:
+    from sqlalchemy.exc import OperationalError
+
+    def broken_session():
+        raise OperationalError("SELECT 1", {}, Exception("db down"))
+
+    monkeypatch.setattr(task_module, "sync_session", broken_session)
+
+    assert task_module._late_reference_transcript(_work(source_kind="embedded_spine")) is None
+
+
+# ── Gemini's own reference when the item has none (Kria v2, voiceovers) ─────
+
+
+def _gemini_reference_on(monkeypatch, transcribe: Mock) -> None:
+    monkeypatch.setattr(task_module.settings, "speech_cleanup_gemini_reference_enabled", True)
+    monkeypatch.setattr(task_module, "_transcribe_reference_sample", transcribe)
+
+
+def _write_silent_pcm(path: Path, *, seconds: float) -> None:
+    with wave.open(str(path), "wb") as artifact:
+        artifact.setnchannels(task_module.SPEECH_CLEANUP_CHANNELS)
+        artifact.setsampwidth(task_module.SPEECH_CLEANUP_SAMPLE_WIDTH_BYTES)
+        artifact.setframerate(task_module.SPEECH_CLEANUP_SAMPLE_RATE_HZ)
+        artifact.writeframes(b"\x00\x00" * int(seconds * task_module.SPEECH_CLEANUP_SAMPLE_RATE_HZ))
+
+
+@pytest.mark.parametrize("source_kind", ["embedded_spine", "voiceover"])
+def test_worker_asks_gemini_when_the_item_has_no_reference(monkeypatch, source_kind: str) -> None:
+    captured: list[SpeechCleanupAnalysisInput] = []
+    monkeypatch.setattr(
+        task_module,
+        "run_speech_cleanup_engine",
+        lambda analysis_input: captured.append(analysis_input) or _misheard_result("en"),
+    )
+    transcribe = Mock(return_value=_GEMINI_EN)
+    _gemini_reference_on(monkeypatch, transcribe)
+    late = Mock()
+    monkeypatch.setattr(task_module, "_late_reference_transcript", late)
+
+    work = _work(source_kind=source_kind)
+    task_module._run_engine(work, Path("narration.wav"))
+
+    transcribe.assert_called_once_with(work, Path("narration.wav"))
+    assert [(value.reference_transcript, value.reference_source) for value in captured] == [
+        (_GEMINI_EN, "gemini_audio")
+    ]
+    late.assert_not_called()  # the run already had its second opinion
+
+
+def test_an_item_reference_needs_no_gemini_call(monkeypatch) -> None:
+    captured: list[SpeechCleanupAnalysisInput] = []
+    monkeypatch.setattr(
+        task_module,
+        "run_speech_cleanup_engine",
+        lambda analysis_input: captured.append(analysis_input) or _misheard_result("en"),
+    )
+    transcribe = Mock(return_value="unused")
+    _gemini_reference_on(monkeypatch, transcribe)
+
+    work = _work(source_kind="embedded_spine", reference_transcript=_GEMINI_EN)
+    task_module._run_engine(work, Path("narration.wav"))
+
+    transcribe.assert_not_called()
+    assert [(value.reference_transcript, value.reference_source) for value in captured] == [
+        (_GEMINI_EN, "clip_analysis")
+    ]
+
+
+def test_a_failed_gemini_call_keeps_the_single_listener_analysis(monkeypatch) -> None:
+    first = _misheard_result("tr")
+    engine = Mock(return_value=first)
+    monkeypatch.setattr(task_module, "run_speech_cleanup_engine", engine)
+    _gemini_reference_on(monkeypatch, Mock(side_effect=RuntimeError("gemini 503")))
+    late = Mock(return_value=None)
+    monkeypatch.setattr(task_module, "_late_reference_transcript", late)
+
+    result = task_module._run_engine(_work(source_kind="embedded_spine"), Path("narration.wav"))
+
+    assert result is first
+    analysis_input = engine.call_args.args[0]
+    assert (analysis_input.reference_transcript, analysis_input.reference_source) == (None, None)
+    late.assert_called_once()  # the item's own transcript can still land mid-run
+
+
+def test_the_kill_switch_skips_the_gemini_call(monkeypatch) -> None:
+    monkeypatch.setattr(task_module, "run_speech_cleanup_engine", Mock(return_value=_result()))
+    transcribe = Mock(return_value=_GEMINI_EN)
+    monkeypatch.setattr(task_module, "_transcribe_reference_sample", transcribe)
+
+    task_module._run_engine(_work(), Path("narration.wav"))  # autouse fixture: flag off
+
+    transcribe.assert_not_called()
+
+
+def test_a_soft_time_limit_during_the_gemini_call_is_not_swallowed(monkeypatch) -> None:
+    engine = Mock()
+    monkeypatch.setattr(task_module, "run_speech_cleanup_engine", engine)
+    _gemini_reference_on(monkeypatch, Mock(side_effect=SoftTimeLimitExceeded()))
+
+    with pytest.raises(SoftTimeLimitExceeded):
+        task_module._run_engine(_work(source_kind="embedded_spine"), Path("narration.wav"))
+    engine.assert_not_called()
+
+
+def test_gemini_hears_only_the_opening_and_bills_the_creator(monkeypatch, tmp_path) -> None:
+    from app.agents import transcript as transcript_agent
+
+    monkeypatch.setattr(task_module, "SPEECH_CLEANUP_GEMINI_REFERENCE_SAMPLE_S", 0.5)
+    artifact = tmp_path / "narration.wav"
+    _write_silent_pcm(artifact, seconds=2.0)
+    uploaded_seconds: list[float] = []
+
+    def upload(sample_path: Path):
+        with wave.open(str(sample_path), "rb") as sample:
+            uploaded_seconds.append(sample.getnframes() / sample.getframerate())
+        return SimpleNamespace(uri="https://generativelanguage.googleapis.com/v1beta/files/a")
+
+    calls = []
+
+    def run(_agent, agent_input, *, ctx):
+        calls.append((agent_input, ctx))
+        return transcript_agent.TranscriptOutput(full_text="  So today\n we built  the thing. ")
+
+    monkeypatch.setattr(task_module, "_upload_reference_sample", upload)
+    monkeypatch.setattr(transcript_agent.TranscriptAgent, "run", run)
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: object())
+    work = _work(
+        source_kind="embedded_spine",
+        plan_item_id=uuid.uuid4(),
+        creator_id=str(uuid.uuid4()),
+    )
+
+    text = task_module._transcribe_reference_sample(work, artifact)
+
+    assert text == "So today we built the thing."
+    assert uploaded_seconds == [0.5]
+    agent_input, ctx = calls[0]
+    assert agent_input.file_mime == "audio/wav"
+    assert (ctx.creator_id, ctx.plan_item_id) == (work.creator_id, str(work.plan_item_id))
+    assert ctx.usage_purpose == "optional_background"
+    assert ctx.request_id == f"speech-cleanup-reference:{work.claim.analysis_id}"
+
+
+def test_reference_upload_makes_one_attempt_and_waits_for_active(monkeypatch, tmp_path) -> None:
+    uploads: list[str] = []
+
+    class _Files:
+        def upload(self, *, file, config):
+            uploads.append(config.mime_type)
+            return SimpleNamespace(name="files/a", state=SimpleNamespace(name="PROCESSING"))
+
+        def get(self, *, name):
+            return SimpleNamespace(name=name, state=SimpleNamespace(name="ACTIVE"))
+
+    monkeypatch.setattr(
+        "app.pipeline.agents.gemini_analyzer._get_client",
+        lambda: SimpleNamespace(files=_Files()),
+    )
+    monkeypatch.setattr(task_module.time, "sleep", lambda _seconds: None)
+
+    file_ref = task_module._upload_reference_sample(tmp_path / "reference-sample.wav")
+
+    assert file_ref.state.name == "ACTIVE"
+    assert uploads == ["audio/wav"]
+
+
+def test_reference_upload_does_not_retry_an_outage(monkeypatch, tmp_path) -> None:
+    attempts: list[int] = []
+
+    class _Files:
+        def upload(self, *, file, config):
+            attempts.append(1)
+            raise ConnectionError("503 from Gemini")
+
+    monkeypatch.setattr(
+        "app.pipeline.agents.gemini_analyzer._get_client",
+        lambda: SimpleNamespace(files=_Files()),
+    )
+
+    with pytest.raises(ConnectionError):
+        task_module._upload_reference_sample(tmp_path / "reference-sample.wav")
+    assert attempts == [1]
+
+
+def test_claim_carries_the_plan_owner_for_gemini_attribution(monkeypatch) -> None:
+    row = _queued_row(DETECTOR_VERSION)
+    plan = SimpleNamespace(id=uuid.uuid4(), user_id=uuid.uuid4())
+    item = SimpleNamespace(id=row.plan_item_id, content_plan_id=plan.id)
+    session = _ClaimSession(row, item, plan)
+    monkeypatch.setattr(task_module, "sync_session", lambda: session)
+
+    work = task_module._claim_work(str(row.id))
+
+    assert work is not None
+    assert (work.plan_item_id, work.creator_id) == (row.plan_item_id, str(plan.user_id))

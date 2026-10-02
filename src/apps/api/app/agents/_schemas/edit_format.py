@@ -78,6 +78,14 @@ AUDIO_LED_EDIT_FORMATS: frozenset[str] = frozenset(
     set(NARRATED_EDIT_FORMATS) | {"subtitled", "talking_head"}
 )
 
+# Talking edits draw no clip intents (labels, groups, orders, includes, chapter
+# captions): neither the cloud subtitled/talking-head renderers nor the phone
+# subtitled job receive them. Their captions are what the creator SAYS, so "add
+# captions" there is a caption-style request, never a clip operation, and
+# clip-intent planning skips these formats. Locked by
+# `tests/kria/test_talking_clip_intents.py::test_talking_renderers_take_no_clip_intents`.
+CLIP_INTENT_FREE_EDIT_FORMATS: frozenset[str] = frozenset({"subtitled", "talking_head"})
+
 # Positive allowlist of EditFormat values whose decisions have a phone-recipe
 # compiler (app/pipeline/phone_<archetype>_plan.py) and can therefore render
 # directly from on-device analysis-proxy sources. Guided-story approval is a
@@ -99,8 +107,8 @@ AUDIO_LED_EDIT_FORMATS: frozenset[str] = frozenset(
 # actually renders (see that flag's docstring in `app/config.py`).
 #
 # KRI-114 P1-2/P1-4: montage/day_vlog/single_hero without a voiceover compile
-# through `app.pipeline.phone_montage_plan.compile_phone_montage_plan`
-# (`app.tasks.generative_build._run_phone_montage_job`); WITH a voiceover they
+# through `app.pipeline.phone_voiceover_montage_plan.compile_phone_voiceover_montage_plan`
+# (`app.tasks.generative_build._run_phone_voiceover_montage_job`); WITH a voiceover they
 # compile through the same function once `phone_narration_rendering_enabled`
 # + narrationAudio are satisfied (KRI-132).
 # KRI-132: `subtitled` (exactly one clip, own audio → editable captions)

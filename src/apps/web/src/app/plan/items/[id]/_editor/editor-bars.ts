@@ -75,9 +75,13 @@ export interface CaptionTextReplacement {
   lineCount: number;
 }
 
-/** Case-insensitive, literal replacement over every narrated caption bar.
- * The callback replacement is intentional: `$&`, `$1`, and friends in user
- * text stay literal instead of being interpreted by String.replace. */
+/** Case-insensitive, literal replacement over every caption bar — both
+ * `caption_cues`-derived (`isCaptionBar`) and guided-story's persisted
+ * narration captions (`isNarrationCaptionBar`), since the drawer's match
+ * count is computed over the same union (`isCaptionUnitBar`) that seeds its
+ * row list — see `captionCueRows` in EditorShell.tsx. The callback
+ * replacement is intentional: `$&`, `$1`, and friends in user text stay
+ * literal instead of being interpreted by String.replace. */
 export function buildCaptionTextReplacement(
   bars: readonly TextElementBar[],
   find: string,
@@ -92,7 +96,7 @@ export function buildCaptionTextReplacement(
   let foundMatchCount = 0;
   let matchCount = 0;
   const patches = bars
-    .filter(isCaptionBar)
+    .filter(isCaptionUnitBar)
     .reduce<Array<{ id: string; patch: { text: string } }>>((acc, bar) => {
       const next = bar.text.replace(pattern, (match) => {
         foundMatchCount += 1;

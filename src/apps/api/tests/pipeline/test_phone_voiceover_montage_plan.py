@@ -7,8 +7,10 @@ from app.pipeline.generative_decision import (
     GenerativeVariantDecision,
 )
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
-from app.pipeline.phone_montage_plan import compile_phone_montage_plan
 from app.pipeline.phone_recipe_shared import PhoneMusicBed, PhoneNarrationBed
+from app.pipeline.phone_voiceover_montage_plan import (
+    compile_phone_voiceover_montage_plan as _compile,
+)
 from app.services.phone_sources import PhoneSourceBinding
 
 
@@ -18,6 +20,19 @@ def _narration(plan_item_id: str = "item-1", *, duration_s: float = 20.0) -> Pho
         generation="9",
         fingerprint=RenderFingerprint(sha256="d" * 64, byte_count=999),
         duration_s=duration_s,
+    )
+
+
+_DEFAULT = object()
+
+
+def compile_phone_voiceover_montage_plan(decision, bindings, *, music=None, narration=_DEFAULT):
+    """The writer REQUIRES a narration bed (KRI-220); default to a valid one here."""
+    return _compile(
+        decision,
+        bindings,
+        music=music,
+        narration=_narration() if narration is _DEFAULT else narration,
     )
 
 
@@ -66,7 +81,7 @@ def fixture(
     extras_overrides=None,
     bindings=None,
     mix=None,
-    voiceover_gcs_path=None,
+    voiceover_gcs_path="voiceover-uploads/direct/u/i/voice.m4a",
     voiceover_target_s=None,
 ):
     if steps is None:
@@ -120,7 +135,7 @@ def fixture(
     return decision, bindings
 
 
-def test_compiles_three_clips_with_crossfades_intro_and_music_bed():
+def test_compiles_three_clips_with_crossfades_intro_and_voiceover_music_bed():
     music = PhoneMusicBed(
         catalog_id="track1",
         generation="7",
@@ -129,8 +144,8 @@ def test_compiles_three_clips_with_crossfades_intro_and_music_bed():
         start_s=30.5,
         volume=1.0,
     )
-    decision, bindings = fixture(music_track_id="track1", music_start_s=30.5)
-    recipe = compile_phone_montage_plan(decision, bindings, music=music)
+    decision, bindings = fixture(music_track_id="track1", music_start_s=30.5, mix=0.7)
+    recipe = compile_phone_voiceover_montage_plan(decision, bindings, music=music)
 
     video_track = recipe.tracks[0]
     assert [clip.id for clip in video_track.clips] == [
@@ -144,12 +159,13 @@ def test_compiles_three_clips_with_crossfades_intro_and_music_bed():
     assert video_track.clips[2].timeline_start == pytest.approx(7.4)
     assert recipe.duration == pytest.approx(11.4)
 
-    music_track = next(t for t in recipe.tracks if t.kind == "audio")
+    music_track = next(t for t in recipe.tracks if t.id == "music")
     assert music_track.clips[0].source_asset_id == "music-track1"
     assert music_track.clips[0].source_start == pytest.approx(30.5)
-    # KRI-184: the clips' own sound keeps playing under the music bed.
-    assert recipe.audio.original_volume == 1
-    assert recipe.audio.music_volume == 1
+    # voiceover_music: the bed sits under the voice (1 - mix), footage never mixed.
+    assert recipe.audio.music_volume == pytest.approx(0.3)
+    assert recipe.audio.original_volume == pytest.approx(0.0)
+    assert any(t.id == "narration" for t in recipe.tracks)
 
     assert len(recipe.text_layers) == 2  # reveal + hold
     assert {"crossfade", "musicBed", "audioMix", "positionedText", "animatedText"} <= (
@@ -165,7 +181,7 @@ def test_refit_clamps_a_window_that_overruns_the_original_duration():
         steps=[_step("c0", in_s=7.0, duration=4.0)],
         bindings=(_binding("c0", duration_s=8.0),),
     )
-    recipe = compile_phone_montage_plan(decision, bindings, music=None)
+    recipe = compile_phone_voiceover_montage_plan(decision, bindings, music=None)
     clip = recipe.tracks[0].clips[0]
     # available = 8.0 - 0.05 safety margin = 7.95; the 4s duration fits by
     # shifting the start back rather than truncating.
@@ -178,7 +194,7 @@ def test_rejects_unsupported_transition():
         steps=[_step("c0"), _step("c1", transition_in="whip-pan")],
     )
     with pytest.raises(UnsupportedPhonePlan, match="unsupported transition"):
-        compile_phone_montage_plan(decision, bindings, music=None)
+        compile_phone_voiceover_montage_plan(decision, bindings, music=None)
 
 
 @pytest.mark.parametrize(
@@ -193,13 +209,13 @@ def test_rejects_unsupported_transition():
 def test_rejects_lanes_the_recipe_cannot_express(overrides, match):
     decision, bindings = fixture(extras_overrides=overrides)
     with pytest.raises(UnsupportedPhonePlan, match=match):
-        compile_phone_montage_plan(decision, bindings, music=None)
+        compile_phone_voiceover_montage_plan(decision, bindings, music=None)
 
 
 def test_rejects_carousel_moment():
     decision, bindings = fixture(extras_overrides={"base": {"carousel_moment": {"clip_id": "c0"}}})
     with pytest.raises(UnsupportedPhonePlan, match="carousel"):
-        compile_phone_montage_plan(decision, bindings, music=None)
+        compile_phone_voiceover_montage_plan(decision, bindings, music=None)
 
 
 def test_rejects_lyrics_text_mode():
@@ -207,31 +223,31 @@ def test_rejects_lyrics_text_mode():
         text_mode="lyrics", extras_overrides={"intro_overlay_params": None}
     )
     with pytest.raises(UnsupportedPhonePlan, match="lyric"):
-        compile_phone_montage_plan(decision, bindings, music=None)
+        compile_phone_voiceover_montage_plan(decision, bindings, music=None)
 
 
 def test_rejects_when_a_step_has_no_phone_source_binding():
     decision, bindings = fixture(extras_overrides={"clip_id_to_media_id": {"c0": "c0"}})
     with pytest.raises(UnsupportedPhonePlan, match="no phone source binding"):
-        compile_phone_montage_plan(decision, bindings, music=None)
+        compile_phone_voiceover_montage_plan(decision, bindings, music=None)
 
 
 def test_rejects_when_music_bed_metadata_is_missing():
     decision, _bindings = fixture(music_track_id="track1", music_start_s=0.0)
     with pytest.raises(UnsupportedPhonePlan, match="music bed"):
-        compile_phone_montage_plan(decision, _bindings, music=None)
+        compile_phone_voiceover_montage_plan(decision, _bindings, music=None)
 
 
 def test_rejects_unexpressible_intro_style():
     decision, bindings = fixture(extras_overrides={"intro_overlay_params": {"effect": "fade-in"}})
     with pytest.raises(UnsupportedPhonePlan, match="unable to compile intro text"):
-        compile_phone_montage_plan(decision, bindings, music=None)
+        compile_phone_voiceover_montage_plan(decision, bindings, music=None)
 
 
 def test_rejects_unsupported_color_grade():
     decision, bindings = fixture(extras_overrides={"recipe": {"color_grade": "moody"}})
     with pytest.raises(UnsupportedPhonePlan, match="color grade"):
-        compile_phone_montage_plan(decision, bindings, music=None)
+        compile_phone_voiceover_montage_plan(decision, bindings, music=None)
 
 
 def test_golden_hour_requires_exact_canvas_unrotated_source():
@@ -253,26 +269,26 @@ def test_golden_hour_requires_exact_canvas_unrotated_source():
         *(_binding(f"c{i}") for i in (1, 2)),
     )
     with pytest.raises(ValueError, match="exact-canvas"):
-        compile_phone_montage_plan(decision, mismatched, music=None)
+        compile_phone_voiceover_montage_plan(decision, mismatched, music=None)
     exact_bindings = tuple(_binding(f"c{i}", duration_s=10.0) for i in range(3))
-    recipe = compile_phone_montage_plan(decision, exact_bindings, music=None)
+    recipe = compile_phone_voiceover_montage_plan(decision, exact_bindings, music=None)
     assert recipe.tracks[0].clips[0].look == "golden_hour"
     assert "goldenHourLook" in recipe.required_capabilities
 
 
 def test_variable_speed_capability_and_rejects_non_positive_rate():
     decision, bindings = fixture(steps=[_step("c0", rate=1.5)])
-    recipe = compile_phone_montage_plan(decision, bindings, music=None)
+    recipe = compile_phone_voiceover_montage_plan(decision, bindings, music=None)
     assert "variableSpeed" in recipe.required_capabilities
 
     decision, bindings = fixture(steps=[_step("c0", rate=0)])
     with pytest.raises(UnsupportedPhonePlan, match="positive"):
-        compile_phone_montage_plan(decision, bindings, music=None)
+        compile_phone_voiceover_montage_plan(decision, bindings, music=None)
 
 
 def test_no_text_variant_has_no_layers():
     decision, bindings = fixture(text_mode="none", extras_overrides={"intro_overlay_params": None})
-    recipe = compile_phone_montage_plan(decision, bindings, music=None)
+    recipe = compile_phone_voiceover_montage_plan(decision, bindings, music=None)
     assert recipe.text_layers == []
     assert "positionedText" not in recipe.required_capabilities
 
@@ -285,7 +301,9 @@ def test_voiceover_mix_1_0_fully_ducks_footage_audio():
         mix=1.0,
     )
     narration = _narration()
-    recipe = compile_phone_montage_plan(decision, bindings, music=None, narration=narration)
+    recipe = compile_phone_voiceover_montage_plan(
+        decision, bindings, music=None, narration=narration
+    )
 
     narration_track = next(t for t in recipe.tracks if t.id == "narration")
     assert narration_track.kind == "audio"
@@ -316,7 +334,9 @@ def test_voiceover_mix_0_4_mixes_footage_audio_under_the_voice():
         mix=0.4,
     )
     narration = _narration()
-    recipe = compile_phone_montage_plan(decision, bindings, music=None, narration=narration)
+    recipe = compile_phone_voiceover_montage_plan(
+        decision, bindings, music=None, narration=narration
+    )
 
     assert recipe.audio.original_volume == pytest.approx(0.6)
     narration_track = next(t for t in recipe.tracks if t.id == "narration")
@@ -342,7 +362,9 @@ def test_voiceover_music_bed_caps_gain_and_never_mixes_footage():
             music_track_id="track1",
             music_start_s=10.0,
         )
-        recipe = compile_phone_montage_plan(decision, bindings, music=music, narration=narration)
+        recipe = compile_phone_voiceover_montage_plan(
+            decision, bindings, music=music, narration=narration
+        )
         music_track = next(t for t in recipe.tracks if t.id == "music")
         assert music_track.clips[0].volume == pytest.approx(expected_gain)
         assert recipe.audio.music_volume == pytest.approx(expected_gain)
@@ -357,5 +379,50 @@ def test_voiceover_requires_a_phone_narration_binding():
         voiceover_target_s=11.4,
     )
     with pytest.raises(UnsupportedPhonePlan, match="narration binding") as exc:
-        compile_phone_montage_plan(decision, bindings, music=None, narration=None)
+        compile_phone_voiceover_montage_plan(decision, bindings, music=None, narration=None)
     assert exc.value.capability == "narrationAudio"
+
+
+def test_no_recorded_voiceover_is_never_this_writers_job():
+    """KRI-220: every non-voiceover montage goes to the unified planner."""
+    decision, bindings = fixture(voiceover_gcs_path=None)
+    with pytest.raises(UnsupportedPhonePlan, match="narration binding") as exc:
+        _compile(decision, bindings, music=None, narration=None)
+    assert exc.value.capability == "narrationAudio"
+    # Even with a music track and no voice, there is no music-only branch any more.
+    decision, bindings = fixture(voiceover_gcs_path=None, music_track_id="t", music_start_s=0.0)
+    with pytest.raises(UnsupportedPhonePlan, match="narration binding"):
+        _compile(decision, bindings, music=None, narration=None)
+
+
+def test_voice_fades_out_and_music_bed_fades_both_ends():
+    """KRI-139: fades ride the audio clips; the loudness target rides the mix."""
+    music = PhoneMusicBed(
+        catalog_id="track1",
+        generation="7",
+        fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=500),
+        duration_s=120.0,
+        start_s=10.0,
+        volume=1.0,
+    )
+    decision, bindings = fixture(
+        voiceover_target_s=11.4, mix=0.7, music_track_id="track1", music_start_s=10.0
+    )
+    recipe = _compile(decision, bindings, music=music, narration=_narration(), target_lufs=-14.0)
+    bed = next(t for t in recipe.tracks if t.id == "music").clips[0]
+    voice = next(t for t in recipe.tracks if t.id == "narration").clips[0]
+    assert (bed.audio_fade_in, bed.audio_fade_out) == (0.5, 0.5)
+    assert voice.audio_fade_out == pytest.approx(0.5)
+    assert voice.audio_fade_in is None
+    assert recipe.audio.target_lufs == pytest.approx(-14.0)
+    # The bed plays through its audio-track clip, never the legacy
+    # `music_asset_id` whole-file path (that would play it twice).
+    assert recipe.audio.music_asset_id is None
+    assert recipe.model_validate(recipe.model_dump(mode="json")) == recipe
+
+
+def test_short_voice_fade_never_covers_more_than_half_the_clip():
+    decision, bindings = fixture(voiceover_target_s=0.6, steps=[_step("c0", duration=0.6)])
+    recipe = compile_phone_voiceover_montage_plan(decision, bindings)
+    voice = next(t for t in recipe.tracks if t.id == "narration").clips[0]
+    assert voice.audio_fade_out == pytest.approx(0.3)
