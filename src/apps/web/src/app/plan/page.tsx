@@ -5,7 +5,7 @@ import { useSession } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
 
 import SignInPrompt from "./_components/SignInPrompt";
-import { LightShell } from "./_components/ui/LightShell";
+import { LightShell } from "@/components/ui/LightShell";
 import ChatCreationWorkspace from "./_components/workspace/ChatCreationWorkspace";
 
 export default function PlanPage() {
