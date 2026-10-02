@@ -2,6 +2,8 @@
 
 Nova transforms raw real-life videos into viral short-form content (TikTok, Reels, Shorts).
 
+Start with [docs/README.md](docs/README.md) to locate code and focused tests by symptom. For runtime evidence or ticket handoffs, use [agent navigation](docs/runbooks/agent-navigation.md).
+
 ## Codex agent routing
 
 Routine delegation is explicitly authorized: use bounded subagents for independent work. Parent default: Astra Low; parent owns architecture, integration, and high-risk review. Choose Luna Medium (`default`/`cheap_worker`: mechanical edits; `explorer`: read-only), Terra Medium (`implementer`: normal multi-file work), or Astra Medium (`debugger`: ambiguous/risky analysis).
@@ -22,24 +24,11 @@ When the CI guard fails your PR: move narrative out, don't fight the check.
 
 ## Session workflow: isolate in a worktree
 
-**Before starting non-trivial work, create a fresh worktree off `origin/main`.** The primary checkout at `/Users/emirerben/Projects/nova` is shared across sessions; uncommitted edits collide and the checkout stays pinned to whatever branch was last left there. Symptoms: stray `.venv` deletions, duplicate migration files, mixed `git status`, PRs with phantom conflicts because work landed against a stale base.
+The primary checkout at `/Users/emirerben/Projects/nova` is shared across sessions. Before non-trivial implementation (including autoship intake), automatically create an isolated worktree from the freshly fetched `origin/main`, within granted filesystem permissions, using a `codex/<topic>` branch and that worktree as the explicit working directory for every subsequent tool. Preserve all staged, unstaged, and untracked files in the shared checkout; do not commit, stash, pull, rebase, or reset it to make room. Diverged `main` also uses a fresh worktree.
 
-Fastest path — `nova-fresh <topic>` (zsh function in `~/.zshrc`) creates the worktree off `origin/main`, `cd`s into it, and launches Claude there in one step:
+In Plan Mode, inspect `origin/main` read-only, defer worktree creation until execution, and do not treat dirty or divergent `main` as a blocker. For execution, use `git fetch origin main` followed by `git worktree add -b codex/<topic> <path> origin/main`; then use `<path>` explicitly. For manual setup, `nova-fresh <topic>` (or `bash scripts/new-session.sh <topic>`) creates and bootstraps one with its helper-default `feat/<topic>-<date>` branch; then `cd` to the printed path. Bootstrap symlinks `.env`/`.venv`/`node_modules` and runs migrations. Re-run `bash scripts/worktree-setup.sh` if needed.
 
-```bash
-nova-fresh template-text-100             # = new-session.sh + cd + claude
-```
-
-Or run the underlying script yourself (fetch origin/main + worktree off the fresh tip + correct branch naming):
-
-```bash
-bash scripts/new-session.sh <topic>      # e.g. template-text-100
-cd ../nova-<topic>                       # script prints this; copy it
-```
-
-Both paths auto-run `scripts/worktree-setup.sh` (symlinks `.env`/`.venv`/`node_modules` from the primary checkout + migrations). Re-run it manually in any worktree that's missing those.
-
-A `SessionStart` hook (`.claude/settings.json` → `scripts/session-check.sh`) fetches `origin/main`, then: on a **clean `main`** it auto fast-forwards (so the shared checkout never drifts); on a dirty `main` or any feature branch it only prints a warning (it can't relocate the session or discard work). If you see the stale-worktree warning, run `nova-fresh`/`new-session.sh` for new work, or `git merge --ff-only origin/main` to update an in-flight branch.
+The `SessionStart` hook (`.claude/settings.json` → `scripts/session-check.sh`) fetches `origin/main`, auto fast-forwards only a clean `main`, and prints fresh-worktree guidance for dirty, divergent, or stale checkouts.
 
 Rules:
 - Run all edits, tests, and commits from the worktree path — never from `/Users/emirerben/Projects/nova` directly.
