@@ -103,7 +103,7 @@ struct NativeDocumentInspector: View {
                 .disabled(!canEditBackground)
             } else {
                 Text("No background music lane")
-                    .foregroundStyle(KriaColor.zinc)
+                        .foregroundStyle(KriaColor.zinc)
             }
             LabeledContent("Title", value: session.document.title ?? "Untitled")
             LabeledContent("Orientation", value: session.document.orientation ?? "9:16")

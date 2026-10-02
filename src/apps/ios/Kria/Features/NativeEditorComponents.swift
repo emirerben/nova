@@ -345,7 +345,7 @@ struct NativeEditorContextStrip: View {
                         .padding(.horizontal, 16)
                 }
                 .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
-                .disabled(!session.canEditTimeline || session.selectedClipID == nil)
+                .disabled(session.selectedClipID == nil)
                 .accessibilityIdentifier("native-editor-delete")
             }
             .padding(4)

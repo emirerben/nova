@@ -619,8 +619,9 @@ struct NativeVideoPreview: View {
             Color.black
             if session.document.editorState == "empty" {
                 VStack(spacing: 12) {
-                    Image(systemName: "film.stack").font(.system(size: 30))
-                    Text("Add a clip to start your edit").font(KriaFont.body(15).weight(.semibold))
+                    Image(systemName: "film.stack").font(.system(size: 30)).accessibilityHidden(true)
+                    Text("Add a clip to start your edit").font(KriaFont.display(20))
+                        .multilineTextAlignment(.center)
                     Button("Add clip", action: { onAddClip?() })
                         .buttonStyle(KriaPrimaryButtonStyle())
                         .disabled(onAddClip == nil || !session.canAddTimelineMedia)

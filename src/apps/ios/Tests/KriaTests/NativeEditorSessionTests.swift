@@ -1595,6 +1595,43 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(session.document.deletions.isEmpty)
     }
 
+    func testFailedSaveOfEmptyTimelineRetainsIntentAndUndoRestoresRenderableDocument() async {
+        let threadID = UUID()
+        let snapshot: [String: JSONValue] = ["editor_payload": .object([
+            "base_generation": .string("g1"),
+            "sections": .object(["timeline_slots": .array([.object([
+                "slot_id": .string("server-slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2),
+            ])])]),
+        ])]
+        let variant: [String: JSONValue] = [
+            "variant_id": .string("initial"), "render_generation_id": .string("g1"), "render_status": .string("ready"),
+            "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"),
+            "editor_capabilities": .object(["timeline": .bool(true)]),
+            "user_timeline": .object(["slots": .array([.object([
+                "slot_id": .string("server-slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2),
+            ])])]),
+        ]
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "initial", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
+            authoritativeVariant: variant,
+            commitError: .offline
+        )
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: threadID)
+
+        XCTAssertTrue(session.deleteSelection(.init(kind: .clip, id: "server-slot")))
+        await session.save()
+
+        XCTAssertEqual(session.document.editorState, "empty")
+        XCTAssertTrue(session.document.clips.isEmpty)
+        XCTAssertEqual(session.document.deletions, [.init(kind: "clip", id: "server-slot")])
+        XCTAssertEqual(fake.lastRequest?.deletions, [.init(kind: "clip", id: "server-slot")])
+        session.undo()
+        XCTAssertEqual(session.document.editorState, "renderable")
+        XCTAssertEqual(session.document.clips.count, 1)
+        XCTAssertTrue(session.document.deletions.isEmpty)
+    }
+
     func testVisibleGeneratedLanesDeleteWithoutEditCapabilitiesAndUndoRedoTheirIntents() {
         var draft = NativeEditorUITestFixtures.captionVisuals
         var document = EditorDocument(snapshot: draft.serverSnapshot)
@@ -2076,6 +2113,29 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.document.clips.count, 2)
         XCTAssertEqual(session.document.clips.last?.clipIndex, 1)
         XCTAssertTrue(session.hasUnsavedChanges)
+    }
+
+    func testAddClipUsesGuidedVariantSourceIndexWhenProvided() async throws {
+        let threadID = UUID(); let jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 0, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        let tempURL = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).mp4")
+        try Data("clip-bytes".utf8).write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        fake.reserveUploadResult = UploadReservation(uploadURL: URL(string: "https://storage.example/signed-put")!, gcsPath: "users/u/generative/abc123def456/clip.mp4", kind: "video", contentType: "video/mp4", uploadHeaders: [:], purpose: nil, reservationID: nil, retentionExpiresAt: nil)
+        fake.addClipResult = AddClipResult(jobID: jobID.uuidString, clipIndex: 1, kind: "video", variantClipIndices: ["variant": 7])
+
+        await session.addClip(fileURL: tempURL)
+
+        XCTAssertNil(session.addClipError)
+        XCTAssertEqual(session.document.clips.last?.clipIndex, 7)
+    }
+
+    func testAddClipResultDecodesGuidedVariantSourceIndices() throws {
+        let data = Data(#"{"job_id":"job","clip_index":1,"kind":"video","variant_clip_indices":{"song_lyrics":7}}"#.utf8)
+        let result = try JSONDecoder().decode(AddClipResult.self, from: data)
+        XCTAssertEqual(result.variantClipIndices?["song_lyrics"], 7)
     }
 
     func testAddClipSurfacesUploadFailureWithoutMutatingTimeline() async throws {

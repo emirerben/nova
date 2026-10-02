@@ -712,7 +712,17 @@ struct AddClipResult: Codable, Sendable {
     let jobID: String
     let clipIndex: Int
     let kind: String
-    enum CodingKeys: String, CodingKey { case kind; case jobID = "job_id"; case clipIndex = "clip_index" }
+    /// Guided variants index their source catalog independently from the job's
+    /// upload pool. Older servers omit this map and continue to use clipIndex.
+    let variantClipIndices: [String: Int]?
+    enum CodingKeys: String, CodingKey { case kind; case jobID = "job_id"; case clipIndex = "clip_index"; case variantClipIndices = "variant_clip_indices" }
+
+    init(jobID: String, clipIndex: Int, kind: String, variantClipIndices: [String: Int]? = nil) {
+        self.jobID = jobID
+        self.clipIndex = clipIndex
+        self.kind = kind
+        self.variantClipIndices = variantClipIndices
+    }
 }
 struct ProjectUploadReservation: Codable, Sendable {
     let mediaID: String

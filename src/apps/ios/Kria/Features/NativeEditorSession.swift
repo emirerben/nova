@@ -2746,7 +2746,8 @@ struct NativeEditorTemporaryVideo {
                 // `media_kind` lets a chat turn's editor state name an UNSAVED added clip whose
                 // clip_index the server may not resolve from persisted sources yet.
                 let kind: [String: JSONValue] = ["video", "image"].contains(result.kind) ? ["media_kind": .string(result.kind)] : [:]
-                doc.clips.append(EditorTimelineSlot(clipIndex: result.clipIndex, inS: 0, durationS: Self.addedClipDurationS, raw: kind))
+                let clipIndex = variantKey.flatMap { result.variantClipIndices?[$0] } ?? result.clipIndex
+                doc.clips.append(EditorTimelineSlot(clipIndex: clipIndex, inS: 0, durationS: Self.addedClipDurationS, raw: kind))
             }
             addClipError = nil
         } catch is AddClipSourceUnreadable {
@@ -3697,8 +3698,18 @@ struct NativeEditorTemporaryVideo {
 
     private func lyricDeletionID(for element: EditorTextElement) -> String? {
         guard element.role == "lyric_line" else { return nil }
-        if element.id.hasPrefix("L") { return element.id }
         let metadata = element.raw["source_params"]?.objectValue ?? element.raw
+        func canonicalID(_ value: String) -> String? {
+            let unprefixed = value.hasPrefix("lyric_") ? String(value.dropFirst("lyric_".count)) : value
+            if unprefixed.hasPrefix("L"), unprefixed.count > 1 { return unprefixed }
+            if let index = Int(unprefixed) { return "L\(index)" }
+            return nil
+        }
+        // The backend snapshot contract is source_params.key = "L7" with a
+        // display element id such as "lyric_L7". Prefer the source key over
+        // the UI id so a delete persists as the server's lyric suppression.
+        if let key = metadata["key"]?.stringValue, let lyricID = canonicalID(key) { return lyricID }
+        if let lyricID = canonicalID(element.id) { return lyricID }
         for key in ["absolute_index", "absolute_line_index", "line_index"] {
             if let value = metadata[key]?.numberValue, value.isFinite, value.rounded() == value {
                 return "L\(Int(value))"
@@ -3838,8 +3849,7 @@ struct NativeEditorTemporaryVideo {
         mutateTimedEffect(kind: .soundEffect, id: id, section: .soundEffects, operationKeys: ["lanes.sfx.gain", "sfx.gain", "sound_effects.gain", "lanes.sfx"]) { $0.raw["gain"] = .number(min(max(0, gain), 2)) }
     }
     func removeSoundEffect(id: String) {
-        guard canEditOperation(["lanes.sfx.remove", "sfx.remove", "sound_effects.remove", "lanes.sfx"], section: .soundEffects) else { return }
-        transactDocument(section: .soundEffects) { $0.soundEffects.removeAll { $0.id == id } }
+        _ = deleteSelection(EditorSelection(kind: .soundEffect, id: id))
     }
 
     func setMediaOverlayTiming(id: String, startS: Double? = nil, endS: Double? = nil) {
@@ -3863,8 +3873,7 @@ struct NativeEditorTemporaryVideo {
         mutateTimedEffect(kind: .mediaOverlay, id: id, section: .mediaOverlays, operationKeys: ["layers.reorder", "layer_order", "lanes.overlays.z_order", "lanes.overlays"]) { $0.raw["z"] = .number(z) }
     }
     func removeMediaOverlay(id: String) {
-        guard canEditOperation(["lanes.overlays.remove", "overlays.remove", "media_overlays.remove", "lanes.overlays"], section: .mediaOverlays) else { return }
-        transactDocument(section: .mediaOverlays) { $0.mediaOverlays.removeAll { $0.id == id } }
+        _ = deleteSelection(EditorSelection(kind: .mediaOverlay, id: id))
     }
 
     func setVisualBlockTiming(id: String, startS: Double? = nil, endS: Double? = nil) {
@@ -3931,8 +3940,7 @@ struct NativeEditorTemporaryVideo {
         }
     }
     func removeVisualBlock(id: String) {
-        guard canEditOperation(["lanes.visual_blocks.remove", "visual_blocks.remove", "lanes.visual_blocks"], section: .visualBlocks) else { return }
-        transactDocument(section: .visualBlocks) { $0.visualBlocks.removeAll { $0.id == id } }
+        _ = deleteSelection(EditorSelection(kind: .visualBlock, id: id))
     }
 
     func setMotionSceneTiming(id: String, startS: Double? = nil, endS: Double? = nil) {
@@ -3988,8 +3996,8 @@ struct NativeEditorTemporaryVideo {
     }
     func setCarouselPosition(_ position: String) { setCarouselMomentPosition(position) }
     func removeCarouselMoment() {
-        guard canEditOperation(["carousel.remove", "carousel", "carousel_moment"], section: .carouselMoment) else { return }
-        transactDocument(section: .carouselMoment) { $0.carouselMoment = nil }
+        let id = document.carouselMoment?["id"]?.stringValue ?? "carousel"
+        _ = deleteSelection(EditorSelection(kind: .carousel, id: id))
     }
 
     // A single baseline is shared by all timed-lane body and edge gestures.
@@ -4042,8 +4050,8 @@ struct NativeEditorTemporaryVideo {
         transactDocument(section: .music) { $0.music = EditorMusic(trackID: trackID.uuidString, startS: max(0, startS), raw: ["title": .string(title)]) }
     }
     func removeMusic() {
-        guard canEditSection(.music) else { return }
-        transactDocument(section: .music) { $0.music = nil }
+        guard let trackID = document.music?.trackID else { return }
+        _ = deleteSelection(EditorSelection(kind: .music, id: trackID))
     }
     func setBackgroundMusic(_ value: EditorBackgroundMusic?) {
         guard canEditSection(.backgroundMusic) else { return }

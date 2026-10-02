@@ -26,7 +26,7 @@ final class TextDeletionTests: XCTestCase {
                 text("clip-label-unified-cut-1", "11"),
                 text("caption-1", "spoken words", extra: ["source_params": .object(["source": .string("caption_cue")])]),
                 text("card-text", "card", extra: ["visual_block_id": .string("block-1")]),
-                text("lyric-1", "la la", role: "lyric_line", extra: ["absolute_index": .number(7)]),
+                text("lyric_L7", "la la", role: "lyric_line", extra: ["source_params": .object(["source": .string("lyric"), "key": .string("L7")])]),
             ]),
             "visual_blocks": .array([
                 .object(["id": .string("block-1"), "kind": .string("text_card"), "start_s": .number(0), "end_s": .number(2),
@@ -93,7 +93,7 @@ final class TextDeletionTests: XCTestCase {
         XCTAssertEqual(session.textDeletion(id: "clip-label-unified-cut-1"), .allowed)
         XCTAssertTrue(session.deleteText(id: "caption-1"), "caption deletion is allowed when the caption lane is editable")
         session.undo()
-        XCTAssertTrue(session.deleteText(id: "lyric-1"), "generated lyric lines use stable suppression IDs")
+        XCTAssertTrue(session.deleteText(id: "lyric_L7"), "generated lyric lines use stable suppression IDs")
         XCTAssertEqual(session.document.deletions, [EditorDeletion(kind: "lyric_line", id: "L7")])
         session.undo()
         XCTAssertTrue(session.deleteText(id: "card-text"), "linked text can be removed without deleting its card")
