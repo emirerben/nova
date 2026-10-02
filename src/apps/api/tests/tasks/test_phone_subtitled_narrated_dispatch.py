@@ -321,6 +321,35 @@ def test_subtitled_applies_required_speech_cleanup_cut_plan(monkeypatch):
     assert all(cue["end_s"] <= recipe.duration + 1e-6 for cue in variant["caption_cues"])
 
 
+def test_subtitled_cut_captions_stay_on_the_raw_float_mapping(monkeypatch):
+    """The phone recipe plays each keep segment at its exact float offsets,
+    so phone captions keep the raw remap -- never the cloud render's 30 fps
+    frame grid ("today" at 0.96 s, not at frame 28 = 0.933 s)."""
+    import app.pipeline.captions as captions_mod
+
+    job, snapshot, _session, binding = _setup_subtitled(monkeypatch, duration_s=DURATION)
+    snapshot["speech_cleanup_contract"] = "required_v1"
+    snapshot["_speech_cleanup_internal"] = {
+        "preflight_snapshot": _raw_preflight_snapshot(storage_path=binding.proxy_path)
+    }
+    seen: list[list[tuple[str, float, float]]] = []
+    build_cues = captions_mod.build_plain_cues
+
+    def _spy(words, *args, **kwargs):
+        seen.append([(word.text, word.start_s, word.end_s) for word in words])
+        return build_cues(words, *args, **kwargs)
+
+    monkeypatch.setattr(captions_mod, "build_plain_cues", _spy)
+
+    gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    (words,) = seen
+    assert [text for text, _, _ in words] == ["so", "today", "we", "built", "the", "thing."]
+    # Source time minus the removed time before it (0.54 s, then 2.44 s).
+    assert [start for _, start, _ in words] == pytest.approx([0.5, 0.96, 1.46, 2.16, 2.56, 2.86])
+
+
 def test_subtitled_rejects_clip_over_five_minutes(monkeypatch):
     job, snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
     import app.pipeline.probe as probe_mod

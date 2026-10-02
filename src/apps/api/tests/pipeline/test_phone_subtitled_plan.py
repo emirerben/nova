@@ -13,6 +13,7 @@ from app.pipeline.phone_subtitled_lanes import (
     SubtitledLaneError,
     SubtitledOverlayCard,
     SubtitledSoundEffect,
+    remap_lanes_for_cut,
     sfx_path_is_playable,
 )
 from app.pipeline.phone_subtitled_plan import (
@@ -219,6 +220,33 @@ def _cut_plan(removed: list[tuple[float, float]], duration: float) -> CutPlan:
         keep.append((cursor, duration))
     saved = sum(hi - lo for lo, hi in removed)
     return CutPlan(keep_segments=keep, removed=removals, time_saved_s=saved)
+
+
+def test_lane_remap_keeps_the_raw_float_plan_not_a_frame_grid():
+    # The phone recipe plays each keep segment at its exact float offsets, so
+    # lanes shift by exactly the removed time before them -- never onto the
+    # cloud cut render's 30 fps grid (which would put 3.0 s at 59/30 s).
+    plan = _cut_plan([(1.013, 2.031), (4.507, 5.0)], 10.0)
+    lanes = PhoneSubtitledLanes(
+        overlays=[
+            _overlay_card(start_s=3.0, end_s=6.0),
+            _overlay_card(id="card-gone", start_s=1.1, end_s=2.0),
+        ],
+        sound_effects=[
+            _resolved_sfx(request=SubtitledSoundEffect(id="sfx-1", catalog_id="pop", at_s=5.5))
+        ],
+    )
+
+    remapped, dropped = remap_lanes_for_cut(lanes, plan)
+
+    assert dropped == frozenset({"card-gone"})
+    (card,) = remapped.overlays
+    # 1.018 s removed before 3.0 s; 1.018 + 0.493 s before 6.0 s and 5.5 s.
+    assert (card.start_s, card.end_s) == pytest.approx((1.982, 4.489), abs=1e-9)
+    assert remapped.sound_effects[0].request.at_s == pytest.approx(3.989, abs=1e-9)
+    # A plan that removed nothing hands the lanes back untouched.
+    unchanged, none_dropped = remap_lanes_for_cut(lanes, no_op_plan(10.0))
+    assert unchanged is lanes and none_dropped == frozenset()
 
 
 def test_cut_plan_emits_one_clip_per_keep_segment():

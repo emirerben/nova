@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 import app.pipeline.silence_cut as silence_cut
+from app.pipeline.cut_grid import FrameGrid, keep_segment_frames, rendered_spans
 from app.pipeline.silence_cut import (
     ACOUSTIC_GAP_MAX_S,
     BAILOUT_CLIP_TOO_SHORT,
@@ -47,6 +48,7 @@ from app.pipeline.silence_cut import (
     remap_range,
     remap_time,
     remap_words,
+    removal_cut_points,
 )
 
 DUR = 20.0
@@ -1181,6 +1183,166 @@ class TestRemapRange:
         assert remap_range(1.0, 3.0, plan) == pytest.approx((1.0, 3.0))
 
 
+class TestRemapOnFrameGrid:
+    """``grid=`` -- remap onto a cloud cut render, which plays each keep
+    segment as whole 30 fps frames, every boundary snapped to the nearest
+    frame (`cut_grid.keep_segment_frames`, used by reframe)."""
+
+    GRID = FrameGrid(fps=30, duration_s=6.0)
+
+    @staticmethod
+    def plan() -> CutPlan:
+        return plan_with_removals([(1.01, 1.52), (3.24, 4.07)], 6.0)
+
+    def test_render_plays_whole_frames(self):
+        # Segment 1 starts 13 ms late and ends 7 ms early; segment 2 starts
+        # 3 ms early.
+        assert_spans(
+            rendered_spans(self.plan().keep_segments, self.GRID),
+            [(0.0, 30 / 30), (46 / 30, 97 / 30), (122 / 30, 180 / 30)],
+        )
+
+    def test_instant_maps_to_where_it_plays_in_the_render(self):
+        plan = self.plan()
+        # 2.0 s is 14 frames into segment 1, which plays from output frame 30.
+        assert remap_time(2.0, plan, grid=self.GRID) == pytest.approx(44 / 30, abs=1e-9)
+        # 5.0 s is 28 frames into segment 2, after 30 + 51 rendered frames.
+        assert remap_time(5.0, plan, grid=self.GRID) == pytest.approx(109 / 30, abs=1e-9)
+        # The raw plan puts both 23-27 ms late.
+        assert remap_time(2.0, plan) == pytest.approx(1.49, abs=1e-9)
+        assert remap_time(5.0, plan) == pytest.approx(3.66, abs=1e-9)
+
+    def test_instant_the_render_drops_maps_to_the_cut(self):
+        plan = self.plan()
+        # Removed by the plan.
+        assert remap_time(1.2, plan, grid=self.GRID) == pytest.approx(1.0, abs=1e-9)
+        # Kept by the plan, but segment 0 snaps to end at 1.0 s.
+        assert remap_time(1.005, plan, grid=self.GRID) == pytest.approx(1.0, abs=1e-9)
+
+    def test_instant_the_plan_removed_but_the_render_plays_keeps_its_place(self):
+        # Segment 2 snaps to start at 4.0667 s, before the removal ends at 4.07 s.
+        assert remap_time(4.068, self.plan(), grid=self.GRID) == pytest.approx(
+            81 / 30 + (4.068 - 122 / 30), abs=1e-9
+        )
+
+    def test_on_grid_plan_matches_the_raw_mapping(self):
+        plan = plan_with_removals([(1.0, 2.0), (5.0, 6.0)], 10.0)
+        grid = FrameGrid(fps=30, duration_s=10.0)
+        for t in (0.5, 1.5, 2.0, 3.3, 5.5, 7.25, 10.0):
+            assert remap_time(t, plan, grid=grid) == pytest.approx(remap_time(t, plan), abs=1e-9)
+
+    def test_noop_plan_is_identity_even_off_grid(self):
+        # The last segment keeps every frame up to an off-grid clip end.
+        grid = FrameGrid(fps=30, duration_s=6.01)
+        for t in (0.0, 1.234, 6.01):
+            assert remap_time(t, no_op_plan(6.01), grid=grid) == pytest.approx(t, abs=1e-9)
+
+    def test_words_survive_by_the_plan_and_take_grid_times(self):
+        words = [w("a", 0.5, 0.9), w("gone", 1.1, 1.4), w("b", 2.0, 2.5), w("c", 5.0, 5.3)]
+        remapped = remap_words(words, self.plan(), grid=self.GRID)
+        assert [entry["text"] for entry in remapped] == ["a", "b", "c"]
+        assert_spans(
+            [(entry["start_s"], entry["end_s"]) for entry in remapped],
+            [(0.5, 0.9), (44 / 30, 59 / 30), (109 / 30, 118 / 30)],
+        )
+
+    def test_word_straddling_a_cut_ends_at_the_rendered_cut(self):
+        remapped = remap_words([w("x", 0.9, 1.2)], self.plan(), grid=self.GRID)
+        assert_spans([(remapped[0]["start_s"], remapped[0]["end_s"])], [(0.9, 1.0)])
+
+    def test_sliver_the_render_drops_survives_at_the_cut(self):
+        # The plan keeps 1.002-1.009 s, so the word survives as it does on
+        # the raw plan; the render plays none of it, so it has no length.
+        remapped = remap_words([w("sliver", 1.002, 1.009)], self.plan(), grid=self.GRID)
+        assert_spans([(remapped[0]["start_s"], remapped[0]["end_s"])], [(1.0, 1.0)])
+
+    def test_range_on_grid(self):
+        plan = self.plan()
+        assert remap_range(2.0, 5.0, plan, grid=self.GRID) == pytest.approx((44 / 30, 109 / 30))
+        # Fully removed: dropped, as on the raw plan.
+        assert remap_range(1.1, 1.4, plan, grid=self.GRID) is None
+        # Partly kept by the plan, but none of it renders.
+        assert remap_range(1.002, 1.2, plan, grid=self.GRID) is None
+        assert remap_range(1.002, 1.2, plan) is not None
+
+    def test_removal_cut_points_sit_on_the_picture_cuts(self):
+        assert removal_cut_points(self.plan(), grid=self.GRID) == pytest.approx(
+            [30 / 30, 81 / 30], abs=1e-9
+        )
+
+    def test_cut_point_where_the_segment_end_snaps_later(self):
+        # The segment ending at 2.49 s snaps up to frame 75: audio at 2.49 s
+        # still plays, 10 ms before the picture cuts.
+        plan = plan_with_removals([(2.49, 3.0)], 6.0)
+        grid = FrameGrid(fps=30, duration_s=6.0)
+        assert removal_cut_points(plan, grid=grid) == pytest.approx([75 / 30], abs=1e-9)
+        assert remap_time(2.49, plan, grid=grid) == pytest.approx(2.49, abs=1e-9)
+
+    def test_leading_and_trailing_trims_cut_at_the_rendered_ends(self):
+        # The one kept segment renders frames [16, 165).
+        plan = plan_with_removals([(0.0, 0.52), (5.49, 6.0)], 6.0)
+        grid = FrameGrid(fps=30, duration_s=6.0)
+        assert removal_cut_points(plan, grid=grid) == pytest.approx([0.0, 149 / 30], abs=1e-9)
+
+    def test_segment_the_render_drops_collapses_its_cuts_to_one_point(self):
+        # The plan keeps 1.5-1.51 s between two removals; both of its ends
+        # snap to frame 45, so the render drops it and plays frame 60 right
+        # after frame 29. Both removals then cut at the same picture cut.
+        plan = plan_with_removals([(1.0, 1.5), (1.51, 2.0)], 6.0)
+        grid = FrameGrid(fps=30, duration_s=6.0)
+        assert_spans(rendered_spans(plan.keep_segments, grid), [(0.0, 1.0), (2.0, 6.0)])
+        assert removal_cut_points(plan, grid=grid) == pytest.approx([1.0, 1.0], abs=1e-9)
+        assert remap_time(1.505, plan, grid=grid) == pytest.approx(1.0, abs=1e-9)
+        # A word in the dropped segment survives (the plan kept it) with no
+        # length; the next word keeps its place right after the cut.
+        remapped = remap_words([w("blip", 1.501, 1.509), w("next", 2.1, 2.4)], plan, grid=grid)
+        assert [entry["text"] for entry in remapped] == ["blip", "next"]
+        assert_spans(
+            [(entry["start_s"], entry["end_s"]) for entry in remapped],
+            [(1.0, 1.0), (1.1, 1.4)],
+        )
+        # A window entirely inside the dropped segment does not render.
+        assert remap_range(1.5, 1.51, plan, grid=grid) is None
+        assert remap_range(1.5, 1.51, plan) == pytest.approx((1.0, 1.01))
+
+    @pytest.mark.parametrize(
+        ("removals", "duration"),
+        [
+            # Boundaries on exact half frames (the rounding tie).
+            ([(1.0 + 1 / 60, 1.5 + 1 / 60), (3.0 - 1 / 60, 3.5)], 6.0),
+            # Off-grid boundaries and an off-grid clip end with a trailing trim.
+            ([(0.013, 0.6), (2.49, 3.011), (5.0, 6.007)], 6.007),
+            # A segment the render drops between two removals.
+            ([(1.0, 1.5), (1.51, 2.0), (4.024, 4.51)], 6.0),
+            # A sub-frame removal whose two segments render contiguous frames.
+            ([(1.0, 1.5), (4.01, 4.012)], 6.0),
+            # Many short cuts, each 13-40 ms off the grid.
+            ([(0.413 + k * 0.977, 0.762 + k * 0.977) for k in range(12)], 12.5),
+        ],
+    )
+    def test_cut_points_match_the_frames_the_render_keeps(self, removals, duration):
+        # Each cut point is the rendered length of every segment before the
+        # removal, frame for frame -- so b-roll anchors never drift from the
+        # picture, however many cuts precede them.
+        plan = plan_with_removals(removals, duration)
+        grid = FrameGrid(fps=30, duration_s=duration)
+        expected = []
+        for removal in plan.removed:
+            frames = sum(
+                end - first
+                for seg in plan.keep_segments
+                if seg[1] <= removal.start_s
+                for first, end in keep_segment_frames([seg], grid.fps, grid.duration_s)
+            )
+            expected.append(frames / grid.fps)
+        assert removal_cut_points(plan, grid=grid) == pytest.approx(expected, abs=1e-9)
+
+    def test_nothing_to_place_maps_to_nothing(self):
+        assert removal_cut_points(no_op_plan(6.0), grid=self.GRID) == []
+        assert remap_words(None, self.plan(), grid=self.GRID) == []
+        assert remap_words([], self.plan(), grid=self.GRID) == []
+
+
 # ---------------------------------------------------------------------------------
 # no_op_plan + plan types
 # ---------------------------------------------------------------------------------
@@ -1465,6 +1627,22 @@ class TestPlanSummary:
             "version": 1,
             "original_duration_s": 10.0,
         }
+
+    def test_grid_adds_the_frames_the_cut_rendered(self):
+        # 1.0166 s is 30.498 frames, so the cut ends after frame 29. The
+        # summary's rounded 1.017 s (30.51 frames) would round to 31: the
+        # frames cannot be rebuilt from `removed`.
+        plan = CutPlan(
+            keep_segments=[(0.0, 1.0166), (2.52, 10.0)],
+            removed=[Removal(start_s=1.0166, end_s=2.52, reason=REASON_SILENCE)],
+            time_saved_s=1.5034,
+        )
+        summary = plan_summary(
+            plan, original_duration_s=10.0, grid=FrameGrid(fps=30, duration_s=10.0)
+        )
+        assert summary["removed"][0]["start_s"] == 1.017
+        # 2.52 s = 75.6 frames -> 76; the last segment reaches the clip end.
+        assert summary["frame_grid"] == {"fps": 30, "frames": [[0, 30], [76, 300]]}
 
     def test_original_duration_defaults_to_none(self):
         summary = plan_summary(no_op_plan(5.0))

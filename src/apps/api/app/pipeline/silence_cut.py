@@ -31,10 +31,15 @@ apply step (``reframe_and_export(keep_segments=…)``); see plans/010.
                                                 │
               ┌─────────────────────────────────┴──────────────────┐
               ▼                                                    ▼
-    reframe_and_export(keep_segments=…)            remap_words(words, plan)
+    reframe_and_export(keep_segments=…)            remap_words(words, plan, grid=…)
     (caller: ONE encode, per-segment                 → surviving words in
-     trim/atrim + concat inside the graph)             cut-timeline coords
-                                                       for caption cues
+     trim/atrim + concat inside the graph;             cut-timeline coords
+     each segment whole frames on                      for caption cues (a cloud
+     reframe.cut_frame_grid)                           cut passes that grid;
+                                                       phone/narration pass none)
+
+    plan_summary(plan, grid=…) persists the frames a cloud cut played
+    (frame_grid) for speech_cut_state's editor re-cut reprojection.
 
 Timeline-rebase siblings (eng review 4A): ``remap_words`` is deliberately NOT
 extracted into a shared utility with the two existing rebases —
@@ -59,10 +64,18 @@ transcription (eng review 3A).
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from itertools import pairwise, product
 from typing import Any, Literal, NamedTuple
+
+from app.pipeline.cut_grid import (
+    FrameGrid,
+    keep_segment_frames,
+    output_time,
+    rendered_spans,
+    snap_to_frame,
+)
 
 # Whisper bias prompt for the CUT path: passed as whisper-1's ``prompt`` /
 # faster-whisper's ``initial_prompt`` (transcribe(..., verbatim_prompt=…)) so the
@@ -2679,31 +2692,57 @@ def _removed_before(t: float, removals: list[Removal]) -> float:
     return sum(max(0.0, min(r.end_s, t) - r.start_s) for r in removals)
 
 
-def remap_time(t: float, plan: CutPlan) -> float:
+def _cut_timeline(plan: CutPlan, grid: FrameGrid | None) -> Callable[[float], float]:
+    """Map a source instant to cut-timeline time under ``plan``.
+
+    Without a grid: ``t`` minus the removed time before it — the timeline of
+    a cut made at the plan's exact float boundaries (the phone compiler, the
+    narration-audio cut). With the grid of a cloud cut render: the summed
+    length of the rendered spans up to ``t`` (``cut_grid.rendered_spans``),
+    i.e. where ``t`` plays in that output. Either way an instant that does
+    not play maps to the cut it falls in.
+    """
+    if grid is None:
+        removals = sorted(plan.removed, key=lambda r: (r.start_s, r.end_s))
+        return lambda t: t - _removed_before(t, removals)
+    spans = rendered_spans(plan.keep_segments, grid)
+    return lambda t: output_time(t, spans)
+
+
+def remap_time(t: float, plan: CutPlan, *, grid: FrameGrid | None = None) -> float:
     """Map one source-timeline instant into cut-timeline time.
 
-    The shared primitive behind `remap_words`/`remap_range`: shift ``t`` left
-    by the cumulative removed time strictly before it. An instant that falls
-    INSIDE a removal maps to that removal's cut-timeline edge (the same
-    clamp `remap_words` applies to a word endpoint straddling a removal),
-    which is exactly what a single placement point (an SFX `at_s`, a beat
-    trigger) wants: it lands at the nearest surviving moment rather than
-    raising or silently keeping stale source-time coordinates.
+    Uses the same mapping as `remap_words`/`remap_range` (`_cut_timeline`).
+    On the raw plan (no ``grid``): shift ``t`` left by the cumulative removed
+    time strictly before it. An instant that falls INSIDE a removal maps to
+    that removal's cut-timeline edge (the same clamp `remap_words` applies to
+    a word endpoint straddling a removal), which is exactly what a single
+    placement point (an SFX `at_s`, a beat trigger) wants: it lands at the
+    nearest surviving moment rather than raising or silently keeping stale
+    source-time coordinates.
+
+    On a cloud render's ``grid`` (``reframe.cut_frame_grid``), ``t`` maps to
+    where it plays in the frame-snapped render; only an instant the render
+    does not play clamps to the cut, so one just inside a removal the render
+    still plays keeps its place.
     """
-    removals = sorted(plan.removed, key=lambda r: (r.start_s, r.end_s))
-    return float(t) - _removed_before(float(t), removals)
+    return _cut_timeline(plan, grid)(float(t))
 
 
-def remap_range(start: float, end: float, plan: CutPlan) -> tuple[float, float] | None:
+def remap_range(
+    start: float, end: float, plan: CutPlan, *, grid: FrameGrid | None = None
+) -> tuple[float, float] | None:
     """Map one source-timeline window ``[start, end)`` into cut-timeline time.
 
     Mirrors `remap_words`' per-word logic for an arbitrary window (a phone
-    lane's overlay card, a caption cue's span): both endpoints shift left by
-    the cumulative removed time before them, so a window straddling a
-    removal shrinks by exactly the removed time inside it (the same
-    behavior a stretched word gets under V2 rule 0). Returns ``None`` when
-    the window is entirely covered by removals -- fully collapsed, not a
-    zero-width edge case the caller must special-case.
+    lane's overlay card, a caption cue's span). On the raw plan both
+    endpoints shift left by the cumulative removed time before them, so a
+    window straddling a removal shrinks by exactly the removed time inside
+    it (the same behavior a stretched word gets under V2 rule 0); on a
+    ``grid`` it shrinks by what the render does not play. Returns ``None``
+    when the window is entirely covered by removals -- fully collapsed, not a
+    zero-width edge case the caller must special-case -- or, on a ``grid``,
+    when none of it plays in the render.
     """
     if end <= start:
         return None
@@ -2711,38 +2750,60 @@ def remap_range(start: float, end: float, plan: CutPlan) -> tuple[float, float] 
     covered = sum(max(0.0, min(end, r.end_s) - max(start, r.start_s)) for r in removals)
     if covered >= (end - start) - _EPS:
         return None
-    new_start = start - _removed_before(start, removals)
-    new_end = end - _removed_before(end, removals)
+    to_cut = _cut_timeline(plan, grid)
+    new_start = to_cut(start)
+    new_end = to_cut(end)
     if new_end <= new_start + _EPS:
         return None
     return new_start, new_end
 
 
-def remap_words(words: Sequence[Any] | None, plan: CutPlan) -> list[dict]:
+def remap_words(
+    words: Sequence[Any] | None, plan: CutPlan, *, grid: FrameGrid | None = None
+) -> list[dict]:
     """Shift surviving words into cut-timeline coordinates.
 
-    Words fully inside a removal are dropped; survivors shift left by the
-    cumulative removed time before them. V1 removals never intrude into kept
-    words' interiors by construction, so kept spans keep their exact
-    durations. A V2 plan may cut FFmpeg silence that rule 0 carved out of a
-    stretched token (``a...`` spanning a 1.4 s hole): that word then shrinks
-    by exactly the carved silence and its caption no longer lingers over dead
-    air. Returns plain dicts (``text``/``start_s``/``end_s``) ready for
-    caption-cue building.
+    Words fully inside a removal are dropped. On the raw plan, survivors
+    shift left by the cumulative removed time before them. V1 removals never
+    intrude into kept words' interiors by construction, so kept spans keep
+    their exact durations. A V2 plan may cut FFmpeg silence that rule 0
+    carved out of a stretched token (``a...`` spanning a 1.4 s hole): that
+    word then shrinks by exactly the carved silence and its caption no longer
+    lingers over dead air. Returns plain dicts (``text``/``start_s``/``end_s``)
+    ready for caption-cue building.
+
+    Captions burned on a cloud cut render pass that render's ``grid``
+    (``reframe.cut_frame_grid``) instead: the times then follow its
+    frame-snapped segments, so a word starts where its audio plays, and a
+    word at a cut can gain or lose up to half a frame at each boundary.
+    Which words survive is still decided by the plan's removals.
     """
     removals = sorted(plan.removed, key=lambda r: (r.start_s, r.end_s))
+    to_cut = _cut_timeline(plan, grid)
     remapped: list[dict] = []
     for word in _normalize_words(words):
         if any(word.start >= r.start_s - _EPS and word.end <= r.end_s + _EPS for r in removals):
             continue
-        new_start = word.start - _removed_before(word.start, removals)
-        new_end = word.end - _removed_before(word.end, removals)
-        remapped.append({"text": word.text, "start_s": new_start, "end_s": new_end})
+        remapped.append(
+            {"text": word.text, "start_s": to_cut(word.start), "end_s": to_cut(word.end)}
+        )
     for entry in remapped:
         assert entry["end_s"] >= entry["start_s"] - _EPS, "remap inverted a word span"
     for prev, nxt in pairwise(remapped):
         assert nxt["start_s"] >= prev["start_s"] - _EPS, "remap broke start monotonicity"
     return remapped
+
+
+def removal_cut_points(plan: CutPlan, *, grid: FrameGrid) -> list[float]:
+    """Where each removal's cut sits in a cloud render, in ``plan.removed`` order.
+
+    The length of everything the render plays before the removal. Its start
+    is snapped the way the grid snapped the segment ending there, so the
+    point is the picture cut itself; `remap_time` of the raw start can land
+    up to half a frame before it, on audio the grid kept.
+    """
+    to_cut = _cut_timeline(plan, grid)
+    return [to_cut(snap_to_frame(r.start_s, grid.fps)) for r in plan.removed]
 
 
 # ---------------------------------------------------------------------------------
@@ -2767,10 +2828,23 @@ def clamp_metadata(plan: CutPlan) -> dict[str, Any]:
     }
 
 
-def plan_summary(plan: CutPlan, *, original_duration_s: float | None = None) -> dict[str, Any]:
+def plan_summary(
+    plan: CutPlan,
+    *,
+    original_duration_s: float | None = None,
+    grid: FrameGrid | None = None,
+) -> dict[str, Any]:
     """Persisted ``variants[i]['silence_cut']`` shape — single source of truth
     (admin strip contract). Clamp keys are ADDITIVE and appear only on clamped
-    plans so every pre-clamp summary stays byte-identical."""
+    plans so every pre-clamp summary stays byte-identical.
+
+    ``grid`` is the frame grid a cloud render cut on (``reframe.cut_frame_grid``);
+    pass it only when the cut was applied. It adds ``frame_grid``: the exact
+    [first, end) frames each keep segment rendered. The millisecond-rounded
+    ``removed`` cannot rebuild them (a boundary near a half frame snaps the
+    other way), and ``speech_cut_state.RenderedCut`` reprojects editor lanes
+    through them. Summaries without it (phone, narration, older renders) were
+    not cut on this grid."""
     summary = {
         "removed": [
             {"start_s": round(r.start_s, 3), "end_s": round(r.end_s, 3), "reason": r.reason}
@@ -2783,6 +2857,14 @@ def plan_summary(plan: CutPlan, *, original_duration_s: float | None = None) -> 
         ),
     }
     summary.update(clamp_metadata(plan))
+    if grid is not None:
+        summary["frame_grid"] = {
+            "fps": grid.fps,
+            "frames": [
+                [first, end]
+                for first, end in keep_segment_frames(plan.keep_segments, grid.fps, grid.duration_s)
+            ],
+        }
     return summary
 
 

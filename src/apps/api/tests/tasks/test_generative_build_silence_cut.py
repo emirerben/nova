@@ -51,6 +51,7 @@ import uuid
 import pytest
 
 import app.tasks.generative_build as gb
+from app.pipeline.cut_grid import FrameGrid
 from app.pipeline.silence_cut import (
     BAILOUT_CLIP_TOO_SHORT,
     BAILOUT_MAX_REMOVAL,
@@ -772,6 +773,8 @@ def test_required_over_budget_clamps_and_renders(monkeypatch, tmp_path):
         "proposed_removed_s": 8.0,
         "clamp_budget_s": 6.999,
         "outcome": "applied",
+        # Keep (0, 3.001) on the 30 fps grid: frames 0-89.
+        "frame_grid": {"fps": 30, "frames": [[0, 90]]},
     }
     assert res["silence_cut_outcome"] == "applied"
 
@@ -1105,17 +1108,25 @@ def test_happy_path_cuts_captions_and_persists(monkeypatch, tmp_path):
     assert reframe["keep_segments"] == pytest.approx([(0.0, 0.88), (1.42, 2.5), (4.4, 6.5)])
     assert reframe["keep_segments_punch_in"] == KEEP_SEGMENTS_PUNCH_IN
 
-    # Caption input == remap_words(words, plan) minus filler tokens (15A):
-    # "um," was cut, "uh" survived the video (segment-signal block) but is
-    # STILL stripped; all times are cut-relative.
+    # Caption input == remap_words(words, plan) on the cut render's frame
+    # grid, minus filler tokens (15A): "um," was cut, "uh" survived the video
+    # (segment-signal block) but is STILL stripped; all times are
+    # cut-relative. The render plays 30 fps frames [0, 26), [43, 75) and
+    # [132, 195), so "today" starts at frame 28, where its audio plays, not at
+    # the raw plan's 0.96 s.
     plan = build_cut_plan(_cut_words(), SILENCES, DURATION)
-    expected = [w for w in remap_words(_cut_words(), plan) if not is_filler_token(w["text"])]
+    grid = FrameGrid(fps=gb.settings.output_fps, duration_s=DURATION)
+    expected = [
+        w for w in remap_words(_cut_words(), plan, grid=grid) if not is_filler_token(w["text"])
+    ]
     got = calls["cues"][0]
     assert [w.text for w in got] == [w["text"] for w in expected]
     assert [w.text for w in got] == ["so", "today", "we", "built", "the", "thing."]
     assert [w.start_s for w in got] == pytest.approx([w["start_s"] for w in expected])
     assert [w.end_s for w in got] == pytest.approx([w["end_s"] for w in expected])
-    assert max(w.end_s for w in got) <= DURATION - plan.time_saved_s + 1e-6
+    assert [w.start_s for w in got] == pytest.approx([f / 30 for f in (15, 28, 43, 64, 76, 85)])
+    assert [w.end_s for w in got] == pytest.approx([f / 30 for f in (21, 40, 49, 73, 82, 103)])
+    assert max(w.end_s for w in got) <= 121 / 30 + 1e-6
 
     # Persistence: plain dicts + version, ready for the finalize whitelist
     # (plan_summary shape — M2; original_duration_s feeds the admin strip).
@@ -1127,6 +1138,9 @@ def test_happy_path_cuts_captions_and_persists(monkeypatch, tmp_path):
         "time_saved_s": 2.44,
         "version": 1,
         "original_duration_s": 6.5,
+        # The frames the cut rendered: (0, 0.88), (1.42, 2.5), (4.4, 6.5) at
+        # 30 fps, the last reaching the clip end (speech_cut_state.RenderedCut).
+        "frame_grid": {"fps": 30, "frames": [[0, 26], [43, 75], [132, 195]]},
     }
     events = _events_named(calls, "silence_cut_plan")
     assert events and events[0][2]["removed_count"] == 2
@@ -1247,6 +1261,108 @@ def test_required_cut_apply_failure_fails_with_typed_reason(monkeypatch, tmp_pat
     assert len(calls["reframe"]) == 1
     assert "keep_segments" in calls["reframe"][0]
     assert _events_named(calls, "silence_cut_required_failed")
+
+
+def _render_smart_v2(monkeypatch, tmp_path):
+    """`_render` with Smart Captions v2 on: cues are built BEFORE the cut
+    encode (the v2 prerequisites), with no Smart plan compiled on top."""
+    import contextlib
+
+    monkeypatch.setattr(gb, "_load_smart_caption_assets_fail_open", lambda _job_id: ([], None))
+    monkeypatch.setattr(gb, "_compile_smart_caption_render_plan", lambda **_kw: (None, {}))
+
+    def _fake_compose(_base, _variant, variant_dir, **_kw):
+        out = f"{variant_dir}/smart-final.mp4"
+        with open(out, "wb") as f:
+            f.write(b"\x02" * 24)
+        return out, _variant.get("subject_matte_path")
+
+    monkeypatch.setattr(gb, "_compose_subtitled_final", _fake_compose)
+    monkeypatch.setattr(
+        gb,
+        "_sync_session",
+        lambda: contextlib.nullcontext(types.SimpleNamespace(get=lambda *_a: None)),
+    )
+    vdir = tmp_path / "variant"
+    vdir.mkdir(exist_ok=True)
+    return gb._render_subtitled_variant(
+        job_id=JOB_ID,
+        rank=1,
+        spec={"variant_id": "subtitled", "archetype": "subtitled", "caption_style": "sentence"},
+        clip_id_to_local={"c1": str(tmp_path / "clip.mp4")},
+        variant_dir=str(vdir),
+        language="en",
+        smart_captions={"preset_id": "cigdem", "preset_version": "v2", "sound_design": "off"},
+    )
+
+
+def test_smart_v2_captions_land_on_the_cut_grid(monkeypatch, tmp_path):
+    """Smart Captions v2 builds its cues before the cut encode; they take the
+    cut render's frame grid exactly like the plain path does."""
+    import app.pipeline.captions as captions_mod
+
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_pipeline(monkeypatch)
+    build_cues = captions_mod.build_plain_cues
+    encodes_before_cues: list[int] = []
+
+    def _ordered_cues(cue_words, offset_s=0.0, *, attach_words=False):
+        encodes_before_cues.append(len(calls["reframe"]))
+        return build_cues(cue_words, offset_s, attach_words=attach_words)
+
+    monkeypatch.setattr(captions_mod, "build_plain_cues", _ordered_cues, raising=False)
+
+    res = _render_smart_v2(monkeypatch, tmp_path)
+
+    assert res["ok"] is True
+    assert encodes_before_cues == [0]  # the v2 path: cues before the cut encode
+    assert calls["reframe"][0]["keep_segments"] == pytest.approx(
+        [(0.0, 0.88), (1.42, 2.5), (4.4, 6.5)]
+    )
+    (cue_words,) = calls["cues"]
+    assert [w.text for w in cue_words] == ["so", "today", "we", "built", "the", "thing."]
+    assert [w.start_s for w in cue_words] == pytest.approx(
+        [f / 30 for f in (15, 28, 43, 64, 76, 85)]
+    )
+    assert [w.end_s for w in cue_words] == pytest.approx(
+        [f / 30 for f in (21, 40, 49, 73, 82, 103)]
+    )
+
+
+def test_smart_v2_cut_apply_failure_recaptions_the_uncut_base(monkeypatch, tmp_path):
+    """The grid-timed v2 cues are discarded when the cut encode fails open:
+    captions are rebuilt from a transcription of the uncut base, in source
+    time, so nothing stays on the grid of a cut that never rendered."""
+    import app.pipeline.reframe as reframe_mod
+
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_pipeline(monkeypatch)
+
+    def _flaky_reframe(input_path, start_s, end_s, aspect, ass, output_path, **kw):
+        calls["reframe"].append({"input": input_path, "out": output_path, **kw})
+        if "keep_segments" in kw:
+            raise RuntimeError("segment select filter blew up")
+        with open(output_path, "wb") as f:
+            f.write(b"\x00" * 16)
+
+    monkeypatch.setattr(reframe_mod, "reframe_and_export", _flaky_reframe, raising=False)
+
+    res = _render_smart_v2(monkeypatch, tmp_path)
+
+    assert res["ok"] is True
+    assert "keep_segments" not in calls["reframe"][-1]
+    assert _events_named(calls, "silence_cut_apply_failed")
+    assert res["silence_cut"] is None
+    base_calls = [c for c in calls["transcribe"] if c["verbatim_prompt"] is None]
+    assert len(base_calls) == 1 and base_calls[0]["path"].endswith("final_base.mp4")
+    # First the grid-timed cues for the cut, then the rebuild in source time.
+    assert len(calls["cues"]) == 2
+    rebuilt = calls["cues"][-1]
+    assert [(w.text, w.start_s, w.end_s) for w in rebuilt] == [
+        (w.text, w.start_s, w.end_s) for w in _cut_words()
+    ]
 
 
 def test_off_contract_skips_cleanup_even_when_engine_flags_are_on(monkeypatch, tmp_path):
@@ -1417,6 +1533,60 @@ def test_cache_computes_once_and_reuses_cut_output(monkeypatch, tmp_path):
     assert first["silence_cut"] == second["silence_cut"]
     entry = cache.clips[str(tmp_path / "clip.mp4")]
     assert entry["cut_video_path"] and entry["cut_video_path"].startswith(str(tmp_path))
+
+
+def test_caption_grid_is_the_window_the_cut_reframe_renders(monkeypatch, tmp_path):
+    """The captions' frame grid must come from the same window the cut
+    reframe renders: a drifted end moves the last segment's end frame."""
+    import app.pipeline.reframe as reframe_mod
+
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_pipeline(monkeypatch)
+    fake_reframe = reframe_mod.reframe_and_export
+    cut_windows: list[tuple[float, float]] = []
+
+    def _windowed(input_path, start_s, end_s, aspect, ass, output_path, **kw):
+        if "keep_segments" in kw:
+            cut_windows.append((start_s, end_s))
+        return fake_reframe(input_path, start_s, end_s, aspect, ass, output_path, **kw)
+
+    monkeypatch.setattr(reframe_mod, "reframe_and_export", _windowed, raising=False)
+    real_grid = reframe_mod.cut_frame_grid
+    grid_windows: list[tuple[float, float]] = []
+
+    def _spy_grid(start_s, end_s):
+        grid_windows.append((start_s, end_s))
+        return real_grid(start_s, end_s)
+
+    monkeypatch.setattr(reframe_mod, "cut_frame_grid", _spy_grid, raising=False)
+
+    res = _render(monkeypatch, tmp_path)
+
+    assert res["ok"] is True
+    assert calls["cues"]
+    assert grid_windows == cut_windows == [(0.0, DURATION)]
+
+
+def test_reused_cut_output_keeps_captions_on_the_cut_grid(monkeypatch, tmp_path):
+    """A sibling variant that copies the cached cut base never re-encodes it,
+    but its captions still follow that base's 30 fps frame grid."""
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_pipeline(monkeypatch)
+    cache = gb._SilenceCutCache(str(tmp_path / "silence_cut"))
+
+    first = _render(monkeypatch, tmp_path, cache=cache)
+    second = _render(monkeypatch, tmp_path, cache=cache, subdir="variant2")
+
+    assert first["ok"] is True and second["ok"] is True
+    assert len(calls["reframe"]) == 1  # the second variant reused the cut
+    assert len(calls["cues"]) == 2
+    for cue_words in calls["cues"]:
+        assert [w.text for w in cue_words] == ["so", "today", "we", "built", "the", "thing."]
+        assert [w.start_s for w in cue_words] == pytest.approx(
+            [f / 30 for f in (15, 28, 43, 64, 76, 85)]
+        )
 
 
 def test_cache_per_key_locking_never_serializes_distinct_keys(monkeypatch, tmp_path):
@@ -2023,6 +2193,9 @@ def test_talking_head_happy_path_cuts_spine_and_anchors_broll(monkeypatch, tmp_p
         "time_saved_s": 2.44,
         "version": 1,
         "original_duration_s": 6.5,
+        # The frames the cut rendered: (0, 0.88), (1.42, 2.5), (4.4, 6.5) at
+        # 30 fps, the last reaching the clip end (speech_cut_state.RenderedCut).
+        "frame_grid": {"fps": 30, "frames": [[0, 26], [43, 75], [132, 195]]},
     }
     events = _events_named(calls, "silence_cut_plan")
     assert events and events[0][2]["applied"] is True
