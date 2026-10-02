@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import inspect
+import json
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -26,6 +29,7 @@ from app.kria.runtime import RuntimeFailure
 from app.limiter import limiter
 from app.main import app
 from app.routes import creation_threads, kria_runtime
+from app.services.ios_device_admission import creation_mutation_admission
 
 
 @pytest.fixture()
@@ -58,6 +62,53 @@ def _install_authenticated_user() -> tuple[SimpleNamespace, AsyncMock]:
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
     return user, db
+
+
+@pytest.mark.parametrize(
+    ("native_client", "client_protocol", "status_code", "problem_code"),
+    [
+        (False, None, 410, "web_creation_retired"),
+        (True, None, 426, "native_update_required"),
+        (True, 1, 426, "native_update_required"),
+        (True, 2, None, None),
+    ],
+)
+def test_runtime_v2_mutation_admission_matrix(
+    monkeypatch: pytest.MonkeyPatch,
+    native_client: bool,
+    client_protocol: int | None,
+    status_code: int | None,
+    problem_code: str | None,
+) -> None:
+    monkeypatch.setattr(settings, "ios_device_only_mode", True)
+    request = Request({"type": "http", "method": "POST", "path": "/creation-threads/t"})
+
+    response = creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    )
+
+    if status_code is None:
+        assert response is None
+    else:
+        assert response is not None
+        assert response.status_code == status_code
+        assert json.loads(response.body)["problem"]["code"] == problem_code
+
+
+def test_runtime_v2_mutating_handlers_all_use_admission_guard() -> None:
+    source = inspect.getsource(kria_runtime)
+    symbols = (
+        "create_turn",
+        "cancel_runtime_turn",
+        "decide_runtime_approval",
+        "put_runtime_draft",
+        "undo_runtime_draft",
+    )
+    for symbol in symbols:
+        start = source.index(f"async def {symbol}(")
+        next_handler = source.find("\nasync def ", start + 1)
+        body = source[start : next_handler if next_handler >= 0 else None]
+        assert "creation_mutation_admission(" in body, symbol
 
 
 def test_create_turn_requires_authentication(client: TestClient) -> None:
@@ -248,7 +299,8 @@ def test_create_turn_returns_202_and_publishes_committed_turn(
     assert submit.await_args.args == (db,)
     assert submit.await_args.kwargs["thread_id"] == thread_id
     assert submit.await_args.kwargs["creator_id"] == user.id
-    assert submit.await_args.kwargs["body"].model_dump() == _body()
+    # `editor_state` is the new optional field (None unless the client sends it).
+    assert submit.await_args.kwargs["body"].model_dump() == {**_body(), "editor_state": None}
     publish.assert_called_once_with(str(turn_id))
     db.rollback.assert_not_awaited()
 
@@ -357,6 +409,7 @@ def test_runtime_request_bodies_reject_unsafe_boundaries(model, payload) -> None
 def test_get_delta_delegates_cursor_and_returns_runtime_projection(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(settings, "ios_device_only_mode", True)
     user, db = _install_authenticated_user()
     thread_id = uuid.uuid4()
     projection = ThreadDeltaOut(
@@ -385,6 +438,32 @@ def test_get_delta_delegates_cursor_and_returns_runtime_projection(
         "limit": 25,
     }
     db.rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_protocol_two_reaches_existing_runtime_mutation_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user, db = _install_authenticated_user()
+    monkeypatch.setattr(settings, "ios_device_only_mode", True)
+    thread_id = uuid.uuid4()
+    accepted = TurnAccepted(turn_id="turn-1", thread_revision=1, status="pending")
+    submit = AsyncMock(return_value=(accepted, False))
+    monkeypatch.setattr(kria_runtime, "submit_turn", submit)
+    request = Request({"type": "http", "method": "POST", "path": "/creation-threads/t/turns"})
+
+    response = await kria_runtime.create_turn(
+        request,
+        str(thread_id),
+        _body(),
+        user,
+        db,
+        native_client=True,
+        client_protocol=2,
+    )
+
+    assert response == accepted
+    submit.assert_awaited_once()
 
 
 def test_get_delta_is_available_on_approved_thread_cursor_contract(

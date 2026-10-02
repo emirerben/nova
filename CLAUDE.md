@@ -205,9 +205,10 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `KRIA_CREATIVE_BRIEF_ENABLED`/`_USER_IDS` — default `false`; ids = per-account on; `docs/pipelines/kria-agent-runtime.md`.
 - Phone montage writers (KRI-190/220, no flag): montage WITH a recorded voiceover → `_run_phone_voiceover_montage_job` (`phone_voiceover_montage_plan.py`); every other phone montage → unified planner (`_run_phone_unified_montage_job`). `docs/pipelines/kria-agent-runtime.md`.
 - `KRIA_RUNTIME_V2_PHONE_ENABLED` / `_USER_IDS` — default `false` / `[]` (KRI-187): offers phone-pilot accounts runtime v2; off ⇒ `[1]`. Runbook: `docs/runbooks/phone-rendering.md`.
+- `IOS_DEVICE_ONLY_MODE` / `KRIA_MINIMUM_CLIENT_PROTOCOL` / `CLOUD_RENDER_EXECUTION_ENABLED` — defaults `false` / `2` / `true`. The staged cutover retires web/cloud creation for protocol-2 native clients, then disables cloud execution only after drain verification; API and workers must share the flags. Runbook: `docs/runbooks/ios-device-only-runtime.md`.
 - `COPILOT_HONEST_REPLIES_ENABLED` — default `true` (KRI-186 kill switch); `false` ⇒ legacy chat-edit reply + stateless copilot. Guard: `test_flag_off_is_byte_identical_to_legacy`. Apply: fly secret + restart.
 - `EDIT_WIDE_LOOKS_ENABLED` — off; rollout: `docs/pipelines/generative.md`.
-- `CLIP_INTENTS_ENABLED` / `CLIP_FACTS_ENABLED` — off; rollout: `docs/pipelines/clip-understanding.md`.
+- `CLIP_INTENTS_ENABLED` / `CLIP_FACTS_ENABLED` — **ON in prod** (code default `false`); intents since 2026-10-01. Rollout/rollback: `docs/pipelines/clip-understanding.md`.
 - `EDIT_PROPOSAL_SEMANTIC_ENABLED` — `false`; requires 0107 + v8 on API/workers. See `docs/pipelines/guided-edit.md`.
 - `ORIENTATION_NORMALIZE_ENABLED` — defaults to `true`. Set to `false` and restart workers to make `normalize_orientation` a no-op (safety valve for orientation regressions).
 - `LYRIC_DYNAMIC_CROSSFADE_ENABLED` — defaults `true`. **WARNING: `false` re-introduces the stacked-text bug — emergency rollback ONLY**, full narrative + apply command in agents/DECISIONS.md "Kill-switch incidents". Guard: `tests/pipeline/test_lyric_injector_no_stacking.py::test_kill_switch_disabled_reproduces_pre_fix_output`.

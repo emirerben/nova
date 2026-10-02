@@ -163,6 +163,31 @@ async def is_native_client(
     )
 
 
+def parse_kria_client_protocol(value: str | None) -> int | None:
+    """Parse the native protocol without producing a generic validation error."""
+
+    if value is None:
+        return None
+    try:
+        protocol = int(value)
+    except (TypeError, ValueError):
+        return None
+    return protocol if protocol >= 0 else None
+
+
+async def kria_client_protocol(
+    x_kria_client_protocol: Annotated[str | None, Header(alias="X-Kria-Client-Protocol")] = None,
+) -> int | None:
+    """Return the native client's declared wire protocol, if it is well-formed.
+
+    Absence and malformed values deliberately both produce ``None``.  This
+    keeps an older app on the same upgrade path without turning a header parse
+    failure into FastAPI's generic validation envelope.
+    """
+
+    return parse_kria_client_protocol(x_kria_client_protocol)
+
+
 async def get_current_user_or_synthetic(
     x_user_id: Annotated[str | None, Header(alias="X-User-Id")] = None,
     authorization: Annotated[str | None, Header()] = None,
@@ -193,14 +218,18 @@ async def get_current_user_or_synthetic(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 CurrentUserOrSynthetic = Annotated[User, Depends(get_current_user_or_synthetic)]
 NativeClient = Annotated[bool, Depends(is_native_client)]
+KriaClientProtocol = Annotated[int | None, Depends(kria_client_protocol)]
 
 __all__ = [
     "SYNTHETIC_USER_ID",
     "CurrentUser",
     "CurrentUserOrSynthetic",
+    "KriaClientProtocol",
     "NativeClient",
     "ensure_job_owner",
     "get_current_user",
     "get_current_user_or_synthetic",
     "is_native_client",
+    "kria_client_protocol",
+    "parse_kria_client_protocol",
 ]

@@ -305,6 +305,9 @@ private struct CreationWorkspaceView: View {
     @State private var previewVersion = 0
     @State private var maximumClipsByFormat: [CreationFormat: Int] = [:]
     @State private var capabilitiesAreAuthoritative = false
+    /// When capabilities were last read; the editor-state capability is re-read at send time once stale
+    /// so a server-side rollback of `editor_state_turns` takes effect without relaunching.
+    @State private var capabilitiesReadAt: Date?
     @State private var isChoosingFormat = false
     @State private var threadState: [String: JSONValue] = [:]
     @State private var afterSequence = -1
@@ -500,6 +503,19 @@ private struct CreationWorkspaceView: View {
         }
     }
 
+    /// Presents the editor with no slide-up animation; `WorkspaceCrossfade` fades it in.
+    private func openEditor() {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { showsResult = true }
+    }
+
+    private func dismissEditor() {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { showsResult = false }
+    }
+
     private func openAttachments() {
         guard canAttachMedia else { return }
         scrollRequest += 1
@@ -593,23 +609,10 @@ private struct CreationWorkspaceView: View {
         }
         .background(WorkspaceSurface())
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: responsePresentation.hapticToken)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if !hasDedicatedSlideWorkspace {
-                ChatComposer(
-                    text: $prompt,
-                    isSending: isSending || isActing,
-                    canAttach: canAttachMedia,
-                    canSendWithoutText: readyMediaCount > 0,
-                    blocksSubmission: isThinking || pendingUploadCount > 0,
-                    placeholder: readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…",
-                    isFocused: $composerFocused,
-                    attach: openAttachments,
-                    send: { Task { await send() } }
-                )
-                .accessibilityHidden(projectsDrawerOpen)
-                .allowsHitTesting(!projectsDrawerOpen)
-            }
-        }
+        // The composer is no longer added here: it floats as a safeAreaInset
+        // directly on ChatConversationScroll inside genericChatWorkspace (KRI-197
+        // floating chat chrome), which also implicitly gates it on
+        // !hasDedicatedSlideWorkspace via the if/else above.
         .onAppear { if prompt.isEmpty { prompt = model.chatDrafts.draft(for: project.id) } }
         .onChange(of: prompt) { _, text in model.chatDrafts.setDraft(text, for: project.id) }
         .task {
@@ -617,6 +620,9 @@ private struct CreationWorkspaceView: View {
             async let capabilities: Void = refreshCapabilities()
             await pollUntilDismissed()
             await capabilities
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active, capabilitiesAreAuthoritative { Task { await refreshEditorStateCapability() } }
         }
         .onChange(of: currentProject.serverRevision) { _, revision in
             threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: revision)
@@ -680,19 +686,33 @@ private struct CreationWorkspaceView: View {
                 .presentationDetents([.medium, .large])
         }
         .fullScreenCover(isPresented: $showsResult) {
-            NativeEditorView(
-                project: currentProject,
-                sharedSession: editorSession,
-                conversationAcceptedID: conversationAcceptedID,
-                conversation: { AnyView(editorConversation) },
-                onBack: { showsResult = false }
-            )
+            // Chat <-> Editor is a switch, not a page rising from the bottom: the
+            // editor cross-dissolves over the chat (see `WorkspaceCrossfade`).
+            WorkspaceCrossfade(dismiss: { dismissEditor() }) { close in
+                NativeEditorView(
+                    project: currentProject,
+                    sharedSession: editorSession,
+                    conversationAcceptedID: conversationAcceptedID,
+                    conversation: { AnyView(editorConversation) },
+                    onBack: close
+                )
                 .environmentObject(model)
+            }
         }
     }
 
+    /// The transcript runs full-bleed and the header and composer float over it
+    /// as `safeAreaInset`s, so text scrolls (and softly fades) underneath both
+    /// instead of ending at an opaque bar. The scroll view is disabled while the
+    /// drawer is open; the insets are added after that so the header's menu
+    /// button stays tappable.
     private var genericChatWorkspace: some View {
-        VStack(spacing: 0) {
+        ChatConversationScroll(isLoaded: initialConversationLoaded, updateToken: timelineUpdateToken, scrollRequest: scrollRequest, dismissKeyboard: { composerFocused = false }) {
+            conversationContent
+        }
+        .accessibilityHidden(projectsDrawerOpen)
+        .allowsHitTesting(!projectsDrawerOpen)
+        .safeAreaInset(edge: .top, spacing: 0) {
             WorkspaceHeader(
                 project: currentProject,
                 // `currentProject.status` (not `workspaceStage`) so the switch
@@ -700,26 +720,34 @@ private struct CreationWorkspaceView: View {
                 // confirmation card is showing on top of it.
                 showsEditorSwitch: currentProject.status == .ready,
                 openProjects: openProjects,
-                openEditor: { showsResult = true },
+                openEditor: openEditor,
                 openAccount: openAccount
             )
             .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
-
-            ChatConversationScroll(isLoaded: initialConversationLoaded, updateToken: timelineUpdateToken, scrollRequest: scrollRequest, dismissKeyboard: { composerFocused = false }) {
-                conversationContent
-            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ChatComposer(
+                text: $prompt,
+                isSending: isSending || isActing,
+                canAttach: canAttachMedia,
+                canSendWithoutText: readyMediaCount > 0,
+                // be99a3f12 (origin/main): a failed attach never blocks Send.
+                blocksSubmission: isThinking || pendingUploadCount > 0,
+                placeholder: readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…",
+                isFocused: $composerFocused,
+                attach: openAttachments,
+                send: { Task { await send() } }
+            )
             .accessibilityHidden(projectsDrawerOpen)
             .allowsHitTesting(!projectsDrawerOpen)
         }
     }
 
     private var editorConversation: some View {
-        VStack(spacing: 0) {
-            Text("Kria").font(KriaFont.body(17).weight(.semibold)).padding(.top, 20)
-                .simultaneousGesture(TapGesture().onEnded { composerFocused = false })
-            ChatConversationScroll(isLoaded: initialConversationLoaded, updateToken: timelineUpdateToken, scrollRequest: scrollRequest, dismissKeyboard: { composerFocused = false }) {
-                conversationContent
-            }
+        ChatConversationScroll(isLoaded: initialConversationLoaded, updateToken: timelineUpdateToken, scrollRequest: scrollRequest, dismissKeyboard: { composerFocused = false }) {
+            conversationContent
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatComposer(
                 text: $prompt, isSending: isSending || isActing,
                 canAttach: false, blocksSubmission: isThinking || pendingUploadCount > 0, isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
@@ -797,7 +825,7 @@ private struct CreationWorkspaceView: View {
             // cut (see `WorkspaceStage.resolve`); confirming it is a choice,
             // not something the old cut's reachability should be sacrificed for.
             if currentProject.status == .ready {
-                Button("Open current cut", action: { showsResult = true })
+                Button("Open current cut", action: openEditor)
                     .buttonStyle(CanonicalSecondaryButtonStyle())
                     .disabled(isActing)
                     .accessibilityIdentifier("open-current-cut")
@@ -819,7 +847,7 @@ private struct CreationWorkspaceView: View {
         case .ready:
             ReadyStage(
                 project: currentProject,
-                openEditor: { showsResult = true },
+                openEditor: openEditor,
                 suggest: { prompt = $0 }
             )
             .id("ready")
@@ -924,7 +952,18 @@ private struct CreationWorkspaceView: View {
         defer { isSending = false }
         // Edits staged from a chat draft already live in the server's draft head;
         // committing them here would render on every send. Only real local edits flush.
-        if editorSession.hasUnsavedChanges, !editorSession.hasOnlyChatStagedChanges {
+        // Runtime-v2 + server `editor_state_turns`: the copilot continues on top of the editor's
+        // CURRENT unsaved state, so nothing is saved or rendered here.
+        var editorState: EditorStateRequest?
+        if currentProject.runtimeVersion == 2 {
+            if Date().timeIntervalSince(capabilitiesReadAt ?? .distantPast) > 30 {
+                await refreshEditorStateCapability()
+            }
+            if capabilities?.editorStateTurnsEnabled == true {
+                editorState = editorSession.exportEditorState(maxBytes: capabilities?.editorStateMaxBytes)
+            }
+        }
+        if editorState == nil, editorSession.hasUnsavedChanges, !editorSession.hasOnlyChatStagedChanges {
             await editorSession.save()
             guard !editorSession.hasUnsavedChanges else {
                 failure = ChatFailure("Your message is still here. Save or resolve your editor changes before sending it.")
@@ -978,7 +1017,8 @@ private struct CreationWorkspaceView: View {
         do {
             accepted = try await model.api.submitTurn(
                 threadID: project.id, message: message,
-                expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID
+                expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID,
+                editorState: editorState
             )
         } catch APIError.conflict {
             pendingMessages.removeAll { $0.id == optimistic.id }
@@ -1073,6 +1113,14 @@ private struct CreationWorkspaceView: View {
         }
     }
 
+    /// Lightweight re-read that only updates `capabilities` on success (no banner, no device-render
+    /// reconcile), so a transient failure keeps the last-known value.
+    private func refreshEditorStateCapability() async {
+        guard let response = try? await model.api.creationCapabilities() else { return }
+        capabilities = response
+        capabilitiesReadAt = Date()
+    }
+
     private func refreshCapabilities() async {
         do {
             let response = try await model.api.creationCapabilities()
@@ -1086,6 +1134,7 @@ private struct CreationWorkspaceView: View {
             // the post as the final card even if a rollout reorders its list.
             availableFormats = formats.sorted { $0.carouselOrder < $1.carouselOrder }
             capabilities = response
+            capabilitiesReadAt = Date()
             capabilitiesFailure = formats.isEmpty ? ChatFailure("No creation formats are currently available. Try again in a moment.") : nil
             maximumClipsByFormat = limits
             capabilitiesAreAuthoritative = true

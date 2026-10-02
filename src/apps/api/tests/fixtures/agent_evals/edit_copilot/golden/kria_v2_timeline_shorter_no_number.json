@@ -108,6 +108,12 @@
       "32 seconds",
       "20 seconds",
       "number of seconds"
-    ]
+    ],
+    "capability_contract": {
+      "intent": "clarify",
+      "needs_clarification": true,
+      "reply_contains": ["32 seconds", "20 seconds"],
+      "reply_excludes": ["can't change the length"]
+    }
   }
 }

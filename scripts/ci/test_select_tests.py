@@ -57,6 +57,7 @@ class ClassificationTests(unittest.TestCase):
             "src/apps/ios/Kria/Generated/openapi.yaml",
             "src/apps/ios/Tests/KriaTests/EditorDocumentTests.swift",
             "src/apps/ios/Tests/Fixtures/editor-commit-picker-contract.json",
+            "src/apps/ios/Tests/Fixtures/guided_label_rebase_vectors.json",
         ):
             self.assertEqual(ci.affected(path), {"ios"})
         for path in (

@@ -289,6 +289,12 @@ def test_mobile_openapi_translates_nullable_bounds_and_constants() -> None:
         document["paths"]["/me/jobs/{job_id}/open-in-editor"]["post"]["operationId"]
         == "openLibraryJobInEditor"
     )
+    for path in ("/creation-threads", "/me/jobs/{job_id}/open-in-editor"):
+        responses = document["paths"][path]["post"]["responses"]
+        for status_code in ("410", "426"):
+            assert responses[status_code]["content"]["application/json"]["schema"] == {
+                "$ref": "#/components/schemas/KriaProblemOut"
+            }
     assert (
         document["paths"]["/generative-jobs/{job_id}/status"]["get"]["operationId"]
         == "getGenerativeJobStatus"

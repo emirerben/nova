@@ -2,6 +2,76 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.2.0] - 2026-10-02
+
+### Changed
+- feat(ios): blur the chat above its header block, floating header and composer, drop the Kria sheet titles (KRI-197) (#1230) <!-- release-pr: 1230 -->
+
+## [0.78.1.0] - 2026-10-02
+
+### Changed
+- ci: stabilize Playwright setup and evaluate Tester Army (KRI-254) (#1311) <!-- release-pr: 1311 -->
+
+## [0.78.0.0] - 2026-10-02
+
+### Added
+- feat: move production creation to on-device rendering (#1310) <!-- release-pr: 1310 -->
+
+## [0.77.50.0] - 2026-10-02
+
+### Changed
+- fix(kria): keep render approvals current after editor Save (#1308) <!-- release-pr: 1308 -->
+
+## [0.77.49.0] - 2026-10-02
+
+### Changed
+- fix(copilot): refuse unsupported length changes before asking follow-ups (#1307) <!-- release-pr: 1307 -->
+
+## [0.77.48.0] - 2026-10-02
+
+### Changed
+- fix(ios): keep guided titles aligned with manual timeline edits (#1306) <!-- release-pr: 1306 -->
+
+## [0.77.47.0] - 2026-10-02
+
+### Changed
+- fix: keep footage context out of clip commands (KRI-244) (#1305) <!-- release-pr: 1305 -->
+
+## [0.77.46.0] - 2026-10-01
+
+### Changed
+- feat(ios): chat turns send the editor's unsaved state; no save-before-send (flag-gated) (#1300) <!-- release-pr: 1300 -->
+
+## [0.77.45.0] - 2026-10-01
+
+### Changed
+- feat(ios): clip labels follow their clip when you trim, extend, reorder or delete (no server) (#1299) <!-- release-pr: 1299 -->
+
+## [0.77.44.0] - 2026-10-01
+
+### Changed
+- feat(copilot): realign_labels op — server-computed label retime after a manual trim (prompt v65) (#1298) <!-- release-pr: 1298 -->
+
+## [0.77.43.0] - 2026-10-01
+
+### Changed
+- docs(clip-intents): record the prod flag flip and its live eval gate (#1302) <!-- release-pr: 1302 -->
+
+## [0.77.42.0] - 2026-10-01
+
+### Fixed
+- fix(kria): "Add captions" on a montage is never a chapter caption clip intent (#1301) <!-- release-pr: 1301 -->
+
+## [0.77.41.0] - 2026-10-01
+
+### Changed
+- feat(kria): chat turns can carry the editor's unsaved state (dark, additive) (#1296) <!-- release-pr: 1296 -->
+
+## [0.77.40.0] - 2026-10-01
+
+### Changed
+- fix(reframe): crossfade speech-cleanup cuts and cut their audio on the frame grid (#1292) <!-- release-pr: 1292 -->
+
 ## [0.77.39.0] - 2026-10-01
 
 ### Fixed

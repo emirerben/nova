@@ -1,0 +1,36 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-01.1",
+  "input": {
+    "creator_request": "Caption the beach clips with what the weather was like.",
+    "latest_user_message": null,
+    "candidate_intents": null
+  },
+  "raw_text": "{\"intents\":[{\"intent_id\":\"i1\",\"op\":\"caption\",\"attribute\":\"beach clips\",\"creator_text\":null,\"caption_attribute\":\"what the weather was like\",\"position\":null,\"source_quote\":\"Caption the beach clips with what the weather was like\"}],\"question\":null}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "i1",
+        "op": "caption",
+        "attribute": "beach clips",
+        "creator_text": null,
+        "caption_attribute": "what the weather was like",
+        "position": null,
+        "source_quote": "Caption the beach clips with what the weather was like"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "expect_intents": [
+      {
+        "op": "caption",
+        "source_quote_keywords": [
+          "beach"
+        ]
+      }
+    ],
+    "expect_any": true
+  }
+}

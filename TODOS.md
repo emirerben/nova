@@ -30,6 +30,68 @@ runs instead of re-planning forever, but each of those runs still pays.
 **Acceptance:** Limits sized from the agent specs, with a guard test that
 fails when an agent deadline grows past the task budget.
 
+## KRI-197 soft scroll edges — deferred follow-ups (2026-09-24)
+
+The native chat transcript now fades at its top/bottom edges under a floating
+header and composer (`kriaScrollEdgeFade`, `kriaFloatingSurface`). These review
+findings were scoped out of that PR.
+
+### Verify the floating chat chrome on device (keyboard up, iOS 26)
+**Priority:** P3
+**What:** Checked on the simulator only. On device, confirm the composer
+floats correctly with the keyboard up, that the transcript still scrolls to
+the last message above it, and that the header capsules stay legible over text.
+**Acceptance:** A device pass with the keyboard up in a long chat and in the
+editor's Kria sheet; fix any inset or fade-zone drift.
+
+### `testIncomingResponseDoesNotPullReaderFromScrolledHistory` fails on `main` locally
+**Priority:** P3
+**What:** On pure `origin/main` source in a local iPhone 17 Pro / iOS 26.5
+simulator it fails 0/4 (never sees "Send clips" after tapping Montage); the
+harness's 3-attempt retry masks it as "flaky, passed after 3 attempts" when it
+does pass. Not caused by KRI-197 (reproduced without those changes).
+**Acceptance:** Find why the format tap doesn't advance under
+`KRIA_CHAT_LONG_HISTORY` (the Montage card sits at the composer's top edge),
+and make the test wait for the transcript to settle before tapping.
+
+### `testTextReturnAndDeleteKeepCanvasLinesAligned` fails on `main` locally
+**Priority:** P3
+**What:** Confirmed failing 4/4 (my branch) and 2/2 on fresh `origin/main`
+(commit c17f89a60), local iPhone 17 Pro / iOS 26.5 simulator. Not caused by
+KRI-197 (reproduced without those changes and before the Chat/Editor
+switch-transition work).
+**Acceptance:** Investigate why the multiline-to-single-line canvas height
+assertion fails on this simulator/OS combo; fix or adjust the assertion.
+
+### Editor Chat/Editor switch-transition: no UI-test fixture opens it from chat
+**Priority:** P3
+**What:** The new `WorkspaceCrossfade` (Chat -> Editor cross-dissolve, shared
+`WorkspaceTopRow`/`WorkspaceModeSwitch` header) was verified with a temporary,
+never-committed UI test that forced `showsEditorSwitch: true`; no permanent UI
+test exercises tapping "Editor" from chat or "Chat" from the editor header.
+**Acceptance:** Add a UI test (behind a fixture that reaches `currentProject.status
+== .ready`, or a forced-switch env var) asserting: `Editor` tap shows
+`native-editor-chat-tab`; that tap returns to the chat header's `Editor`
+segment; no intermediate blank/black frame during the crossfade.
+
+### `testPreviewResizeIsAvailableAcrossEditorPanels` fails on `main` locally
+**Priority:** P3
+**What:** Discovered while merging `origin/main` into this branch (118 commits
+behind). Fails deterministically (not flaky, 3/3) with
+`XCTAssertEqualWithAccuracy failed: ("284.0") is not equal to ("120.0")` and
+`("184.0") is not equal to ("80.0")` for the "text-edit" panel case — i.e. the
+preview isn't shrinking to `NativeEditorLayoutMetrics.typingPreviewHeight`
+(KRI-185) while a text panel is being typed into, even though the call site
+(`NativeEditorView.swift`) does pass `shrinksPreviewWhileTyping: panel?.tool
+== .text`. Confirmed failing identically (same two assertions, same values) on
+a fresh `origin/main` checkout (commit c17f89a60) with no KRI-197 changes
+present at all, so this is a pre-existing bug on `main`, not caused by this
+branch or its merge.
+**Acceptance:** Investigate why `shrinksPreviewWhileTyping` doesn't take effect
+for the text-edit panel (timing of `keyboardVisible` vs `panel?.tool`? a second
+call site constructing `NativeEditorLayoutMetrics` without the flag?); fix or
+adjust the test.
+
 ## SFX picker search — deferred follow-ups (2026-09-24)
 
 The web editor's Sounds drawer and legacy SFX lane gained search + category

@@ -513,6 +513,70 @@ struct NativeEditorTemporaryVideo {
     private var chatStagedDocument: EditorDocument?
     private var chatStagedSections: Set<EditorSection> = []
 
+    /// Editor documents submitted with a chat turn, keyed by the `client_state_id`
+    /// the server echoes on the draft it builds from them. The apply path uses the
+    /// submitted document as the three-way merge base. In-memory only; bounded.
+    private struct SubmittedEditorState { let document: EditorDocument; let sections: Set<EditorSection> }
+    private var submittedEditorStates: [String: SubmittedEditorState] = [:]
+    private var submittedEditorStateOrder: [String] = []
+    private static let submittedEditorStateLimit = 8
+
+    /// The editor's current UNSAVED state for a chat turn, or nil when it cannot be
+    /// sent (not loaded, no baseline generation, or over `maxBytes`) and the caller
+    /// must fall back to the legacy save-then-send flow. A clean editor exports an
+    /// EMPTY `lanes` object, which the server reads as "no unsaved edits".
+    func exportEditorState(maxBytes: Int? = nil) -> EditorStateRequest? {
+        guard loadState == .loaded, !isSaving else { return nil }
+        // A text field still being typed is part of the creator's current state.
+        _ = finishTextCreation()
+        refreshDirtyState()
+        let payload = Self.object(document.encodeSnapshot()["editor_payload"])
+        let sections = Self.object(payload?["sections"])
+        let generation = payload?["base_generation"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
+            ?? document.revision.baseGeneration.nilIfEmpty ?? cleanDocument.revision.baseGeneration.nilIfEmpty
+        guard let generation else { return nil }
+        var lanes = commitRequest(sections: sections, baseGeneration: generation)
+        // Save-only: the server rejects these on a turn's editor state.
+        lanes.guidedRevisionNumber = nil; lanes.guidedRevision = nil
+        lanes.acceptedSuggestionIDs = nil; lanes.copilotReceiptIDs = []; lanes.retryGuidedRevision = false
+        let request = EditorStateRequest(baseGeneration: generation, clientStateID: UUID().uuidString, lanes: lanes)
+        if let maxBytes, let encoded = try? JSONEncoder().encode(request), encoded.count > maxBytes {
+            Self.stagingLog.debug("editor_state over cap bytes=\(encoded.count, privacy: .public) max=\(maxBytes, privacy: .public); legacy flush")
+            return nil
+        }
+        submittedEditorStates[request.clientStateID] = SubmittedEditorState(document: document, sections: changedSections)
+        submittedEditorStateOrder.append(request.clientStateID)
+        while submittedEditorStateOrder.count > Self.submittedEditorStateLimit {
+            submittedEditorStates[submittedEditorStateOrder.removeFirst()] = nil
+        }
+        return request
+    }
+
+    /// Lane equality without comparing whole documents (revision metadata differs).
+    private func lanesEqual(_ section: EditorSection, _ a: EditorDocument, _ b: EditorDocument) -> Bool {
+        var probe = a
+        copy(section, from: b, into: &probe)
+        return probe == a
+    }
+
+    /// Three-way per-lane merge of a chat draft built on `submitted`. Returns nil
+    /// when some lane changed on BOTH sides (caller raises `.conflict`).
+    private func mergeChatDraft(_ staged: (document: EditorDocument, sections: Set<EditorSection>), over submitted: EditorDocument) -> (document: EditorDocument, taken: Set<EditorSection>)? {
+        var merged = document
+        var taken: Set<EditorSection> = []
+        for section in staged.sections {
+            let localUntouched = lanesEqual(section, document, submitted)
+            let serverUntouched = lanesEqual(section, staged.document, submitted)
+            if localUntouched {
+                if !serverUntouched { copy(section, from: staged.document, into: &merged); taken.insert(section) }
+            } else if !serverUntouched, !lanesEqual(section, document, staged.document) {
+                return nil
+            }
+        }
+        merged.revision.number = staged.document.revision.number ?? merged.revision.number
+        return (merged, taken)
+    }
+
     var hasOnlyChatStagedChanges: Bool {
         guard hasUnsavedChanges, let staged = chatStagedDocument, !changedSections.isEmpty,
               changedSections.isSubset(of: chatStagedSections), pendingText == nil else { return false }
@@ -1194,6 +1258,27 @@ struct NativeEditorTemporaryVideo {
             guard !sameTarget || nextDocument != cleanDocument || staged != nil else { return }
             // Only the previous chat draft is unsaved: the newer cumulative
             // head replaces it wholesale instead of conflicting with it.
+            // Editor-state turn: the draft says which submitted state it was built on,
+            // so merge three-way against THAT instead of guessing from the head.
+            if let staged, sameTarget, variantUnchanged(variant), pendingText == nil, !isSaving,
+               let stateID = snapshot.snapshot["client_state_id"]?.stringValue,
+               let submitted = submittedEditorStates[stateID] {
+                guard let result = mergeChatDraft(staged, over: submitted.document) else {
+                    Self.stagingLog.debug("sync conflict: same lane edited locally and by chat rev=\(snapshot.draftRevision, privacy: .public)")
+                    saveState = .conflict
+                    return
+                }
+                // One Undo restores the creator's own pre-chat UNSAVED state. The clean
+                // baseline (the rendered variant) is deliberately left untouched.
+                appendUndo(document); redoStack.removeAll()
+                document = result.document
+                changedSections.formUnion(staged.sections)
+                appliedChatDraftRevision = snapshot.draftRevision
+                chatStagedDocument = nil; chatStagedSections = []
+                refreshDirtyState(); refreshDuration()
+                scheduleSourcePreviewUpdate()
+                return
+            }
             let onlyChatStaged = hasOnlyChatStagedChanges
             if onlyChatStaged, staged == nil, sameTarget, variantUnchanged(variant) { return }
             guard !hasUnsavedChanges || onlyChatStaged, pendingText == nil, !isSaving else {
@@ -2440,7 +2525,9 @@ struct NativeEditorTemporaryVideo {
             slot.durationS = nextOut - sourceIn
         }
         slot.durationBeats = nil; next.clips[index] = slot
-        reflowSlots(&next.clips, from: index + 1)
+        // Later clips ripple by construction (windows are a walk of the slot durations); the
+        // per-clip labels must ripple with them, derived from the gesture baseline every update.
+        rebaseGuidedLabels(&next, from: active.baseline)
 
         if next == active.baseline {
             if active.recordedUndo {
@@ -2651,7 +2738,10 @@ struct NativeEditorTemporaryVideo {
                 return
             }
             transactDocument(section: .timeline) { doc in
-                doc.clips.append(EditorTimelineSlot(clipIndex: result.clipIndex, inS: 0, durationS: Self.addedClipDurationS))
+                // `media_kind` lets a chat turn's editor state name an UNSAVED added clip whose
+                // clip_index the server may not resolve from persisted sources yet.
+                let kind: [String: JSONValue] = ["video", "image"].contains(result.kind) ? ["media_kind": .string(result.kind)] : [:]
+                doc.clips.append(EditorTimelineSlot(clipIndex: result.clipIndex, inS: 0, durationS: Self.addedClipDurationS, raw: kind))
             }
             addClipError = nil
         } catch is AddClipSourceUnreadable {
@@ -3958,8 +4048,11 @@ struct NativeEditorTemporaryVideo {
     private func transact(section: EditorSection, _ body: (inout EditorDraft) -> Void) {
         var next = draft; body(&next); guard next != draft else { return }
         invalidateDurationSources(for: Set([section]))
+        let before = document
         if transactionBaseline == nil { appendUndo(document); redoStack.removeAll() }
-        replace(with: next); changedSections.insert(section); refreshDirtyState(); refreshDuration()
+        replace(with: next)
+        if section == .timeline { var rebased = document; rebaseGuidedLabels(&rebased, from: before); if rebased != document { document = rebased } }
+        changedSections.insert(section); refreshDirtyState(); refreshDuration()
     }
 
     func transactDocument(section: EditorSection, _ body: (inout EditorDocument) -> Void) {
@@ -3968,6 +4061,7 @@ struct NativeEditorTemporaryVideo {
 
     private func transactDocument(sections: Set<EditorSection>, _ body: (inout EditorDocument) -> Void) {
         var next = document; body(&next); guard next != document else { return }
+        rebaseGuidedLabels(&next, from: document)
         invalidateDurationSources(for: sections)
         if transactionBaseline == nil { appendUndo(document); redoStack.removeAll() }
         document = next; changedSections.formUnion(sections); refreshDirtyState(); refreshDuration()
@@ -4361,6 +4455,10 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    private var carriesGuidedLabelsWithTimeline: Bool {
+        changedSections.contains(.timeline) && canEditSection(.text) && GuidedLabelRebase.hasLabels(document.textElements)
+    }
+
     private func commitRequest(sections: [String: JSONValue]?, baseGeneration: String) -> EditorCommitRequest {
         let value = sections ?? [:]
         func array(_ key: String, _ section: EditorSection) -> [JSONValue]? {
@@ -4375,7 +4473,11 @@ struct NativeEditorTemporaryVideo {
         let carouselObject = Self.object(value["carousel_moment"])
         return EditorCommitRequest(
             timelineSlots: array("timeline_slots", .timeline),
-            textElements: array("text_elements", .text),
+            // A guided timeline commit always carries the rebased label lane, like the server's
+            // copilot path: the server then treats text as authored and skips its own
+            // (right-biased, label-unaware) projection.
+            textElements: changedSections.contains(.text) || carriesGuidedLabelsWithTimeline
+                ? Self.array(value["text_elements"]) : nil,
             captionCues: array("caption_cues", .captions),
             captionMeta: object("caption_meta", .captionMeta),
             mix: changedSections.contains(.mix) ? (Self.object(value["mix"]) ?? Self.object(value["audio_mix"]) ?? [:]) : nil,
@@ -4457,8 +4559,16 @@ struct NativeEditorTemporaryVideo {
         let start = min(max(0, index), clips.count - 1)
         for i in start..<clips.count { let length = max(minimumClipDuration, clips[i].end - clips[i].start); let previousEnd = i == 0 ? 0 : clips[i - 1].end; clips[i].start = previousEnd; clips[i].end = previousEnd + length }
     }
-    private func reflowSlots(_ clips: inout [EditorTimelineSlot], from index: Int) {
-        _ = clips; _ = index
+    /// Retimes the per-clip label bars onto their clips after any change to clip
+    /// timing (trim, extend, reorder, delete, transition overlap, add). Runs inside the
+    /// same transaction as the timeline edit, so one Undo reverts both, and the text lane
+    /// then differs from the clean document and is saved alongside `timeline_slots`.
+    /// No-op unless a window actually moved and the text lane is editable.
+    private func rebaseGuidedLabels(_ next: inout EditorDocument, from previous: EditorDocument) {
+        guard GuidedLabelRebase.hasLabels(next.textElements), canEditSection(.text),
+              previous.clips != next.clips,
+              GuidedLabelRebase.windows(of: previous.clips) != GuidedLabelRebase.windows(of: next.clips) else { return }
+        next.textElements = GuidedLabelRebase.rebase(next.textElements, oldSlots: previous.clips, newSlots: next.clips)
     }
     private func installPlayer(url: URL, preferredDuration: TimeInterval? = nil, isCurrent: Bool = true) {
         // A completed cloud render remains a useful, non-editable fallback

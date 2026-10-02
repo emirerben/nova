@@ -435,8 +435,22 @@ def apply_custom_effect_render(
     `visibility_timeout` — see app/worker.py). `self`/`autoretry_for` follow
     `rerender_caption_camera_effects`'s shape byte-for-byte.
     """
+    from app.services.cloud_render_policy import (  # noqa: PLC0415
+        CLOUD_RENDER_DISABLED_DETAIL,
+        block_cloud_render_task,
+    )
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
     from app.tasks.generative_build import _update_variant_entry  # noqa: PLC0415
+
+    if block_cloud_render_task(job_id, task_name="apply_custom_effect_render"):
+        _update_variant_entry(
+            job_id,
+            variant_id,
+            {"render_status": "ready", "render_error": CLOUD_RENDER_DISABLED_DETAIL},
+            expected_render_gen_id=render_gen_id,
+            outcome="custom_effect_render_cloud_disabled",
+        )
+        return
 
     terminal_state = {"accepted": False}
     with pipeline_trace_for(job_id):

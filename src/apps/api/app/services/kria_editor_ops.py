@@ -16,7 +16,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, NamedTuple
 
 from app.agents._schemas.text_element import _ALLOWED_FONTS, CAPTION_CUE_SOURCE
 from app.config import settings
@@ -1034,6 +1034,129 @@ def project_editor_draft(
         if key != "font_set":
             projected["captions_enabled" if key == "enabled" else f"caption_{key}"] = value
     return projected
+
+
+EDITOR_STATE_STALE_REPLY = "Your video changed \u2014 reopen the editor and try again."
+SPEECH_CUT_NEEDS_SAVE_REPLY = "Save your edits first, then I can cut the silences."
+
+
+class EditorStateReplyError(KriaEditorOpError):
+    """A state-related refusal with an honest, user-facing reply (not a crash)."""
+
+    reply = ""
+
+
+class EditorStateStaleError(EditorStateReplyError):
+    """The client's unsaved state was built on a render the server has since replaced."""
+
+    reply = EDITOR_STATE_STALE_REPLY
+
+
+class EditorStateSpeechCutError(EditorStateReplyError):
+    """Speech processing renders persisted state; unsaved edits would be lost."""
+
+    reply = SPEECH_CUT_NEEDS_SAVE_REPLY
+
+
+# Save-only fields a turn's editor state never carries (and the draft never stores).
+_STATE_DROP_KEYS = frozenset(
+    {
+        "copilot_receipt_ids",
+        "accepted_suggestion_ids",
+        "retry_guided_revision",
+        "guided_revision",
+        "guided_revision_number",
+    }
+)
+
+
+class EditorBase(NamedTuple):
+    """What a copilot turn is built on. ``source`` is client_state | head | variant."""
+
+    projected: dict[str, Any]
+    prior_payload: dict[str, Any]
+    source: str
+    fallback_reason: str | None = None
+
+
+def _state_dict(client_state: Any) -> dict[str, Any]:
+    # exclude_unset: only lanes the client actually sent are "present"; Save defaults
+    # (remove_music=False, copilot_receipt_ids=[]) are not lanes.
+    if hasattr(client_state, "model_dump"):
+        return client_state.model_dump(mode="json", exclude_unset=True, exclude_none=True)
+    return dict(client_state)
+
+
+def parse_editor_state(raw: Any) -> Any:
+    """Re-validate a persisted turn ``editor_state``; None when absent or unusable."""
+    if not raw:
+        return None
+    from app.kria.api_schemas import EditorStateIn  # noqa: PLC0415 - import cycle
+
+    try:
+        return EditorStateIn.model_validate(raw)
+    except Exception:  # noqa: BLE001 - stored client input; never crash the turn
+        return None
+
+
+def editor_state_has_lanes(client_state: Any) -> bool:
+    """True when the state carries at least one lane (i.e. possibly unsaved edits)."""
+    lanes = _state_dict(client_state).get("lanes") or {}
+    return any(key not in _STATE_DROP_KEYS and key != "base_generation" for key in lanes)
+
+
+def client_state_payload(client_state: Any) -> dict[str, Any]:
+    """Flat commit-shaped lanes of an ``EditorStateIn`` (present = full value)."""
+    state = _state_dict(client_state)
+    lanes = {
+        key: value
+        for key, value in (state.get("lanes") or {}).items()
+        if key not in _STATE_DROP_KEYS and value is not None
+    }
+    slots = lanes.get("timeline_slots")
+    if isinstance(slots, list):
+        # New (unsaved) rows have no id yet; give them a deterministic one so the
+        # snapshot the model sees and the compile base index the SAME rows.
+        stamp = str(state.get("client_state_id") or "state")[:12]
+        lanes["timeline_slots"] = [
+            row if row.get("slot_id") else {**row, "slot_id": f"cs-{stamp}-{index}"}
+            for index, row in enumerate(slots)
+        ]
+    lanes["base_generation"] = str(state.get("base_generation") or "")
+    return lanes
+
+
+def resolve_editor_base(
+    job: Any, variant: dict[str, Any], head: Any, client_state: Any = None
+) -> EditorBase:
+    """THE base a copilot turn edits; the planner snapshot and the compile both call this.
+
+    Precedence:
+      1. ``client_state`` whose ``base_generation`` equals the variant's current render
+         baseline -> authoritative, the head is IGNORED (even for empty lanes).
+         A different baseline raises ``EditorStateStaleError`` (never silently rebased).
+         Untrusted: a projection failure falls back to 2/3 with ``fallback_reason``.
+      2. the head draft when fresh (``fresh_editor_head_payload``).
+      3. the bare saved variant.
+    """
+    reason: str | None = None
+    if client_state is not None:
+        base = (
+            client_state.base_generation
+            if hasattr(client_state, "base_generation")
+            else dict(client_state).get("base_generation")
+        )
+        if str(base or "") != variant_render_baseline(variant):
+            raise EditorStateStaleError("editor state is based on an older render")
+        try:
+            prior = client_state_payload(client_state)
+            return EditorBase(project_editor_draft(variant, prior, job), prior, "client_state")
+        except Exception as exc:  # noqa: BLE001 - client state is untrusted input
+            reason = f"client_state_unusable:{type(exc).__name__}"
+    fresh = fresh_editor_head_payload(head, variant)
+    if fresh:
+        return EditorBase(project_editor_draft(variant, fresh, job), fresh, "head", reason)
+    return EditorBase(project_editor_draft(variant, {}, job), {}, "variant", reason)
 
 
 def merge_editor_draft(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:

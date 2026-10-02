@@ -84,6 +84,12 @@ Flow (flag on):
    inclusion, and chapter captions remain separate operations. More than six
    operations or ambiguous instructions require clarification, never a subset.
    The generic inventory owns labels when enabled; no label-request regex remains.
+   Descriptive context is not an operation: mentioning sunset and night footage,
+   walking and cycling, a route, or a capture sequence does not authorize a
+   group/order intent unless the creator explicitly asks the edit to act on it.
+   Generated Creative Brief labels and Main Creator candidate intents remain
+   non-authoritative hints; the planner verifies them against creator-authored
+   wording and returns `intents=[]`, `question=null` for context-only requests.
    `app/services/clip_intent_planning.py` forwards the complete inventory for
    grounding. Transcript-sourced requests stay in the complete inventory but
    bypass the visual resolver; they require a pinned guided narration before a
@@ -97,7 +103,12 @@ Flow (flag on):
    skip the inventory. Their renderers draw no clip intents and their captions are
    the creator's speech, so "Add captions" there is never a chapter `caption` op.
    `compile_strategy_to_plan` strips any footage intents the Main Creator proposed
-   for them, with a notice.
+   for them, with a notice. On other formats (montage) the planner prompt
+   (2026-10-02.2) returns no intent and no question for a general "add captions" /
+   "add subtitles" / "altyazı ekle" that names no clips and gives no caption words;
+   a `caption` op is only for one chapter the creator named or described. Unlike
+   the Talking skip this is a prompt rule, so the `montage_add_captions*` /
+   `montage_altyazi_ekle` live-eval fixtures are its guard.
 2. **Resolve, inside the chat turn** (`app/services/clip_intent_resolution.py`,
    DB-free, the session row lock is released around it): `ClipRequestResolverAgent`
    (text-only, media aliases, id set-membership) matches intents to the shared
@@ -230,16 +241,36 @@ Guards: `test_label_intent_migration.py`, `test_creator_agent_clip_intents.py`,
 ### Rollout / rollback
 
 Server-only flag (no `NEXT_PUBLIC` twin; questions render through the existing
-chat event). Enable: `fly secrets set CLIP_INTENTS_ENABLED=true --app nova-video`
-+ restart api + worker. Rollback: set it `false`; visual intents are ignored
-(chat clears them, the build task and worker gate on the flag). Transcript
-intents and already-confirmed label elements keep their existing behavior.
-Retirement must not be deployed until the KRI-127 flag-on observation period
-requested by KRI-156 has been reviewed; this code change does not enable the flag
-or establish production observation evidence. Before enabling, run
-the live evals: `tests/evals/test_clip_request_resolver_evals.py`,
-`test_clip_question_evals.py`, `test_main_creator_evals.py`,
-`test_edit_proposal_evals.py` (`--eval-mode=live`, no judge).
+chat event). Enable: `fly secrets set CLIP_INTENTS_ENABLED=true --app nova-video`.
+That rolls every machine, which matters: the runtime-v2 Kria planner reads the
+flag on the `light` machine, not only api and worker. Rollback: set it `false`
+the same way; visual intents are ignored (chat clears them, the build task and
+worker gate on the flag). Transcript intents and already-confirmed label
+elements keep their existing behavior. Flip while no task is running
+(`celery -A app.worker inspect active` on any machine), since the roll restarts
+the render worker. Before enabling, run the live evals:
+`tests/evals/test_clip_request_resolver_evals.py`, `test_clip_question_evals.py`,
+`test_main_creator_evals.py`, `test_edit_proposal_evals.py` (`--eval-mode=live`,
+no judge).
+
+**Production state: ON since 2026-10-01 (~17:07 UTC, Fly v1354).** The live
+eval gate ran first with the flag on (78 calls, $1.21 settled, test-run IDs
+`clip-intents-enable-20261001-*`): resolver 7/7, clip_question 3/3,
+main_creator 27/30, edit_proposal 19/20. Each miss was re-run with the flag off:
+- `kri190_route_facts_and_order` and `narrated_vo_cue_asr_errors` fail with the
+  flag off too (pre-existing; the voiceover-is-never-chapter-text contract held
+  in every run).
+- `kri127_open_vocabulary_dish_labels` is wording variance (one run named the
+  attribute "the food clips"); it passed on re-run. Watch early clip-label edits.
+- `kri238_talking_add_captions` failed only flag-on: the model omitted
+  `media_scope` on the one-clip Talking edit. The planner plans that answer in
+  one attempt, pinned by
+  `test_flag_on_answer_without_media_scope_still_captions_the_clip`, so the eval
+  now rejects only the refused `"all"`.
+
+The KRI-127 flag-on observation period requested by KRI-156 started with this
+flip; retirement of the legacy label fields must not deploy until it has been
+reviewed.
 
 ## Clip facts: when and where a clip was filmed (`CLIP_FACTS_ENABLED`, KRI-189)
 
@@ -250,7 +281,8 @@ edit-planner prompts, capture-time ordering and the `by_capture_time` /
 `by_route` order intents. The attach API always accepts the new optional fields.
 Flag off, everything below is byte-identical (pinned by tests, see the last
 list). Rollback: `fly secrets set CLIP_FACTS_ENABLED=false CLIP_FACTS_USER_IDS=[]
---app nova-video` + restart api and worker.
+--app nova-video` + restart api and worker. Production state: ON globally
+(checked 2026-10-01).
 
 **Flow.**
 
@@ -325,8 +357,9 @@ the snapshot replan/direction-replacement planners and the editor-op tool
 `tests/services/test_clip_intent_order_by.py`,
 `tests/tasks/test_edit_proposal_build_clip_facts.py`,
 `tests/agents/test_landmark_guess.py`, `tests/evals/test_landmark_guess_evals.py`.
-Prompt versions bumped: `main_creator` v38, `edit_proposal` 1.18.0,
-`clip_intent_planner` 2026-09-24.1, new `landmark_guess` 2026-09-24.1. Live
+Current relevant prompt versions: `main_creator` 2026-10-02-v40,
+`edit_proposal` 1.18.0, `clip_intent_planner` 2026-10-02.2, and
+`landmark_guess` 2026-09-24.1. Live
 evals to run before enabling (`--eval-mode=live`, no judge):
 `test_landmark_guess_evals.py`, `test_clip_intent_planner_evals.py`,
 `test_main_creator_evals.py`, `test_edit_proposal_evals.py`.

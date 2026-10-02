@@ -211,6 +211,10 @@ def orchestrate_auto_music_job(self, job_id: str) -> None:
     any exception becomes ``status=processing_failed`` with
     ``error_detail`` set.
     """
+    from app.services.cloud_render_policy import block_cloud_render_task  # noqa: PLC0415
+
+    if block_cloud_render_task(job_id, task_name="tasks.orchestrate_auto_music_job"):
+        return
     log.info("auto_music_job_start", job_id=job_id)
 
     if not settings.enable_auto_music_mode:

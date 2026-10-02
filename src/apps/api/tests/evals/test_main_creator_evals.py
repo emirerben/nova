@@ -201,6 +201,17 @@ def test_main_creator_eval(
             for key, value in expected_facts["order"].items():
                 assert order["facts"].get(key) == value, key
 
+    if fixture.meta.get("general_context_only"):
+        # KRI-244: describing when/how two sets of footage were captured is
+        # useful creative context, but it does not authorize a durable brief
+        # requirement or a server-resolved clip operation.
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        updates = result.output.get("brief_updates") or []
+        assert all(update["kind"] == "style" and update["scope"] == "global" for update in updates)
+        assert not (action["strategy"].get("clip_intents") or [])
+
     if fixture.meta.get("reaction_beats"):
         # KRI-178: a phone-Talking request naming specific photo/sticker and
         # sound moments must come back with a non-empty `reaction_beats` list
@@ -229,6 +240,10 @@ def test_main_creator_eval(
         strategy = action["strategy"]
         assert strategy["edit_format"] == "subtitled"
         assert strategy["render_program"] == "native"
-        assert strategy["media_scope"] == "selected"
-        manifest_media = fixture.input["capability_manifest"]["media"]
-        assert strategy["selected_media_ids"] == [manifest_media[0]["media_id"]]
+        # Only "all" is refused. With CLIP_INTENTS_ENABLED on, the live model
+        # omits the scope instead, and the planner still captions the one clip
+        # (test_flag_on_answer_without_media_scope_still_captions_the_clip).
+        assert strategy.get("media_scope") != "all"
+        if strategy.get("media_scope") == "selected":
+            manifest_media = fixture.input["capability_manifest"]["media"]
+            assert strategy["selected_media_ids"] == [manifest_media[0]["media_id"]]

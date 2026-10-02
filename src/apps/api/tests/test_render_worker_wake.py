@@ -64,7 +64,9 @@ def test_flag_on_render_queue_attempts_wake(mock_maybe_start: MagicMock):
     mock_maybe_start.assert_called_once()
 
 
-@pytest.mark.parametrize("queue", ["plan-jobs", "overlay-jobs"])
+@pytest.mark.parametrize(
+    "queue", ["plan-jobs", "overlay-jobs", "autoplace-jobs", "speech-analysis"]
+)
 @patch("app.worker.threading.Thread", _SyncThread)
 @patch("app.worker._maybe_start_render_worker")
 def test_flag_on_other_render_queues_attempt_wake(mock_maybe_start: MagicMock, queue: str):

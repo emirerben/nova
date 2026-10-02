@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import Security
 import AuthenticationServices
 import Photos
@@ -10,6 +11,35 @@ import KriaMediaEngine
 
 extension Notification.Name {
     static let kriaSessionExpired = Notification.Name("kria.session-expired")
+    static let kriaNativeUpdateRequired = Notification.Name("kria.native-update-required")
+}
+
+/// Process-wide, deliberately one-way state for a server-enforced native
+/// upgrade. Keeping this outside a view means a 426 received before the root
+/// view subscribes is still reflected when it is first rendered.
+@MainActor final class NativeUpdateState: ObservableObject {
+    static let shared = NativeUpdateState()
+
+    @Published private(set) var isUpdateRequired = false
+
+    func requireUpdate() {
+        isUpdateRequired = true
+        NotificationCenter.default.post(name: .kriaNativeUpdateRequired, object: nil)
+    }
+}
+
+/// Centralize the 426 contract so ordinary requests and the silent token
+/// refresh path both flip the same durable, app-wide state before throwing.
+private func signalNativeUpdateRequiredIfNeeded(data: Data, response: HTTPURLResponse) async -> Bool {
+    guard response.statusCode == 426,
+          let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+          let problem = body["problem"] as? [String: Any],
+          problem["code"] as? String == "native_update_required"
+    else { return false }
+    await MainActor.run {
+        NativeUpdateState.shared.requireUpdate()
+    }
+    return true
 }
 
 enum KriaEnvironment: Sendable {
@@ -120,6 +150,8 @@ protocol KriaAPIClient: Sendable {
     func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int) async throws -> TurnAccepted
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted
+    /// `editorState` is the editor's unsaved state (server capability `editor_state_turns`); nil = omitted.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?) async throws -> TurnAccepted
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread
     func threadDelta(threadID: UUID, afterSequence: Int) async throws -> ThreadDelta
     func draft(threadID: UUID) async throws -> DraftSnapshot
@@ -198,6 +230,9 @@ extension KriaAPIClient {
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted {
         _ = clientEventID
         return try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID)
     }
 
     func creationCapabilities() async throws -> CreationCapabilities { throw APIError.unsupported }
@@ -691,6 +726,11 @@ struct RecipeAsset: Codable, Sendable, Identifiable { let id: String; let relati
 struct RecipeTrack: Codable, Sendable, Identifiable { let id: String; let kind: String; let clips: [RecipeClip] }
 struct RecipeClip: Codable, Sendable, Identifiable { let id: String; let sourceAssetID: String; let sourceStart: Double; let sourceDuration: Double; let timelineStart: Double; let rate: Double; enum CodingKeys: String, CodingKey { case id, rate; case sourceAssetID = "source_asset_id"; case sourceStart = "source_start"; case sourceDuration = "source_duration"; case timelineStart = "timeline_start" } }
 
+private enum KriaClientProtocolContract {
+    static let version = 2
+    static let header = "X-Kria-Client-Protocol"
+}
+
 /// Process-wide: every `KriaAPI` instance (AuthModel, AppModel, the library
 /// audit) shares one Keychain, so they must share one in-flight refresh too.
 /// Per-instance coordinators let two instances replay the same single-use
@@ -722,9 +762,13 @@ private actor MobileSessionRefreshCoordinator {
             var request = URLRequest(url: baseURL.appending(path: "auth/mobile/refresh"))
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(String(KriaClientProtocolContract.version), forHTTPHeaderField: KriaClientProtocolContract.header)
             request.httpBody = try JSONEncoder().encode(["refresh_token": current.refreshToken])
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+            if await signalNativeUpdateRequiredIfNeeded(data: data, response: http) {
+                throw APIError.nativeUpdateRequired
+            }
             guard (200..<300).contains(http.statusCode) else {
                 // The token we presented may have been rotated by another
                 // process (a relaunch mid-rotation) or, on older servers,
@@ -846,7 +890,10 @@ struct KriaAPI: KriaAPIClient {
         try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: UUID().uuidString)
     }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted {
-        try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision)), decode: TurnAccepted.self)
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: nil)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?) async throws -> TurnAccepted {
+        try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState)), decode: TurnAccepted.self)
     }
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread {
         try await request(
@@ -973,6 +1020,7 @@ struct KriaAPI: KriaAPIClient {
         var request = URLRequest(url: url); request.httpMethod = method; request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let timeoutInterval { request.timeoutInterval = timeoutInterval }
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        request.setValue(String(KriaClientProtocolContract.version), forHTTPHeaderField: KriaClientProtocolContract.header)
         let storedSession = requiresAuth ? try tokenStore.read() : nil
         if let token = storedSession?.accessToken { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if let bodyData { request.httpBody = bodyData; request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
@@ -1027,6 +1075,9 @@ struct KriaAPI: KriaAPIClient {
             throw APIError.conflict(detail: ConflictDetail(detail ?? problem?.message, code: problem?.code))
         }
         guard (200..<300).contains(http.statusCode) else {
+            if await signalNativeUpdateRequiredIfNeeded(data: data, response: http) {
+                throw APIError.nativeUpdateRequired
+            }
             if http.statusCode == 422, path.hasSuffix("/editor-commit") {
                 let saveError = EditorSaveError.from(responseData: data)
                 NativePreviewDiagnostics.record("editor-save-rejected", fields: [
@@ -1273,7 +1324,29 @@ private enum ServerDateCoding {
         throw DecodingError.dataCorruptedError(in: try decoder.singleValueContainer(), debugDescription: "Expected ISO-8601 date")
     }
 }
-private struct SubmitTurnRequest: Encodable { let message: String; let clientEventID: String; let expectedThreadRevision: Int; enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision" } }
+private struct SubmitTurnRequest: Encodable {
+    let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil
+    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state" }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(message, forKey: .message); try c.encode(clientEventID, forKey: .clientEventID)
+        try c.encode(expectedThreadRevision, forKey: .expectedThreadRevision)
+        try c.encodeIfPresent(editorState, forKey: .editorState)
+    }
+}
+
+/// The editor's CURRENT UNSAVED state sent with a chat turn (server `EditorStateIn`).
+/// `lanes` reuses the Save commit lane encoding; Save-only fields are never set.
+struct EditorStateRequest: Codable, Sendable, Equatable {
+    var version = 1
+    var baseGeneration: String
+    var clientStateID: String
+    var lanes: EditorCommitRequest
+    enum CodingKeys: String, CodingKey { case version; case baseGeneration = "base_generation"; case clientStateID = "client_state_id"; case lanes }
+}
+extension EditorCommitRequest: Equatable {
+    static func == (l: Self, r: Self) -> Bool { (try? JSONEncoder().encode(l)) == (try? JSONEncoder().encode(r)) }
+}
 private struct CreationActionRequest: Encodable { let action: String; let payload: [String: JSONValue]; let clientActionID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case action, payload; case clientActionID = "client_action_id"; case expectedRevision = "expected_revision" } }
 private struct ApprovalDecisionRequest: Encodable {
     let expectedThreadRevision: Int
@@ -1324,6 +1397,9 @@ enum APIError: Error, LocalizedError, Equatable {
     /// regardless of what the body decoded to.
     case requestFailed(status: Int, detail: RequestFailureDetail = RequestFailureDetail(nil))
     case offline, invalidResponse, sessionExpired, unsupported, contentPlanUnavailable, editorNotReady
+    /// The server retired this client protocol; callers should block creation
+    /// and direct the user to update rather than retrying the mutation.
+    case nativeUpdateRequired
     /// A 409/412. `detail` carries the server's `detail` string when it sent one.
     case conflict(detail: ConflictDetail)
     /// Detail-free conflict. Keeps `throw APIError.conflict`, `== .conflict`,
@@ -1344,6 +1420,7 @@ enum APIError: Error, LocalizedError, Equatable {
         case .conflict: "This edit changed elsewhere. Review your local changes before saving again."
         case .contentPlanUnavailable: "This video’s content plan is unavailable. Its editor cannot be opened."
         case .editorNotReady: "This video has no ready edit to open."
+        case .nativeUpdateRequired: "Update Kria to continue creating projects."
         case .unsupported: "This API client does not support native editor saves."
         case .offline: "Kria couldn’t complete that request. Check your connection and try again."
         case let .requestFailed(status, _) where RequestFailureCause(status: status) == .server:

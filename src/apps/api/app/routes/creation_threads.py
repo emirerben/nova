@@ -34,7 +34,7 @@ from sqlalchemy.orm import selectinload
 
 from app import storage
 from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS, NARRATED_EDIT_FORMATS
-from app.auth import CurrentUser, NativeClient
+from app.auth import CurrentUser, KriaClientProtocol, NativeClient
 from app.config import settings
 from app.database import get_db
 from app.db_locks import (
@@ -43,7 +43,7 @@ from app.db_locks import (
     acquire_locked_rows,
     transient_sqlstate,
 )
-from app.kria.api_schemas import KriaProblemOut, ThreadDeltaOut
+from app.kria.api_schemas import EDITOR_STATE_MAX_BYTES, KriaProblemOut, ThreadDeltaOut
 from app.kria.device_render import DeviceRenderCapabilities
 from app.kria.http import KriaFailureRoute, problem_response
 from app.kria.media_sources import (
@@ -107,6 +107,7 @@ from app.services.creator_sessions import reconcile_render_state
 from app.services.generative_upload_paths import DIRECT_VOICEOVER_PREFIX
 from app.services.guided_speech_cleanup import DISABLED_MESSAGE as CLEANUP_DISABLED_MESSAGE
 from app.services.guided_speech_cleanup import guided_voiceover_cleanup_available
+from app.services.ios_device_admission import creation_mutation_admission
 from app.services.job_phases import mark_reattempt, stamp_variant_attempt
 from app.services.job_status import PLAN_ITEM_JOB_TERMINAL
 from app.services.job_storage_paths import (
@@ -319,6 +320,12 @@ class CreationCapabilitiesOut(BaseModel):
     runtime_versions: list[Literal[1, 2]] = Field(default_factory=lambda: [1])
     visuals_enabled: bool = False
     phone_rendering: DeviceRenderCapabilities = Field(default_factory=DeviceRenderCapabilities)
+    # The chat copilot continues on the editor's unsaved state when the turn body
+    # carries `editor_state` (KRIA_EDITOR_STATE_TURNS_ENABLED); max serialized size.
+    editor_state_turns: bool = False
+    editor_state_max_bytes: int = EDITOR_STATE_MAX_BYTES
+    creation_mode: Literal["hybrid", "device_only"] = "hybrid"
+    minimum_client_protocol: int = 2
 
 
 class CreateBody(StrictBody):
@@ -685,6 +692,11 @@ def _available_formats() -> dict[str, str]:
         available["talking_to_camera"] = "subtitled"
     if settings.slide_posts_enabled:
         available["slides"] = "slides"
+    if settings.ios_device_only_mode:
+        from app.services.phone_rollout import phone_render_supported_formats  # noqa: PLC0415
+
+        supported = phone_render_supported_formats()
+        available = {key: value for key, value in available.items() if value in supported}
     return available
 
 
@@ -3272,7 +3284,7 @@ async def _agent_message(
 async def capabilities(user: CurrentUser, native_client: NativeClient = False) -> dict[str, Any]:
     phone_enabled = settings.phone_rendering_for(user.id)
     formats = _available_formats()
-    if phone_enabled and native_client:
+    if settings.ios_device_only_mode or (phone_enabled and native_client):
         # The app on a pilot account renders every project on the iPhone, and
         # only these formats can; offering the others would end in a refusal
         # after the creator has already uploaded footage. The web keeps them
@@ -3289,7 +3301,7 @@ async def capabilities(user: CurrentUser, native_client: NativeClient = False) -
         )
 
         supported_now = phone_render_supported_formats()
-        # `slides` is exempt from this filter even though it's never in
+        # In hybrid mode, `slides` is exempt from this filter even though it's never in
         # `phone_render_supported_formats()`. A slide post has no clip
         # pipeline at all -- its media lives exclusively in the
         # `PlanItemAsset` pool (see the `upload-urls` fence above) and its
@@ -3301,7 +3313,7 @@ async def capabilities(user: CurrentUser, native_client: NativeClient = False) -
         formats = {
             key: value
             for key, value in formats.items()
-            if value in supported_now or value == "slides"
+            if value in supported_now or (not settings.ios_device_only_mode and value == "slides")
         }
     return {
         # A pilot account is offered v2 only once `KRIA_RUNTIME_V2_PHONE_ENABLED`
@@ -3323,6 +3335,10 @@ async def capabilities(user: CurrentUser, native_client: NativeClient = False) -
         "visuals_enabled": bool(
             settings.overlay_autoplace_enabled or settings.guided_edit_capability_enabled
         ),
+        "editor_state_turns": bool(settings.kria_editor_state_turns_enabled),
+        "editor_state_max_bytes": EDITOR_STATE_MAX_BYTES,
+        "creation_mode": "device_only" if settings.ios_device_only_mode else "hybrid",
+        "minimum_client_protocol": settings.kria_minimum_client_protocol,
         "formats": [
             {
                 "id": key,
@@ -3358,7 +3374,12 @@ async def capabilities(user: CurrentUser, native_client: NativeClient = False) -
     "",
     response_model=CreationThreadOut,
     status_code=201,
-    responses={404: {"model": KriaProblemOut}, 422: {"model": KriaProblemOut}},
+    responses={
+        404: {"model": KriaProblemOut},
+        410: {"model": KriaProblemOut},
+        422: {"model": KriaProblemOut},
+        426: {"model": KriaProblemOut},
+    },
 )
 @limiter.limit("20/minute")
 async def create_thread(
@@ -3367,7 +3388,12 @@ async def create_thread(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
     native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
 ) -> CreationThreadOut | JSONResponse:
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
     if body.runtime_version == 2:
         if body.message is not None:
             return problem_response(
@@ -3578,17 +3604,28 @@ async def list_threads(
     return summaries
 
 
-@router.post("/for-editor", response_model=CreationThreadOut)
+@router.post(
+    "/for-editor",
+    response_model=CreationThreadOut,
+    responses={410: {"model": KriaProblemOut}, 426: {"model": KriaProblemOut}},
+)
 async def open_editor_thread(
+    request: Request,
     body: OpenEditorBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> CreationThreadOut:
+    native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
+) -> CreationThreadOut | JSONResponse:
     """Resolve a direct editor link without creating a second conversation.
 
     Serialize on the account before lookup so concurrent legacy deep links
     cannot create duplicate owning threads. No model or render is dispatched.
     """
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
     if await db.get(type(user), user.id, with_for_update=True) is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     owned = (
@@ -3643,7 +3680,12 @@ async def open_editor_thread(
             active_plan_item_id=item.id,
             active_job_id=job.id,
             title=str(item.idea or _DEFAULT_TITLE)[:_MAX_TITLE_LENGTH],
-            state={"edit_format": item.edit_format, "media_count": len(item.clip_gcs_paths or [])},
+            state=with_device_intent(
+                {"edit_format": item.edit_format, "media_count": len(item.clip_gcs_paths or [])},
+                native_client=native_client,
+                user_id=user.id,
+            )
+            or {"edit_format": item.edit_format, "media_count": len(item.clip_gcs_paths or [])},
         )
         db.add(thread)
         await db.flush()
@@ -3653,6 +3695,7 @@ async def open_editor_thread(
         raise HTTPException(
             status_code=409, detail="The project changed. Open it from your projects and try again."
         )
+    _stamp_device_intent(thread, user, native_client)
     if (thread.state or {}).get("selected_variant_id") != selected["variant_id"]:
         thread.state = {**(thread.state or {}), "selected_variant_id": selected["variant_id"]}
         await _append(db, thread, event_type="editor_variant_selected")
@@ -3662,17 +3705,25 @@ async def open_editor_thread(
 
 @router.post("/{thread_id}/editor-events", response_model=CreationThreadOut)
 async def record_editor_events(
+    request: Request,
     thread_id: str,
     body: EditorEventsBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
 ) -> CreationThreadOut:
     """Append browser-acknowledged conversation receipts, never execute edits.
 
     This narrow history surface is shared by v1 and v2. Client receipts are
     explicitly marked as such; they cannot approve a render or update a draft.
     """
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
     thread = await _load(thread_id, user, db, lock=True)
+    _stamp_device_intent(thread, user, native_client)
     if thread.status != "active":
         raise HTTPException(status_code=409, detail="Creation thread is archived")
     # Strict: this writes editor receipts against a specific item/variant, so
@@ -3844,7 +3895,12 @@ async def message_thread(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
     native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
 ) -> CreationThreadOut:
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
     # Explicit creator-memory admission uses the account mutation boundary.
     # Keep the global lock order user -> thread, matching project overrides,
     # so a concurrent override cannot deadlock with a durable chat instruction.
@@ -4132,7 +4188,12 @@ async def action_thread(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
     native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
 ) -> CreationThreadOut:
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
     owner_id = user.id
     thread = await _load(thread_id, user, db, lock=True, creator_id=owner_id)
     _require_runtime_v1_mutation(thread, action=body.action)
@@ -5295,9 +5356,15 @@ async def attach_media(
     body: AttachBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
 ) -> CreationThreadOut:
-    _ = request
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
     thread = await _load(thread_id, user, db, lock=True)
+    _stamp_device_intent(thread, user, native_client)
     if thread.status != "active":
         _reject_media(
             "creation_thread.attach_media.rejected",
@@ -5733,9 +5800,15 @@ async def rename_thread(
     body: RenameBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
 ) -> CreationThreadOut:
-    _ = request
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
     thread = await _load(thread_id, user, db, lock=True)
+    _stamp_device_intent(thread, user, native_client)
     duplicate = await _duplicate(db, thread.id, _client_id(body.client_event_id))
     if duplicate:
         if duplicate.event_type != "thread_renamed" or duplicate.payload != {"title": body.title}:
@@ -5768,9 +5841,14 @@ async def delete_thread(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
     expected_revision: int = Query(..., ge=0),
+    native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
 ) -> Response:
     """Permanently erase one project and every project-owned render/media row."""
-    _ = request
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
     try:
         identifier = uuid.UUID(thread_id)
     except ValueError as exc:
@@ -6215,9 +6293,15 @@ async def archive_thread(
     body: ArchiveBody,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
 ) -> CreationThreadOut:
-    _ = request
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
     thread = await _load(thread_id, user, db, lock=True)
+    _stamp_device_intent(thread, user, native_client)
     duplicate = await _duplicate(db, thread.id, _client_id(body.client_event_id))
     if duplicate:
         if duplicate.event_type != "thread_archived":

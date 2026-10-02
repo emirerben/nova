@@ -53,6 +53,7 @@ async def plan_and_resolve_clip_intents(
     candidate_intents: list[ClipIntent] | None,
     clips: list[IntentClip],
     run_context: RunContext,
+    generated_brief: str | None = None,
     background: bool = False,
     checkpoint: Any = None,
 ) -> PlannedIntentResolution:
@@ -77,6 +78,7 @@ async def plan_and_resolve_clip_intents(
             ClipIntentPlannerInput(
                 creator_request=creator_request,
                 latest_user_message=latest_user_message,
+                generated_brief=generated_brief,
                 candidate_intents=candidate_intents,
                 **({"clip_facts": True} if clip_facts_on else {}),
             ),

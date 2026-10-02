@@ -266,6 +266,23 @@ def test_account_cohort_obeys_kill_switch(monkeypatch):
     assert not settings.phone_rendering_for(enrolled)
 
 
+def test_device_only_mode_enrolls_every_authenticated_mobile_account(monkeypatch):
+    monkeypatch.setattr(settings, "ios_device_only_mode", True)
+    monkeypatch.setattr(settings, "phone_rendering_enabled", False)
+    monkeypatch.setattr(settings, "phone_render_user_ids", [uuid.uuid4()])
+
+    assert settings.phone_rendering_for(uuid.uuid4())
+
+
+def test_device_only_mode_enrolls_every_authenticated_runtime_v2_account(monkeypatch):
+    monkeypatch.setattr(settings, "ios_device_only_mode", True)
+    monkeypatch.setattr(settings, "kria_runtime_v2_phone_enabled", False)
+    monkeypatch.setattr(settings, "kria_runtime_v2_phone_user_ids", [uuid.uuid4()])
+
+    assert settings.kria_runtime_v2_phone_for(uuid.uuid4())
+    assert not settings.kria_runtime_v2_phone_for(None)
+
+
 def test_unadvertised_capability_cannot_issue_a_device_recipe(monkeypatch):
     plan, sources = fixture()
     recipe = compile_phone_guided_plan(plan, sources)

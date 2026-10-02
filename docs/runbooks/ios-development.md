@@ -161,6 +161,8 @@ Native system authentication, Photos, AI consent, and share sheets remain native
 
 Native footage controls persist `playback_rate` and normalized `source_crop` in the editor document. Retiming keeps each timeline window fixed: slow motion consumes less source, while footage that ends early holds its last frame. Still images retain their placement duration, and held video tails do not stretch source audio. Crop coordinates use the decoded source with a top-left origin; rendering and selection geometry must agree for rotated footage. The controls participate in document undo and save.
 
+Guided-story timeline edits also reanchor the guided opening and closing titles and any manually positioned guided title through the revised source-time projection, including titles that cross split timeline children. Clip-bound labels continue to follow their clip, while captions, narration labels, lyric bars, and other creator text keep their existing timing. The title and label adjustments share the timeline edit's single undo step.
+
 Media direct manipulation freezes the surrounding composed layers while the gesture updates the selected image. Rebuilding the source preview waits until the gesture ends; captions must remain present in the surrounding layers.
 
 Download follows the video currently shown in the editor. A ready source preview is exported locally from the current edit recipe; a matching device-local file is used directly, and a server-rendered result is downloaded only when the source preview is unavailable and the render receipt still matches the current project generation. While a source preview is preparing, the last finished render may remain visible, but canvas editing and download stay disabled until the displayed video is known to be current.
@@ -214,6 +216,84 @@ scrollable lanes need so the last lane can scroll clear of the island; it's a
 pure, nonisolated function so `NativeEditorIslandMetricsTests` can cover it
 without SwiftUI. The island itself always sits `bottomPadding` (6pt) above the
 real safe-area inset, never inside `bottomClearance`'s own padding budget.
+
+### Soft scroll edges + floating chat chrome (KRI-197)
+
+**Scope: the chat transcript only** (`ChatConversationScroll`, which also backs
+the editor's Kria sheet). Other scroll surfaces (the projects drawer, editor
+strips, carousels, slide-post rows) keep their normal hard clip on purpose.
+
+`.kriaScrollEdgeFade()` (`DesignSystem/ScrollEdgeFade.swift`) blurs what scrolls
+past the edges of a vertical `ScrollView`, using `.regularMaterial` strips laid
+over the content:
+
+- **Top:** everything above the bottom of the block floating over the top of
+  the transcript is blurred. That block is the top content inset: status bar,
+  the chat header, and the Chat/Editor row when it is shown (the band is sized
+  from the inset, so it grows and shrinks with the row). Text passing under the
+  header is frosted; text below the block is crisp. With no top inset (the
+  editor's Kria sheet) it falls back to a thin band (`length`, default 6pt).
+- **Bottom:** a thin `length` (6pt) band at the screen edge.
+
+A blurred edge appears only once content has scrolled past it; at rest, with
+nothing past an edge, nothing is drawn. Both bands ease out over their inner
+~10pt so they don't end on a hard line. Apply the modifier directly on the
+`ScrollView`, before any `.overlay`/`.background` that must stay unmasked. It
+never changes frames or hit testing.
+
+- **Floating chat chrome:** the chat header (menu, title, actions, editor
+  switch) and the composer float over the transcript as frosted capsules
+  (`.kriaFloatingSurface(_:)`, `DesignSystem/FloatingSurface.swift`; solid paper
+  under Reduce Transparency). `genericChatWorkspace` (and the editor's Kria
+  sheet) add them as `safeAreaInset`s on the `ChatConversationScroll` itself,
+  not on a wrapping stack, so the scroll view runs full-bleed beneath them and
+  text scrolls (and fades) under both, and under the status bar. The floating
+  surface is material-only on purpose: the editor island's iOS 26 glass path
+  corrupts the accessibility frame of ancestors that carry an identifier, and
+  the header buttons do.
+- **Reduce Transparency** (system setting, or `UI_TEST_REDUCE_TRANSPARENCY=1`
+  via `KriaTransparency.isReduced`): the floating capsules become solid paper
+  and the edge blur becomes a plain alpha fade over the same bands.
+  The env override exists because `simctl ui` does not flip the setting for a
+  simulator app process; the glass island shares the same helper.
+- **Sheet titles:** the visible "Kria" heading is removed from both Kria AI
+  sheets (chat editor conversation, slide-post assistant); the slide-post sheet
+  is now scrollable, scrolls "Apply proposal" into view when a proposal
+  arrives, and keeps a VoiceOver "Kria" label on its container.
+- **Chat/Editor is a switch, not a page:** tapping "Editor" used to
+  `fullScreenCover` the editor as a page sliding up from the bottom. The chat
+  and editor headers now share `WorkspaceTopRow` + `WorkspaceModeSwitch`
+  (`DesignSystem/FloatingSurface.swift`) — same leading button, plain-text
+  title (not a pill: nothing to tap), trailing controls, and Chat/Editor pill
+  in the same place, at the same total header height in both (44 top row + 8pt
+  gap + 44 switch row + 6pt bottom padding = 102pt). The 94pt the editor's
+  original header measured before the 8pt gap was added is load-bearing for
+  `NativeEditorInspectorUITests`/`NativeCaptionVisualUITests`, which assert
+  panel/canvas geometry against the total header height — re-verify both if
+  this height changes again. `NativeEditorTopBar` (the editor's loading/failed
+  state) uses the same shared pieces so the header doesn't jump when the
+  editor finishes loading. The selected switch segment is white with a faint
+  shadow, not the pale selection blue, which vanished on the frosted capsule.
+  The editor is presented via `WorkspaceCrossfade` (`fullScreenCover` +
+  `.presentationBackground(.clear)`, animations disabled on the `showsResult`
+  toggle, an internal `visible` opacity fade instead) so switching feels like a
+  tab change, not a new page.
+
+Geometry traps when the scroll view runs beneath insets (learned the hard way):
+- `ScrollGeometry.containerSize` EXCLUDES the content insets; `visibleRect` is
+  the whole frame, INCLUDING them. Hidden distance is measured from
+  `visibleRect` (`ScrollEdgeFadeMetrics(visibleRect:…)`); using `containerSize`
+  made the bottom fade think hundreds of points were hidden at rest.
+- A `.mask` and an `.overlay` are laid out inside the safe-area-inset region, so
+  the modifier applies `.ignoresSafeArea()` to both; otherwise the band sits at
+  the inset edge (under the header/composer) instead of at the screen edge.
+- Scroll to the end with `ScrollPosition.scrollTo(edge: .bottom)`, not an end
+  marker with `anchor: .bottom` (that aligns to the frame bottom and leaves the
+  last content under the composer). "Near bottom" adds `contentInsets.bottom`.
+
+`ScrollEdgeFadeMetrics` (hidden distance to 0...1 strength, insets, 0.5pt float
+floor, 0.05 step) is pure and covered by `ScrollEdgeFadeTests`. Open device
+checks are tracked in `TODOS.md` under "KRI-197 soft scroll edges".
 
 ### Connected editor panels (KRI-148)
 

@@ -1410,7 +1410,13 @@ async def test_draft_retention_prunes_only_old_superseded_bodies() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("request_render", "followup"),
-    [(True, None), (False, "style"), (False, "stale_head"), (False, "speech")],
+    [
+        (True, None),
+        (True, "saved_after_approval"),
+        (False, "style"),
+        (False, "stale_head"),
+        (False, "speech"),
+    ],
 )
 async def test_editor_revision_approval_atomically_stages_exact_job_generation(
     monkeypatch: pytest.MonkeyPatch,
@@ -1466,7 +1472,10 @@ async def test_editor_revision_approval_atomically_stages_exact_job_generation(
         item.current_job_id = job.id
         session.target_job_id = job.id
         session.target_variant_id = "original_text"
-        session.target_generation_id = "generation-1"
+        # Reproduce the editor-Save gap: the exact variant is current, while
+        # the session pointer still names the prior generation. The committed
+        # editor turn must resync the pointer before minting any approval.
+        session.target_generation_id = "stale-generation"
         session.manifest_hash = "a" * 64
         db.commit()
 
@@ -1506,6 +1515,9 @@ async def test_editor_revision_approval_atomically_stages_exact_job_generation(
         if not request_render:
             assert result["status"] == "completed"
             with sync_session() as db:
+                assert (
+                    db.get(CreatorAgentSession, session_id).target_generation_id == "generation-1"
+                )
                 turn = db.get(CreatorAgentTurn, uuid.UUID(accepted.turn_id))
                 assert (
                     db.execute(
@@ -1634,6 +1646,7 @@ async def test_editor_revision_approval_atomically_stages_exact_job_generation(
         assert result["status"] == "awaiting_approval"
 
         with sync_session() as db:
+            assert db.get(CreatorAgentSession, session_id).target_generation_id == "generation-1"
             turn = db.get(CreatorAgentTurn, uuid.UUID(accepted.turn_id))
             approval = db.execute(
                 select(CreatorAgentApproval).where(CreatorAgentApproval.turn_id == turn.id)
@@ -1660,6 +1673,37 @@ async def test_editor_revision_approval_atomically_stages_exact_job_generation(
                     expected_approval_fingerprint=fingerprint,
                 ),
             )
+
+        if followup == "saved_after_approval":
+            # A manual editor Save can publish a newer exact variant after
+            # approval creation while the session pointer still names the
+            # approved generation. Claiming the old approval must cancel it
+            # without accepting or rewriting the newer saved generation.
+            with sync_session() as db:
+                assert db.get(CreatorAgentSession, session_id).target_generation_id == (
+                    "generation-1"
+                )
+                job = db.get(Job, job_id, with_for_update=True)
+                variants = [dict(row) for row in job.assembly_plan["variants"]]
+                variants[0]["render_generation_id"] = "newer-save"
+                job.assembly_plan = {**job.assembly_plan, "variants": variants}
+                db.commit()
+
+            first_claim = await asyncio.to_thread(_claim_approval_dispatch, approval.id)
+            assert first_claim is None
+            with sync_session() as db:
+                saved_job = db.get(Job, job_id)
+                saved_variant = saved_job.assembly_plan["variants"][0]
+                saved_approval = db.get(CreatorAgentApproval, approval.id)
+                saved_execution = db.get(
+                    CreatorAgentExecution,
+                    uuid.UUID(saved_approval.execution_ids[0]),
+                )
+                assert saved_variant["render_generation_id"] == "newer-save"
+                assert saved_approval.status == "cancelled"
+                assert saved_execution.status == "stale"
+                assert saved_execution.target_generation_id == "generation-1"
+            return
 
         # Simulate a process dying after approval consumption + Job commit but
         # before broker publication. The next task invocation must recover the
@@ -2029,7 +2073,7 @@ async def test_brief_version_is_idempotent_per_turn_and_never_written_on_requeue
         turn_id = uuid.UUID(accepted.turn_id)
         claimed = await asyncio.to_thread(_claim, turn_id, "owner-1")
         assert claimed is not None
-        _snapshot, _message, lease_epoch, revision = claimed
+        _snapshot, _message, lease_epoch, revision, _editor_state = claimed
         question = KriaTurnPlan(mode="respond", turn_value="question", response="Which order?")
         updates = (BriefUpdate(kind="order", scope="global", description="chronological"),)
 
@@ -2055,7 +2099,7 @@ async def test_brief_version_is_idempotent_per_turn_and_never_written_on_requeue
 
         claimed = await asyncio.to_thread(_claim, turn_id, "owner-2")
         assert claimed is not None
-        _snapshot, _message, lease_epoch, revision = claimed
+        _snapshot, _message, lease_epoch, revision, _editor_state = claimed
         done = await asyncio.to_thread(
             lambda: _complete_response_turn(
                 turn_id,

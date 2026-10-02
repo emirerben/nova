@@ -153,17 +153,27 @@ def _decoded_pcm(path: Path) -> array.array:
     return samples
 
 
-def _tone_amplitude(samples: array.array, frequency_hz: float) -> float:
-    """Normalized Goertzel amplitude for one exact synthetic tone."""
+def _tone_amplitude(samples: array.array, frequency_hz: float, window: int = 400) -> float:
+    """RMS over 50 ms Hann windows of the normalized Goertzel amplitude of one tone.
+
+    Measured per window so the result does not depend on the phase relation
+    between the segments a cut joins: one coherent bin over the whole clip
+    let a sub-frame shift of a cut cancel the surviving words' tone. The Hann
+    taper keeps the 440 Hz gate edges from leaking into the filler bins.
+    """
     coefficient = 2.0 * math.cos(2.0 * math.pi * frequency_hz / 8000.0)
-    previous = 0.0
-    previous_two = 0.0
-    for sample in samples:
-        current = sample + coefficient * previous - previous_two
-        previous_two = previous
-        previous = current
-    power = previous**2 + previous_two**2 - coefficient * previous * previous_two
-    return math.sqrt(max(0.0, power)) / max(1, len(samples))
+    taper = [0.5 - 0.5 * math.cos(2.0 * math.pi * n / (window - 1)) for n in range(window)]
+    powers = []
+    for start in range(0, len(samples) - window + 1, window):
+        previous = 0.0
+        previous_two = 0.0
+        for weight, sample in zip(taper, samples[start : start + window], strict=True):
+            current = sample * weight + coefficient * previous - previous_two
+            previous_two = previous
+            previous = current
+        power = previous**2 + previous_two**2 - coefficient * previous * previous_two
+        powers.append(max(0.0, power) / window**2)
+    return math.sqrt(sum(powers) / max(1, len(powers)))
 
 
 class TestMixedGapIncidentGolden:

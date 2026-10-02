@@ -614,9 +614,12 @@ def orchestrate_music_job(self, job_id: str) -> None:
     track's cached recipe declares typed slots; otherwise runs the legacy
     beat-sync pipeline that fills every slot from user clips.
     """
+    from app.services.cloud_render_policy import block_cloud_render_task  # noqa: PLC0415
     from app.services.creator_direction_snapshot import renderer_policy_scope  # noqa: PLC0415
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
+    if block_cloud_render_task(job_id, task_name="tasks.orchestrate_music_job"):
+        return
     log.info("music_job_start", job_id=job_id)
     # `pipeline_trace_for` binds job_id into a contextvar so every
     # `record_pipeline_event` call downstream in app/pipeline/* attributes

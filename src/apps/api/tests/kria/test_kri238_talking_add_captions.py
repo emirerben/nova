@@ -11,6 +11,7 @@ thread events; only the model is stubbed, with the answer it gave.
 
 from __future__ import annotations
 
+import copy
 import json
 from typing import Any
 
@@ -47,14 +48,13 @@ _ADD_CAPTIONS_ANSWER = {
 class _SameAnswerClient:
     """Gives the same answer on every attempt, as the model did in prod."""
 
-    def __init__(self) -> None:
+    def __init__(self, answer: dict[str, Any] = _ADD_CAPTIONS_ANSWER) -> None:
+        self.answer = answer
         self.prompts: list[str] = []
 
     def invoke(self, **kwargs: Any) -> ModelInvocation:
         self.prompts.append(kwargs["prompt"])
-        return ModelInvocation(
-            raw_text=json.dumps(_ADD_CAPTIONS_ANSWER), tokens_in=10, tokens_out=20
-        )
+        return ModelInvocation(raw_text=json.dumps(self.answer), tokens_in=10, tokens_out=20)
 
 
 @pytest.mark.asyncio
@@ -73,6 +73,37 @@ async def test_add_captions_on_one_clip_phone_talking_project_proposes_captions(
     assert strategy["edit_format"] == "subtitled"
     assert strategy["selected_media_ids"] == [MEDIA_ID]
     assert strategy["render_program"] == "native"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "dropped",
+    [("media_scope",), ("media_scope", "selected_media_ids")],
+    ids=["no-scope", "no-scope-no-ids"],
+)
+async def test_flag_on_answer_without_media_scope_still_captions_the_clip(
+    monkeypatch: pytest.MonkeyPatch, prod_profile, dropped: tuple[str, ...]
+) -> None:
+    # With CLIP_INTENTS_ENABLED on, the live Main Creator left `media_scope` out
+    # of this answer on every flag-on eval run (2026-10-01 rollout). Only "all"
+    # needs guided proposals, so an unset scope must still caption the one clip.
+    monkeypatch.setattr(settings, "clip_intents_enabled", True)
+    answer = copy.deepcopy(_ADD_CAPTIONS_ANSWER)
+    for key in dropped:
+        del answer["action"]["strategy"][key]
+    client = _SameAnswerClient(answer)
+    monkeypatch.setattr(planner, "default_client", lambda: client)
+    user_id, thread_id, item_id = _seed()
+
+    result = await _plan(user_id, thread_id, item_id)
+
+    assert result.plan.mode == "act", result.plan.response
+    assert len(client.prompts) == 1
+    strategy = result.plan.intents[0].arguments["strategy"]
+    assert strategy["edit_format"] == "subtitled"
+    assert strategy["render_program"] == "native"
+    assert strategy.get("media_scope") != "all"
+    assert strategy["selected_media_ids"] == [MEDIA_ID]
 
 
 @pytest.mark.asyncio
