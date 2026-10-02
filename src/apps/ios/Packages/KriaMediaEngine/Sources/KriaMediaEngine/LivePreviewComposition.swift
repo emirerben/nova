@@ -163,24 +163,30 @@ public struct LivePreviewExportSnapshot: Sendable {
                 throw MediaEngineError.missingAsset(asset.id)
             }
         }
-        func withoutGains(_ tracks: [TimelineTrack]) -> [TimelineTrack] {
+        // An in-place edit may only move or restyle pixels: the clip fields
+        // cleared here. Audio stays as built. On iPhone, re-assigning the live
+        // item's audioMix, even an identical one, silenced the voice until the
+        // next full rebuild (KRI-241), so a change to `audio` or to any other
+        // clip field (volume, timing, audio fades) throws and takes the full
+        // rebuild. `visualPlacement` and `overlayPreserveAlpha` also decide at
+        // build time whether a clip gets an audio track; the editor compiles
+        // those clips at volume 0, so flipping them here never changes a sound.
+        func withoutVisuals(_ tracks: [TimelineTrack]) -> [TimelineTrack] {
             tracks.map { track in
                 var copy = track
-                copy.clips = track.clips.map { clip in var value = clip; value.volume = 1; value.transform = .identity; value.overlayAboveText = nil; value.overlayPopIn = nil; value.overlayPreserveAlpha = nil; value.visualPlacement = nil; value.overlayDissolveSeed = nil; value.overlayFadeIn = nil; value.overlayFadeOut = nil; return value }
+                copy.clips = track.clips.map { clip in var value = clip; value.transform = .identity; value.overlayAboveText = nil; value.overlayPopIn = nil; value.overlayPreserveAlpha = nil; value.visualPlacement = nil; value.overlayDissolveSeed = nil; value.overlayFadeIn = nil; value.overlayFadeOut = nil; return value }
                 return copy
             }
         }
         for clip in next.tracks.flatMap(\.clips) where clip.look != nil {
             guard recipe.tracks.flatMap(\.clips).first(where: { $0.id == clip.id })?.transform == clip.transform else { throw NativePreviewFeatureError("LivePreviewComposition-77") }
         }
-        guard withoutGains(recipe.tracks) == withoutGains(next.tracks) else { throw NativePreviewFeatureError("LivePreviewComposition-79") }
+        guard next.audio == recipe.audio, withoutVisuals(recipe.tracks) == withoutVisuals(next.tracks) else { throw NativePreviewFeatureError("LivePreviewComposition-79") }
         if next.visualFills.contains(where: { $0.kind == .blurPrevious }), recipe.cameraPulses != next.cameraPulses {
             throw NativePreviewFeatureError("LivePreviewComposition-81")
         }
         var expected = recipe
         expected.tracks = next.tracks
-        expected.audio.originalVolume = next.audio.originalVolume
-        expected.audio.muteWindows = next.audio.muteWindows
         expected.assets = next.assets
         expected.assetManifest = next.assetManifest
         expected.cameraPulses = next.cameraPulses
@@ -258,35 +264,9 @@ public struct LivePreviewExportSnapshot: Sendable {
             RecipeVideoInstruction(timeRange: range, layers: active, text: painted, canvas: current.renderSize,
                 cameraPulses: next.cameraPulses, motionScenes: motion, textStore: textStore)
         }
-        // Visual edits must not reset the player's running audio pipeline (KRI-241).
-        // Track timing has already been checked above; only these gain inputs can
-        // change the mix on the fast path.
-        let audioChanged = recipe.audio != next.audio
-            || recipe.tracks.flatMap(\.clips).map(\.volume) != next.tracks.flatMap(\.clips).map(\.volume)
-        var replacementMix: AVAudioMix?
-        if recipe.audio.musicAssetID != nil {
-            guard next.audio == recipe.audio, next.tracks == recipe.tracks else { throw NativePreviewFeatureError("LivePreviewComposition-176") }
-        } else if audioChanged {
-            let mix = AVMutableAudioMix()
-            let clips = Dictionary(uniqueKeysWithValues: next.tracks.flatMap(\.clips).map { ($0.id, $0) })
-            guard let composition = preview.playerItem.asset as? AVComposition else {
-                throw NativePreviewFeatureError("LivePreviewComposition-audio-composition")
-            }
-            mix.inputParameters = try preview.audioBindings.map { binding in
-                guard let clip = clips[binding.clipID],
-                      let track = composition.track(withTrackID: binding.trackID), track.mediaType == .audio else {
-                    throw NativePreviewFeatureError("LivePreviewComposition-181")
-                }
-                // Match the full builder: bind to the actual composition track.
-                let parameter = AVMutableAudioMixInputParameters(track: track)
-                applyAudioGain(parameter, clip: clip, gain: binding.usesOriginalGain ? next.audio.originalVolume : 1, windows: next.audio.muteWindows, duck: binding.usesOriginalGain ? preview.duckEnvelope : nil)
-                return parameter
-            }
-            replacementMix = mix
-        }
-        // Publish only after every layer and audio binding validates successfully.
+        // Publish only after every layer validates successfully. Never touch
+        // `audioMix` here (see `withoutVisuals`).
         preview.playerItem.videoComposition = replacement
-        if let replacementMix { preview.playerItem.audioMix = replacementMix }
         assetURLs = urls
         recipe = next
     }

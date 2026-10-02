@@ -223,9 +223,11 @@ def compile_phone_subtitled_plan(
     ``keep_segments`` as HARD CUTS on the main video track: one
     `TimelineClip` per kept segment, back to back on the timeline, instead
     of the single full-duration clip. No `Transition`/crossfade joins them --
-    `TimelineClip` has no per-clip audio-only fade, so a crossfade between
-    two cuts of the SAME speaker audio would blend two unrelated words into
-    each other, which is worse than a hard cut's click. ``caption_cues`` and
+    a picture crossfade between two cuts of the SAME speaker would blend two
+    unrelated words into each other. The phone engine instead crossfades only
+    the AUDIO of such same-source cuts, borrowing ~25 ms of the removed span
+    on each side (`AudioCutHandles` in KriaMediaEngine), so room tone runs
+    through the join instead of dipping to silence. ``caption_cues`` and
     every ``lanes`` window MUST already be expressed in CUT-timeline
     coordinates when ``cut_plan`` is passed (the caller remaps them --
     `app.pipeline.phone_captions.remap_cues`,

@@ -77,6 +77,7 @@ struct AudioDuckEnvelope: Equatable, Sendable {
         guard frames > 0 else { return AudioDuckEnvelope(points: []) }
         var key = [Float](repeating: 0, count: frames)
         for (clip, url) in keys {
+            try Task.checkCancellation()
             let pcm = try await readMonoLevels(url: url, start: clip.sourceStart, duration: clip.sourceDuration)
             let offset = Int((clip.timelineStart * sampleRate).rounded())
             let length = Double(pcm.count) / sampleRate
@@ -89,6 +90,7 @@ struct AudioDuckEnvelope: Equatable, Sendable {
                 key[offset + index] = max(key[offset + index], pcm[index] * level)
             }
         }
+        try Task.checkCancellation()
         let gains = compressor.gains(forKey: key, sampleRate: sampleRate)
         // Minimum per hop: never let the bed peek above the compressor inside a hop.
         let hopFrames = Int(hop * sampleRate)

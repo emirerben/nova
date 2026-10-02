@@ -24,10 +24,6 @@ public protocol PreviewComposing: Sendable {
 public struct PreviewComposition: @unchecked Sendable {
     public let description: CompositionDescription
 #if canImport(AVFoundation)
-    var audioBindings: [PreviewAudioBinding] = []
-    /// The footage bed's side-chain duck, kept so a live gain edit rebuilds the
-    /// same curve instead of re-reading the key (KRI-139).
-    var duckEnvelope: AudioDuckEnvelope?
     /// `AudioMixRecipe.targetLUFS`: the exporter normalizes the mix to it.
     /// Playback stays at the mixed level (AVAudioMix cannot boost).
     var loudnessTargetLUFS: Double?
@@ -39,12 +35,6 @@ public struct PreviewComposition: @unchecked Sendable {
 }
 
 #if canImport(AVFoundation)
-struct PreviewAudioBinding: Sendable {
-    let trackID: CMPersistentTrackID
-    let clipID: String
-    let usesOriginalGain: Bool
-}
-
 @MainActor public struct AVPlayerPreviewComposer: PreviewComposing {
     /// Brand furniture to add to the composition this composer builds.
     ///
@@ -54,6 +44,10 @@ struct PreviewAudioBinding: Sendable {
     /// so it cannot be selected, trimmed, or appended twice on export.
     public let branding: KriaBranding.Options
     public init(branding: KriaBranding.Options = .none) { self.branding = branding }
+    /// Throws `CancellationError` at the next clip or phase once its task is
+    /// cancelled. The editor cancels a superseded rebuild (every volume-slider
+    /// sample is a full rebuild, KRI-241), and that build must stop instead of
+    /// finishing a composition nothing will play.
     public func makePreview(recipe: EditRecipe, assetURLs: [String: URL]) async throws -> PreviewComposition {
         try recipe.validate()
         guard recipe.rendererVersion == "kria-ios-\(recipe.schemaVersion)" else {
@@ -77,7 +71,6 @@ struct PreviewAudioBinding: Sendable {
         var layers: [RecipeVideoLayer] = []
         var textLayers: [RecipeTextLayer] = []
         var audioParameters: [AVMutableAudioMixInputParameters] = []
-        var audioBindings: [PreviewAudioBinding] = []
         var stillClock: StillTimelineClock?
         func time(_ seconds: Double) -> CMTime { CMTime(value: Int64((seconds * 60_000).rounded()), timescale: 60_000) }
         // KRI-139: the footage's own audio ducks under every audio-kind track (the
@@ -88,9 +81,13 @@ struct PreviewAudioBinding: Sendable {
                 return (clip, url)
             }, duration: total)
             : nil
-        func addAudio(asset: AVURLAsset, clip: TimelineClip, gain: Double, originalGain: Bool = false) async throws {
+        // Speech-cleanup cuts crossfade their audio across the join.
+        let cutHandles = AudioCutHandles.plan(recipe.tracks)
+        func addAudio(asset: AVURLAsset, clip recipeClip: TimelineClip, gain: Double, originalGain: Bool = false) async throws {
             guard let source = try await asset.loadTracks(withMediaType: .audio).first else { return }
             guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw MediaEngineError.exportUnavailable }
+            let cut = cutHandles[recipeClip.id] ?? .none
+            let clip = recipeClip.widened(by: cut)
             let sourceRange = CMTimeRange(start: time(clip.sourceStart), duration: time(clip.sourceDuration))
             try track.insertTimeRange(sourceRange, of: source, at: time(clip.timelineStart))
             // A held video tail is visual-only. Keep source/narration audio on
@@ -99,9 +96,8 @@ struct PreviewAudioBinding: Sendable {
             track.scaleTimeRange(CMTimeRange(start: time(clip.timelineStart), duration: sourceRange.duration),
                                  toDuration: time(clip.sourceDuration / clip.rate))
             let parameter = AVMutableAudioMixInputParameters(track: track)
-            applyAudioGain(parameter, clip: clip, gain: gain, windows: recipe.audio.muteWindows, duck: originalGain ? duck : nil)
+            applyAudioGain(parameter, clip: clip, gain: gain, windows: recipe.audio.muteWindows, duck: originalGain ? duck : nil, cut: cut)
             audioParameters.append(parameter)
-            audioBindings.append(PreviewAudioBinding(trackID: track.trackID, clipID: clip.id, usesOriginalGain: originalGain))
         }
         let overlayOrders = Self.overlayOrders(in: recipe)
         for recipeTrack in recipe.tracks {
@@ -111,6 +107,7 @@ struct PreviewAudioBinding: Sendable {
             var reusableVideoTracks: [(track: AVMutableCompositionTrack, end: Double)] = []
             var previousEnd: Double?
             for clip in recipeTrack.clips.sorted(by: { $0.timelineStart < $1.timelineStart }) {
+                try Task.checkCancellation()
                 guard let url = assetURLs[clip.sourceAssetID] else { throw MediaEngineError.missingAsset(clip.sourceAssetID) }
                 let asset = AVURLAsset(url: url)
                 if recipeTrack.kind == .audio {
@@ -301,6 +298,7 @@ struct PreviewAudioBinding: Sendable {
             }
         }
         for fill in recipe.visualFills {
+            try Task.checkCancellation()
             var previous: CGImage?
             if fill.kind == .blurPrevious {
                 var base = recipe
@@ -319,8 +317,9 @@ struct PreviewAudioBinding: Sendable {
                 visualPlacement: placement, visualOrder: fill.order))
         }
         let textBitmapBytes = textLayers.reduce(0) { $0 + $1.bitmapBytes }
-        let textStore = try NativeTextLayerStore(layers: recipe.textLayers, assetURLs: assetURLs, canvas: canvas,
-                                               maxBitmapBytes: 64 * 1024 * 1024 - textBitmapBytes)
+        let textStore = try await NativeTextLayerStore.make(layers: recipe.textLayers, assetURLs: assetURLs, canvas: canvas,
+                                                          maxBitmapBytes: 64 * 1024 * 1024 - textBitmapBytes)
+        try Task.checkCancellation()
         _ = try textStore.activeLayers(at: 0)
         textLayers += recipe.textLayers.map(RecipeTextLayer.deferred)
         var videoCoveredUntil = 0.0
@@ -345,6 +344,7 @@ struct PreviewAudioBinding: Sendable {
                                           start: 0, end: total, fadeIn: 0), at: 0)
             StillClockLifetime.retain(clock, on: composition)
         }
+        try Task.checkCancellation()
         if let musicID = recipe.audio.musicAssetID {
             guard let url = assetURLs[musicID] else { throw MediaEngineError.missingAsset(musicID) }
             let asset = AVURLAsset(url: url)
@@ -405,6 +405,7 @@ struct PreviewAudioBinding: Sendable {
             brandedTotal = end
         }
 
+        try Task.checkCancellation()
         if composition.duration.seconds < brandedTotal { composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, duration: time(brandedTotal - composition.duration.seconds))) }
         let motion = try NativeMotionPainter.make(recipe.motionScenes, assets: assetURLs, canvas: canvas, duration: total, frameRate: recipe.frameRate)
         // Instructions must span the whole asset: when the asset outlasts them AVPlayer renders no
@@ -423,8 +424,6 @@ struct PreviewAudioBinding: Sendable {
         item.seekingWaitsForVideoCompositionRendering = true
         item.audioMix = audioMix
         var result = PreviewComposition(description: CompositionDescription(duration: brandedTotal, canvas: recipe.canvas, hasVideo: true, hasAudio: !audioParameters.isEmpty), playerItem: item)
-        result.audioBindings = audioBindings
-        result.duckEnvelope = duck
         result.loudnessTargetLUFS = recipe.audio.targetLUFS
         return result
     }

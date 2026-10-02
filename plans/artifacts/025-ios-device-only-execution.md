@@ -25,8 +25,9 @@ still an operational verification gate.
 
 - A1/A2: video-embedded source audio now has a regression covering caption,
   title, style, original/clip volume, saved export and a full-rebuild trim.
-  Visual-only updates preserve the running audio mix. Gain updates bind mix
-  parameters to the actual composition tracks.
+  Visual-only updates preserve the running audio mix. After integrating the
+  KRI-241 fix from main, gain updates require a full preview rebuild; regressions
+  verify the original mix stays untouched and rebuilt audio matches export.
 - A3: a server-compiled `talking_head` native fixture tests cutaway pixels,
   distinct speaker/cutaway tones, caption on/off windows, and capability
   negotiation. Required execution is separate from the default unit run.
@@ -293,3 +294,24 @@ evidence wrapper to omit its whole-tree fingerprint. The direct test results
 and result bundles are the verification evidence. Simulator clipboard sync
 was temporarily disabled under the existing user approval for the UI gate and
 was restored after that gate.
+
+## PR #1329 conflict resolution — 2026-10-02
+
+Integrated `origin/main@3bd00874a`. Retained main's KRI-241 rule: visual edits
+leave the live audio mix untouched, and every audio edit requires a full preview
+rebuild. Kept this branch's original-audio and narrated-export regressions,
+updated for that rule. The panel test now collapses by its measured expansion
+plus 40pt, below the new 64pt drag-to-close threshold.
+
+Fresh verification after resolution:
+
+- Media engine: 264 executed, 6 expected skips, zero failures. Skips are five
+  external-reference fixtures and one opt-in performance benchmark. All six
+  `LiveAudioMixTests` passed. Log: `/private/tmp/plan025-conflicts-engine.log`.
+- iOS: 17 layout tests and three focused panel UI tests passed without retries.
+  Bundle: `/private/tmp/plan025-conflicts-ui.xcresult`.
+- Backend compiler: 77 passed. Log: `/private/tmp/plan025-conflicts-backend.log`.
+
+The earlier complete qualification remains historical evidence; this merge
+was checked with the full engine suite and focused compiler/layout/UI checks.
+Physical-device and production gates remain pending.
