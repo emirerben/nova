@@ -9,10 +9,7 @@ permissions:
 #     No secrets needed; ~30s. This is the prompt-regression guardrail.
 #   - `workflow_dispatch` (manual): paid live evals only for a prompt, model,
 #     provider, or structured-output change. Every run is attributed and capped.
-#   - weekly schedule: one fixture provider smoke, hard-capped at $0.20.
 on:
-  schedule:
-    - cron: "17 8 * * 1"
   workflow_dispatch:
     inputs:
       agent:
@@ -77,17 +74,16 @@ jobs:
 
   eval:
     name: Paid provider eval
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment:
-      name: ${{ github.event_name == 'schedule' && 'paid-ai-smoke' || 'paid-ai-evals' }}
+      name: paid-ai-evals
     steps:
       # An unset environment secret reads as empty, and the job then dies later
       # with a SQLAlchemy URL parse error. This runs before checkout and install
       # so a missing setup fails in seconds; the shell only sees true/false.
       - name: Require paid-eval secrets in this environment
         env:
-          ENVIRONMENT_NAME: ${{ github.event_name == 'schedule' && 'paid-ai-smoke' || 'paid-ai-evals' }}
           HAS_DATABASE_URL_DEV: ${{ secrets.DATABASE_URL_DEV != '' }}
           HAS_GEMINI_API_KEY_DEV: ${{ secrets.GEMINI_API_KEY_DEV != '' }}
         run: |
@@ -95,7 +91,7 @@ jobs:
           [ "$HAS_DATABASE_URL_DEV" = true ] || missing="$missing DATABASE_URL_DEV"
           [ "$HAS_GEMINI_API_KEY_DEV" = true ] || missing="$missing GEMINI_API_KEY_DEV"
           if [ -n "$missing" ]; then
-            echo "::error title=Paid eval secrets missing::Not set in the $ENVIRONMENT_NAME environment:$missing. Setup: docs/runbooks/gcp-cost-controls.md section 5."
+            echo "::error title=Paid eval secrets missing::Not set in the paid-ai-evals environment:$missing. Setup: docs/runbooks/gcp-cost-controls.md section 5."
             exit 1
           fi
 
@@ -112,7 +108,6 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Validate paid eval reason against the selected ref
-        if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           set -euo pipefail
@@ -142,12 +137,6 @@ jobs:
       - name: Pick test target
         id: target
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            echo "path=tests/evals/test_song_classifier_evals.py -k baseline_track" >> "$GITHUB_OUTPUT"
-            echo "purpose=provider_smoke" >> "$GITHUB_OUTPUT"
-            echo "cap=0.20" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           case "${{ inputs.agent }}" in
             template_recipe)
               echo "path=tests/evals/test_template_recipe_evals.py" >> "$GITHUB_OUTPUT" ;;
