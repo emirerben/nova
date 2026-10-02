@@ -40,17 +40,20 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
 /// phone case would just be a relabeled `cuts_text`/`crossfade` case, not a
 /// new branch. See the script's module docstring for the full writeup.
 ///
-/// Three more cases exercise the OTHER two KRI-132 phone compilers, neither
+/// Four more cases exercise the OTHER two KRI-132 phone compilers, neither
 /// of which goes through `compile_phone_voiceover_montage_plan`:
 ///   - `subtitled_sentence`/`subtitled_word` -- `app.pipeline
 ///     .phone_subtitled_plan.compile_phone_subtitled_plan` ("Talking to
 ///     camera"): one portrait clip, its own audio, sentence (`pop-in`) or
 ///     word (`karaoke-line`) captions.
+///   - `talking_head` -- the same Subtitled compiler with KRI-136
+///     `cutaways=...`: the speaker remains audible while a muted, full-frame
+///     b-roll clip replaces only the intended video window.
 ///   - `narrated` -- `app.pipeline.phone_narrated_plan
 ///     .compile_phone_narrated_plan`: two clips tiled onto narration step
 ///     windows; the second clip is shorter than its step, exercising
 ///     `TimelineClip.rate < 1` (slow-down, never freeze-hold).
-/// All three additionally carry a `caption_samples` list in `e2e.json`
+/// The captioned cases additionally carry a `caption_samples` list in `e2e.json`
 /// (region derived from the compiled recipe's own text-layer geometry, see
 /// the script's `_caption_region`), asserted in `assertCase` below via
 /// `nearWhiteTextPixelCount`.
@@ -97,6 +100,13 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
     /// the karaoke-line highlight sweep instead of plain pop-in blocks.
     func testSubtitledWordCaptionsRenderOnTheIPhone() async throws {
         try await assertCase("subtitled_word")
+    }
+
+    /// KRI-257 / Plan 025 A3: multi-clip self-narrated Talking keeps the
+    /// speaker's audio spine continuous, mutes the visual cutaway, draws that
+    /// cutaway only in its scheduled window, and continues captions across it.
+    func testTalkingHeadCutawayRendersOnTheIPhone() async throws {
+        try await assertCase("talking_head")
     }
 
     /// KRI-132: the narrated-walkthrough phone compiler --
@@ -241,6 +251,24 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
             let peak = try await peakAmplitude(of: asset)
             XCTAssertGreaterThan(peak, 0.01, "\(caseID): the recorded voiceover must be audible")
         }
+        if let audioSamples = caseMeta["audio_samples"] as? [[String: Any]] {
+            for sample in audioSamples {
+                let name = try XCTUnwrap(sample["name"] as? String)
+                let t = try XCTUnwrap(sample["t"] as? Double)
+                let speakerHz = try XCTUnwrap(sample["speaker_hz"] as? Double)
+                let mutedHz = try XCTUnwrap(sample["muted_hz"] as? Double)
+                let speaker = try await toneAmplitude(of: asset, at: t, frequency: speakerHz)
+                let cutaway = try await toneAmplitude(of: asset, at: t, frequency: mutedHz)
+                XCTAssertGreaterThan(
+                    speaker, 0.005,
+                    "\(caseID)/\(name): speaker audio must remain audible at \(t)s"
+                )
+                XCTAssertLessThan(
+                    cutaway, speaker * 0.2,
+                    "\(caseID)/\(name): the cutaway's own audio must stay muted at \(t)s"
+                )
+            }
+        }
 
         let generator = AVAssetImageGenerator(asset: asset)
         generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
@@ -327,6 +355,52 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
             }
         }
         return peak
+    }
+
+    /// Correlates a short mono PCM window with one sine/cosine pair. Fixture
+    /// clips deliberately use distinct tones, so this proves the speaker's
+    /// audio survives throughout a cutaway and that the cutaway source never
+    /// enters the audio mix without relying on simulator playback volume.
+    private func toneAmplitude(of asset: AVAsset, at time: Double, frequency: Double) async throws -> Double {
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        let track = try XCTUnwrap(audioTracks.first)
+        let reader = try AVAssetReader(asset: asset)
+        let sampleRate = 48_000.0
+        let window = 0.3
+        reader.timeRange = CMTimeRange(
+            start: CMTime(seconds: max(0, time - window / 2), preferredTimescale: 48_000),
+            duration: CMTime(seconds: window, preferredTimescale: 48_000)
+        )
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsNonInterleaved: false,
+        ])
+        reader.add(output)
+        XCTAssertTrue(reader.startReading())
+        var pcm: [Float] = []
+        while let buffer = output.copyNextSampleBuffer() {
+            guard let blockBuffer = CMSampleBufferGetDataBuffer(buffer) else { continue }
+            let length = CMBlockBufferGetDataLength(blockBuffer)
+            var data = [UInt8](repeating: 0, count: length)
+            _ = CMBlockBufferCopyDataBytes(blockBuffer, atOffset: 0, dataLength: length, destination: &data)
+            data.withUnsafeBytes { raw in
+                pcm += raw.bindMemory(to: Float32.self)
+            }
+        }
+        let edge = min(Int(sampleRate * 0.02), pcm.count / 4)
+        let samples = Array(pcm.dropFirst(edge).dropLast(edge))
+        guard samples.count > 100 else { return 0 }
+        var sine = 0.0, cosine = 0.0
+        for (index, value) in samples.enumerated() {
+            let phase = 2 * Double.pi * frequency * Double(index) / sampleRate
+            sine += Double(value) * sin(phase)
+            cosine += Double(value) * cos(phase)
+        }
+        return 2 * hypot(sine, cosine) / Double(samples.count)
     }
 
     /// H.264/AAC round saturated colors by a few levels.

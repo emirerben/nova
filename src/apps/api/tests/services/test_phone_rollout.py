@@ -807,6 +807,16 @@ def test_phone_talking_head_supported_when_all_conditions_hold(monkeypatch):
     assert phone_talking_head_supported() is True
 
 
+def test_phone_talking_head_requires_alpha_overlay_capability(monkeypatch):
+    _enable_talking_head(monkeypatch)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        [feature for feature in PHONE_TALKING_HEAD_FEATURES if feature != "alphaOverlay"],
+    )
+    assert phone_talking_head_supported() is False
+
+
 @pytest.mark.parametrize(
     "setting, value",
     [

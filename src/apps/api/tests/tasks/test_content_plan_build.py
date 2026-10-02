@@ -4216,6 +4216,7 @@ def _dispatch_guided_voiceover_cleanup(
     *,
     cleanup_choice: str | None,
     narration_for,  # noqa: ANN001
+    before_dispatch=None,  # noqa: ANN001
 ):
     from app.config import settings
     from app.kria.media_sources import OriginalMediaDescriptor
@@ -4292,6 +4293,8 @@ def _dispatch_guided_voiceover_cleanup(
         ) as mock_build,
         patch("app.services.job_dispatch.enqueue_orchestrator_sync"),
     ):
+        if before_dispatch is not None:
+            before_dispatch()
         result = _dispatch_item_render(
             session,
             item,

@@ -401,6 +401,7 @@ _TALKING_HEAD_FEATURES = [
     "audioMix",
     "visualBlocks",
     "visualVideos",
+    "alphaOverlay",
 ]
 
 

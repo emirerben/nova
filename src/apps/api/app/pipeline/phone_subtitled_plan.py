@@ -402,7 +402,16 @@ def compile_phone_subtitled_plan(
         )
         if cutaway_track.clips:
             tracks.append(cutaway_track)
-            required_capabilities |= {"visualBlocks", "visualVideos", "audioMix"}
+            # Native derives `alphaOverlay` from every non-empty overlay
+            # track, including opaque full-frame Talking-head cutaways. Keep
+            # the server declaration aligned so a device never routes cloud
+            # after the backend admitted the multi-clip shape.
+            required_capabilities |= {
+                "visualBlocks",
+                "visualVideos",
+                "alphaOverlay",
+                "audioMix",
+            }
 
     if lanes is not None and lanes.overlays:
         try:

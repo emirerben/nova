@@ -451,9 +451,15 @@ def phone_subtitled_video_overlays_supported() -> bool:
 
 
 # KRI-136: device features a multi-clip Talking-head recipe needs -- the
-# cutaway track is placed (`visualBlocks`), video (`visualVideos`), and muted
-# under the speaker's audio (`audioMix`).
-PHONE_TALKING_HEAD_FEATURES: tuple[str, ...] = ("visualBlocks", "visualVideos", "audioMix")
+# cutaway track is placed (`visualBlocks`), video (`visualVideos`), represented
+# as an overlay (`alphaOverlay` is conservatively inferred natively for every
+# non-empty overlay track), and muted under the speaker's audio (`audioMix`).
+PHONE_TALKING_HEAD_FEATURES: tuple[str, ...] = (
+    "visualBlocks",
+    "visualVideos",
+    "alphaOverlay",
+    "audioMix",
+)
 
 
 def phone_talking_head_supported() -> bool:
