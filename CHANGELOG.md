@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.3.0] - 2026-10-02
+
+### Fixed
+- fix(edit-proposal): clamp a closing cut stretched to hit the target (KRI-243) (#1304) <!-- release-pr: 1304 -->
+
 ## [0.78.2.0] - 2026-10-02
 
 ### Changed
