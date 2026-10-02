@@ -82,6 +82,23 @@ jobs:
     environment:
       name: ${{ github.event_name == 'schedule' && 'paid-ai-smoke' || 'paid-ai-evals' }}
     steps:
+      # An unset environment secret reads as empty, and the job then dies later
+      # with a SQLAlchemy URL parse error. This runs before checkout and install
+      # so a missing setup fails in seconds; the shell only sees true/false.
+      - name: Require paid-eval secrets in this environment
+        env:
+          ENVIRONMENT_NAME: ${{ github.event_name == 'schedule' && 'paid-ai-smoke' || 'paid-ai-evals' }}
+          HAS_DATABASE_URL_DEV: ${{ secrets.DATABASE_URL_DEV != '' }}
+          HAS_GEMINI_API_KEY_DEV: ${{ secrets.GEMINI_API_KEY_DEV != '' }}
+        run: |
+          missing=""
+          [ "$HAS_DATABASE_URL_DEV" = true ] || missing="$missing DATABASE_URL_DEV"
+          [ "$HAS_GEMINI_API_KEY_DEV" = true ] || missing="$missing GEMINI_API_KEY_DEV"
+          if [ -n "$missing" ]; then
+            echo "::error title=Paid eval secrets missing::Not set in the $ENVIRONMENT_NAME environment:$missing. Setup: docs/runbooks/gcp-cost-controls.md section 5."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
