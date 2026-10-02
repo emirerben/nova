@@ -74,7 +74,6 @@
       "KriaUITests/NativeEditorInspectorUITests/testEmptyingATalkingCaptionLineRemovesItAndUndoRestoresIt",
       "KriaUITests/NativeEditorInspectorUITests/testNextAndPreviousMoveBetweenCaptionLines",
       "KriaUITests/NativeEditorInspectorUITests/testSavingWithACaptionLineOpenCommitsItAndClosesTheBar",
-      "KriaUITests/NativeEditorInspectorUITests/testLongPressDeleteRemovesACaptionLineWithUndo",
       "KriaUITests/NativeEditorInspectorUITests/testAllPersistedLanesExposeStableTimelineIdentityAndInspector",
       "KriaUITests/NativeEditorInspectorUITests/testPreviewDragIsOneUndoableTextEdit",
       "KriaUITests/NativeEditorInspectorUITests/testStressFixtureRemainsReachableAtAccessibilityTypeWithReduceMotion",

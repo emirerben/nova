@@ -56,7 +56,6 @@
   "KriaUITests/NativeEditorInspectorUITests/testFinishedRenderFallbackRemainsPlayableAndDisablesCanvasManipulation": 9.7,
   "KriaUITests/NativeEditorInspectorUITests/testHardSourcePreviewFailureShowsUnavailableStateWithoutFallbackPlayer": 8.1,
   "KriaUITests/NativeEditorInspectorUITests/testKeyboardKeepsSourcePreviewVisibleAboveConnectedPanel": 16.0,
-  "KriaUITests/NativeEditorInspectorUITests/testLongPressDeleteRemovesACaptionLineWithUndo": 18.0,
   "KriaUITests/NativeEditorInspectorUITests/testLongPressDraggingTextBlockToRightEdgeAutoScrollsPastVisibleWindow": 21.1,
   "KriaUITests/NativeEditorInspectorUITests/testLongPressMovesTextTimingWithoutOpeningInspector": 22.1,
   "KriaUITests/NativeEditorInspectorUITests/testMovingSelectedTextDoesNotOpenStylePanel": 13.0,

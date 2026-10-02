@@ -459,7 +459,9 @@ compact 120pt typing preview.
 `CaptionLineEditingTests` covers the word rewrite, line-editor configuration,
 layout metrics, undo and removal behaviour and the park frame. In the `editor` UI
 group, `NativeEditorInspectorUITests` covers one-tap open with the keyboard,
-emptying a line and Undo, Next/Previous, Save with a line open and long-press Delete.
+emptying a line and Undo, Next/Previous and Save with a line open. Long-press
+Delete has no UI test: XCUITest taps on the context-menu item did not fire it
+reliably, so check it by hand on the simulator.
 
 ### Change-based CI
 

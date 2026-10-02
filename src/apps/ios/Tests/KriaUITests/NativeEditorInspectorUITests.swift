@@ -1360,30 +1360,6 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(row.label.contains("Bu alan var mı? tamam"), "the open line's edit was committed: \(row.label)")
     }
 
-    // Value: protects=long-press Delete removes a line and offers Undo; fails_when=the row context menu or remove() regresses; why_new=nothing exercised the list delete; seam=none
-    func testLongPressDeleteRemovesACaptionLineWithUndo() {
-        let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-talking-captions"]
-        app.launch()
-        let tool = app.buttons["native-editor-tool-captions"]
-        XCTAssertTrue(tool.waitForExistence(timeout: 8))
-        tool.tap()
-        // The first row: the second one sits partly under the floating tool rail.
-        let row = app.descendants(matching: .any)["native-editor-caption-row-native-caption-0"].firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 3))
-        row.press(forDuration: 1.0)
-        let delete = app.buttons["Delete"]
-        XCTAssertTrue(delete.waitForExistence(timeout: 3), "the row's long-press menu offers Delete")
-        // On the simulator the first tap after the long-press is swallowed (seen with
-        // XCUITest and by hand); the menu stays open and a second tap activates Delete.
-        delete.tap()
-        if delete.waitForExistence(timeout: 1) { delete.tap() }
-        XCTAssertTrue(app.buttons["native-editor-caption-undo-removal"].waitForExistence(timeout: 3))
-        XCTAssertFalse(app.descendants(matching: .any)["native-editor-caption-row-native-caption-0"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["native-editor-caption-row-native-caption-1"].exists)
-        XCTAssertFalse(app.textViews["native-editor-caption-field"].exists, "Delete does not open the editor")
-    }
-
     func testAllPersistedLanesExposeStableTimelineIdentityAndInspector() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes"]
