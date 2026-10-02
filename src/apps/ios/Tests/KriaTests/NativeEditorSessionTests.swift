@@ -862,9 +862,12 @@ final class NativeEditorSessionTests: XCTestCase {
         session.seek(to: outroTime)
         XCTAssertEqual(session.currentTime, outroTime, accuracy: 0.001)
         XCTAssertEqual(session.timelineTime(for: 100, width: 100), previewDuration, accuracy: 0.01)
-        for _ in 0..<100 where (session.scrubPreviewTime ?? 0) <= session.duration {
-            try await Task.sleep(for: .milliseconds(25))
+        // The compositor may still be finishing the initial frame on a busy
+        // simulator. Wait for the requested outro frame, not a 2.5s render budget.
+        let outroFrameReady = await waitUntil(timeout: .seconds(10)) {
+            (session.scrubPreviewTime ?? 0) > session.duration
         }
+        XCTAssertTrue(outroFrameReady, "The compositor must produce a frame inside the outro")
         XCTAssertGreaterThan(try XCTUnwrap(session.scrubPreviewTime), session.duration)
         session.togglePlayback()
         XCTAssertGreaterThan(session.currentTime, session.duration)
@@ -2156,6 +2159,197 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.commitCount, 1); XCTAssertEqual(fake.lastRequest?.baseGeneration, "generation-1"); XCTAssertEqual(session.saveState, .previewPending); XCTAssertFalse(session.hasUnsavedChanges)
     }
 
+    func testTimelineSaveAdoptsAuthoritativeServerTextWithoutMakingEditorDirty() async throws {
+        let threadID = UUID(); let jobID = UUID(); let clip = EditorClip(id: UUID(), assetID: UUID(), start: 0, end: 2, trimIn: 0, trimOut: 2)
+        let textID = UUID().uuidString
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object([
+            "timeline_slots": .array([.object(["slot_id": .string(clip.id.uuidString), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "removed": .bool(false)])]),
+            "text_elements": .array([.object(["id": .string(textID), "text": .string("Original"), "start_s": .number(0), "end_s": .number(1)])]),
+        ])])]
+        let capabilities: JSONValue = .object(["timeline": .bool(true), "text_elements": .bool(true)])
+        let initialVariant: [String: JSONValue] = ["variant_id": .string("variant"), "render_generation_id": .string("g1"), "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": capabilities]
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
+            authoritativeVariant: initialVariant,
+            commitResponse: EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: 2, revisionHash: "revision-2", expectedDuration: nil)
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [clip], text: [TextLayer(id: UUID(uuidString: textID)!, content: "Original", position: CGPoint(x: 0.5, y: 0.5), style: "Fraunces")], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 1, serverSnapshot: snapshot))
+        await session.load(api: fake, threadID: threadID)
+        session.selectClip(clip.id); session.trimSelected(edge: .trailing, to: 1.5)
+        fake.authoritativeVariant = ["variant_id": .string("variant"), "render_generation_id": .string("g2"), "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": capabilities, "text_elements": .array([.object(["id": .string(textID), "text": .string("Server projection"), "start_s": .number(0), "end_s": .number(1)])])]
+
+        await session.save()
+
+        XCTAssertEqual(session.document.textElements.first?.text, "Server projection")
+        XCTAssertFalse(session.isDirty(.text))
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
+    func testAuthoritativeTextRequiresExplicitArrayAndHonorsEmptyArray() async throws {
+        let threadID = UUID(); let jobID = UUID(); let textID = UUID().uuidString
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["text_elements": .array([.object(["id": .string(textID), "text": .string("Original"), "start_s": .number(0), "end_s": .number(1)])])])])]
+        let capabilities: JSONValue = .object(["timeline": .bool(true), "text_elements": .bool(true)])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
+            authoritativeVariant: ["variant_id": .string("variant"), "render_generation_id": .string("g1"), "editor_capabilities": capabilities],
+            commitResponse: EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: 2, revisionHash: "revision-2", expectedDuration: nil)
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [TextLayer(id: UUID(uuidString: textID)!, content: "Original", position: CGPoint(x: 0.5, y: 0.5), style: "Fraunces")], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 1, serverSnapshot: snapshot))
+        await session.load(api: fake, threadID: threadID)
+        session.markDirty(.timeline)
+        await session.save()
+        XCTAssertEqual(session.document.textElements.first?.text, "Original")
+
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "g3", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: 3, revisionHash: "revision-3", expectedDuration: nil)
+        fake.authoritativeVariant = ["variant_id": .string("variant"), "render_generation_id": .string("g3"), "editor_capabilities": capabilities, "text_elements": .array([])]
+        session.markDirty(.timeline)
+        await session.save()
+        XCTAssertTrue(session.document.textElements.isEmpty)
+    }
+
+    func testSaveReconcilesServerTextWhilePreservingConcurrentTextUndoAndRedo() async throws {
+        let threadID = UUID(); let jobID = UUID(); let textID = UUID().uuidString
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["text_elements": .array([.object(["id": .string(textID), "text": .string("Original"), "start_s": .number(0), "end_s": .number(1)])])])])]
+        let capabilities: JSONValue = .object(["timeline": .bool(true), "text_elements": .bool(true)])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
+            authoritativeVariant: ["variant_id": .string("variant"), "render_generation_id": .string("g1"), "editor_capabilities": capabilities],
+            commitResponse: EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: 2, revisionHash: "revision-2", expectedDuration: nil)
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [TextLayer(id: UUID(uuidString: textID)!, content: "Original", position: CGPoint(x: 0.5, y: 0.5), style: "Fraunces")], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 1, serverSnapshot: snapshot))
+        await session.load(api: fake, threadID: threadID)
+        session.updateTextContent(id: UUID(uuidString: textID)!, content: "Submitted")
+        fake.authoritativeVariant = ["variant_id": .string("variant"), "render_generation_id": .string("g2"), "editor_capabilities": capabilities, "text_elements": .array([.object(["id": .string(textID), "text": .string("Server"), "start_s": .number(0), "end_s": .number(1)])])]
+        fake.suspendNextEditorVariant = true
+
+        let saveTask = Task { await session.save() }
+        for _ in 0..<100 where !fake.editorVariantIsSuspended { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(fake.editorVariantIsSuspended)
+        session.updateTextContent(id: UUID(uuidString: textID)!, content: "Local")
+        fake.resumeEditorVariant()
+        await saveTask.value
+
+        XCTAssertEqual(session.document.textElements.first?.text, "Local")
+        XCTAssertTrue(session.isDirty(.text))
+        session.undo()
+        XCTAssertEqual(session.document.textElements.first?.text, "Server")
+        session.redo()
+        XCTAssertEqual(session.document.textElements.first?.text, "Local")
+    }
+
+    func testOtherLaneEditDuringSaveAdoptsServerTextAndStaysDirtyOnlyForThatLane() async throws {
+        let threadID = UUID(); let jobID = UUID(); let textID = UUID().uuidString; let trackID = UUID().uuidString
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["text_elements": .array([.object(["id": .string(textID), "text": .string("Original"), "start_s": .number(0), "end_s": .number(1)])]), "music_track_id": .string(trackID), "music_window": .object(["start_s": .number(0), "alignment": .string("preserve_cuts")])])])]
+        let capabilities: JSONValue = .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(true)])
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now), authoritativeVariant: ["variant_id": .string("variant"), "render_generation_id": .string("g1"), "editor_capabilities": capabilities], commitResponse: EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: 2, revisionHash: "revision-2", expectedDuration: nil))
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [TextLayer(id: UUID(uuidString: textID)!, content: "Original", position: CGPoint(x: 0.5, y: 0.5), style: "Fraunces")], captions: CaptionStyle(enabled: false, style: "sentence"), music: MusicSelection(trackID: UUID(uuidString: trackID)!, title: "Music", start: 0), revision: 1, serverSnapshot: snapshot))
+        await session.load(api: fake, threadID: threadID)
+        session.markDirty(.timeline)
+        fake.authoritativeVariant = ["variant_id": .string("variant"), "render_generation_id": .string("g2"), "editor_capabilities": capabilities, "text_elements": .array([.object(["id": .string(textID), "text": .string("Server"), "start_s": .number(0), "end_s": .number(1)])])]
+        fake.suspendNextEditorVariant = true
+        let saveTask = Task { await session.save() }
+        for _ in 0..<100 where !fake.editorVariantIsSuspended { try? await Task.sleep(for: .milliseconds(10)) }
+        session.setOriginalMixLevel(0.25)
+        fake.resumeEditorVariant(); await saveTask.value
+
+        XCTAssertEqual(session.document.textElements.first?.text, "Server")
+        XCTAssertFalse(session.isDirty(.text))
+        XCTAssertTrue(session.isDirty(.mix))
+        XCTAssertTrue(session.hasUnsavedChanges)
+    }
+
+    func testMismatchedGenerationPollDoesNotAdoptServerText() async throws {
+        let threadID = UUID(); let jobID = UUID(); let textID = UUID().uuidString
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["text_elements": .array([.object(["id": .string(textID), "text": .string("Original"), "start_s": .number(0), "end_s": .number(1)])])])])]
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now), authoritativeVariant: ["variant_id": .string("variant"), "render_generation_id": .string("g1"), "editor_capabilities": .object(["text_elements": .bool(true)])], commitResponse: EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: 2, revisionHash: "revision-2", expectedDuration: nil))
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [TextLayer(id: UUID(uuidString: textID)!, content: "Original", position: CGPoint(x: 0.5, y: 0.5), style: "Fraunces")], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 1, serverSnapshot: snapshot))
+        await session.load(api: fake, threadID: threadID); session.updateTextContent(id: UUID(uuidString: textID)!, content: "Submitted"); await session.save()
+        XCTAssertFalse(session.applyPreviewVariant(["render_generation_id": .string("old"), "render_status": .string("rendering"), "text_elements": .array([.object(["id": .string(textID), "text": .string("Stale")])])], generation: "g2"))
+        XCTAssertEqual(session.document.textElements.first?.text, "Submitted")
+    }
+
+    func testFetchFailureLeavesSaveDurableAndPollReconcilesLater() async throws {
+        let threadID = UUID(); let jobID = UUID(); let textID = UUID().uuidString
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["text_elements": .array([.object(["id": .string(textID), "text": .string("Original"), "start_s": .number(0), "end_s": .number(1)])])])])]
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now), authoritativeVariant: ["variant_id": .string("variant"), "render_generation_id": .string("g1"), "editor_capabilities": .object(["text_elements": .bool(true)])], commitResponse: EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: 2, revisionHash: "revision-2", expectedDuration: nil))
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [TextLayer(id: UUID(uuidString: textID)!, content: "Original", position: CGPoint(x: 0.5, y: 0.5), style: "Fraunces")], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 1, serverSnapshot: snapshot))
+        await session.load(api: fake, threadID: threadID); session.updateTextContent(id: UUID(uuidString: textID)!, content: "Submitted")
+        fake.authoritativeVariant = ["variant_id": .string("variant"), "render_generation_id": .string("g2"), "editor_capabilities": .object(["text_elements": .bool(true)]), "text_elements": .array([.object(["id": .string(textID), "text": .string("Server")])])]
+        fake.editorVariantError = .requestFailed(status: 503)
+        await session.save()
+        XCTAssertEqual(session.saveState, .previewPending)
+        fake.editorVariantError = nil
+        XCTAssertFalse(session.applyPreviewVariant(["render_generation_id": .string("g2"), "render_status": .string("rendering"), "text_elements": .array([.object(["id": .string(textID), "text": .string("Server")])])], generation: "g2"))
+        XCTAssertEqual(session.document.textElements.first?.text, "Server")
+    }
+
+    func testSaveDoesNotResumeOldResponseAfterTargetSwitchDuringVariantFetch() async throws {
+        let threadID = UUID(); let jobID = UUID(); let textID = UUID().uuidString
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["text_elements": .array([.object(["id": .string(textID), "text": .string("Original"), "start_s": .number(0), "end_s": .number(1)])])])])]
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now), authoritativeVariant: ["variant_id": .string("variant"), "render_generation_id": .string("g1"), "editor_capabilities": .object(["text_elements": .bool(true)])], commitResponse: EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: 2, revisionHash: "revision-2", expectedDuration: nil))
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [TextLayer(id: UUID(uuidString: textID)!, content: "Original", position: CGPoint(x: 0.5, y: 0.5), style: "Fraunces")], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 1, serverSnapshot: snapshot))
+        await session.load(api: fake, threadID: threadID); session.updateTextContent(id: UUID(uuidString: textID)!, content: "Submitted")
+        fake.authoritativeVariant = ["variant_id": .string("variant"), "render_generation_id": .string("g2"), "editor_capabilities": .object(["text_elements": .bool(true)]), "text_elements": .array([.object(["id": .string(textID), "text": .string("Server")])])]
+        fake.suspendNextEditorVariant = true
+        let saveTask = Task { await session.save() }
+        for _ in 0..<100 where !fake.editorVariantIsSuspended { try? await Task.sleep(for: .milliseconds(10)) }
+        let replacementJobID = UUID(); let replacement = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d2", itemID: "new-item", variantKey: "new-variant", draftRevision: 1, snapshotHash: "h2", etag: "e2", baseJobID: replacementJobID.uuidString, baseGenerationID: "new-g1", snapshot: [:], canUndo: false, createdAt: .now), authoritativeVariant: ["variant_id": .string("new-variant"), "render_generation_id": .string("new-g1"), "editor_capabilities": .object(["text_elements": .bool(true)])])
+        await session.load(api: replacement, threadID: UUID())
+        fake.resumeEditorVariant(); await saveTask.value
+
+        XCTAssertEqual(session.visualItemID, "new-item")
+        XCTAssertFalse(session.saveState == .previewPending, "the old save must not start a poll on the replacement target")
+    }
+
+    func testActiveTrimBaselineRebasesAuthoritativeTextDuringSave() async throws {
+        let threadID = UUID(); let jobID = UUID(); let clip = EditorClip(id: UUID(), assetID: UUID(), start: 0, end: 2, trimIn: 0, trimOut: 2); let textID = UUID().uuidString
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["timeline_slots": .array([.object(["slot_id": .string(clip.id.uuidString), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "removed": .bool(false)])]), "text_elements": .array([.object(["id": .string(textID), "text": .string("Original"), "start_s": .number(0), "end_s": .number(1)])])])])]
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now), authoritativeVariant: ["variant_id": .string("variant"), "render_generation_id": .string("g1"), "user_timeline": .object(["slots": .array([.object(["slot_id": .string(clip.id.uuidString), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(2), "removed": .bool(false)])])]), "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true)])], commitResponse: EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: 2, revisionHash: "revision-2", expectedDuration: nil))
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [clip], text: [TextLayer(id: UUID(uuidString: textID)!, content: "Original", position: CGPoint(x: 0.5, y: 0.5), style: "Fraunces")], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 1, serverSnapshot: snapshot))
+        await session.load(api: fake, threadID: threadID)
+        session.beginTrim(clipID: clip.id, edge: .trailing); session.updateTrim(by: -0.25)
+        fake.authoritativeVariant = ["variant_id": .string("variant"), "render_generation_id": .string("g2"), "user_timeline": .object(["slots": .array([.object(["slot_id": .string(clip.id.uuidString), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(2), "removed": .bool(false)])])]), "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true)]), "text_elements": .array([.object(["id": .string(textID), "text": .string("Server")])])]
+        await session.save()
+        XCTAssertEqual(fake.editorVariantJobIDs.last, jobID)
+        XCTAssertEqual(session.saveState, .previewPending)
+        XCTAssertEqual(session.document.textElements.first?.text, "Server")
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        session.updateTrim(by: -0.25)
+        XCTAssertEqual(session.document.clips.first?.durationS, 1.75, "cumulative drag must not apply twice after Save")
+        XCTAssertFalse(session.canUndo)
+        session.updateTrim(by: 0); session.endTrim()
+        XCTAssertEqual(session.document.textElements.first?.text, "Server")
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertTrue(session.canUndo)
+        session.undo()
+        XCTAssertEqual(session.document.clips.first?.durationS, 1.75)
+        XCTAssertEqual(session.document.revision.baseGeneration, "g2")
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
+    func testDurableAcknowledgementInvalidatesPreviousPollDuringReplacementFetch() async throws {
+        let threadID = UUID(); let jobID = UUID(); let textID = UUID().uuidString
+        let snapshot: [String: JSONValue] = ["editor_payload": .object(["base_generation": .string("g1"), "sections": .object(["text_elements": .array([.object(["id": .string(textID), "text": .string("Original"), "start_s": .number(0), "end_s": .number(1)])])])])]
+        let capabilities: JSONValue = .object(["text_elements": .bool(true)])
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now), authoritativeVariant: ["variant_id": .string("variant"), "render_generation_id": .string("g1"), "editor_capabilities": capabilities], commitResponse: EditorCommitResponse(ok: true, generation: "g2", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: 2, revisionHash: "revision-2", expectedDuration: nil))
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [TextLayer(id: UUID(uuidString: textID)!, content: "Original", position: CGPoint(x: 0.5, y: 0.5), style: "Fraunces")], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 1, serverSnapshot: snapshot))
+        await session.load(api: fake, threadID: threadID)
+        session.updateTextContent(id: UUID(uuidString: textID)!, content: "First")
+        fake.authoritativeVariant = ["variant_id": .string("variant"), "render_generation_id": .string("g2"), "editor_capabilities": capabilities, "text_elements": .array([.object(["id": .string(textID), "text": .string("First")])])]
+        await session.save()
+
+        session.updateTextContent(id: UUID(uuidString: textID)!, content: "Second")
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "g3", sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false), revisionNumber: 3, revisionHash: "revision-3", expectedDuration: nil)
+        fake.authoritativeVariant = ["variant_id": .string("variant"), "render_generation_id": .string("g3"), "editor_capabilities": capabilities, "text_elements": .array([.object(["id": .string(textID), "text": .string("Third")])])]
+        fake.suspendNextEditorVariant = true
+        let saveTask = Task { await session.save() }
+        for _ in 0..<100 where !fake.editorVariantIsSuspended { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(fake.editorVariantIsSuspended)
+        XCTAssertFalse(session.applyPreviewVariant(["render_generation_id": .string("g2"), "render_status": .string("rendering"), "text_elements": .array([.object(["id": .string(textID), "text": .string("Stale")])])], generation: "g2"))
+        fake.resumeEditorVariant(); await saveTask.value
+        XCTAssertEqual(session.document.textElements.first?.text, "Third")
+    }
+
     func testPhoneSaveReconcilesAppOwnedRendererWithCreationProjectIdentity() async {
         let threadID = UUID(), jobID = UUID()
         let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 4, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
@@ -3302,7 +3496,7 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     var draftError: APIError?
     let openReceipt: OpenInEditorResponse?
     var authoritativeVariant: [String: JSONValue]?
-    let editorVariantError: APIError?
+    var editorVariantError: APIError?
     var commitResponse: EditorCommitResponse?
     let commitError: APIError?
     var refreshedThread: CreationThread?
@@ -3310,6 +3504,10 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     private var commitContinuation: CheckedContinuation<Void, Never>?
     private var commitResumeRequested = false
     private var suspendNextCommit: Bool
+    var suspendNextEditorVariant = false
+    private(set) var editorVariantIsSuspended = false
+    private var editorVariantContinuation: CheckedContinuation<Void, Never>?
+    private var editorVariantResumeRequested = false
     var suspendNextSourcePool = false
     private(set) var sourcePoolIsSuspended = false
     private var sourcePoolContinuation: CheckedContinuation<Void, Never>?
@@ -3379,8 +3577,29 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue] {
         lastVariantID = variantID; editorVariantJobIDs.append(jobID)
         if supersededJobIDs.contains(jobID) { throw APIError.contentPlanUnavailable }
+        if suspendNextEditorVariant {
+            suspendNextEditorVariant = false
+            editorVariantIsSuspended = true
+            await withCheckedContinuation { continuation in
+                if editorVariantResumeRequested {
+                    editorVariantResumeRequested = false
+                    continuation.resume()
+                } else {
+                    editorVariantContinuation = continuation
+                }
+            }
+            editorVariantIsSuspended = false
+        }
         if let editorVariantError { throw editorVariantError }
         return authoritativeVariant ?? ["editor_revision_number": phoneDestination ? .number(7) : .null, "render_destination": .string(phoneDestination ? "device" : "cloud"), "variant_id": .string(variantID), "render_generation_id": .string("generation-1"), "resolved_archetype": .string("narrated"), "base_video_path": .string("base.mp4"), "editor_capabilities": .object(["timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false)]), "user_timeline": .object(["slots": .array([.object(["slot_id": .string("slot"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(2), "source_duration_s": .number(2), "removed": .bool(false)])])])]
+    }
+    func resumeEditorVariant() {
+        if let editorVariantContinuation {
+            editorVariantContinuation.resume()
+            self.editorVariantContinuation = nil
+        } else {
+            editorVariantResumeRequested = true
+        }
     }
     func editorSource(itemID: String, variantID: String, importID: UUID) async throws -> EditorSourceRegistrationResponse {
         guard let editorSourceResponse else { throw APIError.unsupported }
