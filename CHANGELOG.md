@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.22.0] - 2026-10-02
+
+### Changed
+- feat(ios): redesign footage and voiceover attachment flow (#1331) <!-- release-pr: 1331 -->
+
 ## [0.78.21.0] - 2026-10-02
 
 ### Changed
