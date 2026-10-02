@@ -25,6 +25,9 @@ jobs:
   require-eval-fixture:
     name: Require eval fixture for prompt/schema/agent changes
     runs-on: ubuntu-latest
+    # Full-history checkout dominates; the slowest green full-clone job in CI
+    # took 3.8 min (this one: 2.2 min). 10 is ~2.5x that.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:

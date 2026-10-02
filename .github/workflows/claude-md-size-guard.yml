@@ -12,6 +12,9 @@ on:
 jobs:
   guard:
     runs-on: ubuntu-latest
+    # Full-history checkout dominates; the slowest green full-clone job in CI
+    # took 3.8 min (this one: 2.5 min). 10 is ~2.5x that.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
