@@ -114,10 +114,17 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   Requirements have a server-assigned id (`r<n>`), `kind`, `scope`, `literal`
   (creator-written text only) or `description`, `facts`, and `status`. A later
   requirement with the same `(kind, scope)` supersedes the earlier one. The
-  Main Creator (prompt v37) only proposes `brief_updates`; unparseable entries
+  Main Creator (prompt v40) only proposes `brief_updates`; unparseable entries
   are dropped, never fatal. Versions are written by the turn-completion
   transaction under the thread lock, after the revision fence, so a requeued
   turn never persists one.
+- **Context is not a command.** The brief records requested output changes, not
+  facts that merely describe the footage. Times, activities, locations, routes,
+  or named subsets can shape the proposed story without becoming durable
+  `order`, `select`, or per-clip text requirements. `order/global` is emitted
+  only when the creator explicitly asks the edit to arrange clips (for example,
+  "put them in the order I filmed them"). A broad request for creative ideas
+  does not promote surrounding context into clip constraints.
 - **Router.** `route_requirements` is deterministic. `replan` when a new
   requirement is `order`/`select`, a per-clip text requirement arrives and the
   plan has no per-clip text lane, the kinds are mixed, there is no editable
