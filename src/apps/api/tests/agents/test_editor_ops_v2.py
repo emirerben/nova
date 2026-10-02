@@ -154,6 +154,9 @@ def test_new_op_without_coerce_is_rejected() -> None:
 
 
 def test_register_handler_dispatch_duplicate_and_unregistered(monkeypatch) -> None:
+    # Initialize the real registry before replacing it: the one-time registration
+    # flag survives monkeypatch teardown, so lazy loading into the copy loses ops.
+    editor_ops_v2.register_all_handlers()
     table = dict(ops_mod._OP_HANDLERS)
     monkeypatch.setattr(ops_mod, "_OP_HANDLERS", table)
     variant = _variant()
