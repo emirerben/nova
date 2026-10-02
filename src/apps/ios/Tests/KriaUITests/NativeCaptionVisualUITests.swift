@@ -133,8 +133,10 @@ final class NativeCaptionVisualUITests: XCTestCase {
         XCTAssertNotEqual(speed.value as? String, previousSpeed)
         // The tall panel now covers the transport (KRI-170); collapse it back
         // before checking playback is still available.
+        // A small overshoot: a long pull past the bottom closes the panel (KRI-253).
         let raised = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 10))
-        raised.press(forDuration: 0.1, thenDragTo: raised.withOffset(CGVector(dx: 0, dy: 400)))
+        raised.press(forDuration: 0.1, thenDragTo: raised.withOffset(CGVector(dx: 0, dy: 220)),
+                     withVelocity: .slow, thenHoldForDuration: 0.2)
         let play = app.buttons["native-editor-play-pause"]
         XCTAssertTrue(play.waitForExistence(timeout: 5))
         XCTAssertTrue(play.isHittable)
