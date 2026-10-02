@@ -122,7 +122,7 @@ struct SlidePostWorkspaceView: View {
                             capabilitiesLoaded: effectiveCapabilities != nil,
                             refresh: { await refreshOwner() })
                 .environmentObject(model)
-                .presentationDetents([.medium, .large])
+                .presentationDetents([.large])
         }
         .sheet(isPresented: $exporter.isSharing, onDismiss: exporter.discardShareDirectory) {
             SlidePostShareSheet(items: exporter.shareItems)

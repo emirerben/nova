@@ -126,6 +126,9 @@ private final class CreationChatFixture: @unchecked Sendable {
         if parts.last == "actions" {
             let action = body["action"] as? String ?? ""
             let payload = body["payload"] as? [String: Any] ?? [:]
+            if action == "remove_media", ProcessInfo.processInfo.environment["KRIA_CHAT_REMOVE_MEDIA_FAILURE"] == "1" {
+                return response(["detail": "Fixture removal failed"], status: 500)
+            }
             if action == "generate", let failure = generateFailure(threadID: id) {
                 return failure == "offline" ? nil : response(["detail": "Internal Server Error"], status: 500)
             }
@@ -137,7 +140,15 @@ private final class CreationChatFixture: @unchecked Sendable {
                 // A phone-render account's clip is an analysis proxy; the original stays on the iPhone.
                 let mediaID = DeviceRenderUITestFixture.scenario == nil ? "fixture-clip" : "analysis-proxy-fixture-clip"
                 if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA"] == "1" {
-                    state["media"] = [["media_id": mediaID, "kind": "video", "filename": "sample.mov"]]
+                    var clip: [String: Any] = ["media_id": mediaID, "kind": "video", "filename": "sample.mov"]
+                    if let seconds = ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA_DURATION"].flatMap(Double.init) {
+                        clip["duration_s"] = seconds
+                    }
+                    var media = [clip]
+                    if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_VOICEOVER"] == "1" {
+                        media.append(["media_id": "fixture-voiceover", "kind": "audio", "filename": "existing-voiceover.m4a", "duration_s": 6])
+                    }
+                    state["media"] = media
                 }
                 append("action_select_format", payload: payload)
                 if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA"] == "1" {

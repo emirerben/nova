@@ -31,6 +31,13 @@ struct FootagePickerView: View {
     /// KRI-175: called when a pick filled the live picker and it closed itself, so the host can return
     /// to chat too (one talking-to-camera clip: pick it and you're back).
     let onPickerFilled: (() -> Void)?
+    /// Called after a picker has closed with newly selected footage. This is
+    /// distinct from `onPickerFilled`, which is only the live-picker cap flow.
+    let onSelectionCompleted: (() -> Void)?
+    /// Voiceover preview flow: ownership of the copied local audio file passes
+    /// to this callback. It deliberately does not enqueue an upload.
+    let onAudioFileSelected: ((URL) -> Void)?
+    let showsHeading: Bool
     @ObservedObject private var uploads: BackgroundUploadCoordinator
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showingPhotosPicker = false
@@ -40,6 +47,7 @@ struct FootagePickerView: View {
     /// per render: the picker's limit must count what it will actually display.
     @State private var showablePreselectedCount = 0
     @State private var selectionMessage: String?
+    @State private var photosPickerHasNewFootage = false
 
     init(
         projectID: UUID,
@@ -51,9 +59,15 @@ struct FootagePickerView: View {
         itemID: String? = nil,
         limit: CreationMediaLimit? = nil,
         destination: ProjectUploadDestination = .cloud,
-        onPickerFilled: (() -> Void)? = nil
+        onPickerFilled: (() -> Void)? = nil,
+        onSelectionCompleted: (() -> Void)? = nil,
+        onAudioFileSelected: ((URL) -> Void)? = nil,
+        showsHeading: Bool = true
     ) {
         self.onPickerFilled = onPickerFilled
+        self.onSelectionCompleted = onSelectionCompleted
+        self.onAudioFileSelected = onAudioFileSelected
+        self.showsHeading = showsHeading
         self.role = role
         self.itemID = itemID
         self.limit = limit
@@ -143,7 +157,7 @@ struct FootagePickerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            KriaSectionLabel(title: "Add \(role.title.lowercased())")
+            if showsHeading { KriaSectionLabel(title: "Add \(role.title.lowercased())") }
             if role != .voiceover {
             Button { beginImport(source: .photos) } label: {
                 Label("Choose from Photos", systemImage: "photo.on.rectangle").frame(maxWidth: .infinity, minHeight: 48)
@@ -157,19 +171,21 @@ struct FootagePickerView: View {
                 filter: role == .visual ? visualPickerFilter : .videos,
                 libraryBacked: libraryAuthorized,
                 title: role.title,
-                onFilled: onPickerFilled
+                onFilled: onPickerFilled,
+                didChooseNewFootage: $photosPickerHasNewFootage,
+                onSelectionCompleted: onSelectionCompleted
             ))
             .onChange(of: photoItems) { _, items in reconcile(items) }
             }
             Button { beginImport(source: .files) } label: {
-                Label("Choose from Files or iCloud", systemImage: "folder").frame(maxWidth: .infinity, minHeight: 48)
+                Label(role == .voiceover && onAudioFileSelected != nil ? "Upload an audio file" : "Choose from Files or iCloud", systemImage: "folder").frame(maxWidth: .infinity, minHeight: 48)
             }
-            .buttonStyle(KriaSecondaryButtonStyle())
+            .buttonStyle(AttachmentFileButtonStyle(isVoiceover: role == .voiceover && onAudioFileSelected != nil))
             .disabled(selectionCapacity.remaining == 0 || !destination.canUpload)
             .fileImporter(
                 isPresented: $showingFileImporter,
                 allowedContentTypes: role == .voiceover ? [.audio] : role == .visual ? visualContentTypes : [.movie],
-                allowsMultipleSelection: selectionCapacity.remaining > 1,
+                allowsMultipleSelection: role == .voiceover && onAudioFileSelected != nil ? false : selectionCapacity.remaining > 1,
                 onCompletion: importFiles
             )
             if let message = destination.message {
@@ -312,6 +328,7 @@ struct FootagePickerView: View {
         // upload every clip again.
         let diff = PhotoSelectionDiff(current: items.compactMap(\.itemIdentifier), known: preselectedIdentifiers)
         guard !diff.isEmpty else { return }
+        if role == .clip, !diff.added.isEmpty { photosPickerHasNewFootage = true }
         let byIdentifier = Dictionary(items.compactMap { item in item.itemIdentifier.map { ($0, item) } }, uniquingKeysWith: { first, _ in first })
         for identifier in diff.added {
             guard let item = byIdentifier[identifier] else { continue }
@@ -356,6 +373,18 @@ struct FootagePickerView: View {
             selectionMessage = "Only \(acceptedCount) more \(acceptedCount == 1 ? "clip" : "clips") can be added in this format."
         }
         let chosen = Array(items.prefix(acceptedCount))
+        if role == .clip, !chosen.isEmpty {
+            photosPickerHasNewFootage = true
+            // The permission-free picker only commits this binding after it
+            // has closed. Yield once so its dismissal state is visible even
+            // when PhotosUI delivers the binding before `isPresented` flips.
+            Task { @MainActor in
+                await Task.yield()
+                guard !showingPhotosPicker, photosPickerHasNewFootage else { return }
+                photosPickerHasNewFootage = false
+                onSelectionCompleted?()
+            }
+        }
         photoItems = []
         let ids = chosen.map { _ in UUID() }
         // Count them against the limit while their files are still being fetched.
@@ -377,12 +406,19 @@ struct FootagePickerView: View {
     /// would only thrash the disk.
     private func importFiles(_ result: Result<[URL], any Error>) {
         guard case .success(let urls) = result else { return }
+        if role == .voiceover, let onAudioFileSelected {
+            importVoiceoverPreview(urls, onAudioFileSelected: onAudioFileSelected)
+            return
+        }
         let purpose = uploadPurpose
         let acceptedCount = selectionCapacity.acceptedCount(requested: urls.count)
         if acceptedCount < urls.count {
             selectionMessage = "Only \(acceptedCount) more \(acceptedCount == 1 ? "clip" : "clips") can be added in this format."
         }
         let chosen = Array(urls.prefix(acceptedCount))
+        if role == .clip, !chosen.isEmpty {
+            Task { @MainActor in onSelectionCompleted?() }
+        }
         let ids = chosen.map { _ in UUID() }
         for (url, id) in zip(chosen, ids) { uploads.markInFlight(id, projectID: projectID, role: role, filename: url.lastPathComponent) }
         Task {
@@ -390,6 +426,37 @@ struct FootagePickerView: View {
                 _ = await uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: purpose, role: role, itemID: itemID, limit: limit, recordID: id)
             }
             for id in ids { uploads.clearInFlight(id) }
+        }
+    }
+
+    /// File importer URLs may be security-scoped and stop being readable as
+    /// soon as this callback returns. Copy first, then hand the caller a stable
+    /// temporary file for recording/import preview; the caller owns deletion or
+    /// later enqueueing after the creator taps Use voiceover.
+    private func importVoiceoverPreview(_ urls: [URL], onAudioFileSelected: @escaping (URL) -> Void) {
+        guard destination.canUpload else {
+            selectionMessage = destination.message
+            return
+        }
+        let acceptedCount = selectionCapacity.acceptedCount(requested: urls.count)
+        guard acceptedCount > 0, let source = urls.first else {
+            selectionMessage = "You’ve reached the limit for voiceover."
+            return
+        }
+        let accessed = source.startAccessingSecurityScopedResource()
+        defer { if accessed { source.stopAccessingSecurityScopedResource() } }
+        do {
+            let values = try source.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
+            guard let size = values.fileSize, size > 0 else { throw CreationUploadError.unsupportedType }
+            let contentType = values.contentType?.preferredMIMEType ?? "application/octet-stream"
+            guard role.accepts(contentType) else { throw CreationUploadError.unsupportedType }
+            if let limit, !limit.contentTypes.contains(contentType) { throw CreationUploadError.unsupportedType }
+            if let limit, let maximum = limit.byteLimit(contentType: contentType), Int64(size) > maximum { throw CreationUploadError.tooLarge }
+            let destination = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString)-\(source.lastPathComponent)")
+            try FileManager.default.copyItem(at: source, to: destination)
+            onAudioFileSelected(destination)
+        } catch {
+            selectionMessage = error.localizedDescription
         }
     }
 }
@@ -411,7 +478,15 @@ private struct FootagePhotosPicker: ViewModifier {
     let title: String
     /// Runs once the sheet has closed itself because a pick filled it, so the host can go further back.
     let onFilled: (() -> Void)?
+    @Binding var didChooseNewFootage: Bool
+    let onSelectionCompleted: (() -> Void)?
     @State private var closedByFilling = false
+
+    private func completeSelectionIfNeeded() {
+        guard didChooseNewFootage else { return }
+        didChooseNewFootage = false
+        onSelectionCompleted?()
+    }
 
     func body(content: Content) -> some View {
         if libraryBacked {
@@ -419,6 +494,7 @@ private struct FootagePhotosPicker: ViewModifier {
                 // After the dismissal, not with it: the host closing its own sheet while this one is
                 // still on screen would tear both down mid-animation.
                 if closedByFilling { closedByFilling = false; onFilled?() }
+                completeSelectionIfNeeded()
             }) {
                 LibraryPhotosPickerSheet(title: title, selection: $selection, limit: limit, filter: filter) { filled in
                     closedByFilling = filled
@@ -427,6 +503,9 @@ private struct FootagePhotosPicker: ViewModifier {
             }
         } else {
             content.photosPicker(isPresented: $isPresented, selection: $selection, maxSelectionCount: limit, matching: filter)
+                .onChange(of: isPresented) { _, presented in
+                    if !presented { completeSelectionIfNeeded() }
+                }
         }
     }
 }
@@ -501,5 +580,17 @@ struct ImportedMedia: Transferable {
         let destination = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString)-\(received.file.lastPathComponent)")
         try FileManager.default.copyItem(at: received.file, to: destination)
         return ImportedMedia(url: destination)
+    }
+}
+
+/// The guided voiceover importer is the page's primary action.
+private struct AttachmentFileButtonStyle: ButtonStyle {
+    let isVoiceover: Bool
+    @ViewBuilder func makeBody(configuration: Configuration) -> some View {
+        if isVoiceover {
+            AttachmentPrimaryButtonStyle().makeBody(configuration: configuration)
+        } else {
+            KriaSecondaryButtonStyle().makeBody(configuration: configuration)
+        }
     }
 }

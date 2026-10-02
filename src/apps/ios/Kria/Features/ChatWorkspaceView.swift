@@ -683,7 +683,7 @@ private struct CreationWorkspaceView: View {
                 }
             )
                 .environmentObject(model)
-                .presentationDetents([.medium, .large])
+                .presentationDetents([.large])
         }
         .fullScreenCover(isPresented: $showsResult) {
             // Chat <-> Editor is a switch, not a page rising from the bottom: the
