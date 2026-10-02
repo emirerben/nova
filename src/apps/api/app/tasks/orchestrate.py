@@ -87,6 +87,10 @@ def _merge_probe_metadata(existing: object, probe: dict) -> dict:
     time_limit=1200,
 )
 def orchestrate_job(self, job_id: str) -> None:
+    from app.services.cloud_render_policy import block_cloud_render_task  # noqa: PLC0415
+
+    if block_cloud_render_task(job_id, task_name="tasks.orchestrate_job"):
+        return
     log.info("orchestrate_start", job_id=job_id)
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -337,6 +341,10 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
 
     NEVER raises — errors are caught here so the chord callback always fires.
     """
+    from app.services.cloud_render_policy import block_cloud_render_task  # noqa: PLC0415
+
+    if block_cloud_render_task(job_id, task_name="tasks.render_clip"):
+        return {"clip_id": clip_db_id, "success": False, "error": "cloud_render_disabled"}
     log.info("render_clip_start", job_id=job_id, clip_id=clip_db_id)
 
     with _sync_session() as db:

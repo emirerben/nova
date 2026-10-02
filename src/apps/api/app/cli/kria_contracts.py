@@ -89,6 +89,7 @@ from app.routes.plan_items import (
     SlidePostState,
 )
 from app.schemas.slide_post import SlidePostDraft
+from app.services.ios_device_admission import is_legacy_creation_path, is_state_changing_method
 
 DEFAULT_SNAPSHOT = Path(__file__).parents[2] / "tests" / "fixtures" / "kria_turns" / "tools.json"
 DEFAULT_TYPES = Path(__file__).parents[3] / "web" / "src" / "lib" / "kria-runtime-v2.generated.ts"
@@ -371,6 +372,29 @@ def _editor_source_responses(*, preparing: bool) -> dict[str, Any]:
             "content": {"application/json": {"schema": _schema_ref(EditorSourceOut)}},
         }
     return responses
+
+
+def _add_creation_admission_responses(document: dict[str, Any]) -> None:
+    """Document middleware rejections on every native creation mutation."""
+
+    problem = {
+        "content": {"application/json": {"schema": _schema_ref(KriaProblemOut)}},
+    }
+    for path, path_item in document["paths"].items():
+        if not is_legacy_creation_path(path):
+            continue
+        for method, operation in path_item.items():
+            if not is_state_changing_method(method):
+                continue
+            responses = operation["responses"]
+            responses.setdefault(
+                "410",
+                {**problem, "description": "Web creation is retired"},
+            )
+            responses.setdefault(
+                "426",
+                {**problem, "description": "Native client update required"},
+            )
 
 
 def mobile_openapi_json() -> str:
@@ -935,6 +959,7 @@ def mobile_openapi_json() -> str:
             "schemas": schemas,
         },
     }
+    _add_creation_admission_responses(document)
     return json.dumps(document, indent=2, sort_keys=True) + "\n"
 
 

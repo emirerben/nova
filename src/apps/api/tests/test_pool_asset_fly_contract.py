@@ -32,6 +32,11 @@ def test_dedicated_autoplace_worker_is_always_on_and_bounded() -> None:
         "memory_mb": 2048,
     }
 
+    # Release 1 keeps the dedicated consumer for the drain window while the
+    # unified worker is made ready to own the queue after cutover.
+    worker_queues = set(fly["processes"]["worker"].split("-Q ", 1)[1].split()[0].split(","))
+    assert {"autoplace-jobs", "speech-analysis"}.issubset(worker_queues)
+
 
 def test_initial_deploy_does_not_switch_analysis_queue() -> None:
     assert "POOL_ASSET_ANALYSIS_QUEUE" not in _fly().get("env", {})

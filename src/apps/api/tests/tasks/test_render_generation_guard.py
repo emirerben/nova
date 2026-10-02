@@ -133,6 +133,83 @@ def _capture_updates(monkeypatch, job) -> list[dict]:
     return updates
 
 
+def test_cloud_blocked_variant_rerender_restores_matching_generation(monkeypatch):
+    """The entry fence runs before task-local cleanup, so it owns this reset."""
+    job = _FakeJob([_variant("tok-current")])
+    _patch_sessions(monkeypatch, job)
+    monkeypatch.setattr(
+        "app.services.cloud_render_policy.block_cloud_render_task",
+        lambda *_args, **_kwargs: True,
+    )
+
+    gb.reburn_narrated_captions.run(JOB_ID, "original_text", render_gen_id="tok-current")
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["render_status"] == "ready"
+    assert variant["ok"] is True
+    assert variant["output_url"] == "https://signed/last-good"
+    assert variant["render_error"]
+
+
+def test_cloud_blocked_variant_rerender_does_not_touch_superseded_generation(monkeypatch):
+    job = _FakeJob([_variant("tok-new")])
+    _patch_sessions(monkeypatch, job)
+    updates = _capture_updates(monkeypatch, job)
+    monkeypatch.setattr(
+        "app.services.cloud_render_policy.block_cloud_render_task",
+        lambda *_args, **_kwargs: True,
+    )
+
+    gb.reburn_narrated_captions.run(JOB_ID, "original_text", render_gen_id="tok-old")
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["render_status"] == "rendering"
+    assert variant["output_url"] == "https://signed/last-good"
+    assert updates == []
+
+
+def test_cloud_blocked_rerender_without_last_good_output_stays_failed(monkeypatch):
+    """A retry of a failed first render cannot be presented as playable."""
+    job = _FakeJob(
+        [
+            _variant(
+                "tok-current",
+                render_status="failed",
+                ok=False,
+                video_path=None,
+                output_url=None,
+            )
+        ]
+    )
+    _patch_sessions(monkeypatch, job)
+    monkeypatch.setattr(
+        "app.services.cloud_render_policy.block_cloud_render_task",
+        lambda *_args, **_kwargs: True,
+    )
+
+    gb.regenerate_generative_variant.run(JOB_ID, "original_text", render_gen_id="tok-current")
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["render_status"] == "failed"
+    assert variant["ok"] is False
+    assert variant["video_path"] is None
+    assert variant["output_url"] is None
+    assert variant["render_error"]
+
+
+def test_blocked_slide_rerender_requires_preview_and_export_bundle():
+    assert not gb._has_last_good_variant_artifact(
+        {"variant_id": "slides", "video_path": "slides/preview.mp4"}
+    )
+    assert gb._has_last_good_variant_artifact(
+        {
+            "variant_id": "slides",
+            "video_path": "slides/preview.mp4",
+            "slide_post": {"bundle_gcs_path": "slides/bundle.zip"},
+        }
+    )
+
+
 # ── _stale_render_discarded unit behavior ─────────────────────────────────────
 
 

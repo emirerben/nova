@@ -118,6 +118,19 @@ def _record(**overrides) -> dict:
     }
 
 
+def test_generate_omni_asset_stops_at_cloud_execution_fence(monkeypatch) -> None:
+    blocked = MagicMock(return_value=True)
+    monkeypatch.setattr("app.services.cloud_render_policy.block_cloud_render_task", blocked)
+    read = MagicMock()
+    monkeypatch.setattr(omni_generate, "_read", read)
+
+    job_id = str(uuid.uuid4())
+    omni_generate.generate_omni_asset.run(job_id=job_id, asset_id="asset-1")
+
+    blocked.assert_called_once_with(job_id, task_name="tasks.generate_omni_asset")
+    read.assert_not_called()
+
+
 def test_restyle_requires_an_explicit_bounded_source_segment() -> None:
     with pytest.raises(ValidationError, match="explicit source segment"):
         OmniAssetStartBody(

@@ -942,6 +942,47 @@ def _cleanup_dispatch_item() -> SimpleNamespace:
     )
 
 
+def test_device_only_legacy_cloud_sources_are_rejected_before_job_creation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Opening an old cloud project in the app never authorizes a new cloud render."""
+
+    from app.config import settings
+
+    item = _cleanup_dispatch_item()
+    plan = SimpleNamespace(
+        id=uuid.uuid4(), user_id=uuid.uuid4(), preference_summary="", ownership_epoch=0
+    )
+    session = MagicMock()
+    monkeypatch.setattr(settings, "ios_device_only_mode", True)
+    monkeypatch.setattr(settings, "speech_cleanup_mode", "opt_in")
+    monkeypatch.setattr(settings, "silence_cut_enabled", False)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    monkeypatch.setattr(settings, "edit_format_talking_head_enabled", True)
+    monkeypatch.setattr(settings, "narrated_self_narration_enabled", True)
+
+    with (
+        patch(
+            "app.services.smart_captions.resolve_smart_captions_context_sync",
+            return_value=None,
+        ),
+        patch("app.services.generative_jobs.build_generative_job") as mock_build,
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync") as mock_enqueue,
+    ):
+        result = _dispatch_item_render(
+            session,
+            item,
+            plan,
+            {"tone": "direct", "content_pillars": []},
+            ownership_epoch=0,
+        )
+
+    assert result.outcome == "invalid_clips"
+    assert result.reason == "device_render_unsupported"
+    mock_build.assert_not_called()
+    mock_enqueue.assert_not_called()
+
+
 def _cleanup_analysis(
     item: SimpleNamespace,
     *,

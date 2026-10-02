@@ -3097,6 +3097,38 @@ def test_retry_failed_job_reuses_owned_job_and_preserves_inputs(monkeypatch) -> 
     enqueue.assert_awaited_once()
 
 
+@pytest.mark.parametrize(
+    ("ios_device_only", "cloud_execution", "expected_status", "expected_code"),
+    [
+        (True, True, 422, "device_render_unsupported"),
+        (False, False, 503, "cloud_render_disabled"),
+    ],
+)
+def test_retry_cloud_job_is_rejected_before_status_reset(
+    monkeypatch,
+    ios_device_only,
+    cloud_execution,
+    expected_status,
+    expected_code,
+) -> None:
+    user = _user()
+    job = _job(user_id=user.id, status="processing_failed")
+    db = _db([_scalar(job), _scalar(job)])
+    _override(user, db)
+    enqueue = AsyncMock()
+    monkeypatch.setattr("app.routes.me.settings.ios_device_only_mode", ios_device_only)
+    monkeypatch.setattr("app.routes.me.settings.cloud_render_execution_enabled", cloud_execution)
+    monkeypatch.setattr("app.services.job_dispatch.enqueue_orchestrator", enqueue)
+
+    resp = client.post(f"/me/jobs/{job.id}/retry")
+
+    assert resp.status_code == expected_status
+    assert resp.json()["detail"]["code"] == expected_code
+    assert job.status == "processing_failed"
+    db.commit.assert_not_awaited()
+    enqueue.assert_not_awaited()
+
+
 def test_retry_active_job_is_409_without_enqueue(monkeypatch) -> None:
     user = _user()
     job = _job(user_id=user.id, status="processing")

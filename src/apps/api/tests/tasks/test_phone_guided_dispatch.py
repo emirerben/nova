@@ -76,6 +76,19 @@ def test_worker_stops_at_immutable_device_request(monkeypatch):
     assert planner.call_count == 1
 
 
+def test_device_only_mode_compiles_guided_plan_when_phone_flag_is_off(monkeypatch):
+    """Device-only admission is global compiler availability, not a cohort flag."""
+    job, snapshot, _, planner, cloud = setup(monkeypatch)
+    monkeypatch.setattr(gb.settings, "ios_device_only_mode", True)
+    monkeypatch.setattr(gb.settings, "phone_rendering_enabled", False)
+
+    gb._run_phone_guided_job(str(job.id), snapshot, ownership_epoch=3)
+
+    assert device_status(job, "guided_story").phase == "awaiting_device"
+    planner.assert_called_once()
+    cloud.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "race", ["cancel", "owner", "generation", "binding", "approval", "visuals"]
 )

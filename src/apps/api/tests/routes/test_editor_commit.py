@@ -4586,6 +4586,38 @@ def test_unknown_variant_404(monkeypatch):
     assert exc.value.status_code == 404
 
 
+@pytest.mark.parametrize(
+    ("ios_device_only", "cloud_execution", "expected_status", "expected_code"),
+    [
+        (True, True, 422, "device_render_unsupported"),
+        (False, False, 503, "cloud_render_disabled"),
+    ],
+)
+def test_cloud_editor_commit_is_rejected_before_mutation(
+    monkeypatch,
+    ios_device_only,
+    cloud_execution,
+    expected_status,
+    expected_code,
+):
+    _arm(monkeypatch)
+    monkeypatch.setattr(gj.settings, "ios_device_only_mode", ios_device_only)
+    monkeypatch.setattr(gj.settings, "cloud_render_execution_enabled", cloud_execution)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(text_elements=[dict(_VALID_ELEMENT)]),
+        )
+
+    assert exc.value.status_code == expected_status
+    assert exc.value.detail["code"] == expected_code
+    assert job.assembly_plan == before
+
+
 def test_title_only_commit_kicks_no_render(monkeypatch):
     """A title-only commit persists nothing on the variant and enqueues nothing."""
     _arm(monkeypatch)
