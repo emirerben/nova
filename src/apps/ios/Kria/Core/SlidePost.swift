@@ -303,7 +303,85 @@ struct SlidePostSaveRequest: Encodable, Sendable {
     }
 }
 
+// MARK: Chat edit (KRI-298 Lane E)
+
+/// One prior turn sent to the server (`user` | `assistant`).
+/// Mirrors the server's `SlidePostChatTurn` (routes/plan_items.py): content <= 2000 chars,
+/// applied/rejected <= 20 strings. Bounds are enforced here so the request never 422s.
+struct SlidePostChatTurn: Codable, Equatable, Sendable {
+    static let maxContent = 2000
+    static let maxListed = 20
+    let role: String
+    let content: String
+    let applied: [String]
+    let rejected: [String]
+    init(role: String, content: String, applied: [String] = [], rejected: [String] = []) {
+        self.role = role
+        self.content = String(content.prefix(Self.maxContent))
+        self.applied = Array(applied.prefix(Self.maxListed))
+        self.rejected = Array(rejected.prefix(Self.maxListed))
+    }
+}
+
+struct SlidePostChatEditRequest: Encodable, Sendable {
+    let message: String
+    let expectedVersion: Int
+    /// The editor's unsaved draft; nil when the editor is clean (the server edits its stored copy).
+    let draft: SlidePostDraft?
+    let turns: [SlidePostChatTurn]
+    let clientRequestID: String
+    enum CodingKeys: String, CodingKey {
+        case message, draft, turns
+        case expectedVersion = "expected_version", clientRequestID = "client_request_id"
+    }
+}
+
+struct SlidePostChatEditResponse: Decodable, Equatable, Sendable {
+    enum Outcome: String, Decodable, Sendable { case edited, clarification, unsupported, noEffect = "no_effect", failed }
+    let outcome: Outcome
+    let reply: String
+    let draft: SlidePostDraft?
+    let baseVersion: Int
+    var changes: [String] = []
+    var suggestions: [String] = []
+    enum CodingKeys: String, CodingKey { case outcome, reply, draft, changes, suggestions; case baseVersion = "base_version" }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        outcome = try c.decode(Outcome.self, forKey: .outcome); reply = try c.decode(String.self, forKey: .reply)
+        draft = try c.decodeIfPresent(SlidePostDraft.self, forKey: .draft); baseVersion = try c.decode(Int.self, forKey: .baseVersion)
+        changes = try c.decodeIfPresent([String].self, forKey: .changes) ?? []
+        suggestions = try c.decodeIfPresent([String].self, forKey: .suggestions) ?? []
+    }
+    init(outcome: Outcome, reply: String, draft: SlidePostDraft? = nil, baseVersion: Int, changes: [String] = [], suggestions: [String] = []) {
+        self.outcome = outcome; self.reply = reply; self.draft = draft; self.baseVersion = baseVersion; self.changes = changes; self.suggestions = suggestions
+    }
+}
+
+/// One bubble in the in-workspace Kria thread. `reply` text is server-composed and shown verbatim.
+struct SlidePostChatMessage: Codable, Equatable, Identifiable, Sendable {
+    var id = UUID()
+    let role: String            // "user" | "assistant"
+    let text: String
+    var changes: [String] = []
+    /// Set on a failed send: the message to resend with Retry.
+    var retryText: String? = nil
+    var isUser: Bool { role == "user" }
+    /// Notes about something Kria could NOT do read as a warning, not a success. Matches ONLY the
+    /// server's fixed note phrasings in `compile_slide_post_ops`
+    /// (src/apps/api/app/services/slide_post_chat_edit.py): "N photo(s) has/have no location." and
+    /// "Animation and spacing aren't available on slides...". Keep in sync with that file; a loose
+    /// substring match would flag success chips like "Text updated without ..." as warnings.
+    static func isNote(_ change: String) -> Bool {
+        let text = change.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.range(of: #"^\d+ photos? (has|have) no location\.?$"#, options: .regularExpression) != nil { return true }
+        return text.hasPrefix("Animation and spacing aren't available on slides")
+    }
+}
+
 extension KriaAPI {
+    func slidePostChatEdit(itemID: String, body: SlidePostChatEditRequest) async throws -> SlidePostChatEditResponse {
+        try await request(path: "plan-items/\(itemID)/slide-post/chat-edit", method: "POST", bodyData: JSONEncoder().encode(body), decode: SlidePostChatEditResponse.self)
+    }
     func slidePost(itemID: String) async throws -> SlidePostState {
         try await request(path: "plan-items/\(itemID)/slide-post", method: "GET", bodyData: nil, decode: SlidePostState.self)
     }
@@ -333,6 +411,9 @@ private struct SlidePostItemResponse: Decodable {
     @Published var selectedID: String? { didSet { persist() } }
     @Published var instruction = "" { didSet { persist() } }
     @Published private(set) var isBusy = false
+    /// The Kria thread for this post (chat-edit turns). Persisted with the rest of the local state.
+    @Published private(set) var chat: [SlidePostChatMessage] = [] { didSet { persist() } }
+    @Published private(set) var isChatting = false
     @Published var error: String?
     @Published private(set) var operationMessage: String?
     /// Text being edited on the canvas (not persisted; the text panel owns it).
@@ -466,7 +547,7 @@ private struct SlidePostItemResponse: Decodable {
     }
 
     func save(api: any KriaAPIClient, itemID: String) async {
-        guard !isBusy, let draft else { return }
+        guard !isBusy, !isChatting, let draft else { return }
         if let message = draft.validationMessage { error = message; return }
         await persistDraft(draft, api: api, itemID: itemID)
     }
@@ -505,8 +586,94 @@ private struct SlidePostItemResponse: Decodable {
         } catch { handle(error) }
     }
 
+    // MARK: Chat edit
+
+    static let maxChatTurns = 12
+    /// Cap on the persisted transcript so UserDefaults never grows without bound.
+    static let maxPersistedChat = 50
+
+    /// Sends one chat message. An `edited` reply is STAGED (undoable, unsaved) -- never saved. Every
+    /// other outcome only adds an assistant bubble. Returns true when a draft was staged.
+    @discardableResult
+    func chatEdit(api: any KriaAPIClient, itemID: String, message: String) async -> Bool {
+        guard canChat(message: message), let current = draft else { return false }
+        let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let turns = chatTurns()
+        chat.append(.init(role: "user", text: text))
+        isChatting = true; error = nil
+        defer { isChatting = false }
+        let body = SlidePostChatEditRequest(message: text, expectedVersion: baseVersion, draft: hasUnsavedChanges ? current : nil,
+                                            turns: Array(turns), clientRequestID: UUID().uuidString)
+        let result: SlidePostChatEditResponse
+        do { result = try await api.slidePostChatEdit(itemID: itemID, body: body) } catch is CancellationError { return false } catch {
+            let reason = (error as? APIError)?.conflictDetail ?? error.localizedDescription
+            chat.append(.init(role: "assistant", text: "I couldn't reach Kria just now. \(reason)", retryText: text))
+            return false
+        }
+        guard result.outcome == .edited, let proposed = result.draft else {
+            chat.append(.init(role: "assistant", text: result.reply, changes: result.changes)); return false
+        }
+        // The user changed the slides while Kria worked: never overwrite newer local edits.
+        guard let latest = draft, latest.hasSameContent(as: current) else {
+            chat.append(.init(role: "assistant", text: "Your slides changed while I was working, so I left them as they are. Ask me again."))
+            return false
+        }
+        var staged = proposed
+        // The returned version is meaningless; keep the editor's stamps and quote the server's
+        // current version on the next save.
+        staged.version = latest.version; staged.renderedVersion = latest.renderedVersion; staged.userEdited = latest.userEdited
+        baseVersion = result.baseVersion
+        stageDraft(staged)
+        if let selectedID, !staged.slides.contains(where: { $0.id == selectedID }) { self.selectedID = staged.slides.first?.id }
+        selectedTextID = nil
+        chat.append(.init(role: "assistant", text: result.reply, changes: result.changes))
+        return true
+    }
+    /// Whether `message` would be sent; sets the user-facing error when it is too long. Callers that
+    /// clear a composer must check this first so rejected text is never lost.
+    func canChat(message: String) -> Bool {
+        guard !isBusy, !isChatting, draft != nil else { return false }
+        let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, text.count <= SlidePostChatTurn.maxContent else {
+            if !text.isEmpty { error = "Tell Kria what to change in 2,000 characters or fewer." }
+            return false
+        }
+        return true
+    }
+
+    /// Prior turns for the request: only user messages Kria actually answered (a failed send leaves a
+    /// dangling user bubble followed by a retry bubble, which are both skipped).
+    func chatTurns() -> [SlidePostChatTurn] {
+        var turns: [SlidePostChatTurn] = []
+        var index = 0
+        while index < chat.count {
+            let message = chat[index]
+            if message.isUser {
+                if index + 1 < chat.count, !chat[index + 1].isUser, chat[index + 1].retryText == nil {
+                    turns.append(.init(role: "user", content: message.text))
+                    turns.append(.init(role: "assistant", content: chat[index + 1].text, applied: chat[index + 1].changes))
+                    index += 2; continue
+                }
+            } else if message.retryText == nil, turns.last?.role != "assistant" {
+                // A standalone assistant message (e.g. restored state) with no user turn before it.
+                turns.append(.init(role: "assistant", content: message.text, applied: message.changes))
+            }
+            index += 1
+        }
+        return Array(turns.suffix(Self.maxChatTurns))
+    }
+
+    /// Retry a failed send: drops the failure bubble and the user bubble it answered, then resends.
+    func retryChat(api: any KriaAPIClient, itemID: String, bubble: SlidePostChatMessage) async {
+        guard let text = bubble.retryText, let at = chat.firstIndex(where: { $0.id == bubble.id }), canChat(message: text) else { return }
+        chat.remove(at: at)
+        if at > 0, chat[at - 1].isUser, chat[at - 1].text == text { chat.remove(at: at - 1) }
+        await chatEdit(api: api, itemID: itemID, message: text)
+    }
+    func clearChat() { chat = [] }
+
     func create(api: any KriaAPIClient, itemID: String) async {
-        guard !isBusy else { return }
+        guard !isBusy, !isChatting else { return }
         error = nil
         if proposal != nil { await applyProposal(api: api, itemID: itemID) }
         else if hasUnsavedChanges { await save(api: api, itemID: itemID) }
@@ -524,7 +691,7 @@ private struct SlidePostItemResponse: Decodable {
     }
 
     func undo(api: any KriaAPIClient, itemID: String) async {
-        guard canUndo, let previous = undoDraft else { return }
+        guard !isChatting, canUndo, let previous = undoDraft else { return }
         await persistDraft(previous, api: api, itemID: itemID)
     }
 
@@ -713,18 +880,20 @@ private struct SlidePostItemResponse: Decodable {
         let instruction: String
         let baseVersion: Int
         let baselineDraft: SlidePostDraft?
+        var chat: [SlidePostChatMessage]? = nil
     }
     private func persist() {
         guard !restoring, let itemID else { return }
-        let local = LocalState(draft: draft, proposal: proposal, selectedID: selectedID, instruction: instruction, baseVersion: baseVersion, baselineDraft: baselineDraft)
+        let local = LocalState(draft: draft, proposal: proposal, selectedID: selectedID, instruction: instruction, baseVersion: baseVersion, baselineDraft: baselineDraft, chat: Array(chat.suffix(Self.maxPersistedChat)))
         guard let data = try? JSONEncoder().encode(local) else { return }
         defaults.set(data, forKey: "kria.slide-post.\(itemID)")
     }
     private func restore() {
         guard let itemID, let data = defaults.data(forKey: "kria.slide-post.\(itemID)"), let local = try? JSONDecoder().decode(LocalState.self, from: data) else {
-            draft = nil; proposal = nil; selectedID = nil; instruction = ""; baseVersion = 0; baselineDraft = nil; return
+            draft = nil; proposal = nil; selectedID = nil; instruction = ""; baseVersion = 0; baselineDraft = nil; chat = []; return
         }
         draft = local.draft; proposal = local.proposal; selectedID = local.selectedID; instruction = local.instruction; baseVersion = local.baseVersion; baselineDraft = local.baselineDraft
+        chat = Array((local.chat ?? []).suffix(Self.maxPersistedChat))
     }
 }
 

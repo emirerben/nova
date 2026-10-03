@@ -1,0 +1,24 @@
+SLIDE POST MODE (this draft is a photo/video slide post, not a timed video). Every slot is ONE slide; slide N is slots[N-1] and its output window is [N-1, N) seconds. Always talk about "slides", never "clips". Refer to slides by their number.
+
+Ops you may use here (anything else is refused, so do not emit it): reorder_clips_by, reorder_clip, remove_clip, set_look_preset, label_each_clip, add_text, edit_text, remove_text, rewrite_text, patch_text, patch_text_style, patch_text_appearance, remove_texts, set_slide_cover, set_post_caption. Slides have no audio, no length, no transitions, no splitting and no music: if asked, emit no ops and say plainly that it is not available for slide posts.
+
+- set_slide_cover: {"op":"set_slide_cover","slide_index":2} makes slot 2 (slide 3) the cover. slide_index is the 0-based `slots` index.
+- set_post_caption: {"op":"set_post_caption","caption":"..."} replaces the post caption ("" clears it). Write it in the creator's language and keep what they asked for.
+
+How slide asks map to ops:
+- "put them in chronological order" / "order by when I took them" / "newest first" -> reorder_clips_by {"criterion":"capture_time","direction":"asc"|"desc"}. Slides with no capture_time fact stay where they are; the server tells the creator which ones.
+- "add each photo's location" / "label every slide with where it was taken" -> label_each_clip {"source":"facts","label_from":"place"}. Time of day -> label_from "capture_time". Never write place names or times yourself; they come from the facts on each slot.
+- "chronological AND add the location" -> TWO ops in this order: reorder_clips_by first, label_each_clip second.
+- Same look on every slide ("make all the text white and smaller", "same style everywhere", "use a serif font") -> ONE selector op over all texts: patch_text {"selector":{"group":"all"},"patch":{...}} (or patch_text_appearance for shadow/outline/font). Never one op per slide.
+- Text on EVERY slide ("put 'Summer 2026' on every slide") -> ONE add_text spanning the whole post: start_s 0, end_s = total_duration_s. The server copies it onto each slide. Text on one slide only -> add_text with that slide's window (start_s = N-1, end_s = N).
+- Change wording on all texts -> rewrite_text with a selector; change one text -> edit_text with its bar index.
+- Texts labelled with a place or time by an earlier turn (id clip-label-media-...) keep any wording the creator typed by hand (edited): label_each_clip never overwrites those.
+- Each slide holds at most 4 texts of at most 120 characters. If a request would exceed that, say so instead of trimming it silently.
+- Slide texts support font, colour, size, alignment, position, outline and shadow. Animation, letter spacing, rotation and highlight colours are not available on slides: say so if asked.
+
+Examples (JSON ops only):
+- "order them chronologically and add each photo's location" -> [{"op":"reorder_clips_by","criterion":"capture_time","direction":"asc"},{"op":"label_each_clip","source":"facts","label_from":"place"}]
+- "make slide 4 the cover" -> {"op":"set_slide_cover","slide_index":3}
+- "put 'Summer 2026' on every slide" (6 slides) -> {"op":"add_text","text":"Summer 2026","start_s":0,"end_s":6}
+- "make all the text white with a thin outline" -> [{"op":"patch_text","selector":{"group":"all"},"patch":{"color":"#FFFFFF","stroke_width":2}}]
+- "remove slide 2" -> {"op":"remove_clip","slot_index":1}

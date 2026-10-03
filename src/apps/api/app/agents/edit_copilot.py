@@ -38,7 +38,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-02-v66"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-03-v67"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -148,6 +148,30 @@ _BULK_OPS = {"add_unused_sources", "set_media_duration", "stack_images"}
 # set_intro_layout, but that restriction lives client-side (apply-ops.ts);
 # there is nothing to enforce here since there is no server draft state.
 _HISTORY_OPS = frozenset({"undo_last_edit", "repeat_last_edit"})
+# KRI-301: the ONLY ops a slide post accepts (`snapshot["surface"] == "slide_post"`).
+# Slide-only ops are refused on every other surface.
+_SLIDE_POST_ONLY_OPS = frozenset({"set_slide_cover", "set_post_caption"})
+SLIDE_POST_OPS = frozenset(
+    {
+        "edit_text",
+        "add_text",
+        "remove_text",
+        "patch_text_style",
+        "patch_text_appearance",
+        "label_each_clip",
+        "reorder_clip",
+        "remove_clip",
+        "set_look_preset",
+        "reorder_clips_by",
+        "rewrite_text",
+        "patch_text",
+        "remove_texts",
+    }
+    | _SLIDE_POST_ONLY_OPS
+)
+SLIDE_POST_SURFACE = "slide_post"
+
+
 _VALID_OPS = (
     _TEXT_OPS
     | _STYLE_OPS
@@ -1910,7 +1934,25 @@ def _format_snapshot(snapshot: dict) -> str:
             if last_turn_summary:
                 lines.append(f"last_turn_summary={last_turn_summary!r}")
 
+    if _v2.surface_of(snapshot) == SLIDE_POST_SURFACE:
+        lines.extend(_format_slide_post_block(snapshot, _field))
+
     return "\n".join(lines)
+
+
+def _format_slide_post_block(snapshot: dict, field: Any) -> list[str]:
+    """CURRENT POST lines for the slide surface (never emitted for video edits)."""
+    post = snapshot.get("post")
+    if not isinstance(post, dict):
+        return []
+    cover = post.get("cover_index")
+    lines = ["\nCURRENT POST (slide post; each slide is one slot, slide N = slots[N-1]):"]
+    if isinstance(cover, int) and not isinstance(cover, bool):
+        lines.append(f"cover_slide: {cover + 1}")
+    lines.append(f"slide_count: {len(_snapshot_list(snapshot, _SLOT_INDEX_KEYS))}")
+    lines.append(f"platform_profile: {field(post.get('platform_profile'), max_chars=40)}")
+    lines.append(f"caption: {field(post.get('caption'), max_chars=300)!r}")
+    return lines
 
 
 def _fmt_num(value: float | None) -> str:
@@ -3463,7 +3505,8 @@ def _with_v2_fragments(prompt: str, snapshot: object) -> str:
     """
     if not _v2.is_v2_snapshot(snapshot):
         return prompt
-    fragments = _v2.prompt_fragments()
+    surface = _v2.surface_of(snapshot)
+    fragments = _v2.prompt_fragments(surface) if surface else _v2.prompt_fragments()
     return f"{prompt}\n\n{fragments}" if fragments else prompt
 
 
@@ -3616,6 +3659,11 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
     if name in _v2.REGISTRY.new_ops and not _v2.is_v2_snapshot(snapshot):
         # KRI-219 v2 ops exist only for server-built (Kria) snapshots; the web
         # drawer never sets `editor_ops_version`, so it can never see them.
+        return False
+    surface = _v2.surface_of(snapshot)
+    if name in _SLIDE_POST_ONLY_OPS and surface != SLIDE_POST_SURFACE:
+        return False
+    if surface == SLIDE_POST_SURFACE and name not in SLIDE_POST_OPS:
         return False
     raw_allowed = snapshot.get("allowed_op_families") if isinstance(snapshot, dict) else None
     if name in _CLIP_LABEL_OPS and not (

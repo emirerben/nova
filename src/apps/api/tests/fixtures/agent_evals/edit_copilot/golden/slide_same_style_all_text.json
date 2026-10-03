@@ -1,0 +1,270 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-10-03-v67",
+  "input": {
+    "utterance": "make all the text white with a thin outline",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "surface": "slide_post",
+      "allowed_op_families": [
+        "text",
+        "clip",
+        "timeline",
+        "slides"
+      ],
+      "base_generation": "slide-post-v2",
+      "has_narrated_captions": false,
+      "max_duration_s": 3.0,
+      "remaining_duration_s": 0.0,
+      "slots": [
+        {
+          "key": "slide-1",
+          "slot_id": "slide-1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 0.0,
+          "output_end_s": 1.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "slide-1",
+          "facts": [
+            {
+              "kind": "capture_time",
+              "value": "2026-07-03T09:10:00Z",
+              "provenance": "exif"
+            },
+            {
+              "kind": "place",
+              "value": "Beşiktaş, İstanbul, Türkiye",
+              "provenance": "geocode"
+            }
+          ],
+          "is_cover": true
+        },
+        {
+          "key": "slide-2",
+          "slot_id": "slide-2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 1.0,
+          "output_end_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "slide-2",
+          "facts": [
+            {
+              "kind": "capture_time",
+              "value": "2026-07-01T16:00:00Z",
+              "provenance": "exif"
+            },
+            {
+              "kind": "place",
+              "value": "Kadıköy, İstanbul, Türkiye",
+              "provenance": "geocode"
+            }
+          ],
+          "is_cover": false
+        },
+        {
+          "key": "slide-3",
+          "slot_id": "slide-3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 2.0,
+          "output_end_s": 3.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "slide-3",
+          "is_cover": false
+        }
+      ],
+      "text_bars": [
+        {
+          "id": "clip-label-media-slide-1",
+          "text": "Beşiktaş",
+          "start_s": 0.0,
+          "end_s": 1.0,
+          "role": "generative_intro",
+          "font_family": "DM Sans",
+          "color": "#FFFFFF",
+          "size_px": 86,
+          "alignment": "center",
+          "position": "bottom",
+          "stroke_width": 0,
+          "shadow_enabled": true,
+          "effect": "static",
+          "clip_id": "slide-1",
+          "inferred": false
+        },
+        {
+          "id": "kria-slide-1:x0",
+          "text": "Summer",
+          "start_s": 0.0,
+          "end_s": 1.0,
+          "role": "generative_intro",
+          "font_family": "Playfair Display",
+          "color": "#FFFFFF",
+          "size_px": 86,
+          "alignment": "center",
+          "position": "bottom",
+          "stroke_width": 0,
+          "shadow_enabled": true,
+          "effect": "static"
+        },
+        {
+          "id": "clip-label-media-slide-2",
+          "text": "Kadıköy",
+          "start_s": 1.0,
+          "end_s": 2.0,
+          "role": "generative_intro",
+          "font_family": "DM Sans",
+          "color": "#FFFFFF",
+          "size_px": 86,
+          "alignment": "center",
+          "position": "bottom",
+          "stroke_width": 0,
+          "shadow_enabled": true,
+          "effect": "static",
+          "clip_id": "slide-2",
+          "inferred": false
+        },
+        {
+          "id": "kria-slide-2:x1",
+          "text": "Summer",
+          "start_s": 1.0,
+          "end_s": 2.0,
+          "role": "generative_intro",
+          "font_family": "Playfair Display",
+          "color": "#FFFFFF",
+          "size_px": 86,
+          "alignment": "center",
+          "position": "bottom",
+          "stroke_width": 0,
+          "shadow_enabled": true,
+          "effect": "static"
+        },
+        {
+          "id": "clip-label-media-slide-3",
+          "text": "Üsküdar",
+          "start_s": 2.0,
+          "end_s": 3.0,
+          "role": "generative_intro",
+          "font_family": "DM Sans",
+          "color": "#FFFFFF",
+          "size_px": 86,
+          "alignment": "center",
+          "position": "bottom",
+          "stroke_width": 0,
+          "shadow_enabled": true,
+          "effect": "static",
+          "clip_id": "slide-3",
+          "inferred": false
+        },
+        {
+          "id": "kria-slide-3:x2",
+          "text": "Summer",
+          "start_s": 2.0,
+          "end_s": 3.0,
+          "role": "generative_intro",
+          "font_family": "Playfair Display",
+          "color": "#FFFFFF",
+          "size_px": 86,
+          "alignment": "center",
+          "position": "bottom",
+          "stroke_width": 0,
+          "shadow_enabled": true,
+          "effect": "static"
+        }
+      ],
+      "total_duration_s": 3.0,
+      "post": {
+        "caption": "",
+        "cover_index": 0,
+        "platform_profile": "tiktok_photo"
+      },
+      "label_facts": true,
+      "editor_ops_version": 2
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"patch_text\", \"selector\": {\"group\": \"all\"}, \"patch\": {\"color\": \"#FFFFFF\", \"stroke_width\": 2}}], \"confidence\": 0.93, \"reply\": \"Made all the text white with an outline.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "patch_text",
+        "selector": {
+          "group": "all"
+        },
+        "patch": {
+          "color": "#FFFFFF",
+          "stroke_width": 2.0
+        },
+        "target_ids": [
+          "clip-label-media-slide-1",
+          "kria-slide-1:x0",
+          "clip-label-media-slide-2",
+          "kria-slide-2:x1",
+          "clip-label-media-slide-3",
+          "kria-slide-3:x2"
+        ],
+        "expected_count": 6
+      }
+    ],
+    "confidence": 0.93,
+    "reply": "Made all the text white with an outline.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "proposed",
+    "rejection_reasons": [],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": []
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "one selector op restyles every slide text (never one op per slide)",
+    "lane": "kria-301-slide-post",
+    "exact_edit_ops": [
+      {
+        "op": "patch_text",
+        "selector": {
+          "group": "all"
+        },
+        "patch": {
+          "color": "#FFFFFF",
+          "stroke_width": 2.0
+        },
+        "target_ids": [
+          "clip-label-media-slide-1",
+          "kria-slide-1:x0",
+          "clip-label-media-slide-2",
+          "kria-slide-2:x1",
+          "clip-label-media-slide-3",
+          "kria-slide-3:x2"
+        ],
+        "expected_count": 6
+      }
+    ]
+  }
+}

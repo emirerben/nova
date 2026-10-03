@@ -82,6 +82,7 @@ from app.routes.plan_items import (
     PoolUploadUrlsBody,
     PoolUploadUrlsResponse,
     RegisterAssetBody,
+    SlidePostChatEditBody,
     SlidePostDraftBody,
     SlidePostGenerateBody,
     SlidePostProposalResponse,
@@ -90,6 +91,7 @@ from app.routes.plan_items import (
 )
 from app.schemas.slide_post import SlidePostDraft
 from app.services.ios_device_admission import is_legacy_creation_path, is_state_changing_method
+from app.services.slide_post_chat_edit import SlidePostChatEditResponse
 
 DEFAULT_SNAPSHOT = Path(__file__).parents[2] / "tests" / "fixtures" / "kria_turns" / "tools.json"
 DEFAULT_TYPES = Path(__file__).parents[3] / "web" / "src" / "lib" / "kria-runtime-v2.generated.ts"
@@ -162,6 +164,8 @@ MOBILE_API_MODELS = (
     SlidePostGenerateBody,
     SlidePostProposeBody,
     SlidePostProposalResponse,
+    SlidePostChatEditBody,
+    SlidePostChatEditResponse,
     SlidePostState,
     PersonaResponse,
     QuestionnaireBody,
@@ -621,6 +625,15 @@ def mobile_openapi_json() -> str:
                     "security": bearer,
                     "requestBody": _json_request(SlidePostProposeBody),
                     "responses": _json_responses(SlidePostProposalResponse),
+                },
+            },
+            "/plan-items/{item_id}/slide-post/chat-edit": {
+                "parameters": [item_id],
+                "post": {
+                    "operationId": "chatEditSlidePost",
+                    "security": bearer,
+                    "requestBody": _json_request(SlidePostChatEditBody),
+                    "responses": _json_responses(SlidePostChatEditResponse),
                 },
             },
             "/plan-items/{item_id}/slide-post/generate": {
