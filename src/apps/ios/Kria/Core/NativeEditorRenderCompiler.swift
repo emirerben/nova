@@ -37,9 +37,15 @@ enum NativeEditorRenderError: Error, Equatable {
         ).filter { ["ttf", "otf"].contains($0.pathExtension.lowercased()) }.map { ($0.lastPathComponent, $0) })
     }
 
+    /// `deviceCaptions`: the variant renders on the phone, whose caption
+    /// compiler (`phone_captions.py`) places every caption cue in the Talking
+    /// frame (lower-third safe zone, pop-in) whatever the format. The preview
+    /// follows it so a phone Narrated caption shows where the phone burns it
+    /// (KRI-280); cloud Narrated keeps its low burn position.
     func compile(document: EditorDocument, clips: [EditorClip], items: [NativeEditorTimelineItem],
                  sources: [Int: ResolvedEditorSource], audioSources: [String: ResolvedEditorSource] = [:], mediaSources: [String: ResolvedEditorSource] = [:],
-                 referenceOnlyMusic: Bool = false, sourceAudioPreserved: Bool = true) throws -> NativeEditorRenderProgram {
+                 referenceOnlyMusic: Bool = false, sourceAudioPreserved: Bool = true,
+                 deviceCaptions: Bool = false) throws -> NativeEditorRenderProgram {
         for (name, populated) in [
             ("carousel", document.carouselMoment != nil),
         ] where populated { throw NativeEditorRenderError.unsupportedLane(name) }
@@ -422,6 +428,7 @@ enum NativeEditorRenderError: Error, Equatable {
         }
         if !document.captionCues.isEmpty && document.captionMeta["enabled"] != .bool(false) {
             let meta = document.captionMeta
+            let talkingCaptionFrame = document.editFormat == "subtitled" || deviceCaptions
             let captionFont = ["Inter": "Inter-Bold", "Fraunces": "Fraunces-Bold", "Space Grotesk": "SpaceGrotesk-Bold"]
             let family = meta["font"]?.stringValue ?? "TikTokSans-Bold"
             let font = try resolveFont(captionFont[family] ?? family)
@@ -432,7 +439,7 @@ enum NativeEditorRenderError: Error, Equatable {
             let captionAlignment = AuthoredTextLayout.Alignment(rawValue: appearance["alignment"]?.stringValue ?? "center") ?? .center
             let captionX = captionAlignment == .left ? 80.0 / 1080 : captionAlignment == .right ? 1000.0 / 1080 : 0.5
             let captionStyle = AuthoredTextLayout.Style(fontAssetID: fontID, size: meta["size_px"]?.numberValue ?? 78,
-                widthFraction: 920.0 / 1080, xFraction: captionX, yFraction: meta["y_frac"]?.numberValue ?? (document.editFormat == "subtitled" ? 0.82 : 1740.0 / 1920),
+                widthFraction: 920.0 / 1080, xFraction: captionX, yFraction: meta["y_frac"]?.numberValue ?? (talkingCaptionFrame ? 0.82 : 1740.0 / 1920),
                 alignment: captionAlignment,
                 color: try ink(meta["color"], fallback: "#FFFFFF"), stroke: try ink(appearance["stroke_color"], fallback: "#000000"), strokeWidth: meta["stroke_width"]?.numberValue ?? 4,
                 shadows: meta["shadow_enabled"] == .bool(false) ? [] : [TextBlurLayer(color: try ink(appearance["shadow_color"], fallback: "#000000", alpha: appearance["shadow_opacity"]?.numberValue ?? 0.5), sigma: 0, dx: 1, dy: 1)],
@@ -509,7 +516,7 @@ enum NativeEditorRenderError: Error, Equatable {
                         start: item.start, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas)
                     text.append(PortableTextLayer(id: layout.id, start: layout.start, end: layout.end,
                         anchorX: layout.anchorX, anchorY: layout.anchorY, rotationDegrees: 0, runs: layout.runs,
-                        effect: document.editFormat == "subtitled" ? .captionPop : .none))
+                        effect: talkingCaptionFrame ? .captionPop : .none))
                 }
             }
         }

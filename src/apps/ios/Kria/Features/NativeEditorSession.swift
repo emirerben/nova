@@ -2127,7 +2127,8 @@ struct NativeEditorTemporaryVideo {
             let program = try compiler.compile(document: snapshot, clips: clips, items: items,
                                                sources: sources, audioSources: audio, mediaSources: media,
                                                referenceOnlyMusic: musicPlaybackMode == .referenceOnly,
-                                               sourceAudioPreserved: sourceAudioPreserved)
+                                               sourceAudioPreserved: sourceAudioPreserved,
+                                               deviceCaptions: rendersOnDevice)
             // The in-place text update only applies while the canvas is still
             // on this composition. After a transient compile failure handed
             // the canvas to the finished-render fallback, its player item was

@@ -215,6 +215,32 @@ import KriaMediaEngine
         }
     }
 
+    // KRI-280: the phone compiles every caption cue in the Talking frame
+    // (`phone_captions.py`: lower-third safe zone, pop-in) whatever the format,
+    // so a phone Narrated preview must place and animate captions like phone
+    // Talking. A cloud Narrated burn keeps its low position and no pop.
+    func testDeviceNarratedCaptionsPreviewInTheTalkingFrame() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3,
+            trimIn: 0, trimOut: 3, sourceDuration: 3, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let item = NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue"), start: 0, end: 2)
+        func caption(format: String, device: Bool) throws -> PortableTextLayer {
+            let document = EditorDocument(editFormat: format, captionCues: [.init(id: "cue", startS: 0, endS: 2, text: "First we pack")])
+            return try XCTUnwrap(compiler.compile(document: document, clips: [clip], items: [item], sources: [0: source],
+                                                  deviceCaptions: device).recipe.textLayers.first)
+        }
+        let phoneTalking = try caption(format: "subtitled", device: true)
+        let phoneNarrated = try caption(format: "narrated_planned", device: true)
+        let cloudNarrated = try caption(format: "narrated_planned", device: false)
+        XCTAssertEqual(phoneNarrated.anchorY, phoneTalking.anchorY, accuracy: 0.001)
+        XCTAssertEqual(phoneNarrated.effect, phoneTalking.effect)
+        XCTAssertEqual(phoneNarrated.effect, .captionPop)
+        XCTAssertEqual(cloudNarrated.effect, PortableTextLayer.Effect.none)
+        XCTAssertGreaterThan(cloudNarrated.anchorY, phoneNarrated.anchorY, "cloud Narrated burns lower than the phone")
+    }
+
     // KRI-110: guided-story captions are caption_cue-tagged TextElements, not
     // caption_cues rows, so the block above never sees them. The generic
     // per-element pass must apply the same caption_meta styling via

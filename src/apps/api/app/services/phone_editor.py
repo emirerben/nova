@@ -20,6 +20,7 @@ from app.pipeline.guided_story import (
 )
 from app.pipeline.phone_captions import caption_look_from_variant
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
+from app.pipeline.phone_narrated_plan import replace_narrated_captions
 from app.pipeline.phone_recipe_shared import PhoneNarrationBed
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, lane_names
 from app.pipeline.phone_subtitled_plan import (
@@ -36,6 +37,7 @@ from app.services.phone_editor_sources import (
     editor_visual_bindings,
 )
 from app.services.phone_rollout import (
+    phone_narrated_caption_edits_supported,
     phone_subtitled_editor_lanes_supported,
     validate_phone_pilot_recipe,
 )
@@ -68,6 +70,22 @@ PHONE_EDITOR_PLAN_FIELD = "_phone_editor_plan_v1"
 _SUBTITLED_EDITOR_SECTIONS = frozenset(
     {"sound_effects", "media_overlays", "caption_cues", "caption_meta"}
 )
+
+# The only native-editor sections a phone `narrated` (recorded voiceover)
+# variant honours (KRI-280): the caption lines and their look. The narrated
+# phone compiler has no editor lane for anything else, so every other section
+# stays closed rather than silently dropped on Save.
+_NARRATED_EDITOR_SECTIONS = frozenset({"caption_cues", "caption_meta"})
+
+
+def is_phone_narrated_editor_variant(variant: object) -> bool:
+    """True for a phone-rendered `narrated` (recorded voiceover) variant --
+    the shape `app.tasks.generative_build._run_phone_narrated_job` pins."""
+    return (
+        isinstance(variant, dict)
+        and variant.get("render_destination") == "device"
+        and variant.get("resolved_archetype") == "narrated"
+    )
 
 
 class _StagedJob:
@@ -128,6 +146,10 @@ def prepare_phone_editor_commit(
                 prep=prep,
                 previous=previous,
                 sfx_catalog_paths=sfx_catalog_paths or {},
+            )
+        elif is_phone_narrated_editor_variant(variant):
+            _compile_narrated_editor_commit(
+                staged, variant, variant_id, prep=prep, previous=previous
             )
         else:
             plan = copy.deepcopy(
@@ -413,6 +435,66 @@ def _compile_subtitled_editor_commit(
             row[SFX_DUCK_RECEIPT_FIELD] = duck_receipt
         else:
             row.pop(SFX_DUCK_RECEIPT_FIELD, None)
+
+
+def _compile_narrated_editor_commit(
+    staged: Any,
+    variant: dict,
+    variant_id: str,
+    *,
+    prep: dict,
+    previous: Any,
+) -> None:
+    """The `resolved_archetype == "narrated"` counterpart of the subtitled
+    branch above (KRI-280): swap the committed caption cues and look into the
+    pinned recipe (`replace_narrated_captions`).
+
+    ``variant`` is the STAGED row, so `_prepare_editor_commit` has already
+    written the validated cues and caption-meta fields onto it. The clips,
+    the narration bed and the audio mix all come from ``previous`` -- Save
+    never re-downloads, re-transcribes or re-aligns the voiceover. Raises
+    ``ValueError``/``UnsupportedPhonePlan`` on anything unsupported, caught by
+    the same broad ``except`` in `prepare_phone_editor_commit`.
+    """
+    if not phone_narrated_caption_edits_supported():
+        raise ValueError("phone Narrated captions aren't editable yet")
+
+    active_sections = {key for key, value in prep["sections"].items() if value}
+    unsupported_sections = active_sections - _NARRATED_EDITOR_SECTIONS
+    if unsupported_sections:
+        name = sorted(unsupported_sections)[0]
+        raise ValueError(f"{name} isn't supported on phone Narrated edits yet")
+    if not isinstance(previous.recipe, EditRecipeV2):
+        raise ValueError("phone Narrated edits need a pinned v2 recipe")
+
+    caption_cues = prep.get("caption_cues_override")
+    caption_cues_overridden = caption_cues is not None
+    if caption_cues is None:
+        caption_cues = variant.get("caption_cues") or []
+    recipe = replace_narrated_captions(
+        previous.recipe,
+        caption_cues=caption_cues,
+        caption_style="word" if variant.get("voiceover_caption_style") == "word" else "sentence",
+        look=caption_look_from_variant(variant),
+    )
+    validate_phone_pilot_recipe(recipe)
+    request = make_device_request(
+        job_id=previous.identity.job_id,
+        variant_id=variant_id,
+        revision=previous.identity.recipe_revision + 1,
+        recipe=recipe,
+    )
+    # The cleaned-narration binding (KRI-277) carries over: the voiceover
+    # asset is unchanged, and `pin_device_request` reuses a matching binding.
+    pin_device_request(staged, request, base_generation=prep["generation"])
+    for row in staged.assembly_plan["variants"]:
+        if row.get("variant_id") != variant_id:
+            continue
+        row["render_status"] = "awaiting_device"
+        row["render_destination"] = "device"
+        row["duration_s"] = recipe.duration
+        if caption_cues_overridden:
+            row["caption_cues"] = caption_cues
 
 
 def _previous_keep_segments(

@@ -62,6 +62,46 @@ def test_word_style_compiles_karaoke_layer_with_relative_word_starts():
     assert [run.text for run in layer.runs] == ["Hello", "there"]
 
 
+def test_stale_word_timings_are_respread_over_the_edited_text():
+    """KRI-280 / plan 026 R11: a text edit that kept the old `words` (the chat
+    edit path) must not burn the pre-edit words on a karaoke line."""
+    cues = [
+        {
+            "text": "Packed and ready",
+            "start_s": 10.0,
+            "end_s": 11.5,
+            "words": [
+                _word("First", 10.0, 10.4),
+                _word("we", 10.5, 10.8),
+                _word("pack", 10.9, 11.5),
+            ],
+        }
+    ]
+    layer = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920, style="word")[0]
+
+    assert [run.text for run in layer.runs] == ["Packed", "and", "ready"]
+    # The iOS preview's own fallback: equal slices of the cue window.
+    assert layer.karaoke.starts == pytest.approx([0.0, 0.5, 1.0])
+
+
+def test_words_that_still_spell_the_text_keep_their_real_timings():
+    # Compared without whitespace: an ASR split the text doesn't share ("Wow"
+    # + "!" for "Wow!", or a language written without spaces) still spells
+    # the cue, so its real timings stay.
+    cues = [
+        {
+            "text": "Wow! Look",
+            "start_s": 0.0,
+            "end_s": 1.0,
+            "words": [_word("Wow", 0.0, 0.2), _word("!", 0.2, 0.3), _word("Look", 0.7, 1.0)],
+        }
+    ]
+    layer = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920, style="word")[0]
+
+    assert [run.text for run in layer.runs] == ["Wow", "!", "Look"]
+    assert layer.karaoke.starts == pytest.approx([0.0, 0.2, 0.7])
+
+
 def test_word_style_without_word_timings_falls_back_to_sentence():
     cues = [{"text": "No timings here", "start_s": 0.0, "end_s": 2.0}]
     layers = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920, style="word")

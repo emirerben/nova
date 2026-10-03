@@ -3245,6 +3245,46 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(session.canEditCaptionAppearance)
     }
 
+    // KRI-280: a phone Narrated (recorded voiceover) render gets the same
+    // explicit caption capabilities as phone Talking, so the Captions panel
+    // opens for line edits and Style/Settings, and a Save carries both
+    // sections to the server's phone recompile.
+    func testDeviceNarratedVariantOpensCaptionEditingAndSavesBothSections() async {
+        let threadID = UUID()
+        let cue: JSONValue = .object([
+            "id": .string("cue-1"), "text": .string("First we pack"), "start_s": .number(0), "end_s": .number(2),
+        ])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "narrated", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: [
+                "render_destination": .string("device"),
+                "resolved_archetype": .string("narrated"),
+                "caption_cues": .array([cue]),
+                "voiceover_caption_style": .string("sentence"),
+                "editor_capabilities": .object([
+                    "text_elements": .bool(false),
+                    "caption_cues": .object(["editable": .bool(true)]),
+                    "caption_meta": .object(["editable": .bool(true)]),
+                    "caption_editor_style": .bool(true),
+                ]),
+            ]
+        )
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        XCTAssertTrue(session.canEditCaptions)
+        XCTAssertTrue(session.canEditCaptionLines)
+        XCTAssertTrue(session.canEditCaptionMeta)
+        XCTAssertTrue(session.canEditCaptionAppearance)
+
+        session.updateCaptionCue(id: "cue-1", text: "First we pack light")
+        session.setCaptionStyle("word")
+        XCTAssertTrue(session.isDirty(.captions))
+        XCTAssertTrue(session.isDirty(.captionMeta))
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.captionCues?.first?.objectValue?["text"], .string("First we pack light"))
+        XCTAssertEqual(fake.lastRequest?.captionMeta?["style"], .string("word"))
+    }
+
     // KRI-216: cues open, meta closed — line edits stay available while the
     // Style/Settings writes (`caption_meta`) are locked, even though the
     // coarse `canEditCaptions` is true from the cues lane alone.

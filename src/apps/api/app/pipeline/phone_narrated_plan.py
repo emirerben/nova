@@ -117,7 +117,7 @@ resolved in this module.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -143,6 +143,14 @@ from app.pipeline.phone_recipe_shared import (
     timeline_end_s,
 )
 from app.services.phone_sources import PhoneSourceBinding
+
+if TYPE_CHECKING:
+    from app.pipeline.phone_captions import PhoneCaptionLook
+
+# Only caption layers ask for these in a narrated recipe. `authoredText` is
+# added by the `EditRecipeV2` validator for variable-font runs, so the swap
+# clears it with the rest and the validator puts it back when it applies.
+_CAPTION_CAPABILITIES = frozenset({"positionedText", "animatedText", "authoredText"})
 
 # Mirrors `app.pipeline.narrated_assembler._MIN_USABLE_S` / `_EOF_GUARD_S` --
 # see the module docstring for why they're reimplemented here rather than
@@ -208,61 +216,132 @@ def _fit_step_window(
     return start, usable, rate
 
 
-def _register_caption_fonts(
-    layers: list[Any], assets: dict[str, MediaAsset], manifest: dict[str, object]
-) -> None:
-    """Resolve + register every bundled font a caption layer's runs reference.
-
-    Delegates to `phone_captions.caption_font_assets`, that module's own
-    documented helper for exactly this purpose (see its docstring: callers
-    assembling a full recipe call it right after `compile_caption_layers` and
-    merge the result into their own `assets`/`asset_manifest` dicts).
-    """
-    from app.pipeline.phone_captions import caption_font_assets
-
-    for font_asset_id, font_asset in caption_font_assets(layers).items():
-        if font_asset_id in assets:
-            continue
-        manifest[font_asset_id] = font_asset
-        assets[font_asset_id] = MediaAsset(
-            id=font_asset_id,
-            relative_path=font_asset_id,
-            fingerprint=AssetFingerprint(
-                hex=font_asset.fingerprint.sha256,
-                byte_count=font_asset.fingerprint.byte_count,
-            ),
-        )
-
-
 def _compile_caption_layers(
     caption_cues: list[dict],
     *,
-    canvas_width: int,
-    canvas_height: int,
+    canvas: Canvas,
     caption_style: str,
     timeline_duration_s: float,
+    look: PhoneCaptionLook | None,
 ) -> list[Any]:
     from app.pipeline.phone_captions import compile_caption_layers
 
     try:
-        return compile_caption_layers(
-            caption_cues,
-            canvas_width=canvas_width,
-            canvas_height=canvas_height,
-            style=caption_style,
-            id_prefix="caption",
-            timeline_duration_s=timeline_duration_s,
+        return list(
+            compile_caption_layers(
+                caption_cues,
+                canvas_width=canvas.width,
+                canvas_height=canvas.height,
+                style=caption_style,
+                id_prefix="caption",
+                timeline_duration_s=timeline_duration_s,
+                look=look,
+            )
         )
-    except TypeError:
-        # `timeline_duration_s` is documented as optional keyword-only --
-        # tolerate an earlier signature that doesn't accept it yet.
-        return compile_caption_layers(
+    except UnsupportedPhonePlan:
+        raise
+    except Exception as exc:  # noqa: BLE001 - untrusted cue content
+        raise UnsupportedPhonePlan(f"unable to compile captions: {exc}") from exc
+
+
+def _is_caption_font(asset: object) -> bool:
+    # Captions are the only text a narrated recipe carries, so every bundled
+    # font in it belongs to a caption layer.
+    return getattr(asset, "kind", None) == "library" and str(getattr(asset, "id", "")).startswith(
+        "font-"
+    )
+
+
+def replace_narrated_captions(
+    recipe: EditRecipeV2,
+    *,
+    caption_cues: list[dict] | None,
+    caption_style: str = "sentence",
+    look: PhoneCaptionLook | None = None,
+) -> EditRecipeV2:
+    """``recipe`` with only its caption layers recompiled (KRI-280).
+
+    A narrated device variant has no guided plan and no cloud base: its only
+    program is the recipe pinned for the phone. A caption Save (text, timing,
+    style or look) therefore keeps every clip, the narration bed and the
+    audio mix exactly as pinned and swaps just the caption layers, their
+    bundled fonts and the text capabilities. Nothing is re-derived from the
+    voiceover, so a Save can never move a cut or change the mix.
+
+    `compile_phone_narrated_plan` builds its own captions through this
+    function, so recompiling a recipe with the cues and style it was compiled
+    with returns an equal recipe.
+    """
+    video = next((track for track in recipe.tracks if track.id == "narrated"), None)
+    if video is None or not video.clips:
+        raise UnsupportedPhonePlan("pinned narrated recipe has no video track")
+
+    layers: list[Any] = []
+    if caption_cues:
+        layers = _compile_caption_layers(
             caption_cues,
-            canvas_width=canvas_width,
-            canvas_height=canvas_height,
-            style=caption_style,
-            id_prefix="caption",
+            canvas=recipe.canvas,
+            caption_style=caption_style,
+            timeline_duration_s=timeline_end_s(video.clips),
+            look=look,
         )
+
+    from app.pipeline.phone_captions import caption_font_assets
+
+    fonts = caption_font_assets(layers)
+    dropped = {asset.id for asset in recipe.asset_manifest.assets if _is_caption_font(asset)}
+    voiceover_ids = {
+        asset.id
+        for asset in recipe.asset_manifest.assets
+        if isinstance(asset, VoiceoverRenderAsset)
+    }
+
+    def _with_fonts(entries: list[Any], font_entries: list[Any]) -> list[Any]:
+        # Fonts sit right before the narration bed, the order the compiler
+        # has always registered them in.
+        kept = [entry for entry in entries if entry.id not in dropped]
+        at = next((i for i, entry in enumerate(kept) if entry.id in voiceover_ids), len(kept))
+        return kept[:at] + font_entries + kept[at:]
+
+    manifest = _with_fonts(list(recipe.asset_manifest.assets), list(fonts.values()))
+    assets = _with_fonts(
+        list(recipe.assets),
+        [
+            MediaAsset(
+                id=font_asset_id,
+                relative_path=font_asset_id,
+                fingerprint=AssetFingerprint(
+                    hex=font_asset.fingerprint.sha256,
+                    byte_count=font_asset.fingerprint.byte_count,
+                ),
+            )
+            for font_asset_id, font_asset in fonts.items()
+        ],
+    )
+    # A caption that ends at the voiceover's nominal end can overshoot the recipe's own
+    # duration by float noise (a slowed-down clip's `usable / (usable / target)` lands
+    # 1 ULP short, and the narration bed may be a millisecond shorter): `EditRecipeV2`
+    # rejects `layer.end > duration` strictly (KRI-209, same class as KRI-190).
+    snap_text_overshoot(
+        layers, timeline_end_s(clip for track in recipe.tracks for clip in track.clips)
+    )
+    required_capabilities = (
+        (set(recipe.required_capabilities) - _CAPTION_CAPABILITIES)
+        | ({"positionedText"} if layers else set())
+        | (
+            {"animatedText"}
+            if any(layer.effect not in {"static", "none"} for layer in layers)
+            else set()
+        )
+    )
+    fields = {name: getattr(recipe, name) for name in type(recipe).model_fields}
+    fields.update(
+        assets=assets,
+        asset_manifest=RenderAssetManifest(assets=tuple(manifest)),
+        text_layers=layers,
+        required_capabilities=required_capabilities,
+    )
+    return EditRecipeV2(**fields)
 
 
 def compile_phone_narrated_plan(
@@ -277,11 +356,16 @@ def compile_phone_narrated_plan(
     orientation: str = "portrait",
     target_lufs: float | None = None,
     duck_footage_bed: bool = False,
+    caption_look: PhoneCaptionLook | None = None,
 ) -> EditRecipeV2:
     """See the module docstring for the full contract.
 
     ``target_lufs`` / ``duck_footage_bed`` (KRI-139): see "Audio mix
     approximation" -- both are passed in so this module stays settings-free.
+
+    ``caption_look`` (KRI-280): the caption appearance a phone-editor Save
+    persisted (`phone_captions.caption_look_from_variant`); ``None`` is the
+    default look every first render uses.
 
     ``steps`` must already be in narration-timeline order and tile
     ``[0, voiceover_duration_s]`` contiguously (see "Step-timing contract").
@@ -359,25 +443,6 @@ def compile_phone_narrated_plan(
 
     if len({clip.id for clip in clips}) != len(clips):
         raise ValueError("phone narrated clips must have unique identities")
-    total_duration_s = cursor
-
-    layers: list[Any] = []
-    if caption_cues:
-        try:
-            layers = list(
-                _compile_caption_layers(
-                    caption_cues,
-                    canvas_width=story_canvas.width,
-                    canvas_height=story_canvas.height,
-                    caption_style=caption_style,
-                    timeline_duration_s=total_duration_s,
-                )
-            )
-        except UnsupportedPhonePlan:
-            raise
-        except Exception as exc:  # noqa: BLE001 - untrusted cue content
-            raise UnsupportedPhonePlan(f"unable to compile captions: {exc}") from exc
-        _register_caption_fonts(layers, assets, manifest)
 
     narration_asset = VoiceoverRenderAsset(
         id=f"voiceover-{narration.plan_item_id}",
@@ -426,30 +491,25 @@ def compile_phone_narrated_plan(
         duck_original_during_music=duck_footage_bed and footage_bed_gain > 0,
         target_lufs=target_lufs,
     )
-    # A caption that ends at the voiceover's nominal end can overshoot the recipe's own
-    # duration by float noise (a slowed-down clip's `usable / (usable / target)` lands
-    # 1 ULP short, and the narration bed may be a millisecond shorter): `EditRecipeV2`
-    # rejects `layer.end > duration` strictly (KRI-209, same class as KRI-190).
-    snap_text_overshoot(layers, timeline_end_s(clip for track in tracks for clip in track.clips))
-
     required_capabilities = (
         {"basicComposition", "local1080Export", "narrationAudio", "audioMix"}
-        | ({"positionedText"} if layers else set())
-        | (
-            {"animatedText"}
-            if any(layer.effect not in {"static", "none"} for layer in layers)
-            else set()
-        )
         | ({"variableSpeed"} if any(clip.rate != 1 for clip in clips) else set())
         | ({"audioDucking"} if audio.duck_original_during_music else set())
     )
 
-    return EditRecipeV2(
+    recipe = EditRecipeV2(
         canvas=story_canvas,
         assets=list(assets.values()),
         asset_manifest=RenderAssetManifest(assets=tuple(manifest.values())),
         tracks=tracks,
-        text_layers=layers,
         audio=audio,
         required_capabilities=required_capabilities,
+    )
+    if not caption_cues:
+        # An empty-caption narrated render is not an error (see "Captions").
+        return recipe
+    # Captions go through the same swap a phone-editor caption Save uses
+    # (KRI-280), so the first render and every later Save compile them alike.
+    return replace_narrated_captions(
+        recipe, caption_cues=caption_cues, caption_style=caption_style, look=caption_look
     )

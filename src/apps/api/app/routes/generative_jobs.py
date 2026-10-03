@@ -6559,6 +6559,21 @@ def _phone_subtitled_editor_lanes_available(job: Job, variant: dict) -> bool:
     return is_phone_subtitled_editor_variant(variant) and phone_subtitled_editor_lanes_supported()
 
 
+def _phone_narrated_caption_edits_available(variant: dict) -> bool:
+    """True when a phone Narrated variant's `caption_cues`/`caption_meta`
+    can be Saved (KRI-280): the variant shape (a `narrated` device render)
+    AND the rollout gate (`phone_narrated_caption_edits_supported`). The
+    caption Save guards and the phone capability clamp both read this, so
+    the editor never offers a caption control that Save would 422 on.
+    """
+    from app.services.phone_editor import is_phone_narrated_editor_variant  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_narrated_caption_edits_supported,
+    )
+
+    return is_phone_narrated_editor_variant(variant) and phone_narrated_caption_edits_supported()
+
+
 # The editor sections a phone Talking Save persists onto the variant.
 _PHONE_SUBTITLED_EDITOR_LANE_KEYS = ("sound_effects", "media_overlays")
 
@@ -6586,12 +6601,17 @@ def _clamp_phone_editor_capabilities(
     guided_story: bool = False,
     source_crop: bool = False,
     narrated: bool = False,
+    narrated_captions: bool = False,
 ) -> dict:
     """Close every control a device-rendered variant cannot save, shape-preserving.
 
     ``source_crop`` (KRI-140): a guided-story device variant keeps the footage
     crop control once the device has verified ``sourceCrop`` -- the phone
     compiler then carries the crop on the clip instead of refusing it.
+
+    ``narrated_captions`` (KRI-280): a narrated device variant with the
+    caption-edit rollout on keeps `caption_cues`/`caption_meta`/
+    `caption_editor_style` open, exactly like a phone Talking variant.
     """
     clamped = dict(capabilities)
     # KRI-182 step 1: a subtitled device variant with the editor-lanes rollout
@@ -6650,15 +6670,17 @@ def _clamp_phone_editor_capabilities(
     # KRI-216: a subtitled device variant with the editor-lanes rollout on can
     # Save `caption_cues`/`caption_meta` through the phone subtitled compiler
     # (`phone_subtitled_editor.py`) — open both, matching the sfx/overlays
-    # carve-out above. Every OTHER device variant (phone narrated, montage,
-    # subtitled with the rollout off) 422s on either section today, so close
-    # both — EXCEPT a guided_story device variant: guided phone text
-    # edits already go through `prepare_phone_editor_commit`'s guided branch,
-    # gated on the same revision `operation()` used above, so leave its
+    # carve-out above. KRI-280: so can a narrated device variant with its
+    # caption-edit rollout on (`replace_narrated_captions`). Every OTHER
+    # device variant (montage, subtitled or narrated with its rollout off)
+    # 422s on either section, so close both — EXCEPT a guided_story device
+    # variant: guided phone text edits already go through
+    # `prepare_phone_editor_commit`'s guided branch, gated on the same
+    # revision `operation()` used above, so leave its
     # pre-clamp, revision-gated caption_meta/caption_cues/caption_editor_style
     # exactly as `_base_editor_capabilities` computed them (today's behavior;
     # the clamp has never touched these three keys for guided device variants).
-    if subtitled_lanes:
+    if subtitled_lanes or narrated_captions:
         if "caption_cues" in clamped:
             clamped["caption_cues"] = {"editable": True, "reason": None}
         if "caption_meta" in clamped:
@@ -6698,6 +6720,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             subtitled_lanes=_phone_subtitled_editor_lanes_available(job, variant),
             guided_story=variant.get("resolved_archetype") == "guided_story",
             narrated=variant.get("resolved_archetype") == "narrated",
+            narrated_captions=_phone_narrated_caption_edits_available(variant),
             source_crop=(
                 variant.get("resolved_archetype") == "guided_story"
                 and "sourceCrop" in settings.phone_render_verified_features
@@ -9722,6 +9745,7 @@ def _prepare_editor_commit(
             _is_editable_caption_variant(variant)
             or guided_v2
             or _phone_subtitled_editor_lanes_available(job, variant)
+            or _phone_narrated_caption_edits_available(variant)
             or (
                 "caption_cue" in payload._deleted_kinds
                 and _is_exact_deletion_survivor(payload, "caption_cues", payload.caption_cues)
@@ -9743,6 +9767,7 @@ def _prepare_editor_commit(
             _is_editable_caption_variant(variant)
             or guided_v2
             or _phone_subtitled_editor_lanes_available(job, variant)
+            or _phone_narrated_caption_edits_available(variant)
         ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
