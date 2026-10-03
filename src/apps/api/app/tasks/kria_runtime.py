@@ -2892,7 +2892,10 @@ def _expire_pending_approvals() -> list[str]:
 
     Only approvals with nothing to reverse are swept here: a strategy approval whose
     execution carries a committed media mutation (`strategy_media_before`) keeps its
-    existing lazy path (the next approve/deny restores the item).
+    lazy path: the next approve/deny OR the next `submit_turn` (KRI-295,
+    `runtime._expire_blocking_approval`) restores the item and expires the approval, so such an
+    approval can no longer deadlock the thread. The sweep stays sync-only on purpose (the
+    restore helpers are async).
     """
     successors: list[str] = []
     with sync_session() as db:

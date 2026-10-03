@@ -26,8 +26,10 @@ from app.models import (
     CreationThread,
     CreationThreadEvent,
     CreatorAgentApproval,
+    CreatorAgentExecution,
     CreatorAgentSession,
     CreatorAgentTurn,
+    PlanItem,
 )
 from app.tasks import kria_runtime as rt
 from tests.kria.test_approval_dispatch_lock_order import _approved_strategy, _own_pool  # noqa: F401
@@ -223,3 +225,157 @@ def test_the_sweep_lock_is_released_after_a_run_and_after_an_exception(monkeypat
     with pytest.raises(RuntimeError):
         rt.reconcile_kria_turns.run()
     assert free()
+
+
+def _expire(approval_id: uuid.UUID) -> None:
+    with sync_session() as db:
+        db.execute(
+            update(CreatorAgentApproval)
+            .where(CreatorAgentApproval.id == approval_id)
+            .values(expires_at=datetime.now(UTC) - timedelta(minutes=5))
+        )
+        db.commit()
+
+
+def _stash_media_mutation(approval_id: uuid.UUID, item_id: uuid.UUID) -> dict:
+    """Simulate a committed-but-never-approved strategy media mutation (KRI-295)."""
+    with sync_session() as db:
+        item = db.get(PlanItem, item_id)
+        before = {
+            "edit_format": item.edit_format,
+            "audio_mode": item.audio_mode,
+            "voiceover_caption_style": item.voiceover_caption_style,
+            "user_edited": item.user_edited,
+        }
+        approval = db.get(CreatorAgentApproval, approval_id)
+        execution = db.get(CreatorAgentExecution, uuid.UUID(approval.execution_ids[0]))
+        execution.result = {**(execution.result or {}), "strategy_media_before": before}
+        item.edit_format = "narrated"
+        item.audio_mode = "voiceover"
+        item.user_edited = True
+        db.commit()
+    return before
+
+
+async def _submit(user_id, thread_id, message):  # noqa: ANN001, ANN202
+    async with AsyncSessionLocal() as db:
+        revision = int((await db.get(CreationThread, thread_id)).revision)
+    async with AsyncSessionLocal() as db:
+        return await submit_turn(
+            db,
+            thread_id=thread_id,
+            creator_id=user_id,
+            body=SubmitTurnBody(
+                message=message,
+                client_event_id=f"new-{uuid.uuid4().hex}",
+                expected_thread_revision=revision,
+            ),
+        )
+
+
+def _user_messages(thread_id: uuid.UUID) -> list[str]:
+    with sync_session() as db:
+        return [
+            c
+            for (c,) in db.execute(
+                select(CreationThreadEvent.content)
+                .where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.event_type == "user_message",
+                )
+                .order_by(CreationThreadEvent.sequence)
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_live_pending_approval_with_queued_follow_up_still_409s(monkeypatch) -> None:  # noqa: ANN001
+    user_id, thread_id, _s, approval_id, queued_id = await _pending_with_queued_successor(
+        monkeypatch
+    )
+    with pytest.raises(RuntimeFailure) as caught:
+        await _submit(user_id, thread_id, "yet another message")
+    assert caught.value.code == "queued_successor_exists"
+    assert "Approve or dismiss" in caught.value.message
+    with sync_session() as db:
+        assert db.get(CreatorAgentApproval, approval_id).status == "pending"
+    assert _turn_status(queued_id) == "queued"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_stash", [False, True])
+async def test_submit_expires_an_overdue_approval_instead_of_deadlocking(  # noqa: ANN001
+    monkeypatch, with_stash: bool
+) -> None:
+    user_id, thread_id, session_id, approval_id, queued_id = await _pending_with_queued_successor(
+        monkeypatch
+    )
+    with sync_session() as db:
+        item_id = db.get(CreatorAgentSession, session_id).plan_item_id
+        awaiting_turn_id = db.get(CreatorAgentApproval, approval_id).turn_id
+    before = _stash_media_mutation(approval_id, item_id) if with_stash else None
+    _expire(approval_id)
+
+    accepted, _publish = await _submit(user_id, thread_id, "the new message after expiry")
+
+    with sync_session() as db:
+        approval = db.get(CreatorAgentApproval, approval_id)
+        assert approval.status == "expired"
+        awaiting = db.get(CreatorAgentTurn, awaiting_turn_id)
+        assert awaiting.status == "failed"
+        assert awaiting.error["code"] == "approval_expired"
+        execution = db.get(CreatorAgentExecution, uuid.UUID(approval.execution_ids[0]))
+        assert "strategy_media_before" not in (execution.result or {})
+        if before is not None:
+            item = db.get(PlanItem, item_id)
+            assert item.edit_format == before["edit_format"]
+            assert item.audio_mode == before["audio_mode"]
+            assert item.user_edited == before["user_edited"]
+        events = [
+            c
+            for (c,) in db.execute(
+                select(CreationThreadEvent.content).where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.event_type == "assistant_error",
+                )
+            )
+        ]
+        assert any("expired" in (c or "") for c in events)
+    # The earlier queued follow-up is promoted exactly once; the new message queues behind it.
+    assert _turn_status(queued_id) == "pending"
+    assert accepted.status == "queued"
+    assert _turn_status(accepted.turn_id) == "queued"
+    messages = _user_messages(thread_id)
+    assert messages.count("a follow-up while the approval waits") == 1
+    assert messages.count("the new message after expiry") == 1
+
+
+@pytest.mark.asyncio
+async def test_approve_on_an_expired_approval_fails_the_turn_and_promotes_the_follow_up(  # noqa: ANN001
+    monkeypatch,
+) -> None:
+    user_id, thread_id, session_id, approval_id, queued_id = await _pending_with_queued_successor(
+        monkeypatch
+    )
+    with sync_session() as db:
+        item_id = db.get(CreatorAgentSession, session_id).plan_item_id
+        awaiting_turn_id = db.get(CreatorAgentApproval, approval_id).turn_id
+    before = _stash_media_mutation(approval_id, item_id)
+    _expire(approval_id)
+    body = _body(approval_id, thread_id)
+    async with AsyncSessionLocal() as db:
+        with pytest.raises(RuntimeFailure) as caught:
+            await decide_approval(
+                db,
+                thread_id=thread_id,
+                approval_id=approval_id,
+                creator_id=user_id,
+                decision="approve",
+                body=body,
+            )
+    assert caught.value.code == "approval_expired"
+    with sync_session() as db:
+        assert db.get(CreatorAgentApproval, approval_id).status == "expired"
+        assert db.get(CreatorAgentTurn, awaiting_turn_id).status == "failed"
+        assert db.get(PlanItem, item_id).edit_format == before["edit_format"]
+    assert _turn_status(queued_id) == "pending"
