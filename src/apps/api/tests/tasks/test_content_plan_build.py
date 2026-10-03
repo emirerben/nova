@@ -48,6 +48,19 @@ def test_humanize_job_failure_reason_never_returns_the_raw_code() -> None:
     assert fallback != "some_new_unmapped_code"
 
 
+def test_phone_plan_unsupported_copy_asks_for_a_change_not_a_retry() -> None:
+    message = humanize_job_failure_reason("phone_plan_unsupported")
+    assert message and "try again" not in message.lower()
+    assert "Start a new edit" in message
+
+
+def test_phone_gate_messages_cover_subtitled_clip_too_long() -> None:
+    from app.tasks.content_plan_build import PHONE_GATE_MESSAGES
+
+    code, _message = PHONE_GATE_MESSAGES["subtitled_clip_too_long"]
+    assert code == "phone_format_unavailable"
+
+
 def test_persona_render_snapshot_excludes_expired_derived_style() -> None:
     persona = SimpleNamespace(
         persona={"tone": "direct"},
@@ -3898,6 +3911,39 @@ def test_phone_subtitled_lanes_forwarded_when_eligible_and_flag_on(
     assert mock_build.call_args.kwargs["phone_sources"] == ("bound-source",)
     assert mock_build.call_args.kwargs["phone_subtitled_lanes"] == _LANE_REQUEST
     assert result.outcome == "dispatched"
+
+
+def _bound_source(duration_s: float) -> SimpleNamespace:
+    return SimpleNamespace(original=SimpleNamespace(duration_s=duration_s))
+
+
+def test_phone_gate_subtitled_clip_over_max_duration_mints_no_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A subtitled original longer than the compiler's max can never render:
+    refuse at dispatch (invalid_clips) instead of minting a doomed Job."""
+    result, _job, mock_build, _bind_mock = _run_phone_dispatch(
+        monkeypatch,
+        edit_format="subtitled",
+        approved=False,
+        bound_sources=(_bound_source(301.0),),
+    )
+    assert result.outcome == "invalid_clips"
+    assert result.reason == "subtitled_clip_too_long"
+    mock_build.assert_not_called()
+
+
+def test_phone_gate_subtitled_clip_at_max_duration_dispatches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, _job, mock_build, _bind_mock = _run_phone_dispatch(
+        monkeypatch,
+        edit_format="subtitled",
+        approved=False,
+        bound_sources=(_bound_source(300.0),),
+    )
+    assert result.outcome == "dispatched"
+    mock_build.assert_called_once()
 
 
 def test_phone_subtitled_lanes_absent_when_flag_off(monkeypatch: pytest.MonkeyPatch) -> None:

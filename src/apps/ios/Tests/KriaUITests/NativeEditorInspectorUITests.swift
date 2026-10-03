@@ -1053,6 +1053,16 @@ final class NativeEditorInspectorUITests: XCTestCase {
                        "Fallback video is playback-only; canvas objects cannot be selected or manipulated")
     }
 
+    /// KRI-281: a permanent failure (no video track) rebuilds identically, so Try again must not loop.
+    func testPermanentSourceFailureHidesTryAgain() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-failure-permanent"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["Showing your last finished video"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["native-editor-retry-source-preview"].exists)
+    }
+
     /// KRI-211: a project made on another device has no originals here. Retry cannot fix that, so
     /// the editor says so in plain words and offers the one thing that can: finding the files.
     func testMissingOriginalsOffersFindingFilesInsteadOfRetry() {
@@ -1418,6 +1428,26 @@ final class NativeEditorInspectorUITests: XCTestCase {
         undo.tap()
         expectation(for: NSPredicate(format: "value CONTAINS %@", originalPosition), evaluatedWith: text)
         waitForExpectations(timeout: 3)
+    }
+
+    /// KRI-281: a DragGesture on the caption rows fought the ScrollView, so a long list (narrated /
+    /// voiceover captions) could not be scrolled by hand to its last blocks.
+    func testLongCaptionListScrollsByHandToLastLines() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-stress-71"]
+        app.launch()
+
+        let captions = app.buttons["native-editor-tool-captions"]
+        XCTAssertTrue(captions.waitForExistence(timeout: 8))
+        captions.tap()
+        let scroll = app.scrollViews["native-editor-captions-scroll"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 5))
+        let last = app.descendants(matching: .any)["native-editor-caption-row-stress-cue-30"].firstMatch
+        // The panel is short on a phone; a hand swipe moves roughly one viewport.
+        for _ in 0..<40 where !last.isHittable {
+            scroll.swipeUp(velocity: .fast)
+        }
+        XCTAssertTrue(last.isHittable, "caption list did not scroll to line 31")
     }
 
     func testStressFixtureRemainsReachableAtAccessibilityTypeWithReduceMotion() {

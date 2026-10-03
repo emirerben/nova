@@ -10,6 +10,9 @@ struct NativeEditorLanePanel<Tab: Hashable & RawRepresentable, Content: View>: V
     var heading: String? = nil
     var onAdd: (() -> Void)? = nil
     var onDelete: (() -> Void)? = nil
+    /// Scroll-phase changes of the panel's own ScrollView (user drags, deceleration,
+    /// idle). Lets a panel react to hand scrolling without a competing DragGesture.
+    var onScrollPhase: ((ScrollPhase) -> Void)? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -48,6 +51,7 @@ struct NativeEditorLanePanel<Tab: Hashable & RawRepresentable, Content: View>: V
                 .scrollDismissesKeyboard(.interactively)
                 .accessibilityIdentifier("native-editor-\(title.lowercased())-scroll")
                 .onScrollPhaseChange { _, phase, context in
+                    onScrollPhase?(phase)
                     #if DEBUG
                     guard title == "Visuals" else { return }
                     let geometry = context.geometry
@@ -101,6 +105,7 @@ struct NativeCaptionPanel: View {
     @State private var lineOpen = false
     @State private var loopingCueID: String?
     @State private var followSuspended = false
+    @State private var followResumeTask: Task<Void, Never>?
     @State private var removal: CaptionRemovalNotice?
     /// The line under the playhead (plan 026 D15). Set from the playback clock, which
     /// the session keeps off its own publisher, so the panel re-renders when the
@@ -121,7 +126,7 @@ struct NativeCaptionPanel: View {
             } else {
                 NativeEditorLanePanel(title: "Captions", tabs: Tab.allCases, tab: $tab, onDone: {
                     leaveLine(to: nil); onDone()
-                }) {
+                }, onScrollPhase: handleScrollPhase) {
                     VStack(spacing: 8) {
                         switch tab {
                         // KRI-216: each tab is gated by its own server capability
@@ -181,6 +186,26 @@ struct NativeCaptionPanel: View {
 
     // MARK: Browse (keyboard down)
 
+    /// A hand scroll pauses follow; it resumes ~2s after the list settles. This replaces a
+    /// `DragGesture` on the rows, which fought the ScrollView's own pan on iOS 18 (KRI-281).
+    private func handleScrollPhase(_ phase: ScrollPhase) {
+        switch phase {
+        case .interacting, .decelerating:
+            followResumeTask?.cancel()
+            followSuspended = true
+        case .idle:
+            guard followSuspended else { return }
+            followResumeTask?.cancel()
+            followResumeTask = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
+                followSuspended = false
+            }
+        default:
+            break
+        }
+    }
+
     private func playingLine(at time: TimeInterval) -> String? {
         session.captionTimelineRanges().last { $0.range.lowerBound <= time && time < $0.range.upperBound }?.id
     }
@@ -204,7 +229,6 @@ struct NativeCaptionPanel: View {
                     row(cue, index: index).id(cue.id)
                 }
             }
-            .simultaneousGesture(DragGesture(minimumDistance: 12).onChanged { _ in followSuspended = true })
             .onChange(of: playingID) { _, id in
                 // Follow the playing line (plan 026 D15): never while the creator is
                 // scrolling, editing, or using VoiceOver.

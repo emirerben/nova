@@ -20,11 +20,13 @@ Whisper-derived caption cues burned as `text_layers`
 (`app.pipeline.phone_captions.compile_caption_layers`) instead of an ASS
 file. The cloud path additionally reframes the clip to 9:16 via
 `reframe_and_export`/`resolve_output_fit`, which can letterbox or center-crop
-a non-portrait source; the phone engine only aspect-fills (center-crops) with
-no face tracking, so this compiler rejects a non-portrait source clip
-outright rather than silently cropping the speaker out of frame -- a v1
-limitation, not a permanently-gated capability (hence `semanticCamera`, a
-named-but-unimplemented `MediaCapability`, rather than leaving it bare).
+a non-portrait source; the phone engine cover-fills (center-crops) with no
+face tracking. KRI-283: with ``landscape_fit="fit"`` (the content-plan default,
+same as the cloud) a landscape speaker clip is letterboxed instead -- every
+speaker `TimelineClip` carries a `MediaTransform(scale=contain/cover)` that the
+engine applies about the canvas center over black
+(`app.pipeline.phone_recipe_shared.fit_transform`). With ``"fill"`` (and for
+square sources) the clip is center-cropped, like the cloud's own fill path.
 
 With ``lanes=None`` (or an all-empty `PhoneSubtitledLanes`) and
 ``visuals=()``, this compiler's output is byte-identical to the pre-KRI-174
@@ -39,11 +41,13 @@ window as a muted, full-frame clip on its own overlay track
 a `VisualMediaPlacement` with no ``width_fraction`` cover-fills the canvas,
 and a placed clip never contributes audio -- so no new native primitive is
 needed. Cutaway footage may be landscape (it is centre-cropped, like the
-cloud's b-roll reframe); only the speaker clip must be portrait. With
+cloud's b-roll reframe); only the speaker clip is letterboxed. With
 ``cutaways=()`` the output is byte-identical to the single-clip shape.
 """
 
 from __future__ import annotations
+
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -65,6 +69,7 @@ from app.pipeline.phone_captions import (
     compile_caption_layers,
 )
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
+from app.pipeline.phone_recipe_shared import fit_transform
 from app.pipeline.phone_subtitled_lanes import (
     CAPTION_BAND_TOP_FRAC,
     PhoneSubtitledLanes,
@@ -88,8 +93,8 @@ _MAX_CLIP_DURATION_S = 300.0
 
 # The phone story canvas for every subtitled render -- subtitled has no
 # `decision.orientation`/`extras["canvas"]` to read (unlike the montage
-# compiler), and the portrait-source requirement below makes a landscape
-# canvas meaningless here.
+# compiler); a landscape source is letterboxed into it (KRI-283), never given
+# a landscape canvas.
 _STORY_CANVAS = Canvas(width=1080, height=1920)
 
 # Below this, a clamped sound effect would be inaudible/pointless; skip it
@@ -159,6 +164,7 @@ def compile_phone_subtitled_plan(
     keep_segments: list[tuple[float, float]] | None = None,
     caption_look: PhoneCaptionLook | None = None,
     cutaways: tuple[PhoneCutaway, ...] = (),
+    landscape_fit: Literal["fill", "fit"] = "fill",
 ) -> EditRecipeV2:
     """Compile the subtitled edit format's phone recipe.
 
@@ -256,11 +262,17 @@ def compile_phone_subtitled_plan(
     `PhoneCutaway` carries its own binding. See the module docstring and
     `_compile_cutaway_track` for the exact shape and rejections.
 
+    ``landscape_fit`` (KRI-283, ``"fill"`` default) is the cloud's
+    ``landscape_fit`` preference. ``"fit"`` letterboxes a landscape speaker
+    clip via a main-track `MediaTransform(scale=contain/cover)` on EVERY speaker
+    `TimelineClip` (all keep-segment cuts); the ending clip and cutaways are
+    never transformed. ``"fill"``, square and portrait sources keep the
+    identity transform, so those recipes are byte-identical to the pre-KRI-283
+    shape.
+
     Rejects (all `UnsupportedPhonePlan`, fail-closed):
       - zero or more than one binding.
       - a non-video source (no probed width/height).
-      - a source clip whose (rotation-corrected) display is landscape or
-        square -- the phone engine's center-fill crop has no face tracking.
       - a clip longer than 300s (`_MAX_CLIP_DURATION_S`), matching the
         cloud's own cap.
       - any `lanes` content that cannot compile -- raised as
@@ -282,13 +294,7 @@ def compile_phone_subtitled_plan(
             "subtitled clips are capped at 5 minutes -- trim the clip and re-upload"
         )
     display_width, display_height = _display_dims(original)
-    if display_width >= display_height:
-        raise UnsupportedPhonePlan(
-            "phone subtitled plan requires a portrait source clip -- the phone engine "
-            "aspect-fills with no face tracking, so a landscape or square clip would "
-            "silently center-crop the speaker",
-            capability="semanticCamera",
-        )
+    speaker_transform = fit_transform(display_width, display_height, _STORY_CANVAS, landscape_fit)
 
     duration_s = float(original.duration_s)
     # An explicit `keep_segments` (editor Save reconstructing a previously
@@ -335,6 +341,7 @@ def compile_phone_subtitled_plan(
                 source_duration=seg_duration,
                 timeline_start=cursor,
                 rate=1.0,
+                transform=speaker_transform,
             )
         )
         cursor += seg_duration
@@ -943,6 +950,19 @@ def _sfx_volume(
     if overlap < _SFX_SPEECH_MIN_OVERLAP_S:
         return volume
     return round(volume * SFX_SPEECH_DUCK_GAIN, 4)
+
+
+def landscape_fit_from_recipe(recipe: EditRecipeV2) -> Literal["fill", "fit"]:
+    """Inverse of ``compile_phone_subtitled_plan``'s ``landscape_fit`` ->
+    speaker-clip transform projection (KRI-283): ``"fit"`` when the main
+    (``"subtitled"``) track's first clip -- always the speaker -- is scaled
+    below 1, else ``"fill"``. Lets an editor Save re-derive the letterbox from
+    the previously pinned recipe, like ``keep_segments``."""
+    main_track = next((track for track in recipe.tracks if track.id == "subtitled"), None)
+    if main_track is None or not main_track.clips:
+        return "fill"
+    first = min(main_track.clips, key=lambda clip: clip.timeline_start)
+    return "fit" if first.transform.scale < 1 else "fill"
 
 
 def _display_dims(original) -> tuple[int, int]:

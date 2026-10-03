@@ -2090,6 +2090,9 @@ def _device_render_state(job: Job, execution: CreatorAgentExecution) -> str | No
     return "failed" if "failed" in states else "ready"
 
 
+_DETERMINISTIC_JOB_FAILURE_CODES = {"phone_plan_unsupported"}
+
+
 def _phone_gate_refusal_copy(reason: str) -> str:
     from app.tasks.content_plan_build import PHONE_GATE_MESSAGES  # noqa: PLC0415
 
@@ -2781,10 +2784,13 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         device_failed = device_state == "failed"
         # Chat retry cannot recover a device render (the Job is still
         # `awaiting_device`); the creator retries from the phone's render panel.
-        recovery = "manual" if device_failed else "retry"
+        # Deterministic compiler rejects fail identically on every retry: ask
+        # the creator for a change instead of offering a dead retry loop.
+        deterministic = not device_failed and failure_code in _DETERMINISTIC_JOB_FAILURE_CODES
+        recovery = "manual" if device_failed else ("ask_user" if deterministic else "retry")
         execution.error = {
             "code": failure_code,
-            "retryable": not device_failed,
+            "retryable": not device_failed and not deterministic,
             "recovery": recovery,
         }
         turn.status = "failed"
@@ -2792,18 +2798,26 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         turn.error = execution.error
         session.status = "awaiting_feedback"
         session.last_error = execution.error
+        from app.tasks.content_plan_build import humanize_job_failure_reason  # noqa: PLC0415
+
+        if device_failed:
+            failure_content = (
+                "Your iPhone couldn't finish the render. Your approved edit is still saved: "
+                "open the project on your iPhone and tap Retry."
+            )
+        elif deterministic:
+            failure_content = humanize_job_failure_reason(failure_code)
+        else:
+            failure_content = (
+                "That render didn't finish. Your approved draft is still saved, "
+                "so you can retry without rebuilding the edit."
+            )
         event = _append_sync_event(
             db,
             thread,
             role="assistant",
             event_type="assistant_render_failed",
-            content=(
-                "Your iPhone couldn't finish the render. Your approved edit is still saved: "
-                "open the project on your iPhone and tap Retry."
-                if device_failed
-                else "That render didn't finish. Your approved draft is still saved, "
-                "so you can retry without rebuilding the edit."
-            ),
+            content=failure_content,
             payload={
                 "turn_id": str(turn.id),
                 "execution_id": str(execution.id),

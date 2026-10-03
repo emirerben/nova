@@ -241,6 +241,54 @@ def _decision(
     )
 
 
+def _landscape_rotated_clip(path: Path, freq: int, duration: float) -> None:
+    """KRI-283: a 1920x1080 DISPLAY clip, left half red / right half blue, stored the way a phone
+    stores a landscape recording: 1080x1920 pixels + a rotation flag. Built by transposing the
+    landscape frame counter-clockwise, then remuxing with ffmpeg's `-display_rotation -90`
+    (ffmpeg's convention is counter-clockwise, so -90 == the 90-degree clockwise
+    `orientation_degrees=90` the device binds). Callers should confirm with ffprobe."""
+    raw = path.with_name(path.stem + "-raw.mp4")
+    half = f"s=960x1080:r=30:d={duration}"
+    _ffmpeg(
+        *("-f", "lavfi", "-i", f"color=c=red:{half}"),
+        *("-f", "lavfi", "-i", f"color=c=blue:{half}"),
+        *("-f", "lavfi", "-i", f"sine=frequency={freq}:duration={duration}"),
+        *("-filter_complex", "[0][1]hstack,transpose=cclock[v]"),
+        *("-map", "[v]", "-map", "2:a"),
+        *("-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(raw)),
+    )
+    _ffmpeg("-display_rotation:v:0", "-90", "-i", str(raw), "-c", "copy", str(path))
+    raw.unlink()
+    probe = json.loads(
+        subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_streams", "-of", "json",
+             str(path)],
+            check=True, capture_output=True, text=True,
+        ).stdout
+    )["streams"][0]
+    rotations = [d.get("rotation") for d in probe.get("side_data_list", []) if "rotation" in d]
+    if (probe["width"], probe["height"]) != (1080, 1920) or rotations != [-90]:
+        raise RuntimeError(f"landscape fixture is not 1080x1920 + rotation -90: {probe}")
+
+
+def _landscape_binding(path: Path, media_id: str, *, duration_s: float) -> PhoneSourceBinding:
+    sha, size = _fingerprint(path)
+    return PhoneSourceBinding(
+        media_id=media_id,
+        proxy_path=f"users/owner/creation/analysis-proxy-{media_id}.mp4",
+        generation="101",
+        original=OriginalMediaDescriptor(
+            sha256=sha,
+            byte_count=size,
+            duration_s=duration_s,
+            width=1080,
+            height=1920,
+            orientation_degrees=90,
+            has_audio=True,
+        ),
+    )
+
+
 def _status(job_id: uuid.UUID, variant_id: str, recipe) -> dict:
     request = make_device_request(job_id=job_id, variant_id=variant_id, revision=1, recipe=recipe)
     return DeviceRenderStatus(phase="awaiting_device", request=request).model_dump(mode="json")
@@ -452,6 +500,28 @@ def main() -> None:
     except (UnsupportedPhonePlan, ValueError) as exc:
         compile_errors["subtitled_word"] = f"{type(exc).__name__}: {exc}"
 
+    # --- case (f2): landscape speaker letterboxed (KRI-283) ------------------
+    # 1920x1080 display clip (stored 1080x1920 + 90 degree rotation), left red /
+    # right blue. landscape_fit="fit" letterboxes it via a main-track
+    # MediaTransform(scale=0.31640625): black bars top/bottom, captions in the
+    # lower bar, red/blue orientation preserved.
+    subtitled_landscape_cues = [
+        {"text": "Letterboxed landscape", "start_s": 0.3, "end_s": 1.3},
+        {"text": "Captions in the bar", "start_s": 2.3, "end_s": 3.5},
+    ]
+    _landscape_rotated_clip(out / "subtitled-landscape-c0.mp4", 360, duration=6.0)
+    subtitled_landscape_binding = _landscape_binding(
+        out / "subtitled-landscape-c0.mp4", "subtitled-landscape-c0", duration_s=6.0
+    )
+    try:
+        recipes["subtitled_landscape_fit"] = compile_phone_subtitled_plan(
+            (subtitled_landscape_binding,),
+            caption_cues=subtitled_landscape_cues,
+            landscape_fit="fit",
+        )
+    except (UnsupportedPhonePlan, ValueError) as exc:
+        compile_errors["subtitled_landscape_fit"] = f"{type(exc).__name__}: {exc}"
+
     # --- case (g): multi-clip Talking head with a muted cutaway ------------
     # The speaker remains the only main-track clip and therefore supplies the
     # same 340-Hz source audio before, during, and after the lime cutaway. The
@@ -568,6 +638,11 @@ def main() -> None:
     )
     subtitled_word_region0 = _caption_region(
         recipes["subtitled_word"].text_layers[0],
+        canvas_width=CANVAS["width"],
+        canvas_height=CANVAS["height"],
+    )
+    subtitled_landscape_region0 = _caption_region(
+        recipes["subtitled_landscape_fit"].text_layers[0],
         canvas_width=CANVAS["width"],
         canvas_height=CANVAS["height"],
     )
@@ -741,6 +816,45 @@ def main() -> None:
                         "name": "cue0_gap",
                         "t": 2.0,
                         "region": subtitled_word_region0,
+                        "expect_text": False,
+                    },
+                ],
+            },
+            "subtitled_landscape_fit": {
+                "status_file": "status-subtitled-landscape-fit.json",
+                "duration_s": recipes["subtitled_landscape_fit"].duration,
+                "required_capabilities": sorted(
+                    recipes["subtitled_landscape_fit"].required_capabilities
+                ),
+                "drop_capability": "positionedText",
+                "clips": [
+                    {"media_id": "subtitled-landscape-c0", "file": "subtitled-landscape-c0.mp4"},
+                ],
+                "music_asset_id": None,
+                "music_file": None,
+                "expects_source_audio": True,
+                "expects_music_audio": False,
+                "expects_narration_audio": False,
+                # Letterboxed 1920x1080 on the 1080x1920 canvas: the video band is
+                # y in [656, 1264]. Bars black above/below; red on the left and blue on
+                # the right of the band (a flipped/upside-down orientation swaps them).
+                "samples": [
+                    {"name": "bar_top", "t": 1.8, "x": 540, "y": 300, "rgb": [0, 0, 0]},
+                    {"name": "bar_bottom", "t": 1.8, "x": 540, "y": 1700, "rgb": [0, 0, 0]},
+                    {"name": "band_left_red", "t": 1.8, "x": 270, "y": 960, "rgb": [255, 0, 0]},
+                    {"name": "band_right_blue", "t": 1.8, "x": 810, "y": 960, "rgb": [0, 0, 255]},
+                ],
+                "caption_samples": [
+                    {
+                        "name": "cue0_on",
+                        "t": 0.8,
+                        "region": subtitled_landscape_region0,
+                        "expect_text": True,
+                    },
+                    {
+                        "name": "cue0_gap",
+                        "t": 1.8,
+                        "region": subtitled_landscape_region0,
                         "expect_text": False,
                     },
                 ],

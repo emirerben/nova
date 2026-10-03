@@ -426,7 +426,7 @@ bed-resolution plumbing.
 Two more archetypes render on the phone, following the exact same
 account-pilot/rollout-flag pattern as the montage-family voiceover above.
 
-**Talking to camera (`subtitled`).** Exactly one portrait clip, its OWN audio
+**Talking to camera (`subtitled`).** Exactly one clip (portrait, or landscape letterboxed — see below), its OWN audio
 transcribed into editable captions — no voiceover, no music. Compiles through
 `app.pipeline.phone_subtitled_plan.compile_phone_subtitled_plan` via
 `app.tasks.generative_build._run_phone_subtitled_job`, behind
@@ -578,7 +578,7 @@ and is unavailable for multi-clip Talking; no agentic storyboard re-ranking for
 narrated clip assignment (script/guide order only); side-chain ducking is
 gated on `audioDucking` being verified (flat bed gain until then; `loudnorm`
 and the voice fade-out ship ungated — see "Audio mix parity (KRI-139)"); no face-tracked crop
-(`subtitled` requires an already-portrait source clip instead of cropping);
+(`subtitled` landscape sources letterbox when `landscape_fit="fit"`, the content-plan default — KRI-283: every speaker clip carries `MediaTransform(scale=contain/cover)`, e.g. 0.31640625 for 1920x1080, matching the cloud's `resolve_output_fit`; `"fill"`/square sources center-crop like the cloud's fill path; the editor Save re-derives the fit from the pinned recipe via `landscape_fit_from_recipe`);
 word-style captions use the device `karaoke-line` fill, so already-spoken
 words stay highlighted where the cloud ASS path recolours only the current
 word (seen in the simulator render of the `subtitled_word` E2E case);

@@ -187,13 +187,40 @@ def test_music_plays_only_under_montage_and_resumes_where_it_left_off() -> None:
     assert "musicBed" in recipe.required_capabilities
 
 
-def test_landscape_speaker_is_refused_with_an_actionable_reason() -> None:
-    wide = _binding("wide", width=1920, height=1080)
-    with pytest.raises(UnsupportedPhonePlan, match="vertical"):
-        _compile([_speech(0.0, 3.0, binding=wide)])
+def test_landscape_and_square_speakers_compile_with_centre_cover_and_a_note(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.phone_rollout.settings.phone_render_verified_features",
+        ["basicComposition", "local1080Export"],
+    )
+    for name, w, h in (("wide", 568, 320), ("sq", 1000, 1000), ("w4k", 3840, 2160)):
+        speaker = _binding(name, width=w, height=h)
+        recipe, receipt = _compile([_speech(0.0, 3.0, binding=speaker)], broll=())
+        (clip,) = _main(recipe)
+        assert clip.source_crop is None
+        assert clip.volume == 1.0
+        assert recipe.required_capabilities == {"basicComposition", "local1080Export"}
+        assert any("cropped" in a for a in receipt.adjustments)
+        validate_phone_pilot_recipe(recipe)
+
+
+def test_rotated_speaker_that_displays_portrait_is_not_flagged() -> None:
     rotated = _binding("rot", width=1920, height=1080, orientation_degrees=90)
-    recipe, _ = _compile([_speech(0.0, 3.0, binding=rotated)], broll=())
+    recipe, receipt = _compile([_speech(0.0, 3.0, binding=rotated)], broll=())
     assert recipe.duration == pytest.approx(3.0)
+    assert not receipt.adjustments
+
+
+def test_landscape_speaker_with_cutaways_keeps_the_audio_track() -> None:
+    wide = _binding("wide", width=1920, height=1080)
+    recipe, _ = _compile([_speech(0.0, 3.0, visual="cutaways", binding=wide)])
+    assert len(_audio(recipe)) == 1
+    assert all(c.volume == 0.0 for c in _main(recipe))
+
+
+def test_portrait_speaker_recipe_is_unchanged_by_landscape_support() -> None:
+    recipe, receipt = _compile([_speech(1.0, 6.0)], broll=())
+    assert "source_crop" not in recipe.model_dump_json()
+    assert not receipt.adjustments
 
 
 def test_broll_needed_but_absent_names_what_to_add() -> None:

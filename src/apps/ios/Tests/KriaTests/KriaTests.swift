@@ -247,7 +247,7 @@ final class KriaTests: XCTestCase {
         URLProtocolStub.handler = { request in
             XCTAssertEqual(request.httpMethod, "GET")
             XCTAssertEqual(request.url?.path, "/creation-threads/capabilities")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "2")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "3")
             return (200, Data(#"{"formats":[{"id":"montage","edit_format":"montage","max_clips":20},{"id":"narrated","edit_format":"narrated_planned","max_clips":20}]}"#.utf8))
         }
         let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
@@ -304,7 +304,7 @@ final class KriaTests: XCTestCase {
         }
         defer { NotificationCenter.default.removeObserver(observer) }
         URLProtocolStub.handler = { request in
-            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "2")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "3")
             return (426, Data(#"{"problem":{"code":"native_update_required","message":"Update Kria"}}"#.utf8))
         }
         let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
@@ -333,7 +333,7 @@ final class KriaTests: XCTestCase {
         let store = MemoryTokenStore(MobileSession(accessToken: "expired", refreshToken: "refresh", expiresIn: 1))
         URLProtocolStub.handler = { request in
             if request.url?.path == "/auth/mobile/refresh" {
-                XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "2")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "3")
                 return (426, Data(#"{"problem":{"code":"native_update_required","message":"Update Kria"}}"#.utf8))
             }
             return (401, Data())
@@ -482,7 +482,7 @@ final class KriaTests: XCTestCase {
 
     func testProjectUploadReservationAndAttachmentUseThreadContract() async throws {
         URLProtocolStub.handler = { request in
-            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "2")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "3")
             if request.url?.path.hasSuffix("/upload-urls") == true {
                 let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: Self.bodyData(request)) as? [String: Any])
                 let files = try XCTUnwrap(body["files"] as? [[String: Any]])
@@ -508,7 +508,7 @@ final class KriaTests: XCTestCase {
         let lock = NSLock()
         var projectCalls = 0
         URLProtocolStub.handler = { request in
-            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "2")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kria-Client-Protocol"), "3")
             if request.url?.path == "/auth/mobile/refresh" {
                 return (200, Data(#"{"access_token":"fresh","refresh_token":"refresh-2","token_type":"Bearer","expires_in":900,"user":{"id":"1","email":"creator@example.com","onboarding_status":"complete","linked_providers":[]}}"#.utf8))
             }
