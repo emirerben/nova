@@ -1377,7 +1377,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
 
         let cases: [(timelineID: String, inspectorID: String)] = [
             ("native-editor-timeline-music-00000000-0000-4000-8000-000000000350", "native-editor-selected-music-track"),
-            ("native-editor-timeline-sound_effect-sfx-1", "native-editor-selected-sfx-placement"),
+            ("native-editor-timeline-sound_effect-sfx-1", "native-editor-sfx-volume"),
             ("native-editor-timeline-media_overlay-overlay-1", "native-editor-visuals-panel"),
             ("native-editor-timeline-carousel-carousel-1", "native-editor-selected-carousel-position"),
             ("native-editor-timeline-visual_block-visual-1", "native-editor-visuals-panel"),
@@ -1397,13 +1397,69 @@ final class NativeEditorInspectorUITests: XCTestCase {
                 inspectorElement.waitForExistence(timeout: 3),
                 "Inspector \(value.inspectorID) did not follow \(value.timelineID)"
             )
-            let done = app.buttons[value.inspectorID == "native-editor-visuals-panel" ? "native-editor-visuals-done" : "native-editor-inspector-done"]
+            let doneID: String
+            switch value.inspectorID {
+            case "native-editor-visuals-panel": doneID = "native-editor-visuals-done"
+            case "native-editor-sfx-volume": doneID = "native-editor-sounds-done"
+            default: doneID = "native-editor-inspector-done"
+            }
+            let done = app.buttons[doneID]
             XCTAssertTrue(done.exists)
             done.tap()
         }
     }
 
-    func testPreviewDragIsOneUndoableTextEdit() {
+    /// KRI-288: Effects home → library → add → edit sound → trim → use full sound → remove → home.
+    func testSoundEffectsHomeLibraryEditTrimFlow() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes"]
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
+
+        app.buttons["native-editor-tool-sounds"].tap()
+        app.buttons["native-editor-sounds-tab-Effects"].tap()
+        let home = app.descendants(matching: .any)["native-editor-sfx-home"].firstMatch
+        XCTAssertTrue(home.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["native-editor-sfx-row-sfx-1"].exists, "the fixture sound is listed under In this edit")
+        attachShot("sfx-1-home", app)
+
+        app.buttons["native-editor-sfx-add-sound"].tap()
+        XCTAssertTrue(app.buttons["native-editor-sfx-library-back"].waitForExistence(timeout: 3))
+        attachShot("sfx-2-library", app)
+        let search = app.textFields["native-editor-sfx-search"]
+        search.tap()
+        search.typeText("zzzz\n")
+        XCTAssertTrue(app.buttons["native-editor-sfx-clear-search"].waitForExistence(timeout: 3))
+        app.buttons["native-editor-sfx-clear-search"].tap()
+        app.buttons["native-editor-sfx-add-fx-pop"].tap()
+
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-sfx-volume"].firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["native-editor-remove-sfx"].exists)
+        attachShot("sfx-3-edit", app)
+        app.buttons["native-editor-sfx-trim-row"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-sfx-trim-bar"].firstMatch.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["native-editor-sfx-trim-reset"].isEnabled, "untrimmed sound is already full")
+        let handle = app.descendants(matching: .any)["Trim end"].firstMatch
+        XCTAssertTrue(handle.exists)
+        let grip = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        grip.press(forDuration: 0.1, thenDragTo: grip.withOffset(CGVector(dx: -80, dy: 0)))
+        XCTAssertTrue(app.buttons["native-editor-sfx-trim-reset"].waitForExistence(timeout: 2))
+        attachShot("sfx-4-trim", app)
+        app.buttons["native-editor-sfx-trim-reset"].tap()
+        app.buttons["native-editor-sfx-trim-back"].tap()
+
+        app.buttons["native-editor-remove-sfx"].tap()
+        XCTAssertTrue(home.waitForExistence(timeout: 3), "removing the sound returns to the list")
+    }
+
+    private func attachShot(_ name: String, _ app: XCUIApplication) {
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = name
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
+func testPreviewDragIsOneUndoableTextEdit() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-two-text"]
         app.launch()

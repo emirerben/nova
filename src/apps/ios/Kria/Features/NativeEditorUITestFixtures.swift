@@ -21,6 +21,13 @@ enum NativeEditorUITestFixtures {
         case retimedClips = "retimed-clips"
     }
 
+    /// Three catalog sounds in two categories; nil preview URLs keep UI tests off the network.
+    static let soundEffectCatalog: [NativeEditorSoundEffect] = [
+        .init(id: "fx-whoosh", name: "Soft whoosh", durationS: 0.8, previewAudioURL: nil, roleTags: [], category: "transition", searchTerms: ["whoosh"]),
+        .init(id: "fx-sweep", name: "Air sweep", durationS: 1.2, previewAudioURL: nil, roleTags: [], category: "transition", searchTerms: ["sweep"]),
+        .init(id: "fx-pop", name: "Pop", durationS: 0.3, previewAudioURL: nil, roleTags: [], category: "impact", searchTerms: ["pop"]),
+    ]
+
     struct Fixture: Sendable {
         let shape: Shape
         let draft: EditorDraft
