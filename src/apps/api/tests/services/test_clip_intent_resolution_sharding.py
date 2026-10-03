@@ -165,7 +165,8 @@ def test_merge_concatenates_membership_and_picks_caption_from_largest_shard() ->
     (intent,) = merged.intents
     assert [a.media for a in intent.assignments] == ["m001", "m013", "m014"]
     assert intent.caption == "big"
-    assert intent.question == "which one?"
+    # KRI-282: other shards matched clips, so the stray question is dropped.
+    assert intent.question is None
 
 
 def _soccer_output(input: ClipRequestResolverInput) -> ClipRequestResolverOutput:  # noqa: A002
