@@ -2285,17 +2285,11 @@ struct NativeMiniStrip: View {
         }
     }
 
-    private func clipDuration(_ clip: EditorClip) -> TimeInterval {
-        let trimmed = clip.trimOut - clip.trimIn
-        let timeline = clip.end - clip.start
-        let value = trimmed.isFinite && trimmed > 0 ? trimmed : timeline
-        return max(0.1, value.isFinite ? value : 0.1)
-    }
-
     private func clipFrame(_ clip: EditorClip, playheadX: CGFloat) -> CGRect {
-        let start = playheadX + CGFloat(clip.start - clock.currentTime) * pixelsPerSecond
-        let width = CGFloat(clipDuration(clip)) * pixelsPerSecond
-        return CGRect(x: start, y: 0, width: max(1, width), height: filmstripHeight)
+        NativeClipBlockGeometry.frame(
+            for: clip, playheadX: playheadX, currentTime: clock.currentTime,
+            pixelsPerSecond: pixelsPerSecond, height: filmstripHeight
+        )
     }
 
     private var timelinePanGesture: some Gesture {
@@ -2632,10 +2626,7 @@ private struct NativeClipSurface: View {
     private let minimumDuration: TimeInterval = 0.1
 
     private var duration: TimeInterval {
-        let trimmed = clip.trimOut - clip.trimIn
-        let timeline = clip.end - clip.start
-        let value = trimmed.isFinite && trimmed > 0 ? trimmed : timeline
-        return max(minimumDuration, value.isFinite ? value : minimumDuration)
+        NativeClipBlockGeometry.windowDuration(clip, minimum: minimumDuration)
     }
 
     var body: some View {
@@ -2817,5 +2808,29 @@ private struct TimelinePinchCapture: UIViewRepresentable {
         }
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                                shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+    }
+}
+
+
+/// A clip block is drawn as its TIMELINE window (`start..end`), never its
+/// source span (`trimOut - trimIn`). The two differ for retimed clips (short
+/// footage slowed to fill a voiceover step, `playback_rate` < 1): the preview
+/// plays the clip across the whole window, so a span-wide block left an empty
+/// strip before the next one (KRI-281). For rate-1 clips they are equal.
+/// Trim handles still edit the slot's source In/duration; only the drawn edge
+/// follows the window.
+enum NativeClipBlockGeometry {
+    static func windowDuration(_ clip: EditorClip, minimum: TimeInterval = 0.1) -> TimeInterval {
+        let window = clip.end - clip.start
+        return max(minimum, window.isFinite && window > 0 ? window : minimum)
+    }
+
+    static func frame(
+        for clip: EditorClip, playheadX: CGFloat, currentTime: TimeInterval,
+        pixelsPerSecond: CGFloat, height: CGFloat
+    ) -> CGRect {
+        let start = playheadX + CGFloat(clip.start - currentTime) * pixelsPerSecond
+        let width = CGFloat(windowDuration(clip)) * pixelsPerSecond
+        return CGRect(x: start, y: 0, width: max(1, width), height: height)
     }
 }

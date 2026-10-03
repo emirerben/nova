@@ -66,6 +66,7 @@
       "KriaUITests/NativeQuickAddMenuUITests/testOutroPlaceholderStillAppearsAfterTheLastClip",
       "KriaUITests/EditorUITests/testNativeEditorLongTextEditPreservesDurationAndClipGeometry",
       "KriaUITests/EditorUITests/testNativeEditorTrimHandleShortensExtendsAndUndoesAsOneGesture",
+      "KriaUITests/EditorUITests/testRetimedClipBlocksAbutWithoutGap",
       "KriaUITests/EditorUITests/testNativeEditorNamedFixturesLaunchWithoutAnAccount",
       "KriaUITests/NativeEditorInspectorUITests/testEditorChromeFitsViewportAndCurrentToolsRemainReachable",
       "KriaUITests/NativeEditorInspectorUITests/testToolIslandFloatsOverTimelineAndLastLaneStaysReachable",
