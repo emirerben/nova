@@ -26,6 +26,7 @@ from app.services.speech_cleanup_decision import (
     evaluate_enforce_mode_decision,
     legacy_default_decision,
     resolve_next_audio_mode,
+    reuse_recorded_cleanup_decision,
 )
 from app.services.speech_cleanup_preflight import SPEECH_CLEANUP_ENGINE_VERSION
 
@@ -325,3 +326,46 @@ async def test_not_enforced_for_source_and_no_analysis_passes_through(
     )
 
     assert result == SpeechCleanupDecisionOk(analysis_id=None, choice=None)
+
+
+def _reuse(row, *, fp="fingerprint-1", sid=None, choice=None):
+    return reuse_recorded_cleanup_decision(
+        row,
+        source_policy_fingerprint=fp,
+        submitted_analysis_id=sid,
+        submitted_choice=choice,
+    )
+
+
+@pytest.mark.parametrize("decision", ["clean", "keep_original"])
+def test_reuse_fills_recorded_decision(decision: str) -> None:
+    row = _row(status="ready", decision=decision)
+    assert _reuse(row) == SpeechCleanupDecisionOk(row.id, decision)
+    # id supplied and correct, choice omitted
+    assert _reuse(row, sid=row.id) == SpeechCleanupDecisionOk(row.id, decision)
+
+
+def test_reuse_no_findings_fills_id_only() -> None:
+    row = _row(status="no_findings", candidate_count=0)
+    assert _reuse(row) == SpeechCleanupDecisionOk(row.id, None)
+
+
+def test_reuse_explicit_values_win() -> None:
+    row = _row(status="ready", decision="clean")
+    assert _reuse(row, sid=uuid.uuid4()) is None
+    assert _reuse(row, sid=row.id, choice="keep_original") is None
+    assert _reuse(row, choice="keep_original") == SpeechCleanupDecisionOk(row.id, "keep_original")
+
+
+@pytest.mark.parametrize("status", ["queued", "running", "failed"])
+def test_reuse_skips_unfinished_analysis(status: str) -> None:
+    assert _reuse(_row(status=status, decision="clean")) is None
+
+
+def test_reuse_skips_undecided_stale_or_missing() -> None:
+    assert _reuse(_row(status="ready", decision=None)) is None
+    assert _reuse(_row(status="ready", decision="create_without_cleanup")) is None
+    assert _reuse(_row(status="ready", candidate_count=0, decision="clean")) is None
+    assert _reuse(_row(status="ready", decision="clean"), fp="other") is None
+    assert _reuse(_row(status="ready", decision="clean"), fp=None) is None
+    assert _reuse(None) is None

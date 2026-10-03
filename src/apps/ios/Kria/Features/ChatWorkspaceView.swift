@@ -1391,12 +1391,28 @@ private struct CreationWorkspaceView: View {
     /// always sends `speech_cleanup_aware: true` so the server can safely gate
     /// the decision on the `speech_cleanup_*` conflict codes below.
     private func decide(_ decision: String, cleanupChoice: String? = nil, analysisID: String? = nil) {
-        guard !isActing, pendingUploadCount == 0,
-              let approval, approval.expiresAt > .now,
-              let identifier = UUID(uuidString: approval.approvalID),
+        guard !isActing, let approval else { return }
+        // Silent no-op only for a double tap (`isActing`); every other refusal
+        // tells the creator why, so "Create this video" never appears dead.
+        if approval.expiresAt <= .now {
+            failure = ChatFailure("This approval expired. Ask for the edit again.")
+            return
+        }
+        if pendingUploadCount > 0 {
+            failure = ChatFailure("Wait for your footage to finish uploading.")
+            return
+        }
+        guard let identifier = UUID(uuidString: approval.approvalID),
               let draftRevision = approval.draftRevision
-        else { return }
+        else {
+            Task {
+                await refreshNow()
+                failure = ChatFailure("Kria couldn’t start this yet. Pull to refresh and try again.")
+            }
+            return
+        }
         isActing = true
+        let offerBefore = SpeechCleanupOffer.resolve(fullThread?.speechCleanup)
         Task {
             failure = nil
             defer { isActing = false }
@@ -1419,6 +1435,12 @@ private struct CreationWorkspaceView: View {
                 // latest analysis/outcome and the same card re-renders with
                 // it, instead of a generic "couldn't record that" toast.
                 await refreshNow()
+                let offerAfter = SpeechCleanupOffer.resolve(fullThread?.speechCleanup)
+                if shouldSurfaceSpeechCleanupConflict(before: offerBefore, after: offerAfter) {
+                    // The card didn't visibly change, so staying silent reads
+                    // as a dead button. Say what the server said.
+                    failure = ChatFailure(error.conflictDetail ?? "Kria couldn’t start this yet. Pull to refresh and try again.")
+                }
                 return
             } catch {
                 await refreshNow()

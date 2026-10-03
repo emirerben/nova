@@ -140,6 +140,16 @@ let speechCleanupConflictCodes: Set<String> = [
     "speech_cleanup_choice_not_allowed", "speech_cleanup_analysis_changed",
 ]
 
+/// After a speech-cleanup 409 + refresh: true when the approval card did not
+/// visibly change (same plain offer, same analysis), so the creator would see
+/// a dead button and the conflict message must be surfaced instead.
+func shouldSurfaceSpeechCleanupConflict(
+    before: (offer: SpeechCleanupOffer, analysisID: String?),
+    after: (offer: SpeechCleanupOffer, analysisID: String?)
+) -> Bool {
+    after.offer == .plain && before.offer == .plain && before.analysisID == after.analysisID
+}
+
 /// KRI-118 item 2: `day_vlog`/`single_hero` still report `edit_format:
 /// "montage"` to the chat picker (the picker only ever offers Montage for the
 /// whole `GUIDED_EDIT_FORMATS` family), so the actual shape rides separately

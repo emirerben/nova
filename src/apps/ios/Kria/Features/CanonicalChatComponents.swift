@@ -659,7 +659,7 @@ struct DirectionStage: View {
         let resolution = cleanupResolution
         switch resolution.offer {
         case .plain:
-            Button("Create this video") { decide("approve", nil, nil) }
+            Button("Create this video") { decide("approve", nil, resolution.analysisID) }
                 .buttonStyle(CanonicalPrimaryButtonStyle())
                 .disabled(isBusy)
         case .checking:
