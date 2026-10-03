@@ -80,6 +80,7 @@ private final class CreationChatFixture: @unchecked Sendable {
         if path == "/creation-threads/capabilities" {
             var capabilities: [String: Any] = ["formats": [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", 1), ("slides", "slides", 20)].map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_RICH_TEXT"] == "1" { capabilities["slide_post_rich_text"] = true }
+            if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CHAT_EDIT"] == "1" { capabilities["slide_post_chat_edit"] = true }
             if DeviceRenderUITestFixture.scenario != nil {
                 capabilities["phone_rendering"] = ["enabled": true, "recipe_versions": [1, 2], "verified_features": MediaCapability.allCases.map(\.rawValue)]
             }
@@ -290,6 +291,21 @@ private final class CreationChatFixture: @unchecked Sendable {
             draft["version"] = base + 1
             if base > 0 { draft["caption"] = "A slower day, kept together." }
             return response(["draft": draft, "base_version": base, "fallback_used": false, "summary": "Open on the quiet street, move through the city, and close on the view."])
+        }
+        if parts.last == "chat-edit" {
+            // KRI-298 Lane E stub: reverse the slides and label the first two with a place. The editor's
+            // own draft wins when sent; `base_version` is the stored version the next PUT must quote.
+            let stored = slideDrafts[itemID]
+            var draft = (body["draft"] as? [String: Any]) ?? stored ?? ["schema_version": 1, "platform_profile": "instagram_carousel", "slides": slides, "cover_index": 0, "caption": "", "user_edited": false]
+            let base = stored?["version"] as? Int ?? 0
+            guard var edited = (draft["slides"] as? [[String: Any]])?.reversed().map({ $0 }) else { return response(["detail": "no draft"], status: 409) }
+            let places = ["Athens", "Naxos"]
+            for index in edited.indices {
+                let label: [String: Any] = ["id": "label-\(edited[index]["id"] ?? index)", "text": index < places.count ? places[index] : "", "role": "label", "label_source": "place", "edited": false]
+                if index < places.count { edited[index]["edits"] = ["texts": [label], "look_preset": "none"] }
+            }
+            draft["slides"] = edited; draft["cover_index"] = 0; draft["version"] = 999
+            return response(["outcome": "edited", "reply": "Done. Your photos now follow the order you took them, with the place on each slide in the same style. One photo had no location, so I left it without a label.", "draft": draft, "base_version": base, "changes": ["Reordered \(edited.count)", "Location on \(places.count)", "1 photo has no location"], "suggestions": []])
         }
         if request.httpMethod == "PUT" {
             let version = slideDrafts[itemID]?["version"] as? Int ?? 0

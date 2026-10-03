@@ -75,12 +75,13 @@ import XCTest
     // MARK: Redesigned workspace (KRIA_SLIDE_POST_RICH_TEXT=1)
 
     /// Walks the fixture creation flow to the redesigned workspace: format, direction, Apply.
-    private func openRichWorkspace(dynamicType: String? = nil) -> XCUIApplication {
+    private func openRichWorkspace(dynamicType: String? = nil, chatEdit: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launchEnvironment["KRIA_SLIDE_POST_FIXTURE"] = "1"
         app.launchEnvironment["KRIA_SLIDE_POST_RICH_TEXT"] = "1"
+        if chatEdit { app.launchEnvironment["KRIA_SLIDE_POST_CHAT_EDIT"] = "1" }
         if let dynamicType { app.launchEnvironment["UI_TEST_DYNAMIC_TYPE_SIZE"] = dynamicType }
         app.launch()
         XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 12)); app.buttons["Open projects"].tap()
@@ -187,6 +188,47 @@ import XCTest
         app.buttons["slidepost-undo"].tap()
         XCTAssertTrue(app.buttons["slidepost-tile-3"].waitForExistence(timeout: 3), "undo restores the removed slide")
         attach(app, "More menu then undo")
+    }
+
+    /// KRI-298 Lane E: a chat message stages the server's edit (unsaved, undoable) in the compact
+    /// thread layout, and Save PUTs it quoting the server's base version (the stub 409s otherwise).
+    func testSlideChatEditStagesAndSaves() {
+        let app = openRichWorkspace(chatEdit: true)
+        XCTAssertTrue(app.buttons["slidepost-tile-1"].waitForExistence(timeout: 5))
+        let composer = app.textFields["slidepost-composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 5)); composer.tap()
+        composer.typeText("Put them in chronological order and add each photo's location")
+        app.buttons["slidepost-composer-send"].tap()
+        let reply = app.staticTexts["slidepost-chat-reply"].firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 8), "Kria's reply is shown")
+        XCTAssertTrue(reply.label.hasPrefix("Done. Your photos now follow the order"), "the reply is server text, verbatim")
+        XCTAssertTrue(app.staticTexts["Reordered 3"].exists)
+        XCTAssertTrue(app.staticTexts["1 photo has no location"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["slidepost-chat-note"].firstMatch.exists, "a missing location reads as a note")
+        XCTAssertFalse(app.buttons["slidepost-tool-text"].exists, "the tool bar is hidden while the thread shows")
+        XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes")
+        XCTAssertTrue(app.descendants(matching: .any)["slidepost-chat-unsaved"].firstMatch.exists)
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        XCTAssertLessThan(preview.frame.height, 260, "the preview is compact while chatting")
+        attach(app, "AI turn: staged edit")
+        // Undo returns the editor to the saved draft; the thread stays.
+        app.buttons["slidepost-chat-undo"].tap()
+        XCTAssertNotEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes")
+        XCTAssertTrue(app.staticTexts["slidepost-chat-reply"].firstMatch.exists)
+        composer.tap(); composer.typeText("Again please")
+        app.buttons["slidepost-composer-send"].tap()
+        XCTAssertTrue(app.buttons["slidepost-chat-save"].waitForExistence(timeout: 8))
+        // Save stays disabled while Kria is still editing; wait for the staged result.
+        expectation(for: NSPredicate(format: "isEnabled == true"), evaluatedWith: app.buttons["slidepost-chat-save"]); waitForExpectations(timeout: 10)
+        app.buttons["slidepost-chat-save"].tap()
+        let back = app.buttons["slidepost-chat-close"]
+        XCTAssertTrue(back.waitForExistence(timeout: 8))
+        let saved = NSPredicate(format: "label != %@", "Unsaved changes")
+        expectation(for: saved, evaluatedWith: app.staticTexts["slidepost-subtitle"]); waitForExpectations(timeout: 8)
+        XCTAssertFalse(app.descendants(matching: .any)["slidepost-error"].firstMatch.exists, "a PUT that quoted the wrong version would 409 and show an error")
+        attach(app, "AI turn: saved")
+        back.tap()
+        XCTAssertTrue(app.buttons["slidepost-tool-text"].waitForExistence(timeout: 5), "closing the thread returns to the normal workspace")
     }
 
     func testArrangeDragReordersAndKeepsTheCover() {

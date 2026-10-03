@@ -38,6 +38,11 @@ struct SlidePostWorkspaceView: View {
     @State private var textTab: SlidePostTextPanel.Tab = .edit
     @State private var showsCaption = false
     @State private var showsAddChoice = false
+    /// The Kria thread replaces the tool bar while it is open (Paper art. 04).
+    @State private var chatOpen = false
+    /// While the keyboard is up the chat layout drops the strip and shrinks the preview so the
+    /// thread and composer stay above it instead of the whole screen being pushed off the top.
+    @State private var keyboardUp = false
     @State private var rootSize = CGSize.zero
 
     /// `session` is injectable so a parent (the chat workspace) can own the draft and stage edits
@@ -136,6 +141,8 @@ struct SlidePostWorkspaceView: View {
         .onReceive(model.uploads.$inFlight) { uploadInFlight = $0 }
         .onReceive(model.uploads.$photoSelections) { photoSelections = $0 }
         .onReceive(model.uploads.$failures) { uploadFailures = $0 }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardUp = true }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardUp = false }
         .onChange(of: conversationAcceptedID) { _, _ in showsConversation = false }
         .onChange(of: session.selectedID) { _, _ in loadInspectorValues() }
         .onChange(of: session.selectedID) { _, _ in previewPlayer?.pause() }
@@ -442,6 +449,8 @@ struct SlidePostWorkspaceView: View {
     // MARK: Redesigned workspace (capability `slide_post_rich_text`)
 
     private var richEnabled: Bool { effectiveCapabilities?.slidePostRichTextEnabled == true }
+    private var chatEditOn: Bool { effectiveCapabilities?.slidePostChatEditEnabled == true }
+    private var showsChatThread: Bool { chatEditOn && chatOpen && mode == .browse }
     private var showsRichWorkspace: Bool { richEnabled && session.proposal == nil && session.draft != nil }
     private var unusedAssets: [SlidePostAsset] {
         guard let draft = session.draft else { return [] }
@@ -496,9 +505,21 @@ struct SlidePostWorkspaceView: View {
                                 detail: "Kria can't sort by time or add locations. You can still reorder by hand, or ask for text you write yourself.")
                     .padding(.bottom, 8)
             }
-            stage(draft, compact: panelOpen)
-                .frame(maxHeight: panelOpen ? 0.37 * height : .infinity)
-            if mode == .text, let slide {
+            if showsChatThread {
+                let previewHeight = keyboardUp ? 96 : Self.chatPreviewHeight
+                stage(draft, compact: true, fixedHeight: previewHeight)
+                    .frame(height: previewHeight + (keyboardUp ? 12 : 24))
+                if !keyboardUp { slideStrip(draft) }
+                Divider()
+                chatThread
+                composer
+            } else {
+                stage(draft, compact: panelOpen)
+                    .frame(maxHeight: panelOpen ? 0.37 * height : .infinity)
+            }
+            if showsChatThread {
+                EmptyView()
+            } else if mode == .text, let slide {
                 SlidePostTextPanel(session: session, slideID: slide.id, tab: $textTab)
                     .frame(maxHeight: .infinity)
             } else if mode == .look, let slide {
@@ -531,12 +552,14 @@ struct SlidePostWorkspaceView: View {
         }
     }
 
-    private func stage(_ draft: SlidePostDraft, compact: Bool) -> some View {
+    private static let chatPreviewHeight: CGFloat = 236
+
+    private func stage(_ draft: SlidePostDraft, compact: Bool, fixedHeight: CGFloat? = nil) -> some View {
         GeometryReader { geometry in
             let height = max(rootSize.height, 640)
             let cap = (compact ? 0.34 : 0.535) * height
             let ratio = aspect(draft)
-            let previewHeight = max(120, min(cap, (geometry.size.width - 36) / ratio, geometry.size.height - 24))
+            let previewHeight = fixedHeight ?? max(120, min(cap, (geometry.size.width - 36) / ratio, geometry.size.height - 24))
             ZStack {
                 SlidePostTone.stage
                 richPreview(draft, size: CGSize(width: previewHeight * ratio, height: previewHeight))
@@ -589,19 +612,41 @@ struct SlidePostWorkspaceView: View {
         .excludesDrawerGestureWhen(mode == .text)
     }
 
+    private func slideStrip(_ draft: SlidePostDraft) -> some View {
+        SlidePostStrip(
+            slides: draft.slides, coverIndex: draft.coverIndex, selectedID: session.selectedID, arranging: mode == .arrange,
+            asset: { slide in session.state?.assets.first { $0.id == slide.assetID } },
+            onSelect: { session.selectedID = $0; session.selectedTextID = nil },
+            onMove: { id, to in session.moveSlide(id: id, toIndex: to) },
+            onSetCover: { session.setCover(id: $0) },
+            onRemove: { session.removeSlide(id: $0) },
+            onAdd: { if unusedAssets.isEmpty { addMedia() } else { showsAddChoice = true } }
+        )
+        .disabled(session.isChatting)
+    }
+
+    private var chatThread: some View {
+        SlidePostChatThread(
+            messages: session.chat, isWorking: session.isChatting,
+            unsaved: session.hasUnsavedChanges, canUndo: session.canUndoEdit, canSave: session.hasUnsavedChanges && !session.isBusy && !session.isChatting,
+            onUndo: { session.undoEdit() },
+            onSave: { Task { await save() } },
+            onRetry: { bubble in if let itemID { Task { await session.retryChat(api: model.api, itemID: itemID, bubble: bubble) } } },
+            onClose: { chatOpen = false }
+        )
+    }
+
+    private var composer: some View {
+        SlidePostComposer(text: $instruction, canSend: canSendFromComposer, isLocked: session.isChatting,
+                          onSend: { Task { await sendFromComposer() } })
+            .padding(.bottom, 6)
+    }
+
     private func browseControls(_ draft: SlidePostDraft) -> some View {
         let slide = session.selectedSlide
         let hasTexts = !(slide?.edits?.effectiveTexts.isEmpty ?? true)
         return VStack(spacing: 8) {
-            SlidePostStrip(
-                slides: draft.slides, coverIndex: draft.coverIndex, selectedID: session.selectedID, arranging: mode == .arrange,
-                asset: { slide in session.state?.assets.first { $0.id == slide.assetID } },
-                onSelect: { session.selectedID = $0; session.selectedTextID = nil },
-                onMove: { id, to in session.moveSlide(id: id, toIndex: to) },
-                onSetCover: { session.setCover(id: $0) },
-                onRemove: { session.removeSlide(id: $0) },
-                onAdd: { if unusedAssets.isEmpty { addMedia() } else { showsAddChoice = true } }
-            )
+            slideStrip(draft)
             SlidePostToolBar(
                 mode: mode, canCover: slide != nil, canRemove: draft.slides.count > 1 && slide != nil,
                 canDuplicateText: hasTexts && (slide?.edits?.effectiveTexts.count ?? 0) < SlidePostEdits.maxTexts,
@@ -615,7 +660,15 @@ struct SlidePostWorkspaceView: View {
                 },
                 onCaption: { showsCaption = true }
             )
-            SlidePostComposer(text: $instruction, canSend: canSendFromComposer, onSend: { Task { await sendFromComposer() } })
+            if chatEditOn, !session.chat.isEmpty {
+                Button { chatOpen = true } label: {
+                    Text("Kria chat · \(session.chat.count)").font(KriaFont.body(14).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                        .padding(.horizontal, 14).frame(minHeight: 44)
+                }
+                .accessibilityIdentifier("slidepost-chat-open")
+            }
+            SlidePostComposer(text: $instruction, canSend: canSendFromComposer, isLocked: session.isChatting,
+                              onSend: { Task { await sendFromComposer() } })
         }
         .padding(.bottom, 6)
         .disabled(session.isBusy)
@@ -623,12 +676,21 @@ struct SlidePostWorkspaceView: View {
     }
 
     private var canSendFromComposer: Bool {
-        !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && canRequestProposal && itemID != nil
+        let hasText = !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if chatEditOn { return hasText && !session.isBusy && !session.isChatting && session.draft != nil && itemID != nil }
+        return hasText && canRequestProposal && itemID != nil
     }
-    /// Lane E replaces this with the slide chat-edit endpoint when `slide_post_chat_edit` is on.
+    /// With `slide_post_chat_edit` on the composer edits the draft through Kria's chat endpoint; with it
+    /// off the legacy propose flow (and its assistant sheet) is unchanged.
     private func sendFromComposer() async {
         guard canSendFromComposer else { return }
-        await propose()
+        guard chatEditOn else { await propose(); return }
+        guard let itemID else { return }
+        let text = instruction
+        instruction = ""; session.instruction = ""
+        chatOpen = true
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        await session.chatEdit(api: model.api, itemID: itemID, message: text)
     }
 
     private func beginTextEditing() {
