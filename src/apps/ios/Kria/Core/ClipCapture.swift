@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 // location to two decimal places (about 1 km), reverse-geocodes it to a place name on the device, and
 // sends all three with the attach call. Everything here is best effort and non-fatal: a missing date, a
 // denied location, an offline geocoder or a failed lookup sends nothing for that part and never blocks
-// or fails an upload. The whole feature is one setting, "Use when and where clips were filmed"
+// or fails an upload. The whole feature is one setting, "Use when and where clips and photos were taken"
 // (default ON); with it off nothing below reads or sends anything.
 //
 // Privacy: a precise coordinate is never stored, sent or persisted. `ClipCaptureRaw` only ever holds a
@@ -114,9 +114,10 @@ enum ClipCaptureReader {
     }
 
     /// The exported file's embedded creation date and location. Never throws; nil when it has neither.
-    /// Photos (KRI-300) carry it as EXIF/GPS in the image; videos as QuickTime metadata.
+    /// Photos (KRI-300) carry it as EXIF/GPS in the image; videos as QuickTime metadata. An image is
+    /// recognised by its extension or, for an export with no usable extension, by its content.
     static func readFile(_ url: URL) async -> ClipCaptureRaw? {
-        if UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true {
+        if UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true || isImageByContent(url) {
             return readImageFile(url)
         }
         let asset = AVURLAsset(url: url)
@@ -131,6 +132,12 @@ enum ClipCaptureReader {
         return capture(creationDate: date, coordinate: coordinate)
     }
 
+    /// True when ImageIO recognises the file as an image (no decoding). Videos return false.
+    static func isImageByContent(_ url: URL) -> Bool {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil), let type = CGImageSourceGetType(source) else { return false }
+        return UTType(type as String)?.conforms(to: .image) == true
+    }
+
     /// EXIF `DateTimeOriginal` (+ `OffsetTimeOriginal` when present) and the GPS dictionary of an image
     /// file. Nil when it has neither. Separate from `readFile` so it is testable with a synthetic JPEG.
     static func readImageFile(_ url: URL) -> ClipCaptureRaw? {
@@ -140,7 +147,8 @@ enum ClipCaptureReader {
         let gps = props[kCGImagePropertyGPSDictionary] as? [CFString: Any]
         var date: Date?
         if let text = exif?[kCGImagePropertyExifDateTimeOriginal] as? String {
-            date = parseExifDate(text, offset: exif?["OffsetTimeOriginal" as CFString] as? String)
+            let gpsStamp = gpsUTCDate(date: gps?[kCGImagePropertyGPSDateStamp] as? String, time: gps?[kCGImagePropertyGPSTimeStamp] as? String)
+            date = parseExifDate(text, offset: exif?["OffsetTimeOriginal" as CFString] as? String, gpsUTC: gpsStamp)
         }
         var coordinate: CLLocationCoordinate2D?
         if let lat = gps?[kCGImagePropertyGPSLatitude] as? Double, let lon = gps?[kCGImagePropertyGPSLongitude] as? Double {
@@ -155,14 +163,39 @@ enum ClipCaptureReader {
         return capture(creationDate: date, coordinate: coordinate)
     }
 
-    /// `yyyy:MM:dd HH:mm:ss` in the camera's local time; `offset` is `+03:00` style when the camera wrote
-    /// one, otherwise the device's current zone is the best available guess.
-    static func parseExifDate(_ text: String, offset: String?) -> Date? {
+    /// `yyyy:MM:dd HH:mm:ss` in the camera's local time. The zone comes from, in order: the EXIF
+    /// `OffsetTimeOriginal` (`+03:00`); the GPS UTC stamp, which fixes the instant exactly (the naive
+    /// time is read as local, and the stamp's offset from it is rounded to a quarter hour, which is what
+    /// real zones use; a stamp more than 14 hours off is ignored as bad data); and only as a last resort
+    /// the device's current zone, which is wrong when the photo was taken elsewhere.
+    static func parseExifDate(_ text: String, offset: String?, gpsUTC: Date? = nil) -> Date? {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
-        formatter.timeZone = offset.flatMap(timeZone(forOffset:)) ?? .current
+        if let zone = offset.flatMap(timeZone(forOffset:)) {
+            formatter.timeZone = zone
+            return formatter.date(from: text)
+        }
+        if let gpsUTC {
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            if let naive = formatter.date(from: text) {
+                let seconds = naive.timeIntervalSince(gpsUTC)
+                let quarter = (seconds / 900).rounded() * 900
+                if abs(quarter) <= 14 * 3600 { return naive.addingTimeInterval(-quarter) }
+            }
+        }
+        formatter.timeZone = .current
         return formatter.date(from: text)
+    }
+
+    /// GPS `DateStamp` (`yyyy:MM:dd`) + `TimeStamp` (`HH:mm:ss`), both UTC. Nil unless both are present.
+    static func gpsUTCDate(date: String?, time: String?) -> Date? {
+        guard let date, let time else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        return formatter.date(from: "\(date) \(time.split(separator: ".").first.map(String.init) ?? time)")
     }
 
     private static func timeZone(forOffset offset: String) -> TimeZone? {

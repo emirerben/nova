@@ -338,6 +338,40 @@ final class ClipCaptureTests: XCTestCase {
         XCTAssertEqual(raw.longitude ?? 0, 151.21, accuracy: 0.0001)
     }
 
+    func testExifWithoutOffsetPrefersGPSUTCOverDeviceZone() async throws {
+        // Taken at 10:31:02 local in Istanbul (+03:00) = 07:31:02Z; no OffsetTimeOriginal, GPS stamp is UTC
+        // a few seconds off the shutter (a GPS fix is not the shutter instant).
+        let url = try writeJPEG(
+            exif: [kCGImagePropertyExifDateTimeOriginal: "2026:09:20 10:31:02"],
+            gps: [kCGImagePropertyGPSLatitude: 41.19, kCGImagePropertyGPSLatitudeRef: "N", kCGImagePropertyGPSLongitude: 28.74, kCGImagePropertyGPSLongitudeRef: "E",
+                  kCGImagePropertyGPSDateStamp: "2026:09:20", kCGImagePropertyGPSTimeStamp: "07:30:55"]
+        )
+        let read = await ClipCaptureReader.readFile(url)
+        let raw = try XCTUnwrap(read)
+        XCTAssertEqual(raw.captureTime, shot, "the GPS UTC stamp fixes the zone, whatever zone the device is in")
+    }
+
+    func testExifOffsetWinsOverGPSAndDeviceZoneIsTheLastResort() {
+        let gps = Date(timeIntervalSince1970: shot.timeIntervalSince1970 - 7)
+        XCTAssertEqual(ClipCaptureReader.parseExifDate("2026:09:20 10:31:02", offset: "+03:00", gpsUTC: nil), shot)
+        XCTAssertEqual(ClipCaptureReader.parseExifDate("2026:09:20 10:31:02", offset: "+03:00", gpsUTC: gps), shot)
+        XCTAssertEqual(ClipCaptureReader.parseExifDate("2026:09:20 10:31:02", offset: nil, gpsUTC: gps), shot)
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = .current; f.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        XCTAssertEqual(ClipCaptureReader.parseExifDate("2026:09:20 10:31:02", offset: nil, gpsUTC: nil), f.date(from: "2026:09:20 10:31:02"))
+        // A stamp more than 14 h from the naive time is bad data and is ignored.
+        let bad = Date(timeIntervalSince1970: shot.timeIntervalSince1970 + 20 * 3600)
+        XCTAssertEqual(ClipCaptureReader.parseExifDate("2026:09:20 10:31:02", offset: nil, gpsUTC: bad), f.date(from: "2026:09:20 10:31:02"))
+    }
+
+    func testImageWithNoImageExtensionStillReadsExif() async throws {
+        let jpg = try writeJPEG(exif: [kCGImagePropertyExifDateTimeOriginal: "2026:09:20 10:31:02", "OffsetTimeOriginal" as CFString: "+03:00"], gps: nil)
+        let bare = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.copyItem(at: jpg, to: bare)
+        addTeardownBlock { try? FileManager.default.removeItem(at: bare) }
+        let raw = await ClipCaptureReader.readFile(bare)
+        XCTAssertEqual(raw?.captureTime, shot)
+    }
+
     func testImageFileWithoutMetadataYieldsNothing() async throws {
         let url = try writeJPEG(exif: nil, gps: nil)
         let raw = await ClipCaptureReader.readFile(url)

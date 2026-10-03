@@ -370,6 +370,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         editorSourceResults[id] = nil
         persistEditorPlacements()
         if let record = records.first(where: { $0.editorSourceTarget?.clientImportID == placement.target.clientImportID }) {
+            ClipCaptureStore.shared.remove(record.id)
             remove(record.id, deleteLocalFile: true)
         }
     }
@@ -423,6 +424,8 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 if staged { Self.clearPreparingUpload(id: recordID, key: defaultsKey, deleteLocalFile: true) }
                 if let preparedToDiscard { Self.discardPrepared(preparedToDiscard.0, asset: preparedToDiscard.1, project: projectID) }
                 CreationMediaPreview.discard(recordID: recordID)
+                // KRI-300: nothing was uploaded, so the remembered date/place has no consumer.
+                ClipCaptureStore.shared.remove(recordID)
             }
         }
         // Keeps the `prepare()`/reservation window below alive if the app is
@@ -931,6 +934,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         }
         releaseSelection(recordID: recordID, projectID: record.projectID)
         CreationMediaPreview.discard(recordID: recordID)
+        ClipCaptureStore.shared.remove(recordID)
         remove(recordID, deleteLocalFile: true)
     }
 
@@ -1186,6 +1190,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             case .chooseFileAgain:
                 lastError = "The original file is no longer available. Choose it again."
                 releaseSelection(recordID: record.id, projectID: record.projectID)
+                ClipCaptureStore.shared.remove(record.id)
                 remove(record.id, deleteLocalFile: false)
             case .keepForManualRetry:
                 continue
@@ -1277,6 +1282,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         guard FileManager.default.fileExists(atPath: localURL.path) else {
             lastError = "The original file is no longer available. Choose it again."
             releaseSelection(recordID: record.id, projectID: record.projectID)
+            ClipCaptureStore.shared.remove(record.id)
             remove(record.id, deleteLocalFile: false)
             return
         }
@@ -1359,6 +1365,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                         return
                     }
                     _ = try await finishEditorSource(record, target: target, sourceID: visual.id)
+                    // The server already has the date/place from registerVisual; the retained record
+                    // must not keep the coordinates until the editor acknowledges it.
+                    ClipCaptureStore.shared.remove(record.id)
                     // Keep the completed record until the placement consumes
                     // it; no creation-thread attachment is part of this path.
                     return
@@ -1366,6 +1375,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 attachedThreads[record.projectID] = try await api.project(threadID: record.projectID)
                 bindSelection(recordID: record.id, projectID: record.projectID, mediaID: reservationID)
                 CreationMediaPreview.discard(recordID: record.id)   // visuals show the server's own preview
+                ClipCaptureStore.shared.remove(record.id)
                 remove(record.id, deleteLocalFile: true)
             } catch {
                 lastError = error.localizedDescription
@@ -1393,6 +1403,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             do {
                 guard target.sourceKind == .footage else { throw APIError.invalidResponse }
                 guard try await finishEditorSource(record, target: target, sourceID: mediaID) else { return }
+                ClipCaptureStore.shared.remove(record.id)
                 remove(record.id, deleteLocalFile: true)
             } catch {
                 lastError = error.localizedDescription
@@ -1458,6 +1469,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         // it acknowledges that transaction, including across a process death.
         if response.status == "ready" { return false }
         if response.status == "failed", response.retryable == false {
+            ClipCaptureStore.shared.remove(record.id)
             remove(record.id, deleteLocalFile: true)
         }
         return false
