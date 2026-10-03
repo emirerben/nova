@@ -6004,6 +6004,18 @@
       },
       "RegisterAssetBody": {
         "properties": {
+          "capture_time": {
+            "default": null,
+            "format": "date-time",
+            "nullable": true,
+            "title": "Capture Time",
+            "type": "string"
+          },
+          "coarse_location": {
+            "$ref": "#/components/schemas/CoarseLocation",
+            "default": null,
+            "nullable": true
+          },
           "content_hash": {
             "default": null,
             "nullable": true,
@@ -6017,6 +6029,11 @@
           "gcs_path": {
             "title": "Gcs Path",
             "type": "string"
+          },
+          "place": {
+            "$ref": "#/components/schemas/ClipPlace",
+            "default": null,
+            "nullable": true
           },
           "reservation_id": {
             "default": null,
@@ -6595,6 +6612,11 @@
       },
       "SlidePostStateAsset": {
         "properties": {
+          "capture": {
+            "$ref": "#/components/schemas/ClipCapture",
+            "default": null,
+            "nullable": true
+          },
           "display_url": {
             "default": null,
             "nullable": true,

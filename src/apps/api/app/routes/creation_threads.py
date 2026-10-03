@@ -23,7 +23,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    ValidationError,
     field_validator,
     model_validator,
 )
@@ -54,6 +53,7 @@ from app.kria.media_sources import (
     CoarseLocation,
     MediaUploadContract,
     is_analysis_proxy_path,
+    lenient_capture_field,
 )
 from app.kria.runtime import RuntimeFailure, read_delta
 from app.limiter import limiter
@@ -480,10 +480,7 @@ class MediaInput(StrictBody):
     @field_validator("capture_time", "coarse_location", "place", mode="wrap")
     @classmethod
     def _lenient_capture_field(cls, value: object, handler: Any) -> Any:
-        try:
-            return handler(value)
-        except ValidationError:
-            return None
+        return lenient_capture_field(value, handler)
 
     @field_validator("media_id")
     @classmethod

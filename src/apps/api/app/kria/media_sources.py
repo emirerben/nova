@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import unicodedata
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 PROXY_MEDIA_PREFIX = "analysis-proxy-"
 
@@ -76,6 +83,18 @@ class ClipPlace(BaseModel):
             if part and part not in parts:
                 parts.append(part)
         return ", ".join(parts)
+
+
+def lenient_capture_field(value: object, handler: Any) -> Any:
+    """Wrap-validator body shared by every request model that accepts capture parts.
+
+    A part that fails validation is dropped (None) instead of rejecting the request:
+    media must never fail to register over a missing or malformed timestamp/place.
+    """
+    try:
+        return handler(value)
+    except ValidationError:
+        return None
 
 
 class ClipCapture(BaseModel):

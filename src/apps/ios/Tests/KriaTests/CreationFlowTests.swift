@@ -126,12 +126,14 @@ import UIKit
             }
             XCTAssertEqual(request.url?.path, "/plan-items/item-1/assets")
             XCTAssertEqual(body["reservation_id"] as? String, "reservation-1")
+            XCTAssertEqual(body["capture_time"] as? String, "2026-09-20T07:31:02Z", "KRI-300: capture rides on the register call")
+            XCTAssertEqual((body["place"] as? [String: Any])?["locality"] as? String, "Istanbul")
             return (200, Data(#"{"id":"asset-1","kind":"image","status":"ready","source_filename":"photo.jpg","display_url":null,"preview_url":null,"retryable":false}"#.utf8))
         }
         let api = NativeEditorTestSupport.api()
         let target = try await api.reserveVisualUpload(itemID: "item-1", clientUploadID: "upload-1", filename: "photo.jpg", contentType: "image/jpeg", size: 123)
         XCTAssertEqual(target.uploadHeaders["x-goog-if-generation-match"], "0")
-        let visual = try await api.registerVisual(itemID: "item-1", reservationID: target.reservationID, gcsPath: target.gcsPath, contentType: "image/jpeg", filename: "photo.jpg")
+        let visual = try await api.registerVisual(itemID: "item-1", reservationID: target.reservationID, gcsPath: target.gcsPath, contentType: "image/jpeg", filename: "photo.jpg", capture: ClipCaptureWire(captureTime: "2026-09-20T07:31:02Z", coarseLocation: nil, place: ClipPlaceWire(subLocality: nil, locality: "Istanbul", country: nil)))
         XCTAssertEqual(visual.id, "asset-1")
     }
 

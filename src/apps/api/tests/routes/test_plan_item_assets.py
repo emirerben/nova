@@ -753,6 +753,73 @@ def test_register_happy_path_commits(client: TestClient, _no_real_broker_publish
     _assert_dedupe_query_reuses_only_finalized_assets(db)
 
 
+def _register_and_get_added_asset(client: TestClient, **overrides):
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db(
+        [_scalar_result(item), _scalar_result(None), _scalar_result(None), _scalar_result(0)],
+        plan,
+    )
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+    ):
+        resp = client.post(
+            f"/plan-items/{item.id}/assets",
+            json=_register_body(user.id, item.id, **overrides),
+        )
+    return resp, db
+
+
+def test_register_persists_capture_context(client: TestClient, _no_real_broker_publish):
+    resp, db = _register_and_get_added_asset(
+        client,
+        capture_time="2025-06-01T10:30:00Z",
+        coarse_location={"lat": 41.01234, "lon": 28.97891},
+        place={"locality": "Istanbul", "country": "Türkiye"},
+    )
+    assert resp.status_code == 200
+    asset = db.add.call_args.args[0]
+    assert asset.capture == {
+        "capture_time": "2025-06-01T10:30:00Z",
+        "coarse_location": {"lat": 41.01, "lon": 28.98},
+        "place": {"locality": "Istanbul", "country": "Türkiye"},
+    }
+
+
+def test_register_drops_bad_capture_but_still_registers(
+    client: TestClient, _no_real_broker_publish
+):
+    resp, db = _register_and_get_added_asset(
+        client,
+        capture_time="not-a-date",
+        coarse_location={"lat": 999, "lon": 0},
+        place={"locality": "Izmir", "bogus": 1},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "queued"
+    assert db.add.call_args.args[0].capture is None
+
+
+def test_register_keeps_valid_parts_when_one_part_is_bad(
+    client: TestClient, _no_real_broker_publish
+):
+    resp, db = _register_and_get_added_asset(
+        client,
+        capture_time="2025-06-01T10:30:00Z",
+        coarse_location={"lat": "x", "lon": "y"},
+    )
+    assert resp.status_code == 200
+    assert db.add.call_args.args[0].capture == {"capture_time": "2025-06-01T10:30:00Z"}
+
+
+def test_register_without_capture_leaves_it_null(client: TestClient, _no_real_broker_publish):
+    resp, db = _register_and_get_added_asset(client)
+    assert resp.status_code == 200
+    assert db.add.call_args.args[0].capture is None
+
+
 def test_queued_response_maps_to_uploaded_until_frontend_activation(
     client: TestClient,
     _no_real_broker_publish,
