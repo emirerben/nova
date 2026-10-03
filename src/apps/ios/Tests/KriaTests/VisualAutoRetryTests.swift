@@ -58,7 +58,7 @@ import XCTest
 
     func testFailedRowsExplainThemselves() {
         XCTAssertEqual(visual(status: "ready", code: nil, detail: nil, retryable: false).statusCaption(), "Ready")
-        XCTAssertEqual(visual(status: "analyzing", code: nil, detail: nil, retryable: false).statusCaption(retryingAutomatically: true), "Analyzing")
+        XCTAssertEqual(visual(status: "analyzing", code: nil, detail: nil, retryable: false).statusCaption(retryingAutomatically: true), "Analyzing…")
         XCTAssertEqual(visual().statusCaption(), Self.transientDetail)
         XCTAssertEqual(visual(detail: nil).statusCaption(), "Failed")
         XCTAssertEqual(visual(detail: "  \n").statusCaption(), "Failed")

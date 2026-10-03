@@ -8,6 +8,7 @@ struct NativeVisualPanel: View {
     enum Category: String, CaseIterable { case media = "Media", cards = "Text cards", motion = "Motion", camera = "Camera FX", transitions = "Transitions" }
     @ObservedObject var session: NativeEditorSession
     @ObservedObject var uploads: BackgroundUploadCoordinator
+    @ObservedObject private var network = NetworkReachability.shared
     let projectID: UUID
     @ObservedObject var panelDrafts: NativeEditorPanelDrafts
     let onDone: () -> Void
@@ -205,6 +206,9 @@ struct NativeVisualPanel: View {
                 Text(message).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                     .accessibilityIdentifier("native-editor-import-visual-unavailable")
             }
+            if let summary = VisualPreparationSummary(assets: session.visualLibrary, uploading: uploads.activeUploadCount(projectID: projectID, role: .visual), online: network.isOnline, slowIDs: session.visualPreparation.slowIDs, surface: .editorLibrary) {
+                VisualPreparationSummaryView(summary: summary)
+            }
             if session.visualLibraryLoading && session.visualLibrary.isEmpty { ProgressView("Loading visuals…") }
             if session.visualLibrary.isEmpty && !session.visualLibraryLoading {
                 Text("Your added photos and videos").font(KriaFont.body(14).weight(.medium))
@@ -262,8 +266,9 @@ struct NativeVisualPanel: View {
                         .multilineTextAlignment(.center).lineLimit(2)
                 }
             } else {
-                Text(asset.status == "ready" ? " " : asset.status.capitalized)
-                    .font(KriaFont.body(11)).foregroundStyle(KriaColor.mutedInk).lineLimit(1).frame(height: 14)
+                VisualStatusLine(text: asset.status == "ready" ? " " : asset.preparationCaption(short: true) ?? asset.status.capitalized,
+                                 preparing: asset.preparationStage != nil, color: KriaColor.mutedInk)
+                    .font(KriaFont.body(11)).lineLimit(1).frame(height: 14)
                     .accessibilityHidden(asset.status == "ready")
             }
         }

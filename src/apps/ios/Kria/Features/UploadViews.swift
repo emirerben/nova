@@ -39,6 +39,8 @@ struct FootagePickerView: View {
     let onAudioFileSelected: ((URL) -> Void)?
     let showsHeading: Bool
     @ObservedObject private var uploads: BackgroundUploadCoordinator
+    /// Upload rows say when they are waiting for a connection (KRI-294).
+    @ObservedObject private var network = NetworkReachability.shared
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showingPhotosPicker = false
     @State private var showingFileImporter = false
@@ -231,6 +233,12 @@ struct FootagePickerView: View {
                             Button(record.uploadCompleted == true ? "Remove" : "Cancel") { Task { await uploads.cancel(recordID: record.id) } }
                         }
                         ProgressView(value: uploads.progress[record.id] ?? 0).tint(KriaColor.ink)
+                        // Failed uploads explain themselves in the failure lines below.
+                        if record.uploadFailed != true {
+                            Text(UploadProgressCaption.text(progress: uploads.progress[record.id], completed: record.uploadCompleted == true, online: network.isOnline))
+                                .font(KriaFont.body(11)).foregroundStyle(KriaColor.zinc).monospacedDigit()
+                                .accessibilityIdentifier("upload-progress-caption")
+                        }
                         if let deadline = record.retentionExpiresAt { Text("Temporary source removed by \(deadline.formatted(date: .abbreviated, time: .shortened)).").font(KriaFont.body(11)).foregroundStyle(KriaColor.zinc) }
                     }
                 }
