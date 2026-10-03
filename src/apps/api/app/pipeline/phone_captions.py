@@ -463,7 +463,7 @@ def _prepare_cues(cues: list[dict], *, timeline_duration_s: float | None) -> lis
         entry: dict[str, Any] = {"text": text, "start_s": start, "end_s": end}
         words = cue.get("words")
         if isinstance(words, list) and words:
-            entry["words"] = words
+            entry["words"] = _words_spelling(text, words, start_s=start, end_s=end)
         cleaned.append(entry)
     cleaned.sort(key=lambda entry: entry["start_s"])
     for i in range(len(cleaned) - 1):
@@ -476,6 +476,31 @@ def _prepare_cues(cues: list[dict], *, timeline_duration_s: float | None) -> lis
             entry["start_s"] = min(entry["start_s"], bound)
             entry["end_s"] = min(entry["end_s"], bound)
     return [entry for entry in cleaned if entry["end_s"] - entry["start_s"] >= _MIN_CUE_DURATION_S]
+
+
+def _words_spelling(text: str, words: list[dict], *, start_s: float, end_s: float) -> list[dict]:
+    """``words`` when they still spell ``text``, else an even spread of the text.
+
+    A karaoke line draws its runs from the cue's ``words``, not its ``text``,
+    so a text edit that kept the old word list (the chat edit path does) would
+    burn the pre-edit words (KRI-280; plan 026 R11). Spelling is compared with
+    all whitespace removed, so languages written without spaces keep their
+    real timings. On a mismatch the text's own tokens are spread across the
+    cue the way the iOS preview already does (`NativeEditorRenderCompiler`):
+    equal slices, at least 0.05 s apart.
+    """
+    spelled = "".join(str(word.get("text", "")) for word in words if isinstance(word, dict))
+    if "".join(spelled.split()) == "".join(text.split()):
+        return words
+    tokens = text.split()
+    duration = max(_MIN_CUE_DURATION_S, end_s - start_s)
+    spread: list[dict] = []
+    cursor = 0.0
+    for index, token in enumerate(tokens):
+        nxt = max((index + 1) * duration / len(tokens), cursor + 0.05)
+        spread.append({"text": token, "start_s": start_s + cursor, "end_s": start_s + nxt})
+        cursor = nxt
+    return spread
 
 
 def _relative_word_timings(cue: dict, words: list[dict]) -> list[dict]:

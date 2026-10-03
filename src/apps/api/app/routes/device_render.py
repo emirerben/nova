@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import math
@@ -12,9 +13,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from fractions import Fraction
 from pathlib import Path
+from types import SimpleNamespace
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from google.api_core.exceptions import NotFound
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,6 +50,7 @@ from app.routes.generative_jobs import PLAYBACK_URL_TTL_MIN
 from app.schemas.edit_proposal import NarrationTrack
 from app.services.content_plan_persona import PlanPersonaOwnershipError, load_owned_plan_persona
 from app.services.creator_execution_contract import narration_matches_item
+from app.services.device_narration_binding import authorized_device_narration
 from app.services.device_render import (
     apply_device_failure_variant_update,
     apply_retry_variant_reset,
@@ -204,7 +208,7 @@ async def download_device_asset(
         raise HTTPException(404, "Phone rendering is unavailable")
     user_id = user.id
     job = await _owned_job(db, user_id, job_id)
-    _, status = _record(job, body.identity)
+    record, status = _record(job, body.identity)
     manifest = getattr(status.request.recipe, "asset_manifest", None)
     asset = next((a for a in manifest.assets if a.id == body.asset_id), None) if manifest else None
     if isinstance(asset, VisualRenderAsset):
@@ -215,7 +219,7 @@ async def download_device_asset(
             expires_at=datetime.now(UTC) + timedelta(minutes=15),
         )
     if isinstance(asset, VoiceoverRenderAsset):
-        url = await _voiceover_download_url(db, job, user_id, asset)
+        url = await _voiceover_download_url(db, job, user_id, asset, record, body.identity)
         return DeviceAssetDownloadOut(
             asset_id=asset.id,
             download_url=url,
@@ -303,13 +307,17 @@ def _approved_guided_narration(assembly: object) -> dict | None:
     return narration if isinstance(narration, dict) else None
 
 
-def _cleaned_voiceover_path(
-    job: Job, user_id: uuid.UUID, item: PlanItem | None, asset: VoiceoverRenderAsset
-) -> str | None:
-    """The cleaned derivative a "Clean up speech" guided Job plays, else None.
+def _authorized_cleaned_narration(
+    assembly: dict,
+    user_id: uuid.UUID,
+    item: object | None,
+    asset: VoiceoverRenderAsset,
+    record: dict,
+) -> NarrationTrack | None:
+    """The authorized cleaned narration for guided or narrated Jobs, else None.
 
-    Returns None only when the Job's approved narration carries no cleanup
-    provenance (the raw-voiceover grant applies unchanged). Otherwise every
+    Returns None only when the Job requires no cleaned narration
+    (the raw-voiceover grant applies unchanged). Otherwise every
     binding must still hold -- the item's current voiceover is the derivative's
     raw source, the pinned generation is the derivative's, the object sits
     under this owner's item/analysis prefix (`narration_matches_item`), and
@@ -318,21 +326,19 @@ def _cleaned_voiceover_path(
     falls back to granting the uncut recording.
     """
     changed = HTTPException(409, "Voiceover changed; refresh the recipe")
-    raw = _approved_guided_narration(job.assembly_plan)
     try:
-        if narration_speech_cleanup(raw) is None:
-            return None
-        narration = NarrationTrack.model_validate(raw)
-        require_guided_cleanup_binding(job.assembly_plan, narration)
+        if item is None:
+            raise ValueError("item missing")
+        narration = authorized_device_narration(
+            record,
+            assembly=assembly,
+            owner_id=user_id,
+            item=item,
+            asset=asset,
+        )
     except (ValueError, SpeechCleanupFailure) as exc:
         raise changed from exc
-    if (
-        item is None
-        or narration.generation != asset.generation
-        or not narration_matches_item(narration.model_dump(mode="json"), item, owner_id=user_id)
-    ):
-        raise changed
-    return narration.gcs_path
+    return narration
 
 
 def _device_speech_cleanup_outcome(
@@ -391,7 +397,12 @@ def _device_speech_cleanup_outcome(
 
 
 async def _voiceover_download_url(
-    db: AsyncSession, job: Job, user_id: uuid.UUID, asset: VoiceoverRenderAsset
+    db: AsyncSession,
+    job: Job,
+    user_id: uuid.UUID,
+    asset: VoiceoverRenderAsset,
+    record: dict,
+    identity: DeviceRenderIdentity,
 ) -> str:
     """Grant the job owner's own plan-item voiceover, never another item's bytes.
 
@@ -406,21 +417,74 @@ async def _voiceover_download_url(
     still be in "voiceover" audio mode with that exact `(path, generation)`
     attached, so a cleared or replaced voiceover fails closed instead of
     granting different bytes. A "Clean up speech" guided Job grants its cleaned
-    derivative instead (`_cleaned_voiceover_path`), never the raw recording.
+    derivative instead (`_authorized_cleaned_narration`), never the raw recording.
     """
     if job.content_plan_item_id is None or str(job.content_plan_item_id) != asset.plan_item_id:
         raise HTTPException(404, "Voiceover unavailable")
     item = await db.get(PlanItem, job.content_plan_item_id, populate_existing=True)
-    path = _cleaned_voiceover_path(job, user_id, item, asset)
+    item_snapshot = (
+        SimpleNamespace(
+            id=item.id,
+            audio_mode=item.audio_mode,
+            voiceover_gcs_path=item.voiceover_gcs_path,
+            voiceover_generation=item.voiceover_generation,
+            voiceover_duration_s=getattr(item, "voiceover_duration_s", None),
+        )
+        if item is not None
+        else None
+    )
+    assembly_snapshot = copy.deepcopy(job.assembly_plan or {})
+    job_id_value = job.id
+    # Legacy recovery streams a derivative to verify its manifest fingerprint.
+    # Release the request transaction before that potentially slow storage I/O.
+    await db.rollback()
+    try:
+        narration_snapshot = await asyncio.to_thread(
+            _authorized_cleaned_narration, assembly_snapshot, user_id, item_snapshot, asset, record
+        )
+    except (FileNotFoundError, NotFound) as exc:
+        raise HTTPException(409, "Voiceover changed; refresh the recipe") from exc
+    path = narration_snapshot.gcs_path if narration_snapshot is not None else None
+    # Re-establish the identity/owner fence after external I/O before granting.
+    job = await _owned_job(db, user_id, job_id_value)
+    current_record, _ = _record(job, identity)
+    if current_record.get("status", {}).get("request") != record.get("status", {}).get(
+        "request"
+    ) or current_record.get("narration_binding") != record.get("narration_binding"):
+        raise HTTPException(409, "Device recipe changed")
+    current_item = await db.get(PlanItem, job.content_plan_item_id, populate_existing=True)
     if path is None:
         if (
-            item is None
-            or getattr(item, "audio_mode", None) != "voiceover"
-            or not item.voiceover_gcs_path
-            or str(item.voiceover_generation or "") != asset.generation
+            current_item is None
+            or getattr(current_item, "audio_mode", None) != "voiceover"
+            or not current_item.voiceover_gcs_path
+            or str(current_item.voiceover_generation or "") != asset.generation
         ):
             raise HTTPException(409, "Voiceover changed; refresh the recipe")
-        path = str(item.voiceover_gcs_path)
+        path = str(current_item.voiceover_gcs_path)
+    else:
+        try:
+            if current_record.get("narration_binding") is not None:
+                narration = authorized_device_narration(
+                    current_record,
+                    assembly=job.assembly_plan or {},
+                    owner_id=user_id,
+                    item=current_item,
+                    asset=asset,
+                )
+            else:
+                narration = narration_snapshot
+                require_guided_cleanup_binding(job.assembly_plan or {}, narration)
+        except (ValueError, SpeechCleanupFailure) as exc:
+            raise HTTPException(409, "Voiceover changed; refresh the recipe") from exc
+        if (
+            narration is None
+            or narration.gcs_path != path
+            or not narration_matches_item(
+                narration.model_dump(mode="json"), current_item, owner_id=user_id
+            )
+        ):
+            raise HTTPException(409, "Voiceover changed; refresh the recipe")
     await db.rollback()
     try:
         return await asyncio.to_thread(

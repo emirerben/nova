@@ -37,7 +37,7 @@ Four cases originally exercised four distinct compiler branches:
                      the video timeline to prove the compiler's duration
                      clamp (basicComposition/audioMix/narrationAudio).
 
-Three more cases exercise the OTHER two KRI-132 phone compilers -- neither
+Four more cases exercise the OTHER two KRI-132 phone compilers -- neither
 goes through `compile_phone_voiceover_montage_plan` at all:
   - `subtitled_sentence` -- `app.pipeline.phone_subtitled_plan
                      .compile_phone_subtitled_plan`: one portrait clip,
@@ -48,6 +48,9 @@ goes through `compile_phone_voiceover_montage_plan` at all:
   - `subtitled_word` -- same compiler, `caption_style="word"` -- per-word
                      timings compile to the karaoke-line highlight sweep
                      instead of plain pop-in blocks.
+  - `talking_head` -- the same Subtitled compiler with a speaker spine and
+                     one muted, full-frame cutaway (`visualBlocks` /
+                     `visualVideos` / `audioMix`).
   - `narrated`    -- `app.pipeline.phone_narrated_plan
                      .compile_phone_narrated_plan`: two clips tiled onto
                      narration step windows; the second clip is SHORTER than
@@ -57,7 +60,7 @@ goes through `compile_phone_voiceover_montage_plan` at all:
                      local1080Export/narrationAudio/audioMix/variableSpeed/
                      positionedText/animatedText).
 
-All three new cases additionally write `caption_samples` into `e2e.json`
+The captioned cases additionally write `caption_samples` into `e2e.json`
 (`{name, t, region, expect_text}`): a region derived from the compiled
 recipe's own `PortableTextLayer`/`PositionedTextRun` geometry (see
 `_caption_region` below), sampled once while a cue is on screen and once in
@@ -119,7 +122,7 @@ from app.pipeline.generative_decision import (
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_narrated_plan import NarratedPhoneStep, compile_phone_narrated_plan
 from app.pipeline.phone_recipe_shared import PhoneMusicBed, PhoneNarrationBed
-from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
+from app.pipeline.phone_subtitled_plan import PhoneCutaway, compile_phone_subtitled_plan
 from app.pipeline.phone_voiceover_montage_plan import compile_phone_voiceover_montage_plan
 from app.services.phone_rollout import validate_phone_pilot_recipe
 from app.services.phone_sources import PhoneSourceBinding
@@ -449,7 +452,35 @@ def main() -> None:
     except (UnsupportedPhonePlan, ValueError) as exc:
         compile_errors["subtitled_word"] = f"{type(exc).__name__}: {exc}"
 
-    # --- case (g): narrated walkthrough -- second clip retimes (rate<1) ----
+    # --- case (g): multi-clip Talking head with a muted cutaway ------------
+    # The speaker remains the only main-track clip and therefore supplies the
+    # same 340-Hz source audio before, during, and after the lime cutaway. The
+    # cutaway carries a deliberately different 659-Hz tone so the native E2E
+    # can prove its overlay track stays silent as well as proving its pixels
+    # only cover the intended 2.0...4.0s window.
+    talking_cues = [
+        {"text": "Speaker before the cutaway", "start_s": 0.3, "end_s": 1.4},
+        {"text": "Speaker continues during cutaway", "start_s": 2.3, "end_s": 3.7},
+        {"text": "Speaker after the cutaway", "start_s": 4.4, "end_s": 5.6},
+    ]
+    _color_clip(out / "talking-head-speaker.mp4", "blue", 340, duration=6.0)
+    _color_clip(out / "talking-head-broll.mp4", "lime", 659, duration=2.5)
+    talking_speaker = _binding(
+        out / "talking-head-speaker.mp4", "talking-head-speaker", duration_s=6.0
+    )
+    talking_broll = _binding(
+        out / "talking-head-broll.mp4", "talking-head-broll", duration_s=2.5
+    )
+    try:
+        recipes["talking_head"] = compile_phone_subtitled_plan(
+            (talking_speaker,),
+            caption_cues=talking_cues,
+            cutaways=(PhoneCutaway(binding=talking_broll, start_s=2.0, end_s=4.0),),
+        )
+    except (UnsupportedPhonePlan, ValueError) as exc:
+        compile_errors["talking_head"] = f"{type(exc).__name__}: {exc}"
+
+    # --- case (h): narrated walkthrough -- second clip retimes (rate<1) ----
     # c0 has more footage (5s) than its 4s step -> trims, rate=1.0. c1 has
     # LESS footage (3s) than its 6s step -> slows down instead of freezing.
     _color_clip(out / "narrated-c0.mp4", "gold", 260, duration=5.0)
@@ -506,7 +537,10 @@ def main() -> None:
     rejections: dict[str, str] = {}
     for case_id, recipe in recipes.items():
         try:
-            validate_phone_pilot_recipe(recipe)
+            # The KRI-257 fixture exercises the production-admitted cutaway
+            # overlay shape through the same worker allowance used for that
+            # path. Its capability negotiation remains mandatory.
+            validate_phone_pilot_recipe(recipe, allow_editor_media=case_id == "talking_head")
         except ValueError as exc:
             rejections[case_id] = str(exc)
 
@@ -534,6 +568,21 @@ def main() -> None:
     )
     subtitled_word_region0 = _caption_region(
         recipes["subtitled_word"].text_layers[0],
+        canvas_width=CANVAS["width"],
+        canvas_height=CANVAS["height"],
+    )
+    talking_region0 = _caption_region(
+        recipes["talking_head"].text_layers[0],
+        canvas_width=CANVAS["width"],
+        canvas_height=CANVAS["height"],
+    )
+    talking_region1 = _caption_region(
+        recipes["talking_head"].text_layers[1],
+        canvas_width=CANVAS["width"],
+        canvas_height=CANVAS["height"],
+    )
+    talking_region2 = _caption_region(
+        recipes["talking_head"].text_layers[2],
         canvas_width=CANVAS["width"],
         canvas_height=CANVAS["height"],
     )
@@ -694,6 +743,47 @@ def main() -> None:
                         "region": subtitled_word_region0,
                         "expect_text": False,
                     },
+                ],
+            },
+            "talking_head": {
+                "status_file": "status-talking-head.json",
+                "duration_s": recipes["talking_head"].duration,
+                "required_capabilities": sorted(recipes["talking_head"].required_capabilities),
+                # KRI-136 cutaways add these capabilities to the base
+                # Subtitled recipe. Dropping visualVideos must route to cloud.
+                "drop_capability": "visualVideos",
+                "clips": [
+                    {"media_id": "talking-head-speaker", "file": "talking-head-speaker.mp4"},
+                    {"media_id": "talking-head-broll", "file": "talking-head-broll.mp4"},
+                ],
+                "music_asset_id": None,
+                "music_file": None,
+                "expects_source_audio": True,
+                "expects_music_audio": False,
+                "expects_narration_audio": False,
+                # The blue speaker must reappear on either side of the lime
+                # cutaway. The outside samples sit 0.1s beyond the scheduled
+                # edges, so an early/late overlay cannot pass by showing blue
+                # only far from the window.
+                "samples": [
+                    {"name": "speaker_before", "t": 1.9, "x": 540, "y": 200, "rgb": [0, 0, 255]},
+                    {"name": "cutaway_window", "t": 3.0, "x": 540, "y": 200, "rgb": [0, 255, 0]},
+                    {"name": "speaker_after", "t": 4.1, "x": 540, "y": 200, "rgb": [0, 0, 255]},
+                ],
+                # Sample every cue while active and each deliberate gap while
+                # inactive: caption timing must survive the visual replacement
+                # window without becoming a permanently-visible overlay.
+                "caption_samples": [
+                    {"name": "before_on", "t": 0.8, "region": talking_region0, "expect_text": True},
+                    {"name": "before_during_off", "t": 1.8, "region": talking_region0, "expect_text": False},
+                    {"name": "during_on", "t": 3.0, "region": talking_region1, "expect_text": True},
+                    {"name": "during_after_off", "t": 4.0, "region": talking_region1, "expect_text": False},
+                    {"name": "after_on", "t": 5.0, "region": talking_region2, "expect_text": True},
+                ],
+                "audio_samples": [
+                    {"name": "before", "t": 1.0, "speaker_hz": 340, "muted_hz": 659},
+                    {"name": "during", "t": 3.0, "speaker_hz": 340, "muted_hz": 659},
+                    {"name": "after", "t": 4.8, "speaker_hz": 340, "muted_hz": 659},
                 ],
             },
             "narrated": {

@@ -22,7 +22,8 @@ What it decides, and only this:
   lasts a default fast-cut length;
 * title: the creator's confirmed title, else a title written from brief facts
   ("20K Run · Arnavutköy → Eminönü"). Text stays NFC; nothing is folded to
-  ASCII. A montage never takes its title from a Gemini setting;
+  ASCII. With neither source, the visible title is omitted. A montage never
+  takes its title from a Gemini setting;
 * Visuals (KRI-217): the item's ready Visuals-pool photos and videos are spread
   evenly between the clips (the montage always opens on a clip) and keep their
   upload order. A photo holds for a fast-cut length, never longer than a beat of
@@ -89,8 +90,10 @@ MIN_TOTAL_S = 3.0
 # (``ClipLabel`` allows 120).
 MAX_LABEL_CHARS = 60
 MAX_CREATOR_LABEL_CHARS = 120
-# Only when the creator gave nothing to title with.
-DEFAULT_TITLE = "Montage"
+# ``EditProposalSnapshot.title`` is required even when no creator-visible title
+# exists. Keep its schema placeholder separate from ``opening_title`` so this
+# internal label never becomes an on-screen text layer (KRI-255).
+SNAPSHOT_FALLBACK_TITLE = "Montage"
 _CAPTURE_ORDER_KEYS = frozenset({"capture_time", "chronological", "route", "time", "shot_order"})
 _START_KEYS = START_KEYS
 _END_KEYS = END_KEYS
@@ -718,7 +721,7 @@ def plan_unified_montage(
             dropped.append(media_id)
             dropped_reasons[media_id] = "no_fact"
     if not title:
-        title, title_source = DEFAULT_TITLE, "default"
+        title_source = "none"
 
     # ── cut lengths ──────────────────────────────────────────────────────────
     wanted: list[int] = []
@@ -829,7 +832,7 @@ def plan_unified_montage(
             goal="",
             pace="fast",
             duration_s=total_s,
-            title=(title or DEFAULT_TITLE)[:100],
+            title=(title or SNAPSHOT_FALLBACK_TITLE)[:100],
             opening_title=title,
             media=refs,
             story_beats=_story_beats(cuts),
@@ -969,10 +972,10 @@ def _title(strategy: Mapping[str, Any], view: BriefView) -> tuple[str | None, st
     generated = title_from_facts(view.facts)
     if generated:
         return generated, "brief"
-    # A guided edit always carries one text element. With nothing the creator
-    # said to title it, use the neutral default: never a model-authored hook, and
-    # never unrequested place text taken from clip facts.
-    return DEFAULT_TITLE, "default"
+    # The strict snapshot still needs an internal title, but creator-visible
+    # opening text does not. Never burn a generic label, a model-authored hook,
+    # or unrequested place text taken from clip facts.
+    return None, "none"
 
 
 __all__ = [

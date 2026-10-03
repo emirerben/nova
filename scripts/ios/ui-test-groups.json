@@ -26,7 +26,11 @@
       "KriaUITests/CreationUITests/testFailedUploadWithRecordDoesNotBlockSendAndOffersRetry",
       "KriaUITests/DeviceRenderUITests/testPhoneRenderReachesReadyWithPlaySaveAndShare",
       "KriaUITests/DeviceRenderUITests/testUnsupportedRecipeAsksForANewEditWithoutRetry",
-      "KriaUITests/DeviceRenderUITests/testTimedOutRenderRetriesToReady"
+      "KriaUITests/DeviceRenderUITests/testTimedOutRenderRetriesToReady",
+      "KriaUITests/AttachmentFlowUITests/testNarratedAttachmentsSwipeAndRequireExplicitAudioChoice",
+      "KriaUITests/AttachmentFlowUITests/testImportedVoiceoverReviewsTimingAndPlaybackBeforeUpload",
+      "KriaUITests/AttachmentFlowUITests/testUnknownFootageDurationDoesNotInventComparison",
+      "KriaUITests/AttachmentFlowUITests/testExistingVoiceoverKeepsItsCapacityAndContinueChoice"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -42,7 +46,9 @@
       "KriaUITests/SignInUITests/testSignInEmailOpensReviewerSheetAndCancelReturns",
       "KriaUITests/SignInUITests/testSignInAtLargestDynamicTypeKeepsEveryActionReachable",
       "KriaUITests/SignInUITests/testSignInWithReduceMotionIsInteractiveImmediately",
-      "KriaUITests/SignInUITests/testSignInErrorMessageIsAnnounced"
+      "KriaUITests/SignInUITests/testSignInErrorMessageIsAnnounced",
+      "KriaUITests/NativeUpdateRequiredUITests/testTyped426ReplacesEachRootRoute",
+      "KriaUITests/NativeUpdateRequiredUITests/testBlockingScreenScrollsAtAccessibilitySizeAndActionsUseFixtureSeam"
     ],
     "editor": [
       "KriaUITests/EditorUITests/testNativeEditorStagesLocalEditsAndGatesUnavailableTools",
@@ -69,6 +75,9 @@
       "KriaUITests/NativeEditorInspectorUITests/testCaptionSelectionOpensCaptionInspector",
       "KriaUITests/NativeEditorInspectorUITests/testProjectedCaptionTapOpensCaptionsPanelNotTextInspector",
       "KriaUITests/NativeEditorInspectorUITests/testTappingCaptionRowEntersEditModeAndPersistsTypedText",
+      "KriaUITests/NativeEditorInspectorUITests/testEmptyingATalkingCaptionLineRemovesItAndUndoRestoresIt",
+      "KriaUITests/NativeEditorInspectorUITests/testNextAndPreviousMoveBetweenCaptionLines",
+      "KriaUITests/NativeEditorInspectorUITests/testSavingWithACaptionLineOpenCommitsItAndClosesTheBar",
       "KriaUITests/NativeEditorInspectorUITests/testAllPersistedLanesExposeStableTimelineIdentityAndInspector",
       "KriaUITests/NativeEditorInspectorUITests/testPreviewDragIsOneUndoableTextEdit",
       "KriaUITests/NativeEditorInspectorUITests/testStressFixtureRemainsReachableAtAccessibilityTypeWithReduceMotion",
@@ -86,8 +95,10 @@
       "KriaUITests/NativeEditorInspectorUITests/testTimelineCanZoomBeyondPreviousLimit",
       "KriaUITests/NativeEditorInspectorUITests/testTimelineResizeShrinksPreviewAndRestoresIt",
       "KriaUITests/NativeEditorInspectorUITests/testTimelineResizeGrowsPreviewBeyondDefault",
+      "KriaUITests/NativeEditorInspectorUITests/testTimelineResizeWorksFromTheBandBesideTheGrabber",
       "KriaUITests/NativeEditorInspectorUITests/testPanelExpansionResetsWhenPanelCloses",
       "KriaUITests/NativeEditorInspectorUITests/testPanelHeaderDragsResizePanel",
+      "KriaUITests/NativeEditorInspectorUITests/testPanelDragDownClosesLikeDone",
       "KriaUITests/EditorUITests/testPreviewEmptyTapTogglesFullscreen",
       "KriaUITests/EditorUITests/testDeletingFinalClipShowsEmptyCanvasAndUndoRestoresPlayback",
       "KriaUITests/EditorUITests/testClipActionsDismissOnOutsideTapAndKeepClipSelectionWorking",
@@ -164,6 +175,11 @@
     "src/apps/ios/Kria/Features/AccountDeletionView.swift": "projects",
     "src/apps/ios/Kria/Features/BrandPreviewHost.swift": "projects",
     "src/apps/ios/Tests/KriaUITests/SignInUITests.swift": "projects",
-    "src/apps/ios/Tests/KriaUITests/DeviceRenderUITests.swift": "creation"
+    "src/apps/ios/Tests/KriaUITests/DeviceRenderUITests.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/NativeUpdateRequiredUITests.swift": "projects",
+    "src/apps/ios/Kria/Features/NativeUpdateUITestTransport.swift": "projects",
+    "src/apps/ios/Tests/KriaUITests/AttachmentFlowUITests.swift": "creation",
+    "src/apps/ios/Kria/Features/CreationAttachmentPresentation.swift": "creation",
+    "src/apps/ios/Kria/Features/CreationVoiceRecorder.swift": "creation"
   }
 }

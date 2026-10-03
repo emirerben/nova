@@ -3814,6 +3814,7 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
         UnsupportedPhonePlan,
         compile_phone_guided_plan,
     )
+    from app.services.device_narration_binding import make_device_narration_binding  # noqa: PLC0415
     from app.services.device_render import (  # noqa: PLC0415
         DEVICE_RENDER_FIELD,
         pin_device_request,
@@ -3970,7 +3971,22 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
             # gcs_path so pool deletion still sees the photo as referenced.
             current[PHONE_VISUALS_FIELD] = visual_rows
         job.assembly_plan = current
-        pin_device_request(job, request, base_generation=generation)
+        narration_binding = None
+        if plan.narration is not None and plan.narration.speech_cleanup is not None:
+            from app.kria.render_assets import VoiceoverRenderAsset  # noqa: PLC0415
+
+            asset = next(
+                a for a in recipe.asset_manifest.assets if isinstance(a, VoiceoverRenderAsset)
+            )
+            narration_binding = make_device_narration_binding(plan.narration, asset).model_dump(
+                mode="json"
+            )
+        pin_device_request(
+            job,
+            request,
+            base_generation=generation,
+            narration_binding=narration_binding,
+        )
         job.status = "awaiting_device"
         job.error_detail = None
         job.failure_reason = None
@@ -6278,6 +6294,7 @@ def _run_phone_narrated_job(
     )
     from app.pipeline.phrase_sequence import split_phrases  # noqa: PLC0415
     from app.pipeline.transcribe import Transcript, Word, transcribe_whisper  # noqa: PLC0415
+    from app.services.device_narration_binding import make_device_narration_binding  # noqa: PLC0415
     from app.services.device_render import (  # noqa: PLC0415
         DEVICE_RENDER_FIELD,
         pin_device_request,
@@ -6642,7 +6659,24 @@ def _run_phone_narrated_job(
             variants.append(new_entry)
         current["variants"] = variants
         job.assembly_plan = current
-        pin_device_request(job, request, base_generation=generation)
+        narration_binding = None
+        if cleaned_narration is not None:
+            from app.kria.render_assets import VoiceoverRenderAsset  # noqa: PLC0415
+
+            asset = next(
+                asset
+                for asset in recipe.asset_manifest.assets
+                if isinstance(asset, VoiceoverRenderAsset)
+            )
+            narration_binding = make_device_narration_binding(cleaned_narration, asset).model_dump(
+                mode="json"
+            )
+        pin_device_request(
+            job,
+            request,
+            base_generation=generation,
+            narration_binding=narration_binding,
+        )
         job.status = "awaiting_device"
         job.error_detail = None
         job.failure_reason = None

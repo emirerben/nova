@@ -43,6 +43,9 @@ struct UploadRecoveryRecord: Codable, Identifiable, Sendable, Equatable {
     /// The upload or attach failed and is waiting for the creator (Retry / Remove). The record stays for
     /// that, but it is not "in progress": Send must not wait for it (KRI-211). Cleared by a retry.
     var uploadFailed: Bool? = nil
+    /// Best-effort local footage duration. Optional so records from older builds
+    /// and files AVFoundation cannot inspect continue through recovery normally.
+    var durationS: Double? = nil
     var role: CreationMediaRole { mediaRole ?? .clip }
 }
 
@@ -146,6 +149,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     let role: CreationMediaRole
     let itemID: String?
     let editorSourceTarget: EditorSourceRegistrationTarget?
+    /// Carries a completed best-effort probe across a crash before the upload
+    /// record is created. Resume also re-probes when this is absent.
+    var durationS: Double? = nil
     var state: PreparationState
     var lastHeartbeatAt: Date
     /// Identifies the process that most recently wrote/touched this entry.
@@ -153,7 +159,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// still-running preparation from an orphaned one (see type doc above).
     var launchToken: UUID
 
-    init(id: UUID, projectID: UUID, localFilePath: String, filename: String, source: UploadSource, purpose: UploadPurpose, role: CreationMediaRole, itemID: String?, editorSourceTarget: EditorSourceRegistrationTarget? = nil, state: PreparationState = .preparing, lastHeartbeatAt: Date = Date(), launchToken: UUID) {
+    init(id: UUID, projectID: UUID, localFilePath: String, filename: String, source: UploadSource, purpose: UploadPurpose, role: CreationMediaRole, itemID: String?, editorSourceTarget: EditorSourceRegistrationTarget? = nil, durationS: Double? = nil, state: PreparationState = .preparing, lastHeartbeatAt: Date = Date(), launchToken: UUID) {
         self.id = id
         self.projectID = projectID
         self.localFilePath = localFilePath
@@ -163,6 +169,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         self.role = role
         self.itemID = itemID
         self.editorSourceTarget = editorSourceTarget
+        self.durationS = durationS
         self.state = state
         self.lastHeartbeatAt = lastHeartbeatAt
         self.launchToken = launchToken
@@ -187,6 +194,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         role = try container.decode(CreationMediaRole.self, forKey: .role)
         itemID = try container.decodeIfPresent(String.self, forKey: .itemID)
         editorSourceTarget = try container.decodeIfPresent(EditorSourceRegistrationTarget.self, forKey: .editorSourceTarget)
+        durationS = try container.decodeIfPresent(Double.self, forKey: .durationS).flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
         state = try container.decodeIfPresent(PreparationState.self, forKey: .state) ?? .interrupted
         lastHeartbeatAt = try container.decodeIfPresent(Date.self, forKey: .lastHeartbeatAt) ?? .distantPast
         launchToken = try container.decodeIfPresent(UUID.self, forKey: .launchToken) ?? UUID()
@@ -238,6 +246,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         /// Shown while the clip is still being prepared and has no upload record to name it yet.
         var filename: String? = nil
         var startedAt = Date()
+        var durationS: Double? = nil
     }
 
     /// Bumped whenever a thumbnail file is written, so views that read previews from disk re-render.
@@ -448,6 +457,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 Self.persistPreparingUpload(PreparingUpload(id: recordID, projectID: projectID, localFilePath: copy.path,
                     filename: fileURL.lastPathComponent, source: source, purpose: purpose, role: role, itemID: itemID, editorSourceTarget: editorSourceTarget, launchToken: launchToken), key: defaultsKey)
                 staged = true
+                probeAndCacheFootageDuration(at: copy, recordID: recordID)
                 activePreparationIDs.insert(recordID)
                 backgroundTaskID = backgroundActivity.begin(name: Self.preparationBackgroundTaskName) { [weak self] in
                     Task { @MainActor in self?.markPreparationExpired(recordID: recordID) }
@@ -503,7 +513,8 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 purpose: purpose,
                 reservation: reservation,
                 clientUploadID: clientUploadID,
-                retryCount: 0, role: role, itemID: itemID, visualReservationID: visualReservationID, uploadContract: prepared.2, editorSourceTarget: editorSourceTarget
+                retryCount: 0, role: role, itemID: itemID, visualReservationID: visualReservationID, uploadContract: prepared.2, editorSourceTarget: editorSourceTarget,
+                durationS: inFlight[recordID]?.durationS
             )
             accepted = true
             if editorSourceTarget != nil && !containsEditorPlacement(recordID) {
@@ -536,6 +547,38 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     private func startEarlyPreview(of file: URL, recordID: UUID) {
         Task { @MainActor [weak self] in
             if await CreationMediaPreview.saveEarly(localURL: file, recordID: recordID) { self?.previewVersion += 1 }
+        }
+    }
+
+    /// Duration is UI metadata, never an admission requirement. Start this from
+    /// the durable staged source so a picker/provider URL cannot disappear
+    /// underneath AVFoundation, and let upload preparation continue regardless
+    /// of an unreadable or indeterminate asset.
+    private func probeAndCacheFootageDuration(at fileURL: URL, recordID: UUID) {
+        Task { @MainActor [weak self] in
+            guard let duration = await Self.footageDuration(at: fileURL) else { return }
+            self?.cacheFootageDuration(duration, recordID: recordID)
+        }
+    }
+
+    private nonisolated static func footageDuration(at fileURL: URL) async -> Double? {
+        let asset = AVURLAsset(url: fileURL)
+        guard let duration = try? await asset.load(.duration) else { return nil }
+        let seconds = CMTimeGetSeconds(duration)
+        return seconds.isFinite && seconds > 0 ? seconds : nil
+    }
+
+    private func cacheFootageDuration(_ duration: Double, recordID: UUID) {
+        guard duration.isFinite && duration > 0 else { return }
+        if inFlight[recordID] != nil { inFlight[recordID]?.durationS = duration }
+        var preparing = Self.restorePreparingUploads(key: defaultsKey)
+        if let index = preparing.firstIndex(where: { $0.id == recordID }) {
+            preparing[index].durationS = duration
+            Self.persistPreparingUploads(preparing, key: defaultsKey)
+        }
+        if let index = records.firstIndex(where: { $0.id == recordID }) {
+            records[index].durationS = duration
+            persist()
         }
     }
 
@@ -963,7 +1006,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     private func resumePreparation(_ entry: PreparingUpload) -> Task<Void, Never> {
         let recordID = entry.id
         activePreparationIDs.insert(recordID)
-        inFlight[recordID] = InFlightUpload(projectID: entry.projectID, role: entry.role)
+        inFlight[recordID] = InFlightUpload(projectID: entry.projectID, role: entry.role, durationS: entry.durationS)
         let backgroundTaskID = backgroundActivity.begin(name: Self.preparationBackgroundTaskName) { [weak self] in
             Task { @MainActor in self?.markPreparationExpired(recordID: recordID) }
         }
@@ -1001,6 +1044,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         if !FileManager.default.fileExists(atPath: CreationMediaPreview.url(recordID: recordID).path) {
             startEarlyPreview(of: stagedURL, recordID: recordID)
         }
+        probeAndCacheFootageDuration(at: stagedURL, recordID: recordID)
         do {
             let prepared = try await prepare(fileURL: stagedURL, projectID: entry.projectID, purpose: entry.purpose, recordID: recordID)
             preparedToDiscard = (prepared.0, prepared.1)
@@ -1035,7 +1079,8 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 purpose: entry.purpose,
                 reservation: reservation,
                 clientUploadID: clientUploadID,
-                retryCount: 0, role: entry.role, itemID: entry.itemID, visualReservationID: visualReservationID, uploadContract: prepared.2, editorSourceTarget: entry.editorSourceTarget
+                retryCount: 0, role: entry.role, itemID: entry.itemID, visualReservationID: visualReservationID, uploadContract: prepared.2, editorSourceTarget: entry.editorSourceTarget,
+                durationS: inFlight[recordID]?.durationS ?? entry.durationS
             )
             if entry.editorSourceTarget != nil && !containsEditorPlacement(recordID) { await cancel(recordID: recordID) }
         } catch {
@@ -1259,7 +1304,8 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 purpose: record.purpose,
                 reservation: reservation,
                 clientUploadID: clientUploadID,
-                retryCount: record.retryCount + 1, role: record.role, itemID: record.itemID, visualReservationID: visualReservationID, uploadContract: record.uploadContract, editorSourceTarget: record.editorSourceTarget
+                retryCount: record.retryCount + 1, role: record.role, itemID: record.itemID, visualReservationID: visualReservationID, uploadContract: record.uploadContract, editorSourceTarget: record.editorSourceTarget,
+                durationS: record.durationS
             )
         } catch { lastError = error.localizedDescription }
     }
@@ -1416,7 +1462,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         return false
     }
 
-    private func startTask(recordID: UUID, localURL: URL, filename: String, projectID: UUID, source: UploadSource, purpose: UploadPurpose, reservation: ProjectUploadReservation, clientUploadID: String, retryCount: Int, role: CreationMediaRole, itemID: String?, visualReservationID: String?, uploadContract: ProjectMediaUploadContract? = nil, editorSourceTarget: EditorSourceRegistrationTarget? = nil) throws {
+    private func startTask(recordID: UUID, localURL: URL, filename: String, projectID: UUID, source: UploadSource, purpose: UploadPurpose, reservation: ProjectUploadReservation, clientUploadID: String, retryCount: Int, role: CreationMediaRole, itemID: String?, visualReservationID: String?, uploadContract: ProjectMediaUploadContract? = nil, editorSourceTarget: EditorSourceRegistrationTarget? = nil, durationS: Double? = nil) throws {
         var request = URLRequest(url: reservation.uploadURL)
         request.httpMethod = "PUT"
         request.setValue(reservation.contentType, forHTTPHeaderField: "Content-Type")
@@ -1439,7 +1485,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             retentionExpiresAt: nil,
             taskIdentifier: task.taskIdentifier,
             retryCount: retryCount, mediaRole: role, itemID: itemID, visualReservationID: visualReservationID,
-            editorSourceTarget: editorSourceTarget
+            editorSourceTarget: editorSourceTarget, durationS: durationS
         )
         records.append(record)
         persist()

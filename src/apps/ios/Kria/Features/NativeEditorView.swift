@@ -16,6 +16,13 @@ struct NativeEditorView: View {
     @StateObject private var panelDrafts = NativeEditorPanelDrafts()
     @StateObject private var panelLifecycle = NativeEditorPanelLifecycle()
     @State private var panel: NativeEditorPanel?
+    /// KRI-240: the caption line open in the caption editor (plan 026 D27: the
+    /// source of truth for caption edit state; keyboard focus only follows it).
+    @State private var captionEditingCueID: String?
+    @State private var headerHeight: CGFloat = 0
+    /// Preview taps while a caption line is open toggle its loop (plan 026 D5).
+    @State private var captionLoopRequest = 0
+    @ScaledMetric(relativeTo: .body) private var captionLineHeight: CGFloat = 22
     @State private var inspector: NativeEditorInspector?
     @State private var showsUnsavedExit = false
     @State private var showsDeviceRender = false
@@ -33,6 +40,8 @@ struct NativeEditorView: View {
     /// grows it); `panelExpansion` is 0…1 and may lift the panel over the preview.
     @State private var previewResize: CGFloat = 0
     @State private var panelExpansion: CGFloat = 0
+    /// KRI-253: points a drag has pulled the panel below its smallest size.
+    @State private var panelDismissPull: CGFloat = 0
     @State private var topChromeHeight: CGFloat = 0
     /// `previewFullscreen` mounts the overlay; `fullscreenExpanded` drives its
     /// grow/shrink so the overlay can animate out before it is removed.
@@ -127,6 +136,8 @@ struct NativeEditorView: View {
             .onChange(of: panel == nil) { _, closed in
                 if closed { panelExpansion = 0 }
             }
+            // A drag on an outgoing panel can't end on it.
+            .onChange(of: panel) { _, _ in panelDismissPull = 0 }
             .onChange(of: session.pendingText == nil) { _, finished in
                 if finished {
                     resignKeyboard()
@@ -230,7 +241,10 @@ struct NativeEditorView: View {
             previewAspectRatio: session.previewAspectRatio,
             keyboardVisible: keyboardVisible,
             isAccessibilitySize: dynamicTypeSize.isAccessibilitySize,
-            shrinksPreviewWhileTyping: panel?.tool == .text
+            reservesSongReferencePreviewFloor: session.editorSongReferencePresentation != nil,
+            shrinksPreviewWhileTyping: panel?.tool == .text,
+            captionEditBarHeight: captionEditing ? CaptionEditBar.height(lineHeight: captionLineHeight, lines: captionEditLines(viewport: viewport)) : nil,
+            measuredHeaderHeight: headerHeight > 0 ? headerHeight : nil
         )
         let showsTimeline = panel == nil
         let showsContext = showsTimeline && (session.selection?.kind == .text || session.selectedClipID != nil)
@@ -243,8 +257,10 @@ struct NativeEditorView: View {
                 title: project.workspaceTitle, session: session, exporter: exporter,
                 onBack: requestBack, onChat: conversation == nil ? requestBack : onBack,
                 onSaveToPhotos: { Task { await exporter.saveToPhotos(from: session, api: model.api, deviceLocalFile: deviceLocalFile) } },
-                onShare: { Task { await exporter.share(from: session, api: model.api, deviceLocalFile: deviceLocalFile) } }
+                onShare: { Task { await exporter.share(from: session, api: model.api, deviceLocalFile: deviceLocalFile) } },
+                beforeSave: { if captionEditing { panelLifecycle.prepareToClose(); resignKeyboard() } }
             )
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
             VStack(spacing: 0) {
                 NativeEditorSaveBanner(session: session)
                 NativeEditorExportBanner(exporter: exporter)
@@ -273,11 +289,25 @@ struct NativeEditorView: View {
                 .frame(width: previewHeight * session.previewAspectRatio, height: previewHeight)
                 .clipped()
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { previewGlobalFrame = $0 }
+                .overlay {
+                    // KRI-240 (plan 026 R10): the finished render still shows the old
+                    // caption, so say so instead of looking like the fix didn't take.
+                    if captionEditing, session.sourcePreviewState.isFailure || session.sourcePreviewState == .originalsUnavailable {
+                        ZStack {
+                            KriaColor.paper.opacity(0.5)
+                            Text("Preview shows your last render. Your fix appears after Save.")
+                                .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                                .multilineTextAlignment(.center).padding(12)
+                        }
+                        .allowsHitTesting(false)
+                        .accessibilityIdentifier("native-editor-caption-stale-preview")
+                    }
+                }
                 .accessibilityIdentifier("native-editor-preview")
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
                 .overlay(alignment: .bottomTrailing) {
-                    if conversation != nil, session.pendingText == nil {
+                    if conversation != nil, session.pendingText == nil, !captionEditing {
                         Button { showsConversation = true } label: {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 23))
@@ -300,7 +330,7 @@ struct NativeEditorView: View {
                         .onTapGesture { dismissSelectedClipContext() }
                 }
 
-            timelineResizeHandle(metrics: metrics)
+            if !captionEditing { timelineResizeHandle(metrics: metrics) }
             connectedEditorArea(viewport: viewport, showsContext: showsContext, metrics: metrics, previewHeight: previewHeight)
                 // The panel may rise over the preview; paint and hit-test it
                 // above the preview and the timeline handle.
@@ -312,6 +342,26 @@ struct NativeEditorView: View {
 
     private var panelIsOpen: Bool { panel != nil }
 
+    /// KRI-240: a caption line is open in the caption editor (Variant A edit state).
+    /// The line must still exist: if a save or reload drops it, the chrome comes back
+    /// in the same pass rather than staying hidden over the caption list.
+    private var captionEditing: Bool {
+        guard panel?.tool == .captions, let id = captionEditingCueID else { return false }
+        return session.document.captionUnits.contains { $0.id == id }
+    }
+
+    /// Field lines in the caption edit bar. Computed once here and handed to the panel,
+    /// so the height the layout reserves is the height the bar draws.
+    private func captionEditLines(viewport: GeometryProxy) -> Int {
+        // The screen, not the viewport: the viewport shrinks by the keyboard, which
+        // would make every phone "short" the moment the keyboard rises.
+        CaptionEditBar.fieldLineCount(
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize,
+            screenHeight: UIScreen.main.bounds.height,
+            contentWidth: max(0, viewport.size.width - 72)
+        )
+    }
+
     private var fullscreenSpring: Animation {
         shouldReduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.36, dampingFraction: 0.88)
     }
@@ -322,7 +372,7 @@ struct NativeEditorView: View {
     /// the animation. Playback is restored on exit. At the end of the timeline
     /// `togglePlayback()` restarts from 0.
     private func enterFullscreen() {
-        guard !previewFullscreen, !keyboardVisible, session.pendingText == nil,
+        guard !previewFullscreen, !keyboardVisible, !captionEditing, session.pendingText == nil,
               session.canDisplayCurrentPlayer else { return }
         wasPlayingBeforeFullscreen = session.isPlaying
         fullscreenExpanded = false
@@ -340,6 +390,10 @@ struct NativeEditorView: View {
     /// An empty preview tap first closes clip-only context. Once nothing is
     /// selected, the next tap retains the established fullscreen behavior.
     private func handleEmptyPreviewTap() {
+        if captionEditing {
+            captionLoopRequest += 1
+            return
+        }
         guard !dismissSelectedClipContext() else { return }
         enterFullscreen()
     }
@@ -422,7 +476,7 @@ struct NativeEditorView: View {
                 .ignoresSafeArea(.container, edges: .bottom)
                 .allowsHitTesting(false)
 
-                if panelIsOpen && !keyboardVisible {
+                if panelIsOpen && !keyboardVisible && !captionEditing {
                     // Stays pinned to the top of the area; a tall panel rises
                     // over it rather than dragging it along. Fixed to the
                     // area's height so the taller ZStack can't stretch it.
@@ -454,29 +508,39 @@ struct NativeEditorView: View {
                         VStack(spacing: 0) {
                             if panelIsOpen {
                                 let panelRange = metrics.panelRange(areaHeight: area.size.height, previewHeight: previewHeight)
-                                panelContent
+                                let panelDismiss = NativeEditorPanelDismiss(pull: $panelDismissPull, complete: completePanel)
+                                panelContent(captionEditLines: captionEditLines(viewport: viewport))
                                     .environment(\.nativeEditorPanelContentWidth, max(0, area.size.width - 72))
-                                    .environment(\.nativeEditorPanelResize, NativeEditorPanelResize(expansion: $panelExpansion, range: panelRange))
-                                    .padding(.top, 18)
+                                    .environment(\.nativeEditorPanelResize, NativeEditorPanelResize(
+                                        expansion: $panelExpansion, range: panelRange, dismiss: panelDismiss
+                                    ))
+                                    .padding(.top, captionEditing ? 0 : 18)
                                     .overlay(alignment: .top) {
                                         // The band beside the grabber resizes too (KRI-235).
-                                        Color.clear.frame(height: 18).contentShape(Rectangle())
-                                            .modifier(NativeEditorPanelResizeDrag(expansion: $panelExpansion, range: panelRange, minimumDistance: 8))
+                                        if !captionEditing {
+                                            Color.clear.frame(height: 18).contentShape(Rectangle())
+                                                .modifier(NativeEditorPanelResizeDrag(
+                                                    expansion: $panelExpansion, range: panelRange, minimumDistance: 8, dismiss: panelDismiss
+                                                ))
+                                        }
                                     }
                                     .overlay(alignment: .top) {
-                                        NativeEditorPanelResizeGrabber(
-                                            expansion: $panelExpansion,
-                                            range: panelRange,
-                                            reduceMotion: shouldReduceMotion,
-                                            accessibilityIdentifier: "native-editor-panel-resize",
-                                            topAligned: true,
-                                            accessibilityTitle: "Editor panel size",
-                                            accessibilityHint: "Swipe up or down to resize the editor panel"
-                                        )
+                                        if !captionEditing {
+                                            NativeEditorPanelResizeGrabber(
+                                                expansion: $panelExpansion,
+                                                range: panelRange,
+                                                reduceMotion: shouldReduceMotion,
+                                                accessibilityIdentifier: "native-editor-panel-resize",
+                                                topAligned: true,
+                                                accessibilityTitle: "Editor panel size",
+                                                accessibilityHint: "Swipe up or down to resize the editor panel",
+                                                dismiss: panelDismiss
+                                            )
+                                        }
                                     }
                                     .transition(panelTransition)
                             }
-                            if !keyboardVisible {
+                            if !keyboardVisible && !captionEditing {
                                 NativeEditorToolRail(selected: panel?.tool, availableWidth: area.size.width - 24, connected: true, onSelect: selectTool)
                             }
                         }
@@ -494,6 +558,12 @@ struct NativeEditorView: View {
                                     .accessibilityIdentifier("native-editor-connected-panel")
                             }
                         }
+                        // KRI-253: the panel follows a drag past its smallest
+                        // size and springs back when the drag ends.
+                        .offset(y: NativeEditorPanelDismissRule.offset(forPull: panelDismissPull))
+                        .animation(panelDismissPull == 0 && !shouldReduceMotion
+                                   ? .spring(response: 0.34, dampingFraction: 0.88) : nil,
+                                   value: panelDismissPull == 0)
                     }
                 }
                 .padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
@@ -504,27 +574,49 @@ struct NativeEditorView: View {
         .layoutPriority(1)
     }
 
-    @ViewBuilder private var panelContent: some View {
+    @ViewBuilder private func panelContent(captionEditLines: Int) -> some View {
         switch panel {
         case .textCreation:
-            NativeTextCreationPanel(session: session, onDone: { selection in
-                selectedTextForActions = selection.id
-                changePanel(to: .text(selection.id))
-            }, onSelectBlock: { openTextBlock($0) })
+            NativeTextCreationPanel(session: session, onDone: textCreated, onSelectBlock: { openTextBlock($0) })
         case .text(let id):
             NativeEditorTextPanel(
-                id: id, session: session, initialTab: textEditOrigin == .list ? .edit : .style
-            ) {
-                if textEditOrigin == .list { showTextTab() } else { changePanel(to: nil) }
-            }.id(id)
+                id: id, session: session, initialTab: textEditOrigin == .list ? .edit : .style,
+                onDone: textEditingDone
+            ).id(id)
         case .captions:
-            NativeCaptionPanel(session: session) { changePanel(to: nil) }
+            NativeCaptionPanel(
+                session: session, editingCueID: $captionEditingCueID,
+                loopToggleRequest: captionLoopRequest, editLines: captionEditLines, editLineHeight: captionLineHeight
+            ) { changePanel(to: nil) }
         case .visuals:
             NativeVisualPanel(session: session, uploads: model.uploads, projectID: project.id, panelDrafts: panelDrafts) { changePanel(to: nil) }
         case .sounds:
             NativeSoundsPanel(session: session, panelDrafts: panelDrafts) { changePanel(to: nil) }
         case nil:
             EmptyView()
+        }
+    }
+
+    private func textCreated(_ selection: EditorSelection) {
+        selectedTextForActions = selection.id
+        changePanel(to: .text(selection.id))
+    }
+
+    private func textEditingDone() {
+        if textEditOrigin == .list { showTextTab() } else { changePanel(to: nil) }
+    }
+
+    /// The open panel's Done, for a drag that pulls the panel closed (KRI-253).
+    /// The panels' draft cleanup still runs: `changePanel` and `showTextTab`
+    /// flush it through `panelLifecycle`.
+    private func completePanel() {
+        switch panel {
+        case .textCreation:
+            // An empty draft returns nil and the pending-text observer closes the panel.
+            if let selection = session.finishTextCreation() { textCreated(selection) }
+        case .text: textEditingDone()
+        case .captions, .visuals, .sounds: changePanel(to: nil)
+        case nil: break
         }
     }
 
@@ -543,6 +635,7 @@ struct NativeEditorView: View {
         finishPanelEditing()
         inspector = nil
         if case .text = destination {} else { textEditOrigin = .timeline }
+        if destination?.tool != .captions { captionEditingCueID = nil }
         withAnimation(shouldReduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.88)) {
             panel = destination
         }
@@ -652,7 +745,8 @@ struct NativeEditorView: View {
                 let span = max(0.0001, bounds.upperBound - bounds.lowerBound)
                 return "\(Int(((bounds.upperBound - value) / span) * 100)) percent of maximum size"
             },
-            incrementFraction: -0.25
+            incrementFraction: -0.25,
+            spansRow: true
         )
     }
 

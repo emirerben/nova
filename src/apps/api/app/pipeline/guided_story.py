@@ -284,7 +284,13 @@ class GuidedStoryExecutionPlan(BaseModel):
                 > 0.001
             ):
                 raise ValueError("song reference must cover the resolved video duration")
-        if self.editor_revision_number is None and not self.text_elements:
+        # A fast montage is valid without creator-visible copy. Other guided
+        # formats still require their approved text identity lane (KRI-255).
+        if (
+            self.editor_revision_number is None
+            and not self.text_elements
+            and self.direction != "fast_montage"
+        ):
             raise ValueError("approved guided stories require at least one text element")
         if len(self.selected_media_ids) != len(set(self.selected_media_ids)):
             raise ValueError("selected media IDs must be unique")

@@ -8,7 +8,7 @@ when `creator_prompt_fidelity_enabled` and guided editing are both on AND the
 voiceover has a resolved narration identity -- i.e. always in production, never
 in the old tests.
 
-`PROD_TRUE_FLAGS` was derived on 2026-09-22 (re-derived 2026-09-28) from
+`PROD_TRUE_FLAGS` was derived on 2026-09-22 (re-derived 2026-10-02) from
 `fly secrets list --app nova-video`: every secret sharing
 `PHONE_RENDERING_ENABLED`'s digest holds the same value, and that one is
 known to be `true` (pilot renders work). No secret
@@ -103,6 +103,10 @@ PROD_TRUE_FLAGS: tuple[str, ...] = (
     # that refused every iOS montage with a photo. (MONTAGE_UNIFIED_PLAN_ENABLED
     # was on too; KRI-220 removed the flag.)
     "clip_facts_enabled",
+    "clip_intents_enabled",
+    "kria_editor_state_turns_enabled",
+    "kria_guided_timeline_ops",
+    "phone_talking_head_rendering_enabled",
     "creator_clip_preparation_enabled",
     "edit_proposal_semantic_enabled",
     "guided_voiceover_speech_cleanup_enabled",
@@ -117,7 +121,7 @@ PROD_TRUE_FLAGS: tuple[str, ...] = (
 )
 
 # `PHONE_RENDER_VERIFIED_FEATURES` as read from the production api machine on
-# 2026-09-22 (a capability-name list, not a secret).
+# 2026-10-02 (unchanged; a capability-name list, not a secret).
 PROD_VERIFIED_FEATURES: tuple[str, ...] = (
     "alphaOverlay",
     "animatedText",

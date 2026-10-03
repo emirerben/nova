@@ -3,10 +3,16 @@ import pytest
 pytest.importorskip("app.pipeline.phone_captions")
 
 from app.config import settings
+from app.kria.device_render import recipe_digest
 from app.kria.media_sources import OriginalMediaDescriptor
 from app.kria.render_assets import RenderFingerprint
+from app.pipeline.phone_captions import PhoneCaptionLook
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
-from app.pipeline.phone_narrated_plan import NarratedPhoneStep, compile_phone_narrated_plan
+from app.pipeline.phone_narrated_plan import (
+    NarratedPhoneStep,
+    compile_phone_narrated_plan,
+    replace_narrated_captions,
+)
 from app.pipeline.phone_recipe_shared import PhoneNarrationBed
 from app.services.phone_rollout import validate_phone_pilot_recipe
 from app.services.phone_sources import PhoneSourceBinding
@@ -345,3 +351,118 @@ def test_no_duck_without_the_gate_or_without_a_bed():
     )
     assert silent_bed.audio.duck_original_during_music is False
     assert "audioDucking" not in silent_bed.required_capabilities
+
+
+# --- caption swap (KRI-280: phone Narrated caption Saves) ---------------------------
+
+_WORD_CUES = [
+    {
+        "text": "First we pack",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "words": [
+            {"text": "First", "start_s": 0.0, "end_s": 0.6},
+            {"text": "we", "start_s": 0.7, "end_s": 1.0},
+            {"text": "pack", "start_s": 1.1, "end_s": 2.0},
+        ],
+    },
+    {"text": "then we drive", "start_s": 4.5, "end_s": 6.0},
+]
+
+
+def _worker_shaped_recipe(*, cues=_WORD_CUES, style="sentence", look=None):
+    """The worker's real knobs: a slowed clip (c1 holds 2 s for a 4 s step), a
+    ducked footage bed and a loudness target."""
+    return compile_phone_narrated_plan(
+        [
+            _step("s0", "c0", start_s=0.0, end_s=4.0, source_start_s=1.5),
+            _step("s1", "c1", start_s=4.0, end_s=8.0),
+            _step("s2", "c2", start_s=8.0, end_s=12.0),
+        ],
+        (_binding("c0"), _binding("c1", duration_s=2.0), _binding("c2")),
+        _narration(duration_s=12.0),
+        voiceover_duration_s=12.0,
+        mix=0.7,
+        caption_cues=cues,
+        caption_style=style,
+        target_lufs=-14.0,
+        duck_footage_bed=True,
+        caption_look=look,
+    )
+
+
+@pytest.mark.parametrize("style", ["sentence", "word"])
+def test_swapping_in_the_same_captions_returns_the_same_recipe(style):
+    pinned = _worker_shaped_recipe(style=style)
+
+    swapped = replace_narrated_captions(pinned, caption_cues=_WORD_CUES, caption_style=style)
+
+    # Compared by the device identity digest: `required_capabilities` is a set,
+    # so its raw JSON list order depends on the hash seed; the digest sorts it.
+    assert recipe_digest(swapped) == recipe_digest(pinned)
+
+
+def test_swapping_captions_keeps_every_clip_the_bed_and_the_mix():
+    pinned = _worker_shaped_recipe()
+    edited = [dict(_WORD_CUES[0], text="Packed and ready"), _WORD_CUES[1]]
+
+    swapped = replace_narrated_captions(pinned, caption_cues=edited)
+
+    assert swapped.tracks == pinned.tracks
+    assert swapped.audio == pinned.audio
+    assert swapped.canvas == pinned.canvas
+    assert {"variableSpeed", "audioDucking"} <= swapped.required_capabilities
+    texts = [" ".join(run.text for run in layer.runs) for layer in swapped.text_layers]
+    assert texts == ["Packed and ready", "then we drive"]
+
+
+def test_swapping_in_no_captions_drops_layers_fonts_and_text_capabilities():
+    pinned = _worker_shaped_recipe()
+
+    swapped = replace_narrated_captions(pinned, caption_cues=[])
+
+    assert swapped.text_layers == []
+    assert not [a for a in swapped.asset_manifest.assets if a.kind == "library"]
+    assert not [a for a in swapped.assets if a.id.startswith("font-")]
+    assert not ({"positionedText", "animatedText"} & swapped.required_capabilities)
+    assert swapped.required_capabilities == pinned.required_capabilities - {
+        "positionedText",
+        "animatedText",
+    }
+    # Adding them back restores the original recipe exactly.
+    restored = replace_narrated_captions(swapped, caption_cues=_WORD_CUES)
+    assert recipe_digest(restored) == recipe_digest(pinned)
+
+
+def test_a_new_caption_font_replaces_the_old_one():
+    pinned = _worker_shaped_recipe()
+    old_fonts = {a.id for a in pinned.asset_manifest.assets if a.kind == "library"}
+
+    swapped = replace_narrated_captions(
+        pinned, caption_cues=_WORD_CUES, look=PhoneCaptionLook(font_family="Montserrat Bold")
+    )
+
+    fonts = [a.id for a in swapped.asset_manifest.assets if a.kind == "library"]
+    assert fonts == ["font-Montserrat-Bold.ttf"]
+    assert fonts[0] not in old_fonts
+    # Fonts sit before the narration bed in both projections, like the compiler's.
+    manifest_ids = [a.id for a in swapped.asset_manifest.assets]
+    assert manifest_ids.index(fonts[0]) < manifest_ids.index("voiceover-item-1")
+    assert [a.id for a in swapped.assets] == manifest_ids
+
+
+def test_the_first_render_honours_a_caption_look():
+    recipe = _worker_shaped_recipe(look=PhoneCaptionLook(captions_enabled=False))
+    assert recipe.text_layers == []
+    assert "positionedText" not in recipe.required_capabilities
+
+
+def test_swapping_captions_refuses_a_recipe_without_the_narrated_track():
+    pinned = _worker_shaped_recipe()
+    fields = {name: getattr(pinned, name) for name in type(pinned).model_fields}
+    fields["tracks"] = [track for track in pinned.tracks if track.id != "narrated"]
+    fields["text_layers"] = []
+    foreign = type(pinned)(**fields)
+
+    with pytest.raises(UnsupportedPhonePlan):
+        replace_narrated_captions(foreign, caption_cues=_WORD_CUES)

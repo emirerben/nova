@@ -2,6 +2,51 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.24.0] - 2026-10-03
+
+### Changed
+- feat: edit phone Narrated captions like phone Talking (KRI-280) (#1333) <!-- release-pr: 1333 -->
+
+## [0.78.23.0] - 2026-10-03
+
+### Changed
+- v0.78.2.0 fix: omit ungrounded montage titles (#1316) <!-- release-pr: 1316 -->
+
+## [0.78.22.0] - 2026-10-02
+
+### Changed
+- feat(ios): redesign footage and voiceover attachment flow (#1331) <!-- release-pr: 1331 -->
+
+## [0.78.21.0] - 2026-10-02
+
+### Changed
+- feat(ios): one-tap caption line editing with an edit bar (KRI-240) (#1332) <!-- release-pr: 1332 -->
+
+## [0.78.20.0] - 2026-10-02
+
+### Changed
+- fix: deliver approved cleaned narration to phone renders (KRI-277) (#1330) <!-- release-pr: 1330 -->
+
+## [0.78.19.0] - 2026-10-02
+
+### Fixed
+- fix(ios): qualify device-only rendering and preserve editor audio (KRI-256) (#1329) <!-- release-pr: 1329 -->
+
+## [0.78.18.0] - 2026-10-02
+
+### Changed
+- fix(ios): stop superseded preview rebuilds early (re-land #1325) (#1327) <!-- release-pr: 1327 -->
+
+## [0.78.17.0] - 2026-10-02
+
+### Changed
+- fix(ios): crossfade speech-cleanup cut audio and drag the preview band anywhere (#1326) <!-- release-pr: 1326 -->
+
+## [0.78.16.0] - 2026-10-02
+
+### Changed
+- feat(ios): drag the editor panel down to close it, like Done (KRI-253) (#1324) <!-- release-pr: 1324 -->
+
 ## [0.78.15.0] - 2026-10-02
 
 ### Changed

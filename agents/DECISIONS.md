@@ -2710,3 +2710,23 @@ property test, which now has to produce this kind.
 Reversal condition. If a "cleanup clipped the end of my sentence" report traces to a
 `trim_sentence_tail` adjustment, return `None` from `_sentence_final_tail_carve` and bump
 `DETECTOR_VERSION`. For an immediate stop, the kill switch is `SILENCE_CUT_ENABLED=false`.
+
+## [2026-10-02] A montage with no grounded title has no opening title (KRI-255)
+
+Context. The unified phone-montage planner used `Montage` both as the required internal
+`EditProposalSnapshot.title` and as `opening_title`. The guided compiler correctly turns every
+non-empty `opening_title` into a visible `guided-title`, so a generic implementation label was
+burned into a production video even though the creator had not asked for a title.
+
+Decision. Keep `Montage` only as the snapshot schema's internal fallback. When neither exact
+creator text nor eligible brief facts produce a title, persist `title: null`,
+`title_source: "none"`, omit `opening_title`, and compile no `guided-title`. Do not substitute
+the conversation/project name, unrequested clip-location facts, or a model-authored hook.
+Explicit creator titles and deterministic titles grounded in brief facts are unchanged.
+
+Consequences. Internal proposal consumers still receive the non-empty snapshot title their
+schema requires, while render receipts and pixels agree that no visible opening title was
+selected. The execution-plan validator permits an empty approved text lane only for
+`fast_montage`; guided stories and explainers retain their text requirement. A creator
+requirement asking for a title that could not be grounded is now reported as partial instead
+of being cosmetically satisfied by a generic label.

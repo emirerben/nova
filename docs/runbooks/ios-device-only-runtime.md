@@ -4,7 +4,9 @@ This runbook retires new web and cloud video creation without deleting any
 Job, database row, or stored output. Authentication, account deletion, project
 history, signed playback, and the device upload/completion lifecycle stay live.
 
-The end state has exactly three managed `nova-video` process groups:
+After Release 1 passes its own 24-hour acceptance window, Release 2 may
+reduce the topology. The eventual end state has exactly three managed
+`nova-video` process groups:
 
 - `api`: one shared CPU/1 GB Machine, Fly autostop enabled, warm floor zero;
 - `worker`: one shared 2 CPU/4 GB Machine consuming every media queue, stopped
@@ -30,7 +32,8 @@ the admission release.
 2. The topology release contains the final checked-in `fly.toml`, strict
    three-group deploy/backfill verifier, and their tests. It is deployed only
    after the App Store build is proven, device-only admission is live, cloud
-   work is drained, and cloud execution is disabled.
+   work is drained, cloud execution is disabled, and Plan 025 has completed
+   its 24-hour acceptance window.
 
 If the implementation is presented as one branch, split it at this boundary
 into two merge/deploy revisions. A squash of both stages followed by the normal
@@ -120,13 +123,56 @@ fly secrets set --app nova-video \
   KRIA_RUNTIME_V2_PHONE_USER_IDS='[]'
 ```
 
-For each of the four active mobile accounts, open the production build, refresh
-Projects, start a disposable supported project, and cancel before render if the
-account is not the canary. In Fly logs, require an
-`ios_device_only_admission` receipt with `client_protocol=2` once device-only
-mode is enabled. Before enabling it, use device/network diagnostics to confirm
-the header directly. Do not use a 426-free period as proof: no request is also
-426-free.
+### Hold point: format-specific signed-device qualification
+
+Use [Plan 025](../../plans/025-ios-device-only-rollout-qualification.md) and its
+[test/evidence matrix](../../plans/artifacts/025-ios-device-only-rollout-test-plan.md).
+Automated implementation work stops before TestFlight and production operations.
+The following gates apply both while admission is hybrid and again after step 2;
+passing one montage does not waive any speech or voiceover case.
+
+Before starting, re-derive the effective API and worker boolean/capability profile
+without printing credentials. On 2026-10-02 the API's multi-clip Talking and
+caption-editor gates were both **on**; both therefore require qualification.
+Configuration names alone do not prove the worker agrees: confirm its profile too.
+
+| Canary | Required proof before cloud disable |
+|---|---|
+| D0: protocol/update | Signed build sends protocol 2 on ordinary, refresh, retry and background upload; old protocol gets the blocking update screen. |
+| D1–D2: existing playback and device lifecycle | Existing cloud output plays; a new device project reaches `awaiting_device` → export → upload/complete → `published`, with Play/Save/Share and relaunch playback. Run D2 on **each of the four active mobile accounts**. |
+| D3–D4: single-clip Talking | Audible source speech, visible sentence and word captions, correct language, timing through the final word. |
+| D5: caption editing | Unsaved caption/title/style/gain edits and saved replacement keep voice; full-rebuild trim/SFX control also keeps voice. KRI-241 needs physical-device evidence. |
+| D6: multi-clip Talking | Continuous speaker audio, muted cutaways only in their intended windows, correctly timed captions. If deliberately disabled, verify actionable refusal before Job creation and record the accepted limitation. |
+| D7: generic recorded voiceover | Audible narration and intended source/music gains; no invented caption promise. |
+| D8: recorded narrated | Audible narration plus visible, timed narration captions. |
+| D9: guided voiceover with Visuals | Audible narration, correct Visuals and promised text/caption layers, successful publication. |
+| D10–D11: refusal and recovery | Unsupported work is absent or refused before Job creation; retryable failure offers recovery and a fresh attempt reaches publication. No silent cloud fallback. |
+| D12: legacy mutation | After admission, a render-affecting mutation returns the typed refusal without changing the old playable output. |
+
+Run the complete enabled-scope matrix on the oldest supported test phone and a
+current phone, using the signed production/TestFlight build and the designated
+canary account. D2 additionally runs across all four accounts. The oldest phone
+also needs the 60-second performance case; a short render does not establish it.
+Require sustained 30-fps preview, seek p95 ≤250 ms, 60-second export ≤120 seconds,
+and no crash or critical thermal state.
+
+Caption editing stays a **STOP** while KRI-241 lacks passing physical-device
+verification. Disabling `PHONE_SUBTITLED_EDITOR_LANES_ENABLED` is an explicit
+product downgrade, not a test waiver: record acceptance and prove controls close
+with a reason before proceeding. Do not enable additional PiP/SFX/reaction lanes
+as part of this rollout; already-enabled lanes still need their applicable checks.
+
+For every case, retain a private record with UTC start/end, Git/deployed SHA,
+iOS build, device/OS, boolean flag names and capability names, canary ID,
+Job/variant/attempt IDs, state transitions, audio/caption/playback results,
+export/wall time, memory/thermal observations, cloud-task check and PASS/FAIL.
+Never include tokens, signed URLs, storage paths, transcripts or user identifiers.
+
+Stop for missing protocol/capability evidence, any silent audio, missing or wrong
+captions, stuck device work, failed completion/playback, advertised-but-refused
+format, new cloud work, unknown/nonempty drain state, auth/history/account
+regression, OOM/restarts or sustained queue growth. Fix and rerun the first
+affected case; unknown and skipped required cases are failures.
 
 ## 2. Enable device-only admission
 
@@ -168,18 +214,11 @@ curl -sS -o /tmp/kria-cloud-only.json -w '%{http_code}\n' \
 Inspect the files locally with `jq . /tmp/kria-*.json`; do not attach them to a
 public ticket because trace IDs are operational metadata.
 
-With a real current iOS build, prove all of the following before continuing:
-
-1. existing Projects and an existing video still load and play;
-2. account/session operations still work;
-3. a phone-supported project reaches `awaiting_device`;
-4. the phone downloads the recipe/assets, renders, uploads, completes, and the
-   same project reaches `published` with playable output; and
-5. an unsupported/cloud-only format is absent from capabilities or returns
-   `device_render_unsupported` before a Job is created.
-
-The canary Job ID, variant ID, attempt ID, timestamps, and final status belong
-in the private release record. Never record signed URLs or object paths.
+Repeat the entire applicable matrix from the step-1 hold point with the signed
+build. Require an `ios_device_only_admission` receipt with `client_protocol=2`
+for each admitted flow. Exercise D12 against an existing cloud output and prove
+that the original still plays after the typed mutation refusal. Keep the private
+evidence record complete; do not proceed on generic montage-only evidence.
 
 ## 3. Drain legacy cloud work
 
@@ -227,7 +266,8 @@ continuing. An old stale row may predate this rollout and have no broker task;
 record and diagnose it rather than deleting or rewriting it. Broker inspection,
 worker heartbeat, and the admin job-debug view must agree that it is not live.
 
-Now turn off cloud execution:
+Only after every required signed-device canary and the broker/database drain
+agree, turn off cloud execution:
 
 ```bash
 fly secrets set CLOUD_RENDER_EXECUTION_ENABLED=false --app nova-video
@@ -236,10 +276,40 @@ fly secrets set CLOUD_RENDER_EXECUTION_ENABLED=false --app nova-video
 Repeat the queue and database audits. A cloud task published by a race must be
 terminalized as `processing_failed` with `failure_reason=cloud_render_disabled`;
 it must not begin FFmpeg, Skia, provider generation, or upload. Device recipe
-jobs must still progress to `awaiting_device`. Do not continue if a new cloud
-Job appears after the admission timestamp.
+jobs must still progress to `awaiting_device`. Repeat D3 (Subtitled) and D7
+(recorded voiceover) all the way to `published` and relaunch playback. Do not
+continue if a new cloud Job appears after the admission timestamp.
 
-## 4. Topology reduction release
+## 4. Release 1 twenty-four-hour acceptance
+
+Keep the temporary five-group topology throughout this gate. Do not merge or
+deploy the topology reduction while Release 1 is still being qualified.
+
+Watch continuously for the first hour, then at least hourly through 24 hours:
+
+- Fly cost allocation and exact Machine counts/states;
+- API and worker cold-start latency;
+- queue depth, oldest-message age, active/reserved tasks, and wake failures;
+- worker RSS, OOM exits, task timeouts, and unexpected restarts;
+- device recipe latency, `awaiting_device` age, upload/complete failures, and
+  published playback;
+- structured `ios_device_only_admission` counts grouped by `code` (especially
+  `web_creation_retired`, `native_update_required`, and
+  `device_render_unsupported`); and
+- `cloud_render_publish_blocked` / `generative_cloud_render_blocked` events.
+
+Break device results down by Subtitled, multi-clip Talking, narrated, guided
+voiceover, generic voiceover, protocol update, unsupported recipe, upload,
+completion and playback. Require zero unexplained silent-audio, missing-caption,
+cloud-start, OOM or stuck-device incidents. Mark Plan 025 DONE only when this
+entire window and all signed-device evidence pass.
+
+Hold or roll back immediately on any OOM, cloud work beginning after the kill
+switch, unavailable auth/playback/account deletion, missing device completion,
+or sustained queue growth. API memory pressure returns to 2 GB; worker memory
+pressure returns to a larger VM before considering separate always-on workers.
+
+## 5. Release 2 topology reduction (after Plan 025 is DONE)
 
 While the admission release still defines the old process groups, scale the
 drained dedicated groups to zero. This avoids depending on `fly deploy` to
@@ -288,26 +358,6 @@ Exercise wake and scale-to-zero behavior:
 5. Leave a harmless controlled queue message only in a staging rehearsal; the
    two-minute Beat backstop must recover a deliberately missed wake. Do not
    manufacture stuck production work merely to test the backstop.
-
-## 5. Twenty-four-hour acceptance
-
-Watch continuously for the first hour, then at least hourly through 24 hours:
-
-- Fly cost allocation and exact Machine counts/states;
-- API and worker cold-start latency;
-- queue depth, oldest-message age, active/reserved tasks, and wake failures;
-- worker RSS, OOM exits, task timeouts, and unexpected restarts;
-- device recipe latency, `awaiting_device` age, upload/complete failures, and
-  published playback;
-- structured `ios_device_only_admission` counts grouped by `code` (especially
-  `web_creation_retired`, `native_update_required`, and
-  `device_render_unsupported`); and
-- `cloud_render_publish_blocked` / `generative_cloud_render_blocked` events.
-
-Hold or roll back immediately on any OOM, cloud work beginning after the kill
-switch, unavailable auth/playback/account deletion, missing device completion,
-or sustained queue growth. API memory pressure returns to 2 GB; worker memory
-pressure returns to a larger VM before considering separate always-on workers.
 
 ## Rollback
 

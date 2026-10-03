@@ -412,6 +412,37 @@ def phone_subtitled_editor_lanes_supported() -> bool:
     )
 
 
+# Device features every phone caption layer needs (KRI-280).
+PHONE_NARRATED_CAPTION_FEATURES: tuple[str, ...] = ("positionedText", "animatedText")
+
+
+def phone_narrated_caption_edits_supported() -> bool:
+    """Single source of truth for "can a phone-rendered `narrated` (recorded
+    voiceover) variant's `caption_cues`/`caption_meta` editor sections be
+    Saved right now" (KRI-280).
+
+    Consulted by `app.services.phone_editor.prepare_phone_editor_commit`
+    (whether the narrated branch swaps the pinned recipe's caption layers or
+    422s `unsupported_phone_edit`) and by `app.routes.generative_jobs`
+    (`_prepare_editor_commit`'s caption guards and
+    `_clamp_phone_editor_capabilities`), so the manifest never advertises a
+    caption control that Save would refuse.
+
+    True iff `phone_narrated_caption_edits_enabled` AND every feature in
+    `PHONE_NARRATED_CAPTION_FEATURES` is verified: every caption layer is
+    positioned text that animates (`pop-in` sentences, `karaoke-line` words).
+    A Save is still checked against the verified features by
+    `validate_phone_pilot_recipe` (a variable caption font adds
+    `authoredText`).
+    """
+
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        settings.phone_narrated_caption_edits_enabled
+        and all(feature in verified for feature in PHONE_NARRATED_CAPTION_FEATURES)
+    )
+
+
 # Device feature the video-PiP lane needs on top of the overlay lane: the
 # compiler emits a video overlay card as a muted, trimmed `TimelineClip` on
 # the `subtitled-overlays` track, which the device composites through the
@@ -451,9 +482,15 @@ def phone_subtitled_video_overlays_supported() -> bool:
 
 
 # KRI-136: device features a multi-clip Talking-head recipe needs -- the
-# cutaway track is placed (`visualBlocks`), video (`visualVideos`), and muted
-# under the speaker's audio (`audioMix`).
-PHONE_TALKING_HEAD_FEATURES: tuple[str, ...] = ("visualBlocks", "visualVideos", "audioMix")
+# cutaway track is placed (`visualBlocks`), video (`visualVideos`), represented
+# as an overlay (`alphaOverlay` is conservatively inferred natively for every
+# non-empty overlay track), and muted under the speaker's audio (`audioMix`).
+PHONE_TALKING_HEAD_FEATURES: tuple[str, ...] = (
+    "visualBlocks",
+    "visualVideos",
+    "alphaOverlay",
+    "audioMix",
+)
 
 
 def phone_talking_head_supported() -> bool:

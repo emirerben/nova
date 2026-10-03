@@ -134,12 +134,12 @@ final class CreationUITests: XCTestCase {
             app.buttons["choose-videos"].tap()
             XCTAssertTrue(app.buttons["Choose from Photos"].waitForExistence(timeout: 3))
             XCTAssertTrue(app.buttons["Choose from Files or iCloud"].exists)
-            app.buttons["Done"].tap()
+            app.buttons["attachment-close"].tap()
         }
     }
 
-    /// KRI-175: with Full Access the picker selects live and has no Add/Cancel of its own. Done must
-    /// always lead back, and the one talking-to-camera clip returns straight to chat once picked.
+    /// Full-access Photos returns to the attachment flow on Done. A selected
+    /// talking-to-camera clip advances to overlays; Done there returns to chat.
     func testLibraryPickerReturnsToChatByDoneAndBySinglePick() {
         let app = XCUIApplication()
         app.resetAuthorizationStatus(for: .photos)
@@ -179,11 +179,42 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(done.waitForExistence(timeout: 10))
         let video = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Video'")).firstMatch
         XCTAssertTrue(video.waitForExistence(timeout: 10), app.debugDescription)
-        // The picker grid lives in a remote view, whose cells report themselves as not hittable.
-        video.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        let backInChat = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: photos)
-        XCTAssertEqual(XCTWaiter.wait(for: [backInChat], timeout: 10), .completed, "picking the one clip returns to chat")
+        // PhotosUI can expose its remote image in either screen coordinates
+        // or picker-local coordinates depending on the presenting container.
+        // Translate only the local case; adding the host origin twice taps below
+        // the thumbnail and never exercises the selection callback.
+        let picker = app.scrollViews["photosView_content_scroll_view"]
+        XCTAssertTrue(picker.exists)
+        let videoFrame = video.frame
+        let center = CGPoint(x: videoFrame.midX, y: videoFrame.midY)
+        let selectionPoint = picker.frame.contains(center) ? center :
+            CGPoint(x: picker.frame.minX + center.x, y: picker.frame.minY + center.y)
+        XCTAssertTrue(picker.frame.contains(selectionPoint), "The selected video must be inside the visible Photos picker")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: selectionPoint.x, dy: selectionPoint.y)).tap()
+        // Filling the picker advances the attachment flow after dismissal.
+        // Talking-to-camera has no voiceover step, so it lands on overlays.
+        XCTAssertTrue(app.staticTexts["Add overlays"].waitForExistence(timeout: 10))
         XCTAssertFalse(done.exists)
+        app.buttons["attachment-done"].tap()
+        // This offline chat fixture does not implement upload reservations. The
+        // imported asset must still be retained as a named, dismissible failure;
+        // closing the picker alone would also pass if the selection were lost.
+        XCTAssertTrue(app.staticTexts["footage-upload-failures-message"].waitForExistence(timeout: 10))
+        chooseVideos.tap()
+        XCTAssertTrue(photos.waitForExistence(timeout: 3))
+        let selectedClipFailure = app.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH 'kria-outro-paper.mp4: '")
+        ).firstMatch
+        XCTAssertTrue(selectedClipFailure.waitForExistence(timeout: 3),
+            "The selected Photos asset remains available as a named upload failure")
+        let dismissFailure = app.buttons.matching(NSPredicate(
+            format: "label == 'Dismiss' AND identifier != 'footage-upload-failures-dismiss'"
+        )).firstMatch
+        XCTAssertTrue(dismissFailure.isHittable)
+        dismissFailure.tap()
+        XCTAssertFalse(selectedClipFailure.exists)
+        XCTAssertTrue(photos.isHittable, "The user can choose the clip again after dismissing the failure")
     }
 
     func testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes() {
@@ -363,7 +394,33 @@ final class CreationUITests: XCTestCase {
         app.launchEnvironment["KRIA_CHAT_SLOW_CREATION"] = "1"
         app.launch()
         createFreshChat(in: app)
-        app.buttons["format-montage"].tap()
+        let montage = app.buttons["format-montage"]
+        // The format heading appears before the independent capabilities
+        // request completes. Wait until this card accepts selection so the
+        // fixture’s select_format action cannot be dropped while disabled.
+        let formatReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in montage.isEnabled && montage.isHittable },
+            object: montage
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [formatReady], timeout: 5), .completed)
+        // With long history, the card's accessibility center can sit behind
+        // the composer even though its upper portion is hittable. Tap inside
+        // the visible carousel, above the composer's 19pt surrounding padding.
+        let cardFrame = montage.frame
+        let historyFrame = app.scrollViews.firstMatch.frame
+        let composerTop = app.buttons["chat-send-message"].frame.minY - 24
+        let unobscuredHistory = CGRect(x: historyFrame.minX, y: historyFrame.minY,
+            width: historyFrame.width, height: max(0, composerTop - historyFrame.minY))
+        let visibleCard = cardFrame.intersection(app.scrollViews["format-carousel"].frame)
+            .intersection(unobscuredHistory)
+        guard !visibleCard.isNull, visibleCard.width >= 20, visibleCard.height >= 20 else {
+            XCTFail("Expected a visible montage card area above the composer")
+            return
+        }
+        montage.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: visibleCard.midX - cardFrame.minX,
+                dy: visibleCard.minY + min(20, visibleCard.height / 2) - cardFrame.minY))
+            .tap()
 
         let send = app.buttons["Send clips"]
         XCTAssertTrue(send.waitForExistence(timeout: 5))
