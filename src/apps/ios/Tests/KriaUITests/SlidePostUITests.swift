@@ -202,9 +202,35 @@ import XCTest
 
     func testWorkspaceKeepsToolbarReachableAtLargeText() {
         let app = openRichWorkspace(dynamicType: "accessibility3")
-        XCTAssertTrue(app.buttons["slidepost-tool-text"].exists)
         XCTAssertTrue(app.buttons["slidepost-tile-1"].isHittable)
+        let tools = ["slidepost-tool-text", "slidepost-tool-arrange", "slidepost-tool-cover", "slidepost-tool-look", "slidepost-tool-more"]
+        let bar = app.buttons[tools[0]]
+        for id in tools {
+            let tool = app.buttons[id]
+            XCTAssertTrue(tool.waitForExistence(timeout: 5), id)
+            var tries = 0
+            while !tool.isHittable && tries < 4 { (tries < 2 ? bar : app.buttons[tools[4]]).swipeLeft(); tries += 1 }
+            XCTAssertTrue(tool.isHittable, "\(id) must be reachable at accessibility3 (scrolling the bar if needed)")
+        }
         attach(app, "Workspace at large text")
+    }
+
+    func testTextPanelKeepsEditFieldVisibleWithKeyboardUp() {
+        let app = openRichWorkspace()
+        app.buttons["slidepost-tool-text"].tap()
+        let field = app.textFields["slidepost-text-field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(field.isHittable, "the Edit field stays visible above the keyboard")
+        let keyboardTop = app.keyboards.firstMatch.frame.minY
+        XCTAssertLessThan(field.frame.maxY, keyboardTop)
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        XCTAssertTrue(preview.exists, "the preview stays on screen too")
+        XCTAssertLessThan(preview.frame.maxY, field.frame.minY + 1, "the stage shrinks above the field")
+        attach(app, "Text panel with keyboard up")
+        app.buttons["slidepost-tab-style"].tap()
+        attach(app, "Text panel style chips")
     }
 
     private func scrollTo(_ element: XCUIElement, app: XCUIApplication) {

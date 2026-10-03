@@ -375,9 +375,7 @@ struct SlidePostTextCanvas: View {
     let onSelect: (String) -> Void
     let onDrag: (String, Double, Double) -> Void
 
-    @State private var dragStart: (id: String, point: CGPoint)?
-
-    private static let bucketY: [String: Double] = ["top": 0.14, "center": 0.5, "bottom": 0.82]
+    @State private var dragStart: (id: String, element: SlidePostTextElement)?
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -388,12 +386,6 @@ struct SlidePostTextCanvas: View {
         .allowsHitTesting(interactive)
     }
 
-    private func center(of element: SlidePostTextElement) -> CGPoint {
-        let x = element.position == "custom" ? (element.xFrac ?? 0.5) : 0.5
-        let y = element.position == "custom" ? (element.yFrac ?? 0.5) : (Self.bucketY[element.position] ?? 0.82)
-        return CGPoint(x: x * size.width, y: y * size.height)
-    }
-
     private func textView(_ element: SlidePostTextElement) -> some View {
         let scale = size.width / 1080
         let points = max(8, CGFloat(element.sizePx) * scale)
@@ -401,19 +393,22 @@ struct SlidePostTextCanvas: View {
         let selected = interactive && element.id == selectedID
         let alignment: TextAlignment = element.alignment == "left" ? .leading : (element.alignment == "right" ? .trailing : .center)
         let stroke = element.strokeWidth > 0 ? max(0.6, CGFloat(element.strokeWidth) * scale) : 0
-        let point = center(of: element)
+        let anchor = SlidePostTextLayout.anchor(for: element)
+        // Server parity: x is the left edge / centre / right edge by alignment; y is the block centre.
+        let frameAlignment: Alignment = element.alignment == "left" ? .leading : (element.alignment == "right" ? .trailing : .center)
+        let offsetX = element.alignment == "left" ? anchor.x : (element.alignment == "right" ? anchor.x - 1 : anchor.x - 0.5)
         let makeText: (Color) -> Text = { Text(element.text).font(font).foregroundStyle($0) }
         return styled(makeText, color: Color(slideHex: element.color), alignment: alignment, stroke: stroke, shadow: element.shadowEnabled, scale: scale)
             .padding(.horizontal, element.background == "box" ? points * 0.45 : 0).padding(.vertical, element.background == "box" ? points * 0.22 : 0)
             .background { if element.background == "box" { RoundedRectangle(cornerRadius: points * 0.25, style: .continuous).fill(.black.opacity(0.55)) } }
             .frame(maxWidth: size.width * CGFloat(element.maxWidthFrac ?? 0.88))
-            .padding(6)
-            .overlay { if selected { selectionFrame } }
-            .overlay(alignment: .bottom) { if selected { handle.offset(y: 34) } }
-            .contentShape(Rectangle())
+            .overlay { if selected { selectionFrame.padding(-6) } }
+            .overlay(alignment: .bottom) { if selected { handle.offset(y: 40) } }
+            .contentShape(Rectangle().inset(by: -6))
             .onTapGesture { onSelect(element.id) }
-            .gesture(drag(for: element, from: point))
-            .position(point)
+            .gesture(drag(for: element))
+            .frame(width: size.width, height: size.height, alignment: frameAlignment)
+            .offset(x: CGFloat(offsetX) * size.width, y: CGFloat(anchor.y - 0.5) * size.height)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(element.text)
             .accessibilityHint(selected ? "Drag to move" : "Double tap to edit")
@@ -452,15 +447,15 @@ struct SlidePostTextCanvas: View {
             .allowsHitTesting(false)
     }
 
-    private func drag(for element: SlidePostTextElement, from start: CGPoint) -> some Gesture {
+    private func drag(for element: SlidePostTextElement) -> some Gesture {
         DragGesture(minimumDistance: 3, coordinateSpace: .named("slidepost-canvas"))
             .onChanged { value in
                 guard interactive else { return }
-                if dragStart?.id != element.id { dragStart = (element.id, start); onSelect(element.id) }
-                let origin = dragStart?.point ?? start
-                let x = min(max((origin.x + value.translation.width) / size.width, 0), 1)
-                let y = min(max((origin.y + value.translation.height) / size.height, 0), 1)
-                onDrag(element.id, x, y)
+                // The start is captured once per gesture so a mid-drag update can't compound.
+                if dragStart?.id != element.id { dragStart = (element.id, element); onSelect(element.id) }
+                let origin = dragStart?.element ?? element
+                let moved = SlidePostTextLayout.dragged(from: origin, translation: value.translation, canvas: size)
+                onDrag(element.id, moved.x, moved.y)
             }
             .onEnded { _ in dragStart = nil }
     }

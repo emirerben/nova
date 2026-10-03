@@ -27,6 +27,7 @@
       "KriaUITests/SlidePostUITests/testMoreMenuRemoveAndCover",
       "KriaUITests/SlidePostUITests/testArrangeDragReordersAndKeepsTheCover",
       "KriaUITests/SlidePostUITests/testWorkspaceKeepsToolbarReachableAtLargeText",
+      "KriaUITests/SlidePostUITests/testTextPanelKeepsEditFieldVisibleWithKeyboardUp",
       "KriaUITests/CreationUITests/testReceiptChipsAndGuessedNamesStartACorrection",
       "KriaUITests/CreationUITests/testUnreadableAttachmentDoesNotBlockSend",
       "KriaUITests/CreationUITests/testFailedUploadWithRecordDoesNotBlockSendAndOffersRetry",

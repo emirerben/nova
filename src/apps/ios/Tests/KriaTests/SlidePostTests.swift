@@ -315,6 +315,89 @@ import XCTest
         session.undoEdit()
         XCTAssertEqual(session.draft?.slides[1].edits?.texts?.first, before, "applying to all is one undo step")
     }
+    func testApplyStyleToAllOnlyTouchesTheMatchingTextOnMultiTextSlides() async throws {
+        let session = try await richSession()
+        let source = try XCTUnwrap(session.addText(slideID: "slide-1", text: "Athens"))
+        let second = try XCTUnwrap(session.addText(slideID: "slide-1", text: "Greece"))
+        _ = session.addText(slideID: "slide-2", text: "Naxos")
+        _ = session.addText(slideID: "slide-2", text: "Cyclades")
+        session.updateText(slideID: "slide-2", textID: try XCTUnwrap(session.draft?.slides[1].edits?.texts?[1].id)) { $0.position = "custom"; $0.xFrac = 0.3; $0.yFrac = 0.2 }
+        session.updateText(slideID: "slide-1", textID: source) { $0.color = "#9BCAFF"; $0.position = "custom"; $0.xFrac = 0.1; $0.yFrac = 0.6 }
+        let before = try XCTUnwrap(session.draft?.slides[1].edits?.texts)
+        session.applyStyleToAllSlides(slideID: "slide-1", textID: source)
+        var after = try XCTUnwrap(session.draft?.slides[1].edits?.texts)
+        XCTAssertEqual(after[0].color, "#9BCAFF"); XCTAssertEqual(after[0].yFrac, 0.6); XCTAssertEqual(after[0].text, "Naxos")
+        XCTAssertEqual(after[1], before[1], "the sibling text keeps its own look and position")
+        session.updateText(slideID: "slide-1", textID: second) { $0.color = "#A63224" }
+        session.applyStyleToAllSlides(slideID: "slide-1", textID: second)
+        after = try XCTUnwrap(session.draft?.slides[1].edits?.texts)
+        XCTAssertEqual(after[1].color, "#A63224", "the second text styles the second text")
+        XCTAssertEqual(after[0].color, "#9BCAFF")
+    }
+    func testTextLayoutAnchorsMatchServerEdgeSemantics() {
+        var element = SlidePostTextElement(text: "x")
+        XCTAssertEqual(SlidePostTextLayout.anchor(for: element).x, 0.5); XCTAssertEqual(SlidePostTextLayout.anchor(for: element).y, 0.82)
+        element.alignment = "left"; XCTAssertEqual(SlidePostTextLayout.anchor(for: element).x, 0.08)
+        element.alignment = "right"; XCTAssertEqual(SlidePostTextLayout.anchor(for: element).x, 0.92)
+        for (position, y) in [("top", 0.12), ("center", 0.5), ("bottom", 0.82)] {
+            element.position = position; XCTAssertEqual(SlidePostTextLayout.anchor(for: element).y, y)
+        }
+        element.position = "custom"; element.xFrac = 0.3; element.yFrac = 0.4
+        XCTAssertEqual(SlidePostTextLayout.anchor(for: element).x, 0.3); XCTAssertEqual(SlidePostTextLayout.anchor(for: element).y, 0.4)
+        element.yFrac = nil; XCTAssertEqual(SlidePostTextLayout.anchor(for: element).y, 0.5)
+    }
+    func testDragRoundTripWritesEdgeXAndClamps() {
+        let canvas = CGSize(width: 400, height: 500)
+        for alignment in ["left", "center", "right"] {
+            var element = SlidePostTextElement(text: "x"); element.alignment = alignment
+            let start = SlidePostTextLayout.anchor(for: element)
+            let moved = SlidePostTextLayout.dragged(from: element, translation: CGSize(width: -20, height: -50), canvas: canvas)
+            XCTAssertEqual(moved.x, start.x - 0.05, accuracy: 1e-9, alignment)
+            XCTAssertEqual(moved.y, start.y - 0.1, accuracy: 1e-9)
+            element.position = "custom"; element.xFrac = moved.x; element.yFrac = moved.y
+            let anchor = SlidePostTextLayout.anchor(for: element)
+            XCTAssertEqual(anchor.x, moved.x, accuracy: 1e-9); XCTAssertEqual(anchor.y, moved.y, accuracy: 1e-9)
+            let zero = SlidePostTextLayout.dragged(from: element, translation: .zero, canvas: canvas)
+            XCTAssertEqual(zero.x, moved.x, accuracy: 1e-9)
+        }
+        var edge = SlidePostTextElement(text: "x"); edge.alignment = "right"
+        XCTAssertEqual(SlidePostTextLayout.dragged(from: edge, translation: CGSize(width: 1000, height: 1000), canvas: canvas).x, 1)
+        XCTAssertEqual(SlidePostTextLayout.dragged(from: edge, translation: CGSize(width: -1000, height: -1000), canvas: canvas).y, 0)
+    }
+    func testFontChipsAreDeduplicatedAndStartWithTheDefault() {
+        let choices = SlidePostTextElement.fontChoices()
+        XCTAssertEqual(choices.first, SlidePostTextElement.defaultFont)
+        XCTAssertEqual(Set(choices).count, choices.count)
+        XCTAssertFalse(choices.dropFirst().contains("Inter"), "the registry's Inter is the same file as the default Inter-Bold chip")
+    }
+    func testIsInvalidCountsScalarsAndChecksMaxWidth() {
+        var element = SlidePostTextElement(text: String(repeating: "a", count: 120)); XCTAssertFalse(element.isInvalid)
+        element.text = String(repeating: "\u{1F468}\u{200D}\u{1F469}", count: 41)  // 41 clusters, 123 code points
+        XCTAssertTrue(element.isInvalid)
+        element.text = "ok"; element.maxWidthFrac = 0.1; XCTAssertTrue(element.isInvalid)
+        element.maxWidthFrac = 0.2; XCTAssertFalse(element.isInvalid)
+        element.maxWidthFrac = 1.1; XCTAssertTrue(element.isInvalid)
+    }
+    func testAdoptingANewerServerDraftClearsUndoHistory() async throws {
+        var remote = fixture()
+        NativeEditorURLProtocol.handler = { _ in (200, try JSONEncoder().encode(remote)) }
+        let api = NativeEditorTestSupport.api()
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: api, itemID: itemID)
+        session.setLook(slideID: "slide-1", preset: "golden_hour")
+        session.undoEdit()  // clean again, but redo now holds a snapshot of the old content
+        XCTAssertTrue(session.canRedoEdit)
+        session.setLook(slideID: "slide-1", preset: "olive_film")
+        session.undoEdit()
+        XCTAssertTrue(session.canRedoEdit)
+        var changed = fixture(version: 2)
+        changed.draft?.caption = "Changed elsewhere"
+        remote = changed
+        await session.refresh(api: api, itemID: itemID)
+        XCTAssertEqual(session.draft?.caption, "Changed elsewhere")
+        XCTAssertFalse(session.canUndoEdit, "undo must not restore a pre-remote snapshot")
+        XCTAssertFalse(session.canRedoEdit, "redo must not resurrect a pre-remote snapshot")
+    }
     func testEditedLabelsAreMarkedSoARelabelNeverOverwritesThem() async throws {
         let session = try await richSession()
         let id = try XCTUnwrap(session.addText(slideID: "slide-1", text: "Athens"))

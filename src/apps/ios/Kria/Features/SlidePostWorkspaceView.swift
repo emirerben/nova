@@ -28,6 +28,8 @@ struct SlidePostWorkspaceView: View {
     @State private var pendingUploads: [UploadRecoveryRecord] = []
     @State private var uploadFailures: [UploadFailure] = []
     @State private var uploadInFlight: [UUID: BackgroundUploadCoordinator.InFlightUpload] = [:]
+    /// True while the software keyboard is up; text mode shrinks the stage so the Edit field stays visible.
+    @State private var keyboardUp = false
     @State private var photoSelections: [String: ProjectPhotoSelection] = [:]
     @State private var previewPlayer: AVPlayer?
     @State private var previewRetry = 0
@@ -497,7 +499,8 @@ struct SlidePostWorkspaceView: View {
                     .padding(.bottom, 8)
             }
             stage(draft, compact: panelOpen)
-                .frame(maxHeight: panelOpen ? 0.37 * height : .infinity)
+                .frame(maxHeight: panelOpen ? max(150, 0.37 * height - (keyboardUp && mode == .text ? 96 : 0)) : .infinity)
+                .animation(.easeOut(duration: 0.2), value: keyboardUp)
             if mode == .text, let slide {
                 SlidePostTextPanel(session: session, slideID: slide.id, tab: $textTab)
                     .frame(maxHeight: .infinity)
@@ -509,6 +512,8 @@ struct SlidePostWorkspaceView: View {
             }
         }
         .background(KriaColor.paper)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardUp = true }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardUp = false }
     }
 
     @ViewBuilder private var richBanner: some View {
