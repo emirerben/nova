@@ -1459,7 +1459,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         add(capture)
     }
 
-func testPreviewDragIsOneUndoableTextEdit() {
+    func testPreviewDragIsOneUndoableTextEdit() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-two-text"]
         app.launch()
