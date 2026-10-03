@@ -1612,7 +1612,61 @@ async def test_deadline_retains_fast_answer_and_defers_only_slow_clip(monkeypatc
     assert result.intents[0].status == "needs_creator"
 
 
-async def test_non_cacheable_overflow_still_asks_creator(monkeypatch):
+async def test_photo_the_record_cannot_settle_asks_the_creator(monkeypatch):
+    """KRI-291: vision re-query is video-only. A photo the resolver wanted to
+    re-check became `media_unavailable`, which the chat reports as "I couldn't
+    reliably match that request to your clips. Please try again shortly." — on
+    every retry, since the photo can never be re-checked. It is an unknown the
+    creator settles instead."""
+    photo = IntentClip(
+        media_id="asset-photo",
+        kind="image",
+        analysis=_record_analysis(subject="two people in a shop"),
+        gcs_path="users/u/pool/photo.jpg",
+        asset_id="photo",
+    )
+    intent = ClipIntent(
+        intent_id="book",
+        op="caption",
+        attribute="bookshop photo of two guys with a book",
+        creator_text="Eren's gift to Mahmoud: his first Turkish book",
+    )
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="book",
+                    needs_vision=[
+                        ResolverVisionQuestion(
+                            media="m002", question="Are two people holding a book in a bookshop?"
+                        )
+                    ],
+                )
+            ]
+        ),
+    )
+    _patch_vision_forbidden(monkeypatch)
+
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request=(
+            'Show "Eren\'s gift to Mahmoud: his first Turkish book" on the bookshop photo'
+            " of two guys with a book"
+        ),
+        clips=[_video_clip("bowling", subject="people bowling"), photo],
+        run_context=RunContext(),
+    )
+
+    assert result.status == "needs_creator"
+    assert result.error_code is None
+    assert "bookshop photo" in result.question
+    assert "2" in result.question  # names the photo's position for the creator
+    assert not result.deferred_queries
+    assert result.vision_answers == {}
+
+
+async def test_non_cacheable_overflow_is_pending_and_never_unavailable_media(monkeypatch):
     from dataclasses import replace
 
     monkeypatch.setattr(settings, "clip_intents_max_vision_requeries", 0)
@@ -1639,7 +1693,10 @@ async def test_non_cacheable_overflow_still_asks_creator(monkeypatch):
         clips=clips,
         run_context=RunContext(),
     )
-    assert result.status == "media_unavailable"
+    # m1 could not be asked this turn and has no worker lane; the photo is an
+    # unknown for the creator, not unavailable media (KRI-291).
+    assert result.status == "pending"
+    assert result.error_code == "vision_batch_deadline_or_foreground_cap"
     assert result.question is None
     assert not result.deferred_queries
 
