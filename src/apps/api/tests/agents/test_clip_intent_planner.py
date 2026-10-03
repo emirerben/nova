@@ -345,3 +345,83 @@ def test_parse_rejects_order_by_combined_with_position() -> None:
 
     with pytest.raises(SchemaError, match="order_by requires op=order and no position"):
         _agent().parse(raw, ClipIntentPlannerInput(creator_request=request, clip_facts=True))
+
+
+_GAMES_DAY_REQUEST = (
+    "We ran a backyard games day: kickball, then tug of war, then relay races, then pizza. "
+    "Make a chronological, very fast paced video. Group content by game and add the game name "
+    "to the bottom left. Also include a text for the pizza and the warmup as well. For "
+    "individual shots of people, add a text placeholder so I can replace with their real names"
+)
+
+
+def _games_intent(intent_id: str, op: str, attribute: str, quote: str, **extra: object) -> dict:
+    return {
+        "intent_id": intent_id,
+        "op": op,
+        "attribute": attribute,
+        "source_quote": quote,
+        **extra,
+    }
+
+
+def test_real_prompt_shape_fits_cap_and_keeps_every_instruction() -> None:
+    """KRI-282: a natural 7-operation montage request must not overflow or fail."""
+    from app.schemas.clip_intents import MAX_CLIP_INTENTS
+
+    assert MAX_CLIP_INTENTS >= 8
+    group_quote = "Group content by game"
+    chapter_quote = "include a text for the pizza and the warmup"
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent("g1", "group", "kickball clips", group_quote),
+                _games_intent("g2", "group", "tug of war clips", group_quote),
+                _games_intent("g3", "group", "relay race clips", group_quote),
+                _games_intent("l1", "label", "game", "add the game name to the bottom left"),
+                _games_intent(
+                    "c1", "caption", "the pizza", chapter_quote, caption_attribute="pizza"
+                ),
+                _games_intent(
+                    "c2", "caption", "the warmup", chapter_quote, caption_attribute="warmup"
+                ),
+                _games_intent(
+                    "l2",
+                    "label",
+                    "person's name",
+                    "add a text placeholder so I can replace with their real names",
+                ),
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, ClipIntentPlannerInput(creator_request=_GAMES_DAY_REQUEST))
+    assert len(out.intents) == 7
+    assert out.salvage_question is None
+
+
+def test_name_placeholder_is_never_accepted_as_creator_copy() -> None:
+    """The original KRI-282 failure: a model-invented token in creator_text is not source-backed."""
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent(
+                    "p1",
+                    "caption",
+                    "individual shots of people",
+                    "add a text placeholder so I can replace with their real names",
+                    creator_text="NAME_PLACEHOLDER",
+                )
+            ],
+            "question": None,
+        }
+    )
+    with pytest.raises(SchemaError):
+        _agent().parse(raw, ClipIntentPlannerInput(creator_request=_GAMES_DAY_REQUEST))
+
+
+def test_prompt_teaches_compact_inventory_and_named_values() -> None:
+    prompt = _agent().render_prompt(ClipIntentPlannerInput(creator_request=_GAMES_DAY_REQUEST))
+    assert "is ONE\n  `label` intent" in prompt
+    assert "ask them to name the sports again" in prompt
+    assert "must never go in `creator_text`" in prompt

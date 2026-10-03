@@ -55,7 +55,7 @@ ClipOrderBy = Literal["capture_time", "route"]
 GroundingSource = Literal["creator_text", "record_span", "vision_verified"]
 ResolutionStatus = Literal["resolved", "needs_creator"]
 
-MAX_CLIP_INTENTS = 6
+MAX_CLIP_INTENTS = 8
 LABEL_MIN_CONFIDENCE = 0.8
 LABEL_MAX_CHARS = 24
 LABEL_MAX_WORDS = 3

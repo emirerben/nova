@@ -1,0 +1,112 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-03.1",
+  "input": {
+    "creator_request": "We ran a backyard games day with two teams: kickball, then tug of war, then relay races, then pizza. Whoever won 2 games won. Make a chronological, very fast paced video. Group content by game and add the game name to the bottom left. Also include a text for the pizza and the warmup as well. For individual shots of people, add a text placeholder so I can replace with their real names",
+    "latest_user_message": "Use all of them",
+    "candidate_intents": null
+  },
+  "raw_text": "{\"intents\": [{\"intent_id\": \"g1\", \"op\": \"group\", \"attribute\": \"kickball clips\", \"label_source\": \"clip\", \"transcript_kind\": null, \"creator_text\": null, \"caption_attribute\": null, \"position\": null, \"source_quote\": \"Group content by game\"}, {\"intent_id\": \"g2\", \"op\": \"group\", \"attribute\": \"tug of war clips\", \"label_source\": \"clip\", \"transcript_kind\": null, \"creator_text\": null, \"caption_attribute\": null, \"position\": null, \"source_quote\": \"Group content by game\"}, {\"intent_id\": \"g3\", \"op\": \"group\", \"attribute\": \"relay race clips\", \"label_source\": \"clip\", \"transcript_kind\": null, \"creator_text\": null, \"caption_attribute\": null, \"position\": null, \"source_quote\": \"Group content by game\"}, {\"intent_id\": \"l1\", \"op\": \"label\", \"attribute\": \"game\", \"label_source\": \"clip\", \"transcript_kind\": null, \"creator_text\": null, \"caption_attribute\": null, \"position\": null, \"source_quote\": \"add the game name to the bottom left\"}, {\"intent_id\": \"c1\", \"op\": \"caption\", \"attribute\": \"the pizza\", \"label_source\": \"clip\", \"transcript_kind\": null, \"creator_text\": null, \"caption_attribute\": \"pizza\", \"position\": null, \"source_quote\": \"include a text for the pizza and the warmup\"}, {\"intent_id\": \"c2\", \"op\": \"caption\", \"attribute\": \"the warmup\", \"label_source\": \"clip\", \"transcript_kind\": null, \"creator_text\": null, \"caption_attribute\": \"warmup\", \"position\": null, \"source_quote\": \"include a text for the pizza and the warmup\"}, {\"intent_id\": \"l2\", \"op\": \"label\", \"attribute\": \"person's name\", \"label_source\": \"clip\", \"transcript_kind\": null, \"creator_text\": null, \"caption_attribute\": null, \"position\": null, \"source_quote\": \"add a text placeholder so I can replace with their real names\"}], \"question\": null}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "g1",
+        "op": "group",
+        "attribute": "kickball clips",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Group content by game"
+      },
+      {
+        "intent_id": "g2",
+        "op": "group",
+        "attribute": "tug of war clips",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Group content by game"
+      },
+      {
+        "intent_id": "g3",
+        "op": "group",
+        "attribute": "relay race clips",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Group content by game"
+      },
+      {
+        "intent_id": "l1",
+        "op": "label",
+        "attribute": "game",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "add the game name to the bottom left"
+      },
+      {
+        "intent_id": "c1",
+        "op": "caption",
+        "attribute": "the pizza",
+        "creator_text": null,
+        "caption_attribute": "pizza",
+        "position": null,
+        "source_quote": "include a text for the pizza and the warmup"
+      },
+      {
+        "intent_id": "c2",
+        "op": "caption",
+        "attribute": "the warmup",
+        "creator_text": null,
+        "caption_attribute": "warmup",
+        "position": null,
+        "source_quote": "include a text for the pizza and the warmup"
+      },
+      {
+        "intent_id": "l2",
+        "op": "label",
+        "attribute": "person's name",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "add a text placeholder so I can replace with their real names"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "KRI-282: redacted shape of a real failed thread. Named games inside the prose are the named groups (no 'name the groups' question); one game label (not a caption per group); one caption per named chapter; a name placeholder is a label, never creator_text. 7 operations fit the cap.",
+    "expect_intents": [
+      {
+        "op": "group",
+        "source_quote_keywords": [
+          "group",
+          "game"
+        ]
+      },
+      {
+        "op": "label",
+        "source_quote_keywords": [
+          "game",
+          "bottom"
+        ]
+      },
+      {
+        "op": "caption",
+        "source_quote_keywords": [
+          "text",
+          "pizza"
+        ]
+      },
+      {
+        "op": "label",
+        "source_quote_keywords": [
+          "placeholder"
+        ]
+      }
+    ],
+    "expect_any": true
+  }
+}

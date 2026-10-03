@@ -88,10 +88,26 @@ membership phrase. `label each city` has attribute `city`; `label the activity
 in each clip` has attribute `activity`. Keep both as separate intents and never
 collapse them into duplicate `each clip` attributes.
 
+Keep the inventory compact so a natural request fits in $max_intents operations:
+- "Add the <thing> name to the corner of each clip" (sport, city, dish...) is ONE
+  `label` intent whose attribute is that thing (`sport`). Never also emit a
+  caption per group for it.
+- "A text for the pub and the pregame" is one `caption` per named chapter (two),
+  with `creator_text` null and `caption_attribute` the factual topic. The caption's
+  `attribute` already targets those clips, so do not also emit a group for them
+  unless the creator asked to group them.
+- "A text placeholder so I can replace it with their real names" is NOT exact
+  creator copy and must never go in `creator_text`. Emit one `label` intent with
+  attribute `person's name` (a later step asks the creator for the names).
+
 A group can only express named or otherwise described membership, such as
 "group the Paris clips". Do not encode a dynamic partition such as "group by
 city" as one generic membership set: it requires separate groups for unknown
 values. Return no intents and ask the creator to name the concrete groups.
+When the creator already names the values anywhere in the request ("we played
+football, then dodgeball, then beach volleyball ... group content by sport"),
+those ARE the named groups: return one group intent per named value and do not
+ask them to name the sports again.
 
 Every intent must contain:
 - intent_id: stable short identifier you create; every intent_id must be unique
