@@ -23,6 +23,7 @@ from app.services.clip_intent_resolution import (
     IntentResolution,
     resolve_clip_intents_for_turn,
 )
+from app.services.clip_understanding import understanding_incomplete
 
 log = structlog.get_logger()
 
@@ -66,6 +67,7 @@ async def plan_and_resolve_clip_intents(
     checkpoint: Any = None,
     max_vision_requeries: int | None = None,
     vision_deadline_s: float | None = None,
+    require_clip_understanding: bool = False,
 ) -> PlannedIntentResolution:
     if len(creator_request) > CREATOR_REQUEST_MAX_CHARS:
         return PlannedIntentResolution(
@@ -160,6 +162,24 @@ async def plan_and_resolve_clip_intents(
         if resolved_orders:
             return PlannedIntentResolution(intents, IntentResolution(intents=resolved_orders))
         return PlannedIntentResolution(intents, IntentResolution())
+    if require_clip_understanding:
+        # KRI-282 L2: a clip whose background analysis has not landed has an empty
+        # record, so the resolver would ask the creator about it. That is OUR gap, not
+        # theirs: answer with the converging "still checking" reply instead.
+        unanalysed = [c for c in clips if understanding_incomplete(c.analysis, kind=c.kind)]
+        if unanalysed:
+            return PlannedIntentResolution(
+                intents,
+                IntentResolution(
+                    status="pending",
+                    error_code="clip_understanding_incomplete",
+                    diagnostics={
+                        "reason": "clip_understanding_incomplete",
+                        "unanalysed_clips": len(unanalysed),
+                        "total_clips": len(clips),
+                    },
+                ),
+            )
     resolution = await resolve_clip_intents_for_turn(
         intents=visual_intents,
         creator_request=creator_request,
