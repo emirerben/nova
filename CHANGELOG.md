@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.33.0] - 2026-10-03
+
+### Changed
+- fix(planner): real failed montage prompt yields intents, not a dead end (KRI-282) (#1341) <!-- release-pr: 1341 -->
+
 ## [0.78.32.0] - 2026-10-03
 
 ### Changed
