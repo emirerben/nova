@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.31.0] - 2026-10-03
+
+### Changed
+- fix(phone): letterbox landscape Talking-to-camera + honest non-retryable failures (KRI-283) (#1339) <!-- release-pr: 1339 -->
+
 ## [0.78.30.0] - 2026-10-03
 
 ### Changed
