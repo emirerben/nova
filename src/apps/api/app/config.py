@@ -1037,6 +1037,13 @@ class Settings(BaseSettings):
     # replacement is cheap). 0 disables. Measured in KB (Celery convention).
     worker_max_memory_per_child_kb: int = 3_145_728  # 3GB
 
+    # Deploy dead time (KRI-294): end Celery's 240s soft-shutdown wait as soon
+    # as the tasks in flight at SIGTERM finish, and skip it when idle
+    # (app/services/celery_soft_shutdown.py). False restores the stock
+    # full-window wait on every shutdown. Read on the OLD machine at stop time,
+    # so a flip takes effect from the deploy after it.
+    celery_soft_shutdown_early_exit_enabled: bool = True
+
     # Render heartbeat (same incident, user-visible half): the orchestrator
     # ticks jobs.worker_heartbeat_at every `interval` seconds; the status route
     # reports `retrying: true` while a non-terminal job's heartbeat is older
