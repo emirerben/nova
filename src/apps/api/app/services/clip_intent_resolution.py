@@ -52,6 +52,7 @@ from app.agents.clip_request_resolver import (
     ClipRequestResolverOutput,
     ResolverClipIn,
     ResolverIntentIn,
+    ResolverIntentOut,
 )
 from app.config import settings
 from app.schemas.clip_intents import (
@@ -319,6 +320,65 @@ def _cached_answer(clip: IntentClip, question_norm: str) -> dict[str, Any] | Non
 # chat turn waits for before it degrades to a question.
 _RESOLVER_DEADLINE_S = 45.0
 
+# KRI-282: the resolver's output grows with clips x intents (an assignment per
+# matching clip per intent). At ~47 clips one call took ~20s, i.e. right at the
+# agent's 20s timeout, so a real 47-clip montage failed as "provider unavailable".
+# Membership is decided per clip, so the clip list is sharded across concurrent
+# calls, each answering for <= this many clips. Small projects keep ONE call.
+_RESOLVER_SHARD_CLIPS = 12
+
+
+def _shard_resolver_input(
+    resolver_input: ClipRequestResolverInput,
+) -> list[ClipRequestResolverInput]:
+    """Split the clip list into balanced shards; every shard sees every intent."""
+    clips = resolver_input.clips
+    shard_count = -(-len(clips) // _RESOLVER_SHARD_CLIPS)  # ceil
+    if shard_count <= 1:
+        return [resolver_input]
+    base, extra = divmod(len(clips), shard_count)
+    shards: list[ClipRequestResolverInput] = []
+    start = 0
+    for i in range(shard_count):
+        end = start + base + (1 if i < extra else 0)
+        shards.append(resolver_input.model_copy(update={"clips": clips[start:end]}))
+        start = end
+    return shards
+
+
+def _merge_resolver_outputs(
+    outputs: list[ClipRequestResolverOutput],
+) -> ClipRequestResolverOutput:
+    """Merge per-shard outputs. Aliases are disjoint across shards, so membership
+    simply concatenates; an intent-level question is clip-independent (first
+    wins); the single authored caption comes from the shard that matched the
+    most clips (its text is re-verified against the final members downstream)."""
+    if len(outputs) == 1:
+        return outputs[0]
+    order: list[str] = []
+    parts: dict[str, list[ResolverIntentOut]] = {}
+    for output in outputs:
+        for intent in output.intents:
+            if intent.intent_id not in parts:
+                order.append(intent.intent_id)
+                parts[intent.intent_id] = []
+            parts[intent.intent_id].append(intent)
+    merged: list[ResolverIntentOut] = []
+    for intent_id in order:
+        group = parts[intent_id]
+        captioned = [g for g in group if g.caption]
+        best = max(captioned, key=lambda g: len(g.assignments)) if captioned else None
+        merged.append(
+            ResolverIntentOut(
+                intent_id=intent_id,
+                assignments=[a for g in group for a in g.assignments],
+                needs_vision=[v for g in group for v in g.needs_vision],
+                question=next((g.question for g in group if g.question), None),
+                caption=best.caption if best else None,
+            )
+        )
+    return ClipRequestResolverOutput(intents=merged)
+
 
 def _fallback_question(intent: ClipIntent) -> str:
     return f"What is the {intent.attribute}?"
@@ -549,15 +609,21 @@ async def resolve_clip_intents_for_turn(
 
     resolver_agent = ClipRequestResolverAgent(default_client())
     try:
-        resolver_call = asyncio.to_thread(resolver_agent.run, resolver_input, ctx=ctx)
-        resolver_output: ClipRequestResolverOutput
+        resolver_call = asyncio.gather(
+            *(
+                asyncio.to_thread(resolver_agent.run, shard, ctx=ctx)
+                for shard in _shard_resolver_input(resolver_input)
+            )
+        )
+        shard_outputs: list[ClipRequestResolverOutput]
         if background:
-            resolver_output = await resolver_call
+            shard_outputs = await resolver_call
         else:
-            resolver_output = await asyncio.wait_for(
+            shard_outputs = await asyncio.wait_for(
                 resolver_call,
                 timeout=_RESOLVER_DEADLINE_S,
             )
+        resolver_output = _merge_resolver_outputs(shard_outputs)
     except Exception as exc:  # noqa: BLE001 — degrade gracefully, never raise from a chat turn
         # Covers TerminalError (refusal/schema/transient-exhausted) and any
         # AI-cost-control TerminalError subclass (budget exhausted, policy
