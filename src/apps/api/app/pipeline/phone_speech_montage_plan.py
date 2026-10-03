@@ -32,11 +32,19 @@ clips, one ``audio`` track, per-clip ``volume`` and fades). Capabilities are
 ``basicComposition``, ``local1080Export`` and, when an audio track is emitted,
 ``audioMix``.
 
+A landscape or square speaker clip is accepted and framed by the engine's
+plain centre cover-fit (the same crop every other phone montage clip gets). We
+deliberately emit NO ``source_crop``: with no face tracking the only window we
+could name is the centred one, which is pixel-identical to the cover-fit, and a
+crop would add the ``sourceCrop`` capability, which ``validate_phone_pilot_recipe``
+refuses unless it is in ``PHONE_RENDER_VERIFIED_FEATURES``. The recipe is the same
+shape for every orientation; the receipt records an adjustment so the creator can
+be told the sides are cropped.
+
 Rejected (all `UnsupportedPhonePlan`, with a message a creator can act on):
-a speaker clip that is not portrait (the phone engine centre-crops with no face
-tracking, which would crop the speaker out), b-roll that is needed but absent,
-an excerpt window that is not playable, and a timeline over the track's clip
-budget.
+a speaker clip that is not a video or is too long, b-roll that is needed but
+absent, an excerpt window that is not playable, and a timeline over the track's
+clip budget.
 """
 
 from __future__ import annotations
@@ -244,6 +252,7 @@ def compile_phone_speech_montage_plan(
         raise UnsupportedPhonePlan("the spoken-excerpt montage has no speech excerpt")
 
     speaker_ids = {s.speaker.media_id for s in sections if s.speaker is not None}
+    centre_cropped: set[str] = set()
     for section in sections:
         if section.kind != "speech" or section.speaker is None:
             continue
@@ -255,12 +264,10 @@ def compile_phone_speech_montage_plan(
                 "the speaking clip is longer than 5 minutes; trim it and try again"
             )
         display_w, display_h = _display_dims(original)
+        if display_w <= 0 or display_h <= 0:
+            raise UnsupportedPhonePlan("the speaking clip has no readable video picture")
         if display_w >= display_h:
-            raise UnsupportedPhonePlan(
-                "the clip you speak in is landscape or square; the phone edit would crop you "
-                "out of frame. Film or pick a vertical (portrait) clip for the speech parts",
-                capability="semanticCamera",
-            )
+            centre_cropped.add(section.speaker.media_id)
     pool_bindings = [
         b
         for b in broll
@@ -411,6 +418,11 @@ def compile_phone_speech_montage_plan(
             )
             receipt.music = True
 
+    if centre_cropped:
+        receipt.adjustments.append(
+            "your speaking clip is wider than vertical, so its sides are cropped to fill the "
+            "9:16 frame (centred)"
+        )
     receipt.duration_s = cursor
     receipt.cut_count = len(main)
     recipe = EditRecipeV2(
