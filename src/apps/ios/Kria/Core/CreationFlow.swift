@@ -21,6 +21,9 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var editorStateTurnsEnabled: Bool { editorStateTurns == true }
     var slidePostRichTextEnabled: Bool { slidePostRichText == true }
     var slidePostChatEditEnabled: Bool { slidePostChatEdit == true }
+    /// The chat composer needs BOTH flags: the server only reports chat-edit as on with rich text, and
+    /// a stale cached capability must not enable it when rich text is off.
+    var slidePostChatComposerEnabled: Bool { slidePostRichTextEnabled && slidePostChatEditEnabled }
     var preferredRuntimeVersion: Int { runtimeVersions?.contains(2) == true ? 2 : 1 }
     enum CodingKeys: String, CodingKey {
         case formats, media

@@ -41,7 +41,15 @@ extension Color {
     }
 }
 
-enum SlidePostMode: Equatable { case browse, arrange, text, look }
+enum SlidePostMode: Equatable {
+    case browse, arrange, text, look
+    /// The Kria thread only renders in browse mode, so sending a chat message always returns there;
+    /// otherwise an edit sent from Arrange would run with no visible feedback.
+    static let afterChatSend: SlidePostMode = .browse
+    static func showsChatThread(chatEnabled: Bool, chatOpen: Bool, mode: SlidePostMode) -> Bool {
+        chatEnabled && chatOpen && mode == .browse
+    }
+}
 
 // MARK: Header
 

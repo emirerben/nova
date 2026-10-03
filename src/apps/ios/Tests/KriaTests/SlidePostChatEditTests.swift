@@ -212,7 +212,121 @@ import XCTest
 
     func testNotesAreSeparatedFromSuccessChips() {
         XCTAssertTrue(SlidePostChatMessage.isNote("2 photos have no location"))
+        XCTAssertTrue(SlidePostChatMessage.isNote("1 photo has no location."))
+        XCTAssertTrue(SlidePostChatMessage.isNote("Animation and spacing aren't available on slides, so those weren't applied."))
         XCTAssertFalse(SlidePostChatMessage.isNote("Location on 6"))
+        for success in ["Text updated on 2 slides", "Caption updated without the hashtags", "Look changed on 3 slides, missing none",
+                        "Removed 1 slide, skipped nothing", "Cover is now slide 2"] {
+            XCTAssertFalse(SlidePostChatMessage.isNote(success), success)
+        }
+    }
+
+    // MARK: Review fixes
+
+    func testSendingFromArrangeReturnsToBrowseSoTheThreadShows() {
+        XCTAssertEqual(SlidePostMode.afterChatSend, .browse)
+        XCTAssertFalse(SlidePostMode.showsChatThread(chatEnabled: true, chatOpen: true, mode: .arrange))
+        XCTAssertTrue(SlidePostMode.showsChatThread(chatEnabled: true, chatOpen: true, mode: SlidePostMode.afterChatSend))
+    }
+
+    func testChatComposerNeedsBothCapabilities() throws {
+        func caps(_ json: String) throws -> CreationCapabilities { try JSONDecoder().decode(CreationCapabilities.self, from: Data(json.utf8)) }
+        XCTAssertTrue(try caps(#"{"formats":[],"slide_post_rich_text":true,"slide_post_chat_edit":true}"#).slidePostChatComposerEnabled)
+        XCTAssertFalse(try caps(#"{"formats":[],"slide_post_chat_edit":true}"#).slidePostChatComposerEnabled, "stale chat flag without rich text")
+        XCTAssertFalse(try caps(#"{"formats":[],"slide_post_chat_edit":true,"slide_post_rich_text":false}"#).slidePostChatComposerEnabled)
+        XCTAssertFalse(try caps(#"{"formats":[],"slide_post_rich_text":true}"#).slidePostChatComposerEnabled)
+    }
+
+    func testFailedSendIsNotSentAsADanglingUserTurn() async throws {
+        let remote = state()
+        var fail = true
+        serve(remote: remote) {
+            if fail { throw URLError(.notConnectedToInternet) }
+            return try self.response("clarification", reply: "Which photos?")
+        }
+        let session = await session(remote: remote)
+        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "first")
+        fail = false
+        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "second")
+        let turns = try XCTUnwrap(captured.chatBodies.last?["turns"] as? [[String: Any]])
+        XCTAssertEqual(turns.count, 0, "the failed 'first' (user + retry bubble) is excluded")
+        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "third")
+        let later = try XCTUnwrap(captured.chatBodies.last?["turns"] as? [[String: Any]])
+        XCTAssertEqual(later.compactMap { $0["role"] as? String }, ["user", "assistant"])
+    }
+
+    func testTurnsMatchServerSchemaAndTruncateContent() async throws {
+        let remote = state()
+        let long = String(repeating: "x", count: 2500)
+        let manyChanges = (0..<30).map { "c\($0)" }
+        let payload = try response("edited", reply: long, draft: reordered(remote.draft!), changes: manyChanges)
+        serve(remote: remote) { payload }
+        let session = await session(remote: remote)
+        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "reverse")
+        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "again")
+        let turns = try XCTUnwrap(captured.chatBodies.last?["turns"] as? [[String: Any]])
+        let assistant = try XCTUnwrap(turns.last)
+        XCTAssertEqual((assistant["content"] as? String)?.count, 2000)
+        XCTAssertEqual((assistant["applied"] as? [String])?.count, 20)
+        XCTAssertEqual((assistant["rejected"] as? [String])?.count, 0)
+    }
+
+    func testOverlongMessageKeepsErrorAndSendsNothing() async throws {
+        let remote = state()
+        serve(remote: remote) { try self.response("clarification") }
+        let session = await session(remote: remote)
+        let long = String(repeating: "a", count: 2001)
+        XCTAssertFalse(session.canChat(message: long))
+        XCTAssertNotNil(session.error)
+        XCTAssertTrue(session.canChat(message: "ok"))
+        let staged = await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: long)
+        XCTAssertFalse(staged)
+        XCTAssertTrue(session.chat.isEmpty)
+        XCTAssertTrue(captured.chatBodies.isEmpty)
+    }
+
+    func testRetryThatFailsItsGuardKeepsTheBubbles() async throws {
+        let remote = state()
+        serve(remote: remote) { throw URLError(.notConnectedToInternet) }
+        let session = await session(remote: remote)
+        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "sort them")
+        let failure = try XCTUnwrap(session.chat.last)
+        XCTAssertEqual(session.chat.count, 2)
+        // Make the guard bail: no draft to edit.
+        session.draft = nil
+        await session.retryChat(api: NativeEditorTestSupport.api(), itemID: itemID, bubble: failure)
+        XCTAssertEqual(session.chat.count, 2, "bubbles survive when chatEdit would bail")
+    }
+
+    func testPersistedTranscriptIsCapped() async throws {
+        let remote = state()
+        serve(remote: remote) { try self.response("clarification", reply: "r") }
+        let first = await session(remote: remote)
+        for index in 0..<30 { await first.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "m\(index)") }
+        XCTAssertEqual(first.chat.count, 60)
+        let reopened = await session(remote: remote)
+        XCTAssertEqual(reopened.chat.count, SlidePostSession.maxPersistedChat)
+        XCTAssertEqual(reopened.chat.last?.text, "r")
+    }
+
+    func testCreateAndUndoAreBlockedWhileChatting() async throws {
+        let remote = state()
+        let box = SlidePostSessionBox()
+        serve(remote: remote) {
+            DispatchQueue.main.sync {
+                MainActor.assumeIsolated {
+                    guard let session = box.session else { return }
+                    Task { await session.create(api: NativeEditorTestSupport.api(), itemID: self.itemID) }
+                }
+            }
+            return try self.response("clarification")
+        }
+        let session = await session(remote: remote)
+        box.session = session
+        session.setCaption("dirty")
+        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "hi")
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertTrue(captured.putBodies.isEmpty, "create must not save while a chat turn is in flight")
     }
 }
 

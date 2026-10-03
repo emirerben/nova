@@ -448,8 +448,8 @@ struct SlidePostWorkspaceView: View {
     // MARK: Redesigned workspace (capability `slide_post_rich_text`)
 
     private var richEnabled: Bool { effectiveCapabilities?.slidePostRichTextEnabled == true }
-    private var chatEditOn: Bool { effectiveCapabilities?.slidePostChatEditEnabled == true }
-    private var showsChatThread: Bool { chatEditOn && chatOpen && mode == .browse }
+    private var chatEditOn: Bool { effectiveCapabilities?.slidePostChatComposerEnabled == true }
+    private var showsChatThread: Bool { SlidePostMode.showsChatThread(chatEnabled: chatEditOn, chatOpen: chatOpen, mode: mode) }
     private var showsRichWorkspace: Bool { richEnabled && session.proposal == nil && session.draft != nil }
     private var unusedAssets: [SlidePostAsset] {
         guard let draft = session.draft else { return [] }
@@ -687,7 +687,11 @@ struct SlidePostWorkspaceView: View {
         guard chatEditOn else { await propose(); return }
         guard let itemID else { return }
         let text = instruction
+        // Validate first: a rejected message (too long) keeps its text and shows the error.
+        guard session.canChat(message: text) else { return }
         instruction = ""; session.instruction = ""
+        // The thread only shows in browse mode; sending from Arrange would otherwise edit silently.
+        mode = SlidePostMode.afterChatSend
         chatOpen = true
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         await session.chatEdit(api: model.api, itemID: itemID, message: text)
