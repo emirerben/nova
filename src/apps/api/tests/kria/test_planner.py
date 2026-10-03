@@ -975,3 +975,35 @@ def test_strategy_adapter_keeps_only_deferred_transcript_intents():
     assert len(strategy["clip_intents"]) == 1
     assert strategy["clip_intents"][0]["label_source"] == "transcript"
     assert "resolved_clip_intents" not in strategy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["unsupported", "no_effect"])
+async def test_overlay_display_ask_defers_to_replan_instead_of_copilot_refusal(
+    monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    """KRI-297: "Use all overlays as full screen" is not an editor op; the copilot's
+    refusal must not be the answer -- `_plan_editor_revision` returns None so the
+    planner re-plans it (strategy.overlay_display). Other refusals still stand."""
+    target = SimpleNamespace(conversation=[], snapshot={}, job_id=uuid.uuid4())
+    monkeypatch.setattr(planner, "_load_editor_target", AsyncMock(return_value=target))
+    copilot = AsyncMock(
+        return_value=SimpleNamespace(
+            ops=[], outcome=outcome, reply="That kind of edit isn't available."
+        )
+    )
+    monkeypatch.setattr(planner, "run_copilot_turn", copilot)
+    db = SimpleNamespace(rollback=AsyncMock())
+
+    deferred = await _plan_editor_revision(
+        db,
+        thread_id=uuid.uuid4(),
+        item=SimpleNamespace(),
+        user_message="Use all overlays as full screen.",
+    )
+    assert deferred is None
+
+    refused = await _plan_editor_revision(
+        db, thread_id=uuid.uuid4(), item=SimpleNamespace(), user_message="make the text bigger"
+    )
+    assert refused is not None and refused.turn_value == "recovery"

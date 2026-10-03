@@ -223,6 +223,15 @@ class Settings(BaseSettings):
     # set PHONE_SUBTITLED_VIDEO_OVERLAYS_ENABLED=false --app nova-video` +
     # `fly machine restart <id>` (api + worker).
     phone_subtitled_video_overlays_enabled: bool = False
+    # KRI-297 kill switch: lets a phone `subtitled` (Talking) edit show ALL its
+    # Visuals as a full-screen cutaway sequence when the creator asks for it
+    # ("use all overlays as full screen"). Gates the `media_overlays:fullscreen`
+    # capability; a strategy that asks for it while this is off is refused
+    # honestly, and a stale job's `all_candidates["overlay_display"]` is the
+    # worker's concern. Rollback: `fly secrets set
+    # PHONE_SUBTITLED_FULLSCREEN_OVERLAYS_ENABLED=false --app nova-video` +
+    # `fly machine restart <id>` (api + worker).
+    phone_subtitled_fullscreen_overlays_enabled: bool = True
     # KRI-136: a self-narrated (`narrated*`, no recorded voiceover) item with
     # 2+ clips that resolves to the `talking_head` archetype renders on the
     # device: the speech clip stays the main track (its audio runs the whole
