@@ -808,6 +808,8 @@ async def _plan_from_creator_output(
                 # turn itself a larger (cached, converging) foreground budget.
                 max_vision_requeries=settings.kria_clip_intents_max_vision_requeries,
                 vision_deadline_s=settings.kria_clip_intents_vision_deadline_s,
+                # KRI-282 L2: hold the turn while background clip analysis is incomplete.
+                require_clip_understanding=settings.kria_clip_understanding_enabled,
             )
         except Exception as exc:  # noqa: BLE001 - no provider failure may mint a draft
             log.warning(
