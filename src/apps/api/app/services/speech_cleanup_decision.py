@@ -203,6 +203,45 @@ def legacy_default_decision(
     return LegacyCleanupDefault(None, None)
 
 
+def reuse_recorded_cleanup_decision(
+    current_cleanup: SpeechCleanupAnalysis | None,
+    *,
+    source_policy_fingerprint: str | None,
+    submitted_analysis_id: uuid.UUID | None,
+    submitted_choice: SpeechCleanupChoice | None,
+) -> SpeechCleanupDecisionOk | None:
+    """Fill a follow-up approval's omitted id/choice from the recorded decision.
+
+    Once the creator chose, the projection stops asking, so the client's plain
+    "Create this video" sends neither. Mirrors v1's `_recorded_cleanup_consent`
+    (`routes/creation_threads.py`): only a current, fingerprint-fresh analysis
+    that is `no_findings` (id, no choice) or `ready` with candidates and a
+    recorded clean/keep_original decision (id + that decision) qualifies.
+    Explicit submitted values always win (a wrong id is left for the enforce
+    fence to 409). Returns None when nothing should be filled.
+    """
+
+    if current_cleanup is None or source_policy_fingerprint is None:
+        return None
+    if current_cleanup.source_policy_fingerprint != source_policy_fingerprint:
+        return None
+    if submitted_analysis_id is not None and submitted_analysis_id != current_cleanup.id:
+        return None
+    if submitted_analysis_id is not None and submitted_choice is not None:
+        return None
+    if current_cleanup.status == "no_findings":
+        return SpeechCleanupDecisionOk(current_cleanup.id, submitted_choice)
+    if (
+        current_cleanup.status == "ready"
+        and int(current_cleanup.candidate_count or 0) > 0
+        and current_cleanup.decision in {"clean", "keep_original"}
+    ):
+        return SpeechCleanupDecisionOk(
+            current_cleanup.id, submitted_choice or current_cleanup.decision
+        )
+    return None
+
+
 def resolve_next_audio_mode(strategy: Any, item: PlanItem) -> str | None:
     """The `PlanItem.audio_mode` a strategy's `audio_strategy` implies.
 

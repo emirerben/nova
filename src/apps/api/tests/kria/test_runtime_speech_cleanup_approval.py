@@ -648,3 +648,105 @@ async def test_restore_snapshot_if_present_is_a_noop_without_one(
         )
         is None
     )
+
+
+def _patch_enforce(monkeypatch: pytest.MonkeyPatch, row: SpeechCleanupAnalysis) -> None:
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_mode", "enforce")
+    monkeypatch.setattr(settings, "speech_cleanup_preflight_rollout_percent", 100)
+    monkeypatch.setattr(
+        "app.services.plan_item_media.resolve_item_narration",
+        lambda *a, **k: _resolution(),
+    )
+    monkeypatch.setattr(
+        "app.services.speech_cleanup_preflight.current_analysis_async",
+        AsyncMock(return_value=row),
+    )
+
+
+async def _followup(body: ApprovalDecisionBody):
+    db = SimpleNamespace(commit=AsyncMock())
+    return await _apply_strategy_approval_media(
+        db,
+        thread=_thread(),
+        item=_item(),
+        strategy_payload={"audio_strategy": "licensed_music"},
+        body=body,
+        execution=SimpleNamespace(result={}),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("decision", ["clean", "keep_original"])
+async def test_followup_approval_reuses_recorded_decision(
+    monkeypatch: pytest.MonkeyPatch, decision: str
+) -> None:
+    row = _row(status="ready", candidate_count=3)
+    row.decision = decision
+    _patch_enforce(monkeypatch, row)
+
+    result = await _followup(_body(speech_cleanup_aware=True))
+
+    assert result.speech_cleanup_stash == {"analysis_id": str(row.id), "choice": decision}
+
+
+@pytest.mark.asyncio
+async def test_followup_approval_reuses_no_findings_with_no_choice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = _row(status="no_findings", candidate_count=0)
+    _patch_enforce(monkeypatch, row)
+
+    result = await _followup(_body(speech_cleanup_aware=True))
+
+    assert result.speech_cleanup_stash == {"analysis_id": str(row.id), "choice": None}
+
+
+@pytest.mark.asyncio
+async def test_followup_approval_without_recorded_decision_still_409(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = _row(status="ready", candidate_count=3)
+    _patch_enforce(monkeypatch, row)
+
+    with pytest.raises(RuntimeFailure) as failure:
+        await _followup(_body(speech_cleanup_aware=True))
+
+    # Nothing filled: the id fence fires first (id omitted), as before.
+    assert failure.value.code == "speech_cleanup_analysis_changed"
+
+
+@pytest.mark.asyncio
+async def test_followup_approval_explicit_wrong_id_still_409(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = _row(status="ready", candidate_count=3)
+    row.decision = "clean"
+    _patch_enforce(monkeypatch, row)
+
+    with pytest.raises(RuntimeFailure) as failure:
+        await _followup(_body(speech_cleanup_aware=True, speech_cleanup_analysis_id=uuid.uuid4()))
+
+    assert failure.value.code == "speech_cleanup_analysis_changed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [
+        ("running", "speech_cleanup_analysis_changed"),
+        ("queued", "speech_cleanup_analysis_changed"),
+        ("failed", "speech_cleanup_analysis_changed"),
+    ],
+)
+async def test_followup_approval_not_reused_while_in_flight_or_failed(
+    monkeypatch: pytest.MonkeyPatch, status: str, code: str
+) -> None:
+    row = _row(status=status, candidate_count=3)
+    row.decision = "clean"
+    _patch_enforce(monkeypatch, row)
+
+    with pytest.raises(RuntimeFailure) as failure:
+        await _followup(_body(speech_cleanup_aware=True))
+
+    # Nothing was filled, so the unchanged fence (missing id) still fires.
+    assert failure.value.code == code

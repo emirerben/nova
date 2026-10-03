@@ -62,6 +62,7 @@ from app.services.speech_cleanup_decision import (
     evaluate_enforce_mode_decision,
     legacy_default_decision,
     resolve_next_audio_mode,
+    reuse_recorded_cleanup_decision,
 )
 
 log = structlog.get_logger()
@@ -943,11 +944,34 @@ async def _apply_strategy_approval_media(
             preflight_analysis_id,
         )
 
+    submitted_analysis_id = body.speech_cleanup_analysis_id
+    submitted_choice = body.speech_cleanup_choice
+    if submitted_analysis_id is None or submitted_choice is None:
+        # Follow-up approval after the creator already chose: the projection
+        # stopped asking, so the client sends neither. Reuse the recorded one.
+        reusable = reuse_recorded_cleanup_decision(
+            await current_analysis_async(db, item.id, for_update=True),
+            source_policy_fingerprint=(
+                resolution.source.source_policy_fingerprint if resolution.source else None
+            ),
+            submitted_analysis_id=submitted_analysis_id,
+            submitted_choice=submitted_choice,
+        )
+        if reusable is not None:
+            log.info(
+                "kria_speech_cleanup_recorded_decision_reused",
+                item_id=str(item.id),
+                analysis_id=str(reusable.analysis_id),
+                choice=reusable.choice,
+            )
+            submitted_analysis_id = reusable.analysis_id
+            submitted_choice = reusable.choice
+
     result = await evaluate_enforce_mode_decision(
         db,
         item,
-        cleanup_analysis_id=body.speech_cleanup_analysis_id,
-        cleanup_choice=body.speech_cleanup_choice,
+        cleanup_analysis_id=submitted_analysis_id,
+        cleanup_choice=submitted_choice,
         resolution=resolution,
     )
     if isinstance(result, SpeechCleanupDecisionConflict):

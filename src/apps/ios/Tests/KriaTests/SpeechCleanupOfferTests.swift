@@ -81,6 +81,22 @@ final class SpeechCleanupOfferTests: XCTestCase {
         XCTAssertEqual(offer, .plain)
     }
 
+    func testPlainAfterRecordedChoiceStillCarriesAnalysisID() {
+        let resolved = SpeechCleanupOffer.resolve(cleanup(#"{"applicable": true, "requires_choice": false, "analysis": {"id": "a1", "status": "ready"}}"#))
+        XCTAssertEqual(resolved.offer, .plain)
+        XCTAssertEqual(resolved.analysisID, "a1")
+    }
+
+    func testSurfaceConflictOnlyWhenPlainCardDidNotChange() {
+        let plain: (offer: SpeechCleanupOffer, analysisID: String?) = (.plain, "a1")
+        XCTAssertTrue(shouldSurfaceSpeechCleanupConflict(before: plain, after: plain))
+        XCTAssertFalse(shouldSurfaceSpeechCleanupConflict(before: plain, after: (.checking, "a1")))
+        XCTAssertFalse(shouldSurfaceSpeechCleanupConflict(before: plain, after: (.failed, "a1")))
+        XCTAssertFalse(shouldSurfaceSpeechCleanupConflict(before: plain, after: (.choice(SpeechCleanupStats()), "a1")))
+        XCTAssertFalse(shouldSurfaceSpeechCleanupConflict(before: plain, after: (.plain, "a2")), "New analysis = visible change")
+        XCTAssertFalse(shouldSurfaceSpeechCleanupConflict(before: (.checking, "a1"), after: (.checking, "a1")))
+    }
+
     // MARK: - SpeechCleanupStats.summarySentence
 
     func testSummarySentenceDropsEveryFieldTheServerDidNotSend() {
