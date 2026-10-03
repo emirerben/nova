@@ -19,7 +19,7 @@ import app.routes.generative_jobs as gj
 from app.kria.device_render import make_device_request
 from app.kria.recipes_v2 import EditRecipeV2
 from app.pipeline.phone_narrated_plan import compile_phone_narrated_plan
-from app.services.client_protocol import set_client_protocol
+from app.services.client_protocol import clear_request_context, set_client_protocol
 from app.services.device_render import device_status, pin_device_request
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD
 from app.services.phone_voiceover_timeline import (
@@ -52,9 +52,9 @@ _MIN_PROTOCOL = 3
 
 @pytest.fixture(autouse=True)
 def _reset_protocol():
-    set_client_protocol(None)
+    clear_request_context()
     yield
-    set_client_protocol(None)
+    clear_request_context()
 
 
 def _enable(monkeypatch, *, lanes: bool = True, protocol: int | None = _MIN_PROTOCOL) -> None:
@@ -528,3 +528,84 @@ def test_middleware_exposes_the_declared_client_protocol_to_handlers():
     assert declared.json() == {"protocol": 3}
     junk = client.get("/__kri281_protocol_probe", headers={"X-Kria-Client-Protocol": "abc"})
     assert junk.json() == {"protocol": None}
+
+
+# --- worker / sync callers (no HTTP request) ----------------------------------------
+
+
+def test_worker_context_judges_lanes_on_server_gates_only(monkeypatch):
+    _enable(monkeypatch)
+    _arm_every_editor_lane(monkeypatch)
+    clear_request_context()  # Celery / sync runtime: no request, so no build to qualify
+    job = _job(resolved_archetype="narrated")
+    variant = {**job.assembly_plan["variants"][0], "render_destination": "device"}
+    caps = gj._editor_capabilities(job, variant)
+    assert caps["sfx"] is True and caps["overlays"] is True
+    # ...but the server-side gates still apply.
+    monkeypatch.setattr(gj.settings, "phone_voiceover_editor_lanes_enabled", False)
+    assert gj._editor_capabilities(job, variant)["sfx"] is False
+
+
+def test_sfx_paths_resolve_for_voiceover_variants_in_worker_and_request(monkeypatch):
+    _enable(monkeypatch)
+    _fake_inspect(monkeypatch)
+    job, vid = voiceover_job()
+    save(job, vid, sound_effects=[_sfx_payload()])
+    variant = dict(job.assembly_plan["variants"][0])
+    # Persisted rows carry a real path from the Save; a placeholder one needs a catalog read.
+    variant["sound_effects"] = [
+        {
+            **variant["sound_effects"][0],
+            "src_gcs_path": "sound-effects/pop/pop",
+            "source": "phone_lane",
+        }
+    ]
+    assert gj._phone_subtitled_sfx_ids_missing_paths(job, variant) == {"pop"}
+    clear_request_context()
+    assert gj._phone_subtitled_sfx_ids_missing_paths(job, variant) == {"pop"}
+    # An old build in a request still gets nothing.
+    set_client_protocol(_MIN_PROTOCOL - 1)
+    assert gj._phone_subtitled_sfx_ids_missing_paths(job, variant) == set()
+
+
+# --- montage crossfade overlaps -------------------------------------------------------
+
+
+def test_montage_crossfade_overlaps_are_not_double_counted(monkeypatch):
+    from app.kria.recipes import Transition
+
+    recipe = _montage_recipe()
+    fields = {name: getattr(recipe, name) for name in type(recipe).model_fields}
+    tracks = []
+    for track in recipe.tracks:
+        if track.id == "montage":
+            clips = []
+            shift = 0.0
+            for i, clip in enumerate(track.clips):
+                if i:
+                    shift += 0.5  # each later clip starts 0.5 s into the previous one
+                clips.append(
+                    clip.model_copy(
+                        update={
+                            "timeline_start": clip.timeline_start - shift,
+                            "transition": Transition(kind="crossfade", duration=0.5) if i else None,
+                        }
+                    )
+                )
+            track = track.model_copy(update={"clips": clips})
+        tracks.append(track)
+    fields["tracks"] = tracks
+    overlapped = EditRecipeV2(**fields)
+
+    job, vid = voiceover_job(archetype="voiceover")
+    pin_device_request(
+        job,
+        make_device_request(job_id=job.id, variant_id=vid, revision=2, recipe=overlapped),
+        base_generation="first",
+    )
+    timeline = gj.dispatch_get_timeline(job, vid, sign_url=lambda path, ttl: f"https://s/{path}")
+
+    assert timeline["total_duration_s"] == pytest.approx(overlapped.duration)
+    slots = timeline["slots"]
+    assert [s["transition_after"] for s in slots] == ["crossfade", "crossfade", "cut"]
+    assert slots[0]["transition_duration_s"] == pytest.approx(0.5)

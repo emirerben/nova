@@ -153,10 +153,18 @@ def voiceover_ai_timeline(
     """
     rows = _clip_rows(recipe, _VOICEOVER_TRACK_ID, bindings, pool)
     slots: list[dict] = []
-    for clip, index, binding in rows:
+    for position, (clip, index, binding) in enumerate(rows):
         duration = round(float(clip.source_duration / clip.rate), 3)
         if duration <= 0:
             continue
+        # The montage compiler overlaps a clip with the previous one by its
+        # transition; carry that as `transition_after` on the LEFT slot (the
+        # guided-story projection's convention) so durations don't double-count.
+        overlap_s = 0.0
+        if position + 1 < len(rows):
+            following = rows[position + 1][0]
+            overlap_s = max(0.0, clip.timeline_start + duration - following.timeline_start)
+        crossfade = overlap_s >= 0.1
         slots.append(
             {
                 "slot_id": clip.id,
@@ -167,6 +175,8 @@ def voiceover_ai_timeline(
                 "duration_beats": None,
                 "order": len(slots),
                 "removed": False,
+                "transition_after": "crossfade" if crossfade else "cut",
+                "transition_duration_s": round(min(1.0, overlap_s), 3) if crossfade else None,
             }
         )
     return {"beat_grid": [], "slots": slots} if slots else None
@@ -200,10 +210,16 @@ def project_phone_voiceover_timeline(
         return {
             "pool": pool,
             "slots": projected[2],
+            "total_duration_s": round(float(recipe.duration), 3),
             "narrated_timings": projected[0],
             "narrated_clip_assignments": projected[1],
         }
     timeline = voiceover_ai_timeline(recipe, bindings, pool)
     if not timeline:
         return None
-    return {"pool": pool, "slots": timeline["slots"], "ai_timeline": timeline}
+    return {
+        "pool": pool,
+        "slots": timeline["slots"],
+        "ai_timeline": timeline,
+        "total_duration_s": round(float(recipe.duration), 3),
+    }

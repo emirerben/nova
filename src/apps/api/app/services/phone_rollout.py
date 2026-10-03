@@ -418,7 +418,7 @@ def phone_subtitled_editor_lanes_supported() -> bool:
 PHONE_VOICEOVER_EDITOR_FEATURES: tuple[str, ...] = PHONE_SUBTITLED_EDITOR_FEATURES
 
 
-def phone_voiceover_editor_lanes_supported(*, require_client: bool = True) -> bool:
+def phone_voiceover_editor_lanes_supported(*, require_client: bool | None = None) -> bool:
     """Single source of truth for "can a phone-rendered Voiceover variant
     (`narrated` or montage `voiceover`) carry editable `sound_effects` /
     `media_overlays` right now" (KRI-281, mirrors KRI-182 for Talking).
@@ -435,14 +435,19 @@ def phone_voiceover_editor_lanes_supported(*, require_client: bool = True) -> bo
         lane kill switches, cloud and phone alike).
       - every feature in `PHONE_VOICEOVER_EDITOR_FEATURES` is in
         `phone_render_verified_features` (device-parity gate).
-      - ``require_client``: the request declares an `X-Kria-Client-Protocol`
-        of at least `phone_voiceover_editor_min_client_protocol`, i.e. an app
-        build that hydrates the locked source clips these lanes edit. Older
-        builds (and any non-request caller) keep the lanes closed. Save passes
-        ``require_client=False``: it only needs the server-side gates, so a
-        worker-driven chat edit is not refused for lacking a request header.
+      - the app-build gate, when it applies: the request declares an
+        `X-Kria-Client-Protocol` of at least
+        `phone_voiceover_editor_min_client_protocol`, i.e. a build that
+        hydrates the locked source clips these lanes edit. ``require_client``
+        ``None`` (default) applies it only inside an HTTP request, so older
+        builds stay closed while worker / sync callers (copilot ops, runtime
+        approvals, SFX path resolution) are judged on the server-side gates
+        alone; pass ``True``/``False`` to force it. Save passes ``False``.
     """
-    from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
 
     verified = set(settings.phone_render_verified_features)
     if not (
@@ -452,6 +457,8 @@ def phone_voiceover_editor_lanes_supported(*, require_client: bool = True) -> bo
         and all(feature in verified for feature in PHONE_VOICEOVER_EDITOR_FEATURES)
     ):
         return False
+    if require_client is None:
+        require_client = in_http_request()
     if not require_client:
         return True
     protocol = current_client_protocol()

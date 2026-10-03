@@ -5806,6 +5806,12 @@ async def dispatch_set_narrated_bed_level(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Background sound can only be adjusted on narrated videos.",
         )
+    if variant.get("render_destination") == "device":
+        # A phone-rendered narrated video has no cloud base to re-mix (KRI-281).
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Background sound can't be re-mixed on a video rendered on your phone.",
+        )
     render_gen_id = _mark_variant_rendering(job, variant_id)
     await db.commit()
     from app.tasks.generative_build import reburn_narrated_bed_level  # noqa: PLC0415
@@ -7716,6 +7722,7 @@ def _dispatch_rendered_timeline(
         )
     else:
         clip_paths = list((job.all_candidates or {}).get("clip_paths") or [])
+    phone_total_duration_s: float | None = None
     if not ai_slots and not user_slots and is_phone_voiceover_lane_variant(variant):
         # KRI-281: a phone Voiceover edit has no cloud slot layout; its cut lives
         # in the pinned device recipe. Project it (read-only) so the editor lists
@@ -7730,6 +7737,7 @@ def _dispatch_rendered_timeline(
         if phone_timeline:
             ai_slots = phone_timeline["slots"]
             clip_paths = list(phone_timeline["pool"])
+            phone_total_duration_s = phone_timeline["total_duration_s"]
     projected_story_duration_s: float | None = None
     # Guided stories deliberately have no editable legacy ``ai_timeline``;
     # their immutable, verified cut lives in ``story_timeline`` instead.  Still
@@ -7799,6 +7807,10 @@ def _dispatch_rendered_timeline(
     total = _active_timeline_duration_s(active)
     if projected_story_duration_s is not None:
         total = projected_story_duration_s
+    if phone_total_duration_s is not None:
+        # The pinned recipe's own length is authoritative (it already accounts for
+        # montage crossfade overlaps and retimed clips).
+        total = phone_total_duration_s
     used_indices = {s.get("clip_index") for s in active}
 
     # Source durations are only known where the worker probed them (ai_timeline).
