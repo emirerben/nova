@@ -358,8 +358,13 @@ public struct PreviewComposition: @unchecked Sendable {
             parameter.setVolume(volume, at: .zero)
             let fadeIn = min(recipe.audio.fadeIn, duration)
             let fadeOut = min(recipe.audio.fadeOut, duration - fadeIn)
-            if fadeIn > 0 { parameter.setVolumeRamp(fromStartVolume: 0, toEndVolume: volume, timeRange: CMTimeRange(start: .zero, duration: time(fadeIn))) }
-            if fadeOut > 0 { parameter.setVolumeRamp(fromStartVolume: volume, toEndVolume: 0, timeRange: CMTimeRange(start: time(duration - fadeOut), duration: time(fadeOut))) }
+            if recipe.audio.duckMusicDuringSpeech, let speechDuck = AudioDuckEnvelope.speech(
+                windows: recipe.tracks.filter { $0.kind == .audio }.flatMap(\.clips).map { ($0.timelineStart, $0.timelineStart + $0.sourceDuration / $0.rate) }) {
+                applyMusicBedGain(parameter, volume: volume, duration: duration, fadeIn: fadeIn, fadeOut: fadeOut, duck: speechDuck)
+            } else {
+                if fadeIn > 0 { parameter.setVolumeRamp(fromStartVolume: 0, toEndVolume: volume, timeRange: CMTimeRange(start: .zero, duration: time(fadeIn))) }
+                if fadeOut > 0 { parameter.setVolumeRamp(fromStartVolume: volume, toEndVolume: 0, timeRange: CMTimeRange(start: time(duration - fadeOut), duration: time(fadeOut))) }
+            }
             audioParameters.append(parameter)
         }
         // --- Kria branding -------------------------------------------------

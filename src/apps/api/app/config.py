@@ -188,6 +188,26 @@ class Settings(BaseSettings):
     # PHONE_SUBTITLED_EDITOR_LANES_ENABLED=false --app nova-video` + `fly
     # machine restart <id>` (api + worker).
     phone_subtitled_editor_lanes_enabled: bool = False
+    # KRI-281 (editable phone Voiceover edits): the sound-effects and Visuals
+    # (media overlay) editor lanes for a phone-rendered `narrated` (recorded
+    # voiceover over a script) or montage `voiceover` variant, mirroring
+    # KRI-182 for Talking. `phone_rollout.phone_voiceover_editor_lanes_supported()`
+    # is the single source of truth: this flag AND `sound_effects_enabled` AND
+    # `media_overlays_enabled` AND every feature in
+    # `phone_rollout.PHONE_VOICEOVER_EDITOR_FEATURES` verified AND the
+    # requesting app declares `X-Kria-Client-Protocol` >=
+    # `phone_voiceover_editor_min_client_protocol` (older builds never hydrate
+    # the source clips these lanes need, so they stay closed). Capabilities and
+    # Save flip together. False (default): byte-identical, `sfx`/`overlays`
+    # stay closed on every device variant and Save 422s those sections.
+    # Rollback: `fly secrets set PHONE_VOICEOVER_EDITOR_LANES_ENABLED=false
+    # --app nova-video` + `fly machine restart <id>` (api + worker).
+    phone_voiceover_editor_lanes_enabled: bool = False
+    # Client protocol (`X-Kria-Client-Protocol`) the app build must declare for
+    # the KRI-281 lanes to open. The iOS build that hydrates narrated/voiceover
+    # source clips bumps its protocol to this value; builds that predate it
+    # send a lower one (or none) and keep the lanes closed.
+    phone_voiceover_editor_min_client_protocol: int = 3
     # KRI-183 (video Visuals as PiP): when this flag AND
     # `phone_rollout.phone_subtitled_overlays_supported()` hold AND
     # "visualVideos" is in `phone_render_verified_features` -- i.e.

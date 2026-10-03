@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from hashlib import sha256
 from typing import Any, ClassVar
 
@@ -39,6 +40,95 @@ def _sanitize_text(value: str) -> str:
     return _FENCE.sub("'''", value)
 
 
+_QUOTE_TABLE = str.maketrans(
+    {
+        "‘": "'",
+        "’": "'",
+        "‚": "'",
+        "‛": "'",
+        "′": "'",
+        "“": '"',
+        "”": '"',
+        "„": '"',
+        "‟": '"',
+        "«": '"',
+        "»": '"',
+        "–": "-",
+        "—": "-",
+        "−": "-",
+    }
+)
+_CREATOR_TEXT_MAX = 60
+_LABEL_PREVIEW_CHARS = 40
+_QUESTION_MAX_CHARS = 400
+_KNOWN_OPS = {"label", "group", "order", "include", "caption"}
+
+
+def _norm(value: str) -> str:
+    """Compare creator text the way the model saw it, tolerant of typography.
+
+    The prompt shows the model ``_sanitize_text(...)`` output, and models freely
+    swap curly/straight quotes, dash styles and line breaks when copying. None of
+    that changes what the creator wrote, so provenance is checked on a form with
+    sanitization applied, quotes/dashes unified and whitespace collapsed.
+    """
+    value = unicodedata.normalize("NFKC", _sanitize_text(value)).translate(_QUOTE_TABLE)
+    return " ".join(value.split())
+
+
+class ClipIntentSchemaError(SchemaError):
+    """Planner output failed validation.
+
+    ``error_class`` is a closed vocabulary (never model or creator text) so a
+    sensitive agent can still record WHY a run failed. ``dropped`` carries short
+    attribute previews of instructions that could not be verified, used only to
+    word a specific question back to the creator.
+    """
+
+    def __init__(self, message: str, *, error_class: str, dropped: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.error_class = error_class
+        self.dropped = dropped or []
+
+
+class _IntentRejected(Exception):  # noqa: N818 - internal control flow
+    def __init__(self, error_class: str, detail: str) -> None:
+        super().__init__(error_class)
+        self.error_class = error_class
+        self.detail = detail
+
+
+def _preview(raw_intent: object) -> str:
+    """Short, sanitized description of a returned intent, for a creator question."""
+    if not isinstance(raw_intent, dict):
+        return "an instruction"
+    attribute = raw_intent.get("attribute")
+    op = raw_intent.get("op")
+    text = " ".join(_sanitize_text(attribute).split()) if isinstance(attribute, str) else ""
+    text = text[:_LABEL_PREVIEW_CHARS].strip() or "an instruction"
+    return f"{op}: {text}" if isinstance(op, str) and op in _KNOWN_OPS else text
+
+
+def salvage_question(kept: int, labels: list[str], overflow: int = 0) -> str:
+    """One focused question naming what could not be verified (labels are previews)."""
+    named = "; ".join(f'"{label}"' for label in labels[:3])
+    extra = len(labels) - 3
+    if extra > 0:
+        named += f" (and {extra} more)"
+    pieces: list[str] = []
+    if named:
+        pieces.append(f"I couldn't safely verify {named}")
+    if overflow:
+        pieces.append(
+            f"I can apply at most {MAX_CLIP_INTENTS} clip instructions at a time, "
+            f"so {overflow} more weren't included"
+        )
+    lead = f"I understood {kept} of your clip instructions"
+    body = "; ".join(pieces)
+    text = f"{lead}. {body}." if body else f"{lead}."
+    return (text + " Please restate just those so I can add them.")[:_QUESTION_MAX_CHARS]
+
+
 class PlannedClipIntent(ClipIntent):
     """A clip operation with its exact creator-written provenance."""
 
@@ -71,6 +161,12 @@ class ClipIntentPlannerInput(BaseModel):
 class ClipIntentPlannerOutput(BaseModel):
     intents: list[PlannedClipIntent] = Field(default_factory=list, max_length=MAX_CLIP_INTENTS)
     question: str | None = Field(default=None, max_length=300)
+    # Parser-authored (never model-authored): set when some instructions were
+    # dropped or exceeded the cap. The kept ``intents`` are valid, but the
+    # caller must ask this instead of silently acting on a subset.
+    salvage_question: str | None = Field(
+        default=None, max_length=500, exclude_if=lambda value: value is None
+    )
 
 
 class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutput]):
@@ -134,64 +230,51 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         try:
             data = json.loads(raw_text)
         except (TypeError, ValueError) as exc:
-            raise SchemaError(f"clip_intent_planner: invalid JSON — {exc}") from exc
+            raise ClipIntentSchemaError(
+                f"clip_intent_planner: invalid JSON — {exc}", error_class="invalid_json"
+            ) from exc
         if not isinstance(data, dict):
-            raise SchemaError("clip_intent_planner: response is not a JSON object")
+            raise ClipIntentSchemaError(
+                "clip_intent_planner: response is not a JSON object", error_class="not_object"
+            )
         raw_intents = data.get("intents")
         if not isinstance(raw_intents, list):
-            raise SchemaError("clip_intent_planner: intents must be a list")
+            raise ClipIntentSchemaError(
+                "clip_intent_planner: intents must be a list", error_class="intents_not_list"
+            )
         question = data.get("question")
         if question is not None and (not isinstance(question, str) or not question.strip()):
-            raise SchemaError("clip_intent_planner: question must be a non-empty string or null")
+            raise ClipIntentSchemaError(
+                "clip_intent_planner: question must be a non-empty string or null",
+                error_class="bad_question",
+            )
 
-        sources = (input.creator_request, input.latest_user_message or "")
-        intents: list[PlannedClipIntent] = []
+        # Validate provenance against the text the model actually saw (sanitized),
+        # tolerant of quote/dash/whitespace typography.
+        sources = tuple(
+            _norm(source) for source in (input.creator_request, input.latest_user_message or "")
+        )
+        kept: list[tuple[PlannedClipIntent, object]] = []
+        dropped: list[str] = []
+        drop_classes: list[str] = []
+        failures: list[str] = []
         seen: set[tuple[str, str, str | None, str | None, str | None, str, str | None]] = set()
         seen_ids: set[str] = set()
         for index, raw_intent in enumerate(raw_intents):
-            if not isinstance(raw_intent, dict):
-                raise SchemaError(f"clip_intent_planner: intents[{index}] is not an object")
-            if "label_source" in raw_intent and raw_intent["label_source"] is None:
-                # Flash copies the template's nullable neighbours and writes
-                # `"label_source": null`; null means the field's default, "clip".
-                raw_intent = {k: v for k, v in raw_intent.items() if k != "label_source"}
             try:
-                intent = PlannedClipIntent.model_validate(raw_intent)
-            except ValidationError as exc:
-                raise SchemaError(
-                    f"clip_intent_planner: invalid intent at {index} — {exc}"
-                ) from exc
-            if not any(intent.source_quote in source for source in sources):
-                raise SchemaError(
-                    f"clip_intent_planner: intent {intent.intent_id!r} "
-                    "source_quote is not creator text"
-                )
-            if intent.creator_text is not None and (
-                intent.creator_text not in intent.source_quote
-                or not any(intent.creator_text in source for source in sources)
-            ):
-                raise SchemaError(
-                    f"clip_intent_planner: intent {intent.intent_id!r} "
-                    "creator_text is not source-backed"
-                )
-            if intent.op != "caption" and intent.caption_attribute is not None:
-                raise SchemaError(
-                    f"clip_intent_planner: intent {intent.intent_id!r} "
-                    f"has caption_attribute for {intent.op}"
-                )
-            if intent.order_by is not None and not input.clip_facts:
-                # The flag-off prompt never teaches `order_by`, so a stray one behaves as if the
-                # field did not exist: the intent is dropped rather than failing the whole
-                # output (which would retry the model for nothing).
+                intent = self._build_intent(raw_intent, sources, input)
+            except _IntentRejected as rejected:
+                dropped.append(_preview(raw_intent))
+                drop_classes.append(rejected.error_class)
+                failures.append(f"intents[{index}]: {rejected.detail}")
                 continue
-            if intent.op != "order" and intent.position is not None:
-                raise SchemaError(
-                    f"clip_intent_planner: intent {intent.intent_id!r} has position for {intent.op}"
-                )
+            if intent is None:
+                continue
             if intent.intent_id in seen_ids:
-                raise SchemaError(
-                    f"clip_intent_planner: duplicate intent_id {intent.intent_id!r} at {index}"
-                )
+                dropped.append(_preview(raw_intent))
+                drop_classes.append("duplicate_intent_id")
+                failures.append(f"intents[{index}]: intent_id must be unique")
+                continue
             key = (
                 intent.op,
                 intent.attribute.casefold(),
@@ -202,20 +285,105 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
                 intent.transcript_kind,
             )
             if key in seen:
-                raise SchemaError(f"clip_intent_planner: duplicate intent at {index}")
+                continue  # a verbatim repeat adds nothing; not worth failing the output
             seen.add(key)
             seen_ids.add(intent.intent_id)
-            intents.append(intent)
-        if question is not None and intents:
-            raise SchemaError("clip_intent_planner: question cannot accompany partial intents")
+            kept.append((intent, raw_intent))
+
+        if question is not None:
+            if kept:
+                raise ClipIntentSchemaError(
+                    "clip_intent_planner: question cannot accompany partial intents",
+                    error_class="question_with_intents",
+                )
+            return ClipIntentPlannerOutput(intents=[], question=question.strip())
+        if not kept and dropped:
+            raise ClipIntentSchemaError(
+                "clip_intent_planner: every intent was rejected — " + "; ".join(failures[:3]),
+                error_class=drop_classes[0],
+                dropped=dropped,
+            )
+        # Over the cap: keep the first valid ones in the creator's order and ask about
+        # the rest instead of failing the whole inventory.
+        overflow = [_preview(raw) for _, raw in kept[MAX_CLIP_INTENTS:]]
+        kept = kept[:MAX_CLIP_INTENTS]
+        salvage = None
+        if dropped or overflow:
+            salvage = salvage_question(len(kept), dropped + overflow, len(overflow))
         try:
             return ClipIntentPlannerOutput(
-                intents=intents, question=question.strip() if question else None
+                intents=[intent for intent, _ in kept], salvage_question=salvage
             )
         except ValidationError as exc:
-            raise SchemaError(f"clip_intent_planner: output validation — {exc}") from exc
+            raise ClipIntentSchemaError(
+                f"clip_intent_planner: output validation — {exc}",
+                error_class="output_validation",
+            ) from exc
+
+    @staticmethod
+    def _build_intent(
+        raw_intent: object,
+        sources: tuple[str, ...],
+        input: ClipIntentPlannerInput,  # noqa: A002
+    ) -> PlannedClipIntent | None:
+        """One validated intent; None drops it silently; ``_IntentRejected`` drops it loudly."""
+        if not isinstance(raw_intent, dict):
+            raise _IntentRejected("intent_not_object", "is not an object")
+        # Flash copies the template's nullable neighbours and writes
+        # `"label_source": null`; null means the field's default, "clip".
+        data = {k: v for k, v in raw_intent.items() if not (k == "label_source" and v is None)}
+        # Benign shape repairs: none of these change what the creator asked for.
+        if isinstance(data.get("creator_text"), str):
+            data["creator_text"] = " ".join(data["creator_text"].split()) or None
+        if data.get("op") != "caption" or data.get("creator_text") is not None:
+            data["caption_attribute"] = None  # exact copy wins over an authored topic
+        if data.get("op") != "order":
+            data["position"] = None
+        creator_text = data.get("creator_text")
+        if isinstance(creator_text, str) and len(creator_text) > _CREATOR_TEXT_MAX:
+            raise _IntentRejected(
+                "creator_text_too_long",
+                f"creator_text is over {_CREATOR_TEXT_MAX} characters; copy only the exact"
+                " on-screen words, not the whole sentence",
+            )
+        try:
+            intent = PlannedClipIntent.model_validate(data)
+        except ValidationError as exc:
+            fields = sorted(
+                {
+                    re.sub(r"[^a-z_]", "", str(err["loc"][0]).lower())
+                    for err in exc.errors()
+                    if err.get("loc")
+                }
+            )
+            # pydantic `msg` strings carry no input values (those live in `input`),
+            # so they are safe to relay to the retry prompt.
+            messages = "; ".join(str(err.get("msg", "")) for err in exc.errors())[:200]
+            raise _IntentRejected(
+                "intent_invalid:" + (",".join(fields) or "model"),
+                f"failed validation on {', '.join(fields) or 'intent'} ({messages})",
+            ) from exc
+        quote = _norm(intent.source_quote)
+        if not quote or not any(quote in source for source in sources):
+            raise _IntentRejected(
+                "source_quote_not_creator_text",
+                "source_quote is not an exact contiguous substring of the creator text",
+            )
+        if intent.creator_text is not None:
+            text = _norm(intent.creator_text)
+            if text not in quote or not any(text in source for source in sources):
+                raise _IntentRejected(
+                    "creator_text_not_source_backed",
+                    "creator_text must be exact creator words inside source_quote",
+                )
+        if intent.order_by is not None and not input.clip_facts:
+            # The flag-off prompt never teaches `order_by`, so a stray one behaves as if the
+            # field did not exist: dropped without retrying the model for nothing.
+            return None
+        return intent
 
     def schema_clarification(self) -> str:
+        hint = getattr(self, "_last_schema_error", "")
         return (
             "\n\nReturn only the requested JSON. Every intent needs an exact "
             "source_quote copied from the creator text and a non-empty attribute; "
@@ -223,6 +391,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             "attribute is always the target clips/chapter. When creator_text has "
             "exact copy, caption_attribute must be null; otherwise caption_attribute "
             "is only the factual topic to author."
+            + (f"\nFix this schema error: {hint}" if hint else "")
         )
 
     def refusal_clarification(self) -> str:

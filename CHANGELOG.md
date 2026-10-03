@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.28.0] - 2026-10-03
+
+### Changed
+- KRI-282: iOS speech-excerpt audio (crossfade, music duck, clip-audio lane) (#1337) <!-- release-pr: 1337 -->
+
+## [0.78.27.0] - 2026-10-03
+
+### Changed
+- feat(phone): clip timeline + SFX/Visuals lanes for phone Voiceover edits (KRI-281) (#1334) <!-- release-pr: 1334 -->
+
+## [0.78.26.0] - 2026-10-03
+
+### Changed
+- fix(planner): robust long multi-instruction clip requests (KRI-282) (#1336) <!-- release-pr: 1336 -->
+
 ## [0.78.25.0] - 2026-10-03
 
 ### Changed

@@ -114,7 +114,9 @@ struct AudioCutHandles: Equatable, Sendable {
     /// inside half the removed span and a quarter of either clip.
     static func plan(_ tracks: [TimelineTrack]) -> [String: AudioCutHandles] {
         var result: [String: AudioCutHandles] = [:]
-        for track in tracks where track.kind == .video {
+        // KRI-282: audio-kind tracks qualify too, so back-to-back speech excerpts
+        // lifted from one take join smoothly instead of only declicking.
+        for track in tracks where track.kind == .video || track.kind == .audio {
             let clips = track.clips.sorted { $0.timelineStart < $1.timelineStart }
             for (outgoing, incoming) in zip(clips, clips.dropFirst()) {
                 let removed = incoming.sourceStart - (outgoing.sourceStart + outgoing.sourceDuration)
@@ -250,6 +252,27 @@ let audioEdgeFade: TimeInterval = 0.025
 /// each borrowed edge fades over twice its handle on an equal-power curve,
 /// centred on the original boundary, so the two sides overlap instead of each
 /// declicking to silence.
+/// KRI-282: the music bed's gain with the speech duck folded in. Only called
+/// when a duck exists; the plain bed keeps its original set-point/fade code so
+/// recipes without the opt-in render byte-identically. Fade-in/out and the duck
+/// are piecewise linear, so ramps between every breakpoint of either reproduce
+/// their product closely.
+func applyMusicBedGain(_ parameter: AVMutableAudioMixInputParameters, volume: Float, duration: Double, fadeIn: Double, fadeOut: Double, duck: AudioDuckEnvelope) {
+    func cm(_ seconds: Double) -> CMTime { CMTime(seconds: seconds, preferredTimescale: 60_000) }
+    func level(_ time: Double) -> Float {
+        var fade = 1.0
+        if fadeIn > 0 { fade = min(fade, time / fadeIn) }
+        if fadeOut > 0 { fade = min(fade, (duration - time) / fadeOut) }
+        return volume * Float(max(0, min(1, fade)) * duck.gain(at: time))
+    }
+    let breaks = [0, fadeIn, duration - fadeOut, duration].filter { $0 >= 0 && $0 <= duration } + duck.times(in: 0...duration)
+    let marks = Set(breaks).sorted()
+    for (from, to) in zip(marks, marks.dropFirst()) {
+        let range = CMTimeRange(start: cm(from), end: cm(to))
+        if range.duration > .zero { parameter.setVolumeRamp(fromStartVolume: level(from), toEndVolume: level(to), timeRange: range) }
+    }
+}
+
 func applyAudioGain(_ parameter: AVMutableAudioMixInputParameters, clip: TimelineClip, gain: Double, windows: [AudioMuteWindow], duck: AudioDuckEnvelope? = nil, cut: AudioCutHandles = .none) {
     func cm(_ seconds: Double) -> CMTime { CMTime(seconds: seconds, preferredTimescale: 60_000) }
     func ramp(_ from: Float, _ to: Float, _ start: Double, _ end: Double) {

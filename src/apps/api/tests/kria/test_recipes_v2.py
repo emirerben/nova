@@ -164,6 +164,19 @@ def test_mute_window_roundtrip_capability_and_timeline_boundary():
         EditRecipeV2.model_validate(document)
 
 
+def test_duck_music_during_speech_is_optional_and_derives_audio_ducking():
+    document = json.loads(FIXTURE.read_text())
+    recipe = EditRecipeV2.model_validate(document)
+    assert recipe.audio.duck_music_during_speech is False
+    # Default-off is omitted, so existing recipes serialize byte-identically.
+    assert "duck_music_during_speech" not in json.loads(recipe.model_dump_json())["audio"]
+    document["audio"]["duck_music_during_speech"] = True
+    ducked = EditRecipeV2.model_validate(document)
+    assert "audioDucking" in ducked.required_capabilities
+    assert json.loads(ducked.model_dump_json())["audio"]["duck_music_during_speech"] is True
+    assert EditRecipeV2.model_validate_json(ducked.model_dump_json()) == ducked
+
+
 def visual_document():
     document = json.loads(FIXTURE.read_text())
     original = document["asset_manifest"]["assets"][0]

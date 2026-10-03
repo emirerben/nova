@@ -2014,3 +2014,47 @@ of failing at render. The Talking lane is timed to a transcript and ducked under
 speech (KRI-174/181); guided stories and montages have no equivalent grounding, so
 a naive port would place effects blindly. Revisit only with a design for
 transcript-free placement.
+
+## Editing a phone Voiceover video (KRI-281)
+
+Phone-rendered Voiceover videos are `resolved_archetype == "narrated"`
+(`_run_phone_narrated_job`) and montage `"voiceover"`
+(`_run_phone_voiceover_montage_job`). Two things were missing in the native
+editor, both fixed server-side:
+
+**Clip timeline.** Neither writes a cloud slot layout, so the editor had no
+clips (timeline showed only the outro; preview refused to build). The pinned
+device recipe is the source of truth, projected by
+`app/services/phone_voiceover_timeline.py`:
+
+- narrated: `narrated_timings` (`step_id,start_s,end_s,confidence`) +
+  `narrated_clip_assignments` (`step_id,clip_id,participant_key,source_start_s`,
+  `clip_id = "clip_<pool index>"`) plus timeline `slots`.
+- voiceover montage: a read-only `ai_timeline` (`beat_grid: []`, `slots` with
+  `slot_id,clip_index,in_s,duration_s,source_duration_s,order,removed`).
+- `clip_index` indexes the source pool the timeline response lists
+  (`all_candidates["clip_paths"]`, matched to bindings by analysis-proxy path;
+  falls back to `PHONE_SOURCES_FIELD` order when the pool does not cover every
+  binding), never the matcher's clip ids. Pool clips used by a slot are marked
+  `used`.
+- Read-time: `_augment_variant_with_phone_voiceover_timeline` (variants
+  response) and `_dispatch_rendered_timeline` (timeline GET), so existing
+  videos work without a backfill. Write-time: `_run_phone_narrated_job` also
+  persists the narrated rows (voiceover montage `ai_timeline` is read-time only
+  so the chat copilot's timeline ops are unaffected). Cut edits stay locked to
+  the voiceover (`_timeline_ineligibility` unchanged).
+
+**Sound effects + Visuals (Media).** Mirrors KRI-182 for Talking.
+`phone_rollout.phone_voiceover_editor_lanes_supported()` is the single gate:
+`PHONE_VOICEOVER_EDITOR_LANES_ENABLED` AND `SOUND_EFFECTS_ENABLED` AND
+`MEDIA_OVERLAYS_ENABLED` AND device features `PHONE_VOICEOVER_EDITOR_FEATURES`
+verified AND the request's `X-Kria-Client-Protocol` >=
+`PHONE_VOICEOVER_EDITOR_MIN_CLIENT_PROTOCOL` (default 3; older app builds stay
+closed - the header is recorded per request by `app/services/client_protocol.py`).
+The capability clamp and Save share it (Save drops only the header check).
+Save recompiles through `phone_narrated_plan.replace_editor_lanes`, reusing
+`phone_subtitled_plan`'s lane compilers; the clips, voice/music beds, captions
+and mix stay exactly as pinned. Apply: `fly secrets set
+PHONE_VOICEOVER_EDITOR_LANES_ENABLED=true SOUND_EFFECTS_ENABLED=true
+MEDIA_OVERLAYS_ENABLED=true --app nova-video` + restart (api + worker), after
+the iOS build that declares protocol 3 is out. Rollback: set the first to false.

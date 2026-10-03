@@ -37,9 +37,9 @@ final class AudioCutCrossfadeTests: XCTestCase {
         XCTAssertTrue(plan([clip("a", source: 0, duration: 1, at: 0), clip("b", "other", source: 2, duration: 1, at: 1)]).isEmpty)
         // A timeline gap is not a cut.
         XCTAssertTrue(plan([clip("a", source: 0, duration: 1, at: 0), clip("b", source: 2, duration: 1, at: 1.5)]).isEmpty)
-        // Overlays and audio lanes keep their own edges.
+        // Overlays keep their own edges. Audio tracks crossfade same-source
+        // excerpts since KRI-282 (see SpeechExcerptAudioTests).
         XCTAssertTrue(plan([clip("a", source: 0, duration: 1, at: 0), clip("b", source: 2, duration: 1, at: 1)], kind: .overlay).isEmpty)
-        XCTAssertTrue(plan([clip("a", source: 0, duration: 1, at: 0), clip("b", source: 2, duration: 1, at: 1)], kind: .audio).isEmpty)
     }
 
     func testAuthoredTransitionsFadesRatesAndHoldsKeepTheirOwnEdges() {

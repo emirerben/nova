@@ -197,6 +197,21 @@ struct EditorBackgroundMusic: Codable, Equatable, Sendable {
 /// SFX and media overlays intentionally share a tolerant envelope. The API
 /// accepts evolving dictionaries, so known timing fields are typed while all
 /// effect-specific fields remain lossless in `raw`.
+/// KRI-282: a speech excerpt lifted from one clip's own audio and played at a
+/// timeline position over whatever visuals sit there (speech-over-montage).
+/// Read-only in the editor: it is decoded so previews and renders keep it, and
+/// the raw section is preserved untouched on save. Wire section `clip_audio`.
+struct EditorClipAudio: Equatable, Sendable {
+    var id: String
+    var sourceClipIndex: Int
+    var sourceStartS: Double
+    var sourceEndS: Double
+    var startS: Double
+    var gain: Double
+    var fadeInS: Double?
+    var fadeOutS: Double?
+}
+
 struct EditorTimedEffect: Codable, Equatable, Sendable {
     var id: String
     var startS: Double
@@ -285,6 +300,11 @@ struct EditorDocument: Equatable, Sendable {
     var editorState: String
     var deletions: [EditorDeletion]
     var opaqueRecords: [EditorSection: [EditorOpaqueRecord]]
+    /// KRI-282 read-only speech-excerpt lane (see `EditorClipAudio`).
+    var clipAudio: [EditorClipAudio] = []
+    /// Rows of `clip_audio` that did not parse. The renderer refuses these
+    /// rather than silently rendering without the excerpt.
+    var unreadableClipAudio = 0
 
     /// Captions regardless of persisted representation: `caption_cues` for
     /// narrated/subtitled, `caption_cue`-marked text elements for guided_story
@@ -385,6 +405,14 @@ struct EditorDocument: Equatable, Sendable {
         document.motionScenes = decodeMotion(array(sections["motion_scenes"] ?? snapshot["motion_scenes"]) ?? [])
         document.motionRuntimeHash = string(sections["motion_runtime_hash"] ?? snapshot["motion_runtime_hash"])
         document.cameraEffects = decodeCamera(array(sections["camera_effects"] ?? snapshot["camera_effects"]) ?? [])
+        let clipAudioRows = array(sections["clip_audio"] ?? snapshot["clip_audio"]) ?? []
+        document.clipAudio = clipAudioRows.compactMap { row in
+            guard let o = object(row), let id = string(o["id"]), let index = integer(o["source_clip_index"]),
+                  let start = number(o["source_start_s"]), let end = number(o["source_end_s"]), let at = number(o["start_s"]) else { return nil }
+            return EditorClipAudio(id: id, sourceClipIndex: index, sourceStartS: start, sourceEndS: end, startS: at,
+                                   gain: number(o["gain"]) ?? 1, fadeInS: number(o["fade_in_s"]), fadeOutS: number(o["fade_out_s"]))
+        }
+        document.unreadableClipAudio = clipAudioRows.count - document.clipAudio.count
         for section in EditorSection.allCases { document.sectionPresence[section] = document.presence(for: section, in: sections) }
         document.opaqueRecords = document.makeOpaqueRecords(sections)
         document.loadedState = document.currentState()

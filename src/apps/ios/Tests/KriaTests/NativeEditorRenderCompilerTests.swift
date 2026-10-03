@@ -25,6 +25,58 @@ import KriaMediaEngine
         XCTAssertEqual(rendered.sourceCrop, .init(x: 0.1, y: 0.2, width: 0.7, height: 0.6))
     }
 
+    /// KRI-282: a draft whose speech excerpts play from one clip over another
+    /// clip's visuals keeps them as a `clip-audio` track (never dropped), and the
+    /// visuals' own sound is muted under each excerpt so the two never double up.
+    func testClipAudioLaneCompilesExcerptOverOtherClipsVisuals() throws {
+        let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        func source(_ index: Int) -> ResolvedEditorSource {
+            ResolvedEditorSource(clipIndex: index, mediaID: "original-\(index)",
+                asset: MediaAsset(id: "local-\(index)", relativePath: "original-\(index).mp4", fingerprint: fingerprint, duration: 6),
+                url: URL(fileURLWithPath: "/fixture/original-\(index).mp4"))
+        }
+        let clips = (0..<2).map { index in
+            EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: index, start: Double(index) * 3, end: Double(index) * 3 + 3,
+                       trimIn: 0, trimOut: 3, sourceDuration: 6, slotID: "slot-\(index)")
+        }
+        var document = EditorDocument(clips: [.init(id: "slot-0", clipIndex: 0, inS: 0, durationS: 3),
+                                              .init(id: "slot-1", clipIndex: 1, inS: 0, durationS: 3)])
+        let snapshot: [String: JSONValue] = ["clip_audio": .array([.object([
+            "id": .string("e1"), "source_clip_index": .number(0), "source_start_s": .number(1), "source_end_s": .number(2.5),
+            "start_s": .number(3.5), "gain": .number(0.9)])])]
+        document.clipAudio = EditorDocument.decode(snapshot: snapshot).clipAudio
+        XCTAssertEqual(document.clipAudio.count, 1)
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let recipe = try compiler.compile(document: document, clips: clips, items: [], sources: [0: source(0), 1: source(1)]).recipe
+        let track = try XCTUnwrap(recipe.tracks.first { $0.kind == .audio })
+        let excerpt = try XCTUnwrap(track.clips.first)
+        XCTAssertEqual(excerpt.sourceAssetID, "source-0")
+        XCTAssertEqual(excerpt.sourceStart, 1)
+        XCTAssertEqual(excerpt.sourceDuration, 1.5, accuracy: 0.0001)
+        XCTAssertEqual(excerpt.timelineStart, 3.5)
+        XCTAssertEqual(excerpt.volume, 0.9, accuracy: 0.0001)
+        let window = try XCTUnwrap(recipe.audio.muteWindows.first)
+        XCTAssertEqual(window.clipIDs, ["slot-1"])
+        XCTAssertEqual(window.start, 3.5, accuracy: 0.0001)
+        XCTAssertEqual(window.end, 5, accuracy: 0.0001)
+    }
+
+    func testUnreadableClipAudioRowRefusesInsteadOfDroppingSpeech() throws {
+        let document = EditorDocument.decode(snapshot: ["clip_audio": .array([.object(["id": .string("broken")])])])
+        XCTAssertEqual(document.unreadableClipAudio, 1)
+        var renderable = EditorDocument(clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 3)])
+        renderable.unreadableClipAudio = 1
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3, trimIn: 0, trimOut: 3, sourceDuration: 6, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
+            asset: MediaAsset(id: "local", relativePath: "original.mp4", fingerprint: fingerprint, duration: 6),
+            url: URL(fileURLWithPath: "/fixture/original.mp4"))
+        XCTAssertThrowsError(try compiler.compile(document: renderable, clips: [clip], items: [], sources: [0: source])) { error in
+            XCTAssertEqual(error as? NativeEditorRenderError, .unsupportedLane("clip audio"))
+        }
+    }
+
     func testRetimingPreservesAdjacentClipWindows() throws {
         let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
         let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original",

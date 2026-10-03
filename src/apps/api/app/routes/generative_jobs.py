@@ -2117,7 +2117,7 @@ def _augment_variant_with_phone_subtitled_editor_sections(job: Job, v: dict) -> 
     source clip only while a lane is editable, so a non-empty overlay track
     with no source clip rendered a black canvas instead of the MP4 fallback.
     """
-    if not is_phone_subtitled_editor_variant(v):
+    if not (is_phone_subtitled_editor_variant(v) or is_phone_voiceover_lane_variant(v)):
         return v
     if not _phone_subtitled_editor_lanes_open(job, v):
         if not any(lane in v for lane in _PHONE_SUBTITLED_EDITOR_LANE_KEYS):
@@ -2136,6 +2136,38 @@ def _augment_variant_with_phone_subtitled_editor_sections(job: Job, v: dict) -> 
     if "media_overlays" not in v and projected.get("media_overlays") is not None:
         patch["media_overlays"] = projected["media_overlays"]
     return {**v, **patch} if patch else v
+
+
+def _augment_variant_with_phone_voiceover_timeline(job: Job, v: dict) -> dict:
+    """Project a phone Voiceover variant's clip timeline from its pinned recipe (KRI-281).
+
+    A device-rendered `narrated` variant carries no `narrated_timings` /
+    `narrated_clip_assignments`, and a montage `voiceover` one no
+    `ai_timeline`, unless it was rendered after the worker started writing them
+    (`_run_phone_narrated_job`). Without them the native editor has no clips and
+    its preview cannot build. Derive them on read so EXISTING videos work with
+    no backfill. Never overwrites a key already present and never mutates
+    `job.assembly_plan`; `v` is already a shallow copy.
+    """
+    if not is_phone_voiceover_lane_variant(v):
+        return v
+    narrated = v.get("resolved_archetype") == "narrated"
+    if narrated:
+        if v.get("narrated_timings") and v.get("narrated_clip_assignments"):
+            return v
+    elif (v.get("user_timeline") or v.get("ai_timeline") or {}).get("slots"):
+        return v
+    from app.services.phone_voiceover_timeline import (  # noqa: PLC0415
+        project_phone_voiceover_timeline,
+    )
+
+    projected = project_phone_voiceover_timeline(
+        job.assembly_plan or {}, job.all_candidates or {}, v
+    )
+    if not projected:
+        return v
+    keys = ("narrated_timings", "narrated_clip_assignments") if narrated else ("ai_timeline",)
+    return {**v, **{key: projected[key] for key in keys}}
 
 
 def _variants_for_response(job: Job) -> list[dict]:
@@ -2347,6 +2379,7 @@ def _variants_for_response(job: Job) -> list[dict]:
         # signs/normalizes it — a variant that never Saved through the editor
         # yet has neither key persisted.
         v = _augment_variant_with_phone_subtitled_editor_sections(job, v)
+        v = _augment_variant_with_phone_voiceover_timeline(job, v)
         # Media-overlay cards: sign each card's src_gcs_path into a preview_url so
         # the browser can show existing applied cards as a live CSS overlay without
         # re-uploading them. Signing failure skips the key on that card (graceful).
@@ -5773,6 +5806,12 @@ async def dispatch_set_narrated_bed_level(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Background sound can only be adjusted on narrated videos.",
         )
+    if variant.get("render_destination") == "device":
+        # A phone-rendered narrated video has no cloud base to re-mix (KRI-281).
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Background sound can't be re-mixed on a video rendered on your phone.",
+        )
     render_gen_id = _mark_variant_rendering(job, variant_id)
     await db.commit()
     from app.tasks.generative_build import reburn_narrated_bed_level  # noqa: PLC0415
@@ -6547,6 +6586,43 @@ def project_phone_subtitled_editor_sections(assembly_plan: dict, variant: dict) 
     return _impl(assembly_plan, variant)
 
 
+def phone_voiceover_editor_lanes_supported() -> bool:
+    """Re-export of `app.services.phone_rollout.phone_voiceover_editor_lanes_supported`
+    (KRI-281), same lazy-import + module-scope-binding rationale as the
+    Talking one above. Reads the REQUEST's declared client protocol, so it is
+    the capability-side gate; Save uses the server-only variant of it."""
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_voiceover_editor_lanes_supported as _impl,
+    )
+
+    return _impl()
+
+
+def is_phone_voiceover_lane_variant(variant: dict) -> bool:
+    """True for a device-rendered `narrated` or montage `voiceover` variant."""
+    from app.services.phone_voiceover_timeline import (  # noqa: PLC0415
+        is_phone_voiceover_family_variant,
+    )
+
+    return is_phone_voiceover_family_variant(variant)
+
+
+def _phone_voiceover_editor_lanes_available(variant: dict) -> bool:
+    """True when `sfx`/`overlays` may stay open in the phone capability clamp
+    for a Voiceover device variant (KRI-281): the variant shape AND the rollout
+    gate (flags, verified features, minimum app build). Gate off => False =>
+    the clamp stays byte-identical to before for every Voiceover variant."""
+    return is_phone_voiceover_lane_variant(variant) and phone_voiceover_editor_lanes_supported()
+
+
+def _phone_editor_lanes_available(job: Job, variant: dict) -> bool:
+    """Either phone lane rollout (Talking KRI-182 or Voiceover KRI-281) is open
+    for this variant; both bridge editor sections through the same lane state."""
+    return _phone_subtitled_editor_lanes_available(
+        job, variant
+    ) or _phone_voiceover_editor_lanes_available(variant)
+
+
 def _phone_subtitled_editor_lanes_available(job: Job, variant: dict) -> bool:
     """True when `sfx`/`overlays` may stay open in the phone capability clamp.
 
@@ -6587,7 +6663,7 @@ def _phone_subtitled_editor_lanes_open(job: Job, variant: dict) -> bool:
     open by the clamped capability map (`SOUND_EFFECTS_ENABLED` /
     `MEDIA_OVERLAYS_ENABLED`, a rendered video).
     """
-    if not _phone_subtitled_editor_lanes_available(job, variant):
+    if not _phone_editor_lanes_available(job, variant):
         return False
     capabilities = _editor_capabilities(job, variant)
     return capabilities.get("sfx") is True or capabilities.get("overlays") is True
@@ -6602,12 +6678,17 @@ def _clamp_phone_editor_capabilities(
     source_crop: bool = False,
     narrated: bool = False,
     narrated_captions: bool = False,
+    voiceover_lanes: bool = False,
 ) -> dict:
     """Close every control a device-rendered variant cannot save, shape-preserving.
 
     ``source_crop`` (KRI-140): a guided-story device variant keeps the footage
     crop control once the device has verified ``sourceCrop`` -- the phone
     compiler then carries the crop on the clip instead of refusing it.
+
+    ``voiceover_lanes`` (KRI-281): a narrated or montage `voiceover` device variant
+    with the Voiceover lane rollout on keeps `sfx`/`overlays` open, exactly like
+    a phone Talking variant; captions and everything else follow their own flags.
 
     ``narrated_captions`` (KRI-280): a narrated device variant with the
     caption-edit rollout on keeps `caption_cues`/`caption_meta`/
@@ -6620,7 +6701,7 @@ def _clamp_phone_editor_capabilities(
     # `phone_subtitled_editor.py`) — everything else (visual_blocks,
     # motion_scenes, camera_effects, clip add/looks/source_crop/playback_rate)
     # stays closed; the phone subtitled compiler has no lane for those.
-    subtitled_carve_out = {"sfx", "overlays"} if subtitled_lanes else set()
+    subtitled_carve_out = {"sfx", "overlays"} if (subtitled_lanes or voiceover_lanes) else set()
     for group, names in (
         ("clips", _PHONE_UNSUPPORTED_CLIP_OPERATIONS),
         ("lanes", _PHONE_UNSUPPORTED_LANES),
@@ -6721,6 +6802,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             guided_story=variant.get("resolved_archetype") == "guided_story",
             narrated=variant.get("resolved_archetype") == "narrated",
             narrated_captions=_phone_narrated_caption_edits_available(variant),
+            voiceover_lanes=_phone_voiceover_editor_lanes_available(variant),
             source_crop=(
                 variant.get("resolved_archetype") == "guided_story"
                 and "sourceCrop" in settings.phone_render_verified_features
@@ -7640,6 +7722,22 @@ def _dispatch_rendered_timeline(
         )
     else:
         clip_paths = list((job.all_candidates or {}).get("clip_paths") or [])
+    phone_total_duration_s: float | None = None
+    if not ai_slots and not user_slots and is_phone_voiceover_lane_variant(variant):
+        # KRI-281: a phone Voiceover edit has no cloud slot layout; its cut lives
+        # in the pinned device recipe. Project it (read-only) so the editor lists
+        # the real clips, and index them against the pool it returns.
+        from app.services.phone_voiceover_timeline import (  # noqa: PLC0415
+            project_phone_voiceover_timeline,
+        )
+
+        phone_timeline = project_phone_voiceover_timeline(
+            job.assembly_plan or {}, job.all_candidates or {}, variant
+        )
+        if phone_timeline:
+            ai_slots = phone_timeline["slots"]
+            clip_paths = list(phone_timeline["pool"])
+            phone_total_duration_s = phone_timeline["total_duration_s"]
     projected_story_duration_s: float | None = None
     # Guided stories deliberately have no editable legacy ``ai_timeline``;
     # their immutable, verified cut lives in ``story_timeline`` instead.  Still
@@ -7709,6 +7807,10 @@ def _dispatch_rendered_timeline(
     total = _active_timeline_duration_s(active)
     if projected_story_duration_s is not None:
         total = projected_story_duration_s
+    if phone_total_duration_s is not None:
+        # The pinned recipe's own length is authoritative (it already accounts for
+        # montage crossfade overlaps and retimed clips).
+        total = phone_total_duration_s
     used_indices = {s.get("clip_index") for s in active}
 
     # Source durations are only known where the worker probed them (ai_timeline).
@@ -11838,7 +11940,7 @@ def _phone_subtitled_sfx_ids_missing_paths(job: Job, variant: dict) -> set[str]:
     Empty for every other variant, and byte-identical with the gate off."""
     from app.services.phone_subtitled_editor import is_catalog_sfx_path  # noqa: PLC0415
 
-    if not _phone_subtitled_editor_lanes_available(job, variant):
+    if not _phone_editor_lanes_available(job, variant):
         return set()
     rows = variant.get("sound_effects")
     if not isinstance(rows, list):
