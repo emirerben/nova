@@ -15,6 +15,7 @@ from app.agents._schemas.creator_agent import (
     ResolvedCreatorManifest,
 )
 from app.kria import planner
+from app.kria.contracts import KriaTurnPlan
 from app.kria.planner import (
     _full_creator_request,
     _phone_editor_reply,
@@ -692,6 +693,146 @@ async def test_generic_montage_context_with_empty_inventory_stays_actionable(
     assert inventory.await_args.kwargs["creator_request"] == request
     assert inventory.await_args.kwargs["latest_user_message"] == request
     assert "[order/global]" in inventory.await_args.kwargs["generated_brief"]
+
+
+async def _degraded_clip_intent_turn(
+    monkeypatch: pytest.MonkeyPatch, resolver: AsyncMock
+) -> planner.PlannedKriaTurn:
+    item_id = uuid.uuid4()
+    manifest = ResolvedCreatorManifest(
+        item_id=str(item_id),
+        edit_format="montage",
+        render_program="guided",
+        capabilities={"dispatch_render": CapabilityAvailability(available=True)},
+        context_hash="a" * 64,
+        manifest_hash="b" * 64,
+    )
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            direction="guided_story",
+            edit_format="montage",
+            audio_strategy="licensed_music",
+            pacing="fast",
+            render_program="guided",
+            selected_media_ids=[],
+            rationale="Build a games-day story.",
+        ),
+        summary="A games-day montage.",
+    )
+    monkeypatch.setattr(planner.settings, "clip_intents_enabled", True)
+    monkeypatch.setattr(planner, "plan_and_resolve_clip_intents", resolver)
+    monkeypatch.setattr(
+        planner,
+        "check_strategy_for_runtime_v2",
+        lambda _manifest, strategy: CheckedStrategy(strategy=strategy, notices=()),
+    )
+    return await planner._plan_from_creator_output(
+        SimpleNamespace(),
+        thread_id=uuid.uuid4(),
+        item_id=item_id,
+        creator_id=uuid.uuid4(),
+        user_message="Group by sport.",
+        manifest=manifest,
+        inputs=planner._CreatorInputs(
+            agent_input=SimpleNamespace(), intent_clips=[], creator_request="Group by sport."
+        ),
+        output=SimpleNamespace(action=action),
+    )
+
+
+@pytest.mark.asyncio
+async def test_kria_turn_gets_the_larger_foreground_vision_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-282: chat clips have no background vision lane, so the turn itself must."""
+    resolver = AsyncMock(return_value=PlannedIntentResolution([], IntentResolution()))
+    await _degraded_clip_intent_turn(monkeypatch, resolver)
+    kwargs = resolver.await_args.kwargs
+    assert kwargs["max_vision_requeries"] == planner.settings.kria_clip_intents_max_vision_requeries
+    assert kwargs["vision_deadline_s"] == planner.settings.kria_clip_intents_vision_deadline_s
+    assert kwargs["max_vision_requeries"] > 4
+
+
+@pytest.mark.asyncio
+async def test_pending_vision_is_not_reported_as_a_match_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real 47-clip failure: the foreground vision cap left clips pending, and
+    the generic 'couldn't reliably match' reply made a converging retry look broken."""
+    resolver = AsyncMock(
+        return_value=PlannedIntentResolution(
+            [],
+            IntentResolution(
+                status="pending",
+                error_code="vision_batch_deadline_or_foreground_cap",
+                diagnostics={
+                    "stage": "vision",
+                    "clips": 47,
+                    "intents": 8,
+                    "shard_ms": [4100, 5200, 6100],
+                    "vision_calls": 12,
+                    "pending_clips": 9,
+                    "nested": {"dropped": True},
+                },
+            ),
+        )
+    )
+    result = await _degraded_clip_intent_turn(monkeypatch, resolver)
+
+    assert result.plan.turn_value == "recovery"
+    assert "couldn't reliably match" not in (result.plan.response or "")
+    assert "still checking" in (result.plan.response or "")
+    diag = result.plan.diagnostics
+    assert diag["status"] == "pending"
+    assert diag["reason"] == "vision_batch_deadline_or_foreground_cap"
+    assert diag["pending_clips"] == 9 and diag["shard_ms"] == [4100, 5200, 6100]
+    assert "nested" not in diag  # only scalars / short scalar lists are persisted
+    # It survives the persisted-turn round trip (admin /turns shows `plan`).
+    assert result.plan.model_dump()["diagnostics"]["pending_clips"] == 9
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_persists_a_reason_code_not_a_bare_apology(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolver = AsyncMock(side_effect=RuntimeError("secret creator sentence"))
+    result = await _degraded_clip_intent_turn(monkeypatch, resolver)
+
+    assert "couldn't reliably match" in (result.plan.response or "")
+    assert result.plan.diagnostics["reason"] == "planner_exception"
+    assert result.plan.diagnostics["error_type"] == "RuntimeError"
+    assert "secret" not in str(result.plan.diagnostics)
+
+
+@pytest.mark.asyncio
+async def test_resolver_stage_failure_reason_reaches_the_turn_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolver = AsyncMock(
+        return_value=PlannedIntentResolution(
+            [],
+            IntentResolution(
+                status="provider_unavailable",
+                error_code="provider_outcome_unknown",
+                diagnostics={"stage": "resolver", "shards": 8, "split_retries": 1},
+            ),
+        )
+    )
+    result = await _degraded_clip_intent_turn(monkeypatch, resolver)
+
+    assert result.plan.diagnostics == {
+        "status": "provider_unavailable",
+        "reason": "provider_outcome_unknown",
+        "stage": "resolver",
+        "shards": 8,
+        "split_retries": 1,
+    }
+
+
+def test_plans_without_diagnostics_dump_byte_identical() -> None:
+    plan = KriaTurnPlan(mode="respond", turn_value="question", response="Which clip?")
+    assert "diagnostics" not in plan.model_dump()
 
 
 def test_explicit_server_editor_action_retains_exact_render_approval() -> None:

@@ -185,9 +185,12 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
         thinking_budget=384,
         # Runs synchronously inside a chat turn: keep the worst case short
         # (defaults allow ~249s of retries). A failure degrades to a question.
+        # KRI-282: 30s, not 20s. A shard is sized to ~half the load that took
+        # 7-16s live (clip_intent_resolution._RESOLVER_SHARD_CELLS), so 30s is
+        # >3x headroom; a timeout is an UNKNOWN outcome and is not re-sent whole.
         max_attempts=2,
         backoff_s=(1.0,),
-        timeout_s=20.0,
+        timeout_s=30.0,
     )
     Input = ClipRequestResolverInput
     Output = ClipRequestResolverOutput

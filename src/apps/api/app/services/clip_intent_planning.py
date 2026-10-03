@@ -64,6 +64,8 @@ async def plan_and_resolve_clip_intents(
     generated_brief: str | None = None,
     background: bool = False,
     checkpoint: Any = None,
+    max_vision_requeries: int | None = None,
+    vision_deadline_s: float | None = None,
 ) -> PlannedIntentResolution:
     if len(creator_request) > CREATOR_REQUEST_MAX_CHARS:
         return PlannedIntentResolution(
@@ -165,6 +167,8 @@ async def plan_and_resolve_clip_intents(
         run_context=run_context,
         background=background,
         checkpoint=checkpoint,
+        max_vision_requeries=max_vision_requeries,
+        vision_deadline_s=vision_deadline_s,
     )
     if resolved_orders:
         resolution = replace(resolution, intents=[*resolution.intents, *resolved_orders])

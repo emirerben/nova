@@ -45,6 +45,10 @@ class KriaTurnPlan(_KriaModel):
     response: str | None = Field(default=None, max_length=1200)
     evidence_ids: list[str] = Field(default_factory=list, max_length=24)
     intents: list[KriaToolIntent] = Field(default_factory=list, max_length=8)
+    # KRI-282: redacted reason code + counts/latencies for a degraded turn
+    # (never creator text or model output), readable via the admin turns view.
+    # Omitted from the dump when unset so every other plan stays byte-identical.
+    diagnostics: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: not value)
 
     @field_validator("intents")
     @classmethod
