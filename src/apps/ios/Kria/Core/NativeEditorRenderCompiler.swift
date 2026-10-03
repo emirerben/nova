@@ -207,6 +207,37 @@ enum NativeEditorRenderError: Error, Equatable {
                     gain: effect.raw["gain"]?.numberValue ?? 1, timelineStart: item.start, catalog: .soundEffect)
             }
         }
+        // KRI-282 clip-audio lane: speech excerpts lifted from one clip's own audio
+        // and played over other clips' visuals. They share one audio track so
+        // back-to-back excerpts of a take crossfade (AudioCutHandles.plan). An
+        // unreadable row refuses the render instead of silently dropping speech.
+        guard document.unreadableClipAudio == 0 else { throw NativeEditorRenderError.unsupportedLane("clip audio") }
+        var clipAudioWindows: [(start: Double, end: Double)] = []
+        var excerptClips: [TimelineClip] = []
+        for excerpt in document.clipAudio.sorted(by: { ($0.startS, $0.id) < ($1.startS, $1.id) }) {
+            guard let source = sources[excerpt.sourceClipIndex], let fingerprint = source.asset.fingerprint else {
+                throw NativeEditorRenderError.missingSource(excerpt.sourceClipIndex)
+            }
+            let sourceSpan = excerpt.sourceEndS - excerpt.sourceStartS
+            guard [excerpt.sourceStartS, excerpt.sourceEndS, excerpt.startS, excerpt.gain].allSatisfy(\.isFinite),
+                  excerpt.sourceStartS >= 0, sourceSpan > 0, excerpt.startS >= 0, (0...2).contains(excerpt.gain),
+                  (excerpt.fadeInS ?? 0) >= 0, (excerpt.fadeOutS ?? 0) >= 0,
+                  source.asset.duration.map({ excerpt.sourceEndS <= $0 + 0.01 }) ?? true else { throw RecipeError.invalidTimeline }
+            let length = min(sourceSpan, total - excerpt.startS)
+            guard length > 0.001 else { continue }
+            let id = "source-\(excerpt.sourceClipIndex)"
+            if assets[id] == nil {
+                assets[id] = MediaAsset(id: id, relativePath: id, fingerprint: fingerprint)
+                references[id] = RenderAssetReference(id: id, fingerprint: try RenderFingerprint(fingerprint), source: .original(mediaID: source.mediaID))
+                urls[id] = source.url
+            }
+            var clip = TimelineClip(id: "clip-audio:" + excerpt.id, sourceAssetID: id, sourceStart: excerpt.sourceStartS, sourceDuration: length,
+                                    timelineStart: excerpt.startS, volume: excerpt.gain)
+            clip.audioFadeIn = excerpt.fadeInS; clip.audioFadeOut = excerpt.fadeOutS
+            excerptClips.append(clip)
+            clipAudioWindows.append((excerpt.startS, excerpt.startS + length))
+        }
+        if !excerptClips.isEmpty { audioTracks.append(TimelineTrack(id: "clip-audio", kind: .audio, clips: excerptClips)) }
         var overlays: [TimelineClip] = []
         for overlay in document.mediaOverlays.sorted(by: { ($0.raw["z"]?.numberValue ?? 0) < ($1.raw["z"]?.numberValue ?? 0) }) {
             let id = "overlay:" + overlay.id
@@ -629,6 +660,12 @@ enum NativeEditorRenderError: Error, Equatable {
             }
             motionProgram = MotionSceneProgram(instances: try JSONDecoder().decode([MotionSceneValue].self, from: JSONEncoder().encode(instances)),
                 runtimeHash: hash, fontAssetID: try registerFont(resolveFont("Inter")), imageAssetIDs: imageAssets)
+        }
+        // The excerpt is the speech in its window: silence the visuals' own
+        // sound there so the two never double up.
+        for window in clipAudioWindows {
+            let under = video.filter { $0.volume > 0 && $0.timelineStart < window.end && $0.timelineStart + $0.duration > window.start }.map(\.id)
+            if !under.isEmpty, muteWindows.count < 100 { muteWindows.append(AudioMuteWindow(start: window.start, end: window.end, clipIDs: under)) }
         }
         let recipe = KriaMediaEngine.EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: canvas,
             assets: assets.values.sorted { $0.id < $1.id }, tracks: [TimelineTrack(id: "video", kind: .video, clips: video)] + (overlays.isEmpty ? [] : [TimelineTrack(id: "overlays", kind: .overlay, clips: overlays)]) + audioTracks,

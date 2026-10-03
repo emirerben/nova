@@ -184,6 +184,11 @@ class AudioMixRecipe(_RecipeModel):
     # -1.5 dBTP peak limiter, approximating the cloud's
     # `loudnorm=I=<target>:TP=-1.5:LRA=11`. None = leave levels as mixed.
     target_lufs: float | None = Field(default=None, ge=-40, le=-5)
+    # KRI-282: duck the music bed under every audio-kind track clip (speech
+    # excerpts played over other clips' visuals). Additive/optional and
+    # default-off: omitted from the payload when false so existing recipes stay
+    # byte-identical. Requires the `audioDucking` capability (derived below).
+    duck_music_during_speech: bool = False
 
     @model_serializer(mode="wrap")
     def preserve_legacy_shape(self, handler):
@@ -194,6 +199,8 @@ class AudioMixRecipe(_RecipeModel):
             payload.pop("narration_asset_id", None)
         if self.target_lufs is None:
             payload.pop("target_lufs", None)
+        if not self.duck_music_during_speech:
+            payload.pop("duck_music_during_speech", None)
         return payload
 
 
@@ -309,7 +316,7 @@ class EditRecipeV1(_RecipeModel):
             self.required_capabilities |= {"visualBlocks"}
         if any(clip.look for clip in clips):
             self.required_capabilities = self.required_capabilities | {"goldenHourLook"}
-        if self.audio.duck_original_during_music:
+        if self.audio.duck_original_during_music or self.audio.duck_music_during_speech:
             # Mirrors `EditRecipe.effectiveCapabilities`: a device that has not
             # verified the native side-chain duck must never receive one.
             self.required_capabilities = self.required_capabilities | {"audioDucking"}
