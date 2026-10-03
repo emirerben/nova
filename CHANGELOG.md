@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.27.0] - 2026-10-03
+
+### Changed
+- feat(phone): clip timeline + SFX/Visuals lanes for phone Voiceover edits (KRI-281) (#1334) <!-- release-pr: 1334 -->
+
 ## [0.78.26.0] - 2026-10-03
 
 ### Changed
