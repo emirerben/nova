@@ -142,10 +142,11 @@ from app.pipeline.phone_recipe_shared import (
     snap_text_overshoot,
     timeline_end_s,
 )
-from app.services.phone_sources import PhoneSourceBinding
+from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
 
 if TYPE_CHECKING:
     from app.pipeline.phone_captions import PhoneCaptionLook
+    from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes
 
 # Only caption layers ask for these in a narrated recipe. `authoredText` is
 # added by the `EditRecipeV2` validator for variable-font runs, so the swap
@@ -357,6 +358,8 @@ def compile_phone_narrated_plan(
     target_lufs: float | None = None,
     duck_footage_bed: bool = False,
     caption_look: PhoneCaptionLook | None = None,
+    lanes: PhoneSubtitledLanes | None = None,
+    visuals: tuple[PhoneVisualBinding, ...] = (),
 ) -> EditRecipeV2:
     """See the module docstring for the full contract.
 
@@ -374,6 +377,10 @@ def compile_phone_narrated_plan(
     `_resolve_phone_voiceover_bed`. ``mix`` follows
     `GenerativeVariantDecision.mix`'s convention (see "Audio mix
     approximation" in the module docstring).
+
+    ``lanes`` / ``visuals`` (KRI-281): the editor's sound-effect and Visuals
+    lanes, compiled by `replace_editor_lanes` -- the same swap a phone-editor
+    Save uses, so a first compile and every later Save agree.
     """
     if not steps:
         raise ValueError("phone narrated plan has no steps")
@@ -505,11 +512,115 @@ def compile_phone_narrated_plan(
         audio=audio,
         required_capabilities=required_capabilities,
     )
-    if not caption_cues:
+    if caption_cues:
+        # Captions go through the same swap a phone-editor caption Save uses
+        # (KRI-280), so the first render and every later Save compile them alike.
         # An empty-caption narrated render is not an error (see "Captions").
-        return recipe
-    # Captions go through the same swap a phone-editor caption Save uses
-    # (KRI-280), so the first render and every later Save compile them alike.
-    return replace_narrated_captions(
-        recipe, caption_cues=caption_cues, caption_style=caption_style, look=caption_look
+        recipe = replace_narrated_captions(
+            recipe, caption_cues=caption_cues, caption_style=caption_style, look=caption_look
+        )
+    if lanes is not None and (lanes.overlays or lanes.sound_effects):
+        recipe = replace_editor_lanes(recipe, lanes=lanes, visuals=visuals)
+    return recipe
+
+
+# Tracks and capabilities owned by the editor's sound-effect / Visuals lanes
+# (`phone_subtitled_plan`'s lane compilers write exactly these).
+_EDITOR_LANE_TRACK_IDS = frozenset({"subtitled-overlays", "sfx"})
+_EDITOR_LANE_CAPABILITIES = frozenset(
+    {"visualBlocks", "alphaOverlay", "visualVideos", "soundEffects"}
+)
+
+
+def replace_editor_lanes(
+    recipe: EditRecipeV2,
+    *,
+    lanes: PhoneSubtitledLanes,
+    visuals: tuple[PhoneVisualBinding, ...],
+    video_track_id: str = "narrated",
+) -> EditRecipeV2:
+    """``recipe`` with only its sound-effect and Visuals (overlay) lanes recompiled
+    (KRI-281), the Voiceover counterpart of `replace_narrated_captions`.
+
+    Phone Voiceover has no guided plan to recompile from, so a lane Save keeps
+    every clip, caption layer, the narration/music beats and the audio mix
+    exactly as pinned and swaps just the ``subtitled-overlays`` / ``sfx``
+    tracks (and the assets only they used). The lane compilers are
+    `phone_subtitled_plan`'s own, so a card or effect compiles the same on a
+    Voiceover edit as on a Talking one; windows clamp to the main video
+    track's end (``video_track_id``: ``"narrated"`` or the montage's
+    ``"montage"``).
+
+    Raises `UnsupportedPhonePlan` (a lane error names the failing lane) for an
+    ending clip, which Voiceover edits do not carry.
+    """
+    from app.pipeline.phone_subtitled_lanes import _lane_error  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
+        _compile_overlay_track,
+        _compile_sfx_track,
     )
+
+    video = next((track for track in recipe.tracks if track.id == video_track_id), None)
+    if video is None or not video.clips:
+        raise UnsupportedPhonePlan("pinned voiceover recipe has no video track")
+    if lanes.ending_clip is not None:
+        raise UnsupportedPhonePlan("an ending clip isn't supported on phone Voiceover edits")
+
+    kept_tracks = [track for track in recipe.tracks if track.id not in _EDITOR_LANE_TRACK_IDS]
+    still_used = {clip.source_asset_id for track in kept_tracks for clip in track.clips}
+    lane_only = {
+        clip.source_asset_id
+        for track in recipe.tracks
+        if track.id in _EDITOR_LANE_TRACK_IDS
+        for clip in track.clips
+    } - still_used
+    assets = {asset.id: asset for asset in recipe.assets if asset.id not in lane_only}
+    manifest = {
+        asset.id: asset for asset in recipe.asset_manifest.assets if asset.id not in lane_only
+    }
+
+    timeline_end = timeline_end_s(video.clips)
+    required = set(recipe.required_capabilities) - _EDITOR_LANE_CAPABILITIES
+    tracks = list(kept_tracks)
+    if lanes.overlays:
+        try:
+            overlay_track, has_video = _compile_overlay_track(
+                lanes.overlays,
+                visuals=visuals,
+                speaker_end=timeline_end,
+                assets=assets,
+                manifest=manifest,
+            )
+        except UnsupportedPhonePlan:
+            raise
+        except Exception as exc:  # noqa: BLE001 - untrusted lane content
+            raise _lane_error("overlays", str(exc), capability="visualBlocks") from exc
+        if overlay_track.clips:
+            tracks.append(overlay_track)
+            required |= {"visualBlocks", "alphaOverlay", "audioMix"}
+            if has_video:
+                required |= {"visualVideos"}
+    if lanes.sound_effects:
+        try:
+            sfx_track = _compile_sfx_track(
+                lanes.sound_effects,
+                timeline_end=timeline_end,
+                assets=assets,
+                manifest=manifest,
+            )
+        except UnsupportedPhonePlan:
+            raise
+        except Exception as exc:  # noqa: BLE001 - untrusted lane content
+            raise _lane_error("sound_effects", str(exc), capability="soundEffects") from exc
+        if sfx_track.clips:
+            tracks.append(sfx_track)
+            required |= {"soundEffects", "audioMix"}
+
+    fields = {name: getattr(recipe, name) for name in type(recipe).model_fields}
+    fields.update(
+        assets=list(assets.values()),
+        asset_manifest=RenderAssetManifest(assets=tuple(manifest.values())),
+        tracks=tracks,
+        required_capabilities=required,
+    )
+    return EditRecipeV2(**fields)

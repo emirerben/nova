@@ -412,6 +412,52 @@ def phone_subtitled_editor_lanes_supported() -> bool:
     )
 
 
+# Device features a phone Voiceover (`narrated` / montage `voiceover`) Save needs
+# to recompile its sound-effect and Visuals lanes (KRI-281): the same set the
+# Talking lanes need, since both reuse `phone_subtitled_plan`'s lane compilers.
+PHONE_VOICEOVER_EDITOR_FEATURES: tuple[str, ...] = PHONE_SUBTITLED_EDITOR_FEATURES
+
+
+def phone_voiceover_editor_lanes_supported(*, require_client: bool = True) -> bool:
+    """Single source of truth for "can a phone-rendered Voiceover variant
+    (`narrated` or montage `voiceover`) carry editable `sound_effects` /
+    `media_overlays` right now" (KRI-281, mirrors KRI-182 for Talking).
+
+    Consulted by `app.routes.generative_jobs._clamp_phone_editor_capabilities`
+    (whether `sfx`/`overlays` stay open) and by
+    `app.services.phone_editor.prepare_phone_editor_commit` (whether Save
+    recompiles the lanes or 422s), so capabilities never advertise a lane
+    Save would refuse.
+
+    True iff ALL of:
+      - `phone_voiceover_editor_lanes_enabled` (this feature's own flag).
+      - `sound_effects_enabled` and `media_overlays_enabled` (the generic
+        lane kill switches, cloud and phone alike).
+      - every feature in `PHONE_VOICEOVER_EDITOR_FEATURES` is in
+        `phone_render_verified_features` (device-parity gate).
+      - ``require_client``: the request declares an `X-Kria-Client-Protocol`
+        of at least `phone_voiceover_editor_min_client_protocol`, i.e. an app
+        build that hydrates the locked source clips these lanes edit. Older
+        builds (and any non-request caller) keep the lanes closed. Save passes
+        ``require_client=False``: it only needs the server-side gates, so a
+        worker-driven chat edit is not refused for lacking a request header.
+    """
+    from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+
+    verified = set(settings.phone_render_verified_features)
+    if not (
+        settings.phone_voiceover_editor_lanes_enabled
+        and settings.sound_effects_enabled
+        and settings.media_overlays_enabled
+        and all(feature in verified for feature in PHONE_VOICEOVER_EDITOR_FEATURES)
+    ):
+        return False
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.phone_voiceover_editor_min_client_protocol
+
+
 # Device features every phone caption layer needs (KRI-280).
 PHONE_NARRATED_CAPTION_FEATURES: tuple[str, ...] = ("positionedText", "animatedText")
 
