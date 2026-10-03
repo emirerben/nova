@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.28.0] - 2026-10-03
+
+### Changed
+- KRI-282: iOS speech-excerpt audio (crossfade, music duck, clip-audio lane) (#1337) <!-- release-pr: 1337 -->
+
 ## [0.78.27.0] - 2026-10-03
 
 ### Changed
