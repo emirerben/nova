@@ -1468,6 +1468,11 @@ class Settings(BaseSettings):
     # `slide_post_rich_text`. Apply: `fly secrets set SLIDE_POST_RICH_TEXT_ENABLED=true
     # --app nova-video` + restart (api + worker).
     slide_post_rich_text_enabled: bool = False
+    # KRI-298/301: chat editing of slide posts through the edit copilot
+    # (`POST /plan-items/{id}/slide-post/chat-edit`, read-only staging). Off: the route
+    # 404s. Capability `slide_post_chat_edit`. Apply: `fly secrets set
+    # SLIDE_POST_CHAT_EDIT_ENABLED=true --app nova-video` + restart (api).
+    slide_post_chat_edit_enabled: bool = False
     main_creator_agent_freeform_uploads_enabled: bool = False
     main_creator_agent_workspace_enabled: bool = False
     main_creator_agent_rollout_percent: int = Field(default=0, ge=0, le=100)

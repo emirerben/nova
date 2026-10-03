@@ -205,6 +205,10 @@ from app.services.media_overlay_preview import (
     nonblank_str,
 )
 from app.services.public_assembly_plan import project_public_assembly_plan
+from app.services.slide_post_chat_edit import (
+    SlidePostChatEditResponse,
+    run_slide_post_chat_edit,
+)
 from app.services.speech_cleanup import (
     acknowledge_notice,
     capability_for_item,
@@ -4255,6 +4259,30 @@ class SlidePostProposeBody(BaseModel):
     instruction: str = Field(min_length=1, max_length=2000)
 
 
+class SlidePostChatTurn(BaseModel):
+    """One prior chat turn: the `EditCopilotInput.prior_turns` shape, size-bounded."""
+
+    role: Literal["user", "assistant"]
+    content: str = Field(default="", max_length=2000)
+    applied: list[str] = Field(default_factory=list, max_length=20)
+    rejected: list[str] = Field(default_factory=list, max_length=20)
+
+
+class SlidePostChatEditBody(BaseModel):
+    """POST /{item_id}/slide-post/chat-edit request (KRI-301).
+
+    The editor's local draft is the newest truth: when `draft` is sent the edit is
+    built from IT (never the stored one) and `expected_version` is informational
+    only, so there is no version-conflict step. Asset ownership is still checked.
+    """
+
+    message: str = Field(min_length=1, max_length=2000)
+    expected_version: int = Field(default=0, ge=0)
+    draft: SlidePostDraft | None = None
+    turns: list[SlidePostChatTurn] = Field(default_factory=list, max_length=12)
+    client_request_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
 class SlidePostGenerateBody(BaseModel):
     expected_version: int = Field(ge=1)
 
@@ -4570,6 +4598,68 @@ async def propose_slide_post(
             "Kria could not complete a composition, so this keeps the selected asset order."
             if composed.fallback_used
             else "Kria proposed an order, cover, and caption. Review before saving."
+        ),
+    )
+
+
+@router.post("/{item_id}/slide-post/chat-edit", response_model=SlidePostChatEditResponse)
+@limiter.limit("20/minute", key_func=get_real_ip)
+@limiter.limit("30/hour", key_func=_edit_conversation_rate_key)
+async def chat_edit_slide_post(
+    request: Request,
+    item_id: str,
+    body: SlidePostChatEditBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> SlidePostChatEditResponse:
+    """Chat-edit a slide post through the edit copilot. Read-only staging: returns a
+    proposed draft (or a clarification/refusal); the client saves it with the PUT."""
+    # Chat edit round-trips rich per-slide text: it needs that flag too.
+    if not (settings.slide_post_chat_edit_enabled and settings.slide_post_rich_text_enabled):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Slide post chat editing is not available.",
+        )
+    _require_slide_posts()
+    item = await _load_owned_item(item_id, user.id, db)
+    if str(item.edit_format or "") != "slides":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Set this item's type to a slide post first.",
+        )
+    stored = parse_slide_post(item.slide_post)
+    server_version = stored.version if stored is not None else 0
+    draft = body.draft if body.draft is not None else stored
+    if draft is None or not draft.slides:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "slide_post_no_draft",
+                "message": "Add photos or videos to this post first.",
+            },
+        )
+    owned_assets = await _owned_ready_slide_assets(item, [s.asset_id for s in draft.slides], db)
+    _validate_slide_ref_ownership(draft.slides, owned_assets)
+    if body.draft is not None:
+        # The editor's draft wins over the stored one; the server's version is only
+        # the base the client's next PUT must quote.
+        draft = draft.model_copy(update={"version": max(server_version, 1)})
+    return await run_slide_post_chat_edit(
+        draft=draft,
+        assets_by_id={asset.id: asset for asset in owned_assets},
+        message=body.message,
+        turns=[t.model_dump() for t in body.turns],
+        user_id=user.id,
+        server_version=server_version,
+        run_context=_creator_run_context(
+            request,
+            creator_id=user.id,
+            request_id=_paid_agent_request_id(
+                "slide-post-chat-edit",
+                str(item.id),
+                body,
+                client_request_id=body.client_request_id,
+            ),
         ),
     )
 
