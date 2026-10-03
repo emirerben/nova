@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.32.0] - 2026-10-03
+
+### Changed
+- KRI-282: speech-excerpt montage accepts landscape/square speaker clips (#1340) <!-- release-pr: 1340 -->
+
 ## [0.78.31.0] - 2026-10-03
 
 ### Changed
