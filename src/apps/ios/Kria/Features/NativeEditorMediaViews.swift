@@ -1371,6 +1371,15 @@ struct NativeMiniStrip: View {
                         }
                         .frame(maxWidth: .infinity, minHeight: max(0, viewport.size.height - bottomClearance), alignment: .topLeading)
                         .contentShape(Rectangle())
+                        // This remains behind clips, lanes, the playhead, and
+                        // controls, so their own taps and gestures win. It
+                        // only receives a tap that lands in otherwise empty
+                        // timeline or editor-margin space.
+                        .background {
+                            Color.clear
+                                .contentShape(Rectangle())
+                                .onTapGesture { dismissClipSelection() }
+                        }
                         .simultaneousGesture(timelinePanGesture)
                     }
                     .contentMargins(.bottom, bottomClearance, for: .scrollContent)
@@ -1910,6 +1919,11 @@ struct NativeMiniStrip: View {
     }
 
     private var suppressTimelineSelection: Bool { session.isTimingGestureActive || isPinching || panStartTime != nil || Date().timeIntervalSince(lastPanAt) < 0.2 }
+
+    private func dismissClipSelection() {
+        guard session.selection?.kind == .clip, !session.isTimingGestureActive else { return }
+        session.select(nil)
+    }
 
     private func select(_ item: NativeEditorTimelineItem) {
         guard !suppressTimelineSelection else { return }
