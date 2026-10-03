@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.40.0] - 2026-10-03
+
+### Changed
+- KRI-282: first-class name placeholder (fixed text) instead of a dropped instruction (#1350) <!-- release-pr: 1350 -->
+
 ## [0.78.39.0] - 2026-10-03
 
 ### Changed
