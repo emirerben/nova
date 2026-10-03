@@ -17,7 +17,7 @@ struct SlidePostWorkspaceView: View {
 
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var session = SlidePostSession()
+    @StateObject private var session: SlidePostSession
     @StateObject private var exporter = SlidePostExporter()
     @State private var showsConversation = false
     @State private var showsInspector = false
@@ -28,13 +28,22 @@ struct SlidePostWorkspaceView: View {
     @State private var pendingUploads: [UploadRecoveryRecord] = []
     @State private var uploadFailures: [UploadFailure] = []
     @State private var uploadInFlight: [UUID: BackgroundUploadCoordinator.InFlightUpload] = [:]
+    /// True while the software keyboard is up; text mode shrinks the stage so the Edit field stays visible.
+    @State private var keyboardUp = false
     @State private var photoSelections: [String: ProjectPhotoSelection] = [:]
     @State private var previewPlayer: AVPlayer?
     @State private var previewRetry = 0
     @State private var resolvedThread: CreationThread?
     @State private var resolvedCapabilities: CreationCapabilities?
     @State private var showsAttachments = false
+    @State private var mode: SlidePostMode = .browse
+    @State private var textTab: SlidePostTextPanel.Tab = .edit
+    @State private var showsCaption = false
+    @State private var showsAddChoice = false
+    @State private var rootSize = CGSize.zero
 
+    /// `session` is injectable so a parent (the chat workspace) can own the draft and stage edits
+    /// into it; by default the workspace creates its own.
     init(
         project: ProjectSummary,
         thread: CreationThread? = nil,
@@ -43,8 +52,10 @@ struct SlidePostWorkspaceView: View {
         conversation: (() -> AnyView)? = nil,
         conversationAcceptedID: UUID? = nil,
         onBack: (() -> Void)? = nil,
-        onAddMedia: (() -> Void)? = nil
+        onAddMedia: (() -> Void)? = nil,
+        session: SlidePostSession? = nil
     ) {
+        _session = StateObject(wrappedValue: session ?? SlidePostSession())
         self.project = project
         self.thread = thread
         self.capabilities = capabilities
@@ -81,31 +92,22 @@ struct SlidePostWorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if let error = session.error { recovery(error) }
-                    if let message = session.operationMessage { status(message) }
-                    if hasPendingAssets || hasFailedUploads {
-                        Button(hasFailedUploads ? "Review files that need retrying" : "Preparing your media… View files", action: addMedia)
-                            .font(KriaFont.body(14)).frame(minHeight: 44)
-                    }
-                    ForEach(session.state?.validationErrors ?? [], id: \.message) { issue in
-                        Text(issue.message).font(KriaFont.body(14)).foregroundStyle(KriaColor.failureText)
-                    }
-                    if let proposal = session.proposal {
-                        proposalView(proposal)
-                    } else if let draft = session.draft {
-                        editor(draft)
-                    } else {
-                        startingPoint
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
+            if showsRichWorkspace, let draft = session.draft {
+                richHeader(draft)
+                richWorkspace(draft)
+            } else {
+                header
+                legacyScroll
             }
         }
+        .onGeometryChange(for: CGSize.self, of: { $0.size }) { rootSize = $0 }
         .background(KriaColor.paper)
+        .sheet(isPresented: $showsCaption) { captionSheet }
+        .confirmationDialog("Add to your post", isPresented: $showsAddChoice, titleVisibility: .visible) {
+            let unused = unusedAssets
+            Button("Add \(unused.count) ready photo\(unused.count == 1 ? "" : "s") & video\(unused.count == 1 ? "" : "s")") { unused.forEach { session.addAsset(id: $0.id) } }
+            Button("Choose from library", action: addMedia)
+        }
         .sheet(isPresented: $showsConversation) {
             SlidePostAssistantSheet(
                 session: session, api: model.api, itemID: itemID,
@@ -147,6 +149,31 @@ struct SlidePostWorkspaceView: View {
                 do { try await Task.sleep(for: .seconds(3)) } catch { return }
                 await refresh()
             }
+        }
+    }
+
+    private var legacyScroll: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                if let error = session.error { recovery(error) }
+                if let message = session.operationMessage { status(message) }
+                if hasPendingAssets || hasFailedUploads {
+                    Button(hasFailedUploads ? "Review files that need retrying" : "Preparing your media… View files", action: addMedia)
+                        .font(KriaFont.body(14)).frame(minHeight: 44)
+                }
+                ForEach(session.state?.validationErrors ?? [], id: \.message) { issue in
+                    Text(issue.message).font(KriaFont.body(14)).foregroundStyle(KriaColor.failureText)
+                }
+                if let proposal = session.proposal {
+                    proposalView(proposal)
+                } else if let draft = session.draft {
+                    editor(draft)
+                } else {
+                    startingPoint
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
         }
     }
 
@@ -232,6 +259,7 @@ struct SlidePostWorkspaceView: View {
         VStack(alignment: .leading, spacing: 18) {
             ZStack(alignment: .bottomTrailing) {
                 preview(draft)
+                    .frame(maxWidth: .infinity, maxHeight: legacyPreviewCap)
                 Button { showsConversation = true } label: {
                     Image(systemName: "sparkles").font(.system(size: 23, weight: .semibold)).foregroundStyle(.white).frame(width: 52, height: 52).background(KriaColor.ink, in: Circle())
                 }
@@ -239,6 +267,7 @@ struct SlidePostWorkspaceView: View {
                 .accessibilityIdentifier("slidepost-openkria")
                 .padding(14)
             }
+            .background(SlidePostTone.stage)
             .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             thumbrail(draft)
             editorTools(draft)
@@ -270,12 +299,22 @@ struct SlidePostWorkspaceView: View {
     }
 
     private func preview(_ draft: SlidePostDraft) -> some View {
-        let asset = session.selectedAsset
-        return Rectangle().fill(KriaColor.softZinc)
+        Rectangle().fill(KriaColor.softZinc)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Slide preview")
             .accessibilityIdentifier("slidepost-preview")
-            .overlay {
+            .overlay { previewMediaView }
+        .aspectRatio(draft.platformProfile == "instagram_carousel" ? CGFloat(4) / 5 : CGFloat(9) / 16, contentMode: .fit)
+        .clipped()
+        .contentShape(Rectangle())
+        .overlay(alignment: textAlignment) { if !session.canExport, let text = session.selectedSlide?.edits?.text, !text.content.isEmpty { Text(text.content).font(KriaFont.display(26)).multilineTextAlignment(.center).padding(12).foregroundStyle(.white).shadow(radius: 3).padding(16) } }
+        .overlay(alignment: .topLeading) { Text("Preview").font(KriaFont.body(11).weight(.semibold)).padding(8).background(.black.opacity(0.45), in: Capsule()).foregroundStyle(.white).padding(10) }
+    }
+
+    /// The selected slide's media (still, video or rendered output) with its player lifecycle.
+    private var previewMediaView: some View {
+        let asset = session.selectedAsset
+        return Group {
             if let url = previewURL {
                 if asset?.kind == "video" { VideoPlayer(player: previewPlayer) }
                 else if url.isFileURL, let image = UIImage(contentsOfFile: url.path) { Image(uiImage: image).resizable().scaledToFill().accessibilityHidden(true) }
@@ -297,11 +336,6 @@ struct SlidePostWorkspaceView: View {
                 }
             } else { Image(systemName: "photo.on.rectangle").font(.largeTitle).foregroundStyle(KriaColor.zinc) }
         }
-        .aspectRatio(draft.platformProfile == "instagram_carousel" ? CGFloat(4) / 5 : CGFloat(9) / 16, contentMode: .fit)
-        .clipped()
-        .contentShape(Rectangle())
-        .overlay(alignment: textAlignment) { if !session.canExport, let text = session.selectedSlide?.edits?.text, !text.content.isEmpty { Text(text.content).font(KriaFont.display(26)).multilineTextAlignment(.center).padding(12).foregroundStyle(.white).shadow(radius: 3).padding(16) } }
-        .overlay(alignment: .topLeading) { Text("Preview").font(KriaFont.body(11).weight(.semibold)).padding(8).background(.black.opacity(0.45), in: Capsule()).foregroundStyle(.white).padding(10) }
         .task(id: previewURL) {
             guard session.selectedAsset?.kind == "video", let previewURL else { previewPlayer?.pause(); previewPlayer = nil; return }
             previewPlayer?.pause(); previewPlayer = AVPlayer(url: previewURL)
@@ -338,6 +372,7 @@ struct SlidePostWorkspaceView: View {
                 }
             }
         }
+        .excludesDrawerGesture()
     }
 
     private func editorTools(_ draft: SlidePostDraft) -> some View {
@@ -370,6 +405,7 @@ struct SlidePostWorkspaceView: View {
                         }
                     }
                 }
+                .excludesDrawerGesture()
             }
         }
     }
@@ -399,10 +435,238 @@ struct SlidePostWorkspaceView: View {
 
     private func assetReceipts(_ assets: [SlidePostAsset]) -> some View {
         ScrollView(.horizontal, showsIndicators: false) { HStack(spacing: 8) { ForEach(assets) { asset in SlidePostAssetThumbnail(asset: asset).frame(width: 76, height: 88) } } }
+            .excludesDrawerGesture()
     }
     private func proposalPreview(_ draft: SlidePostDraft) -> some View { thumbrail(draft).padding(12).background(KriaColor.sage.opacity(0.35), in: RoundedRectangle(cornerRadius: 14)) }
     private func status(_ message: String) -> some View { Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc).padding(12).frame(maxWidth: .infinity, alignment: .leading).background(KriaColor.sage.opacity(0.45), in: RoundedRectangle(cornerRadius: 12)) }
     private func recovery(_ message: String) -> some View { VStack(alignment: .leading, spacing: 8) { Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText); Button("Reload saved post") { Task { await refresh() } }.buttonStyle(KriaSecondaryButtonStyle()); if session.hasUnsavedChanges || session.hasConflict { Button("Discard local changes") { Task { await discardLocalChanges() } }.buttonStyle(KriaSecondaryButtonStyle()) } }.padding(12).background(KriaColor.failureSoft, in: RoundedRectangle(cornerRadius: 12)) }
+
+    // MARK: Redesigned workspace (capability `slide_post_rich_text`)
+
+    private var richEnabled: Bool { effectiveCapabilities?.slidePostRichTextEnabled == true }
+    private var showsRichWorkspace: Bool { richEnabled && session.proposal == nil && session.draft != nil }
+    private var unusedAssets: [SlidePostAsset] {
+        guard let draft = session.draft else { return [] }
+        return session.readyAssets.filter { asset in !draft.slides.contains { $0.assetID == asset.id } }
+    }
+    /// The preview never grows past ~53.5% of the screen, so the strip and tool bar always stay visible.
+    private var legacyPreviewCap: CGFloat { max(260, 0.535 * (rootSize.height > 0 ? rootSize.height : 800)) }
+    /// Dates/places for Kria to sort and label by. Lane B ships the capture metadata; until a slide
+    /// asset carries it this stays off, so the notice never appears on a guess.
+    private var showsNoMetadataNotice: Bool { false }
+
+    private func aspect(_ draft: SlidePostDraft) -> CGFloat { draft.platformProfile == "instagram_carousel" ? 4.0 / 5 : 9.0 / 16 }
+    private func platformName(_ draft: SlidePostDraft) -> String { draft.platformProfile == "instagram_carousel" ? "Instagram" : "TikTok" }
+
+    private func richHeader(_ draft: SlidePostDraft) -> some View {
+        let slideNumber = (draft.slides.firstIndex { $0.id == session.selectedSlide?.id } ?? 0) + 1
+        let subtitle: String
+        if mode == .text { subtitle = "Slide \(slideNumber) · Text" }
+        else if mode == .look { subtitle = "Slide \(slideNumber) · Look" }
+        else if session.hasUnsavedChanges { subtitle = "Unsaved changes" }
+        else { subtitle = "\(platformName(draft)) · \(draft.platformProfile == "instagram_carousel" ? "4:5" : "9:16") · \(draft.slides.count) slide\(draft.slides.count == 1 ? "" : "s")" }
+        let action: SlidePostHeader.Action
+        if session.isBusy { action = .saving }
+        else if session.hasUnsavedChanges { action = .save }
+        else if isRendering { action = .rendering }
+        else if session.canExport { action = .share }
+        else if canCreateRender { action = .create }
+        else { action = .save }
+        return SlidePostHeader(
+            subtitle: subtitle, unsaved: session.hasUnsavedChanges && mode != .text && mode != .look,
+            inTextMode: mode == .text || mode == .look,
+            canUndo: session.canUndoEdit || session.canUndo, canRedo: session.canRedoEdit,
+            action: action, actionEnabled: action == .create || (action == .save && session.hasUnsavedChanges),
+            onBack: { if let onBack { onBack() } else { dismiss() } },
+            onUndo: { if session.canUndoEdit { session.undoEdit() } else { Task { await undo() } } },
+            onRedo: { session.redoEdit() },
+            onDone: finishEditing,
+            onAction: { Task { if action == .create { await create() } else { await save() } } },
+            onSaveToPhotos: { Task { await saveToPhotos() } },
+            onShare: { Task { await prepareShare() } }
+        )
+    }
+
+    private func richWorkspace(_ draft: SlidePostDraft) -> some View {
+        let slide = session.selectedSlide
+        let panelOpen = mode == .text || mode == .look
+        let height = max(rootSize.height, 640)
+        return VStack(spacing: 0) {
+            richBanner
+            if showsNoMetadataNotice, !panelOpen {
+                SlidePostNotice(title: "No dates or places on these photos",
+                                detail: "Kria can't sort by time or add locations. You can still reorder by hand, or ask for text you write yourself.")
+                    .padding(.bottom, 8)
+            }
+            stage(draft, compact: panelOpen)
+                .frame(maxHeight: panelOpen ? max(150, 0.37 * height - (keyboardUp && mode == .text ? 96 : 0)) : .infinity)
+                .animation(.easeOut(duration: 0.2), value: keyboardUp)
+            if mode == .text, let slide {
+                SlidePostTextPanel(session: session, slideID: slide.id, tab: $textTab)
+                    .frame(maxHeight: .infinity)
+            } else if mode == .look, let slide {
+                SlidePostLookPanel(session: session, slideID: slide.id)
+                    .frame(maxHeight: .infinity)
+            } else {
+                browseControls(draft)
+            }
+        }
+        .background(KriaColor.paper)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardUp = true }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardUp = false }
+    }
+
+    @ViewBuilder private var richBanner: some View {
+        if let error = session.error {
+            HStack(spacing: 10) {
+                Text(error).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText).frame(maxWidth: .infinity, alignment: .leading)
+                Button("Dismiss") { session.error = nil }.font(KriaFont.body(13).weight(.semibold)).frame(minHeight: 44)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 4).background(KriaColor.failureSoft)
+            .accessibilityIdentifier("slidepost-error")
+        } else if let issue = session.state?.validationErrors.first {
+            Text(issue.message).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText)
+                .padding(.horizontal, 16).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading).background(KriaColor.failureSoft)
+        } else if hasPendingAssets || hasFailedUploads {
+            Button(action: addMedia) {
+                Text(hasFailedUploads ? "Review files that need retrying" : "Preparing your media… View files")
+                    .font(KriaFont.body(13).weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .background(KriaColor.sage.opacity(0.45))
+        }
+    }
+
+    private func stage(_ draft: SlidePostDraft, compact: Bool) -> some View {
+        GeometryReader { geometry in
+            let height = max(rootSize.height, 640)
+            let cap = (compact ? 0.34 : 0.535) * height
+            let ratio = aspect(draft)
+            let previewHeight = max(120, min(cap, (geometry.size.width - 36) / ratio, geometry.size.height - 24))
+            ZStack {
+                SlidePostTone.stage
+                richPreview(draft, size: CGSize(width: previewHeight * ratio, height: previewHeight))
+                    .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                if mode == .arrange {
+                    Text("Drag a slide to reorder · hold for more").font(KriaFont.body(15).weight(.semibold)).foregroundStyle(.white)
+                        .padding(.horizontal, 16).padding(.vertical, 10).background(KriaColor.ink, in: Capsule())
+                        .position(x: geometry.size.width / 2, y: geometry.size.height - 22)
+                        .accessibilityIdentifier("slidepost-arrange-hint")
+                }
+            }
+        }
+        .clipped()
+    }
+
+    private func richPreview(_ draft: SlidePostDraft, size: CGSize) -> some View {
+        let index = (draft.slides.firstIndex { $0.id == session.selectedSlide?.id } ?? 0) + 1
+        let texts = session.canExport ? [] : (session.selectedSlide?.edits?.effectiveTexts ?? [])
+        return ZStack(alignment: .topLeading) {
+            Rectangle().fill(KriaColor.softZinc)
+                .frame(width: size.width, height: size.height)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Slide preview")
+                .accessibilityIdentifier("slidepost-preview")
+            previewMediaView.frame(width: size.width, height: size.height).clipped()
+            SlidePostTextCanvas(
+                texts: texts, size: size, selectedID: session.selectedTextID, interactive: mode == .text,
+                onSelect: { session.selectedTextID = $0; textTab = .style },
+                onDrag: { id, x, y in
+                    guard let slideID = session.selectedSlide?.id else { return }
+                    session.updateText(slideID: slideID, textID: id, coalescing: "drag") { $0.position = "custom"; $0.xFrac = x; $0.yFrac = y }
+                }
+            )
+        }
+        .frame(width: size.width, height: size.height)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(alignment: .topTrailing) {
+            Text("\(index) / \(draft.slides.count)").font(KriaFont.body(13).weight(.bold)).foregroundStyle(.white)
+                .padding(.horizontal, 12).padding(.vertical, 6).background(KriaColor.mutedInk.opacity(0.85), in: Capsule()).padding(12)
+                .allowsHitTesting(false)
+        }
+        .overlay(alignment: .topLeading) {
+            if isRendering && !session.isBusy {
+                Text("Rendering…").font(KriaFont.body(12).weight(.semibold)).foregroundStyle(.white)
+                    .padding(.horizontal, 10).padding(.vertical, 5).background(.black.opacity(0.5), in: Capsule()).padding(12)
+            }
+        }
+        .overlay { if session.isBusy { SlidePostVeil(message: session.operationMessage ?? "Saving your post…").clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous)) } }
+        .shadow(color: .black.opacity(0.14), radius: 14, y: 8)
+        .excludesDrawerGestureWhen(mode == .text)
+    }
+
+    private func browseControls(_ draft: SlidePostDraft) -> some View {
+        let slide = session.selectedSlide
+        let hasTexts = !(slide?.edits?.effectiveTexts.isEmpty ?? true)
+        return VStack(spacing: 8) {
+            SlidePostStrip(
+                slides: draft.slides, coverIndex: draft.coverIndex, selectedID: session.selectedID, arranging: mode == .arrange,
+                asset: { slide in session.state?.assets.first { $0.id == slide.assetID } },
+                onSelect: { session.selectedID = $0; session.selectedTextID = nil },
+                onMove: { id, to in session.moveSlide(id: id, toIndex: to) },
+                onSetCover: { session.setCover(id: $0) },
+                onRemove: { session.removeSlide(id: $0) },
+                onAdd: { if unusedAssets.isEmpty { addMedia() } else { showsAddChoice = true } }
+            )
+            SlidePostToolBar(
+                mode: mode, canCover: slide != nil, canRemove: draft.slides.count > 1 && slide != nil,
+                canDuplicateText: hasTexts && (slide?.edits?.effectiveTexts.count ?? 0) < SlidePostEdits.maxTexts,
+                onText: beginTextEditing,
+                onArrange: { mode = mode == .arrange ? .browse : .arrange },
+                onCover: { if let id = slide?.id { session.setCover(id: id); UINotificationFeedbackGenerator().notificationOccurred(.success) } },
+                onLook: { mode = .look },
+                onRemove: { if let id = slide?.id { session.removeSlide(id: id) } },
+                onDuplicateText: {
+                    if let id = slide?.id, let textID = session.selectedTextID ?? slide?.edits?.effectiveTexts.first?.id { session.duplicateText(slideID: id, textID: textID) }
+                },
+                onCaption: { showsCaption = true }
+            )
+            SlidePostComposer(text: $instruction, canSend: canSendFromComposer, onSend: { Task { await sendFromComposer() } })
+        }
+        .padding(.bottom, 6)
+        .disabled(session.isBusy)
+        .opacity(session.isBusy ? 0.5 : 1)
+    }
+
+    private var canSendFromComposer: Bool {
+        !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && canRequestProposal && itemID != nil
+    }
+    /// Lane E replaces this with the slide chat-edit endpoint when `slide_post_chat_edit` is on.
+    private func sendFromComposer() async {
+        guard canSendFromComposer else { return }
+        await propose()
+    }
+
+    private func beginTextEditing() {
+        guard let slide = session.selectedSlide else { return }
+        if slide.edits?.effectiveTexts.isEmpty ?? true {
+            session.addText(slideID: slide.id); textTab = .edit
+        } else {
+            if session.selectedTextID == nil || slide.edits?.effectiveTexts.contains(where: { $0.id == session.selectedTextID }) != true {
+                session.selectedTextID = slide.edits?.effectiveTexts.first?.id
+            }
+            textTab = .style
+        }
+        mode = .text
+    }
+    private func finishEditing() {
+        if let id = session.selectedSlide?.id { session.removeEmptyTexts(slideID: id) }
+        session.selectedTextID = nil
+        mode = .browse
+    }
+
+    private var captionSheet: some View {
+        NavigationStack {
+            Form {
+                TextField("Caption", text: Binding(get: { session.draft?.caption ?? "" }, set: { session.setCaption($0) }), axis: .vertical)
+                    .lineLimit(3...8).accessibilityIdentifier("slidepost-caption-field")
+                Button("Copy caption") { UIPasteboard.general.string = session.draft?.caption }
+                    .disabled(session.draft?.caption.isEmpty ?? true)
+            }
+            .navigationTitle("Caption")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showsCaption = false } } }
+        }
+        .presentationDetents([.medium])
+    }
 
     private func refresh() async {
         guard let itemID else { return }
@@ -469,8 +733,10 @@ private struct SlidePostHeading: View {
     var body: some View { VStack(alignment: .leading, spacing: 6) { Text(title).font(KriaFont.display(29)); Text(detail).font(KriaFont.body(15)).foregroundStyle(KriaColor.zinc) } }
 }
 
-private struct SlidePostAssetThumbnail: View {
+struct SlidePostAssetThumbnail: View {
     let asset: SlidePostAsset?
+    var size = CGSize(width: 64, height: 76)
+    var radius: CGFloat = 8
     var body: some View {
         Group {
             if let url = asset?.previewURL ?? asset?.displayURL {
@@ -479,7 +745,7 @@ private struct SlidePostAssetThumbnail: View {
             }
             else { Image(systemName: asset?.kind == "video" ? "video" : "photo").foregroundStyle(KriaColor.zinc) }
         }
-        .frame(width: 64, height: 76).background(KriaColor.softZinc).clipped().clipShape(RoundedRectangle(cornerRadius: 8))
+        .frame(width: size.width, height: size.height).background(KriaColor.softZinc).clipped().clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
     }
 }
 
