@@ -102,10 +102,20 @@ struct SlidePostTextElement: Codable, Equatable, Identifiable, Sendable {
         for (key, value) in other.extra { extra[key] = value }
     }
     var isInvalid: Bool {
-        text.isEmpty || text.count > Self.maxLength || fontFamily.isEmpty || !Self.sizeRange.contains(sizePx)
+        // The server counts code points, not grapheme clusters, so count unicode scalars.
+        text.isEmpty || text.unicodeScalars.count > Self.maxLength || fontFamily.isEmpty || !Self.sizeRange.contains(sizePx)
+            || (maxWidthFrac.map { !(0.2...1).contains($0) } ?? false)
             || !["left", "center", "right"].contains(alignment) || !["top", "center", "bottom", "custom"].contains(position)
             || !["none", "box"].contains(background) || !Self.isHex(color) || !(0...12).contains(strokeWidth)
             || [xFrac, yFrac].contains { $0.map { !(0...1).contains($0) } ?? false }
+    }
+    /// Font chips for the Style tab: the default face first, then every live registry font, with
+    /// faces that share a font file collapsed (the registry's "Inter" is the default Inter-Bold).
+    /// The server accepts every registry name, so no chip can be rejected on save.
+    static func fontChoices(catalog: NativeFontCatalog = .shared) -> [String] {
+        var seen = Set<String>()
+        func key(_ name: String) -> String { catalog.fontURL(for: name)?.lastPathComponent ?? name }
+        return ([defaultFont] + catalog.pickerFonts).filter { seen.insert(key($0)).inserted }
     }
     static func isHex(_ value: String) -> Bool {
         value.count == 7 && value.hasPrefix("#") && value.dropFirst().allSatisfy(\.isHexDigit)
@@ -467,7 +477,13 @@ private struct SlidePostItemResponse: Decodable {
         state = result
         baselineDraft = result.draft
         // A clean copy follows the server; unsaved edits stay and simply rebase onto the new version.
-        if !wasDirty { draft = result.draft }
+        if !wasDirty {
+            // Undo must never restore a snapshot taken before a different remote draft was adopted.
+            let changed: Bool
+            if let local = draft, let remote = result.draft { changed = !local.hasSameContent(as: remote) } else { changed = (draft == nil) != (result.draft == nil) }
+            if changed { undoStack = []; redoStack = []; lastCoalesceKey = nil }
+            draft = result.draft
+        }
         baseVersion = remoteVersion
         if let selectedID, (draft ?? proposal?.draft)?.slides.contains(where: { $0.id == selectedID }) != true {
             self.selectedID = (draft ?? proposal?.draft)?.slides.first?.id
@@ -631,6 +647,8 @@ private struct SlidePostItemResponse: Decodable {
     /// undo step. Also the entry point for a staged AI result (Lane E): stage it, show it, and the
     /// user can undo it before saving.
     func stageDraft(_ new: SlidePostDraft, coalescing key: String? = nil) {
+        // Dropped while a save/propose is in flight: the draft is being rebased onto the server's
+        // answer, and the controls that call this are disabled/veiled in that window anyway.
         guard !isBusy, let current = draft, !new.hasSameContent(as: current) else { return }
         if key == nil || key != lastCoalesceKey {
             undoStack.append(current)
@@ -770,7 +788,9 @@ private struct SlidePostItemResponse: Decodable {
         for index in value.slides.indices where value.slides[index].id != slideID {
             guard var edits = value.slides[index].edits, !edits.effectiveTexts.isEmpty else { continue }
             var texts = edits.effectiveTexts
-            for at in texts.indices { texts[at].copyStyle(from: source) }
+            // Only the matching text takes the look (and position); siblings keep their own place.
+            let sourceIndex = value.slides.first(where: { $0.id == slideID })?.edits?.effectiveTexts.firstIndex(where: { $0.id == textID }) ?? 0
+            texts[sourceIndex < texts.count ? sourceIndex : 0].copyStyle(from: source)
             edits.setTexts(texts)
             value.slides[index].edits = edits
         }
@@ -819,5 +839,27 @@ private struct SlidePostItemResponse: Decodable {
         }
         draft = local.draft; proposal = local.proposal; selectedID = local.selectedID; instruction = local.instruction; baseVersion = local.baseVersion; baselineDraft = local.baselineDraft
         chat = local.chat ?? []
+    }
+}
+
+/// Pure preview geometry, mirroring the server's `render_text_element_png`: `x_frac` is the line's
+/// left edge for left alignment, its right edge for right alignment and its centre for centre;
+/// `y_frac` (or a vertical preset) is the block's vertical centre.
+enum SlidePostTextLayout {
+    static let xDefaults: [String: Double] = ["left": 0.08, "center": 0.5, "right": 0.92]
+    static let yPresets: [String: Double] = ["top": 0.12, "center": 0.5, "bottom": 0.82]
+
+    static func anchor(for element: SlidePostTextElement) -> (x: Double, y: Double) {
+        let x = element.xFrac ?? xDefaults[element.alignment] ?? 0.5
+        let y = element.position == "custom" ? (element.yFrac ?? 0.5) : (yPresets[element.position] ?? 0.82)
+        return (x, y)
+    }
+    /// The anchor after a drag of `translation` points, as canvas fractions (clamped to 0...1).
+    /// Starting from the edge anchor means dragging a left/right text writes an edge x, not a centre.
+    static func dragged(from element: SlidePostTextElement, translation: CGSize, canvas: CGSize) -> (x: Double, y: Double) {
+        guard canvas.width > 0, canvas.height > 0 else { return anchor(for: element) }
+        let start = anchor(for: element)
+        return (min(max(start.x + Double(translation.width / canvas.width), 0), 1),
+                min(max(start.y + Double(translation.height / canvas.height), 0), 1))
     }
 }

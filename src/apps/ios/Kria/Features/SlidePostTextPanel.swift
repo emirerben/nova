@@ -110,14 +110,15 @@ struct SlidePostTextPanel: View {
     }
 
     private func fontChips(_ element: SlidePostTextElement) -> some View {
-        let names = [SlidePostTextElement.defaultFont] + NativeFontCatalog.shared.pickerFonts.filter { $0 != SlidePostTextElement.defaultFont }
+        let names = SlidePostTextElement.fontChoices()
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(names, id: \.self) { name in
                     let on = element.fontFamily == name
                     Button { update(element) { $0.fontFamily = name } } label: {
                         Text(name == SlidePostTextElement.defaultFont ? "Inter Bold" : name)
-                            .font(NativeFontCatalog.shared.ctFont(name, size: 17).map(Font.init) ?? KriaFont.body(16))
+                            // Chrome stays Inter; the chosen font is applied to the canvas text, not the chip.
+                            .font(KriaFont.body(16))
                             .foregroundStyle(on ? KriaColor.plum : KriaColor.ink)
                             .padding(.horizontal, 16).frame(minHeight: 44)
                             .background(on ? KriaColor.lilac : KriaColor.paper, in: Capsule())
