@@ -837,6 +837,11 @@
             "title": "Runtime Versions",
             "type": "array"
           },
+          "slide_post_rich_text": {
+            "default": false,
+            "title": "Slide Post Rich Text",
+            "type": "boolean"
+          },
           "visuals_enabled": {
             "default": false,
             "title": "Visuals Enabled",
@@ -6289,7 +6294,7 @@
         "type": "object"
       },
       "SlideEdits": {
-        "description": "Per-slide edit state, applied at render time in `pipeline/slide_post/build.py`.\n\nDeliberately flat and small \u2014 see plans/024 follow-up eng-review for why\nthis is NOT a scaled-down `EditorShell` document (media_overlays, text\nlanes, etc). Every field here must correspond to an FFmpeg filter fragment\n`normalize_image_slide`/`normalize_video_slide` can append to their\nexisting `-vf` chain; there is no separate rendering subsystem.",
+        "description": "Per-slide edit state, applied at render time in `pipeline/slide_post/build.py`.\n\n`text` is the legacy single drawtext overlay. `texts` is the rich model\n(max 4 styled elements). When `texts` is not None, `text` is ALWAYS a\nmirror of `texts[0]` (None when `texts` is empty) so old clients and the\nflag-off render path keep working. `look_preset` maps to an FFmpeg filter\nfragment; there is no separate rendering subsystem for it.",
         "properties": {
           "look_preset": {
             "default": "none",
@@ -6308,6 +6313,16 @@
             "$ref": "#/components/schemas/TextOverlay",
             "default": null,
             "nullable": true
+          },
+          "texts": {
+            "default": null,
+            "items": {
+              "$ref": "#/components/schemas/SlideTextElement"
+            },
+            "maxItems": 4,
+            "nullable": true,
+            "title": "Texts",
+            "type": "array"
           }
         },
         "title": "SlideEdits",
@@ -6753,6 +6768,136 @@
           "kind"
         ],
         "title": "SlideRef",
+        "type": "object"
+      },
+      "SlideTextElement": {
+        "description": "One styled text element on a single slide (rich text model, KRI-298).\n\nA style vocabulary aligned with `agents/_schemas/text_element.TextElement`.\nRendered by `pipeline/slide_post/build.py` through the Pillow\n`text_overlay._draw_text_png` path (PNG overlay) when\n`slide_post_rich_text_enabled` is on. All style fields default so a\npartial payload from a client stays valid.",
+        "properties": {
+          "alignment": {
+            "default": "center",
+            "enum": [
+              "left",
+              "center",
+              "right"
+            ],
+            "title": "Alignment",
+            "type": "string"
+          },
+          "background": {
+            "default": "none",
+            "enum": [
+              "none",
+              "box"
+            ],
+            "title": "Background",
+            "type": "string"
+          },
+          "color": {
+            "default": "#FFFFFF",
+            "title": "Color",
+            "type": "string"
+          },
+          "edited": {
+            "default": false,
+            "title": "Edited",
+            "type": "boolean"
+          },
+          "font_family": {
+            "default": "Inter-Bold",
+            "title": "Font Family",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "label_source": {
+            "default": null,
+            "enum": [
+              "place",
+              "capture_time"
+            ],
+            "nullable": true,
+            "title": "Label Source",
+            "type": "string"
+          },
+          "max_width_frac": {
+            "default": null,
+            "maximum": 1.0,
+            "minimum": 0.2,
+            "nullable": true,
+            "title": "Max Width Frac",
+            "type": "number"
+          },
+          "position": {
+            "default": "bottom",
+            "enum": [
+              "top",
+              "center",
+              "bottom",
+              "custom"
+            ],
+            "title": "Position",
+            "type": "string"
+          },
+          "role": {
+            "default": "text",
+            "enum": [
+              "text",
+              "label"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "shadow_enabled": {
+            "default": true,
+            "title": "Shadow Enabled",
+            "type": "boolean"
+          },
+          "size_px": {
+            "default": 86,
+            "maximum": 200,
+            "minimum": 24,
+            "title": "Size Px",
+            "type": "integer"
+          },
+          "stroke_width": {
+            "default": 0,
+            "maximum": 12,
+            "minimum": 0,
+            "title": "Stroke Width",
+            "type": "integer"
+          },
+          "text": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "x_frac": {
+            "default": null,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "X Frac",
+            "type": "number"
+          },
+          "y_frac": {
+            "default": null,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Y Frac",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ],
+        "title": "SlideTextElement",
         "type": "object"
       },
       "SmoothRevealContent": {

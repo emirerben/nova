@@ -7587,11 +7587,7 @@ def _build_slide_post_result(
             # edit — the edit would never appear in the export. "noedits" is
             # a plain literal (not a hash) so the unedited path's key is
             # unchanged from before this feature existed.
-            edits_digest = (
-                hashlib.sha256(edits.model_dump_json().encode("utf-8")).hexdigest()[:16]
-                if edits is not None
-                else "noedits"
-            )
+            edits_digest = slide_build.edits_cache_digest(edits)
             normalized_key = (
                 f"generative-jobs/{job_id}/slides/normalized/"
                 f"{fingerprint}_{canvas[0]}x{canvas[1]}_{edits_digest}.{ext}"

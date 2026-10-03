@@ -11,20 +11,23 @@ import zipfile
 import pytest
 from PIL import Image
 
+from app.config import settings
 from app.pipeline.slide_post.build import (
     BundleSlideFile,
     SlideBuildError,
     build_bundle_zip,
     build_post_manifest,
     concat_preview_segments,
+    edits_cache_digest,
     extract_cover,
     normalize_image_slide,
     normalize_video_slide,
     probe_dimensions,
     probe_duration_s,
     render_preview_segment,
+    rich_text_active,
 )
-from app.schemas.slide_post import SlideEdits, TextOverlay
+from app.schemas.slide_post import SlideEdits, SlideTextElement, TextOverlay
 
 _HAS_FFMPEG = shutil.which("ffmpeg") is not None
 
@@ -275,3 +278,186 @@ class TestManifestAndBundle:
             assert zf.read("slides/01.mp4") == b"fake-mp4-bytes"
             assert json.loads(zf.read("post.json")) == manifest
             assert zf.read("caption.txt").decode() == "my caption"
+
+
+# ---- Rich per-slide text (KRI-299) ---------------------------------------------------
+
+
+CANVAS_45 = (1080, 1350)
+
+
+@pytest.fixture
+def rich_on(monkeypatch):
+    monkeypatch.setattr(settings, "slide_post_rich_text_enabled", True)
+
+
+def _el(**kw) -> SlideTextElement:
+    base = {"id": "t1", "text": "Lisbon", "color": "#FF0000", "size_px": 120, "position": "center"}
+    base.update(kw)
+    return SlideTextElement(**base)
+
+
+def _bbox_of_color(path, rgb, tol=40):
+    img = Image.open(path).convert("RGB")
+    w, h = img.size
+    px = img.load()
+    xs, ys = [], []
+    for y in range(0, h, 2):
+        for x in range(0, w, 2):
+            r, g, b = px[x, y]
+            if abs(r - rgb[0]) < tol and abs(g - rgb[1]) < tol and abs(b - rgb[2]) < tol:
+                xs.append(x)
+                ys.append(y)
+    return (min(xs), min(ys), max(xs), max(ys)) if xs else None
+
+
+@pytest.mark.skipif(not _HAS_FFMPEG, reason="ffmpeg not installed")
+class TestRichSlideText:
+    def test_styled_image_slide_draws_colored_text_where_asked(self, tmp_path, rich_on):
+        src, out = tmp_path / "s.png", tmp_path / "o.jpg"
+        _make_image(src, 1080, 1920, color=(0, 0, 0))
+        edits = SlideEdits(texts=[_el()])
+        normalize_image_slide(str(src), str(out), canvas=CANVAS, edits=edits)
+        assert probe_dimensions(str(out)) == CANVAS
+        box = _bbox_of_color(out, (255, 0, 0))
+        assert box is not None, "styled text not visible"
+        cy = (box[1] + box[3]) / 2
+        assert 0.4 * 1920 < cy < 0.6 * 1920
+        assert not [p for p in tmp_path.iterdir() if ".text" in p.name]
+
+    def test_apostrophe_and_percent_text_render(self, tmp_path, rich_on):
+        src, out = tmp_path / "s.png", tmp_path / "o.jpg"
+        _make_image(src, 1080, 1920, color=(0, 0, 0))
+        edits = SlideEdits(texts=[_el(text="50% of Dad's day")])
+        normalize_image_slide(str(src), str(out), canvas=CANVAS, edits=edits)
+        assert _bbox_of_color(out, (255, 0, 0)) is not None
+
+    def test_multiple_elements_and_look_compose(self, tmp_path, rich_on):
+        src, out = tmp_path / "s.png", tmp_path / "o.jpg"
+        _make_image(src, 1080, 1920, color=(0, 0, 0))
+        edits = SlideEdits(
+            look_preset="golden_hour",
+            texts=[_el(id="a", position="top"), _el(id="b", color="#00FF00", position="bottom")],
+        )
+        normalize_image_slide(str(src), str(out), canvas=CANVAS, edits=edits)
+        top = _bbox_of_color(out, (255, 0, 0), tol=90)
+        bottom = _bbox_of_color(out, (0, 255, 0), tol=90)
+        assert top and bottom and top[1] < bottom[1]
+
+    def test_four_by_five_top_band_lands_inside_cropped_frame(self, tmp_path, rich_on):
+        src, out = tmp_path / "s.png", tmp_path / "o.jpg"
+        _make_image(src, 1080, 1350, color=(0, 0, 0))
+        edits = SlideEdits(texts=[_el(position="custom", x_frac=0.5, y_frac=0.1, size_px=80)])
+        normalize_image_slide(str(src), str(out), canvas=CANVAS_45, edits=edits)
+        assert probe_dimensions(str(out)) == CANVAS_45
+        box = _bbox_of_color(out, (255, 0, 0))
+        assert box is not None
+        cy = (box[1] + box[3]) / 2
+        # y_frac 0.1 of a 1350-tall slide, not of the 1920 raster.
+        assert abs(cy - 0.1 * 1350) < 40
+
+    def test_video_slide_keeps_full_duration_and_audio_with_text(self, tmp_path, rich_on):
+        src, out = tmp_path / "s.mp4", tmp_path / "o.mp4"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:s=640x360:d=1.5",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=d=1.5",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-shortest",
+                str(src),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        normalize_video_slide(str(src), str(out), canvas=CANVAS, edits=SlideEdits(texts=[_el()]))
+        assert probe_dimensions(str(out)) == CANVAS
+        assert abs(probe_duration_s(str(out)) - 1.5) < 0.3
+        streams = subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type",
+                "-of",
+                "csv=p=0",
+                str(out),
+            ],
+            text=True,
+        )
+        assert "audio" in streams
+        frame = tmp_path / "f.jpg"
+        extract_cover(str(out), "video", str(frame))
+        assert _bbox_of_color(frame, (255, 0, 0)) is not None
+
+    def test_flag_off_uses_legacy_drawtext_of_mirrored_text(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(settings, "slide_post_rich_text_enabled", False)
+        src, out = tmp_path / "s.png", tmp_path / "o.jpg"
+        _make_image(src, 1080, 1920, color=(0, 0, 0))
+        edits = SlideEdits(texts=[_el()])
+        assert edits.text is not None and edits.text.content == "Lisbon"
+        assert not rich_text_active(edits)
+        normalize_image_slide(str(src), str(out), canvas=CANVAS, edits=edits)
+        # drawtext is white on a translucent box; the styled red never appears.
+        assert _bbox_of_color(out, (255, 0, 0)) is None
+        assert _bbox_of_color(out, (255, 255, 255)) is not None
+
+    def test_legacy_only_edits_render_byte_identical_with_flag_on_or_off(
+        self, tmp_path, monkeypatch
+    ):
+        src = tmp_path / "s.png"
+        _make_image(src, 1080, 1920, color=(10, 20, 30))
+        legacy = SlideEdits(text=TextOverlay(content="Hi", position="bottom"))
+        outs = []
+        for flag in (False, True):
+            monkeypatch.setattr(settings, "slide_post_rich_text_enabled", flag)
+            out = tmp_path / f"o{flag}.jpg"
+            normalize_image_slide(str(src), str(out), canvas=CANVAS, edits=legacy)
+            outs.append(out.read_bytes())
+        assert outs[0] == outs[1]
+
+    def test_empty_texts_renders_without_overlay(self, tmp_path, rich_on):
+        src, out = tmp_path / "s.png", tmp_path / "o.jpg"
+        _make_image(src, 1080, 1920, color=(0, 0, 0))
+        normalize_image_slide(str(src), str(out), canvas=CANVAS, edits=SlideEdits(texts=[]))
+        assert probe_dimensions(str(out)) == CANVAS
+
+
+class TestEditsCacheDigest:
+    def test_legacy_digest_ignores_texts_field(self):
+        import hashlib
+
+        legacy = SlideEdits(text=TextOverlay(content="Hi", position="top"))
+        expected = hashlib.sha256(legacy.model_dump_json(exclude={"texts"}).encode()).hexdigest()[
+            :16
+        ]
+        assert edits_cache_digest(legacy) == expected
+        assert edits_cache_digest(None) == "noedits"
+
+    def test_digest_covers_every_style_field(self):
+        a = edits_cache_digest(SlideEdits(texts=[_el()]))
+        assert a != edits_cache_digest(SlideEdits(texts=[_el(color="#00FF00")]))
+        assert a != edits_cache_digest(SlideEdits(texts=[_el(y_frac=0.2, position="custom")]))
+        assert a != edits_cache_digest(SlideEdits(texts=[_el(), _el(id="t2")]))
+
+    def test_flag_flip_changes_digest(self, monkeypatch):
+        edits = SlideEdits(texts=[_el()])
+        monkeypatch.setattr(settings, "slide_post_rich_text_enabled", False)
+        off = edits_cache_digest(edits)
+        monkeypatch.setattr(settings, "slide_post_rich_text_enabled", True)
+        assert edits_cache_digest(edits) != off
