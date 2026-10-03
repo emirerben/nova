@@ -2730,3 +2730,100 @@ selected. The execution-plan validator permits an empty approved text lane only 
 `fast_montage`; guided stories and explainers retain their text requirement. A creator
 requirement asking for a title that could not be grounded is now reported as partial instead
 of being cosmetically satisfied by a generic label.
+
+## [2026-10-03] Celery soft shutdown ends when in-flight work does, not after a fixed 240 s (found during KRI-294)
+
+Context. PR #808 (v0.25.11.0) remapped Fly's SIGTERM to Celery's SIGQUIT soft shutdown
+(`worker_soft_shutdown_timeout=240`, `kill_timeout=300`) and turned on
+`worker_enable_soft_shutdown_on_idle` "so reserved work is restored". In Celery 5.5/5.6
+`WorkController.wait_for_soft_shutdown` treats that flag as "always wait" and then runs one
+unconditional `sleep(240)`. So every worker group paused for the full window on every
+deploy, even when idle. Fly Deploy run 37105374364 (v1390): "Updating" at 07:21:52.69Z, then
+"reached started" for light +251.7 s, speech_analysis +253.7 s, autoplace +254.8 s and
+worker +257.1 s. A user's five Visuals photos sat "Queued" with no consumer for that time. With
+~20 deploys a day this happens many times daily.
+
+Two Celery internals shape the fix. Both were checked against Celery 5.6.3 / kombu 5.6.2 /
+billiard 4.3.0, which prod installed in its last dependency-layer build (run 36064301375):
+
+- The wait runs inside the SIGQUIT handler on the MainProcess thread, and that thread also
+  drives the event loop. The loop is frozen while it waits, so `celery.worker.state` never
+  changes: a task that finishes in a prefork child still looks active until the wait ends.
+  Polling `active_requests` would therefore never end the wait early.
+- ETA/countdown messages whose time has not come are not in `reserved_requests`. kombu holds
+  them unacked and `Channel.close()` restores them during the cold shutdown that follows the
+  wait. That includes reading an outstanding BRPOP first. The restore does not depend on the
+  wait. The Celery docs warn that ETA re-queueing can fail on the idle path, but this did not
+  reproduce on these versions (drill below).
+
+Decision. `app/services/celery_soft_shutdown.py` replaces the worker instance's
+`wait_for_soft_shutdown` at `celeryd_init`. Each prefork child writes the id of every task it
+finishes (`task_postrun`) into a shared anonymous mmap. There is one slot per billiard
+process index. The mmap is created in the MainProcess before the pool forks. The new wait
+works like this:
+
+- If nothing is reserved or active at the signal, there is no wait.
+- Otherwise it waits until every request that was reserved at the signal appears as
+  finished, plus a 1 s settle so the child's result reaches the pool pipe. The late ack is
+  sent from that pipe during cold shutdown. The wait still ends at 240 s at the latest.
+
+Every unexpected state falls back to the stock full wait, never a shorter one. That covers a
+request that never reached a child, a child killed before `task_postrun`, an index beyond 32
+and a missing mmap. Whatever is unfinished at the deadline is cancelled and restored exactly
+as before. `worker_enable_soft_shutdown_on_idle` is now `not CELERY_SOFT_SHUTDOWN_EARLY_EXIT_ENABLED`,
+so the kill switch restores the pre-change behaviour (on_idle on, stock sleep). The flag is read
+on the old machine at stop time, so a flip takes effect from the deploy after it.
+
+Drill. A real prefork worker ran against local Redis on DB 15, with
+`REMAP_SIGTERM=SIGQUIT`, acks_late, prefetch 1, `polling_interval` 10 and the window scaled to
+20 s. Each run sent SIGTERM to the MainProcess, then a replacement worker drained the queue
+and the task executions were counted:
+
+| scenario | today (on_idle) | early exit |
+|---|---|---|
+| idle | exit 21.6 s | exit 9.0 s (2/2) |
+| idle, holding a 1 h countdown task | 21.6 s, ETA restored | 10.1 s, ETA restored (2/2); stock without on_idle also restored it 4/4 |
+| 4 s task in flight | 22.1 s, ran once, acked | wait ended at 4.6 s, exit 10.0 s, ran once, acked (2/2) |
+| task finishing 0.1 s after the signal | — | exit 10.6 s, ran once, acked (5/5) |
+| 4 s task plus a held ETA | — | 10.1 s, ran once, ETA restored (2/2) |
+| 35 s task (outlasts window) | 21.1 s, restored, re-run once | 21.2 s, restored, re-run once |
+| 4 s and 35 s tasks concurrently | — | 22.1 s: short ran once; long restored and re-run |
+
+In the early-exit runs, the remaining ~9–10 s before exit is kombu's `Channel.close()` reading
+the outstanding BRPOP. Its timeout equals `polling_interval` (10 s).
+
+Alternatives rejected.
+
+- **Shorter timeout for short-task groups (autoplace, light, speech_analysis).** Once the wait
+  ends when work finishes, a shorter cap only matters for a task still running at the cap. For
+  that task it trades waiting for a cancel-and-restart from scratch. light also runs
+  `run_kria_turn` on agent-control. Revisit only if a group's tasks routinely outlast the window.
+- **Fly bluegreen.** The strategy is app-wide. It would run two `light` machines and so two
+  embedded Beat schedulers (Beat does not de-duplicate). It would also give
+  `fly_machines._resolve_worker_machine` two `worker` machines, and it then deliberately acts on
+  neither. Bluegreen also expects health checks, which the worker groups have no HTTP service for.
+
+Residual, measured but not changed. With `polling_interval` 10, a freshly started worker picked
+up its first message 9.0 s after "ready" (0.04 s at `polling_interval` 1). Steady-state pickup
+stays instant (0.01–0.05 s). So each deploy still carries up to ~10 s at stop (BRPOP drain) and
+up to ~10 s after start, which `reached started` does not show. That is the cost of the
+Upstash command-count trade in `worker.py`. Revisit it there, not here.
+
+Guards. `tests/test_deploy_shutdown_policy.py` pins:
+
+- the 240/300 budget;
+- `on_idle` off while the early exit is on;
+- the instance binding via `celeryd_init`;
+- the kill-switch fallback, in a subprocess.
+
+`tests/services/test_celery_soft_shutdown.py` covers:
+
+- the exit rules, with a fake clock;
+- a real billiard child writing to parent-visible memory;
+- a Celery-upgrade tripwire. If `on_cold_shutdown` stops calling
+  `worker.wait_for_soft_shutdown()`, or `celeryd_init` stops passing the worker instance, the
+  override would be silently ignored.
+
+Revisit if a deploy shows a task executed twice around a worker stop (check for "Soft shutdown:"
+log lines before restoring), if Celery's soft-shutdown wait stops blocking the event loop (then
+`active_requests` polling is enough), or if prefork concurrency exceeds 32.
