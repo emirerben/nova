@@ -1,0 +1,54 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-03.2",
+  "input": {
+    "creator_request": "We filmed a charity 5-a-side. Put the sport label bottom left. For individual shots of people, add a text placeholder so I can replace with their real names",
+    "latest_user_message": null,
+    "candidate_intents": null
+  },
+  "raw_text": "{\"intents\": [{\"intent_id\": \"l1\", \"op\": \"label\", \"attribute\": \"sport\", \"label_source\": \"clip\", \"transcript_kind\": null, \"creator_text\": null, \"caption_attribute\": null, \"position\": null, \"placeholder\": false, \"source_quote\": \"Put the sport label bottom left\"}, {\"intent_id\": \"p1\", \"op\": \"caption\", \"attribute\": \"individual shots of people\", \"label_source\": \"clip\", \"transcript_kind\": null, \"creator_text\": \"NAME_PLACEHOLDER\", \"caption_attribute\": null, \"position\": null, \"placeholder\": false, \"source_quote\": \"For individual shots of people, add a text placeholder so I can replace with their real names\"}], \"question\": null}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "l1",
+        "op": "label",
+        "attribute": "sport",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Put the sport label bottom left"
+      },
+      {
+        "intent_id": "p1",
+        "op": "label",
+        "attribute": "individual shots of people",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "placeholder": true,
+        "source_quote": "For individual shots of people, add a text placeholder so I can replace with their real names"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "KRI-282 follow-up: a model that maps the name placeholder to a creator_text caption (the shape the source fence rejects) is repaired into a placeholder label instead of dropped.",
+    "expect_intents": [
+      {
+        "op": "label",
+        "source_quote_keywords": [
+          "sport",
+          "label"
+        ]
+      },
+      {
+        "op": "label",
+        "source_quote_keywords": [
+          "placeholder"
+        ]
+      }
+    ],
+    "expect_any": true
+  }
+}

@@ -1457,6 +1457,7 @@ export interface CreatorAgentPlanPreview {
         transcript_kind?: "participant" | "score" | "topic" | null;
         caption_attribute?: string | null;
         creator_text?: string | null;
+        placeholder?: boolean;
         position?: "first" | "last" | null;
         status?: "resolved" | "needs_creator";
         assignments?: Array<{
@@ -1464,7 +1465,7 @@ export interface CreatorAgentPlanPreview {
           value?: string | null;
           evidence?: string;
           confidence?: number;
-          grounding?: "creator_text" | "record_span" | "vision_verified" | null;
+          grounding?: "creator_text" | "record_span" | "vision_verified" | "placeholder" | null;
         }>;
       }> | null;
       optional_treatments?: Array<"overlays" | "sfx" | "transitions" | "looks">;

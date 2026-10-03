@@ -942,6 +942,10 @@ def _intent_labels(strategy: Mapping[str, Any], enabled: bool) -> dict[str, tupl
     if not enabled:
         return {}
     rows: dict[str, tuple[str, bool]] = {}
+    # KRI-282: a placeholder ("Name", for the creator to replace) is the more specific
+    # ask -- "individual shots of people" -- so it wins over a broader label on the
+    # same clip (a sport tag). It prints as the creator's own request, never inferred.
+    placeholders: dict[str, tuple[str, bool]] = {}
     for intent in strategy.get("resolved_clip_intents") or []:
         if not isinstance(intent, Mapping) or intent.get("op") != "label":
             continue
@@ -950,8 +954,14 @@ def _intent_labels(strategy: Mapping[str, Any], enabled: bool) -> dict[str, tupl
                 continue
             media_id = str(assignment.get("media_id") or "")
             value = _nfc(assignment.get("value"))
-            if media_id and value and media_id not in rows:
-                rows[media_id] = (value, assignment.get("grounding") == "creator_text")
+            if not (media_id and value):
+                continue
+            grounding = assignment.get("grounding")
+            if grounding == "placeholder":
+                placeholders.setdefault(media_id, (value, True))
+            elif media_id not in rows:
+                rows[media_id] = (value, grounding == "creator_text")
+    rows.update(placeholders)
     return rows
 
 

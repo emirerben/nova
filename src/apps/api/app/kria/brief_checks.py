@@ -242,7 +242,7 @@ def plan_facts_from_strategy(
             per_clip[media_id] = str(value)
             # Only the creator's own words are "read"; everything the server
             # matched from footage or the record is reported as inferred.
-            if assignment.get("grounding") != "creator_text":
+            if assignment.get("grounding") not in {"creator_text", "placeholder"}:
                 inferred[media_id] = str(value)
     labels = tuple(str(x) for x in (strategy.get("shot_labels") or []) if str(x).strip())
     title = strategy.get("opening_title")

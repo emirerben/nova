@@ -13781,6 +13781,33 @@ def _grounded_context_labels(
             seen_pairs.add(pair)
             attempted_by_clip.setdefault(clip_id, []).append(intent.intent_id)
 
+            if getattr(intent, "placeholder", False):
+                # KRI-282: the creator-requested stand-in is the fixed system constant,
+                # not model text, so the provenance fence does not apply. Re-check the
+                # stored value against the constant instead of trusting it.
+                from app.schemas.clip_intents import (  # noqa: PLC0415
+                    PLACEHOLDER_LABEL_TEXT,
+                    ground_placeholder_label,
+                )
+
+                if assignment.value == PLACEHOLDER_LABEL_TEXT:
+                    placeholder = ground_placeholder_label(
+                        media_id=clip_id, intent_id=intent.intent_id
+                    )
+                    accepted.append(
+                        {
+                            "clip_id": clip_id,
+                            "sport": placeholder.text,
+                            "source": "grounded_label",
+                            "grounding": placeholder.grounding,
+                            "confidence": placeholder.confidence,
+                            "intent_id": placeholder.intent_id,
+                        }
+                    )
+                else:
+                    failures_by_clip.setdefault(clip_id, []).append(intent.intent_id)
+                continue
+
             media_ref = media_ref_by_clip_id.get(clip_id)
             cached_answers: Any = None
             if media_ref is not None:

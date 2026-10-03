@@ -400,17 +400,63 @@ def test_real_prompt_shape_fits_cap_and_keeps_every_instruction() -> None:
     assert out.salvage_question is None
 
 
-def test_name_placeholder_is_never_accepted_as_creator_copy() -> None:
-    """The original KRI-282 failure: a model-invented token in creator_text is not source-backed."""
-    raw = json.dumps(
+_PLACEHOLDER_QUOTE = "add a text placeholder so I can replace with their real names"
+
+
+def _placeholder_raw(**extra: object) -> str:
+    return json.dumps(
         {
             "intents": [
                 _games_intent(
                     "p1",
                     "caption",
                     "individual shots of people",
-                    "add a text placeholder so I can replace with their real names",
-                    creator_text="NAME_PLACEHOLDER",
+                    _PLACEHOLDER_QUOTE,
+                    **extra,
+                )
+            ],
+            "question": None,
+        }
+    )
+
+
+def test_invented_placeholder_token_is_repaired_not_dropped() -> None:
+    """KRI-282: a model-invented creator_text token must never be accepted as creator copy,
+    but the placeholder request itself is supported -- repaired, not a salvage question."""
+    out = _agent().parse(
+        _placeholder_raw(creator_text="NAME_PLACEHOLDER"),
+        ClipIntentPlannerInput(creator_request=_GAMES_DAY_REQUEST),
+    )
+    assert out.salvage_question is None
+    assert out.question is None
+    (intent,) = out.intents
+    assert (intent.op, intent.placeholder) == ("label", True)
+    assert intent.creator_text is None
+    assert intent.attribute == "individual shots of people"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"placeholder": True},
+        {"placeholder": True, "creator_text": "[Name]", "caption_attribute": "names"},
+        {"placeholder": None},
+    ],
+)
+def test_placeholder_request_in_every_model_shape_becomes_a_placeholder_label(extra) -> None:
+    out = _agent().parse(
+        _placeholder_raw(**extra), ClipIntentPlannerInput(creator_request=_GAMES_DAY_REQUEST)
+    )
+    assert [(i.op, i.placeholder, i.creator_text) for i in out.intents] == [("label", True, None)]
+    assert out.salvage_question is None
+
+
+def test_placeholder_flag_without_a_placeholder_request_still_needs_source_quote() -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent(
+                    "p1", "label", "people", "this quote is not in the request", placeholder=True
                 )
             ],
             "question": None,
@@ -420,8 +466,110 @@ def test_name_placeholder_is_never_accepted_as_creator_copy() -> None:
         _agent().parse(raw, ClipIntentPlannerInput(creator_request=_GAMES_DAY_REQUEST))
 
 
+def test_unflagged_label_is_not_a_placeholder() -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent("l1", "label", "game", "add the game name to the bottom left")
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, ClipIntentPlannerInput(creator_request=_GAMES_DAY_REQUEST))
+    assert out.intents[0].placeholder is False
+    assert "placeholder" not in out.intents[0].model_dump(mode="json")
+
+
+def test_group_with_garbled_quote_is_repaired_from_the_creators_own_sentence() -> None:
+    """Named values in prose ARE the groups; a garbled quote must not make the creator restate."""
+    request = "We played football, then dodgeball, then beach volleyball. Group content by sport."
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent("g1", "group", "dodgeball", "Group the dodgeball footage together")
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, ClipIntentPlannerInput(creator_request=request))
+    assert out.salvage_question is None
+    assert (
+        out.intents[0].source_quote == "We played football, then dodgeball, then beach volleyball."
+    )
+
+
+def test_group_with_unsupported_garbled_quote_is_still_dropped() -> None:
+    raw = json.dumps(
+        {
+            "intents": [_games_intent("g1", "group", "sailing", "Group the sailing footage")],
+            "question": None,
+        }
+    )
+    with pytest.raises(SchemaError):
+        _agent().parse(raw, ClipIntentPlannerInput(creator_request=_GAMES_DAY_REQUEST))
+
+
+def test_real_prompt_shape_with_placeholder_is_eight_intents_and_no_question() -> None:
+    """Redacted shape of the real ~47-clip Olympics prompt: 8 intents, 0 questions."""
+    request = (
+        "We hosted a field day with two teams: football, then dodgeball, then beach volleyball, "
+        "then the pub. Create a chronological, very fast paced video. Group content by sport "
+        "and add the sports name to the bottom left. Also include a text for the pub and the "
+        "pregame as well. For individual shots of people, add a text placeholder so I can "
+        "replace with their real names"
+    )
+    group_quote = "Group content by sport"
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent(
+                    "o1",
+                    "order",
+                    "all clips",
+                    "Create a chronological, very fast paced video",
+                    order_by="capture_time",
+                ),
+                _games_intent("g1", "group", "football clips", group_quote),
+                _games_intent("g2", "group", "dodgeball clips", group_quote),
+                _games_intent("g3", "group", "beach volleyball clips", group_quote),
+                _games_intent("l1", "label", "sport", "add the sports name to the bottom left"),
+                _games_intent(
+                    "c1",
+                    "caption",
+                    "pub clips",
+                    "include a text for the pub and the pregame",
+                    caption_attribute="pub",
+                ),
+                _games_intent(
+                    "c2",
+                    "caption",
+                    "pregame clips",
+                    "include a text for the pub and the pregame",
+                    caption_attribute="pregame",
+                ),
+                _games_intent(
+                    "l2",
+                    "caption",
+                    "individual shots of people",
+                    "For individual shots of people, add a text placeholder so I can replace with "
+                    "their real names",
+                    creator_text="NAME_PLACEHOLDER",
+                ),
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, ClipIntentPlannerInput(creator_request=request, clip_facts=True))
+    assert len(out.intents) == 8
+    assert out.question is None
+    assert out.salvage_question is None
+    placeholders = [i for i in out.intents if i.placeholder]
+    assert [(i.op, i.attribute) for i in placeholders] == [("label", "individual shots of people")]
+
+
 def test_prompt_teaches_compact_inventory_and_named_values() -> None:
     prompt = _agent().render_prompt(ClipIntentPlannerInput(creator_request=_GAMES_DAY_REQUEST))
     assert "is ONE\n  `label` intent" in prompt
     assert "ask them to name the sports again" in prompt
-    assert "must never go in `creator_text`" in prompt
+    assert '"placeholder": true' in prompt
+    assert "never ask the creator to restate it" in prompt
