@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.44.0] - 2026-10-03
+
+### Changed
+- KRI-282 L2: full clip-understanding coverage + hold turns until analysis lands (#1354) <!-- release-pr: 1354 -->
+
 ## [0.78.43.0] - 2026-10-03
 
 ### Changed

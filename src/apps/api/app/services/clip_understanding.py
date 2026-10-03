@@ -112,3 +112,23 @@ def clip_record(analysis: dict[str, Any] | None, *, kind: str = "video") -> Clip
         notable_moments=_moment_notes(analysis.get("best_moments")),
         facts=analysis.get(FACTS_KEY) or [],
     )
+
+
+# KRI-282 L2: how many times a clip's understanding is attempted before the clip
+# counts as "settled" (analysed-but-empty, or persistently failing). A settled
+# empty clip must never hold a turn in "still checking" forever.
+UNDERSTANDING_ATTEMPTS_KEY = "understanding_attempts"
+UNDERSTANDING_MAX_ATTEMPTS = 3
+
+
+def understanding_attempts(analysis: dict[str, Any] | None) -> int:
+    raw = analysis.get(UNDERSTANDING_ATTEMPTS_KEY) if isinstance(analysis, dict) else 0
+    return raw if isinstance(raw, int) and raw > 0 else 0
+
+
+def understanding_incomplete(analysis: dict[str, Any] | None, *, kind: str = "video") -> bool:
+    """True while a clip has no usable record AND analysis may still produce one."""
+    return (
+        clip_record(analysis, kind=kind).is_empty()
+        and understanding_attempts(analysis) < UNDERSTANDING_MAX_ATTEMPTS
+    )
