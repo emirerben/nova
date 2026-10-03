@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.36.0] - 2026-10-03
+
+### Changed
+- fix(chat): follow-up "Create this video" no longer dead after a recorded cleanup choice (KRI-292) (#1344) <!-- release-pr: 1344 -->
+
 ## [0.78.35.0] - 2026-10-03
 
 ### Changed
