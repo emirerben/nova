@@ -238,9 +238,42 @@ pool order / first slide as cover / no caption rather than blocking assembly.
 - **No dedicated type-poster loop** for the "Photo & video post" SetupPicker
   card yet — it reuses the "Photo wall" style tile as a visual stand-in.
 
+## Chat editing (KRI-301, flag `slide_post_chat_edit_enabled`, default off)
+
+`POST /plan-items/{id}/slide-post/chat-edit` runs the video **edit copilot** over a
+slide post instead of a second composer. Read-only: it never writes the DB; the
+client stages the returned draft and saves with the normal versioned PUT.
+
+- **Request:** `{message, expected_version?, draft?, turns<=12, client_request_id?}`.
+  The editor's local `draft` is the newest truth: when sent, the edit is built from
+  IT (asset ownership still validated, else 422) and `expected_version` is
+  informational, so there is **no 409 / conflict step**. Without `draft` the stored
+  draft is used (409 `slide_post_no_draft` if none).
+- **Response:** `{outcome: edited|clarification|unsupported|no_effect|failed, reply,
+  draft|null, base_version, changes[], suggestions[]}`. `base_version` is the
+  SERVER's current version: quote it as `expected_version` on the next PUT.
+- **Pipeline** (`services/slide_post_chat_edit.py`): `build_slide_post_snapshot`
+  presents slide i as a 1-second slot (window `[i, i+1)`, `media_id` = slide id,
+  `surface: "slide_post"`, `editor_ops_version: 2`) with text bars (a place/time label
+  is `clip-label-media-{slide.id}`; free texts get `kria-` ids). Parsed ops run
+  through `kria_editor_ops.apply_text_lane_ops` (shared handlers, no Job) and
+  `compile_slide_post_ops` projects them back onto a `SlidePostDraft`: spanning texts
+  are copied per slide with fresh ids, the cover follows its slide id, per-slide
+  limits (4 texts, 120 chars) raise `KriaEditorOpError` => honest `failed`.
+- **Surface gating** (`edit_copilot._family_allowed`): only `SLIDE_POST_OPS` are
+  accepted on `surface == "slide_post"`; `set_slide_cover` / `set_post_caption`
+  (`editor_ops_v2/slides.py`) are refused on video. The slides prompt fragment
+  (`prompts/edit_copilot_ops/slides.txt`) is appended ONLY for that surface, so video
+  prompts stay byte-identical (guard: `tests/services/test_slide_post_chat_edit.py`).
+- **Facts:** `_slide_facts(asset)` reads capture/analysis facts (empty when none);
+  KRI-300 swaps in `clip_facts.slide_asset_facts(asset)` here. Facts only reach the
+  copilot for accounts where `settings.clip_facts_for(user_id)` is true.
+- **Evals:** goldens `tests/fixtures/agent_evals/edit_copilot/golden/slide_*.json`.
+
 ## Verification
 
 ```bash
 cd src/apps/api && pytest tests/pipeline/test_slide_post_profiles.py tests/pipeline/test_slide_post_build.py tests/tasks/test_slide_post_render.py tests/tasks/test_slide_post_dispatch.py tests/agents/test_slide_post_composer.py -q
 cd src/apps/web && npx jest src/__tests__/plan/items/SlidePostPanel.test.tsx src/__tests__/plan/edit-format.test.ts -q
+cd src/apps/api && pytest tests/services/test_slide_post_chat_edit.py tests/routes/test_slide_post_chat_edit_route.py -q
 ```
