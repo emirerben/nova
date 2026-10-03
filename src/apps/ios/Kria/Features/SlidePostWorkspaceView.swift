@@ -42,9 +42,6 @@ struct SlidePostWorkspaceView: View {
     @State private var showsAddChoice = false
     /// The Kria thread replaces the tool bar while it is open (Paper art. 04).
     @State private var chatOpen = false
-    /// While the keyboard is up the chat layout drops the strip and shrinks the preview so the
-    /// thread and composer stay above it instead of the whole screen being pushed off the top.
-    @State private var keyboardUp = false
     @State private var rootSize = CGSize.zero
 
     /// `session` is injectable so a parent (the chat workspace) can own the draft and stage edits
@@ -533,8 +530,6 @@ struct SlidePostWorkspaceView: View {
             }
         }
         .background(KriaColor.paper)
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardUp = true }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardUp = false }
     }
 
     @ViewBuilder private var richBanner: some View {
