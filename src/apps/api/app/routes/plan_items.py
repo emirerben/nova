@@ -6962,6 +6962,25 @@ async def editor_commit_item(
         await validate_editor_sources(
             db, job=source_job, variant=source_variant, used_media_ids=used_media_ids
         )
+    if (
+        body.visual_blocks is not None
+        and source_variant.get("render_destination") == "device"
+        and source_variant.get("resolved_archetype") in {"narrated", "voiceover"}
+    ):
+        # KRI-287: re-check the admitted receipt of every photo/video a phone
+        # Voiceover Save places, like the guided device branch above.
+        from app.routes.editor_sources import validate_editor_sources
+
+        await validate_editor_sources(
+            db,
+            job=source_job,
+            variant=source_variant,
+            used_media_ids={
+                str(row["asset_id"])
+                for row in (block.model_dump() for block in body.visual_blocks)
+                if row.get("asset_id")
+            },
+        )
     if body.media_overlays is not None:
         await _require_verified_pool_paths(
             item_id=item_id,

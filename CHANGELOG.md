@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.39.0] - 2026-10-03
+
+### Changed
+- fix(chat): an expired approval no longer deadlocks the thread (KRI-295) (#1349) <!-- release-pr: 1349 -->
+
+## [0.78.38.0] - 2026-10-03
+
+### Changed
+- feat(phone): add photo/video Visuals on phone Voiceover edits (KRI-287) (#1346) <!-- release-pr: 1346 -->
+
 ## [0.78.37.0] - 2026-10-03
 
 ### Changed
