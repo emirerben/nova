@@ -133,7 +133,7 @@ def test_parse_rejects_source_quote_found_only_in_generated_brief() -> None:
         "question": None,
     }
 
-    with pytest.raises(SchemaError, match="source_quote is not creator text"):
+    with pytest.raises(SchemaError, match="source_quote is not an exact contiguous substring"):
         _agent().parse(
             json.dumps(raw),
             ClipIntentPlannerInput(
@@ -145,30 +145,33 @@ def test_parse_rejects_source_quote_found_only_in_generated_brief() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    "caption",
-    [
-        {
-            "intent_id": "missing-topic",
-            "op": "caption",
-            "attribute": "pub chapter",
-            "source_quote": "caption the pub chapter",
-        },
-        {
-            "intent_id": "conflicting-copy",
-            "op": "caption",
-            "attribute": "pub chapter",
-            "creator_text": "Post-match",
-            "caption_attribute": "weather",
-            "source_quote": 'say "Post-match" on the pub chapter',
-        },
-    ],
-)
-def test_parse_rejects_incomplete_or_conflicting_caption_shape(caption: dict) -> None:
+def test_parse_rejects_incomplete_caption_shape() -> None:
+    caption = {
+        "intent_id": "missing-topic",
+        "op": "caption",
+        "attribute": "pub chapter",
+        "source_quote": "caption the pub chapter",
+    }
     raw = {"intents": [caption], "question": None}
 
-    with pytest.raises(SchemaError, match="caption"):
+    with pytest.raises(SchemaError, match="caption_attribute") as info:
         _agent().parse(json.dumps(raw), _input())
+    assert info.value.error_class.startswith("intent_invalid")
+
+
+def test_parse_repairs_conflicting_caption_copy_in_favour_of_exact_words() -> None:
+    caption = {
+        "intent_id": "conflicting-copy",
+        "op": "caption",
+        "attribute": "pub chapter",
+        "creator_text": "Post-match",
+        "caption_attribute": "weather",
+        "source_quote": 'say "Post-match" on the pub chapter',
+    }
+    out = _agent().parse(json.dumps({"intents": [caption], "question": None}), _input())
+    assert out.salvage_question is None
+    assert out.intents[0].creator_text == "Post-match"
+    assert out.intents[0].caption_attribute is None
 
 
 def test_parse_rejects_partial_inventory_question() -> None:
@@ -205,8 +208,10 @@ def test_parse_rejects_duplicate_intent_ids_even_for_distinct_operations() -> No
         ],
         "question": None,
     }
-    with pytest.raises(SchemaError, match="duplicate intent_id"):
-        _agent().parse(json.dumps(raw), _input())
+    out = _agent().parse(json.dumps(raw), _input())
+    assert [intent.intent_id for intent in out.intents] == ["same-id"]
+    assert out.salvage_question is not None
+    assert "pub clips" in out.salvage_question
 
 
 def test_pure_duration_request_has_no_intents() -> None:

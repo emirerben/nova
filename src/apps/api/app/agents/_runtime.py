@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -841,6 +842,11 @@ class Agent(ABC, Generic[InputT, OutputT]):
         if exc is None:
             return None
         if self.spec.sensitive_io:
+            # An agent may tag its error with a closed-vocabulary `error_class`
+            # (never content) so a redacted run stays diagnosable.
+            error_class = getattr(exc, "error_class", None)
+            if isinstance(error_class, str) and re.fullmatch(r"[a-z_:,]{1,80}", error_class):
+                return f"sensitive_agent_error:{error_class}"
             return "sensitive_agent_error"
         return str(exc)
 

@@ -2494,3 +2494,11 @@ Add a regression test: Save -> render ready -> ask resolves the post-Save head d
 **Cons:** Extra macOS CI minutes (~3 min per the local timing); may surface existing failures; needs a full (non-sparse) checkout so fixture paths resolve (52 tests fail otherwise).
 **Context:** Found during the plan 026 (KRI-240) eng review, 2026-10-02 (decision D34). Plan 026 (this KRI-240 work) keeps its own caption-word tests in `KriaTests`, so it does not depend on this.
 **Effort:** S (human: ~3h / CC: ~20 min) **Priority:** P2 **Depends on:** none.
+
+### T-KRI282-1 — Persist an `agent_run` row for the kria v2 clip-intent planner
+**What:** Give `plan_and_resolve_clip_intents` calls from `kria/planner.py` an `agent_run` row (today only the v1 `creator_agent` route has one).
+**Why:** The v2 path builds `RunContext(request_id=thread_id, creator_id=...)` with no job, plan item or session id, so `persist_agent_run` has no owner and nothing is stored; the planner is `sensitive_io`, so a failed v2 turn leaves no durable trace. KRI-282 added a redacted `error_class` to `_safe_error` and a `clip_intent_planner.terminal_schema` log line, which covers v1 rows and logs but not v2 rows.
+**Pros:** Next planner incident on a v2 thread is diagnosable from the DB.
+**Cons:** `agent_run` needs an owner FK; v2 threads are not `creator_agent_sessions`, so this needs a nullable thread column (migration + alembic head-guard bump).
+**Context:** KRI-282 Lane A. See `app/agents/_persistence.py` `_parse_owner`.
+**Effort:** S (human: ~3h / CC: ~20 min) **Priority:** P2 **Depends on:** none.

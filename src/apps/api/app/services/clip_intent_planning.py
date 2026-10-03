@@ -6,10 +6,16 @@ import asyncio
 from dataclasses import dataclass, replace
 from typing import Any
 
+import structlog
+
 from app.agents._model_client import default_client
 from app.agents._runtime import RunContext, TerminalSchemaError
 from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
-from app.agents.clip_intent_planner import ClipIntentPlannerAgent, ClipIntentPlannerInput
+from app.agents.clip_intent_planner import (
+    ClipIntentPlannerAgent,
+    ClipIntentPlannerInput,
+    salvage_question,
+)
 from app.config import settings
 from app.schemas.clip_intents import ClipAssignment, ClipIntent, ResolvedClipIntent
 from app.services.clip_intent_resolution import (
@@ -17,6 +23,8 @@ from app.services.clip_intent_resolution import (
     IntentResolution,
     resolve_clip_intents_for_turn,
 )
+
+log = structlog.get_logger()
 
 
 @dataclass(frozen=True)
@@ -84,20 +92,41 @@ async def plan_and_resolve_clip_intents(
             ),
             ctx=run_context,
         )
-    except TerminalSchemaError:
+    except TerminalSchemaError as exc:
         # Invalid model output is a content-recovery problem, not a failed
-        # preparation. Ask for a complete restatement and trust none of the
-        # candidate intents. Refusals, transient exhaustion, and control-plane
-        # failures remain terminal and are handled by their existing callers.
+        # preparation. Ask for a restatement and trust none of the candidate
+        # intents. Refusals, transient exhaustion, and control-plane failures
+        # remain terminal and are handled by their existing callers.
+        cause = exc.__cause__
+        error_class = getattr(cause, "error_class", None) or type(cause).__name__
+        dropped = list(getattr(cause, "dropped", None) or [])
+        # Redacted on purpose: the error CLASS and sizes only, never creator or
+        # model text, so the next incident is diagnosable from logs alone.
+        log.warning(
+            "clip_intent_planner.terminal_schema",
+            error_class=error_class,
+            dropped_count=len(dropped),
+            request_chars=len(creator_request),
+            latest_chars=len(latest_user_message or ""),
+            candidate_count=len(candidate_intents or []),
+            clip_count=len(clips),
+        )
+        if dropped:
+            question = salvage_question(0, dropped)
+        else:
+            question = (
+                "I couldn't safely verify the clip-specific instructions. "
+                "Please restate which clips to use, group, order, label, or caption."
+            )
         return PlannedIntentResolution(
-            [],
-            IntentResolution(
-                status="needs_creator",
-                question=(
-                    "I couldn't safely verify the clip-specific instructions. "
-                    "Please restate which clips to use, group, order, label, or caption."
-                ),
-            ),
+            [], IntentResolution(status="needs_creator", question=question)
+        )
+    if output.salvage_question:
+        # Some instructions were valid but others could not be verified (or the
+        # inventory exceeded the cap). Never act on a silent subset: ask about
+        # exactly the remainder.
+        return PlannedIntentResolution(
+            [], IntentResolution(status="needs_creator", question=output.salvage_question)
         )
     if output.question:
         return PlannedIntentResolution(
