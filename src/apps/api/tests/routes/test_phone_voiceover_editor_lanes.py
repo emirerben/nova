@@ -256,9 +256,10 @@ def test_timeline_endpoint_lists_slots_and_marks_pool_clips_used(archetype):
 
     timeline = gj.dispatch_get_timeline(job, vid, sign_url=lambda path, ttl: f"https://s/{path}")
 
-    # Cut edits stay locked to the voiceover.
-    assert timeline["editable"] is False
-    assert timeline["reason"] in {"locked_to_voiceover", "voiceover_bed_fit"}
+    # KRI-290: the creator owns the cut (the lock is only the kill-switch state,
+    # see test_phone_voiceover_cut_edits.py).
+    assert timeline["editable"] is True
+    assert timeline["reason"] is None
     assert [s["clip_index"] for s in timeline["slots"]] == [1, 2, 0]
     assert [c["clip_index"] for c in timeline["clips"]] == [0, 1, 2]
     assert all(c["used"] for c in timeline["clips"])

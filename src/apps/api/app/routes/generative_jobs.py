@@ -1321,6 +1321,14 @@ def editor_deletion_timeline(job: Job, variant: dict) -> list[dict]:
     rows = (variant.get("ai_timeline") or {}).get("slots") or []
     if rows:
         return copy.deepcopy(rows)
+    if is_phone_voiceover_lane_variant(variant):
+        # The cut lives in the pinned recipe (KRI-281); a clip delete is then an
+        # ordinary timeline edit of it (KRI-290).
+        from app.services.phone_voiceover_cut_editor import (  # noqa: PLC0415
+            current_voiceover_slots,
+        )
+
+        return current_voiceover_slots(job, variant) or []
     if (
         variant.get("resolved_archetype") == "talking_head"
         and variant.get("render_destination") != "device"
@@ -6225,6 +6233,15 @@ def _timeline_ineligibility(job: Job, variant: dict) -> str | None:
         # clip re-cuts don't move the song, so they stay in sync and the
         # timeline is editable like any other variant.
         return "lyrics_sync"
+    if is_phone_voiceover_lane_variant(variant):
+        # KRI-290: the creator owns a phone Voiceover cut; a Save swaps the
+        # pinned recipe's video track (`phone_voiceover_cut_editor`).
+        from app.services.phone_voiceover_cut_editor import (  # noqa: PLC0415
+            phone_voiceover_cut_editable,
+        )
+
+        if phone_voiceover_cut_editable(job, variant):
+            return None
     if variant.get("resolved_archetype") == "narrated":
         return "locked_to_voiceover"  # clip timing is driven by the narrated VO bed
     if vid.startswith("voiceover"):
@@ -7810,6 +7827,24 @@ def _dispatch_rendered_timeline(
             ai_slots = phone_timeline["slots"]
             clip_paths = list(phone_timeline["pool"])
             phone_total_duration_s = phone_timeline["total_duration_s"]
+    elif (
+        user_slots
+        and is_phone_voiceover_lane_variant(variant)
+        and variant.get("editor_timeline_mode") != "authored"
+        and variant_id not in projection.masked_last_good_variant_ids
+    ):
+        # KRI-290: a saved creator cut indexes the same source pool, and its
+        # pinned recipe's length (transition overlaps included) is authoritative.
+        from app.services.phone_voiceover_timeline import (  # noqa: PLC0415
+            project_phone_voiceover_timeline,
+        )
+
+        phone_timeline = project_phone_voiceover_timeline(
+            job.assembly_plan or {}, job.all_candidates or {}, variant
+        )
+        if phone_timeline:
+            clip_paths = list(phone_timeline["pool"])
+            phone_total_duration_s = phone_timeline["total_duration_s"]
     projected_story_duration_s: float | None = None
     # Guided stories deliberately have no editable legacy ``ai_timeline``;
     # their immutable, verified cut lives in ``story_timeline`` instead.  Still
@@ -8496,6 +8531,14 @@ def resolve_timeline_slots_for_edit(
     reason = _timeline_ineligibility(job, variant)
     if reason is not None:
         raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, reason)
+    if is_phone_voiceover_lane_variant(variant):
+        # Eligible (above) means creator-owned: exact seconds against the
+        # phone source pool, no beat grid or half-second snapping (KRI-290).
+        from app.services.phone_voiceover_cut_editor import (  # noqa: PLC0415
+            resolve_phone_voiceover_slots,
+        )
+
+        return resolve_phone_voiceover_slots(job, variant, slots)
 
     ai_slots, user_slots, beat_grid = _timeline_parts(variant)
 

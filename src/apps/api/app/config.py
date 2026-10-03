@@ -270,6 +270,19 @@ class Settings(BaseSettings):
     # + `fly machine restart <id>` (api). No NEXT_PUBLIC twin (the iOS editor
     # follows the server's capability map).
     phone_narrated_caption_edits_enabled: bool = True
+    # KRI-290 (free clip edits on phone Voiceover videos): a phone `narrated`
+    # or montage `voiceover` variant's timeline opens (trim, extend, reorder,
+    # split, delete) instead of being locked to the voiceover. A Save swaps the
+    # pinned recipe's video track (`app.pipeline.phone_voiceover_cut`); the
+    # video owns the clock, so shorter footage cuts the voice at the video's
+    # end and longer footage plays on after it. See
+    # `app.services.phone_voiceover_cut_editor`. False: byte-identical to
+    # before -- `timeline` stays `locked_to_voiceover`/`voiceover_bed_fit` and
+    # a timeline Save 422s. Rollback: `fly secrets set
+    # PHONE_VOICEOVER_TIMELINE_EDITS_ENABLED=false --app nova-video` +
+    # `fly machine restart <id>` (api). No NEXT_PUBLIC twin (the iOS editor
+    # follows the server's capability map).
+    phone_voiceover_timeline_edits_enabled: bool = True
     # A device recipe with no delivery (no poll, no upload) for this long is
     # presumed abandoned (app crashed, app deleted, notification never seen).
     # The reaper (app/tasks/device_render_reaper.py) flips it to

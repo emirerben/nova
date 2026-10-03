@@ -314,7 +314,11 @@ struct NativeEditorTemporaryVideo {
     /// successful empty resolution for this generation so ordinary editor
     /// rebuilds do not repeatedly poll the device-render endpoint.
     private var deviceNarrationResolutionGeneration: String?
-    private var previewVariant: [String: JSONValue] = [:]
+    private var previewVariant: [String: JSONValue] = [:] {
+        didSet { timelineClipsCache = nil }
+    }
+    /// Narrated footage slows to fill its voiceover step (`timelineClips`).
+    private var usesNarratedSourceFit: Bool { previewVariant["resolved_archetype"] == .string("narrated") }
     var musicPlaybackMode: NativeMusicPlaybackMode { .init(variant: previewVariant) }
     var songReference: NativeSongReference? {
         guard musicPlaybackMode == .referenceOnly else { return nil }
@@ -1074,10 +1078,18 @@ struct NativeEditorTemporaryVideo {
             let sourceStart = max(0, slot.inS)
             let sourceDuration = Self.number(slot.raw["source_duration_s"] ?? slot.raw["source_duration"])
             let available = sourceDuration.map { max(0, $0 - sourceStart) }
-            let sourceSpan = min(
-                Self.number(slot.raw["native_source_span_s"]) ?? movingDuration,
-                available ?? .greatestFiniteMagnitude
-            )
+            let sourceSpan: TimeInterval
+            if let available, usesNarratedSourceFit, slot.raw["native_composite_source"] != .bool(true) {
+                // KRI-290: narrated clips are trimmable, so derive the slow-to-fill
+                // span from the slot's current length; the span hydrated on load
+                // would replay a trimmed clip sped up or slowed down.
+                sourceSpan = NativeNarratedSourceTiming.span(target: movingDuration, available: available)
+            } else {
+                sourceSpan = min(
+                    Self.number(slot.raw["native_source_span_s"]) ?? movingDuration,
+                    available ?? .greatestFiniteMagnitude
+                )
+            }
             let assetID = slot.raw["asset_id"]?.stringValue.flatMap(UUID.init(uuidString:)) ?? id
             return EditorClip(
                 id: id,
@@ -2601,9 +2613,11 @@ struct NativeEditorTemporaryVideo {
             slot.durationS = max(minimumClipDuration, sourceOut - slot.inS)
         case .trailing:
             // Right trim preserves source In. Later clips are not a ceiling:
-            // they ripple after this duration changes.
+            // they ripple after this duration changes. A clip already longer
+            // than its footage (narrated footage slowed to fill its voiceover
+            // step) can shrink smoothly instead of snapping to the footage end.
             let currentOut = sourceIn + currentDuration
-            let maximumOut = sourceDuration.map { max(sourceIn + minimumClipDuration, $0) } ?? .greatestFiniteMagnitude
+            let maximumOut = sourceDuration.map { max(sourceIn + minimumClipDuration, $0, currentOut) } ?? .greatestFiniteMagnitude
             let nextOut = min(max(currentOut + translation, sourceIn + minimumClipDuration), maximumOut)
             slot.durationS = nextOut - sourceIn
         }

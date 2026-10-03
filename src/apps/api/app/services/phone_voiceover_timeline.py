@@ -1,4 +1,4 @@
-"""Read-only clip timeline for phone-rendered Voiceover videos (KRI-281).
+"""Clip timeline for phone-rendered Voiceover videos (KRI-281).
 
 A phone `narrated` (recorded voiceover over a script) or `voiceover` (montage
 with a recorded voice) variant is compiled on the server and rendered on the
@@ -19,6 +19,10 @@ analysis-proxy path), never the matcher's internal clip ids. When the pool does
 not cover every bound source the pool falls back to the order of
 `PHONE_SOURCES_FIELD`, so a slot always indexes a real entry of `clips`.
 
+KRI-290 lets the creator change the cut: a timeline Save swaps the recipe's
+video track (`app.pipeline.phone_voiceover_cut`), so the projection keeps
+reading the cut the phone will actually render.
+
 Everything here is PURE and read-only: no GCS call, no mutation.
 """
 
@@ -36,6 +40,14 @@ _NARRATED_TRACK_ID = "narrated"
 _VOICEOVER_TRACK_ID = "montage"
 
 _STEP_ID = re.compile(r"^step-\d+-(?P<step_id>.+)$")
+
+# Recipe transition kind -> the editor's `transition_after` vocabulary. A
+# wipe has no editor control, so it reads (and re-saves) as a crossfade.
+_EDITOR_TRANSITIONS = {
+    "crossfade": "crossfade",
+    "fade_black": "dip_to_black",
+    "fade_white": "flash",
+}
 
 
 def is_phone_voiceover_family_variant(variant: object) -> bool:
@@ -161,24 +173,30 @@ def voiceover_ai_timeline(
         # transition; carry that as `transition_after` on the LEFT slot (the
         # guided-story projection's convention) so durations don't double-count.
         overlap_s = 0.0
+        transition_after = "crossfade"
         if position + 1 < len(rows):
             following = rows[position + 1][0]
             overlap_s = max(0.0, clip.timeline_start + duration - following.timeline_start)
+            if following.transition is not None:
+                transition_after = _EDITOR_TRANSITIONS.get(following.transition.kind, "crossfade")
         crossfade = overlap_s >= 0.1
-        slots.append(
-            {
-                "slot_id": clip.id,
-                "clip_index": index,
-                "source_duration_s": round(float(binding.original.duration_s), 3),
-                "in_s": round(max(0.0, float(clip.source_start)), 3),
-                "duration_s": duration,
-                "duration_beats": None,
-                "order": len(slots),
-                "removed": False,
-                "transition_after": "crossfade" if crossfade else "cut",
-                "transition_duration_s": round(min(1.0, overlap_s), 3) if crossfade else None,
-            }
-        )
+        slot = {
+            "slot_id": clip.id,
+            "clip_index": index,
+            "source_duration_s": round(float(binding.original.duration_s), 3),
+            "in_s": round(max(0.0, float(clip.source_start)), 3),
+            "duration_s": duration,
+            "duration_beats": None,
+            "order": len(slots),
+            "removed": False,
+            "transition_after": transition_after if crossfade else "cut",
+            "transition_duration_s": round(min(1.0, overlap_s), 3) if crossfade else None,
+        }
+        if clip.rate != 1:
+            # A retimed clip plays `duration_s * playback_rate` source seconds;
+            # the editor and a timeline Save must keep that speed (KRI-290).
+            slot["playback_rate"] = round(float(clip.rate), 6)
+        slots.append(slot)
     return {"beat_grid": [], "slots": slots} if slots else None
 
 

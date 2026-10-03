@@ -313,13 +313,18 @@ enum NativeNarratedSourceTiming {
                 throw RecipeError.invalidTimeline
             }
             let start = total - slot.inS <= 0.05 ? 0 : max(0, slot.inS)
-            let available = total - start
-            let span = available >= target ? target : max(0.05, available - 0.05)
             result.clips[index].inS = start
             result.clips[index].raw["source_duration_s"] = .number(total)
-            result.clips[index].raw["native_source_span_s"] = .number(span)
+            result.clips[index].raw["native_source_span_s"] = .number(span(target: target, available: total - start))
         }
         return result
+    }
+
+    /// Source seconds a narrated slot of `target` output seconds plays: all of
+    /// it at 1x when the footage covers it, else the remaining footage (minus
+    /// the EOF guard) slowed to fill it -- the server's `_fit_step_window`.
+    static func span(target: Double, available: Double) -> Double {
+        available >= target ? target : max(0.05, available - 0.05)
     }
 }
 
