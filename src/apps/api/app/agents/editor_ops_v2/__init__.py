@@ -1,6 +1,6 @@
 """Editor ops v2: additive, lane-owned copilot operations (KRI-219).
 
-Each lane module (``text``, ``timeline``, ``audio``) exports:
+Each lane module (``text``, ``timeline``, ``audio``, ``slides``) exports:
 
     SPECS: list[OpSpec]          # parser contract for its ops
     register_handlers() -> None  # calls ``kria_editor_ops.register_handler``
@@ -31,7 +31,10 @@ from pathlib import Path
 from typing import Any
 
 EDITOR_OPS_VERSION = 2
-LANES: tuple[str, ...] = ("text", "timeline", "audio")
+LANES: tuple[str, ...] = ("text", "timeline", "audio", "slides")
+# Lanes whose prompt fragment is appended ONLY on the named surface, so video
+# prompts stay byte-identical (KRI-301).
+SURFACE_ONLY_LANES: dict[str, str] = {"slides": "slide_post"}
 _FRAGMENT_DIR = Path(__file__).resolve().parents[3] / "prompts" / "edit_copilot_ops"
 
 # coerce(name, payload, snapshot, state) -> cleaned payload | None. Returning
@@ -119,9 +122,17 @@ def is_v2_snapshot(snapshot: object) -> bool:
     return isinstance(snapshot, dict) and snapshot.get("editor_ops_version") == EDITOR_OPS_VERSION
 
 
-def prompt_fragments() -> str:
-    """Concatenated non-empty lane prompt fragments ('' when all are empty)."""
-    names = [f"{lane}.txt" for lane in LANES]
+def surface_of(snapshot: object) -> str | None:
+    value = snapshot.get("surface") if isinstance(snapshot, dict) else None
+    return value if isinstance(value, str) else None
+
+
+def prompt_fragments(surface: str | None = None) -> str:
+    """Concatenated non-empty lane prompt fragments ('' when all are empty).
+
+    Surface-only lanes (``SURFACE_ONLY_LANES``) contribute only on their surface.
+    """
+    names = [f"{lane}.txt" for lane in LANES if SURFACE_ONLY_LANES.get(lane) in (None, surface)]
     for spec in lane_specs():
         if spec.prompt_fragment and spec.prompt_fragment not in names:
             names.append(spec.prompt_fragment)
@@ -140,6 +151,7 @@ __all__ = [
     "EDITOR_OPS_VERSION",
     "LANES",
     "REGISTRY",
+    "SURFACE_ONLY_LANES",
     "CoerceFn",
     "MergedRegistry",
     "OpSpec",
@@ -148,4 +160,5 @@ __all__ = [
     "merge_into_parser",
     "prompt_fragments",
     "register_all_handlers",
+    "surface_of",
 ]

@@ -837,6 +837,11 @@
             "title": "Runtime Versions",
             "type": "array"
           },
+          "slide_post_chat_edit": {
+            "default": false,
+            "title": "Slide Post Chat Edit",
+            "type": "boolean"
+          },
           "slide_post_rich_text": {
             "default": false,
             "title": "Slide Post Rich Text",
@@ -6328,6 +6333,100 @@
         "title": "SlideEdits",
         "type": "object"
       },
+      "SlidePostChatEditBody": {
+        "description": "POST /{item_id}/slide-post/chat-edit request (KRI-301).\n\nThe editor's local draft is the newest truth: when `draft` is sent the edit is\nbuilt from IT (never the stored one) and `expected_version` is informational\nonly, so there is no version-conflict step. Asset ownership is still checked.",
+        "properties": {
+          "client_request_id": {
+            "default": null,
+            "maxLength": 128,
+            "minLength": 1,
+            "nullable": true,
+            "title": "Client Request Id",
+            "type": "string"
+          },
+          "draft": {
+            "$ref": "#/components/schemas/SlidePostDraft",
+            "default": null,
+            "nullable": true
+          },
+          "expected_version": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "message": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "turns": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 12,
+            "title": "Turns",
+            "type": "array"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "SlidePostChatEditBody",
+        "type": "object"
+      },
+      "SlidePostChatEditResponse": {
+        "description": "What ``POST /plan-items/{id}/slide-post/chat-edit`` returns (never persisted).",
+        "properties": {
+          "base_version": {
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "changes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "draft": {
+            "$ref": "#/components/schemas/SlidePostDraft",
+            "default": null,
+            "nullable": true
+          },
+          "outcome": {
+            "enum": [
+              "edited",
+              "clarification",
+              "unsupported",
+              "no_effect",
+              "failed"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "reply": {
+            "title": "Reply",
+            "type": "string"
+          },
+          "suggestions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Suggestions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "outcome",
+          "reply",
+          "base_version"
+        ],
+        "title": "SlidePostChatEditResponse",
+        "type": "object"
+      },
       "SlidePostDraft": {
         "description": "The persisted draft document (`PlanItem.slide_post`).",
         "properties": {
@@ -11117,6 +11216,78 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SlidePostMutationResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
+          "422": {
+            "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/plan-items/{item_id}/slide-post/chat-edit": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "chatEditSlidePost",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SlidePostChatEditBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlidePostChatEditResponse"
                 }
               }
             },
