@@ -38,6 +38,7 @@ from app.routes.generative_jobs import (
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 from app.services.clip_facts import assignment_facts, facts_for_prompt
 from app.services.editor_limits import MAX_EDITOR_OPS
+from app.services.phone_voiceover_timeline import is_phone_voiceover_family_variant
 
 _IMAGE_SUFFIXES = {".avif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".webp"}
 _PORTABLE_FAMILIES = {
@@ -108,6 +109,14 @@ def _variant_slots(variant: dict[str, Any], job: Any = None) -> list[dict[str, A
         return [copy.deepcopy(row) for row in draft if isinstance(row, dict)]
     timeline = variant.get("user_timeline") or variant.get("ai_timeline") or {}
     rows = [copy.deepcopy(row) for row in timeline.get("slots") or [] if isinstance(row, dict)]
+    if not rows and job is not None and is_phone_voiceover_family_variant(variant):
+        # KRI-290: a phone Voiceover cut is editable but lives in the pinned
+        # recipe until its first timeline Save; read it the way the editor does.
+        from app.services.phone_voiceover_cut_editor import (  # noqa: PLC0415
+            current_voiceover_slots,
+        )
+
+        rows = current_voiceover_slots(job, variant) or []
     if rows and job is not None:
         # Legacy slot rows carry no media identity: derive photo/video from the
         # job's clip paths so kind selectors and still-image rules see photos.

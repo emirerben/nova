@@ -2041,8 +2041,36 @@ device recipe is the source of truth, projected by
   response) and `_dispatch_rendered_timeline` (timeline GET), so existing
   videos work without a backfill. Write-time: `_run_phone_narrated_job` also
   persists the narrated rows (voiceover montage `ai_timeline` is read-time only
-  so the chat copilot's timeline ops are unaffected). Cut edits stay locked to
-  the voiceover (`_timeline_ineligibility` unchanged).
+  so the chat copilot's timeline ops are unaffected). Cut edits were locked to
+  the voiceover until KRI-290 (below).
+
+**Free clip edits (KRI-290).** The creator may trim, extend, reorder, split or
+delete clips whatever that does to the footage-vs-voiceover length. Gate:
+`PHONE_VOICEOVER_TIMELINE_EDITS_ENABLED` (default true; false restores
+`locked_to_voiceover` / `voiceover_bed_fit` and a timeline Save 422s), checked by
+`phone_voiceover_cut_editor.phone_voiceover_cut_editable` (also needs a cut the
+editor can show). No app release is needed: every current build reads these
+clips from server fields.
+
+- Save: `resolve_timeline_slots_for_edit` -> `resolve_phone_voiceover_slots`
+  (exact seconds, no beat grid or 0.5 s snap; 409 `TIMELINE_STALE`, 422
+  `TIMELINE_OUT_OF_BOUNDS`, `phone_edit_unsupported` for speed/look/crop) ->
+  `prepare_phone_editor_commit`'s narrated/montage branch ->
+  `phone_voiceover_cut.replace_voiceover_cut`, which swaps only the recipe's
+  video track. Narrated clips keep the compiler's slow-to-fill fit; montage
+  clips keep their pinned rate and look. Transitions use the native preview's
+  overlap (`min(0.3, requested, 30% of either clip)`, under 0.1 s = cut).
+- The video owns the clock (as in the native preview): shorter footage cuts the
+  voiceover at the video's end with a fade; longer footage plays on after it.
+  A later, longer cut plays the voiceover (and a montage music bed) up to their
+  natural length again. Text that ran to the end follows the new end;
+  captions and sound-effect / Visuals lanes recompile from their editor state,
+  so a shorten-then-extend brings them back.
+- The variant keeps its archetype: `user_timeline` mirrors the new recipe,
+  narrated `narrated_timings` are rewritten, and caption / lane Saves keep
+  working on top of the cut. A clip delete on these variants is a cut edit,
+  not an authored restage (`plan_items.editor_commit_item`). A full
+  regenerate rebuilds the cut from the voiceover and replaces the row.
 
 **Sound effects + Visuals (Media).** Mirrors KRI-182 for Talking.
 `phone_rollout.phone_voiceover_editor_lanes_supported()` is the single gate:

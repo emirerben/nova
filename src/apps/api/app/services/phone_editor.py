@@ -20,7 +20,11 @@ from app.pipeline.guided_story import (
 )
 from app.pipeline.phone_captions import caption_look_from_variant
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
-from app.pipeline.phone_narrated_plan import replace_editor_lanes, replace_narrated_captions
+from app.pipeline.phone_narrated_plan import (
+    _EDITOR_LANE_TRACK_IDS,
+    replace_editor_lanes,
+    replace_narrated_captions,
+)
 from app.pipeline.phone_recipe_shared import PhoneNarrationBed
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, lane_names
 from app.pipeline.phone_subtitled_plan import (
@@ -31,6 +35,7 @@ from app.pipeline.phone_subtitled_plan import (
     sfx_duck_receipt,
     speaker_binding_from_recipe,
 )
+from app.pipeline.phone_voiceover_cut import replace_voiceover_cut
 from app.services.device_render import device_status, pin_device_request
 from app.services.phone_editor_sources import (
     editor_source_bindings,
@@ -56,6 +61,10 @@ from app.services.phone_subtitled_editor import (
     lanes_from_editor_sections,
     lanes_from_recipe,
     sections_from_lanes,
+)
+from app.services.phone_voiceover_timeline import (
+    narrated_timings_and_assignments,
+    source_pool_paths,
 )
 
 log = structlog.get_logger()
@@ -83,6 +92,9 @@ _NARRATED_CAPTION_SECTIONS = frozenset({"caption_cues", "caption_meta"})
 # honours the sound-effect and Visuals lanes, recompiled through the SAME lane
 # helpers phone Talking uses -- only while `phone_voiceover_editor_lanes_supported`.
 _VOICEOVER_LANE_SECTIONS = frozenset({"sound_effects", "media_overlays"})
+# KRI-290: ...and its clip cut (trim, extend, reorder, split, delete), swapped
+# into the pinned recipe's video track by `replace_voiceover_cut`.
+_VOICEOVER_CUT_SECTIONS = frozenset({"timeline"})
 
 
 def is_phone_narrated_editor_variant(variant: object) -> bool:
@@ -561,6 +573,45 @@ def _commit_voiceover_lanes(
     return recipe, lanes, labels, paths
 
 
+def _voiceover_sources(
+    staged: Any, assembly: dict
+) -> tuple[tuple[PhoneSourceBinding, ...], list[str]]:
+    """``(bindings, pool)`` a phone Voiceover slot's ``clip_index`` resolves through."""
+    bindings = tuple(
+        PhoneSourceBinding.model_validate(row) for row in assembly.get(PHONE_SOURCES_FIELD) or []
+    )
+    return bindings, source_pool_paths(assembly, getattr(staged, "all_candidates", None) or {})
+
+
+def _swap_voiceover_cut(
+    recipe: EditRecipeV2,
+    prep: dict,
+    bindings: tuple[PhoneSourceBinding, ...],
+    pool: list[str],
+    *,
+    archetype: str,
+) -> EditRecipeV2:
+    """KRI-290: the committed creator cut (resolved by
+    `resolve_phone_voiceover_slots`) swapped into ``recipe``'s video track."""
+    if not settings.phone_voiceover_timeline_edits_enabled:
+        raise ValueError("phone Voiceover clip edits aren't available right now")
+    slots = [slot for slot in prep.get("timeline_override") or [] if not slot.get("removed")]
+    if not slots:
+        raise ValueError("a phone Voiceover clip edit needs at least one clip")
+    return replace_voiceover_cut(
+        recipe, archetype=archetype, slots=slots, bindings=bindings, pool=pool
+    )
+
+
+def _has_editor_lanes(recipe: EditRecipeV2, variant: dict) -> bool:
+    """A cut change must re-bound the sound-effect / Visuals lanes too --
+    including ones an earlier, shorter cut pushed past the end, which only the
+    persisted lane state still remembers."""
+    return bool(variant.get(PHONE_SUBTITLED_EDITOR_LANES_FIELD)) or any(
+        track.id in _EDITOR_LANE_TRACK_IDS for track in recipe.tracks
+    )
+
+
 def _compile_narrated_editor_commit(
     staged: Any,
     assembly: dict,
@@ -577,8 +628,9 @@ def _compile_narrated_editor_commit(
     sound-effect / Visuals lanes (`replace_editor_lanes`).
 
     ``variant`` is the STAGED row, so `_prepare_editor_commit` has already
-    written the validated cues and caption-meta fields onto it. The clips,
-    the narration bed and the audio mix all come from ``previous`` -- Save
+    written the validated cues and caption-meta fields onto it. The narration
+    bed and the audio mix come from ``previous``, and so do the clips unless
+    the Save carries a timeline (KRI-290, `_swap_voiceover_cut`) -- Save
     never re-downloads, re-transcribes or re-aligns the voiceover. Raises
     ``ValueError``/``UnsupportedPhonePlan`` on anything unsupported, caught by
     the same broad ``except`` in `prepare_phone_editor_commit`.
@@ -586,13 +638,20 @@ def _compile_narrated_editor_commit(
     active_sections = {key for key, value in prep["sections"].items() if value}
     caption_active = active_sections & _NARRATED_CAPTION_SECTIONS
     lanes_active = active_sections & _VOICEOVER_LANE_SECTIONS
+    cut_active = bool(active_sections & _VOICEOVER_CUT_SECTIONS)
     lanes_ok = phone_voiceover_editor_lanes_supported(require_client=False)
     if lanes_active and not lanes_ok:
         raise ValueError("phone Voiceover sound effects and Visuals aren't editable yet")
-    if (caption_active or not lanes_active) and not phone_narrated_caption_edits_supported():
+    if (
+        caption_active or not (lanes_active or cut_active)
+    ) and not phone_narrated_caption_edits_supported():
         raise ValueError("phone Narrated captions aren't editable yet")
 
-    allowed = _NARRATED_EDITOR_SECTIONS | (_VOICEOVER_LANE_SECTIONS if lanes_ok else frozenset())
+    allowed = (
+        _NARRATED_EDITOR_SECTIONS
+        | _VOICEOVER_CUT_SECTIONS
+        | (_VOICEOVER_LANE_SECTIONS if lanes_ok else frozenset())
+    )
     unsupported_sections = active_sections - allowed
     if unsupported_sections:
         name = sorted(unsupported_sections)[0]
@@ -605,7 +664,11 @@ def _compile_narrated_editor_commit(
     if caption_cues is None:
         caption_cues = variant.get("caption_cues") or []
     recipe = previous.recipe
-    if caption_active or not lanes_active:
+    if cut_active:
+        bindings, pool = _voiceover_sources(staged, assembly)
+        recipe = _swap_voiceover_cut(recipe, prep, bindings, pool, archetype="narrated")
+    if caption_active or cut_active or not lanes_active:
+        # A new cut re-bounds the captions to where the video now ends.
         caption_style = "word" if variant.get("voiceover_caption_style") == "word" else "sentence"
         recipe = replace_narrated_captions(
             recipe,
@@ -614,7 +677,7 @@ def _compile_narrated_editor_commit(
             look=caption_look_from_variant(variant),
         )
     lane_state = None
-    if lanes_active:
+    if lanes_active or (cut_active and _has_editor_lanes(previous.recipe, variant)):
         lane_state = _commit_voiceover_lanes(
             recipe,
             assembly=assembly,
@@ -645,6 +708,12 @@ def _compile_narrated_editor_commit(
         row["duration_s"] = recipe.duration
         if caption_cues_overridden:
             row["caption_cues"] = caption_cues
+        if cut_active:
+            # Keep the persisted pair (admin/debug, older app builds) on the new cut.
+            projected_cut = narrated_timings_and_assignments(recipe, list(bindings), pool)
+            if projected_cut is not None:
+                row["narrated_timings"] = projected_cut[0]
+                row["narrated_clip_assignments"] = projected_cut[1]
         if lane_state is not None:
             _, lanes, labels, paths = lane_state
             _persist_lane_state(
@@ -667,29 +736,42 @@ def _compile_voiceover_montage_editor_commit(
     previous: Any,
     sfx_catalog_paths: Mapping[str, str],
 ) -> None:
-    """Save for a phone montage `voiceover` variant (KRI-281): only the
-    sound-effect and Visuals lanes are editable; the clips, voice and music beds
-    and intro text stay exactly as pinned."""
-    if not phone_voiceover_editor_lanes_supported(require_client=False):
-        raise ValueError("phone Voiceover sound effects and Visuals aren't editable yet")
+    """Save for a phone montage `voiceover` variant (KRI-281): the sound-effect
+    and Visuals lanes and (KRI-290) the clip cut are editable; the voice and
+    music beds and intro text keep their pinned shape, re-fitted to the cut."""
     active_sections = {key for key, value in prep["sections"].items() if value}
-    unsupported_sections = active_sections - _VOICEOVER_LANE_SECTIONS
+    lanes_active = active_sections & _VOICEOVER_LANE_SECTIONS
+    cut_active = bool(active_sections & _VOICEOVER_CUT_SECTIONS)
+    if (lanes_active or not cut_active) and not phone_voiceover_editor_lanes_supported(
+        require_client=False
+    ):
+        raise ValueError("phone Voiceover sound effects and Visuals aren't editable yet")
+    unsupported_sections = active_sections - _VOICEOVER_LANE_SECTIONS - _VOICEOVER_CUT_SECTIONS
     if unsupported_sections:
         name = sorted(unsupported_sections)[0]
         raise ValueError(f"{name} isn't supported on phone Voiceover edits yet")
     if not isinstance(previous.recipe, EditRecipeV2):
         raise ValueError("phone Voiceover edits need a pinned v2 recipe")
 
-    recipe, lanes, labels, paths = _commit_voiceover_lanes(
-        previous.recipe,
-        assembly=assembly,
-        variant=variant,
-        previous=previous,
-        prep=prep,
-        sfx_catalog_paths=sfx_catalog_paths,
-        video_track_id="montage",
+    recipe = previous.recipe
+    if cut_active:
+        bindings, pool = _voiceover_sources(staged, assembly)
+        recipe = _swap_voiceover_cut(recipe, prep, bindings, pool, archetype="voiceover")
+    lane_state = None
+    if lanes_active or not cut_active or _has_editor_lanes(previous.recipe, variant):
+        lane_state = _commit_voiceover_lanes(
+            recipe,
+            assembly=assembly,
+            variant=variant,
+            previous=previous,
+            prep=prep,
+            sfx_catalog_paths=sfx_catalog_paths,
+            video_track_id="montage",
+        )
+        recipe = lane_state[0]
+    validate_phone_pilot_recipe(
+        recipe, allow_editor_media=bool(lane_state and lane_state[1].overlays)
     )
-    validate_phone_pilot_recipe(recipe, allow_editor_media=bool(lanes.overlays))
     request = make_device_request(
         job_id=previous.identity.job_id,
         variant_id=variant_id,
@@ -703,7 +785,11 @@ def _compile_voiceover_montage_editor_commit(
         row["render_status"] = "awaiting_device"
         row["render_destination"] = "device"
         row["duration_s"] = recipe.duration
-        _persist_lane_state(row, lanes, labels, paths, caption_style="sentence", duck_receipt=None)
+        if lane_state is not None:
+            _, lanes, labels, paths = lane_state
+            _persist_lane_state(
+                row, lanes, labels, paths, caption_style="sentence", duck_receipt=None
+            )
 
 
 def _previous_keep_segments(

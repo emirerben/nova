@@ -1528,6 +1528,50 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(session.duration, 7, accuracy: 0.0001)
     }
 
+    /// KRI-290: a phone Narrated clip the server slowed to fill its voiceover
+    /// step can be trimmed, and the preview plays the trimmed window the way
+    /// the phone renders it (`_fit_step_window`), not the span hydrated on load.
+    func testTrimmedNarratedClipPreviewsLikeThePhoneRendersIt() async throws {
+        let threadID = UUID()
+        // A 4 s window over 2 s of footage, as hydrated on load (1.95 s slowed).
+        let slot: JSONValue = .object([
+            "slot_id": .string("s1"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(4),
+            "source_duration_s": .number(2), "native_source_span_s": .number(1.95),
+        ])
+        let snapshot: [String: JSONValue] = ["editor_payload": .object([
+            "base_generation": .string("g1"), "sections": .object(["timeline_slots": .array([slot])]),
+        ])]
+        let variant: [String: JSONValue] = [
+            "variant_id": .string("narrated"), "render_generation_id": .string("g1"), "render_status": .string("ready"),
+            "resolved_archetype": .string("narrated"),
+            "editor_capabilities": .object(["timeline": .bool(true)]),
+            "user_timeline": .object(["slots": .array([slot])]),
+        ]
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "narrated", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
+            authoritativeVariant: variant
+        )
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: threadID)
+        let loaded = try XCTUnwrap(session.timelineClips.first)
+        XCTAssertEqual(loaded.trimOut - loaded.trimIn, 1.95, accuracy: 0.0001)
+
+        session.beginTrim(clipID: try XCTUnwrap(session.draft.clips.first?.id), edge: .trailing)
+        session.updateTrim(by: -0.5)
+        // Shrinks from its own length instead of snapping to the 2 s of footage.
+        XCTAssertEqual(session.timelineClips[0].end, 3.5, accuracy: 0.0001)
+        XCTAssertEqual(session.timelineClips[0].trimOut - session.timelineClips[0].trimIn, 1.95, accuracy: 0.0001)
+        session.updateTrim(by: 1)
+        XCTAssertEqual(session.timelineClips[0].end, 4, accuracy: 0.0001)
+        session.updateTrim(by: -2.5)
+        session.endTrim()
+
+        // Within its footage now: 1.5 s at 1x, not the load-time 1.95 s sped up.
+        let trimmed = session.timelineClips[0]
+        XCTAssertEqual(trimmed.end, 1.5, accuracy: 0.0001)
+        XCTAssertEqual(trimmed.trimOut - trimmed.trimIn, 1.5, accuracy: 0.0001)
+    }
+
     // REGRESSION: timelineScrubDuration must equal playbackDuration whenever
     // no preview rebuild is pending or in flight — auto-scroll and any seek
     // widen against timelineScrubDuration, so if this baseline case were

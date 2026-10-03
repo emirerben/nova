@@ -6848,8 +6848,17 @@ async def editor_commit_item(
     # Normalize tombstones before guided/source policy checks. Empty drafts use
     # their pinned snapshot as the deletion baseline because public reads
     # intentionally project zero timeline rows.
-    has_clip_deletions = any(deletion.kind == "clip" for deletion in initial_deletions)
-    needs_authored_deletion_baseline = has_clip_deletions or (
+    from app.services.phone_voiceover_cut_editor import (  # noqa: PLC0415
+        phone_voiceover_cut_editable,
+    )
+
+    # KRI-290: a phone Voiceover cut is creator-owned in place -- deleting a
+    # clip is an ordinary timeline edit of it, so the variant keeps its
+    # archetype (captions, voiceover, mix) instead of turning authored.
+    authored_clip_deletion = any(
+        deletion.kind == "clip" for deletion in initial_deletions
+    ) and not phone_voiceover_cut_editable(locked_job, locked_variant)
+    needs_authored_deletion_baseline = authored_clip_deletion or (
         bool(initial_deletions) and locked_variant.get("resolved_archetype") == "guided_story"
     )
     if is_empty_editor_variant(locked_variant):
