@@ -4259,6 +4259,15 @@ class SlidePostProposeBody(BaseModel):
     instruction: str = Field(min_length=1, max_length=2000)
 
 
+class SlidePostChatTurn(BaseModel):
+    """One prior chat turn: the `EditCopilotInput.prior_turns` shape, size-bounded."""
+
+    role: Literal["user", "assistant"]
+    content: str = Field(default="", max_length=2000)
+    applied: list[str] = Field(default_factory=list, max_length=20)
+    rejected: list[str] = Field(default_factory=list, max_length=20)
+
+
 class SlidePostChatEditBody(BaseModel):
     """POST /{item_id}/slide-post/chat-edit request (KRI-301).
 
@@ -4270,7 +4279,7 @@ class SlidePostChatEditBody(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     expected_version: int = Field(default=0, ge=0)
     draft: SlidePostDraft | None = None
-    turns: list[dict] = Field(default_factory=list, max_length=12)
+    turns: list[SlidePostChatTurn] = Field(default_factory=list, max_length=12)
     client_request_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
@@ -4595,6 +4604,7 @@ async def propose_slide_post(
 
 @router.post("/{item_id}/slide-post/chat-edit", response_model=SlidePostChatEditResponse)
 @limiter.limit("20/minute", key_func=get_real_ip)
+@limiter.limit("30/hour", key_func=_edit_conversation_rate_key)
 async def chat_edit_slide_post(
     request: Request,
     item_id: str,
@@ -4604,7 +4614,8 @@ async def chat_edit_slide_post(
 ) -> SlidePostChatEditResponse:
     """Chat-edit a slide post through the edit copilot. Read-only staging: returns a
     proposed draft (or a clarification/refusal); the client saves it with the PUT."""
-    if not settings.slide_post_chat_edit_enabled:
+    # Chat edit round-trips rich per-slide text: it needs that flag too.
+    if not (settings.slide_post_chat_edit_enabled and settings.slide_post_rich_text_enabled):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Slide post chat editing is not available.",
@@ -4637,7 +4648,7 @@ async def chat_edit_slide_post(
         draft=draft,
         assets_by_id={asset.id: asset for asset in owned_assets},
         message=body.message,
-        turns=body.turns,
+        turns=[t.model_dump() for t in body.turns],
         user_id=user.id,
         server_version=server_version,
         run_context=_creator_run_context(

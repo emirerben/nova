@@ -220,7 +220,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `SILENCE_CUT_ENABLED` / `RETAKE_CUT_ENABLED` — default `false`; speech paths only, fail-open. `SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED` + `DETECTOR_VERSION` are in the policy fingerprint. **"cleanup cut a word" is a guard bug, not this lever.** Runbook: `docs/runbooks/chat-speech-cleanup-rollout.md`; pins `test_silence_cut*.py`; plans/010/019/021.
 - `PHONE_TALKING_HEAD_RENDERING_ENABLED` — default `false`. 2+-clip self-narration renders on the phone: speaker clip + muted full-frame cutaways (`compile_phone_subtitled_plan(cutaways=)`), no speech cleanup. `docs/reviews/kri-132/phone-format-matrix.md`.
 - `SLIDE_POSTS_ENABLED` — defaults `true`. Mixed-media posts; docs/pipelines/slide-post.md. Rollback: fly secret `…=false` + restart (api+worker).
-- `SLIDE_POST_RICH_TEXT_ENABLED` / `SLIDE_POST_CHAT_EDIT_ENABLED` — default `false`. Styled slide text (off = drawtext) / slide chat-edit route (404 off); caps `slide_post_*`.
+- `SLIDE_POST_RICH_TEXT_ENABLED` / `SLIDE_POST_CHAT_EDIT_ENABLED` — default `false`. Styled slide text (off = drawtext) / slide chat-edit route (404 off; needs rich text); caps `slide_post_*`.
 - `REVIEWER_LOGIN_ENABLED` — default `false`; gates `POST /auth/mobile/reviewer-login` (404 off), Apple Beta App Review demo login. `REVIEWER_LOGIN_EMAIL`/`_PASSWORD_HASH` (scrypt via `app.cli.reviewer_login hash`) are Fly-secrets only: `docs/runbooks/testflight.md`.
 
 ## Agent evals

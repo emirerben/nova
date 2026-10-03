@@ -240,6 +240,12 @@ pool order / first slide as cover / no caption rather than blocking assembly.
 
 ## Chat editing (KRI-301, flag `slide_post_chat_edit_enabled`, default off)
 
+**Requires `slide_post_rich_text_enabled` too:** chat edits round-trip styled
+`SlideEdits.texts`, so with rich text off the route 404s and the
+`slide_post_chat_edit` capability is false (both flags needed). Limits: 20/min per IP
+plus 30/hour per user (`x-user-id` key, like the edit-guide route); `turns` entries are
+`{role: user|assistant, content<=2000, applied/rejected<=20}`.
+
 `POST /plan-items/{id}/slide-post/chat-edit` runs the video **edit copilot** over a
 slide post instead of a second composer. Read-only: it never writes the DB; the
 client stages the returned draft and saves with the normal versioned PUT.

@@ -292,6 +292,20 @@ def _clamp(value: object, low: float, high: float, default: float) -> float:
     return max(low, min(high, float(value)))
 
 
+def _row_matches_element(row: dict[str, Any], el: SlideTextElement) -> bool:
+    """True when the ops left this bar exactly as `_bar_row` projected it."""
+    projected = _bar_row("", 0, el, bar_id="")
+    for key, value in projected.items():
+        if key in {"id", "start_s", "end_s", "role", "effect"}:
+            continue
+        if row.get(key) != value:
+            return False
+    return not any(row.get(k) is not None and k not in projected for k in _GEOMETRY_KEYS)
+
+
+_GEOMETRY_KEYS = ("x_frac", "y_frac", "max_width_frac")
+
+
 def _element_from_row(
     row: dict[str, Any],
     base: SlideTextElement | None,
@@ -303,6 +317,18 @@ def _element_from_row(
 ) -> SlideTextElement:
     from app.agents._schemas.text_element import _ALLOWED_FONTS, _HEX_COLOR_RE  # noqa: PLC0415
 
+    if (
+        base is not None
+        and base.id == element_id
+        and base.role == role
+        and base.label_source == label_source
+        and base.edited == edited
+        and row.get("text_case") in (None, "none")
+        and _row_matches_element(row, base)
+    ):
+        # Untouched by the ops: keep the stored element byte-for-byte (no strip /
+        # size clamp) so an untouched slide never counts as changed.
+        return base
     data: dict[str, Any] = base.model_dump() if base is not None else {}
     text = _apply_case(str(row.get("text") or "").strip(), row.get("text_case"))
     if not text:
@@ -564,16 +590,21 @@ def compile_slide_post_ops(
 
 
 _CLIP_WORD = re.compile(r"\bclip(s?)\b", re.IGNORECASE)
+# Quoted spans (the user's own text) are never reworded.
+_QUOTED = re.compile(r'"[^"]*"|\u201c[^\u201d]*\u201d')
+_WORDING_TOKEN = re.compile(_QUOTED.pattern + "|" + _CLIP_WORD.pattern, re.IGNORECASE)
 
 
 def slide_wording(text: str) -> str:
     """Video wording -> slide wording ("clip 3" -> "slide 3")."""
 
     def swap(match: re.Match[str]) -> str:
+        if _QUOTED.fullmatch(match.group(0)):
+            return match.group(0)
         word = f"slide{match.group(1)}"
         return word.capitalize() if match.group(0)[0].isupper() else word
 
-    return _CLIP_WORD.sub(swap, text)
+    return _WORDING_TOKEN.sub(swap, text)
 
 
 def _same_content(a: SlidePostDraft, b: SlidePostDraft) -> bool:

@@ -604,3 +604,57 @@ async def test_run_agent_failure_is_honest(monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_slide_wording() -> None:
     assert slide_wording("Clip 2 and clips 3; a clipboard") == "Slide 2 and slides 3; a clipboard"
+
+
+def test_slide_wording_leaves_quoted_text_alone() -> None:
+    assert slide_wording('Text "my clip 2" on clip 2') == 'Text "my clip 2" on slide 2'
+    assert (
+        slide_wording("Said \u201cclip it\u201d on clips") == "Said \u201cclip it\u201d on slides"
+    )
+
+
+def test_untouched_elements_are_not_normalised() -> None:
+    """Stored text with edge whitespace / off-grid size must not count as changed."""
+    assets = [_asset(), _asset()]
+    odd = SlideEdits(texts=[_text("a", " padded ", size_px=87)])
+    draft = _draft(assets, edits={0: odd})
+    compiled, _ = _edit(draft, assets, [{"op": "set_post_caption", "caption": "hi"}])
+    assert compiled.draft.slides[0].edits.texts[0].text == " padded "
+    assert compiled.draft.slides[0] == draft.slides[0]
+    assert compiled.changes == ["Caption updated"]
+
+
+def test_reorder_and_remove_keep_every_text_on_its_own_slide(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _facts_on(monkeypatch)
+    assets = [
+        _asset(time="2024-07-04T10:00:00Z", place="Beşiktaş"),  # s0 (latest)
+        _asset(time="2024-07-03T10:00:00Z", place="Kadıköy"),  # s1: removed
+        _asset(time="2024-07-02T10:00:00Z", place="Moda"),  # s2
+        _asset(time="2024-07-01T10:00:00Z", place="Fener"),  # s3: earliest
+    ]
+    edits = {
+        0: SlideEdits(texts=[_text("t0", "zero")]),
+        2: SlideEdits(
+            texts=[_text("t2", "two"), _text("l2", "Moda", role="label", label_source="place")]
+        ),
+        3: SlideEdits(texts=[_text("t3", "three")]),
+    }
+    draft = _draft(assets, edits=edits)
+    compiled, _ = _edit(
+        draft,
+        assets,
+        [{"op": "remove_clip", "slot_index": 1}, CHRONO],
+    )
+    order = [s.id for s in compiled.draft.slides]
+    assert order == ["s3", "s2", "s0"]
+    texts = {
+        s.id: [(t.role, t.text) for t in (s.edits.effective_texts() if s.edits else [])]
+        for s in compiled.draft.slides
+    }
+    assert texts == {
+        "s3": [("text", "three")],
+        "s2": [("text", "two"), ("label", "Moda")],
+        "s0": [("text", "zero")],
+    }
