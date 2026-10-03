@@ -158,6 +158,17 @@ import XCTest
           "created_at":"2026-09-07T11:00:00Z"}]
         """#)
         XCTAssertFalse(nonRetryablePhoneGateErrorCodes.contains(try XCTUnwrap(transient.lastAssistantErrorCode)))
+
+        // v2 render failures carry their copy in `content`, not payload["message"].
+        let planUnsupported = try thread(#"""
+        [{"id":"e1","sequence":1,"revision":1,"role":"assistant","event_type":"assistant_render_failed",
+          "content":"This edit uses something your iPhone can't render yet.",
+          "payload":{"code":"phone_plan_unsupported","recovery":"ask_user"},
+          "created_at":"2026-09-07T11:00:00Z"}]
+        """#)
+        XCTAssertEqual(planUnsupported.lastAssistantErrorContent, "This edit uses something your iPhone can't render yet.")
+        XCTAssertTrue(isNonRetryableFailureCode(planUnsupported.lastAssistantErrorCode))
+        XCTAssertNil(none.lastAssistantErrorContent)
     }
 
     /// KRI-118 item 4: `strategy_invalid` (`app.services.creator_errors

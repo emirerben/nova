@@ -668,6 +668,21 @@ def test_a_cloud_render_failure_keeps_the_chat_retry_recovery() -> None:
     _, execution, events = _observe(job, {})
     assert execution.error["recovery"] == "retry"
     assert events[-1]["payload"]["recovery"] == "retry"
+    assert execution.error["retryable"] is True
+
+
+def test_a_deterministic_phone_plan_reject_asks_the_user_instead_of_retrying() -> None:
+    from app.tasks.content_plan_build import humanize_job_failure_reason
+
+    job = _device_job(status="processing_failed")
+    job.assembly_plan = {"variants": [{"variant_id": VARIANT}]}
+    job.failure_reason = "phone_plan_unsupported"
+    _, execution, events = _observe(job, {})
+    assert execution.error["code"] == "phone_plan_unsupported"
+    assert execution.error["recovery"] == "ask_user"
+    assert execution.error["retryable"] is False
+    assert events[-1]["payload"]["recovery"] == "ask_user"
+    assert events[-1]["content"] == humanize_job_failure_reason("phone_plan_unsupported")
 
 
 def test_claim_reports_a_baseline_conflict_as_a_stale_video_not_an_unsupported_edit() -> None:

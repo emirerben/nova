@@ -385,6 +385,76 @@ final class NativeCompositionTests: XCTestCase {
         XCTAssertGreaterThan(moved, 15000)
     }
 
+    /// KRI-283: a landscape talking-to-camera clip (portrait pixels + 90 degree display rotation) with the
+    /// compiler's letterbox transform (scale 0.31640625 = 607.5/1920) must render black bars above and
+    /// below, source content in the middle band, and keep red-left / blue-right (catches a flipped or
+    /// upside-down orientation). Canvas is the 1080x1920 layout at 1/5 scale: sample points are scaled too.
+    @MainActor func testLandscapeClipWithFitScaleLetterboxesOnBlackWithOrientationPreserved() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        // Buffer is 216x384 portrait; rotating +90 degrees displays it as 384x216 landscape with the
+        // buffer's top half on the right. Top = blue, bottom = red => displayed red-left / blue-right.
+        let url = try await makeRotatedLandscapeVideo(directory: directory, name: "landscape")
+        let system = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        system.appliesPreferredTrackTransform = true
+        let reference = try await system.image(at: CMTime(seconds: 0.4, preferredTimescale: 600)).image
+        XCTAssertEqual(reference.width, 384); XCTAssertEqual(reference.height, 216)
+        let refPixels = rgba(reference)
+        func refAt(_ x: Int, _ y: Int) -> (Int, Int, Int) { let o = (y * reference.width + x) * 4; return (Int(refPixels[o]), Int(refPixels[o + 1]), Int(refPixels[o + 2])) }
+        XCTAssertGreaterThan(refAt(40, 108).0, refAt(40, 108).2, "fixture must display red on the left")
+        XCTAssertGreaterThan(refAt(340, 108).2, refAt(340, 108).0, "fixture must display blue on the right")
+
+        let recipe = EditRecipe(canvas: Canvas(width: 216, height: 384),
+            assets: [MediaAsset(id: "source", relativePath: "source.mp4")],
+            tracks: [TimelineTrack(id: "video", kind: .video, clips: [
+                TimelineClip(id: "clip", sourceAssetID: "source", sourceDuration: 1, transform: MediaTransform(scale: 0.31640625))])])
+        let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: ["source": url])
+        let generator = AVAssetImageGenerator(asset: preview.playerItem.asset)
+        generator.videoComposition = preview.playerItem.videoComposition
+        generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+        let image = try await generator.image(at: CMTime(seconds: 0.4, preferredTimescale: 600)).image
+        XCTAssertEqual(image.width, 216); XCTAssertEqual(image.height, 384)
+        let pixels = rgba(image)
+        func at(_ x: Int, _ y: Int) -> (r: Int, g: Int, b: Int) { let o = (y * image.width + x) * 4; return (Int(pixels[o]), Int(pixels[o + 1]), Int(pixels[o + 2])) }
+        for (x, y) in [(108, 60), (108, 340)] {
+            let p = at(x, y)
+            XCTAssertLessThan(max(p.r, p.g, p.b), 40, "bar at \(x),\(y) must be black, got \(p)")
+        }
+        let left = at(30, 192), right = at(186, 192), middle = at(108, 192)
+        XCTAssertGreaterThan(max(middle.r, middle.g, middle.b), 100, "source content expected at the centre")
+        XCTAssertTrue(left.r > 150 && left.b < 100, "left of the band must be red, got \(left)")
+        XCTAssertTrue(right.b > 150 && right.r < 100, "right of the band must be blue, got \(right)")
+    }
+
+    @MainActor private func makeRotatedLandscapeVideo(directory: URL, name: String) async throws -> URL {
+        let url = directory.appendingPathComponent("\(name).mp4")
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 216, AVVideoHeightKey: 384])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB, kCVPixelBufferWidthKey as String: 216, kCVPixelBufferHeightKey as String: 384])
+        input.transform = CGAffineTransform(rotationAngle: .pi / 2)
+        writer.add(input)
+        XCTAssertTrue(writer.startWriting())
+        writer.startSession(atSourceTime: .zero)
+        for index in 0..<30 {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(2)) }
+            var buffer: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adaptor.pixelBufferPool), &buffer)
+            let pixel = try XCTUnwrap(buffer)
+            CVPixelBufferLockBaseAddress(pixel, [])
+            let context = try XCTUnwrap(CGContext(data: CVPixelBufferGetBaseAddress(pixel), width: 216, height: 384, bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(pixel), space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue))
+            // CGContext origin is bottom-left: y 0..192 is the buffer's bottom half (red), 192..384 the top half (blue).
+            context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 216, height: 192))
+            context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1)); context.fill(CGRect(x: 0, y: 192, width: 216, height: 192))
+            CVPixelBufferUnlockBaseAddress(pixel, [])
+            XCTAssertTrue(adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(index), timescale: 30)))
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        XCTAssertEqual(writer.status, .completed)
+        return url
+    }
+
     @MainActor func testOverlayPositionPopAndFrozenTailMatchPreviewAndExport() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

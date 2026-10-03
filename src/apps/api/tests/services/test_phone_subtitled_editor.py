@@ -650,3 +650,15 @@ def test_a_new_video_card_is_accepted_while_the_video_gate_holds(monkeypatch):
 
     assert lanes.overlays[0].kind == "video"
     assert lanes.overlays[0].source_start_s == pytest.approx(0.5)
+
+
+def test_landscape_fit_from_recipe_round_trips_through_a_pinned_recompile():
+    from app.pipeline.phone_subtitled_plan import landscape_fit_from_recipe
+
+    wide = (_binding(width=1920, height=1080),)
+    for fit in ("fit", "fill"):
+        recipe = compile_phone_subtitled_plan(wide, caption_cues=_CUES, landscape_fit=fit)
+        recompiled = compile_phone_subtitled_plan(
+            wide, caption_cues=_CUES, landscape_fit=landscape_fit_from_recipe(recipe)
+        )
+        assert recompiled.model_dump_json() == recipe.model_dump_json()

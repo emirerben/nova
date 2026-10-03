@@ -44,6 +44,7 @@ from app.services.phone_overlay_grounding import GroundedOverlayCards
 from app.services.phone_reaction_grounding import GroundedReactionBeats
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD, PhoneVisualBinding
 from app.tasks import generative_build as gb
+from tests.pipeline.test_phone_subtitled_plan import _binding as _wide_binding
 from tests.pipeline.test_phone_voiceover_montage_plan import _binding
 from tests.tasks.test_generative_build import _Meta
 from tests.tasks.test_generative_build_silence_cut import DURATION, SILENCES, _cut_words
@@ -167,6 +168,37 @@ def test_subtitled_compiles_and_pins_device_request(monkeypatch):
     assert variant["render_destination"] == "device"
     assert variant["caption_cues"]
     assert "phone_deferred_variants" not in job.assembly_plan
+
+
+def _setup_landscape_subtitled(monkeypatch, *, landscape_fit):
+    job, snapshot, session, _binding_ = _setup_subtitled(monkeypatch)
+    landscape = _wide_binding("c0", duration_s=10.0, width=1920, height=1080)
+    job.assembly_plan[PHONE_SOURCES_FIELD] = [landscape.model_dump(mode="json")]
+    snapshot[PHONE_SOURCES_FIELD] = [landscape.model_dump(mode="json")]
+    if landscape_fit is not None:
+        job.all_candidates["landscape_fit"] = landscape_fit
+    return job
+
+
+def test_subtitled_landscape_fit_reaches_the_pinned_recipe_letterboxed(monkeypatch):
+    job = _setup_landscape_subtitled(monkeypatch, landscape_fit="fit")
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    recipe = device_status(job, "subtitled").request.recipe
+    clips = next(t for t in recipe.tracks if t.id == "subtitled").clips
+    assert clips and all(c.transform.scale == pytest.approx(0.31640625) for c in clips)
+
+
+@pytest.mark.parametrize("landscape_fit", [None, "fill"])
+def test_subtitled_landscape_without_fit_center_crops(monkeypatch, landscape_fit):
+    job = _setup_landscape_subtitled(monkeypatch, landscape_fit=landscape_fit)
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    recipe = device_status(job, "subtitled").request.recipe
+    clips = next(t for t in recipe.tracks if t.id == "subtitled").clips
+    assert all(c.transform.scale == 1 for c in clips)
 
 
 def test_subtitled_redelivery_is_a_no_op(monkeypatch):

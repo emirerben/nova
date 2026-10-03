@@ -102,6 +102,13 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         try await assertCase("subtitled_word")
     }
 
+    /// KRI-283: a landscape (1080x1920 pixels + 90 degree rotation) talking-to-camera clip compiled with
+    /// `landscape_fit="fit"` letterboxes through the device exporter: black bars above/below the video
+    /// band, red-left / blue-right preserved, and the caption drawn in the lower bar.
+    func testSubtitledLandscapeLetterboxRendersOnTheIPhone() async throws {
+        try await assertCase("subtitled_landscape_fit")
+    }
+
     /// KRI-257 / Plan 025 A3: multi-clip self-narrated Talking keeps the
     /// speaker's audio spine continuous, mutes the visual cutaway, draws that
     /// cutaway only in its scheduled window, and continues captions across it.
