@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.46.0] - 2026-10-03
+
+### Changed
+- fix(clips): KRI-282 resolver question must not discard matches (#1355) <!-- release-pr: 1355 -->
+
 ## [0.78.45.0] - 2026-10-03
 
 ### Changed
