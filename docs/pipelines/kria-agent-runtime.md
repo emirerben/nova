@@ -229,9 +229,11 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   stopped a fraction of a frame short of a 0.298s iPhone clip, which the strict
   snapshot refused.
 - *Title*: confirmed strategy title > brief title literal > brief global literal
-  (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`) >
-  `Montage`. Never a model hook, never place text nobody asked for. Creator-written
-  labels keep up to 120 characters; fact/model labels are cut at 60.
+  (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`). With
+  none of those sources, the visible opening title is omitted; `Montage` remains
+  only the internal snapshot fallback. Never a model hook, never place text nobody
+  asked for. Creator-written labels keep up to 120 characters; fact/model labels
+  are cut at 60.
   Text stays NFC; nothing is folded to ASCII.
 - *Typography*: Fraunces has no "→" glyph and the phone lays out from exact glyph
   ids (a missing glyph fails the whole recipe), so `skia_font_covers` picks the

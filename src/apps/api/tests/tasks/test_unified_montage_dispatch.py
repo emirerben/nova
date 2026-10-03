@@ -302,9 +302,13 @@ def test_no_brief_still_produces_a_plain_guided_montage(harness):
     assert job.status == "awaiting_device"
     record = job.assembly_plan["unified_montage"]
     assert record["labels"] == []
-    # Nothing to title with: the neutral default, not unrequested place text.
-    assert record["title"] == "Montage"
-    assert record["title_source"] == "default"
+    # Nothing to title with: omit visible text rather than leaking the internal
+    # snapshot label or using unrequested place text.
+    assert record["title"] is None
+    assert record["title_source"] == "none"
+    assert "opening_title" not in job.assembly_plan["guided_edit"]["approved_proposal"]
+    plan = GuidedStoryExecutionPlan.model_validate(job.assembly_plan["guided_story_execution_plan"])
+    assert all(element.id != "guided-title" for element in plan.text_elements)
     assert "requirement_receipts" not in record
 
 

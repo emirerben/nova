@@ -16,6 +16,7 @@ from app.pipeline.generative_overlays import build_overlays_from_text_elements
 from app.pipeline.guided_story import (
     LABEL_LANE_RENDER_ROLES,
     GuidedStoryError,
+    GuidedStoryExecutionPlan,
     _allocate_beat_durations,
     _apply_guided_text_face_placement,
     _assign_label_lane_roles,
@@ -56,6 +57,17 @@ from app.schemas.edit_proposal import (
     canonical_media_digest,
 )
 from app.schemas.guided_edit_revision import guided_editor_revision_from_approval
+
+
+def test_only_fast_montage_may_have_no_approved_text_elements() -> None:
+    compiled = compile_execution_plan(_guided_snapshot(), track=None)
+    compiled["text_elements"] = []
+
+    with pytest.raises(ValueError, match="require at least one text element"):
+        GuidedStoryExecutionPlan.model_validate(compiled)
+
+    compiled["direction"] = "fast_montage"
+    assert GuidedStoryExecutionPlan.model_validate(compiled).text_elements == []
 
 
 def test_song_reference_preserves_explicit_zero_and_rejects_out_of_catalog_window() -> None:
