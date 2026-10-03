@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.29.0] - 2026-10-03
+
+### Changed
+- feat: spoken-excerpt montage on the phone (KRI-282) (#1338) <!-- release-pr: 1338 -->
+
 ## [0.78.28.0] - 2026-10-03
 
 ### Changed
