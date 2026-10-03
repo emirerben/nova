@@ -101,6 +101,7 @@
       "KriaUITests/NativeEditorInspectorUITests/testPanelDragDownClosesLikeDone",
       "KriaUITests/EditorUITests/testPreviewEmptyTapTogglesFullscreen",
       "KriaUITests/EditorUITests/testDeletingFinalClipShowsEmptyCanvasAndUndoRestoresPlayback",
+      "KriaUITests/EditorUITests/testClipActionsDismissOnOutsideTapAndKeepClipSelectionWorking",
       "KriaUITests/EditorUITests/testPreviewObjectTapStillSelectsNotFullscreen",
       "KriaUITests/NativeEditorInspectorUITests/testTimelineSwipesSeekUnderFixedPlayhead",
       "KriaUITests/NativeEditorInspectorUITests/testDraggingTrailingClipHandleToRightEdgeAutoScrollsPastVisibleWindow",

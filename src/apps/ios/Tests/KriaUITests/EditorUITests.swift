@@ -10,12 +10,29 @@ final class EditorUITests: XCTestCase {
 
         let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
         XCTAssertTrue(clip.waitForExistence(timeout: 20))
-        for _ in 0..<2 {
+        for index in 0..<2 {
             clip.tap()
+            XCTAssertFalse(app.buttons["native-editor-clip-back"].exists)
+            XCTAssertFalse(app.buttons["native-editor-clip-more-actions"].exists)
+            XCTAssertFalse(app.buttons["native-editor-clip-earlier-actions"].exists)
             let delete = app.buttons["native-editor-delete"]
             XCTAssertTrue(delete.waitForExistence(timeout: 5))
+            if index == 0 {
+                let screenshot = XCTAttachment(screenshot: app.screenshot())
+                screenshot.name = "Clip actions with passive scroll fade"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+            }
             let context = app.scrollViews.containing(.button, identifier: "native-editor-delete").firstMatch
-            if !delete.isHittable { context.swipeLeft() }
+            context.swipeLeft()
+            XCTAssertTrue(delete.isHittable, "Swiping the action bar must reveal Delete without dismissing it")
+            XCTAssertTrue(app.windows.firstMatch.frame.contains(delete.frame), "The full Delete button must fit on screen")
+            if index == 0 {
+                let screenshot = XCTAttachment(screenshot: app.screenshot())
+                screenshot.name = "Clip actions after swiping"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+            }
             XCTAssertTrue(delete.isEnabled)
             delete.tap()
         }
@@ -36,6 +53,45 @@ final class EditorUITests: XCTestCase {
         XCTAssertFalse(app.buttons["native-editor-play-pause"].isEnabled)
         addClip.tap()
         XCTAssertTrue(app.buttons["native-editor-add-clip-files"].waitForExistence(timeout: 5))
+    }
+
+    func testClipActionsDismissOnOutsideTapAndKeepClipSelectionWorking() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+
+        let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        let secondClip = app.descendants(matching: .any)["native-editor-clip-2"].firstMatch
+        let adjust = app.buttons["native-editor-adjust"]
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        let fullscreen = app.descendants(matching: .any)["native-editor-preview-fullscreen"].firstMatch
+        XCTAssertTrue(clip.waitForExistence(timeout: 20))
+        clip.tap()
+        XCTAssertTrue(adjust.waitForExistence(timeout: 5))
+        secondClip.tap()
+        XCTAssertTrue(adjust.exists, "Selecting another clip keeps its actions available")
+
+        preview.coordinate(withNormalizedOffset: CGVector(dx: 0.06, dy: 0.06)).tap()
+        XCTAssertFalse(adjust.exists, "An empty preview tap dismisses the selected clip actions")
+        XCTAssertFalse(fullscreen.exists, "The dismissal tap must not also open fullscreen")
+
+        clip.tap()
+        XCTAssertTrue(adjust.waitForExistence(timeout: 5))
+        let timeline = app.descendants(matching: .any)["native-editor-timeline-content"].firstMatch
+        timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.25)).tap()
+        XCTAssertFalse(adjust.exists, "An empty timeline tap dismisses the selected clip actions")
+
+        clip.tap()
+        XCTAssertTrue(adjust.waitForExistence(timeout: 5))
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 8, dy: preview.frame.midY - app.frame.minY)).tap()
+        XCTAssertFalse(adjust.exists, "Tapping the margin beside the preview dismisses the actions")
+
+        clip.tap()
+        XCTAssertTrue(adjust.waitForExistence(timeout: 5))
+        adjust.tap()
+        XCTAssertTrue(app.navigationBars["Adjust"].waitForExistence(timeout: 5), "Toolbar actions still open their inspector")
     }
 
     func testNativeEditorStagesLocalEditsAndGatesUnavailableTools() {

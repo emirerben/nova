@@ -298,21 +298,13 @@ struct NativeEditorTimeline: View {
 
 struct NativeEditorContextStrip: View {
     @ObservedObject var session: NativeEditorSession
-    let onBack: () -> Void
     let onAdjust: () -> Void
     let onTransition: () -> Void
+    @State private var scrollState = NativeEditorActionScrollState()
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 4) {
-                Button(action: onBack) {
-                    Label("Back", systemImage: "chevron.left")
-                        .frame(minHeight: 44)
-                        .padding(.horizontal, 16)
-                }
-                .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
-                .accessibilityIdentifier("native-editor-clip-back")
-
                 Button(action: onAdjust) {
                     Label("Adjust", systemImage: "slider.horizontal.3")
                         .frame(minHeight: 44)
@@ -350,9 +342,45 @@ struct NativeEditorContextStrip: View {
             }
             .padding(4)
         }
+        .onScrollGeometryChange(for: NativeEditorActionScrollState.self) { geometry in
+            NativeEditorActionScrollState(
+                hasEarlierActions: geometry.visibleRect.minX + geometry.contentInsets.leading > 1,
+                hasMoreActions: geometry.contentSize.width + geometry.contentInsets.trailing - geometry.visibleRect.maxX > 1
+            )
+        } action: { _, value in
+            scrollState = value
+        }
+        .overlay(alignment: .trailing) {
+            if scrollState.hasMoreActions {
+                LinearGradient(
+                    colors: [KriaColor.paper.opacity(0), KriaColor.paper],
+                    startPoint: .leading, endPoint: .trailing
+                )
+                .frame(width: 28)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+        }
+        .overlay(alignment: .leading) {
+            if scrollState.hasEarlierActions {
+                LinearGradient(
+                    colors: [KriaColor.paper, KriaColor.paper.opacity(0)],
+                    startPoint: .leading, endPoint: .trailing
+                )
+                .frame(width: 28)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+        }
         .frame(height: NativeEditorIslandMetrics.contextHeight)
+        .clipShape(Capsule())
         .nativeEditorIslandSurface()
     }
+}
+
+private struct NativeEditorActionScrollState: Equatable {
+    var hasEarlierActions = false
+    var hasMoreActions = false
 }
 
 struct NativeEditorTextContextStrip: View {

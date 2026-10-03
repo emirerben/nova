@@ -282,7 +282,7 @@ struct NativeEditorView: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { topChromeHeight = $0 }
 
             NativeVideoPreview(
-                session: session, onEmptyTap: { if captionEditing { captionLoopRequest += 1 } else { enterFullscreen() } },
+                session: session, onEmptyTap: handleEmptyPreviewTap,
                 onFindOriginals: { showsOriginalsRecovery = true },
                 onAddClip: { showsEmptyAddClip = true }
             )
@@ -320,6 +320,14 @@ struct NativeEditorView: View {
                         .padding(.trailing, 16)
                         .padding(.bottom, 14)
                     }
+                }
+                // The centered preview leaves horizontal editor margins on
+                // wider layouts. Keep their tap surface behind the preview
+                // and conversation control so it only dismisses context.
+                .background {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture { dismissSelectedClipContext() }
                 }
 
             if !captionEditing { timelineResizeHandle(metrics: metrics) }
@@ -377,6 +385,24 @@ struct NativeEditorView: View {
                 if previewFullscreen, fullscreenExpanded, !session.isPlaying { session.togglePlayback() }
             }
         }
+    }
+
+    /// An empty preview tap first closes clip-only context. Once nothing is
+    /// selected, the next tap retains the established fullscreen behavior.
+    private func handleEmptyPreviewTap() {
+        if captionEditing {
+            captionLoopRequest += 1
+            return
+        }
+        guard !dismissSelectedClipContext() else { return }
+        enterFullscreen()
+    }
+
+    @discardableResult
+    private func dismissSelectedClipContext() -> Bool {
+        guard session.selection?.kind == .clip else { return false }
+        session.select(nil)
+        return true
     }
 
     private func exitFullscreen() {
@@ -473,7 +499,6 @@ struct NativeEditorView: View {
                             } else if let selection = session.selection, selection.kind == .clip {
                                 NativeEditorContextStrip(
                                     session: session,
-                                    onBack: { session.select(nil) },
                                     onAdjust: { inspector = .adjust },
                                     onTransition: { inspector = .selection(selection) }
                                 )
