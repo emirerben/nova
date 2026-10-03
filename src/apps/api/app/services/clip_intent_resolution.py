@@ -69,6 +69,7 @@ from app.schemas.clip_intents import (
     clean_label_text,
     ground_caption,
     ground_label,
+    ground_placeholder_label,
 )
 from app.schemas.clip_understanding import ClipUnderstanding
 from app.services.clip_understanding import clip_record
@@ -258,11 +259,16 @@ class _VisionCandidate:
     # closed yes/no membership check `is_membership_check` would otherwise
     # force for any non-"label" op.
     text_authoring: bool = False
+    # KRI-282: a placeholder label's vision check only confirms membership; the
+    # printed text is the fixed PLACEHOLDER_LABEL_TEXT.
+    placeholder: bool = False
 
     @property
     def is_membership_check(self) -> bool:
         """True when the vision model confirms a clip BELONGS, rather than names a value."""
-        return not self.text_authoring and (self.op != "label" or bool(self.creator_text))
+        return not self.text_authoring and (
+            self.op != "label" or bool(self.creator_text) or self.placeholder
+        )
 
     def __post_init__(self) -> None:
         # A membership check must be a closed yes/no question: a free-form
@@ -581,7 +587,11 @@ def _build_question(work_items: list[_IntentWork], position_by_media: dict[str, 
                 seen.add(work.intent_question)
             continue
         positions = [position_by_media[m] for m in work.failed_media_ids if m in position_by_media]
-        if positions:
+        if positions and work.intent.placeholder:
+            phrase = f'I couldn\'t tell if these are "{work.intent.attribute}"'
+            parts.append(f"{phrase}: {_position_phrase(sorted(positions))}")
+            seen.add(phrase)
+        elif positions:
             phrase = f"I couldn't tell the {work.intent.attribute}"
             positions_by_phrase.setdefault(phrase, set()).update(positions)
             if phrase not in part_indexes:
@@ -593,6 +603,13 @@ def _build_question(work_items: list[_IntentWork], position_by_media: dict[str, 
             else:
                 idx = part_indexes[phrase]
                 parts[idx] = f"{phrase} for {_position_phrase(sorted(positions_by_phrase[phrase]))}"
+        elif not work.kept and work.intent.placeholder:
+            phrase = (
+                f'I couldn\'t find any "{work.intent.attribute}" to put the name placeholder on'
+            )
+            if phrase not in seen:
+                parts.append(phrase)
+                seen.add(phrase)
         elif not work.kept:
             label = work.intent.creator_text or work.intent.attribute
             phrase = f'I couldn\'t find any clips for "{label}"'
@@ -632,7 +649,9 @@ def _build_resolver_input(
     resolver_intents = [
         ResolverIntentIn(
             intent_id=i.intent_id,
-            op=i.op,
+            # KRI-282: a placeholder label is membership-only for the resolver ("which
+            # clips are <attribute>"); it must never author text for it.
+            op="include" if i.placeholder else i.op,
             attribute=i.attribute,
             creator_text=i.creator_text,
             caption_attribute=i.caption_attribute,
@@ -764,6 +783,7 @@ async def resolve_clip_intents_for_turn(
                     op=i.op,
                     attribute=i.attribute,
                     creator_text=i.creator_text,
+                    placeholder=i.placeholder,
                     position=i.position,
                     status="needs_creator",
                     assignments=[],
@@ -818,7 +838,43 @@ async def resolve_clip_intents_for_turn(
             assignment = assignment_by_media.get(alias)
             forced_question = vision_media.get(alias)
 
-            if intent.op == "label":
+            if intent.op == "label" and intent.placeholder:
+                # KRI-282: the text is the system's fixed stand-in (no source fence
+                # applies); only WHICH clips it lands on is a judgment, and it prints,
+                # so hold membership to the label bar, then a yes/no vision check.
+                if forced_question is None and assignment is None:
+                    continue
+                if (
+                    forced_question is None
+                    and assignment is not None
+                    and assignment.confidence >= LABEL_MIN_CONFIDENCE
+                ):
+                    placeholder_label = ground_placeholder_label(
+                        media_id=media_id, intent_id=intent.intent_id
+                    )
+                    work.kept.append(
+                        ClipAssignment(
+                            media_id=media_id,
+                            value=placeholder_label.text,
+                            evidence=assignment.evidence,
+                            confidence=placeholder_label.confidence,
+                            grounding=placeholder_label.grounding,
+                        )
+                    )
+                    continue
+                vision_candidates.append(
+                    _VisionCandidate(
+                        media_id=media_id,
+                        intent_id=intent.intent_id,
+                        op=intent.op,
+                        attribute=intent.attribute,
+                        question=forced_question or _fallback_question(intent),
+                        fallback_value=None,
+                        creator_text=None,
+                        placeholder=True,
+                    )
+                )
+            elif intent.op == "label":
                 if forced_question is not None:
                     vision_candidates.append(
                         _VisionCandidate(
@@ -1341,6 +1397,7 @@ async def resolve_clip_intents_for_turn(
                     op=intent.op,
                     attribute=intent.attribute,
                     creator_text=intent.creator_text,
+                    placeholder=intent.placeholder,
                     caption_attribute=intent.caption_attribute,
                     position=intent.position,
                     status="needs_creator",
@@ -1357,6 +1414,7 @@ async def resolve_clip_intents_for_turn(
                     op=intent.op,
                     attribute=intent.attribute,
                     creator_text=intent.creator_text,
+                    placeholder=intent.placeholder,
                     caption_attribute=intent.caption_attribute,
                     position=intent.position,
                     status="resolved",
@@ -1459,7 +1517,24 @@ def _apply_vision_result(
             work.failed_media_ids.add(candidate.media_id)
             return
 
-    if candidate.op == "label":
+    if candidate.op == "label" and candidate.placeholder:
+        # Membership was just confirmed above (is_membership_check): print the fixed text.
+        if output.confidence >= LABEL_MIN_CONFIDENCE:
+            placeholder_label = ground_placeholder_label(
+                media_id=candidate.media_id, intent_id=candidate.intent_id
+            )
+            work.kept.append(
+                ClipAssignment(
+                    media_id=candidate.media_id,
+                    value=placeholder_label.text,
+                    evidence=output.evidence,
+                    confidence=placeholder_label.confidence,
+                    grounding=placeholder_label.grounding,
+                )
+            )
+        else:
+            work.failed_media_ids.add(candidate.media_id)
+    elif candidate.op == "label":
         if candidate.creator_text:
             if output.confidence >= LABEL_MIN_CONFIDENCE:
                 label = ground_label(

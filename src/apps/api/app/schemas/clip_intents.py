@@ -52,10 +52,19 @@ ClipOrderPosition = Literal["first", "last"]
 # walked a route is the order they filmed it in); the distinction is kept so a
 # later geographic ordering needs no schema change.
 ClipOrderBy = Literal["capture_time", "route"]
-GroundingSource = Literal["creator_text", "record_span", "vision_verified"]
+# ``placeholder`` (KRI-282) is system-owned copy the creator explicitly asked for
+# ("add a text placeholder so I can replace it with their real names"). It is
+# the fixed ``PLACEHOLDER_LABEL_TEXT``, never model output, so it needs no
+# source-provenance or vision evidence -- see ``ground_placeholder_label``.
+GroundingSource = Literal["creator_text", "record_span", "vision_verified", "placeholder"]
 ResolutionStatus = Literal["resolved", "needs_creator"]
 
 MAX_CLIP_INTENTS = 8
+# KRI-282: the generic stand-in printed on every clip a "placeholder" label
+# targets. System-chosen on purpose: the fence's invariant is that model or
+# Gemini output never becomes on-screen text, and the creator replaces this in
+# the editor anyway.
+PLACEHOLDER_LABEL_TEXT = "Name"
 LABEL_MIN_CONFIDENCE = 0.8
 LABEL_MAX_CHARS = 24
 LABEL_MAX_WORDS = 3
@@ -112,6 +121,13 @@ class ClipIntent(BaseModel):
             raise ValueError("transcript_kind requires label_source=transcript")
         if self.order_by is not None and (self.op != "order" or self.position is not None):
             raise ValueError("order_by requires op=order and no position")
+        if self.placeholder and (
+            self.op != "label"
+            or self.label_source != "clip"
+            or self.creator_text is not None
+            or self.caption_attribute is not None
+        ):
+            raise ValueError("placeholder requires a clip label with no creator_text")
         return self
 
     # Exact creator-written copy for this intent ("post match pub"), if any.
@@ -120,6 +136,12 @@ class ClipIntent(BaseModel):
     # ABOUT ("the weather"), as distinct from `attribute` (WHICH clips it's
     # for, "the park clips"). Never set for any other op.
     caption_attribute: str | None = Field(default=None, max_length=160)
+    # KRI-282: "add a text placeholder so I can replace it with their real names".
+    # A per-clip label whose text is the fixed ``PLACEHOLDER_LABEL_TEXT``; the
+    # resolver only decides WHICH clips (``attribute``, e.g. "individual shots of
+    # people") and never writes the text. Omitted from dumps when false, so every
+    # persisted intent written before this field loads and re-dumps byte-identically.
+    placeholder: bool = Field(default=False, exclude_if=lambda value: not value)
     # Only for op="order".
     position: ClipOrderPosition | None = None
     # Only for op="order", and never together with `position`.
@@ -212,6 +234,22 @@ def _tokens(text: str) -> set[str]:
     # Every word counts, including one-letter ones: dropping short tokens would
     # let an unverified word ride along inside an otherwise grounded label.
     return set(_word_list(text))
+
+
+def ground_placeholder_label(*, media_id: str, intent_id: str = "") -> GroundedLabel:
+    """The fixed placeholder label for one clip a placeholder intent targets.
+
+    The only on-screen text that bypasses the provenance fence, because it is
+    the constant ``PLACEHOLDER_LABEL_TEXT`` (system-owned, explicitly requested
+    by the creator) -- never anything a model wrote.
+    """
+    return GroundedLabel(
+        media_id=media_id,
+        text=PLACEHOLDER_LABEL_TEXT,
+        grounding="placeholder",
+        confidence=1.0,
+        intent_id=intent_id,
+    )
 
 
 def clean_label_text(value: object) -> str | None:

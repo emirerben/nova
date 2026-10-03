@@ -62,6 +62,16 @@ _CREATOR_TEXT_MAX = 60
 _LABEL_PREVIEW_CHARS = 40
 _QUESTION_MAX_CHARS = 400
 _KNOWN_OPS = {"label", "group", "order", "include", "caption"}
+# KRI-282: "add a text placeholder so I can replace it with their real names".
+# Flash does not reliably set `placeholder: true` (it has mapped this to a
+# creator_text caption or a grounded "person's name" label), so a quote that
+# literally asks for a placeholder is the deterministic signal.
+_PLACEHOLDER_REQUEST = re.compile(r"\bplace[\s-]?holders?\b", re.IGNORECASE)
+_STOPWORDS = frozenset(
+    "a an the and or of to for in on at by with all my our your their clips clip shots shot "
+    "videos video content footage".split()
+)
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?\n])\s+")
 
 
 def _norm(value: str) -> str:
@@ -129,6 +139,52 @@ def salvage_question(kept: int, labels: list[str], overflow: int = 0) -> str:
     return (text + " Please restate just those so I can add them.")[:_QUESTION_MAX_CHARS]
 
 
+def _repair_placeholder(data: dict[str, Any], sources: tuple[str, ...]) -> None:
+    """Normalise a placeholder request into ``label`` + ``placeholder=true`` in place.
+
+    The text is the system's fixed stand-in, never creator copy, so any
+    ``creator_text`` the model attached ("NAME", "[Name]") is discarded rather
+    than rejected by the source fence -- the creator is never asked to restate
+    something the system can resolve itself.
+    """
+    quote = data.get("source_quote")
+    flagged = data.get("placeholder") is True
+    asked = (
+        isinstance(quote, str)
+        and bool(_PLACEHOLDER_REQUEST.search(quote))
+        and data.get("op") in {"label", "caption"}
+        and any(_norm(quote) in source for source in sources)
+    )
+    if not (flagged or asked):
+        data.pop("placeholder", None)
+        return
+    data.update(
+        op="label",
+        placeholder=True,
+        label_source="clip",
+        creator_text=None,
+        caption_attribute=None,
+        position=None,
+        order_by=None,
+    )
+    data.pop("transcript_kind", None)
+    if not str(data.get("attribute") or "").strip():
+        data["attribute"] = "individual shots of people"
+
+
+def _sentence_naming(attribute: str, sources: tuple[str, ...]) -> str | None:
+    """The creator sentence that contains every content word of ``attribute``."""
+    words = {w for w in re.findall(r"\w+", attribute.casefold()) if w not in _STOPWORDS}
+    if not words:
+        return None
+    for source in sources:
+        for sentence in _SENTENCE_SPLIT.split(source):
+            sentence = sentence.strip()
+            if sentence and words <= set(re.findall(r"\w+", sentence.casefold())):
+                return sentence[:600]
+    return None
+
+
 class PlannedClipIntent(ClipIntent):
     """A clip operation with its exact creator-written provenance."""
 
@@ -173,7 +229,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.clip_intent_planner",
         prompt_id="clip_intent_planner",
-        prompt_version="2026-10-03.1",
+        prompt_version="2026-10-03.2",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -258,7 +314,9 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         dropped: list[str] = []
         drop_classes: list[str] = []
         failures: list[str] = []
-        seen: set[tuple[str, str, str | None, str | None, str | None, str, str | None]] = set()
+        seen: set[tuple[str, str, str | None, str | None, str | None, str, str | None, bool]] = (
+            set()
+        )
         seen_ids: set[str] = set()
         for index, raw_intent in enumerate(raw_intents):
             try:
@@ -283,6 +341,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
                 intent.order_by,
                 intent.label_source,
                 intent.transcript_kind,
+                intent.placeholder,
             )
             if key in seen:
                 continue  # a verbatim repeat adds nothing; not worth failing the output
@@ -331,7 +390,12 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             raise _IntentRejected("intent_not_object", "is not an object")
         # Flash copies the template's nullable neighbours and writes
         # `"label_source": null`; null means the field's default, "clip".
-        data = {k: v for k, v in raw_intent.items() if not (k == "label_source" and v is None)}
+        data = {
+            k: v
+            for k, v in raw_intent.items()
+            if not (k in {"label_source", "placeholder"} and v is None)
+        }
+        _repair_placeholder(data, sources)
         # Benign shape repairs: none of these change what the creator asked for.
         if isinstance(data.get("creator_text"), str):
             data["creator_text"] = " ".join(data["creator_text"].split()) or None
@@ -364,6 +428,15 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
                 f"failed validation on {', '.join(fields) or 'intent'} ({messages})",
             ) from exc
         quote = _norm(intent.source_quote)
+        if (not quote or not any(quote in source for source in sources)) and intent.op == "group":
+            # A group prints nothing, so its quote is only evidence the creator asked
+            # for it. When the model garbled the quote but the creator's own sentence
+            # names the group ("we played football, then dodgeball ... group content by
+            # sport"), pick that sentence ourselves instead of making them restate it.
+            repaired = _sentence_naming(intent.attribute, sources)
+            if repaired is not None:
+                intent = intent.model_copy(update={"source_quote": repaired})
+                quote = _norm(repaired)
         if not quote or not any(quote in source for source in sources):
             raise _IntentRejected(
                 "source_quote_not_creator_text",

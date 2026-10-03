@@ -423,6 +423,10 @@ def _clip_intents_prompt_note(
                 f"INCLUDE: {aliases} must each appear somewhere in the plan -- in a story "
                 f"beat's media_ids{fast_cut_note}."
             )
+        elif intent.op == "label" and intent.placeholder:
+            # KRI-282: every placeholder clip shows the same stand-in text; that is not a
+            # grouping signal and the server renders it, so there is nothing to constrain.
+            continue
         elif intent.op == "label":
             values = {
                 id_to_alias[assignment.media_id]: assignment.value
