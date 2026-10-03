@@ -151,6 +151,31 @@ def assignment_facts(assignment: Mapping[str, Any]) -> list[ClipFact]:
     return facts
 
 
+def slide_asset_facts(asset: object) -> list[ClipFact]:
+    """Every fact known about one slide-post pool asset (photo or video).
+
+    Capture facts come from the asset's own ``capture`` column; stored
+    understanding facts (landmark, ...) never duplicate a capture-derived one of
+    the same kind and provenance. Reads attributes defensively so any asset-like
+    object works; a malformed stored capture is "no capture".
+    """
+    raw = getattr(asset, "capture", None)
+    capture: ClipCapture | None = None
+    if isinstance(raw, dict) and raw:
+        try:
+            capture = ClipCapture.model_validate(raw)
+        except ValidationError:
+            capture = None
+    facts = capture_facts(capture)
+    seen = {(fact.kind, fact.provenance) for fact in facts}
+    for fact in understanding_facts(getattr(asset, "analysis", None)):
+        if (fact.kind, fact.provenance) in seen:
+            continue
+        seen.add((fact.kind, fact.provenance))
+        facts.append(fact)
+    return facts
+
+
 def facts_for_prompt(facts: Iterable[ClipFact]) -> list[dict[str, Any]]:
     return [fact.prompt_dict() for fact in facts]
 

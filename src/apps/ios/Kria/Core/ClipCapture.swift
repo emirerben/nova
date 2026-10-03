@@ -2,6 +2,8 @@ import Foundation
 import CoreLocation
 import Photos
 import AVFoundation
+import ImageIO
+import UniformTypeIdentifiers
 
 // KRI-189: when and where a clip was filmed.
 //
@@ -112,7 +114,11 @@ enum ClipCaptureReader {
     }
 
     /// The exported file's embedded creation date and location. Never throws; nil when it has neither.
+    /// Photos (KRI-300) carry it as EXIF/GPS in the image; videos as QuickTime metadata.
     static func readFile(_ url: URL) async -> ClipCaptureRaw? {
+        if UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true {
+            return readImageFile(url)
+        }
         let asset = AVURLAsset(url: url)
         var date: Date?
         if let item = try? await asset.load(.creationDate) { date = try? await item.load(.dateValue) }
@@ -123,6 +129,47 @@ enum ClipCaptureReader {
             }
         }
         return capture(creationDate: date, coordinate: coordinate)
+    }
+
+    /// EXIF `DateTimeOriginal` (+ `OffsetTimeOriginal` when present) and the GPS dictionary of an image
+    /// file. Nil when it has neither. Separate from `readFile` so it is testable with a synthetic JPEG.
+    static func readImageFile(_ url: URL) -> ClipCaptureRaw? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else { return nil }
+        let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any]
+        let gps = props[kCGImagePropertyGPSDictionary] as? [CFString: Any]
+        var date: Date?
+        if let text = exif?[kCGImagePropertyExifDateTimeOriginal] as? String {
+            date = parseExifDate(text, offset: exif?["OffsetTimeOriginal" as CFString] as? String)
+        }
+        var coordinate: CLLocationCoordinate2D?
+        if let lat = gps?[kCGImagePropertyGPSLatitude] as? Double, let lon = gps?[kCGImagePropertyGPSLongitude] as? Double {
+            let south = (gps?[kCGImagePropertyGPSLatitudeRef] as? String) == "S"
+            let west = (gps?[kCGImagePropertyGPSLongitudeRef] as? String) == "W"
+            let signedLat = south ? -abs(lat) : abs(lat)
+            let signedLon = west ? -abs(lon) : abs(lon)
+            if CoarseCoordinate.isValid(latitude: signedLat, longitude: signedLon) {
+                coordinate = CLLocationCoordinate2D(latitude: signedLat, longitude: signedLon)
+            }
+        }
+        return capture(creationDate: date, coordinate: coordinate)
+    }
+
+    /// `yyyy:MM:dd HH:mm:ss` in the camera's local time; `offset` is `+03:00` style when the camera wrote
+    /// one, otherwise the device's current zone is the best available guess.
+    static func parseExifDate(_ text: String, offset: String?) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        formatter.timeZone = offset.flatMap(timeZone(forOffset:)) ?? .current
+        return formatter.date(from: text)
+    }
+
+    private static func timeZone(forOffset offset: String) -> TimeZone? {
+        let parts = offset.split(separator: ":")
+        guard parts.count == 2, let h = Int(parts[0]), let m = Int(parts[1]) else { return nil }
+        let sign = offset.hasPrefix("-") ? -1 : 1
+        return TimeZone(secondsFromGMT: sign * (abs(h) * 3600 + m * 60))
     }
 
     /// ISO 6709 as QuickTime writes it, e.g. `+41.0082+028.9784+012.000/`. Nil when malformed.
@@ -231,6 +278,21 @@ struct ClipCaptureWire: Sendable, Equatable {
     var place: ClipPlaceWire?
 
     var isEmpty: Bool { captureTime == nil && coarseLocation == nil && place == nil }
+
+    /// The three fields as JSON for a request body; absent parts are omitted.
+    var jsonFields: [String: JSONValue] {
+        var fields: [String: JSONValue] = [:]
+        if let captureTime { fields["capture_time"] = .string(captureTime) }
+        if let coarseLocation { fields["coarse_location"] = .object(["lat": .number(coarseLocation.lat), "lon": .number(coarseLocation.lon)]) }
+        if let place {
+            var parts: [String: JSONValue] = [:]
+            if let value = place.subLocality { parts["sub_locality"] = .string(value) }
+            if let value = place.locality { parts["locality"] = .string(value) }
+            if let value = place.country { parts["country"] = .string(value) }
+            fields["place"] = .object(parts)
+        }
+        return fields
+    }
 
     /// ISO8601 UTC with a `Z`, which the server parses as an aware datetime.
     static func isoString(_ date: Date) -> String {

@@ -1,5 +1,8 @@
 import XCTest
 import CoreLocation
+import ImageIO
+import UniformTypeIdentifiers
+import UIKit
 @testable import Kria
 
 /// KRI-189: when and where a clip was filmed. Everything here is best effort and privacy-first: a
@@ -304,5 +307,69 @@ final class ClipCaptureTests: XCTestCase {
         XCTAssertEqual(wire?.captureTime, "2026-09-20T07:31:02Z")
         XCTAssertNil(wire?.coarseLocation)
         XCTAssertTrue(geocoder.calls.isEmpty)
+    }
+
+    // MARK: KRI-300 slide-post photos
+
+    private func writeJPEG(exif: [CFString: Any]?, gps: [CFString: Any]?) throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jpg")
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { ctx in
+            UIColor.red.setFill(); ctx.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
+        }.cgImage!
+        let dest = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
+        var props: [CFString: Any] = [:]
+        if let exif { props[kCGImagePropertyExifDictionary] = exif }
+        if let gps { props[kCGImagePropertyGPSDictionary] = gps }
+        CGImageDestinationAddImage(dest, image, props as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(dest))
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return url
+    }
+
+    func testImageFileReadsExifDateAndSignedGPS() async throws {
+        let url = try writeJPEG(
+            exif: [kCGImagePropertyExifDateTimeOriginal: "2026:09:20 10:31:02", "OffsetTimeOriginal" as CFString: "+03:00"],
+            gps: [kCGImagePropertyGPSLatitude: 33.8688123, kCGImagePropertyGPSLatitudeRef: "S", kCGImagePropertyGPSLongitude: 151.2093, kCGImagePropertyGPSLongitudeRef: "E"]
+        )
+        let read = await ClipCaptureReader.readFile(url)
+        let raw = try XCTUnwrap(read)
+        XCTAssertEqual(raw.captureTime, shot, "10:31:02 at +03:00 is 07:31:02Z")
+        XCTAssertEqual(raw.latitude ?? 0, -33.87, accuracy: 0.0001, "a southern latitude is negative and rounded")
+        XCTAssertEqual(raw.longitude ?? 0, 151.21, accuracy: 0.0001)
+    }
+
+    func testImageFileWithoutMetadataYieldsNothing() async throws {
+        let url = try writeJPEG(exif: nil, gps: nil)
+        let raw = await ClipCaptureReader.readFile(url)
+        XCTAssertNil(raw)
+    }
+
+    func testVisualReadHonoursTheSettingForImages() async throws {
+        let url = try writeJPEG(exif: [kCGImagePropertyExifDateTimeOriginal: "2026:09:20 10:31:02"], gps: nil)
+        ClipCaptureSetting.setEnabled(false, defaults: defaults)
+        let off = await ClipCaptureReader.read(assetIdentifier: "none", fileURL: url, defaults: defaults)
+        XCTAssertNil(off, "the setting off reads nothing from the photo")
+        ClipCaptureSetting.setEnabled(true, defaults: defaults)
+        let on = await ClipCaptureReader.read(assetIdentifier: "none", fileURL: url, defaults: defaults)
+        XCTAssertNotNil(on?.captureTime)
+    }
+
+    func testRegisterBodyFieldsOmitAbsentPartsAndCarryPresentOnes() {
+        XCTAssertTrue(ClipCaptureWire().jsonFields.isEmpty)
+        let wire = ClipCaptureWire.make(from: ClipCaptureRaw(captureTime: shot, latitude: arnavutkoy.lat, longitude: arnavutkoy.lon), place: place)
+        let fields = wire?.jsonFields ?? [:]
+        XCTAssertEqual(fields["capture_time"]?.stringValue, "2026-09-20T07:31:02Z")
+        XCTAssertEqual(fields["coarse_location"]?.objectValue?["lat"]?.numberValue, 41.19)
+        XCTAssertNotNil(fields["place"]?.objectValue)
+    }
+
+    func testSlidePostAssetDecodesCaptureAndToleratesItsAbsence() throws {
+        let with = #"{"id":"a","kind":"image","status":"ready","capture":{"capture_time":"2026-09-20T07:31:02Z","coarse_location":{"lat":41.19,"lon":28.74},"place":{"locality":"Istanbul","country":"Türkiye"}}}"#
+        let asset = try JSONDecoder().decode(SlidePostAsset.self, from: Data(with.utf8))
+        XCTAssertEqual(asset.capture?.date, shot)
+        XCTAssertEqual(asset.capture?.place?.locality, "Istanbul")
+        XCTAssertEqual(asset.capture?.coarseLocation?.lon, 28.74)
+        let without = try JSONDecoder().decode(SlidePostAsset.self, from: Data(#"{"id":"a","kind":"image","status":"ready"}"#.utf8))
+        XCTAssertNil(without.capture)
     }
 }
