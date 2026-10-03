@@ -695,6 +695,109 @@ async def test_generic_montage_context_with_empty_inventory_stays_actionable(
     assert "[order/global]" in inventory.await_args.kwargs["generated_brief"]
 
 
+class _Savepoint:
+    async def __aenter__(self) -> _Savepoint:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> bool:
+        return False  # never swallow what the cache writer raises
+
+
+@pytest.mark.asyncio
+async def test_phone_clip_vision_answers_do_not_fail_a_resolved_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-291: iPhone montage clips are raw `clip_assignments`, and vision answers
+    are only cached for pool assets. The strict cache write raised on the phone
+    clip's id, so a fully resolved turn answered "I couldn't reliably match that
+    request to your clips" — and every retry re-asked vision and failed the same way.
+    Runs the REAL cache writer: the stubbed one in the tests above hid this."""
+    phone_clip = "analysis-proxy-ios-0EBED783-578F-4DFB-B562-623C6776994C.mp4"
+    item_id = uuid.uuid4()
+    manifest = ResolvedCreatorManifest(
+        item_id=str(item_id),
+        edit_format="montage",
+        render_program="guided",
+        capabilities={"dispatch_render": CapabilityAvailability(available=True)},
+        context_hash="a" * 64,
+        manifest_hash="b" * 64,
+    )
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            direction="guided_story",
+            edit_format="montage",
+            audio_strategy="licensed_music",
+            pacing="fast",
+            render_program="guided",
+            selected_media_ids=[],
+            rationale="An evening of bowling in Istanbul.",
+        ),
+        summary="A bowling-night montage.",
+    )
+    request = 'Show "Mahmoud from Tunisia: reads books, bowls too" on the brown T-shirt bowler.'
+    intent = ClipIntent(
+        intent_id="mahmoud",
+        op="caption",
+        attribute="the guy in the brown T-shirt bowling",
+        creator_text="Mahmoud from Tunisia: reads books, bowls too",
+    )
+    resolved = ResolvedClipIntent(
+        **intent.model_dump(),
+        assignments=[ClipAssignment(media_id=phone_clip, evidence="brown T-shirt", confidence=0.9)],
+    )
+    resolver = AsyncMock(
+        return_value=PlannedIntentResolution(
+            [intent],
+            IntentResolution(
+                intents=[resolved],
+                vision_answers={
+                    phone_clip: {
+                        "is the person bowling wearing a brown t-shirt": {
+                            "answer": "yes",
+                            "confidence": 0.9,
+                            "evidence": "brown T-shirt",
+                        }
+                    }
+                },
+            ),
+        )
+    )
+    db = SimpleNamespace(
+        get=AsyncMock(return_value=SimpleNamespace(id=item_id)),
+        begin_nested=lambda: _Savepoint(),
+        flush=AsyncMock(),
+        commit=AsyncMock(),
+        rollback=AsyncMock(),
+    )
+    monkeypatch.setattr(planner.settings, "clip_intents_enabled", True)
+    monkeypatch.setattr(planner, "plan_and_resolve_clip_intents", resolver)
+    monkeypatch.setattr(
+        planner,
+        "check_strategy_for_runtime_v2",
+        lambda _manifest, strategy: CheckedStrategy(strategy=strategy, notices=()),
+    )
+
+    result = await planner._plan_from_creator_output(
+        db,
+        thread_id=uuid.uuid4(),
+        item_id=item_id,
+        creator_id=uuid.uuid4(),
+        user_message=request,
+        manifest=manifest,
+        inputs=planner._CreatorInputs(
+            agent_input=SimpleNamespace(), intent_clips=[], creator_request=request
+        ),
+        output=SimpleNamespace(action=action),
+    )
+
+    assert result.plan.turn_value == "action", result.plan.response
+    strategy = result.plan.intents[0].arguments["strategy"]
+    assert strategy["resolved_clip_intents"][0]["assignments"][0]["media_id"] == phone_clip
+    db.commit.assert_awaited_once()
+    db.rollback.assert_not_awaited()
+
+
 async def _degraded_clip_intent_turn(
     monkeypatch: pytest.MonkeyPatch, resolver: AsyncMock
 ) -> planner.PlannedKriaTurn:
