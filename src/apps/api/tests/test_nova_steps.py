@@ -795,12 +795,12 @@ def test_render_notes_from_overlay_receipt_no_spoken_match_and_no_room_buckets()
         "Showed 1 of 9 Visuals as cards",
         'Couldn\'t find a spoken moment for "no match"',
         'Couldn\'t find a spoken moment for "hook one"',
-        'Couldn\'t find a spoken moment for "unknown reason"',
-        'Couldn\'t find a spoken moment for "empty reason"',
+        'Couldn\'t place "unknown reason"',
+        'Couldn\'t place "empty reason"',
         'No room to show "no safe spot" without covering your face or the captions',
-        'No room to show "dup" without covering your face or the captions',
-        'No room to show "overlaps" without covering your face or the captions',
-        'No room to show "short one" without covering your face or the captions',
+        '"dup" overlapped another visual, so it was skipped',
+        '"overlaps" overlapped another visual, so it was skipped',
+        '"short one" had too little time on screen to show',
     ]
 
 
@@ -1031,7 +1031,7 @@ def test_render_notes_from_overlay_receipt_drops_the_iphone_upload_uuid_prefix()
     }
     assert render_notes_from_overlay_receipt(receipt) == [
         "Showed 0 of 3 Visuals as cards",
-        'No room to show "12_nope_stamp.png" without covering your face or the captions',
+        '"12_nope_stamp.png" overlapped another visual, so it was skipped',
         'Couldn\'t find a spoken moment for "14_thinking_q.png"',
         'Couldn\'t find a spoken moment for "my-photo-2024.png"',
     ]
@@ -1078,3 +1078,31 @@ def test_render_notes_from_beat_receipt_reads_each_miss_once() -> None:
             "number one",
         ]
     ]
+
+
+def test_render_notes_from_overlay_receipt_fullscreen_layout_wording() -> None:
+    """KRI-297: a full-screen receipt says "full screen", never "as cards", and
+    the new timeline-room reason (plus any unknown reason) never crashes."""
+    receipt = {
+        "version": 1,
+        "matcher": "heuristic",
+        "layout": "fullscreen",
+        "placed": [{"media_id": "m0", "label": "a.png", "start_s": 0.0, "end_s": 1.0}],
+        "unplaced": [
+            {"media_id": "m1", "label": "late", "reason": "no_room_in_timeline"},
+            {"media_id": "m2", "label": "weird", "reason": "brand_new_reason"},
+        ],
+    }
+    assert render_notes_from_overlay_receipt(receipt) == [
+        "Showed 1 of 3 Visuals full screen",
+        'There wasn\'t enough room in the video to show "late" full screen',
+        'Couldn\'t place "weird"',
+    ]
+    only = {**receipt, "unplaced": []}
+    assert render_notes_from_overlay_receipt(only) == ["1 Visual shown full screen"]
+    many = {
+        **receipt,
+        "placed": [{"media_id": f"m{i}", "label": f"{i}.png"} for i in range(3)],
+        "unplaced": [],
+    }
+    assert render_notes_from_overlay_receipt(many) == ["3 Visuals shown full screen"]

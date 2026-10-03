@@ -58,7 +58,7 @@ def _enable_subtitled_editor(monkeypatch, *, editor_flag: bool = True) -> None:
     monkeypatch.setattr(gj.settings, "phone_render_verified_features", list(_VERIFIED_FEATURES))
 
 
-def phone_job(monkeypatch, *, enable=True, duck=False):
+def phone_job(monkeypatch, *, enable=True, duck=False, fullscreen=False):
     """A phone-rendered `subtitled` variant with one pinned overlay card and
     one pinned sound effect, mirroring `tests.routes.test_phone_editor_commit
     .phone_job`'s pattern for the guided_story archetype. ``duck=True`` pins
@@ -68,7 +68,7 @@ def phone_job(monkeypatch, *, enable=True, duck=False):
     monkeypatch.setattr(gj.settings, "phone_sfx_speech_duck_enabled", duck)
     bindings = (_binding(duration_s=10.0),)
     photo = _photo_visual()
-    card = _overlay_card(id="card-1")
+    card = _overlay_card(id="card-1", **({"display_mode": "fullscreen"} if fullscreen else {}))
     sfx = _resolved_sfx()
     lanes = PhoneSubtitledLanes(overlays=[card], sound_effects=[sfx])
     recipe = compile_phone_subtitled_plan(
@@ -184,6 +184,35 @@ def test_media_overlay_move_round_trips_into_the_recipe_overlay_clip(monkeypatch
 
     variant = job.assembly_plan["variants"][0]
     assert variant["media_overlays"][0]["x_frac"] == pytest.approx(0.9)
+
+
+def test_fullscreen_card_survives_a_sound_only_and_an_overlay_save(monkeypatch):
+    """KRI-297: Kria's full-screen cards round-trip through an editor Save --
+    never raise, never silently become pip."""
+    job = phone_job(monkeypatch, fullscreen=True)
+    save(job, sound_effects=[_sfx_payload(at_s=4.0)])  # overlays carried over
+    track_ids = [t.id for t in device_status(job, "subtitled").request.recipe.tracks]
+    assert "subtitled-fullscreen" in track_ids and "subtitled-overlays" not in track_ids
+
+
+def test_fullscreen_card_retime_round_trips(monkeypatch):
+    job = phone_job(monkeypatch, fullscreen=True)
+    retimed = _overlay_payload(display_mode="fullscreen", start_s=2.0, end_s=4.0)
+    save(job, media_overlays=[retimed])
+    track = next(
+        t
+        for t in device_status(job, "subtitled").request.recipe.tracks
+        if t.id == "subtitled-fullscreen"
+    )
+    assert track.clips[0].visual_placement.window_start == pytest.approx(2.0)
+    assert track.clips[0].visual_placement.width_fraction is None
+
+
+def test_editor_cannot_promote_a_pip_card_to_fullscreen(monkeypatch):
+    job = phone_job(monkeypatch)
+    with pytest.raises(HTTPException) as error:
+        save(job, media_overlays=[_overlay_payload(display_mode="fullscreen")])
+    assert error.value.status_code == 422
 
 
 def test_sound_delete_removes_the_sfx_clip(monkeypatch):
