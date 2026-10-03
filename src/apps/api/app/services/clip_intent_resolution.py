@@ -485,17 +485,10 @@ def _merge_resolver_outputs(
 _SOFT_REQUERY_OPS = frozenset({"group", "include"})
 
 
-def _record_is_empty(record: Any) -> bool:
+def _record_is_empty(record: ClipUnderstanding) -> bool:
     """True when the stored understanding gives the resolver nothing to match on."""
-    speech = getattr(record, "speech", None)
     return not any(
-        (
-            getattr(record, "subject", ""),
-            getattr(record, "summary", ""),
-            getattr(record, "activity", ""),
-            getattr(record, "setting", ""),
-            getattr(speech, "transcript", "") if speech else "",
-        )
+        (record.subject, record.summary, record.activity, record.setting, record.speech.transcript)
     )
 
 
