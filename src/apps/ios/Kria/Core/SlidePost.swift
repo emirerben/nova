@@ -5,10 +5,153 @@ struct SlidePostText: Codable, Equatable, Sendable {
     var content: String
     var position: String
 }
+
+/// One styled text on a slide. Mirrors the server's `SlideTextElement`; any key this
+/// client does not know yet is kept in `extra` and written back untouched, so a newer
+/// server field survives an edit made on an older app.
+struct SlidePostTextElement: Codable, Equatable, Identifiable, Sendable {
+    static let defaultFont = "Inter-Bold"
+    static let maxLength = 120
+    static let sizeRange = 24...200
+    var id: String
+    var text: String
+    var role = "text"
+    var labelSource: String? = nil
+    var edited = false
+    var fontFamily = SlidePostTextElement.defaultFont
+    var color = "#FFFFFF"
+    var sizePx = 86
+    var alignment = "center"
+    var position = "bottom"
+    var xFrac: Double? = nil
+    var yFrac: Double? = nil
+    var maxWidthFrac: Double? = nil
+    var strokeWidth = 0
+    var shadowEnabled = true
+    var background = "none"
+    var extra: [String: JSONValue] = [:]
+
+    init(id: String = UUID().uuidString, text: String) { self.id = id; self.text = text }
+
+    private struct Key: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init(_ value: String) { stringValue = value }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+    private static let knownKeys: Set<String> = [
+        "id", "text", "role", "label_source", "edited", "font_family", "color", "size_px", "alignment", "position",
+        "x_frac", "y_frac", "max_width_frac", "stroke_width", "shadow_enabled", "background",
+    ]
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Key.self)
+        id = try c.decode(String.self, forKey: Key("id"))
+        text = try c.decode(String.self, forKey: Key("text"))
+        role = try c.decodeIfPresent(String.self, forKey: Key("role")) ?? role
+        labelSource = try c.decodeIfPresent(String.self, forKey: Key("label_source"))
+        edited = try c.decodeIfPresent(Bool.self, forKey: Key("edited")) ?? edited
+        fontFamily = try c.decodeIfPresent(String.self, forKey: Key("font_family")) ?? fontFamily
+        color = try c.decodeIfPresent(String.self, forKey: Key("color")) ?? color
+        sizePx = try c.decodeIfPresent(Int.self, forKey: Key("size_px")) ?? sizePx
+        alignment = try c.decodeIfPresent(String.self, forKey: Key("alignment")) ?? alignment
+        position = try c.decodeIfPresent(String.self, forKey: Key("position")) ?? position
+        xFrac = try c.decodeIfPresent(Double.self, forKey: Key("x_frac"))
+        yFrac = try c.decodeIfPresent(Double.self, forKey: Key("y_frac"))
+        maxWidthFrac = try c.decodeIfPresent(Double.self, forKey: Key("max_width_frac"))
+        strokeWidth = try c.decodeIfPresent(Int.self, forKey: Key("stroke_width")) ?? strokeWidth
+        shadowEnabled = try c.decodeIfPresent(Bool.self, forKey: Key("shadow_enabled")) ?? shadowEnabled
+        background = try c.decodeIfPresent(String.self, forKey: Key("background")) ?? background
+        for key in c.allKeys where !Self.knownKeys.contains(key.stringValue) {
+            extra[key.stringValue] = try c.decode(JSONValue.self, forKey: key)
+        }
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Key.self)
+        for (key, value) in extra where !Self.knownKeys.contains(key) { try c.encode(value, forKey: Key(key)) }
+        try c.encode(id, forKey: Key("id"))
+        try c.encode(text, forKey: Key("text"))
+        try c.encode(role, forKey: Key("role"))
+        try c.encodeIfPresent(labelSource, forKey: Key("label_source"))
+        try c.encode(edited, forKey: Key("edited"))
+        try c.encode(fontFamily, forKey: Key("font_family"))
+        try c.encode(color, forKey: Key("color"))
+        try c.encode(sizePx, forKey: Key("size_px"))
+        try c.encode(alignment, forKey: Key("alignment"))
+        try c.encode(position, forKey: Key("position"))
+        try c.encodeIfPresent(xFrac, forKey: Key("x_frac"))
+        try c.encodeIfPresent(yFrac, forKey: Key("y_frac"))
+        try c.encodeIfPresent(maxWidthFrac, forKey: Key("max_width_frac"))
+        try c.encode(strokeWidth, forKey: Key("stroke_width"))
+        try c.encode(shadowEnabled, forKey: Key("shadow_enabled"))
+        try c.encode(background, forKey: Key("background"))
+    }
+
+    /// The server's top / center / bottom bucket for this element (its legacy-mirror rule).
+    var legacyPositionBucket: String {
+        guard position == "custom" else { return position }
+        let y = yFrac ?? 0.5
+        return y < 0.33 ? "top" : (y > 0.66 ? "bottom" : "center")
+    }
+    /// Copies everything about how the text looks, including where it sits. Never the words,
+    /// identity or label provenance.
+    mutating func copyStyle(from other: Self) {
+        fontFamily = other.fontFamily; color = other.color; sizePx = other.sizePx; alignment = other.alignment
+        position = other.position; xFrac = other.xFrac; yFrac = other.yFrac; maxWidthFrac = other.maxWidthFrac
+        strokeWidth = other.strokeWidth; shadowEnabled = other.shadowEnabled; background = other.background
+        for (key, value) in other.extra { extra[key] = value }
+    }
+    var isInvalid: Bool {
+        text.isEmpty || text.count > Self.maxLength || fontFamily.isEmpty || !Self.sizeRange.contains(sizePx)
+            || !["left", "center", "right"].contains(alignment) || !["top", "center", "bottom", "custom"].contains(position)
+            || !["none", "box"].contains(background) || !Self.isHex(color) || !(0...12).contains(strokeWidth)
+            || [xFrac, yFrac].contains { $0.map { !(0...1).contains($0) } ?? false }
+    }
+    static func isHex(_ value: String) -> Bool {
+        value.count == 7 && value.hasPrefix("#") && value.dropFirst().allSatisfy(\.isHexDigit)
+    }
+}
+
 struct SlidePostEdits: Codable, Equatable, Sendable {
+    static let maxTexts = 4
     var text: SlidePostText? = nil
     var lookPreset: String = "none"
-    enum CodingKeys: String, CodingKey { case text; case lookPreset = "look_preset" }
+    /// The rich model. nil = an older draft that only has the single legacy `text`.
+    var texts: [SlidePostTextElement]? = nil
+    enum CodingKeys: String, CodingKey { case text, texts; case lookPreset = "look_preset" }
+    init(text: SlidePostText? = nil, lookPreset: String = "none", texts: [SlidePostTextElement]? = nil) {
+        self.text = text; self.lookPreset = lookPreset; self.texts = texts
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        text = try c.decodeIfPresent(SlidePostText.self, forKey: .text)
+        lookPreset = try c.decodeIfPresent(String.self, forKey: .lookPreset) ?? "none"
+        texts = try c.decodeIfPresent([SlidePostTextElement].self, forKey: .texts)
+    }
+    /// Writes both shapes: `texts`, and the legacy `text` mirroring `texts[0]` (the server's own rule).
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        if let texts {
+            try c.encode(texts, forKey: .texts)
+            try c.encodeIfPresent(texts.first.map { SlidePostText(content: $0.text, position: $0.legacyPositionBucket) }, forKey: .text)
+        } else {
+            try c.encodeIfPresent(text, forKey: .text)
+        }
+        try c.encode(lookPreset, forKey: .lookPreset)
+    }
+    /// What the editor shows: `texts`, or the legacy text lifted into one boxed element.
+    var effectiveTexts: [SlidePostTextElement] {
+        if let texts { return texts }
+        guard let text else { return [] }
+        var element = SlidePostTextElement(id: "legacy", text: text.content)
+        element.position = text.position; element.background = "box"; element.shadowEnabled = false
+        return [element]
+    }
+    /// Replaces the texts and re-derives the legacy mirror so the value always equals its own round trip.
+    mutating func setTexts(_ new: [SlidePostTextElement]) {
+        texts = new
+        text = new.first.map { SlidePostText(content: $0.text, position: $0.legacyPositionBucket) }
+    }
 }
 struct SlidePostSlide: Codable, Equatable, Identifiable, Sendable {
     var id: String
@@ -47,7 +190,11 @@ struct SlidePostDraft: Codable, Equatable, Sendable {
         guard !slides.contains(where: { !["image", "video"].contains($0.kind) }) else { return "This post contains an unsupported media type." }
         if platformProfile == "tiktok_photo" && slides.contains(where: { $0.kind == "video" }) { return "Choose Instagram carousel to include videos." }
         for slide in slides {
-            if let text = slide.edits?.text, text.content.isEmpty || text.content.count > 120 || !["top", "center", "bottom"].contains(text.position) {
+            if let texts = slide.edits?.texts {
+                if texts.count > SlidePostEdits.maxTexts || Set(texts.map(\.id)).count != texts.count || texts.contains(where: \.isInvalid) {
+                    return "Slide text needs 1–120 characters, and a slide holds up to 4 texts."
+                }
+            } else if let text = slide.edits?.text, text.content.isEmpty || text.content.count > 120 || !["top", "center", "bottom"].contains(text.position) {
                 return "Slide text needs 1–120 characters and a top, center, or bottom position."
             }
             if let look = slide.edits?.lookPreset, !Self.lookPresets.contains(look) { return "Choose a supported look." }
@@ -178,8 +325,17 @@ private struct SlidePostItemResponse: Decodable {
     @Published private(set) var isBusy = false
     @Published var error: String?
     @Published private(set) var operationMessage: String?
-    @Published private(set) var hasConflict = false
+    /// Text being edited on the canvas (not persisted; the text panel owns it).
+    @Published var selectedTextID: String?
+    /// The local draft always wins (KRI-298): a newer server version is rebased onto silently,
+    /// so there is no conflict state. Kept as a constant for older call sites.
+    var hasConflict: Bool { false }
     private var baseVersion = 0
+    private var undoStack: [SlidePostDraft] = []
+    private var redoStack: [SlidePostDraft] = []
+    private var lastCoalesceKey: String?
+    private static let maxHistory = 100
+    private static let maxRebases = 2
     private var baselineDraft: SlidePostDraft?
     private var undoDraft: SlidePostDraft?
     private var itemID: String?
@@ -198,8 +354,12 @@ private struct SlidePostItemResponse: Decodable {
         guard let saved = state?.draft else { return true }
         return !draft.hasSameContent(as: saved)
     }
-    var canExport: Bool { state?.canExport == true && !hasUnsavedChanges && !hasConflict && !isBusy }
-    var canUndo: Bool { undoDraft != nil && !hasConflict && !isBusy }
+    var canExport: Bool { state?.canExport == true && !hasUnsavedChanges && !isBusy }
+    /// Undo of the last SAVED change (the server's previous version).
+    var canUndo: Bool { undoDraft != nil && !isBusy }
+    /// Undo/redo of unsaved edits in this editor.
+    var canUndoEdit: Bool { !undoStack.isEmpty && !isBusy }
+    var canRedoEdit: Bool { !redoStack.isEmpty && !isBusy }
     var isRendering: Bool { ["pending", "queued", "generating", "rendering", "processing"].contains(state?.renderStatus ?? "") }
 
     func refresh(api: any KriaAPIClient, itemID: String) async {
@@ -227,11 +387,11 @@ private struct SlidePostItemResponse: Decodable {
     /// Export requires an authoritative check; a cached ready projection is
     /// insufficient when another device can save a newer version.
     func revalidateForExport(api: any KriaAPIClient, itemID: String) async throws {
-        guard !isBusy, !hasUnsavedChanges, !hasConflict else { throw APIError.conflict }
+        guard !isBusy, !hasUnsavedChanges else { throw APIError.conflict }
         let generation = mutationGeneration
         let result = try await api.slidePost(itemID: itemID)
         guard result.schemaVersion == 1, result.itemID == itemID else { throw APIError.invalidResponse }
-        guard generation == mutationGeneration, !isBusy, !hasUnsavedChanges, !hasConflict,
+        guard generation == mutationGeneration, !isBusy, !hasUnsavedChanges,
               (result.draft?.version ?? 0) >= baseVersion else { throw APIError.conflict }
         // Invalidate background GETs that began before this authoritative read.
         mutationGeneration += 1
@@ -245,13 +405,9 @@ private struct SlidePostItemResponse: Decodable {
         let wasDirty = draft.map { local in baselineDraft.map { !local.hasSameContent(as: $0) } ?? true } ?? false
         state = result
         baselineDraft = result.draft
-        if (wasDirty || proposal != nil) && baseVersion != remoteVersion {
-            hasConflict = true
-            error = "This post changed on another device. Your edits are kept here. Reload the saved post before editing again."
-        } else if !wasDirty {
-            draft = result.draft
-            baseVersion = remoteVersion
-        }
+        // A clean copy follows the server; unsaved edits stay and simply rebase onto the new version.
+        if !wasDirty { draft = result.draft }
+        baseVersion = remoteVersion
         if let selectedID, (draft ?? proposal?.draft)?.slides.contains(where: { $0.id == selectedID }) != true {
             self.selectedID = (draft ?? proposal?.draft)?.slides.first?.id
         } else if selectedID == nil { selectedID = (draft ?? proposal?.draft)?.slides.first?.id }
@@ -260,13 +416,13 @@ private struct SlidePostItemResponse: Decodable {
 
     func discardLocalChanges() {
         guard let state else { return }
-        hasConflict = false; error = nil; proposal = nil; undoDraft = nil
+        error = nil; proposal = nil; undoDraft = nil; undoStack = []; redoStack = []; lastCoalesceKey = nil
         baseVersion = state.draft?.version ?? 0; draft = state.draft
         selectedID = draft?.slides.first?.id
     }
 
     func propose(api: any KriaAPIClient, itemID: String, instruction: String, platformProfile: String? = nil) async {
-        guard !isBusy, !hasConflict else { return }
+        guard !isBusy else { return }
         guard !hasUnsavedChanges else { error = "Save your slide edits before asking Kria for another direction."; return }
         let prompt = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, prompt.count <= 2000 else { error = "Tell Kria your direction in 2,000 characters or fewer."; return }
@@ -285,8 +441,7 @@ private struct SlidePostItemResponse: Decodable {
     }
 
     func applyProposal(api: any KriaAPIClient, itemID: String) async {
-        guard !isBusy, !hasConflict, let proposal else { return }
-        guard proposal.baseVersion == baseVersion else { handle(APIError.conflict); return }
+        guard !isBusy, let proposal else { return }
         guard let message = proposal.draft.validationMessage else {
             await persistDraft(proposal.draft, api: api, itemID: itemID)
             return
@@ -295,7 +450,7 @@ private struct SlidePostItemResponse: Decodable {
     }
 
     func save(api: any KriaAPIClient, itemID: String) async {
-        guard !isBusy, !hasConflict, let draft else { return }
+        guard !isBusy, let draft else { return }
         if let message = draft.validationMessage { error = message; return }
         await persistDraft(draft, api: api, itemID: itemID)
     }
@@ -306,8 +461,25 @@ private struct SlidePostItemResponse: Decodable {
         defer { isBusy = false; operationMessage = nil }
         do {
             let previous = state?.draft
-            let saved = try await api.saveSlidePost(itemID: itemID, request: .init(draft: value, expectedVersion: baseVersion))
-            baseVersion = saved.version; baselineDraft = saved; draft = saved; proposal = nil; undoDraft = previous
+            var rebases = 0
+            var saved: SlidePostDraft
+            while true {
+                do {
+                    saved = try await api.saveSlidePost(itemID: itemID, request: .init(draft: value, expectedVersion: baseVersion))
+                    break
+                } catch let failure as APIError where failure == .conflict && rebases < Self.maxRebases {
+                    // The newest thing the user saw in the editor wins: learn the server's current
+                    // version and write the local draft over it. No banner, no choice.
+                    rebases += 1
+                    let latest = try await api.slidePost(itemID: itemID)
+                    guard latest.schemaVersion == 1, latest.itemID == itemID else { throw APIError.invalidResponse }
+                    baseVersion = latest.draft?.version ?? baseVersion
+                }
+            }
+            baseVersion = saved.version; baselineDraft = saved; proposal = nil; undoDraft = previous
+            // Saved content is what the user was looking at; keep any later undo history but
+            // swap in the server's stamps (version, rendered_version).
+            draft = saved
             // Clear old output immediately, even if the follow-up GET fails.
             state?.draft = saved; state?.slides = []; state?.bundleURL = nil
             state?.renderedVersion = saved.renderedVersion
@@ -318,7 +490,7 @@ private struct SlidePostItemResponse: Decodable {
     }
 
     func create(api: any KriaAPIClient, itemID: String) async {
-        guard !isBusy, !hasConflict else { return }
+        guard !isBusy else { return }
         error = nil
         if proposal != nil { await applyProposal(api: api, itemID: itemID) }
         else if hasUnsavedChanges { await save(api: api, itemID: itemID) }
@@ -340,40 +512,178 @@ private struct SlidePostItemResponse: Decodable {
         await persistDraft(previous, api: api, itemID: itemID)
     }
 
+    // MARK: Unsaved-edit history
+
+    /// The single way an edit reaches `draft`: pushes the previous draft onto the undo stack and
+    /// clears redo. `coalescing` merges a run of the same gesture (typing, a slider drag) into one
+    /// undo step. Also the entry point for a staged AI result (Lane E): stage it, show it, and the
+    /// user can undo it before saving.
+    func stageDraft(_ new: SlidePostDraft, coalescing key: String? = nil) {
+        guard !isBusy, let current = draft, !new.hasSameContent(as: current) else { return }
+        if key == nil || key != lastCoalesceKey {
+            undoStack.append(current)
+            if undoStack.count > Self.maxHistory { undoStack.removeFirst() }
+        }
+        lastCoalesceKey = key
+        redoStack = []
+        draft = new
+    }
+    func undoEdit() {
+        guard !isBusy, let current = draft, let previous = undoStack.popLast() else { return }
+        redoStack.append(current)
+        restoreHistory(previous, over: current)
+    }
+    func redoEdit() {
+        guard !isBusy, let current = draft, let next = redoStack.popLast() else { return }
+        undoStack.append(current)
+        restoreHistory(next, over: current)
+    }
+    private func restoreHistory(_ entry: SlidePostDraft, over current: SlidePostDraft) {
+        var value = entry
+        value.version = current.version; value.renderedVersion = current.renderedVersion; value.userEdited = current.userEdited
+        lastCoalesceKey = nil
+        draft = value
+        if let selectedID, !value.slides.contains(where: { $0.id == selectedID }) { self.selectedID = value.slides.first?.id }
+        if let selectedTextID, selectedSlide?.edits?.effectiveTexts.contains(where: { $0.id == selectedTextID }) != true { self.selectedTextID = nil }
+    }
+
+    // MARK: Slide edits
+
     func updateSlide(_ slide: SlidePostSlide) {
-        guard !isBusy, !hasConflict, let index = draft?.slides.firstIndex(where: { $0.id == slide.id }) else { return }
-        draft?.slides[index] = slide
+        guard var value = draft, let index = value.slides.firstIndex(where: { $0.id == slide.id }) else { return }
+        value.slides[index] = slide
+        stageDraft(value)
     }
     func setCover(id: String) {
-        guard !isBusy, !hasConflict, let index = draft?.slides.firstIndex(where: { $0.id == id }) else { return }
-        draft?.coverIndex = index
+        guard var value = draft, let index = value.slides.firstIndex(where: { $0.id == id }) else { return }
+        value.coverIndex = index
+        stageDraft(value)
+    }
+    func setCaption(_ caption: String) {
+        guard var value = draft else { return }
+        value.caption = String(caption.prefix(2200))
+        stageDraft(value, coalescing: "caption")
     }
     func moveSlide(id: String, offset: Int) {
-        guard !isBusy, !hasConflict, var value = draft, let from = value.slides.firstIndex(where: { $0.id == id }) else { return }
-        let to = from + offset
-        guard value.slides.indices.contains(to) else { return }
+        guard let from = draft?.slides.firstIndex(where: { $0.id == id }) else { return }
+        moveSlide(id: id, toIndex: from + offset)
+    }
+    /// Reorders keeping the cover on the same slide (identity, not position).
+    func moveSlide(id: String, toIndex to: Int) {
+        guard var value = draft, let from = value.slides.firstIndex(where: { $0.id == id }),
+              value.slides.indices.contains(to), to != from else { return }
         let coverID = value.slides[value.coverIndex].id
         let slide = value.slides.remove(at: from); value.slides.insert(slide, at: to)
         value.coverIndex = value.slides.firstIndex { $0.id == coverID } ?? 0
-        draft = value
+        stageDraft(value)
     }
     func removeSlide(id: String) {
-        guard !isBusy, !hasConflict, var value = draft, value.slides.count > 1 else { return }
+        guard var value = draft, value.slides.count > 1 else { return }
         let coverID = value.slides[value.coverIndex].id
         value.slides.removeAll { $0.id == id }; value.coverIndex = value.slides.firstIndex { $0.id == coverID } ?? 0
-        draft = value
+        stageDraft(value)
         if selectedID == id { selectedID = value.slides.first?.id }
     }
     func addAsset(id: String) {
-        guard !isBusy, !hasConflict, var value = draft,
+        guard var value = draft,
               let asset = readyAssets.first(where: { $0.id == id }), !value.slides.contains(where: { $0.assetID == id }) else { return }
         value.slides.append(.init(id: UUID().uuidString, assetID: id, kind: asset.kind))
-        draft = value
+        stageDraft(value)
     }
+
+    // MARK: Slide text
+
+    /// Adds a text to the slide (up to four) and selects it. The first rich edit of a legacy slide
+    /// carries its old text over as `texts[0]` so nothing is lost.
+    @discardableResult
+    func addText(slideID: String, text: String = "Your text") -> String? {
+        guard var value = draft, let index = value.slides.firstIndex(where: { $0.id == slideID }) else { return nil }
+        var edits = value.slides[index].edits ?? SlidePostEdits()
+        var texts = edits.effectiveTexts
+        guard texts.count < SlidePostEdits.maxTexts else { return nil }
+        let element = SlidePostTextElement(text: text)
+        texts.append(element)
+        edits.setTexts(texts)
+        value.slides[index].edits = edits
+        stageDraft(value)
+        selectedTextID = element.id
+        return element.id
+    }
+    /// Edits one text in place. `coalescing` collapses a continuous gesture into one undo step.
+    func updateText(slideID: String, textID: String, coalescing key: String? = nil, _ mutate: (inout SlidePostTextElement) -> Void) {
+        guard var value = draft, let index = value.slides.firstIndex(where: { $0.id == slideID }) else { return }
+        var edits = value.slides[index].edits ?? SlidePostEdits()
+        var texts = edits.effectiveTexts
+        guard let at = texts.firstIndex(where: { $0.id == textID }) else { return }
+        let before = texts[at]
+        mutate(&texts[at])
+        if texts[at].role == "label", texts[at] != before { texts[at].edited = true }
+        edits.setTexts(texts)
+        value.slides[index].edits = edits
+        stageDraft(value, coalescing: key.map { "\($0)-\(textID)" })
+    }
+    func removeText(slideID: String, textID: String) {
+        guard var value = draft, let index = value.slides.firstIndex(where: { $0.id == slideID }) else { return }
+        var edits = value.slides[index].edits ?? SlidePostEdits()
+        var texts = edits.effectiveTexts
+        texts.removeAll { $0.id == textID }
+        edits.setTexts(texts)
+        value.slides[index].edits = edits
+        stageDraft(value)
+        if selectedTextID == textID { selectedTextID = texts.first?.id }
+    }
+    /// Copies a text onto the same slide (the slide itself cannot be duplicated: one asset, one slide).
+    @discardableResult
+    func duplicateText(slideID: String, textID: String) -> String? {
+        guard let source = draft?.slides.first(where: { $0.id == slideID })?.edits?.effectiveTexts.first(where: { $0.id == textID }),
+              var value = draft, let index = value.slides.firstIndex(where: { $0.id == slideID }) else { return nil }
+        var edits = value.slides[index].edits ?? SlidePostEdits()
+        var texts = edits.effectiveTexts
+        guard texts.count < SlidePostEdits.maxTexts else { return nil }
+        var copy = source
+        copy.id = UUID().uuidString
+        if copy.position == "custom", let y = copy.yFrac { copy.yFrac = min(1, y + 0.08) }
+        texts.append(copy)
+        edits.setTexts(texts)
+        value.slides[index].edits = edits
+        stageDraft(value)
+        selectedTextID = copy.id
+        return copy.id
+    }
+    /// One undo step: every other slide's texts take this text's whole look, position included.
+    /// Words, ids and label provenance are never copied.
+    func applyStyleToAllSlides(slideID: String, textID: String) {
+        guard var value = draft,
+              let source = value.slides.first(where: { $0.id == slideID })?.edits?.effectiveTexts.first(where: { $0.id == textID }) else { return }
+        for index in value.slides.indices where value.slides[index].id != slideID {
+            guard var edits = value.slides[index].edits, !edits.effectiveTexts.isEmpty else { continue }
+            var texts = edits.effectiveTexts
+            for at in texts.indices { texts[at].copyStyle(from: source) }
+            edits.setTexts(texts)
+            value.slides[index].edits = edits
+        }
+        stageDraft(value)
+    }
+    func setLook(slideID: String, preset: String) {
+        guard var value = draft, let index = value.slides.firstIndex(where: { $0.id == slideID }) else { return }
+        var edits = value.slides[index].edits ?? SlidePostEdits()
+        edits.lookPreset = preset
+        value.slides[index].edits = edits
+        stageDraft(value)
+    }
+    /// Drops texts the user left empty (the server rejects them) when text editing ends.
+    func removeEmptyTexts(slideID: String) {
+        guard let texts = draft?.slides.first(where: { $0.id == slideID })?.edits?.texts, texts.contains(where: { $0.text.isEmpty }),
+              var value = draft, let index = value.slides.firstIndex(where: { $0.id == slideID }) else { return }
+        var edits = value.slides[index].edits ?? SlidePostEdits()
+        edits.setTexts(texts.filter { !$0.text.isEmpty })
+        value.slides[index].edits = edits
+        stageDraft(value)
+    }
+
     private func handle(_ error: Error) {
         if let apiError = error as? APIError, case .conflict = apiError {
-            hasConflict = true
-            self.error = "This post changed on another device. Your edits are kept here. Reload the saved post before editing again."
+            self.error = "This post kept changing while we saved. Your edits are still here. Try again."
         } else { self.error = error.localizedDescription }
     }
     private struct LocalState: Codable {
