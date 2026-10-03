@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.45.0] - 2026-10-03
+
+### Changed
+- feat(phone): full-screen Visuals sequence on Talking-to-camera + honest overlay notes (KRI-297) (#1353) <!-- release-pr: 1353 -->
+
 ## [0.78.44.0] - 2026-10-03
 
 ### Changed
