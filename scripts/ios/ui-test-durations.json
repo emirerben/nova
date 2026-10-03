@@ -75,6 +75,8 @@
   "KriaUITests/NativeEditorInspectorUITests/testSourcePreviewTextCreationAndAnimations": 121.1,
   "KriaUITests/NativeEditorInspectorUITests/testSourceVideoScrubbingKeepsLatestPosition": 23.9,
   "KriaUITests/NativeEditorInspectorUITests/testStressFixtureRemainsReachableAtAccessibilityTypeWithReduceMotion": 8.0,
+  "KriaUITests/NativeEditorInspectorUITests/testLongCaptionListScrollsByHandToLastLines": 15.0,
+  "KriaUITests/NativeEditorInspectorUITests/testPermanentSourceFailureHidesTryAgain": 9.0,
   "KriaUITests/NativeEditorInspectorUITests/testTappingCaptionRowEntersEditModeAndPersistsTypedText": 19.8,
   "KriaUITests/NativeEditorInspectorUITests/testTappingClipAlignsItsBeginningUnderPlayhead": 12.6,
   "KriaUITests/NativeEditorInspectorUITests/testTextFirstTapShowsTrimsAndSecondTapOpensInspector": 18.6,

@@ -783,9 +783,11 @@ struct NativeVideoPreview: View {
                         Text(message)
                             .font(KriaFont.body(11))
                             .lineLimit(2)
-                        Button("Try again") { Task { await session.prepareSourcePreview() } }
-                            .accessibilityIdentifier("native-editor-retry-source-preview")
-                            .font(KriaFont.body(11).weight(.semibold))
+                        if !session.sourcePreviewFailureIsPermanent {
+                            Button("Try again") { Task { await session.prepareSourcePreview() } }
+                                .accessibilityIdentifier("native-editor-retry-source-preview")
+                                .font(KriaFont.body(11).weight(.semibold))
+                        }
                     } else {
                         originalsUnavailableBody(textStyle: KriaFont.body(11), alignment: .leading)
                     }

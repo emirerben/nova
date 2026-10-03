@@ -762,7 +762,8 @@ struct NativeEditorView: View {
         // are separate fixtures with separate recovery UI.
         let forcedFailure: Error? = arguments.contains("-ui-testing-editor-missing-originals")
             ? SourceAssetError.missingOriginal("fixture-source")
-            : arguments.contains("-ui-testing-editor-source-failure") ? NativeEditorRenderError.missingVideoTrack : nil
+            : arguments.contains("-ui-testing-editor-source-failure-permanent") ? NativeEditorRenderError.missingVideoTrack
+            : arguments.contains("-ui-testing-editor-source-failure") ? APIError.invalidResponse : nil
         if forcedFailure != nil || arguments.contains("-ui-testing-editor-source-text") {
             let delayed = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source")
             if delayed, session.loadState == .loaded { return }

@@ -746,7 +746,7 @@ struct RecipeTrack: Codable, Sendable, Identifiable { let id: String; let kind: 
 struct RecipeClip: Codable, Sendable, Identifiable { let id: String; let sourceAssetID: String; let sourceStart: Double; let sourceDuration: Double; let timelineStart: Double; let rate: Double; enum CodingKeys: String, CodingKey { case id, rate; case sourceAssetID = "source_asset_id"; case sourceStart = "source_start"; case sourceDuration = "source_duration"; case timelineStart = "timeline_start" } }
 
 private enum KriaClientProtocolContract {
-    static let version = 2
+    static let version = 3
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1740,7 +1740,8 @@ extension DraftSnapshot {
             if !isIntentionalEmpty, let timeline,
                let slotValue = timeline["slots"], case let .array(slots) = slotValue {
                 sections["timeline_slots"] = .array(slots)
-            } else if !isIntentionalEmpty, authoritativeVariant["resolved_archetype"] == .string("narrated") {
+            } else if !isIntentionalEmpty,
+                      ["narrated", "voiceover"].contains(authoritativeVariant["resolved_archetype"]?.stringValue ?? "") {
                 let slots = Self.narratedTimelineSlots(authoritativeVariant)
                 if !slots.isEmpty { sections["timeline_slots"] = .array(slots) }
             }
