@@ -317,6 +317,47 @@ final class NativeEditorInspectorTests: XCTestCase {
         XCTAssertFalse(session.canUndo, "one call must create exactly one undo snapshot")
     }
 
+    // MARK: - KRI-288 sound-effects editor contracts
+
+    func testSoundEffectGainClampsToOriginalLevelAndLegacyBoostIsNotRewritten() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.allLanes)
+        session.setSoundEffectGain(id: "sfx-1", gain: 1.6)
+        XCTAssertEqual(session.document.soundEffects.first?.raw["gain"], .number(1))
+        session.setSoundEffectGain(id: "sfx-1", gain: -0.2)
+        XCTAssertEqual(session.document.soundEffects.first?.raw["gain"], .number(0))
+    }
+
+    func testSoundEffectTrimClampsToSourceDurationAndMinimumGap() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.allLanes) // duration_s 1.0
+        session.setSoundEffectTrim(id: "sfx-1", trimStartS: 0.2, trimEndS: 9)
+        XCTAssertEqual(session.document.soundEffects.first?.raw["trim_end_s"], .number(1))
+        session.setSoundEffectTrim(id: "sfx-1", trimStartS: 0.99, trimEndS: 1)
+        let effect = try! XCTUnwrap(session.document.soundEffects.first)
+        let window = NativeEditorSession.soundEffectTrimWindow(effect)
+        XCTAssertEqual(window.end - window.start, NativeEditorSession.sfxMinimumTrim, accuracy: 0.0001)
+        XCTAssertLessThanOrEqual(window.end, 1)
+    }
+
+    func testResetSoundEffectTrimRestoresTheFullSound() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.allLanes)
+        session.setSoundEffectTrim(id: "sfx-1", trimStartS: 0.1, trimEndS: 0.4)
+        session.resetSoundEffectTrim(id: "sfx-1")
+        let effect = try! XCTUnwrap(session.document.soundEffects.first)
+        XCTAssertNil(effect.raw["trim_start_s"])
+        XCTAssertNil(effect.raw["trim_end_s"])
+        let window = NativeEditorSession.soundEffectTrimWindow(effect)
+        XCTAssertEqual(window.start, 0)
+        XCTAssertEqual(window.end, window.source)
+    }
+
+    func testSoundEffectTrimWindowDefaultsToSourceDurationWhenUntrimmed() {
+        let effect = EditorTimedEffect(id: "x", startS: 2, endS: 2.8, pointS: 2, kind: "sfx", raw: ["duration_s": .number(0.8)])
+        let window = NativeEditorSession.soundEffectTrimWindow(effect)
+        XCTAssertEqual(window.source, 0.8)
+        XCTAssertEqual(window.start, 0)
+        XCTAssertEqual(window.end, 0.8)
+    }
+
     func testMovingThePhoneOverlayWritesXFracAndYFrac() {
         let session = NativeEditorSession(draft: NativeEditorUITestFixtures.phoneSubtitledLanes)
 

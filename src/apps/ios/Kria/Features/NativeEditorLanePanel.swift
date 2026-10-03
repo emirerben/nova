@@ -10,6 +10,11 @@ struct NativeEditorLanePanel<Tab: Hashable & RawRepresentable, Content: View>: V
     var heading: String? = nil
     var onAdd: (() -> Void)? = nil
     var onDelete: (() -> Void)? = nil
+    /// Add/Remove labels + ids default to the Visuals panel's; other lanes (Sounds) override them.
+    var addLabel = "Add visual"
+    var addID = "native-editor-add-another-visual"
+    var removeLabel = "Remove visual"
+    var removeID = "native-editor-remove-visual"
     /// Scroll-phase changes of the panel's own ScrollView (user drags, deceleration,
     /// idle). Lets a panel react to hand scrolling without a competing DragGesture.
     var onScrollPhase: ((ScrollPhase) -> Void)? = nil
@@ -26,15 +31,15 @@ struct NativeEditorLanePanel<Tab: Hashable & RawRepresentable, Content: View>: V
                             Image(systemName: "plus").frame(width: 44, height: 44)
                         }
                         .frame(minHeight: 44)
-                        .accessibilityLabel("Add visual")
-                        .accessibilityIdentifier("native-editor-add-another-visual")
+                        .accessibilityLabel(addLabel)
+                        .accessibilityIdentifier(addID)
                     }
                     if let onDelete {
                         Button(role: .destructive, action: onDelete) {
                             Image(systemName: "trash").frame(minWidth: 44, minHeight: 44)
                         }
-                        .accessibilityLabel("Remove visual")
-                        .accessibilityIdentifier("native-editor-remove-visual")
+                        .accessibilityLabel(removeLabel)
+                        .accessibilityIdentifier(removeID)
                     }
                     Button(action: onDone) {
                         Text("Done").frame(minWidth: 64, minHeight: 44)

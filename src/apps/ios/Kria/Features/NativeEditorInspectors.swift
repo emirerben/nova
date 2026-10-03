@@ -649,10 +649,6 @@ private struct NativeSelectedEffectInspector: View {
 
     @State private var start = 0.0
     @State private var end = 1.0
-    @State private var point = 0.0
-    @State private var trimStart = 0.0
-    @State private var trimEnd = 0.3
-    @State private var gain = 1.0
     @State private var x = 0.5
     @State private var y = 0.5
     @State private var scale = 1.0
@@ -769,44 +765,15 @@ private struct NativeSelectedEffectInspector: View {
     private var timingSection: some View {
         if let timing {
             Section("Timing") {
-                if selection.kind == .soundEffect {
-                    NativeEditorSlider(session: session, value: $point, in: 0...max(session.duration, 0.1), step: 0.05) { Text("Placement") }
-                        .onChange(of: point) { _, value in session.setSoundEffectTiming(id: selection.id, atS: value) }
-                        .accessibilityIdentifier("native-editor-selected-sfx-placement")
-                } else {
-                    NativeEditorSlider(session: session, value: $start, in: 0...max(end, session.duration), step: 0.05) { Text("In") }
-                        .onChange(of: start) { _, value in changeTiming(start: value) }
-                        .accessibilityIdentifier("native-editor-selected-\(selection.kind.rawValue)-start")
-                    NativeEditorSlider(session: session, value: $end, in: max(start + 0.1, 0.1)...max(start + 0.1, session.duration), step: 0.05) { Text("Out") }
-                        .onChange(of: end) { _, value in changeTiming(end: value) }
-                        .accessibilityIdentifier("native-editor-selected-\(selection.kind.rawValue)-end")
-                }
+                NativeEditorSlider(session: session, value: $start, in: 0...max(end, session.duration), step: 0.05) { Text("In") }
+                    .onChange(of: start) { _, value in changeTiming(start: value) }
+                    .accessibilityIdentifier("native-editor-selected-\(selection.kind.rawValue)-start")
+                NativeEditorSlider(session: session, value: $end, in: max(start + 0.1, 0.1)...max(start + 0.1, session.duration), step: 0.05) { Text("Out") }
+                    .onChange(of: end) { _, value in changeTiming(end: value) }
+                    .accessibilityIdentifier("native-editor-selected-\(selection.kind.rawValue)-end")
                 LabeledContent("Range", value: "\(nativeTimecode(timing.0)) – \(nativeTimecode(timing.1))")
             }
             .disabled(!canEditTiming)
-        }
-    }
-
-    @ViewBuilder
-    private var sfxBody: some View {
-        Section("Sound") {
-            NativeEditorSlider(session: session, value: $trimStart, in: 0...max(trimEnd - 0.05, 0.05), step: 0.05) { Text("Trim in") }
-                .onChange(of: trimStart) { _, value in session.setSoundEffectTrim(id: selection.id, trimStartS: value, trimEndS: trimEnd) }
-                .accessibilityIdentifier("native-editor-selected-sfx-trim-start")
-            NativeEditorSlider(session: session, value: $trimEnd, in: max(trimStart + 0.05, 0.05)...max(trimStart + 0.05, trimEnd + 1), step: 0.05) { Text("Trim out") }
-                .onChange(of: trimEnd) { _, value in session.setSoundEffectTrim(id: selection.id, trimStartS: trimStart, trimEndS: value) }
-                .accessibilityIdentifier("native-editor-selected-sfx-trim-end")
-            NativeEditorSlider(session: session, value: $gain, in: 0...2, step: 0.05) { Text("Gain") }
-                .onChange(of: gain) { _, value in session.setSoundEffectGain(id: selection.id, gain: value) }
-                .accessibilityIdentifier("native-editor-selected-sfx-gain")
-            LabeledContent("Gain", value: "\(Int(gain * 100))%")
-        }
-        .disabled(!editable)
-        Section {
-            Button("Remove sound effect", role: .destructive) {
-                _ = session.deleteSelection(selection)
-            }
-            .accessibilityIdentifier("native-editor-selected-sfx-remove")
         }
     }
 
@@ -986,7 +953,7 @@ private struct NativeSelectedEffectInspector: View {
             }
             timingSection
             switch selection.kind {
-            case .soundEffect: sfxBody
+            case .soundEffect: EmptyView() // edited in the Sounds panel (KRI-288)
             case .mediaOverlay: overlayBody
             case .visualBlock: visualBody
             case .motionScene, .cameraEffect, .carousel: advancedBody
@@ -997,12 +964,8 @@ private struct NativeSelectedEffectInspector: View {
     }
 
     private func loadValues() {
-        if let timing { start = timing.0; end = max(timing.0 + 0.1, timing.1); point = timing.0 }
+        if let timing { start = timing.0; end = max(timing.0 + 0.1, timing.1) }
         switch selection.kind {
-        case .soundEffect:
-            trimStart = nativeNumber(record?.raw["trim_start_s"]) ?? 0
-            trimEnd = max(trimStart + 0.05, nativeNumber(record?.raw["trim_end_s"]) ?? end)
-            gain = nativeNumber(record?.raw["gain"] ?? record?.raw["gain_db"] ?? record?.raw["volume"]) ?? 1
         case .mediaOverlay:
             x = nativeNumber(record?.raw["x_frac"] ?? record?.raw["position_x"]) ?? 0.5
             y = nativeNumber(record?.raw["y_frac"] ?? record?.raw["position_y"]) ?? 0.5

@@ -812,6 +812,10 @@ struct NativeEditorTemporaryVideo {
             installPlayer(url: initialPlaybackURL)
         }
         #if DEBUG
+        // KRI-288: the API stub throws, so the Effects library would always be empty in UI tests.
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") {
+            soundEffectCatalog = NativeEditorUITestFixtures.soundEffectCatalog
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-legacy-visuals") {
             itemID = "fixture-visual-item"
         }
@@ -3987,12 +3991,44 @@ struct NativeEditorTemporaryVideo {
     }
     func setSoundEffectTrim(id: String, trimStartS: Double? = nil, trimEndS: Double? = nil) {
         mutateTimedEffect(kind: .soundEffect, id: id, section: .soundEffects, operationKeys: ["lanes.sfx.trim", "sfx.trim", "sound_effects.trim", "lanes.sfx"]) { effect in
-            if let trimStartS { effect.raw["trim_start_s"] = .number(max(0, trimStartS)) }
-            if let trimEndS { effect.raw["trim_end_s"] = .number(max(0, trimEndS)) }
+            let next = Self.clampedSoundEffectTrim(effect, start: trimStartS, end: trimEndS, minimum: Self.sfxMinimumTrim)
+            effect.raw["trim_start_s"] = .number(next.start)
+            effect.raw["trim_end_s"] = .number(next.end)
         }
     }
+    func resetSoundEffectTrim(id: String) {
+        mutateTimedEffect(kind: .soundEffect, id: id, section: .soundEffects, operationKeys: ["lanes.sfx.trim", "sfx.trim", "sound_effects.trim", "lanes.sfx"]) { effect in
+            effect.raw["trim_start_s"] = nil
+            effect.raw["trim_end_s"] = nil
+        }
+    }
+    static let sfxMinimumTrim = 0.05
+    /// Source-sound trim window (seconds into the catalog sound), clamped to `duration_s`
+    /// with a minimum kept length.
+    static func soundEffectTrimWindow(_ effect: EditorTimedEffect, minimum: Double = sfxMinimumTrim) -> (start: Double, end: Double, source: Double) {
+        let source = max(minimum, number(effect.raw["duration_s"]) ?? max(minimum, effect.endS - effect.startS))
+        let start = min(max(0, number(effect.raw["trim_start_s"]) ?? 0), source - minimum)
+        let end = min(source, max(start + minimum, number(effect.raw["trim_end_s"]) ?? source))
+        return (start, end, source)
+    }
+    /// `nil` start/end keep the current value.
+    static func clampedSoundEffectTrim(_ effect: EditorTimedEffect, start: Double?, end: Double?, minimum: Double) -> (start: Double, end: Double) {
+        let current = soundEffectTrimWindow(effect, minimum: minimum)
+        var s = min(max(0, start ?? current.start), current.source - minimum)
+        var e = min(current.source, end ?? current.end)
+        if start != nil && end == nil { e = max(e, s + minimum) }
+        if end != nil && start == nil { s = min(s, e - minimum) }
+        e = max(e, s + minimum)
+        return (s, min(e, current.source))
+    }
+    /// Audition/preview URL for a placed effect: the timeline source pool, else the catalog.
+    func soundEffectPreviewURL(for effect: EditorTimedEffect) -> URL? {
+        if let asset = sourcePool?.nativeAssets.first(where: { $0.kind == "sound_effect" && $0.id == effect.id }) { return asset.sourceURL }
+        guard let catalogID = effect.raw["sound_effect_id"]?.stringValue else { return nil }
+        return soundEffectCatalog.first(where: { $0.id == catalogID })?.previewAudioURL
+    }
     func setSoundEffectGain(id: String, gain: Double) {
-        mutateTimedEffect(kind: .soundEffect, id: id, section: .soundEffects, operationKeys: ["lanes.sfx.gain", "sfx.gain", "sound_effects.gain", "lanes.sfx"]) { $0.raw["gain"] = .number(min(max(0, gain), 2)) }
+        mutateTimedEffect(kind: .soundEffect, id: id, section: .soundEffects, operationKeys: ["lanes.sfx.gain", "sfx.gain", "sound_effects.gain", "lanes.sfx"]) { $0.raw["gain"] = .number(min(max(0, gain), 1)) }
     }
     func removeSoundEffect(id: String) {
         _ = deleteSelection(EditorSelection(kind: .soundEffect, id: id))
@@ -4677,14 +4713,12 @@ struct NativeEditorTemporaryVideo {
     private func setSoundEffectTrimBounds(_ id: String, edge: NativeTrimEdge, translation: Double, in document: inout EditorDocument) {
         guard let index = document.soundEffects.firstIndex(where: { $0.id == id }) else { return }
         var effect = document.soundEffects[index]
-        let sourceDuration = max(minimumClipDuration, Self.number(effect.raw["duration_s"]) ?? max(minimumClipDuration, effect.endS - effect.startS))
-        let trimStart = max(0, Self.number(effect.raw["trim_start_s"]) ?? 0)
-        let trimEnd = min(sourceDuration, Self.number(effect.raw["trim_end_s"]) ?? sourceDuration)
+        let window = Self.soundEffectTrimWindow(effect, minimum: minimumClipDuration)
         switch edge {
         case .leading:
-            effect.raw["trim_start_s"] = .number(min(max(0, trimStart + translation), trimEnd - minimumClipDuration))
+            effect.raw["trim_start_s"] = .number(min(max(0, window.start + translation), window.end - minimumClipDuration))
         case .trailing:
-            effect.raw["trim_end_s"] = .number(max(trimStart + minimumClipDuration, min(sourceDuration, trimEnd + translation)))
+            effect.raw["trim_end_s"] = .number(max(window.start + minimumClipDuration, min(window.source, window.end + translation)))
         }
         document.soundEffects[index] = effect
     }
