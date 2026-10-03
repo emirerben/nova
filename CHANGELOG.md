@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.30.0] - 2026-10-03
+
+### Changed
+- fix(ios): voiceover editor clips, captions scroll, no retry loop (KRI-281) (#1335) <!-- release-pr: 1335 -->
+
 ## [0.78.29.0] - 2026-10-03
 
 ### Changed
