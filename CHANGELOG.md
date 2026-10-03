@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.34.0] - 2026-10-03
+
+### Changed
+- fix(ios): editor clip blocks span their timeline window, no gaps (KRI-281) (#1342) <!-- release-pr: 1342 -->
+
 ## [0.78.33.0] - 2026-10-03
 
 ### Changed
