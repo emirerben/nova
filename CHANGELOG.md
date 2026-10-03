@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.24.0] - 2026-10-03
+
+### Changed
+- feat: edit phone Narrated captions like phone Talking (KRI-280) (#1333) <!-- release-pr: 1333 -->
+
 ## [0.78.23.0] - 2026-10-03
 
 ### Changed
