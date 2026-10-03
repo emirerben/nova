@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.25.0] - 2026-10-03
+
+### Changed
+- fix(ios): reveal clip action overflow and dismiss on outside taps (#1328) <!-- release-pr: 1328 -->
+
 ## [0.78.24.0] - 2026-10-03
 
 ### Changed
