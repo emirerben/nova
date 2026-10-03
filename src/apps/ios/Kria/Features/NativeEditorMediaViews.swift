@@ -1371,15 +1371,6 @@ struct NativeMiniStrip: View {
                         }
                         .frame(maxWidth: .infinity, minHeight: max(0, viewport.size.height - bottomClearance), alignment: .topLeading)
                         .contentShape(Rectangle())
-                        // This remains behind clips, lanes, the playhead, and
-                        // controls, so their own taps and gestures win. It
-                        // only receives a tap that lands in otherwise empty
-                        // timeline or editor-margin space.
-                        .background {
-                            Color.clear
-                                .contentShape(Rectangle())
-                                .onTapGesture { dismissClipSelection() }
-                        }
                         .simultaneousGesture(timelinePanGesture)
                     }
                     .contentMargins(.bottom, bottomClearance, for: .scrollContent)
@@ -1666,6 +1657,11 @@ struct NativeMiniStrip: View {
             let globalFrame = proxy.frame(in: .global)
             let viewportGlobalRange: ClosedRange<CGFloat> = globalFrame.width > 0
                 ? globalFrame.minX...globalFrame.maxX : 0...0
+            // Snapshot hit regions from this layout pass. A clip selection
+            // can seek the clock before simultaneous gestures finish, so
+            // checking live geometry here could classify that original clip
+            // tap against a later timeline position.
+            let interactiveTapFrames = timelineInteractiveTapFrames(playheadX: playheadX)
             ZStack(alignment: .topLeading) {
                 VStack(spacing: rowGap) {
                     ruler(width: width, playheadX: playheadX)
@@ -1698,6 +1694,17 @@ struct NativeMiniStrip: View {
                     .accessibilityIdentifier("native-editor-playhead")
             }
             .clipped()
+            // The timeline content itself owns the full hit shape, so a
+            // background gesture cannot receive blank-timeline taps. Observe
+            // its taps here and exclude every interactive surface before
+            // closing clip context.
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                SpatialTapGesture().onEnded { value in
+                    guard !interactiveTapFrames.contains(where: { $0.contains(value.location) }) else { return }
+                    dismissClipSelection()
+                }
+            )
             .background(TimelinePinchCapture { scale, ended in
                 if ended {
                     pinchAnchor = zoom
@@ -1923,6 +1930,50 @@ struct NativeMiniStrip: View {
     private func dismissClipSelection() {
         guard session.selection?.kind == .clip, !session.isTimingGestureActive else { return }
         session.select(nil)
+    }
+
+    private func timelineInteractiveTapFrames(playheadX: CGFloat) -> [CGRect] {
+        var frames = [CGRect]()
+        // The draggable playhead owns this small ruler-area target.
+        let playheadTarget = CGRect(x: playheadX - 22, y: 0, width: 44, height: 24)
+        frames.append(playheadTarget)
+
+        // NativeClipSurface makes short clips at least 44pt wide, centered on
+        // their visual frame. Match that touch geometry so another clip keeps
+        // its selection instead of being immediately deselected.
+        let filmstripOriginY = 18 + rowGap
+        for (_, clip) in visibleClips(playheadX: playheadX) {
+            let frame = clipFrame(clip, playheadX: playheadX)
+            let hitWidth = max(44, frame.width)
+            let hitFrame = CGRect(
+                x: frame.midX - hitWidth / 2,
+                y: filmstripOriginY,
+                width: hitWidth,
+                height: filmstripHeight
+            )
+            frames.append(hitFrame)
+        }
+
+        var rowOriginY = filmstripOriginY + filmstripHeight + rowGap
+        for row in rows {
+            let packed = row.title == "TEXT" ? NativeEditorInteraction.packLanes(row.items) : []
+            let lanes = Dictionary(uniqueKeysWithValues: packed.map { ($0.item.selection, $0.lane) })
+            for item in visibleItems(row.items, playheadX: playheadX) {
+                let visualFrame = itemFrame(item, playheadX: playheadX)
+                let hitWidth = max(44, visualFrame.width)
+                let laneOriginY = rowOriginY + CGFloat(lanes[item.selection] ?? 0) * (secondaryLaneHeight + rowGap)
+                // NativeTimelineBar centers a 44pt-high Button at the visual
+                // item's midpoint, even when the rendered bar is shorter.
+                frames.append(CGRect(
+                    x: visualFrame.midX - hitWidth / 2,
+                    y: laneOriginY + visualFrame.height / 2 - 22,
+                    width: hitWidth,
+                    height: 44
+                ))
+            }
+            rowOriginY += CGFloat(rowCount(row)) * secondaryLaneHeight + CGFloat(rowCount(row) - 1) * rowGap + rowGap
+        }
+        return frames
     }
 
     private func select(_ item: NativeEditorTimelineItem) {
