@@ -508,7 +508,7 @@ def _publish_pending_pool_dispatches(
         try:
             receipt = analyze_pool_asset.apply_async(
                 args=[asset_id, False],
-                queue=settings.pool_asset_analysis_queue,
+                queue=settings.pool_asset_visuals_queue,
                 headers=headers,
             )
             log.info(

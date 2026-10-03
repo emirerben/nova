@@ -384,7 +384,7 @@ def reconcile_stale_pool_assets(*, now: datetime | None = None) -> int:
                 task_headers["x-correlation-id"] = correlation_id
             analyze_pool_asset.apply_async(
                 args=[asset_id, False],
-                queue=settings.pool_asset_analysis_queue,
+                queue=settings.pool_asset_visuals_queue,
                 headers=task_headers,
             )
         except Exception as exc:  # noqa: BLE001

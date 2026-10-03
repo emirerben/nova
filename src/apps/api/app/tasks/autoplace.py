@@ -26,8 +26,10 @@ Both: soft_time_limit=240 / time_limit=300 (< broker visibility_timeout=1900,
 worker.py invariant) and wrapped in pipeline_trace_for (mandatory orchestrator
 contract — agent I/O must reach /admin/jobs).
 
-Queues: asset analysis uses `settings.pool_asset_analysis_queue`; matchers use
-`settings.autoplace_queue`. Both default to "celery" outside configured environments.
+Queues: creator-facing asset analysis uses `settings.pool_asset_visuals_queue`
+(`visuals_analysis_queue`, falling back to `pool_asset_analysis_queue`); the stale
+analysis refresh stays on `settings.pool_asset_analysis_queue`; matchers use
+`settings.autoplace_queue`. All default to "celery" outside configured environments.
 """
 
 from __future__ import annotations
@@ -2261,6 +2263,8 @@ def match_overlay_suggestions(
                 if analysis_is_stale(a["analysis"], kind=a.get("kind")):
                     _record("autoplace_stale_analysis", asset_id=a["id"])
                     try:
+                        # Background refresh, nobody waits on it: keep it off the
+                        # Visuals queue so a backfill never delays a new upload.
                         analyze_pool_asset.apply_async(
                             args=[a["id"]],
                             kwargs={"refresh": True},

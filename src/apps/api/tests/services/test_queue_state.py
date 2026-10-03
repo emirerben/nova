@@ -361,7 +361,7 @@ def test_render_worker_idle_false_when_render_queue_has_depth() -> None:
     assert render_worker_idle(celery_app) is False
 
 
-@pytest.mark.parametrize("queue", ["autoplace-jobs", "speech-analysis"])
+@pytest.mark.parametrize("queue", ["autoplace-jobs", "speech-analysis", "visuals-analysis"])
 def test_render_worker_idle_false_for_unified_analysis_queue_work(queue: str) -> None:
     redis = MagicMock()
     redis.llen.side_effect = lambda name: 1 if name == queue else 0
@@ -369,7 +369,7 @@ def test_render_worker_idle_false_for_unified_analysis_queue_work(queue: str) ->
     assert render_worker_idle(celery_app) is False
 
 
-@pytest.mark.parametrize("queue", ["autoplace-jobs", "speech-analysis"])
+@pytest.mark.parametrize("queue", ["autoplace-jobs", "speech-analysis", "visuals-analysis"])
 @pytest.mark.parametrize("state", ["active", "reserved"])
 def test_render_worker_idle_false_for_unified_analysis_inflight_work(
     queue: str, state: str
@@ -417,6 +417,7 @@ def test_render_worker_queues_constant_matches_fly_toml_worker_queues() -> None:
             "creator-fidelity-v1",
             "autoplace-jobs",
             "speech-analysis",
+            "visuals-analysis",
         }
     )
 

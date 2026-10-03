@@ -1740,6 +1740,18 @@ class Settings(BaseSettings):
     # Upload-time image/video metadata analysis is isolated from renders in Fly.
     # Roll back by setting POOL_ASSET_ANALYSIS_QUEUE=celery.
     pool_asset_analysis_queue: str = "celery"
+    # Creator-facing analyze_pool_asset dispatches (Visuals photos/videos) go here
+    # instead of pool_asset_analysis_queue, so they never wait FIFO behind footage
+    # analysis. Empty = pool_asset_analysis_queue (pre-change routing). Set
+    # VISUALS_ANALYSIS_QUEUE=visuals-analysis only after the deployed autoplace
+    # process consumes that queue (fly.toml); unset it to roll back.
+    visuals_analysis_queue: str = ""
+
+    @property
+    def pool_asset_visuals_queue(self) -> str:
+        """Queue for creator-facing analyze_pool_asset runs (see visuals_analysis_queue)."""
+        return self.visuals_analysis_queue or self.pool_asset_analysis_queue
+
     # Keep response compatibility during the backend-first rollout. Set true
     # only after both queued-aware upload surfaces are deployed.
     pool_asset_queued_status_enabled: bool = False
