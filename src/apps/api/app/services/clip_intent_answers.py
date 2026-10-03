@@ -32,6 +32,10 @@ async def persist_clip_intent_vision_answers(
     keeps a failed cache write from poisoning that transaction. Answers are
     accepted only for the exact asset generation that produced them, so an old
     provider result can never be attached to replaced media.
+
+    ``strict`` raises when a pool asset's answers cannot be written (missing,
+    foreign, or replaced). Raw ``clip_assignments`` media (every iPhone montage
+    clip) have no cache to write and are skipped in both modes (KRI-291).
     """
     if not vision_answers:
         return True
@@ -39,7 +43,9 @@ async def persist_clip_intent_vision_answers(
         async with db.begin_nested():
             skipped = False
             for media_id, answers in vision_answers.items():
-                if not answers or not media_id.startswith("asset-"):
+                if not media_id.startswith("asset-"):
+                    continue
+                if not answers:
                     skipped = True
                     continue
                 try:

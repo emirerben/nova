@@ -671,6 +671,47 @@ async def test_strict_vision_answer_cache_rejects_a_stale_asset_generation() -> 
 
 
 @pytest.mark.asyncio
+async def test_strict_vision_answer_cache_skips_raw_phone_clip_media() -> None:
+    """KRI-291: iPhone montage clips are raw `clip_assignments`
+    (`analysis-proxy-ios-….mp4`) with no answer cache (pool assets only). Strict
+    mode fences a CHANGED pool asset; an uncacheable phone clip is the same
+    documented no-op as in best-effort mode, never a failure that ends the turn."""
+    item_id = uuid.uuid4()
+    asset_id = uuid.uuid4()
+    asset = SimpleNamespace(plan_item_id=item_id, gcs_generation="7", analysis={})
+    item = SimpleNamespace(id=item_id)
+    db = _fake_db(return_value=asset)
+
+    await persist_clip_intent_vision_answers(
+        db,
+        item,
+        {
+            "analysis-proxy-ios-0EBED783-578F-4DFB-B562-623C6776994C.mp4": {
+                "is someone bowling": {"answer": "yes", "confidence": 0.9}
+            },
+            f"asset-{asset_id}": {"is it a scoreboard": {"answer": "yes", "generation": "7"}},
+        },
+        strict=True,
+    )
+
+    db.get.assert_awaited_once()  # only the pool asset has a row to write
+    assert asset.analysis[ANSWERS_KEY] == {
+        "is it a scoreboard": {"answer": "yes", "generation": "7"}
+    }
+
+
+@pytest.mark.asyncio
+async def test_strict_vision_answer_cache_rejects_a_malformed_pool_asset_id() -> None:
+    item = SimpleNamespace(id=uuid.uuid4())
+    db = _fake_db(side_effect=AssertionError("must not be looked up"))
+
+    with pytest.raises(ClipIntentAnswerPersistenceError, match="target_changed"):
+        await persist_clip_intent_vision_answers(
+            db, item, {"asset-not-a-uuid": {"q": {"answer": "yes"}}}, strict=True
+        )
+
+
+@pytest.mark.asyncio
 async def test_vision_answers_skip_raw_clip_assignments_media() -> None:
     """Raw `clip_assignments` clips have no light-weight writer here (see the
     docstring on `_persist_clip_intent_vision_answers`); persistence for them

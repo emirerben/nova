@@ -121,8 +121,9 @@ Flow (flag on):
    record. Clips the record cannot answer go to `ClipQuestionAgent` (the vision
    model re-watches THAT clip): at most `clip_intents_max_vision_requeries`
    (4) per turn, under one `clip_intents_vision_deadline_s` (25 s) deadline, video
-   only. Completed answers survive another clip hitting the deadline; membership
-   and caption authoring share that deadline. Membership checks are re-asked as
+   only: a photo the record can't settle is an unknown the creator answers, never
+   unavailable media (KRI-291). Completed answers survive another clip hitting
+   the deadline; membership and caption authoring share that deadline. Membership checks are re-asked as
    closed yes/no questions; a confident "no" excludes the clip. New answers are
    cached on the asset's `analysis["answers"][normalized_question]` (pool assets only).
 3. **Continue in the background (KRI-154).** On the foreground chat path,
@@ -369,7 +370,11 @@ evals to run before enabling (`--eval-mode=live`, no judge):
 - Vision re-query remains video-only. Images need an inline media input path.
 - KRI-154 overflow results are picked up on the next creator message. KRI-151's
   separate durable preparation flow can finish and publish the original turn.
-- Vision answers are cached for pool assets only, not raw `clip_assignments`.
+- Vision answers are cached for pool assets only, not raw `clip_assignments`
+  (every iPhone montage clip, `analysis-proxy-ios-…`). The Kria turn's strict
+  cache write skips those ids; failing on them ended every resolved iPhone turn
+  that needed a vision check with "I couldn't reliably match that request to
+  your clips" (KRI-291).
 
 KRI-154 regression coverage: `tests/services/test_clip_intent_resolution.py`
 replays the 30-clip / 8-vague-clip overflow and cache pickup;

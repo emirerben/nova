@@ -1104,6 +1104,16 @@ async def resolve_clip_intents_for_turn(
                 ]:
                     apply_result(dependent, output)
                 continue
+            if clip.kind == "image":
+                # Vision re-query is video-only (see ClipQuestionAgent), so a photo
+                # the record can't settle is an "unknown" the creator resolves.
+                # Reporting it as unavailable media told them to "try again
+                # shortly", which could never succeed (KRI-291).
+                for dependent in dependents[
+                    (candidate.media_id, str(clip.generation or ""), question_norm)
+                ]:
+                    apply_result(dependent, ClipQuestionOutput())
+                continue
             if not clip.gcs_path or clip.kind != "video":
                 for dependent in dependents[
                     (candidate.media_id, str(clip.generation or ""), question_norm)
