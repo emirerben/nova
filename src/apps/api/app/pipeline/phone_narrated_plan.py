@@ -530,6 +530,98 @@ _EDITOR_LANE_TRACK_IDS = frozenset({"subtitled-overlays", "sfx"})
 _EDITOR_LANE_CAPABILITIES = frozenset(
     {"visualBlocks", "alphaOverlay", "visualVideos", "soundEffects"}
 )
+# The track an editor-added photo/video compiles to
+# (`phone_editor_visuals.compile_editor_media_track`) and what it needs: the
+# guided compiler declares the same set for it (KRI-287).
+EDITOR_MEDIA_TRACK_ID = "editor-media"
+_EDITOR_MEDIA_CAPABILITIES = frozenset({"visualBlocks", "alphaOverlay", "audioMix"})
+
+
+def _media_last(tracks: list[TimelineTrack]) -> list[TimelineTrack]:
+    """Keep editor media on top of every other layer, whichever lane a Save
+    recompiled last, so layering never depends on the order of Saves."""
+    return [t for t in tracks if t.id != EDITOR_MEDIA_TRACK_ID] + [
+        t for t in tracks if t.id == EDITOR_MEDIA_TRACK_ID
+    ]
+
+
+def _has_editor_media(tracks: list[TimelineTrack]) -> bool:
+    return any(track.id == EDITOR_MEDIA_TRACK_ID and track.clips for track in tracks)
+
+
+def replace_editor_media(
+    recipe: EditRecipeV2,
+    *,
+    blocks: list[dict[str, Any]],
+    visuals: tuple[PhoneVisualBinding, ...],
+    video_track_id: str = "narrated",
+) -> EditRecipeV2:
+    """``recipe`` with only its editor media Visual blocks recompiled (KRI-287),
+    the media counterpart of `replace_editor_lanes`.
+
+    ``blocks`` is the variant's complete saved ``visual_blocks`` list (media
+    kind only); an empty list removes the layer. Every clip, caption, lane,
+    bed and the audio mix stay exactly as pinned. Blocks compile through the
+    guided editor's own `compile_editor_media_track`, so an added photo or
+    video renders the same on a Voiceover edit as on a guided story, and must
+    sit inside the main video track (``video_track_id``).
+
+    Raises `UnsupportedPhonePlan` (capability ``visualBlocks``) for a block the
+    phone can't render.
+    """
+    from app.pipeline.phone_editor_visuals import (  # noqa: PLC0415
+        UnsupportedEditorMedia,
+        compile_editor_media_track,
+    )
+
+    video = next((track for track in recipe.tracks if track.id == video_track_id), None)
+    if video is None or not video.clips:
+        raise UnsupportedPhonePlan("pinned voiceover recipe has no video track")
+
+    kept_tracks = [track for track in recipe.tracks if track.id != EDITOR_MEDIA_TRACK_ID]
+    still_used = {clip.source_asset_id for track in kept_tracks for clip in track.clips}
+    media_only = {
+        clip.source_asset_id
+        for track in recipe.tracks
+        if track.id == EDITOR_MEDIA_TRACK_ID
+        for clip in track.clips
+    } - still_used
+    assets = {asset.id: asset for asset in recipe.assets if asset.id not in media_only}
+    manifest = {
+        asset.id: asset for asset in recipe.asset_manifest.assets if asset.id not in media_only
+    }
+
+    tracks = list(kept_tracks)
+    required = set(recipe.required_capabilities)
+    # Drop what only the old media layer needed (mirrors the device's own
+    # content-derived requirements); kept overlay lanes still need theirs.
+    if not any(clip.visual_placement for track in tracks for clip in track.clips):
+        required.discard("visualBlocks")
+    if not any(track.kind == "overlay" and track.clips for track in tracks):
+        required.discard("alphaOverlay")
+    if blocks:
+        try:
+            media_track = compile_editor_media_track(
+                blocks,
+                visuals=visuals,
+                timeline_duration_s=timeline_end_s(video.clips),
+                assets=assets,
+                manifest=manifest,
+            )
+        except UnsupportedEditorMedia as exc:
+            raise UnsupportedPhonePlan(str(exc), capability="visualBlocks") from exc
+        if media_track.clips:
+            tracks.append(media_track)
+            required |= _EDITOR_MEDIA_CAPABILITIES
+
+    fields = {name: getattr(recipe, name) for name in type(recipe).model_fields}
+    fields.update(
+        assets=list(assets.values()),
+        asset_manifest=RenderAssetManifest(assets=tuple(manifest.values())),
+        tracks=_media_last(tracks),
+        required_capabilities=required,
+    )
+    return EditRecipeV2(**fields)
 
 
 def replace_editor_lanes(
@@ -615,12 +707,16 @@ def replace_editor_lanes(
         if sfx_track.clips:
             tracks.append(sfx_track)
             required |= {"soundEffects", "audioMix"}
+    if _has_editor_media(tracks):
+        # The kept editor media layer (KRI-287) still needs what the lane
+        # strip above removed.
+        required |= _EDITOR_MEDIA_CAPABILITIES
 
     fields = {name: getattr(recipe, name) for name in type(recipe).model_fields}
     fields.update(
         assets=list(assets.values()),
         asset_manifest=RenderAssetManifest(assets=tuple(manifest.values())),
-        tracks=tracks,
+        tracks=_media_last(tracks),
         required_capabilities=required,
     )
     return EditRecipeV2(**fields)

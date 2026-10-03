@@ -465,6 +465,49 @@ def phone_voiceover_editor_lanes_supported(*, require_client: bool | None = None
     return protocol is not None and protocol >= settings.phone_voiceover_editor_min_client_protocol
 
 
+# Device features a photo or video added in the phone editor needs (KRI-287):
+# the set the guided editor's own media import is gated on
+# (`generative_jobs._phone_editor_media_available`).
+PHONE_EDITOR_MEDIA_FEATURES: tuple[str, ...] = (
+    "stillImages",
+    "visualVideos",
+    "visualBlocks",
+    "alphaOverlay",
+    "audioMix",
+)
+
+
+def phone_voiceover_editor_media_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "can a phone-rendered Voiceover variant
+    (`narrated` or montage `voiceover`) import a photo or video as a media
+    Visual block right now" (KRI-287, the media half of KRI-281).
+
+    Consulted by `generative_jobs._phone_editor_media_available` (the
+    `phone_editor_media` capability, source registration and the
+    `visual_blocks` clamp) and by `phone_editor.prepare_phone_editor_commit`
+    (whether Save compiles `visual_blocks` or 422s), so the editor never
+    offers an import that registration or Save would refuse.
+
+    True iff ALL of:
+      - `phone_editor_media_enabled` and `visual_blocks_enabled` (the editor
+        media import and the visual-block lane kill switches).
+      - every feature in `PHONE_EDITOR_MEDIA_FEATURES` is verified.
+      - `phone_voiceover_editor_lanes_supported(require_client=...)`: the
+        Voiceover lanes rollout, including its app-build gate. No newer build
+        is needed: the protocol-3 app already registers, places, previews and
+        reopens editor media for any archetype. ``require_client`` has the
+        same meaning there; Save and the source-admission worker pass
+        ``False``.
+    """
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        settings.phone_editor_media_enabled
+        and settings.visual_blocks_enabled
+        and all(feature in verified for feature in PHONE_EDITOR_MEDIA_FEATURES)
+        and phone_voiceover_editor_lanes_supported(require_client=require_client)
+    )
+
+
 # Device features every phone caption layer needs (KRI-280).
 PHONE_NARRATED_CAPTION_FEATURES: tuple[str, ...] = ("positionedText", "animatedText")
 
