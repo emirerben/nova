@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.43.0] - 2026-10-03
+
+### Changed
+- feat(phone): free clip trims on voiceover edits (KRI-290) (#1347) <!-- release-pr: 1347 -->
+
 ## [0.78.42.0] - 2026-10-03
 
 ### Changed
