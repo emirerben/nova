@@ -117,10 +117,12 @@ def test_curly_quotes_and_multiline_copy_are_source_backed() -> None:
 
 def test_over_cap_keeps_first_valid_intents_and_asks_about_the_rest() -> None:
     out = _parse(_nine_intents())
-    assert [intent.intent_id for intent in out.intents] == [f"i{n}" for n in range(1, 7)]
+    assert [intent.intent_id for intent in out.intents] == [
+        f"i{n}" for n in range(1, MAX_CLIP_INTENTS + 1)
+    ]
     assert len(out.intents) == MAX_CLIP_INTENTS
     assert out.salvage_question is not None
-    assert "3 more" in out.salvage_question
+    assert f"{9 - MAX_CLIP_INTENTS} more" in out.salvage_question
     assert "Home again" not in out.salvage_question  # names instructions, never copies copy
     assert len(out.salvage_question) <= 400
 
@@ -213,7 +215,7 @@ async def test_fifty_clip_long_prompt_over_cap_asks_one_focused_question(monkeyp
     assert len(client.invocations) == 1  # salvaged, no retry spent
     assert result.resolution.needs_creator
     question = result.resolution.question or ""
-    assert "3 more" in question
+    assert f"{9 - MAX_CLIP_INTENTS} more" in question
     assert "restate which clips to use" not in question  # not the generic dead end
     resolver.assert_not_called()
 
