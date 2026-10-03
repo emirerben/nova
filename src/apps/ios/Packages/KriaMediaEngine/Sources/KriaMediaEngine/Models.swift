@@ -203,7 +203,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
             result.insert(.audioMix)
         }
         if audio.narrationAssetID != nil { result.insert(.narrationAudio) }
-        if audio.duckOriginalDuringMusic { result.insert(.audioDucking) }
+        if audio.duckOriginalDuringMusic || audio.duckMusicDuringSpeech { result.insert(.audioDucking) }
         return result
     }
 
@@ -405,7 +405,12 @@ public struct AudioMixRecipe: Codable, Equatable, Sendable {
     /// measures the mix (ITU-R BS.1770) and applies one gain plus a -1.5 dBTP
     /// limiter, approximating the cloud's `loudnorm`. Nil leaves levels as mixed.
     public var targetLUFS: Double?
-    private enum CodingKeys: String, CodingKey { case musicAssetID = "musicAssetId", musicVolume, originalVolume, fadeIn, fadeOut, duckOriginalDuringMusic, muteWindows, narrationAssetID = "narrationAssetId", targetLUFS = "targetLufs" }
+    /// KRI-282: lower the music bed under every audio-kind track clip (speech
+    /// excerpts played over other clips' visuals). Opt-in and additive: absent
+    /// decodes to false, and false is omitted on encode, so every existing recipe
+    /// renders byte-identically. Gated by the `audioDucking` capability.
+    public var duckMusicDuringSpeech: Bool = false
+    private enum CodingKeys: String, CodingKey { case musicAssetID = "musicAssetId", musicVolume, originalVolume, fadeIn, fadeOut, duckOriginalDuringMusic, muteWindows, narrationAssetID = "narrationAssetId", targetLUFS = "targetLufs", duckMusicDuringSpeech }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         musicAssetID = try c.decodeIfPresent(String.self, forKey: .musicAssetID)
@@ -415,6 +420,7 @@ public struct AudioMixRecipe: Codable, Equatable, Sendable {
         muteWindows = try c.decodeIfPresent([AudioMuteWindow].self, forKey: .muteWindows) ?? []
         narrationAssetID = try c.decodeIfPresent(String.self, forKey: .narrationAssetID)
         targetLUFS = try c.decodeIfPresent(Double.self, forKey: .targetLUFS)
+        duckMusicDuringSpeech = try c.decodeIfPresent(Bool.self, forKey: .duckMusicDuringSpeech) ?? false
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -425,8 +431,9 @@ public struct AudioMixRecipe: Codable, Equatable, Sendable {
         if !muteWindows.isEmpty { try c.encode(muteWindows, forKey: .muteWindows) }
         try c.encodeIfPresent(narrationAssetID, forKey: .narrationAssetID)
         try c.encodeIfPresent(targetLUFS, forKey: .targetLUFS)
+        if duckMusicDuringSpeech { try c.encode(true, forKey: .duckMusicDuringSpeech) }
     }
-    public init(musicAssetID: String? = nil, musicVolume: Double = 1, originalVolume: Double = 1, fadeIn: TimeInterval = 0, fadeOut: TimeInterval = 0, duckOriginalDuringMusic: Bool = false, muteWindows: [AudioMuteWindow] = [], narrationAssetID: String? = nil, targetLUFS: Double? = nil) { self.musicAssetID = musicAssetID; self.musicVolume = musicVolume; self.originalVolume = originalVolume; self.fadeIn = fadeIn; self.fadeOut = fadeOut; self.duckOriginalDuringMusic = duckOriginalDuringMusic; self.muteWindows = muteWindows; self.narrationAssetID = narrationAssetID; self.targetLUFS = targetLUFS }
+    public init(musicAssetID: String? = nil, musicVolume: Double = 1, originalVolume: Double = 1, fadeIn: TimeInterval = 0, fadeOut: TimeInterval = 0, duckOriginalDuringMusic: Bool = false, muteWindows: [AudioMuteWindow] = [], narrationAssetID: String? = nil, targetLUFS: Double? = nil, duckMusicDuringSpeech: Bool = false) { self.duckMusicDuringSpeech = duckMusicDuringSpeech; self.musicAssetID = musicAssetID; self.musicVolume = musicVolume; self.originalVolume = originalVolume; self.fadeIn = fadeIn; self.fadeOut = fadeOut; self.duckOriginalDuringMusic = duckOriginalDuringMusic; self.muteWindows = muteWindows; self.narrationAssetID = narrationAssetID; self.targetLUFS = targetLUFS }
     public static let `default` = AudioMixRecipe()
 }
 

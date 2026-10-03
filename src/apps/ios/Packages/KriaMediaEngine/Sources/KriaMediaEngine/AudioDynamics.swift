@@ -25,6 +25,29 @@ struct AudioDuckEnvelope: Equatable, Sendable {
         return a.gain + (b.gain - a.gain) * (time - a.time) / (b.time - a.time)
     }
 
+    /// KRI-282: the music bed's duck under speech excerpts. Each window is the
+    /// timeline span of an audio-kind track clip. The bed falls to `level` over
+    /// `attack` BEFORE the speech starts (so the first syllable is never masked)
+    /// and recovers over `release` after it ends. Windows closer together than
+    /// the two ramps merge, so a run of back-to-back excerpts is one duck, not a
+    /// pump per join. Returns nil when there is no speech to duck under.
+    static func speech(windows: [(start: Double, end: Double)], level: Double = 0.3, attack: Double = 0.15,
+                       release: Double = 0.35) -> AudioDuckEnvelope? {
+        let spans = windows.filter { $0.end > $0.start }.sorted { $0.start < $1.start }
+        var merged: [(start: Double, end: Double)] = []
+        for span in spans {
+            if let last = merged.last, span.start - last.end < attack + release { merged[merged.count - 1].end = max(last.end, span.end) }
+            else { merged.append(span) }
+        }
+        guard !merged.isEmpty else { return nil }
+        var points: [(time: Double, gain: Double)] = []
+        for span in merged {
+            let down = max(0, span.start - attack)
+            points += [(down, 1), (span.start, level), (span.end, level), (span.end + release, 1)]
+        }
+        return AudioDuckEnvelope(points: points)
+    }
+
     /// Breakpoints strictly inside `range`, for callers emitting ramps between them.
     func times(in range: ClosedRange<Double>) -> [Double] {
         points.map(\.time).filter { $0 > range.lowerBound && $0 < range.upperBound }

@@ -1786,7 +1786,7 @@ struct NativeEditorTemporaryVideo {
                 phoneTalkingIndex = NativePhoneTalkingSource.sourceIndex(variant: previewVariant, document: document,
                     pool: pool, lanesEditable: canEdit(.mediaOverlays) || canEdit(.soundEffects))
                 sources = try await resolver.resolve(pool, generation: generation,
-                    requiredIndices: Set(timelineClips.compactMap(\.sourceClipIndex) + (phoneTalkingIndex.map { [$0] } ?? [])))
+                    requiredIndices: Set(timelineClips.compactMap(\.sourceClipIndex) + (phoneTalkingIndex.map { [$0] } ?? []) + document.clipAudio.map(\.sourceClipIndex)))
             }
             guard sequence == sourcePreviewSequence, !Task.isCancelled,
                   document.revision.baseGeneration == generation else { return }
@@ -2097,7 +2097,7 @@ struct NativeEditorTemporaryVideo {
                 start: projection.projectBaseTime(pending.startS), end: projection.projectBaseTime(pending.endS), zIndex: 999, sourceIndex: items.count))
         }
         do {
-            let needed = Set(clips.compactMap(\.sourceClipIndex))
+            let needed = Set(clips.compactMap(\.sourceClipIndex) + baseline.clipAudio.map(\.sourceClipIndex))
             if !needed.isSubset(of: Set(sources.keys)), let pool = sourcePool, let resolver = sourceResolver {
                 sourcePreviewState = .preparing
                 sources = try await resolver.resolve(pool, generation: baseline.revision.baseGeneration, requiredIndices: needed)
