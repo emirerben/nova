@@ -1740,7 +1740,8 @@ extension DraftSnapshot {
             if !isIntentionalEmpty, let timeline,
                let slotValue = timeline["slots"], case let .array(slots) = slotValue {
                 sections["timeline_slots"] = .array(slots)
-            } else if !isIntentionalEmpty, authoritativeVariant["resolved_archetype"] == .string("narrated") {
+            } else if !isIntentionalEmpty,
+                      ["narrated", "voiceover"].contains(authoritativeVariant["resolved_archetype"]?.stringValue ?? "") {
                 let slots = Self.narratedTimelineSlots(authoritativeVariant)
                 if !slots.isEmpty { sections["timeline_slots"] = .array(slots) }
             }

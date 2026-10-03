@@ -329,4 +329,62 @@ final class NativeEditorSourcesTests: XCTestCase {
         XCTAssertEqual(response.importID, target.clientImportID)
         XCTAssertEqual(response.sourceIndex, 4)
     }
+
+    /// KRI-281: phone Narrated / Voiceover edits can arrive with no timeline slots. The pinned recipe's
+    /// video track must become locked source clips, so the strip shows footage (outro only at the
+    /// tail) and the preview compiles instead of failing with `missingVideoTrack`.
+    @MainActor func testPhoneNarratedAndVoiceoverSourcesHydrateFromRecipeVideoTrack() throws {
+        let recipe = KriaMediaEngine.EditRecipe(assets: [.init(id: "a", relativePath: "a"), .init(id: "b", relativePath: "b")], tracks: [
+            .init(id: "video", kind: .video, clips: [
+                .init(id: "step-1", sourceAssetID: "a", sourceStart: 1, sourceDuration: 3, timelineStart: 0),
+                .init(id: "step-2", sourceAssetID: "b", sourceStart: 0, sourceDuration: 4, timelineStart: 3),
+            ]),
+        ])
+        func source(_ id: String) -> NativeTimelineSource { .init(mediaID: id, sourceURL: nil, original: nil, localRequired: false) }
+        let pool = NativeEditorSourcePool(clips: [.init(clipIndex: 4, nativeSource: source("a")), .init(clipIndex: 7, nativeSource: source("b"))], baseGeneration: "g")
+        let seeds = NativePhoneNarratedSource.seeds(recipe: recipe, pool: pool)
+        XCTAssertEqual(seeds.map(\.clipIndex), [4, 7])
+        XCTAssertEqual(seeds.map(\.durationS), [3, 4])
+        // A clip that maps to no pool source must not yield a partial timeline.
+        XCTAssertTrue(NativePhoneNarratedSource.seeds(recipe: recipe, pool: NativeEditorSourcePool(clips: [.init(clipIndex: 4, nativeSource: source("a"))], baseGeneration: "g")).isEmpty)
+
+        func resolved(_ index: Int) -> ResolvedEditorSource {
+            let fingerprint = AssetFingerprint(hex: String(repeating: index == 4 ? "b" : "c", count: 64), byteCount: 10)
+            return ResolvedEditorSource(clipIndex: index, mediaID: index == 4 ? "a" : "b",
+                asset: MediaAsset(id: "local-\(index)", relativePath: "x.mov", fingerprint: fingerprint, duration: 10),
+                url: URL(fileURLWithPath: "/fixture/x.mov"))
+        }
+        let sources = [4: resolved(4), 7: resolved(7)]
+        for archetype in ["narrated", "voiceover"] {
+            let variant: [String: JSONValue] = ["resolved_archetype": .string(archetype), "render_destination": .string("device")]
+            let empty = EditorDocument(capabilities: ["timeline": .init(editable: false)], revision: .init(baseGeneration: "g"))
+            XCTAssertTrue(NativePhoneNarratedSource.applies(variant: variant, document: empty))
+            var edited = empty
+            edited.textElements = [.init(id: "later", text: "Preserve this")]
+            let hydrated = NativePhoneNarratedSource.hydrate(edited, seeds: seeds, sources: sources)
+            XCTAssertEqual(hydrated.clips.map(\.clipIndex), [4, 7])
+            XCTAssertEqual(hydrated.textElements, edited.textElements)
+            XCTAssertEqual(NativePhoneNarratedSource.hydrate(hydrated, seeds: seeds, sources: sources), hydrated)
+            XCTAssertTrue(NativePhoneNarratedSource.applies(variant: variant, document: hydrated))
+
+            let plain = NativePhoneNarratedSource.hydrate(empty, seeds: seeds, sources: sources)
+            let projection = NativeEditorInteraction.timelineProjection(slots: plain.clips, carousel: nil)
+            XCTAssertEqual(projection.totalDuration, 7, accuracy: 0.001)
+            let clips = projection.clipWindows.map { window -> EditorClip in
+                let slot = plain.clips[window.sourceIndex]
+                return EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: slot.clipIndex, start: window.start, end: window.end,
+                    trimIn: slot.inS, trimOut: slot.inS + (slot.durationS ?? 0), sourceDuration: 10, slotID: slot.id)
+            }
+            let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+            let program = try compiler.compile(document: plain, clips: clips, items: [], sources: sources)
+            XCTAssertEqual(program.recipe.tracks.first { $0.kind == .video }?.clips.count, 2)
+            // Branded outro sits only after the last clip.
+            let lastEnd = clips.map(\.end).max() ?? 0
+            XCTAssertEqual(NativeEditorInteraction.outroRange(lastClipEnd: lastEnd, playbackDuration: 8.6, isBrandedPreview: true), 7...8.6)
+        }
+        let cloud: [String: JSONValue] = ["resolved_archetype": .string("narrated"), "render_destination": .string("cloud")]
+        XCTAssertFalse(NativePhoneNarratedSource.applies(variant: cloud, document: EditorDocument()))
+        XCTAssertTrue(NativeEditorSession.isPermanentSourcePreviewFailure(NativeEditorRenderError.missingVideoTrack))
+        XCTAssertFalse(NativeEditorSession.isPermanentSourcePreviewFailure(APIError.invalidResponse))
+    }
 }

@@ -220,6 +220,82 @@ enum NativePhoneTalkingSource {
     }
 }
 
+/// Defence in depth for phone-rendered Narrated / Voiceover edits. The server
+/// should project their clip slots, but older videos (and any projection gap)
+/// arrive with an empty timeline, which stretches the "Kria outro" placeholder
+/// over the whole strip and makes the compiler reject the preview
+/// (`missingVideoTrack`). The pinned device recipe's video track is the
+/// authoritative cut list, so rebuild locked source clips from it. Like the
+/// Talking source, hydration is server state, not an edit.
+enum NativePhoneNarratedSource {
+    static let slotID = "native-phone-narrated-source"
+
+    struct Seed: Equatable, Sendable {
+        let clipID: String
+        let clipIndex: Int
+        let inS: Double
+        let durationS: Double
+        let rate: Double
+        let sourceSpanS: Double
+    }
+
+    static func applies(variant: [String: JSONValue], document: EditorDocument) -> Bool {
+        guard ["narrated", "voiceover"].contains(variant["resolved_archetype"]?.stringValue ?? ""),
+              variant["render_destination"] == .string("device"),
+              document.editorState != "empty", document.tombstones.isEmpty,
+              document.capabilities["timeline"]?.editable != true else { return false }
+        return document.clips.isEmpty || document.clips.allSatisfy { $0.raw["native_composite_source"] == .bool(true) }
+    }
+
+    /// Video-track clips of `recipe`, mapped onto source-pool indices through
+    /// the recipe's original media ids. Empty when any clip cannot be mapped:
+    /// a partial timeline would silently drop footage from the preview.
+    static func seeds(recipe: KriaMediaEngine.EditRecipe, pool: NativeEditorSourcePool) -> [Seed] {
+        var originals: [String: String] = [:]
+        for reference in recipe.assetManifest?.assets ?? [] {
+            if case .original(let mediaID) = reference.source { originals[reference.id] = mediaID }
+        }
+        func index(for assetID: String) -> Int? {
+            let mediaID = originals[assetID] ?? assetID
+            if let match = pool.clips.first(where: { $0.nativeSource?.mediaID == mediaID }) { return match.clipIndex }
+            for prefix in ["clip-", "clip_", "source-"] where mediaID.hasPrefix(prefix) {
+                if let number = Int(mediaID.dropFirst(prefix.count)), pool.clips.contains(where: { $0.clipIndex == number }) { return number }
+            }
+            return nil
+        }
+        let clips = recipe.tracks.filter { $0.kind == .video }.flatMap(\.clips).sorted { $0.timelineStart < $1.timelineStart }
+        var result: [Seed] = []
+        for (position, clip) in clips.enumerated() {
+            guard let clipIndex = index(for: clip.sourceAssetID) else { return [] }
+            // Abut clips: a recipe overlap must not lengthen the editable strip.
+            let next = clips.indices.contains(position + 1) ? clips[position + 1].timelineStart : nil
+            let duration = next.map { $0 - clip.timelineStart } ?? clip.duration
+            guard duration.isFinite, duration > 0.001 else { continue }
+            result.append(Seed(clipID: clip.id, clipIndex: clipIndex, inS: clip.sourceStart, durationS: duration,
+                               rate: clip.rate, sourceSpanS: clip.sourceDuration))
+        }
+        return result
+    }
+
+    static func hydrate(_ document: EditorDocument, seeds: [Seed], sources: [Int: ResolvedEditorSource]) -> EditorDocument {
+        guard !seeds.isEmpty, document.editorState != "empty",
+              document.clips.isEmpty || document.clips.allSatisfy({ $0.raw["native_composite_source"] == .bool(true) }) else { return document }
+        var result = document
+        result.clips = seeds.enumerated().map { index, seed in
+            var raw: [String: JSONValue] = ["native_composite_source": .bool(true), "playback_rate": .number(seed.rate)]
+            var span = seed.sourceSpanS
+            if let total = sources[seed.clipIndex]?.asset.duration, total.isFinite, total > 0 {
+                raw["source_duration_s"] = .number(total)
+                span = min(span, max(0.05, total - seed.inS))
+            }
+            raw["native_source_span_s"] = .number(span)
+            return .init(id: index == 0 ? slotID : slotID + "-\(index)", clipIndex: seed.clipIndex, inS: seed.inS,
+                         durationS: seed.durationS, raw: raw)
+        }
+        return result
+    }
+}
+
 enum NativeNarratedSourceTiming {
     /// Mirrors narrated_assembler._fit_clip_segment: short footage slows to
     /// fill its voiceover step, with a 50 ms guard before source EOF.
