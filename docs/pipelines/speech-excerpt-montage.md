@@ -47,7 +47,15 @@ byte-identically, and nothing is transcribed or stored. Apply:
 - Optional `music` track (compiler supports it; the worker passes none today): split clips that
   sound only during montage runs, the song position resuming after each speech section.
 - Capabilities: `basicComposition`, `local1080Export`, plus `audioMix` when an audio track exists.
-- The speaker must be portrait (the phone engine centre-crops with no face tracking).
+- **Speaker orientation:** any. A landscape or square speaker clip (e.g. a 16:9 announcement) is
+  accepted and shown with the engine's plain centre cover-fit, exactly like every other phone
+  montage clip; the receipt gets an adjustment ("sides are cropped ... centred"). No `source_crop`
+  is emitted on purpose: without face tracking the only nameable window is the centred one (pixel
+  identical to the cover-fit), and a crop would add the `sourceCrop` capability, which
+  `validate_phone_pilot_recipe` refuses unless it is in `PHONE_RENDER_VERIFIED_FEATURES`. Portrait
+  recipes are unchanged. Known limit: a speaker standing off-centre in a wide frame can be cut off;
+  a future face-tracked `source_crop` (needs `sourceCrop` verified) would fix that. Only a clip
+  with no video picture or over 5 minutes is refused.
 
 ## Asking instead of failing
 
