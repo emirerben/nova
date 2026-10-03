@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.26.0] - 2026-10-03
+
+### Changed
+- fix(planner): robust long multi-instruction clip requests (KRI-282) (#1336) <!-- release-pr: 1336 -->
+
 ## [0.78.25.0] - 2026-10-03
 
 ### Changed
