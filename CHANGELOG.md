@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.37.0] - 2026-10-03
+
+### Changed
+- fix(kria): KRI-282 47-clip match no longer dead-ends on vision cap; diagnosable failures (#1345) <!-- release-pr: 1345 -->
+
 ## [0.78.36.0] - 2026-10-03
 
 ### Changed
