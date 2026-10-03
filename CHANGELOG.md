@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.35.0] - 2026-10-03
+
+### Changed
+- fix(planner): shard clip resolver so a 47-clip montage stops timing out (KRI-282) (#1343) <!-- release-pr: 1343 -->
+
 ## [0.78.34.0] - 2026-10-03
 
 ### Changed
