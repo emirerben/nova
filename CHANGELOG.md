@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.23.0] - 2026-10-03
+
+### Changed
+- v0.78.2.0 fix: omit ungrounded montage titles (#1316) <!-- release-pr: 1316 -->
+
 ## [0.78.22.0] - 2026-10-02
 
 ### Changed
