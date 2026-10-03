@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.41.0] - 2026-10-03
+
+### Changed
+- feat(ios): KRI-288 sound effects editor redesign (#1348) <!-- release-pr: 1348 -->
+
 ## [0.78.40.0] - 2026-10-03
 
 ### Changed
