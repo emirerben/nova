@@ -169,6 +169,7 @@ from app.schemas.slide_post import (
     SlidePostDraft,
     SlideRef,
     bump_slide_post_version,
+    merge_legacy_text_edits,
     parse_slide_post,
 )
 from app.services.ai_usage_headers import paid_call_headers
@@ -4415,6 +4416,8 @@ async def put_slide_post_draft(
     _validate_slide_ref_ownership(body.slides, owned_assets)
     platform_profile = coerce_platform_profile(_require_slide_post_profile(body.platform_profile))
     try:
+        # Old clients omit `texts`; keep the stored rich text (KRI-299).
+        body.slides = merge_legacy_text_edits(current, body.slides)
         if current is None:
             new_draft = SlidePostDraft(
                 platform_profile=platform_profile,

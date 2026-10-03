@@ -22,8 +22,9 @@ is resolved to bytes at render time.
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.pipeline.look_presets import LookPreset
 from app.pipeline.slide_post.profiles import PlatformProfile
@@ -51,18 +52,121 @@ class TextOverlay(BaseModel):
     position: str = Field(pattern="^(top|center|bottom)$")
 
 
+MAX_SLIDE_TEXTS = 4
+DEFAULT_SLIDE_TEXT_FONT = "Inter-Bold"
+# Pixel size of the legacy drawtext overlay on the 1920-tall canvas
+# (round(1920 * 0.045)); used when a legacy `text` is lifted into an element.
+_LEGACY_TEXT_SIZE_PX = 86
+
+
+class SlideTextElement(BaseModel):
+    """One styled text element on a single slide (rich text model, KRI-298).
+
+    A style vocabulary aligned with `agents/_schemas/text_element.TextElement`.
+    Rendered by `pipeline/slide_post/build.py` through the Pillow
+    `text_overlay._draw_text_png` path (PNG overlay) when
+    `slide_post_rich_text_enabled` is on. All style fields default so a
+    partial payload from a client stays valid.
+    """
+
+    id: str = Field(min_length=1, max_length=64)
+    text: str = Field(min_length=1, max_length=MAX_SLIDE_TEXT_LENGTH)
+    # `label` marks machine-authored place/time captions (chat "add each
+    # photo's location"); `edited` records that the user changed one so a
+    # re-label never overwrites it.
+    role: Literal["text", "label"] = "text"
+    label_source: Literal["place", "capture_time"] | None = None
+    edited: bool = False
+    font_family: str = DEFAULT_SLIDE_TEXT_FONT
+    color: str = "#FFFFFF"
+    size_px: int = Field(default=_LEGACY_TEXT_SIZE_PX, ge=24, le=200)
+    alignment: Literal["left", "center", "right"] = "center"
+    position: Literal["top", "center", "bottom", "custom"] = "bottom"
+    # Fractions of the SLIDE canvas (so 4:5 slides place identically to the
+    # client's preview). Only read when position == "custom"; x_frac is the
+    # centerline for center alignment and the edge for left/right.
+    x_frac: float | None = Field(default=None, ge=0.0, le=1.0)
+    y_frac: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_width_frac: float | None = Field(default=None, ge=0.2, le=1.0)
+    stroke_width: int = Field(default=0, ge=0, le=12)
+    shadow_enabled: bool = True
+    background: Literal["none", "box"] = "none"
+
+    @field_validator("font_family")
+    @classmethod
+    def _font_allowed(cls, value: str) -> str:
+        from app.agents._schemas.text_element import _ALLOWED_FONTS  # noqa: PLC0415
+
+        if value not in _ALLOWED_FONTS:
+            raise ValueError(f"Unknown font_family {value!r}")
+        return value
+
+    @field_validator("color")
+    @classmethod
+    def _color_hex(cls, value: str) -> str:
+        from app.agents._schemas.text_element import _HEX_COLOR_RE  # noqa: PLC0415
+
+        if not _HEX_COLOR_RE.match(value):
+            raise ValueError("color must be #RRGGBB")
+        return value
+
+
+def _position_bucket(element: SlideTextElement) -> str:
+    """Nearest legacy top/center/bottom bucket for an element."""
+    if element.position != "custom":
+        return element.position
+    y = 0.5 if element.y_frac is None else element.y_frac
+    if y < 0.33:
+        return "top"
+    if y > 0.66:
+        return "bottom"
+    return "center"
+
+
 class SlideEdits(BaseModel):
     """Per-slide edit state, applied at render time in `pipeline/slide_post/build.py`.
 
-    Deliberately flat and small — see plans/024 follow-up eng-review for why
-    this is NOT a scaled-down `EditorShell` document (media_overlays, text
-    lanes, etc). Every field here must correspond to an FFmpeg filter fragment
-    `normalize_image_slide`/`normalize_video_slide` can append to their
-    existing `-vf` chain; there is no separate rendering subsystem.
+    `text` is the legacy single drawtext overlay. `texts` is the rich model
+    (max 4 styled elements). When `texts` is not None, `text` is ALWAYS a
+    mirror of `texts[0]` (None when `texts` is empty) so old clients and the
+    flag-off render path keep working. `look_preset` maps to an FFmpeg filter
+    fragment; there is no separate rendering subsystem for it.
     """
 
     text: TextOverlay | None = None
     look_preset: LookPreset = "none"
+    texts: list[SlideTextElement] | None = Field(default=None, max_length=MAX_SLIDE_TEXTS)
+
+    @model_validator(mode="after")
+    def _mirror_texts_into_legacy_text(self) -> SlideEdits:
+        if self.texts is None:
+            return self
+        ids = [t.id for t in self.texts]
+        if len(set(ids)) != len(ids):
+            raise ValueError("text ids must be unique within a slide")
+        if self.texts:
+            first = self.texts[0]
+            self.text = TextOverlay(content=first.text, position=_position_bucket(first))
+        else:
+            self.text = None
+        return self
+
+    def effective_texts(self) -> list[SlideTextElement]:
+        """`texts` when set, else the legacy `text` lifted into one element
+        (boxed, white, bottom/top/center) so every consumer sees one shape."""
+        if self.texts is not None:
+            return list(self.texts)
+        if self.text is None:
+            return []
+        return [
+            SlideTextElement(
+                id="legacy",
+                text=self.text.content,
+                position=self.text.position,  # type: ignore[arg-type]
+                background="box",
+                shadow_enabled=False,
+            )
+        ]
 
 
 class SlideRef(BaseModel):
@@ -157,3 +261,62 @@ def bump_slide_post_version(draft: SlidePostDraft, **updates: object) -> SlidePo
         draft.model_dump(mode="python")
         | {**updates, "version": draft.version + 1, "user_edited": True}
     )
+
+
+def merge_legacy_text_edits(
+    stored: SlidePostDraft | None, slides: list[SlideRef]
+) -> list[SlideRef]:
+    """Protect stored rich `texts` from an old client's PUT.
+
+    A client that predates `SlideEdits.texts` decodes a slide, drops the
+    unknown key and writes `edits` back with `texts` omitted. Omission (checked
+    via `model_fields_set`) means "unchanged", not "cleared": keep the stored
+    texts. If the legacy mirror `text` changed, fold that change into
+    `texts[0]` so the old client's edit still lands. An explicit
+    `texts: null`/list from a new client is taken as sent.
+    """
+    if stored is None:
+        return slides
+    stored_by_id = {s.id: s for s in stored.slides}
+    merged: list[SlideRef] = []
+    for ref in slides:
+        old = stored_by_id.get(ref.id)
+        incoming = ref.edits
+        if (
+            incoming is None
+            or "texts" in incoming.model_fields_set
+            or old is None
+            or old.edits is None
+            or old.edits.texts is None
+        ):
+            merged.append(ref)
+            continue
+        texts = list(old.edits.texts)
+        if incoming.text != old.edits.text:
+            if incoming.text is None:
+                texts = texts[1:]
+            elif texts:
+                head = texts[0]
+                update: dict[str, object] = {"text": incoming.text.content, "edited": True}
+                if incoming.text.position != _position_bucket(head):
+                    update.update(position=incoming.text.position, x_frac=None, y_frac=None)
+                texts[0] = head.model_copy(update=update)
+            else:
+                texts = [
+                    SlideTextElement(
+                        id=uuid.uuid4().hex[:12],
+                        text=incoming.text.content,
+                        position=incoming.text.position,  # type: ignore[arg-type]
+                        background="box",
+                        shadow_enabled=False,
+                    )
+                ]
+        new_edits = SlideEdits.model_validate(
+            {
+                "text": None,
+                "look_preset": incoming.look_preset,
+                "texts": [t.model_dump(mode="python") for t in texts],
+            }
+        )
+        merged.append(ref.model_copy(update={"edits": new_edits}))
+    return merged
