@@ -171,6 +171,160 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertNil(session.displayedSourcePreviewRecipe)
     }
 
+    /// KRI-287: Visuals → "Add photo or video" on a phone Voiceover edit. The
+    /// server opens `phone_editor_media` + `visual_blocks` with the revision the
+    /// app registers against; each import is admitted, placed at the playhead,
+    /// and plays live in the preview over the locked voiceover cut.
+    func testPhoneVoiceoverEditAddsAPhotoAndAVideoLiveInThePreview() async throws {
+        let (session, fake, uploads) = try await Self.phoneVoiceoverSession(mediaOpen: true)
+        defer { _ = uploads }
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertTrue(session.canImportVisuals)
+        XCTAssertNil(session.visualImportUnavailableMessage)
+
+        await session.addLibraryVisual(try XCTUnwrap(fake.visualPool?.first { $0.kind == "image" }))
+        XCTAssertNil(session.visualError)
+        session.currentTime = 0.5
+        await session.addLibraryVisual(try XCTUnwrap(fake.visualPool?.first { $0.kind == "video" }))
+        XCTAssertNil(session.visualError)
+
+        XCTAssertEqual(fake.registeredSourceIDs, [Self.voiceoverPhotoID, Self.voiceoverVideoID])
+        XCTAssertEqual(fake.registeredRevisionNumbers, [1, 1])
+        XCTAssertEqual(session.document.visualBlocks.map { $0.raw["media_kind"]?.stringValue }, ["image", "video"])
+        XCTAssertEqual(session.document.visualBlocks.map { $0.raw["src_gcs_path"]?.stringValue },
+                       [Self.voiceoverPhotoPath, Self.voiceoverVideoPath])
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        let recipe = try XCTUnwrap(session.displayedSourcePreviewRecipe)
+        XCTAssertTrue(recipe.tracks.contains { $0.kind == .video && !$0.clips.isEmpty }, "The voiceover cut still plays underneath")
+        let overlays = recipe.tracks.filter { $0.kind == .overlay }.flatMap(\.clips)
+        XCTAssertEqual(overlays.count, 2)
+        XCTAssertTrue(overlays.allSatisfy { $0.visualPlacement != nil })
+    }
+
+    /// KRI-287: reopening a saved Voiceover edit replays its added photo from
+    /// the timeline's `visual_block` asset, so the preview matches the MP4.
+    func testReopenedPhoneVoiceoverEditPreviewsItsSavedPhoto() async throws {
+        let (session, _, uploads) = try await Self.phoneVoiceoverSession(mediaOpen: true, savedPhoto: true)
+        defer { _ = uploads }
+
+        XCTAssertEqual(session.document.visualBlocks.map(\.id), ["photo-layer"])
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        let recipe = try XCTUnwrap(session.displayedSourcePreviewRecipe)
+        XCTAssertEqual(recipe.tracks.filter { $0.kind == .overlay }.flatMap(\.clips).count, 1)
+    }
+
+    /// A server without the KRI-287 rollout (lanes only) keeps the import
+    /// greyed out with the device copy.
+    func testPhoneVoiceoverEditWithoutMediaRolloutKeepsImportClosed() async throws {
+        let (session, _, uploads) = try await Self.phoneVoiceoverSession(mediaOpen: false)
+        defer { _ = uploads }
+
+        XCTAssertFalse(session.canImportVisuals)
+        XCTAssertEqual(session.visualImportUnavailableMessage, "Adding media isn’t available for this edit on this iPhone.")
+    }
+
+    static let voiceoverPhotoID = "5b3f6a1e-8f1c-4c55-9a8e-2f7d1c9b0a11"
+    static let voiceoverVideoID = "c4e1d2f3-6a7b-4c8d-9e0f-1a2b3c4d5e6f"
+    static let voiceoverPhotoPath = "users/owner/plan/item/pool/photo.png"
+    static let voiceoverVideoPath = "users/owner/plan/item/pool/clip.mp4"
+
+    private static func phoneVoiceoverSession(mediaOpen: Bool, savedPhoto: Bool = false) async throws -> (NativeEditorSession, EditorCommitSpy, BackgroundUploadCoordinator) {
+        let threadID = UUID(), jobID = UUID()
+        let project = BackgroundUploadCoordinator.projectDirectory(threadID)
+        let montage = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        let input = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+        try FileManager.default.copyItem(at: montage, to: input)
+        defer { try? FileManager.default.removeItem(at: input) }
+        let asset = try await AssetImportCoordinator(project: project).importAsset(from: input)
+        try SourceAssetStore(project: project).bind(mediaID: "source", original: asset)
+        let descriptor = OriginalMediaDescriptor(sha256: try XCTUnwrap(asset.fingerprint).hex, byteCount: try XCTUnwrap(asset.fingerprint).byteCount,
+            durationS: 4.6, width: 1316, height: 740, orientationDegrees: 0, hasAudio: false)
+
+        // Seed the preview cache the editor's resolver reads, so both visuals
+        // resolve without a download.
+        let cache = NativePreviewAssetCache(project: project, jobID: jobID)
+        let photoURL = try XCTUnwrap(URL(string: "https://storage.example/photo.png"))
+        let videoURL = try XCTUnwrap(URL(string: "https://storage.example/clip.mp4"))
+        let photoFile = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).png")
+        try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 96, height: 160)).image { context in
+            UIColor.orange.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 96, height: 160))
+        }.pngData()).write(to: photoFile)
+        var photo = try await NativeDownloadedMedia.importAsset(from: photoFile, sourceURL: photoURL,
+            response: URLResponse(url: photoURL, mimeType: "image/png", expectedContentLength: -1, textEncodingName: nil), project: cache.project)
+        photo.naturalSize = MediaSize(width: 96, height: 160)
+        try cache.store(photo, for: "media:generation-1:\(voiceoverPhotoID)")
+        let videoFile = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+        try FileManager.default.copyItem(at: montage, to: videoFile)
+        var video = try await NativeDownloadedMedia.importAsset(from: videoFile, sourceURL: videoURL,
+            response: URLResponse(url: videoURL, mimeType: "video/mp4", expectedContentLength: -1, textEncodingName: nil), project: cache.project)
+        video.naturalSize = MediaSize(width: 1316, height: 740)
+        video.duration = 4.6
+        try cache.store(video, for: "media:generation-1:\(voiceoverVideoID)")
+
+        var capabilities: [String: JSONValue] = ["timeline": .bool(false), "text_elements": .bool(false), "mix": .bool(false),
+            "overlays": .bool(true), "sfx": .bool(true), "visual_blocks": .bool(mediaOpen)]
+        var variant: [String: JSONValue] = [
+            "variant_id": .string("variant"),
+            "render_generation_id": .string("generation-1"),
+            "render_status": .string("ready"),
+            "render_destination": .string("device"),
+            "resolved_archetype": .string("narrated"),
+            "output_url": .string("file:///tmp/kria-editor-test.mp4"),
+        ]
+        if mediaOpen {
+            capabilities["phone_editor_media"] = .object(["enabled": .bool(true), "source_registration": .bool(true),
+                "visual_kinds": .array([.string("image"), .string("video")])])
+            capabilities["visual_block_kinds"] = .array([.string("media")])
+            variant["editor_revision_number"] = .number(1)
+        }
+        variant["editor_capabilities"] = .object(capabilities)
+        var nativeAssets: [NativeEditorAsset] = []
+        if savedPhoto {
+            variant["visual_blocks"] = .array([.object([
+                "id": .string("photo-layer"), "kind": .string("media"), "asset_id": .string(voiceoverPhotoID),
+                "src_gcs_path": .string(voiceoverPhotoPath), "media_kind": .string("image"), "start_s": .number(0.2),
+                "end_s": .number(1.2), "display_mode": .string("overlay"), "scale": .number(0.4), "x_frac": .number(0.5),
+                "y_frac": .number(0.5), "z": .number(1),
+            ])])
+            nativeAssets = [NativeEditorAsset(id: "photo-layer:photo-layer", kind: "visual_block", mediaID: voiceoverPhotoID,
+                                              sourceURL: photoURL, preserveAlpha: nil)]
+        }
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+                snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
+                snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: variant
+        )
+        fake.sourcePoolResult = NativeEditorSourcePool(clips: [.init(clipIndex: 0, nativeSource: .init(mediaID: "source",
+            sourceURL: nil, original: descriptor, localRequired: true))], baseGeneration: "generation-1", nativeAssets: nativeAssets)
+        fake.deviceRenderResponse = DeviceRenderStatusResponse(
+            phase: "published", request: deviceRenderRequest(jobID: jobID, revision: 1, digest: "a"), publishedGeneration: "generation-1"
+        )
+        fake.visualPool = [
+            CreationVisual(id: voiceoverPhotoID, kind: "image", status: "ready", sourceFilename: "photo.png", displayURL: nil,
+                previewURL: nil, retryable: nil, gcsPath: voiceoverPhotoPath, sourceURL: photoURL),
+            CreationVisual(id: voiceoverVideoID, kind: "video", status: "ready", sourceFilename: "clip.mp4", displayURL: nil,
+                previewURL: nil, retryable: nil, gcsPath: voiceoverVideoPath, sourceURL: videoURL, durationS: 4.6),
+        ]
+        func admitted(_ id: String, index: Int, source: [String: JSONValue]) -> EditorSourceRegistrationResponse {
+            EditorSourceRegistrationResponse(importID: UUID(), status: "ready", sourceID: id, sourceIndex: index,
+                source: source, error: nil, reasonCode: nil, retryable: false)
+        }
+        fake.registerEditorSourceResponses = [
+            voiceoverPhotoID: admitted(voiceoverPhotoID, index: 1, source: ["gcs_path": .string(voiceoverPhotoPath), "kind": .string("image")]),
+            voiceoverVideoID: admitted(voiceoverVideoID, index: 2, source: ["gcs_path": .string(voiceoverVideoPath), "kind": .string("video"),
+                "duration_s": .number(4.6)]),
+        ]
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: threadID)
+        let uploads = BackgroundUploadCoordinator(api: fake, defaultsKey: "voiceover-media-\(UUID().uuidString)", sessionConfiguration: .ephemeral)
+        session.useMediaUploads(uploads)
+        return (session, fake, uploads)
+    }
+
     private static func phoneTalkingSession(lanesEditable: Bool, card: Bool = false, bindOriginal: Bool = true) async throws -> (NativeEditorSession, EditorCommitSpy) {
         let threadID = UUID(), jobID = UUID()
         let project = BackgroundUploadCoordinator.projectDirectory(threadID)
@@ -4044,6 +4198,16 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     func editorSource(itemID: String, variantID: String, importID: UUID) async throws -> EditorSourceRegistrationResponse {
         guard let editorSourceResponse else { throw APIError.unsupported }
         return editorSourceResponse
+    }
+    /// What `registerEditorSource` answers per source id; a missing id fails.
+    var registerEditorSourceResponses: [String: EditorSourceRegistrationResponse] = [:]
+    var registeredSourceIDs: [String] = []
+    var registeredRevisionNumbers: [Int] = []
+    func registerEditorSource(_ target: EditorSourceRegistrationTarget, sourceID: String) async throws -> EditorSourceRegistrationResponse {
+        registeredSourceIDs.append(sourceID)
+        registeredRevisionNumbers.append(target.guidedRevisionNumber)
+        guard let response = registerEditorSourceResponses[sourceID] else { throw APIError.unsupported }
+        return response
     }
     func editorSourcePool(jobID: UUID, variantID: String) async throws -> NativeEditorSourcePool {
         sourcePoolCallCount += 1

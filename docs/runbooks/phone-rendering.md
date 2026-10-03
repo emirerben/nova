@@ -2064,8 +2064,13 @@ clips from server fields.
   voiceover at the video's end with a fade; longer footage plays on after it.
   A later, longer cut plays the voiceover (and a montage music bed) up to their
   natural length again. Text that ran to the end follows the new end;
-  captions and sound-effect / Visuals lanes recompile from their editor state,
+  captions, sound-effect / Visuals lanes and added photos/videos (KRI-287,
+  clipped to the cut for the render only) recompile from their editor state,
   so a shorten-then-extend brings them back.
+- Not supported yet: a newly imported photo/video as a timeline clip. With the
+  KRI-287 media rollout on, the app's Add clip control follows the timeline +
+  registration capabilities, so it shows, and Save 422s `TIMELINE_UNKNOWN_CLIP`
+  (the cut only takes clips from the pinned source pool).
 - The variant keeps its archetype: `user_timeline` mirrors the new recipe,
   narrated `narrated_timings` are rewritten, and caption / lane Saves keep
   working on top of the cut. A clip delete on these variants is a cut edit,
@@ -2086,3 +2091,40 @@ and mix stay exactly as pinned. Apply: `fly secrets set
 PHONE_VOICEOVER_EDITOR_LANES_ENABLED=true SOUND_EFFECTS_ENABLED=true
 MEDIA_OVERLAYS_ENABLED=true --app nova-video` + restart (api + worker), after
 the iOS build that declares protocol 3 is out. Rollback: set the first to false.
+
+**Added photos and videos (KRI-287).** Visuals → "Add photo or video" places
+a media Visual block (`visual_blocks`), not a Visuals card. The single gate is
+`phone_rollout.phone_voiceover_editor_media_supported()`: the lanes gate above
+AND `PHONE_EDITOR_MEDIA_ENABLED` AND `VISUAL_BLOCKS_ENABLED` AND device features
+`PHONE_EDITOR_MEDIA_FEATURES` (`stillImages`, `visualVideos`, `visualBlocks`,
+`alphaOverlay`, `audioMix`) verified. No newer app build is needed: the
+protocol-3 app already registers, places, previews and reopens editor media.
+
+- Capability (`generative_jobs._phone_voiceover_editor_media_available`):
+  narrated, or a montage `voiceover` with no guided plan, plus phone rendering
+  for the creator and a valid revision-1 source catalog
+  (`phone_editor_source_revision`: pinned `PHONE_SOURCES_FIELD` receipts in
+  `all_candidates["clip_paths"]` order). The clamp then sends
+  `phone_editor_media` + `visual_blocks: true` + `visual_block_kinds:
+  ["media"]`; importing a photo/video as a timeline clip is not supported
+  (see the KRI-290 gap above). The variant read
+  carries `editor_revision_number: 1`, which the app registers against.
+- Registration: the existing `POST .../editor-sources` flow; admitted visuals
+  append after the pool in `_editor_sources_v1`.
+- Save: `phone_narrated_plan.replace_editor_media` recompiles only the
+  `editor-media` overlay track with the guided compiler
+  (`compile_editor_media_track`) against pinned + admitted visual receipts.
+  Blocks must sit inside the main video track. The track is kept on top and
+  carried forward by lane and caption Saves; `visual_blocks: []` removes it.
+  The Save route re-checks each placed photo/video's receipt
+  (`validate_editor_sources`).
+- Reopen: saved blocks come back as timeline `native_assets` (`visual_block`),
+  like every other variant.
+
+Apply: `fly secrets set PHONE_EDITOR_MEDIA_ENABLED=true
+VISUAL_BLOCKS_ENABLED=true --app nova-video` + restart (api + worker), once the
+lanes above are on. Rollback: `PHONE_VOICEOVER_EDITOR_LANES_ENABLED=false`
+(closes lanes and media), or `PHONE_EDITOR_MEDIA_ENABLED=false` (also closes
+guided-story media imports). Saved media keeps rendering either way.
+Tests: `tests/routes/test_phone_voiceover_editor_media.py`; iOS
+`NativeEditorSessionTests.testPhoneVoiceoverEdit*`.

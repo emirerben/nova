@@ -326,3 +326,35 @@ def test_the_chat_copilot_sees_and_trims_the_cut(monkeypatch):
     gj.prepare_editor_commit(job, vid, compiled.payload, user_id="owner", plan_item_id="item")
 
     assert _recipe(job, vid).duration == pytest.approx(10.0)
+
+
+def test_added_media_follows_the_cut_and_comes_back_when_it_grows(monkeypatch):
+    """KRI-287 media on a KRI-290 cut: clipped for the render, kept in the save."""
+    from app.pipeline.phone_narrated_plan import EDITOR_MEDIA_TRACK_ID
+    from tests.routes import test_phone_voiceover_editor_media as media
+
+    media._enable(monkeypatch)
+    job, vid = media._media_job()
+    media.save(job, vid, visual_blocks=[media._photo_block(start_s=9.0, end_s=11.5)])
+
+    def photo():
+        track = next((t for t in _recipe(job, vid).tracks if t.id == EDITOR_MEDIA_TRACK_ID), None)
+        return track.clips[0] if track else None
+
+    assert photo().source_duration == pytest.approx(2.5)
+
+    slots = _slots(job, vid)
+    slots[-1]["duration_s"] = 2.0  # the video now ends at 10 s, mid-photo
+    _save(job, vid, timeline_slots=slots)
+    assert (photo().timeline_start, photo().source_duration) == (9.0, pytest.approx(1.0))
+    assert _variant(job)["visual_blocks"][0]["end_s"] == 11.5
+
+    slots = _slots(job, vid)
+    slots[-1]["duration_s"] = 0.5  # ends at 8.5 s, before the photo starts
+    _save(job, vid, timeline_slots=slots)
+    assert photo() is None
+
+    slots = _slots(job, vid)
+    slots[-1]["duration_s"] = 4.0
+    _save(job, vid, timeline_slots=slots)
+    assert photo().source_duration == pytest.approx(2.5)

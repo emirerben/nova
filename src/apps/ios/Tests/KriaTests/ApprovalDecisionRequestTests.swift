@@ -101,6 +101,24 @@ import XCTest
         }
     }
 
+    func testSubmitTurnConflictMessagePrefersServerDetail() {
+        let detail = "A follow-up is already waiting. Approve or dismiss the pending render first."
+        XCTAssertEqual(submitTurnConflictMessage(detail: detail, approvalExpired: false), detail)
+        XCTAssertEqual(submitTurnConflictMessage(detail: detail, approvalExpired: true), detail)
+    }
+
+    func testSubmitTurnConflictMessageFallbackAndExpiredApproval() {
+        XCTAssertEqual(
+            submitTurnConflictMessage(detail: nil, approvalExpired: false),
+            "This conversation changed while you were sending. Review it and try again."
+        )
+        XCTAssertEqual(
+            submitTurnConflictMessage(detail: "  ", approvalExpired: false),
+            "This conversation changed while you were sending. Review it and try again."
+        )
+        XCTAssertNil(submitTurnConflictMessage(detail: nil, approvalExpired: true))
+    }
+
     func testAllFiveSpeechCleanupConflictCodesAreRecognized() {
         for code in [
             "speech_cleanup_pending", "speech_cleanup_choice_required", "speech_cleanup_failed",

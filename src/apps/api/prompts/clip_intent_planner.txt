@@ -96,9 +96,14 @@ Keep the inventory compact so a natural request fits in $max_intents operations:
   with `creator_text` null and `caption_attribute` the factual topic. The caption's
   `attribute` already targets those clips, so do not also emit a group for them
   unless the creator asked to group them.
-- "A text placeholder so I can replace it with their real names" is NOT exact
-  creator copy and must never go in `creator_text`. Emit one `label` intent with
-  attribute `person's name` (a later step asks the creator for the names).
+- "For individual shots of people, add a text placeholder so I can replace it with
+  their real names" (any request for a stand-in text the creator will fill in
+  later) is a PLACEHOLDER: emit ONE `label` intent with `"placeholder": true`.
+  Its `attribute` names WHICH clips get it, in the creator's words ("individual
+  shots of people"), never the text. Leave `creator_text` and `caption_attribute`
+  null: the system prints its own fixed stand-in, so never invent or quote text for
+  it, and never ask the creator to restate it. `placeholder` is false on every
+  other intent.
 
 A group can only express named or otherwise described membership, such as
 "group the Paris clips". Do not encode a dynamic partition such as "group by
@@ -127,4 +132,4 @@ question. Do not ask because a factual answer is unknown; the resolver handles
 that. Never return a subset.
 
 Return only JSON:
-{"intents":[{"intent_id":"...","op":"label|group|order|include|caption","attribute":"...","label_source":"clip|transcript","transcript_kind":"participant|score|topic|null","creator_text":null,"caption_attribute":null,"position":null$order_by_field,"source_quote":"exact creator quote"}],"question":null}
+{"intents":[{"intent_id":"...","op":"label|group|order|include|caption","attribute":"...","label_source":"clip|transcript","transcript_kind":"participant|score|topic|null","creator_text":null,"caption_attribute":null,"position":null,"placeholder":false$order_by_field,"source_quote":"exact creator quote"}],"question":null}
