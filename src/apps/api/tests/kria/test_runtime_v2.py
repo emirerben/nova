@@ -971,19 +971,27 @@ async def test_approval_expiry_is_persisted_before_rejection() -> None:
         commit=AsyncMock(),
     )
 
-    with pytest.raises(RuntimeFailure) as failure:
-        await decide_approval(
-            db,
-            thread_id=thread.id,
-            approval_id=approval.id,
-            creator_id=thread.creator_id,
-            decision="approve",
-            body=_approval_body(approval, thread_revision=5, draft_revision=9),
-        )
+    cancel = AsyncMock(
+        side_effect=RuntimeFailure(409, "approval_expired", "expired", phase="approval")
+    )
+    with patch("app.kria.runtime._cancel_pending_approval", cancel):
+        with pytest.raises(RuntimeFailure) as failure:
+            await decide_approval(
+                db,
+                thread_id=thread.id,
+                approval_id=approval.id,
+                creator_id=thread.creator_id,
+                decision="approve",
+                body=_approval_body(approval, thread_revision=5, draft_revision=9),
+            )
 
+    # KRI-295: approve-on-expired closes the approval through the shared cleanup (fails the
+    # awaiting turn, promotes the queued follow-up); real-Postgres coverage lives in
+    # tests/kria/test_stale_and_expired_approvals.py.
     assert failure.value.code == "approval_expired"
-    assert approval.status == "expired"
-    db.commit.assert_awaited_once()
+    cancel.assert_awaited_once()
+    assert cancel.await_args.kwargs["approval_status"] == "expired"
+    assert cancel.await_args.kwargs["code"] == "approval_expired"
 
 
 @pytest.mark.asyncio

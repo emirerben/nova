@@ -1023,13 +1023,16 @@ private struct CreationWorkspaceView: View {
                 expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID,
                 editorState: editorState
             )
-        } catch APIError.conflict {
+        } catch let error as APIError where error == .conflict {
             pendingMessages.removeAll { $0.id == optimistic.id }
             if prompt.isEmpty { prompt = draftToRestore }
             pendingTurnSubmission = nil
             submissionAnchor = nil
             if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
-            failure = ChatFailure("This conversation changed while you were sending. Review it and try again.")
+            // KRI-295: surface the server's real reason; stay quiet when the expired-approval notice already explains.
+            failure = submitTurnConflictMessage(
+                detail: error.conflictDetail, approvalExpired: approvalNotice != nil
+            ).map { ChatFailure($0) }
             return
         } catch {
             pendingMessages.removeAll { $0.id == optimistic.id }

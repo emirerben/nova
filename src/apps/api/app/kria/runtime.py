@@ -201,8 +201,14 @@ async def submit_turn(
     thread_id: uuid.UUID,
     creator_id: uuid.UUID,
     body: SubmitTurnBody,
+    _expected_revision_override: int | None = None,
 ) -> tuple[TurnAccepted, bool]:
-    """Commit a user event and pending turn together, before broker I/O."""
+    """Commit a user event and pending turn together, before broker I/O.
+
+    ``_expected_revision_override`` is internal: set only on the single re-entry
+    after an overdue approval was lazily expired (that expiry bumps the thread
+    revision, which the client could not have known).
+    """
 
     thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=True)
     digest = request_digest(body)
@@ -239,7 +245,12 @@ async def submit_turn(
             ),
             should_publish,
         )
-    if not matches_conversation_revision(thread, body.expected_thread_revision):
+    if not matches_conversation_revision(
+        thread,
+        body.expected_thread_revision
+        if _expected_revision_override is None
+        else _expected_revision_override,
+    ):
         raise RuntimeFailure(
             409,
             "thread_revision_stale",
@@ -264,6 +275,48 @@ async def submit_turn(
         .scalars()
         .first()
     )
+    if (
+        active is not None
+        and active.status == "awaiting_approval"
+        and _expected_revision_override is None
+    ):
+        # KRI-295: an overdue pending approval must never block the thread (the
+        # creator can no longer decide it -- the UI hides expired cards -- and a
+        # queued follow-up would otherwise 409 every new message forever).
+        overdue_approval_id = (
+            (
+                await db.execute(
+                    select(CreatorAgentApproval.id).where(
+                        CreatorAgentApproval.turn_id == active.id,
+                        CreatorAgentApproval.status == "pending",
+                        CreatorAgentApproval.expires_at <= datetime.now(UTC),
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if overdue_approval_id is not None:
+            # Release the Thread lock taken above: expiry re-locks in canonical
+            # order (Session -> Turn -> Approval -> Execution -> Thread).
+            await db.rollback()
+            revision_after_expiry = await _expire_blocking_approval(
+                db,
+                thread_id=thread_id,
+                creator_id=creator_id,
+                approval_id=overdue_approval_id,
+            )
+            return await submit_turn(
+                db,
+                thread_id=thread_id,
+                creator_id=creator_id,
+                body=body,
+                _expected_revision_override=(
+                    revision_after_expiry
+                    if revision_after_expiry is not None
+                    else body.expected_thread_revision
+                ),
+            )
     inert_response: tuple[Literal["progress", "question"], str] | None = None
     if is_status_question(body.message):
         status = getattr(active, "status", None)
@@ -994,7 +1047,7 @@ async def _apply_strategy_approval_media(
     )
 
 
-async def _cancel_pending_approval(
+async def _close_pending_approval(
     db: AsyncSession,
     *,
     thread: CreationThread,
@@ -1005,14 +1058,17 @@ async def _cancel_pending_approval(
     plan_item: Any,
     code: str,
     message: str,
-) -> None:
-    """Cancel a pending approval that can no longer be decided, then raise its 409.
+    approval_status: str = "cancelled",
+) -> int:
+    """Close a pending approval that can no longer be decided; return the new revision.
 
-    Commits first (so the cancellation persists), promotes the queued follow-up (the
-    reconcile sweep publishes it), and raises the problem the client shows.
+    Commits first (so the closure persists), restores any strategy media stash, and
+    promotes the queued follow-up (the reconcile sweep publishes it). Callers must
+    already hold the locks in canonical order (Session -> Turn -> Approval ->
+    Execution -> Thread, PlanItem ahead of Session when a stash exists).
     """
     now = datetime.now(UTC)
-    approval.status = "cancelled"
+    approval.status = approval_status
     if execution is not None and execution.status == "awaiting_approval":
         execution.status = "stale"
         execution.error = {"code": code, "retryable": False, "recovery": "refresh_replan"}
@@ -1021,7 +1077,8 @@ async def _cancel_pending_approval(
         turn.status = "failed"
         turn.completed_at = now
         turn.error = {"code": code, "retryable": False, "recovery": "refresh_replan"}
-    session.status = "awaiting_feedback"
+    if session.status != "rendering":
+        session.status = "awaiting_feedback"
     preflight_analysis_id = await _restore_strategy_media_snapshot_if_present(
         db, item=plan_item, execution=execution
     )
@@ -1045,6 +1102,35 @@ async def _cancel_pending_approval(
 
         await asyncio.to_thread(publish_preflight_after_commit, preflight_analysis_id)
     await _promote_queued_successor(db, thread_id=thread.id)
+    return revision
+
+
+async def _cancel_pending_approval(
+    db: AsyncSession,
+    *,
+    thread: CreationThread,
+    session: CreatorAgentSession,
+    turn: CreatorAgentTurn,
+    approval: CreatorAgentApproval,
+    execution: CreatorAgentExecution | None,
+    plan_item: Any,
+    code: str,
+    message: str,
+    approval_status: str = "cancelled",
+) -> None:
+    """Close a pending approval (see `_close_pending_approval`), then raise its 409."""
+    revision = await _close_pending_approval(
+        db,
+        thread=thread,
+        session=session,
+        turn=turn,
+        approval=approval,
+        execution=execution,
+        plan_item=plan_item,
+        code=code,
+        message=message,
+        approval_status=approval_status,
+    )
     raise RuntimeFailure(
         409,
         code,
@@ -1052,6 +1138,123 @@ async def _cancel_pending_approval(
         phase="approval",
         recovery="refresh_replan",
         current_revision=revision,
+    )
+
+
+_APPROVAL_EXPIRED_COPY = "This approval expired. Ask Kria to prepare it again."
+
+
+async def _expire_blocking_approval(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    approval_id: uuid.UUID,
+) -> int | None:
+    """Lazily expire an overdue pending approval that blocks `submit_turn` (KRI-295).
+
+    Returns the thread revision after expiry, or None when nothing was expired
+    (decided/extended meanwhile). The caller must hold NO locks: this re-acquires
+    them in canonical order (PlanItem -> Session -> Turn -> Approval -> Execution
+    -> Thread), exactly like `decide_approval`. `submit_turn` therefore rolls back
+    (releasing its Thread lock) before calling this, rather than locking Thread
+    first and then Session/Turn, which would invert the order and can deadlock
+    with a concurrent decide/cancel/sweeper.
+    """
+    approval_ref = (
+        await db.execute(
+            select(CreatorAgentApproval).where(
+                CreatorAgentApproval.id == approval_id,
+                CreatorAgentApproval.thread_id == thread_id,
+                CreatorAgentApproval.creator_id == creator_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if approval_ref is None:
+        return None
+    try:
+        execution_id = uuid.UUID(str((getattr(approval_ref, "execution_ids", None) or [None])[0]))
+    except (TypeError, ValueError, IndexError):
+        execution_id = None
+    execution_peek = None
+    if execution_id is not None:
+        execution_peek = (
+            await db.execute(
+                select(CreatorAgentExecution).where(CreatorAgentExecution.id == execution_id)
+            )
+        ).scalar_one_or_none()
+    has_stash = bool(
+        execution_peek is not None
+        and isinstance(execution_peek.result, dict)
+        and "strategy_media_before" in execution_peek.result
+    )
+    plan_item = (
+        await _lock_strategy_plan_item(
+            db, session_id=approval_ref.session_id, creator_id=creator_id
+        )
+        if has_stash
+        else None
+    )
+    session = (
+        await db.execute(
+            select(CreatorAgentSession)
+            .where(
+                CreatorAgentSession.id == approval_ref.session_id,
+                CreatorAgentSession.creator_id == creator_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    turn = (
+        await db.execute(
+            select(CreatorAgentTurn)
+            .where(
+                CreatorAgentTurn.id == approval_ref.turn_id,
+                CreatorAgentTurn.thread_id == thread_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    approval = (
+        await db.execute(
+            select(CreatorAgentApproval)
+            .where(CreatorAgentApproval.id == approval_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    execution = None
+    if execution_id is not None:
+        execution = (
+            await db.execute(
+                select(CreatorAgentExecution)
+                .where(CreatorAgentExecution.id == execution_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+    thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=True)
+    if (
+        session is None
+        or turn is None
+        or approval is None
+        or approval.status != "pending"
+        or approval.expires_at > datetime.now(UTC)
+    ):
+        await db.rollback()
+        return None
+    return await _close_pending_approval(
+        db,
+        thread=thread,
+        session=session,
+        turn=turn,
+        approval=approval,
+        execution=execution,
+        plan_item=plan_item,
+        code="approval_expired",
+        message=(
+            "That approval expired before it was decided, so nothing was rendered. "
+            "Tell me what you want and I'll prepare it again."
+        ),
+        approval_status="expired",
     )
 
 
@@ -1296,24 +1499,20 @@ async def decide_approval(
             current_revision=int(thread.revision),
         )
     if decision == "approve" and approval.expires_at <= now:
-        approval.status = "expired"
-        # An expired approval can never be approved either -- reverse any
-        # strategy media mutation still pending reversal, exactly like deny.
-        expiry_preflight_analysis_id = await _restore_strategy_media_snapshot_if_present(
-            db, item=plan_item, execution=execution
-        )
-        await db.commit()
-        if expiry_preflight_analysis_id is not None:
-            from app.services.plan_item_media import publish_preflight_after_commit  # noqa: PLC0415
-
-            await asyncio.to_thread(publish_preflight_after_commit, expiry_preflight_analysis_id)
-        raise RuntimeFailure(
-            409,
-            "approval_expired",
-            "This approval expired. Ask Kria to prepare it again.",
-            phase="approval",
-            recovery="refresh_replan",
-            current_revision=int(thread.revision),
+        # An expired approval can never be approved: close it like a stale one
+        # (restores any strategy media stash, fails the awaiting turn, promotes
+        # the queued follow-up) so it cannot keep blocking the thread (KRI-295).
+        await _cancel_pending_approval(
+            db,
+            thread=thread,
+            session=session,
+            turn=turn,
+            approval=approval,
+            execution=execution,
+            plan_item=plan_item,
+            code="approval_expired",
+            message=_APPROVAL_EXPIRED_COPY,
+            approval_status="expired",
         )
     if decision == "approve" and approval.draft_revision != body.expected_draft_revision:
         raise RuntimeFailure(

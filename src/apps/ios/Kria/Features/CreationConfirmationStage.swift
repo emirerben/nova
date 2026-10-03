@@ -150,6 +150,15 @@ func shouldSurfaceSpeechCleanupConflict(
     after.offer == .plain && before.offer == .plain && before.analysisID == after.analysisID
 }
 
+/// KRI-295: copy for a 409 on turn submit. The server's own reason wins
+/// (e.g. `queued_successor_exists`); with no reason, the generic sentence --
+/// unless an expired-approval notice is already on screen, in which case a
+/// second generic banner would contradict it, so show nothing extra.
+func submitTurnConflictMessage(detail: String?, approvalExpired: Bool) -> String? {
+    if let detail = detail?.trimmingCharacters(in: .whitespacesAndNewlines), !detail.isEmpty { return detail }
+    return approvalExpired ? nil : "This conversation changed while you were sending. Review it and try again."
+}
+
 /// KRI-118 item 2: `day_vlog`/`single_hero` still report `edit_format:
 /// "montage"` to the chat picker (the picker only ever offers Montage for the
 /// whole `GUIDED_EDIT_FORMATS` family), so the actual shape rides separately
