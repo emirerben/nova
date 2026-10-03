@@ -3344,7 +3344,10 @@ async def capabilities(user: CurrentUser, native_client: NativeClient = False) -
         "editor_state_turns": bool(settings.kria_editor_state_turns_enabled),
         "editor_state_max_bytes": EDITOR_STATE_MAX_BYTES,
         "slide_post_rich_text": bool(settings.slide_post_rich_text_enabled),
-        "slide_post_chat_edit": bool(settings.slide_post_chat_edit_enabled),
+        # Chat edit round-trips rich per-slide text, so it needs that flag too.
+        "slide_post_chat_edit": bool(
+            settings.slide_post_chat_edit_enabled and settings.slide_post_rich_text_enabled
+        ),
         "creation_mode": "device_only" if settings.ios_device_only_mode else "hybrid",
         "minimum_client_protocol": settings.kria_minimum_client_protocol,
         "formats": [

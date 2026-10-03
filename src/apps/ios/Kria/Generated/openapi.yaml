@@ -6363,8 +6363,7 @@
           },
           "turns": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/SlidePostChatTurn"
             },
             "maxItems": 12,
             "title": "Turns",
@@ -6425,6 +6424,46 @@
           "base_version"
         ],
         "title": "SlidePostChatEditResponse",
+        "type": "object"
+      },
+      "SlidePostChatTurn": {
+        "description": "One prior chat turn: the `EditCopilotInput.prior_turns` shape, size-bounded.",
+        "properties": {
+          "applied": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Applied",
+            "type": "array"
+          },
+          "content": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Content",
+            "type": "string"
+          },
+          "rejected": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Rejected",
+            "type": "array"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "SlidePostChatTurn",
         "type": "object"
       },
       "SlidePostDraft": {

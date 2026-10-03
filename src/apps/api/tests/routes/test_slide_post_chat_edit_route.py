@@ -32,6 +32,7 @@ def _reset(monkeypatch: pytest.MonkeyPatch):
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: AsyncMock()
     monkeypatch.setattr(settings, "slide_post_chat_edit_enabled", True)
+    monkeypatch.setattr(settings, "slide_post_rich_text_enabled", True)
     monkeypatch.setattr(settings, "slide_posts_enabled", True)
     yield
     app.dependency_overrides.clear()
@@ -147,6 +148,55 @@ def test_request_schema_rejects_an_empty_message_and_long_history(
     item, _ = _install(monkeypatch, _draft(ids, version=2), ids)
     assert _post(client, item, message="").status_code == 422
     assert _post(client, item, turns=[{"role": "user"}] * 13).status_code == 422
+
+
+def test_turns_are_size_bounded_and_role_checked(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids = [uuid.uuid4()]
+    item, run = _install(monkeypatch, _draft(ids, version=2), ids)
+    big = [{"role": "user", "content": "x" * 2001}]
+    assert _post(client, item, turns=big).status_code == 422
+    assert _post(client, item, turns=[{"role": "system", "content": "hi"}]).status_code == 422
+    ok = [{"role": "user", "content": "x" * 2000}, {"role": "assistant", "content": "ok"}]
+    assert _post(client, item, turns=ok).status_code == 200
+    assert run.await_args.kwargs["turns"][1]["role"] == "assistant"
+
+
+def test_chat_edit_needs_rich_text_flag_too(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids = [uuid.uuid4()]
+    item, run = _install(monkeypatch, _draft(ids, version=2), ids)
+    monkeypatch.setattr(settings, "slide_post_rich_text_enabled", False)
+    assert _post(client, item).status_code == 404
+    assert run.await_count == 0
+
+
+async def test_capability_requires_both_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.routes.creation_threads import capabilities  # noqa: PLC0415
+
+    user = MagicMock()
+    user.id = uuid.uuid4()
+    for chat, rich, expected in [
+        (True, True, True),
+        (True, False, False),
+        (False, True, False),
+    ]:
+        monkeypatch.setattr(settings, "slide_post_chat_edit_enabled", chat)
+        monkeypatch.setattr(settings, "slide_post_rich_text_enabled", rich)
+        caps = await capabilities(user, False)
+        assert caps["slide_post_chat_edit"] is expected
+
+
+def test_per_user_hourly_limit_is_stacked_on_the_ip_limit() -> None:
+    import inspect  # noqa: PLC0415
+
+    src = inspect.getsource(plan_items)
+    start = src.index("async def chat_edit_slide_post")
+    decorators = src[src.rindex("@router.post", 0, start) : start]
+    assert '"20/minute", key_func=get_real_ip' in decorators
+    assert '"30/hour", key_func=_edit_conversation_rate_key' in decorators
 
 
 def test_route_never_writes_to_the_database(
