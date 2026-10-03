@@ -6642,6 +6642,20 @@ def _run_phone_narrated_job(
             "voiceover_bed_level": bed_level,
             "ok": False,
         }
+        # KRI-281: persist the cut the editor shows, derived from the very recipe
+        # just pinned (same code the read-time projection uses for videos rendered
+        # before this existed). Clip ids index the source pool the timeline lists.
+        from app.services.phone_voiceover_timeline import (  # noqa: PLC0415
+            narrated_timings_and_assignments,
+            source_pool_paths,
+        )
+
+        projected_cut = narrated_timings_and_assignments(
+            recipe, list(bindings), source_pool_paths(current, all_candidates)
+        )
+        if projected_cut is not None:
+            new_entry["narrated_timings"] = projected_cut[0]
+            new_entry["narrated_clip_assignments"] = projected_cut[1]
         if cleaned_narration is not None:
             # Admin/debug parity with the cloud `required_v1` narrated
             # render, and the source `_speech_cleanup_outcome_context` the
@@ -25794,6 +25808,10 @@ def _run_reburn_narrated_bed_level(
         raise ValueError(f"variant {variant_id} not found on job {job_id}")
     if variant.get("resolved_archetype") not in _BED_LEVEL_ARCHETYPES:
         raise ValueError(f"variant {variant_id} has no background-sound bed to mix")
+    if variant.get("render_destination") == "device":
+        # A phone-rendered narrated variant persists `narrated_timings` (KRI-281) only
+        # so the editor can show its cut; it has no cloud base to re-mix.
+        raise ValueError(f"variant {variant_id} renders on the device — no cloud bed to re-mix")
     rank = variant.get("rank")
     narrated_timings = list(variant.get("narrated_timings") or [])
     if not narrated_timings:

@@ -16,6 +16,7 @@ from app.agents._runtime import (
     CostControlUnavailableError,
     ProviderOutcomeUnknownError,
 )
+from app.auth import parse_kria_client_protocol
 from app.config import settings
 from app.db_locks import transient_sqlstate
 from app.limiter import limiter
@@ -61,6 +62,7 @@ from app.routes import (
     uploads,
     waitlist,
 )
+from app.services.client_protocol import set_client_protocol
 from app.services.ios_device_admission import http_creation_mutation_admission
 
 log = structlog.get_logger()
@@ -121,6 +123,7 @@ async def request_correlation(request: Request, call_next):  # noqa: ANN001
     correlation_id = _safe_trace_id(request.headers.get("x-correlation-id")) or request_id
     request.state.request_id = request_id
     request.state.correlation_id = correlation_id
+    set_client_protocol(parse_kria_client_protocol(request.headers.get("x-kria-client-protocol")))
     structlog.contextvars.clear_contextvars()
     structlog.contextvars.bind_contextvars(
         request_id=request.state.request_id,

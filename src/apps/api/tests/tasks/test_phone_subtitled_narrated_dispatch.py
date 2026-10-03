@@ -1985,6 +1985,17 @@ def test_narrated_ready_compiles_and_pins_device_request(monkeypatch):
     assert variant["caption_cues"]
     video_track = next(t for t in status.request.recipe.tracks if t.kind == "video")
     assert [clip.timeline_start for clip in video_track.clips] == [0.0, 4.0, 8.0]
+    # KRI-281: the cut the editor shows is persisted beside the pinned recipe.
+    assert [(t["start_s"], t["end_s"]) for t in variant["narrated_timings"]] == [
+        (0.0, 4.0),
+        (4.0, 8.0),
+        (8.0, 12.0),
+    ]
+    assignments = variant["narrated_clip_assignments"]
+    assert [a["step_id"] for a in assignments] == [
+        t["step_id"] for t in variant["narrated_timings"]
+    ]
+    assert all(a["clip_id"].startswith("clip_") for a in assignments)
 
 
 def test_narrated_scripted_two_plus_steps_uses_force_alignment(monkeypatch):

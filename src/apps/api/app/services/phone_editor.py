@@ -20,7 +20,7 @@ from app.pipeline.guided_story import (
 )
 from app.pipeline.phone_captions import caption_look_from_variant
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
-from app.pipeline.phone_narrated_plan import replace_narrated_captions
+from app.pipeline.phone_narrated_plan import replace_editor_lanes, replace_narrated_captions
 from app.pipeline.phone_recipe_shared import PhoneNarrationBed
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, lane_names
 from app.pipeline.phone_subtitled_plan import (
@@ -39,6 +39,7 @@ from app.services.phone_editor_sources import (
 from app.services.phone_rollout import (
     phone_narrated_caption_edits_supported,
     phone_subtitled_editor_lanes_supported,
+    phone_voiceover_editor_lanes_supported,
     validate_phone_pilot_recipe,
 )
 from app.services.phone_sources import (
@@ -76,6 +77,11 @@ _SUBTITLED_EDITOR_SECTIONS = frozenset(
 # phone compiler has no editor lane for anything else, so every other section
 # stays closed rather than silently dropped on Save.
 _NARRATED_EDITOR_SECTIONS = frozenset({"caption_cues", "caption_meta"})
+_NARRATED_CAPTION_SECTIONS = frozenset({"caption_cues", "caption_meta"})
+# KRI-281: a phone Voiceover edit (`narrated`, or a montage `voiceover`) also
+# honours the sound-effect and Visuals lanes, recompiled through the SAME lane
+# helpers phone Talking uses -- only while `phone_voiceover_editor_lanes_supported`.
+_VOICEOVER_LANE_SECTIONS = frozenset({"sound_effects", "media_overlays"})
 
 
 def is_phone_narrated_editor_variant(variant: object) -> bool:
@@ -85,6 +91,19 @@ def is_phone_narrated_editor_variant(variant: object) -> bool:
         isinstance(variant, dict)
         and variant.get("render_destination") == "device"
         and variant.get("resolved_archetype") == "narrated"
+    )
+
+
+def is_phone_voiceover_montage_editor_variant(variant: object, assembly: dict) -> bool:
+    """True for a phone-rendered montage `voiceover` variant -- the shape
+    `_run_phone_voiceover_montage_job` pins -- that has no guided plan to fall
+    back to (KRI-281)."""
+    return (
+        isinstance(variant, dict)
+        and variant.get("render_destination") == "device"
+        and variant.get("resolved_archetype") == "voiceover"
+        and not variant.get(PHONE_EDITOR_PLAN_FIELD)
+        and "guided_story_execution_plan" not in assembly
     )
 
 
@@ -149,7 +168,23 @@ def prepare_phone_editor_commit(
             )
         elif is_phone_narrated_editor_variant(variant):
             _compile_narrated_editor_commit(
-                staged, variant, variant_id, prep=prep, previous=previous
+                staged,
+                assembly,
+                variant,
+                variant_id,
+                prep=prep,
+                previous=previous,
+                sfx_catalog_paths=sfx_catalog_paths or {},
+            )
+        elif is_phone_voiceover_montage_editor_variant(variant, assembly):
+            _compile_voiceover_montage_editor_commit(
+                staged,
+                assembly,
+                variant,
+                variant_id,
+                prep=prep,
+                previous=previous,
+                sfx_catalog_paths=sfx_catalog_paths or {},
             )
         else:
             plan = copy.deepcopy(
@@ -256,6 +291,117 @@ def prepare_phone_editor_commit(
     return {**prep, "render_destination": "device", "render_task_id": None}
 
 
+def _assembly_visuals(assembly: dict) -> tuple[PhoneVisualBinding, ...]:
+    return tuple(
+        PhoneVisualBinding.model_validate(row) for row in assembly.get(PHONE_VISUALS_FIELD) or []
+    )
+
+
+def _previous_lane_state(
+    variant: dict, previous: Any, visuals: tuple[PhoneVisualBinding, ...]
+) -> tuple[PhoneSubtitledLanes | None, dict[str, str], dict[str, str]]:
+    """``(lanes, labels, paths)`` as of the last Save: the persisted lanes field,
+    else (first-ever Save) derived from the worker-pinned recipe so an untouched
+    section carries forward instead of silently vanishing."""
+    persisted = variant.get(PHONE_SUBTITLED_EDITOR_LANES_FIELD)
+    previous_lanes: PhoneSubtitledLanes | None = None
+    if isinstance(persisted, dict) and isinstance(persisted.get("lanes"), dict):
+        previous_lanes = PhoneSubtitledLanes.model_validate(persisted["lanes"])
+    labels: dict[str, str] = {}
+    if isinstance(persisted, dict) and isinstance(persisted.get("labels"), dict):
+        labels = dict(persisted["labels"])
+    # Real catalog audio object per catalog id (recipes carry no storage
+    # paths); the committed section carries the route-resolved path for every
+    # effect it names, previously persisted paths and `sfx_catalog_paths`
+    # cover the rest (see `_settle_lane_labels_and_paths`).
+    paths: dict[str, str] = {}
+    if isinstance(persisted, dict) and isinstance(persisted.get("paths"), dict):
+        paths = {str(k): str(v) for k, v in persisted["paths"].items() if v}
+    if previous_lanes is None and isinstance(previous.recipe, EditRecipeV2):
+        previous_lanes = lanes_from_recipe(
+            previous.recipe, visuals=visuals, duck_receipt=variant.get(SFX_DUCK_RECEIPT_FIELD)
+        )
+    return previous_lanes, labels, paths
+
+
+def _settle_lane_labels_and_paths(
+    lanes: PhoneSubtitledLanes,
+    labels: dict[str, str],
+    paths: dict[str, str],
+    *,
+    prep: dict,
+    sfx_catalog_paths: Mapping[str, str],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """The labels/paths bags to persist after a lane compile (shared by every
+    phone archetype that edits the sound-effect lane)."""
+    # Keep the labels bag limited to catalog ids still on the timeline, and
+    # pick up any label the committed sfx section carried for a newly added
+    # effect (`resolve_editor_sound_effect_placements` fills it from the
+    # catalog row before this function ever runs).
+    active_catalog_ids = {resolved.asset.catalog_id for resolved in lanes.sound_effects}
+    labels = {
+        catalog_id: label
+        for catalog_id, label in labels.items()
+        if catalog_id in active_catalog_ids
+    }
+    paths = {
+        catalog_id: path for catalog_id, path in paths.items() if catalog_id in active_catalog_ids
+    }
+    for item in prep.get("sfx_override") or []:
+        catalog_id = item.get("sound_effect_id")
+        label = item.get("label")
+        path = item.get("src_gcs_path")
+        if isinstance(catalog_id, str) and isinstance(label, str) and label:
+            labels[catalog_id] = label
+        # A chat edit compiles its section from the variant's own rows without
+        # the route's catalog resolve, so it can echo a placeholder back.
+        if isinstance(catalog_id, str) and is_catalog_sfx_path(catalog_id, path):
+            paths[catalog_id] = path
+    # iOS commits only CHANGED sections: an effect carried over from the
+    # pinned recipe (or from a Save that never learned its path) has no known
+    # object, and persisting the placeholder made every later preview sign a
+    # 404. Fill it from the caller's catalog read; the bag only ever holds real
+    # catalog objects.
+    for catalog_id in active_catalog_ids:
+        if is_catalog_sfx_path(catalog_id, paths.get(catalog_id)):
+            continue
+        resolved_path = sfx_catalog_paths.get(catalog_id)
+        if is_catalog_sfx_path(catalog_id, resolved_path):
+            paths[catalog_id] = resolved_path
+        else:
+            paths.pop(catalog_id, None)
+
+    return labels, paths
+
+
+def _persist_lane_state(
+    row: dict,
+    lanes: PhoneSubtitledLanes,
+    labels: dict[str, str],
+    paths: dict[str, str],
+    *,
+    caption_style: str,
+    duck_receipt: dict | None,
+) -> None:
+    """Write the compiled lane state onto the variant row (shared by every
+    phone archetype whose Save recompiles the sound-effect / Visuals lanes)."""
+    sections = sections_from_lanes(lanes, labels=labels, paths=paths)
+    row[PHONE_SUBTITLED_EDITOR_LANES_FIELD] = {
+        "version": 1,
+        "caption_style": caption_style,
+        "lanes": lanes.model_dump(mode="json"),
+        "labels": labels,
+        "paths": paths,
+    }
+    row["sound_effects"] = sections["sound_effects"] or None
+    row["media_overlays"] = sections["media_overlays"] or None
+    row["phone_lane_receipt"] = {"applied": list(lane_names(lanes)), "dropped": []}
+    if duck_receipt is not None:
+        row[SFX_DUCK_RECEIPT_FIELD] = duck_receipt
+    else:
+        row.pop(SFX_DUCK_RECEIPT_FIELD, None)
+
+
 def _compile_subtitled_editor_commit(
     staged: Any,
     assembly: dict,
@@ -284,33 +430,8 @@ def _compile_subtitled_editor_commit(
         name = sorted(unsupported_sections)[0]
         raise ValueError(f"{name} isn't supported on phone Talking edits yet")
 
-    persisted = variant.get(PHONE_SUBTITLED_EDITOR_LANES_FIELD)
-    previous_lanes: PhoneSubtitledLanes | None = None
-    if isinstance(persisted, dict) and isinstance(persisted.get("lanes"), dict):
-        previous_lanes = PhoneSubtitledLanes.model_validate(persisted["lanes"])
-    labels: dict[str, str] = {}
-    if isinstance(persisted, dict) and isinstance(persisted.get("labels"), dict):
-        labels = dict(persisted["labels"])
-    # Real catalog audio object per catalog id (recipes carry no storage
-    # paths); the committed section carries the route-resolved path for every
-    # effect it names, previously persisted paths and `sfx_catalog_paths`
-    # cover the rest (see the fill below the compile).
-    paths: dict[str, str] = {}
-    if isinstance(persisted, dict) and isinstance(persisted.get("paths"), dict):
-        paths = {str(k): str(v) for k, v in persisted["paths"].items() if v}
-
-    visuals = tuple(
-        PhoneVisualBinding.model_validate(row) for row in assembly.get(PHONE_VISUALS_FIELD) or []
-    )
-    if previous_lanes is None and isinstance(previous.recipe, EditRecipeV2):
-        # First-ever phone-editor Save on this variant: no persisted lanes
-        # field yet -- fall back to deriving the current lane state from the
-        # worker-pinned recipe so an untouched section (sound_effects when
-        # only media_overlays was committed, or vice versa) carries forward
-        # instead of silently vanishing.
-        previous_lanes = lanes_from_recipe(
-            previous.recipe, visuals=visuals, duck_receipt=variant.get(SFX_DUCK_RECEIPT_FIELD)
-        )
+    visuals = _assembly_visuals(assembly)
+    previous_lanes, labels, paths = _previous_lane_state(variant, previous, visuals)
 
     bindings = tuple(
         PhoneSourceBinding.model_validate(row) for row in assembly[PHONE_SOURCES_FIELD]
@@ -375,44 +496,9 @@ def _compile_subtitled_editor_commit(
     )
     pin_device_request(staged, request, base_generation=prep["generation"])
 
-    # Keep the labels bag limited to catalog ids still on the timeline, and
-    # pick up any label the committed sfx section carried for a newly added
-    # effect (`resolve_editor_sound_effect_placements` fills it from the
-    # catalog row before this function ever runs).
-    active_catalog_ids = {resolved.asset.catalog_id for resolved in lanes.sound_effects}
-    labels = {
-        catalog_id: label
-        for catalog_id, label in labels.items()
-        if catalog_id in active_catalog_ids
-    }
-    paths = {
-        catalog_id: path for catalog_id, path in paths.items() if catalog_id in active_catalog_ids
-    }
-    for item in prep.get("sfx_override") or []:
-        catalog_id = item.get("sound_effect_id")
-        label = item.get("label")
-        path = item.get("src_gcs_path")
-        if isinstance(catalog_id, str) and isinstance(label, str) and label:
-            labels[catalog_id] = label
-        # A chat edit compiles its section from the variant's own rows without
-        # the route's catalog resolve, so it can echo a placeholder back.
-        if isinstance(catalog_id, str) and is_catalog_sfx_path(catalog_id, path):
-            paths[catalog_id] = path
-    # iOS commits only CHANGED sections: an effect carried over from the
-    # pinned recipe (or from a Save that never learned its path) has no known
-    # object, and persisting the placeholder made every later preview sign a
-    # 404. Fill it from the caller's catalog read; the bag only ever holds real
-    # catalog objects.
-    for catalog_id in active_catalog_ids:
-        if is_catalog_sfx_path(catalog_id, paths.get(catalog_id)):
-            continue
-        resolved_path = sfx_catalog_paths.get(catalog_id)
-        if is_catalog_sfx_path(catalog_id, resolved_path):
-            paths[catalog_id] = resolved_path
-        else:
-            paths.pop(catalog_id, None)
-
-    sections = sections_from_lanes(lanes, labels=labels, paths=paths)
+    labels, paths = _settle_lane_labels_and_paths(
+        lanes, labels, paths, prep=prep, sfx_catalog_paths=sfx_catalog_paths
+    )
     for row in staged.assembly_plan["variants"]:
         if row.get("variant_id") != variant_id:
             continue
@@ -421,33 +507,59 @@ def _compile_subtitled_editor_commit(
         row["duration_s"] = recipe.duration
         if caption_cues_overridden:
             row["caption_cues"] = caption_cues
-        row[PHONE_SUBTITLED_EDITOR_LANES_FIELD] = {
-            "version": 1,
-            "caption_style": caption_style,
-            "lanes": lanes.model_dump(mode="json"),
-            "labels": labels,
-            "paths": paths,
-        }
-        row["sound_effects"] = sections["sound_effects"] or None
-        row["media_overlays"] = sections["media_overlays"] or None
-        row["phone_lane_receipt"] = {"applied": list(lane_names(lanes)), "dropped": []}
-        if duck_receipt is not None:
-            row[SFX_DUCK_RECEIPT_FIELD] = duck_receipt
-        else:
-            row.pop(SFX_DUCK_RECEIPT_FIELD, None)
+        _persist_lane_state(
+            row, lanes, labels, paths, caption_style=caption_style, duck_receipt=duck_receipt
+        )
+
+
+def _commit_voiceover_lanes(
+    recipe: EditRecipeV2,
+    *,
+    assembly: dict,
+    variant: dict,
+    previous: Any,
+    prep: dict,
+    sfx_catalog_paths: Mapping[str, str],
+    video_track_id: str,
+) -> tuple[EditRecipeV2, PhoneSubtitledLanes, dict[str, str], dict[str, str]]:
+    """Recompile a phone Voiceover recipe's sound-effect / Visuals lanes from the
+    committed sections (KRI-281), reusing Talking's lane bridge end to end:
+    ``(recipe, lanes, labels, paths)``.
+
+    Visuals admitted by the editor (async source registration) count alongside
+    the generation's own pinned visuals, like the guided branch.
+    """
+    visuals = _assembly_visuals(assembly) + editor_visual_bindings(variant)
+    previous_lanes, labels, paths = _previous_lane_state(variant, previous, visuals)
+    lanes = lanes_from_editor_sections(
+        previous=previous_lanes,
+        sound_effects=prep.get("sfx_override"),
+        media_overlays=prep.get("media_overlays_override"),
+        visuals=visuals,
+    )
+    recipe = replace_editor_lanes(
+        recipe, lanes=lanes, visuals=visuals, video_track_id=video_track_id
+    )
+    labels, paths = _settle_lane_labels_and_paths(
+        lanes, labels, paths, prep=prep, sfx_catalog_paths=sfx_catalog_paths
+    )
+    return recipe, lanes, labels, paths
 
 
 def _compile_narrated_editor_commit(
     staged: Any,
+    assembly: dict,
     variant: dict,
     variant_id: str,
     *,
     prep: dict,
     previous: Any,
+    sfx_catalog_paths: Mapping[str, str],
 ) -> None:
     """The `resolved_archetype == "narrated"` counterpart of the subtitled
     branch above (KRI-280): swap the committed caption cues and look into the
-    pinned recipe (`replace_narrated_captions`).
+    pinned recipe (`replace_narrated_captions`), and (KRI-281) recompile the
+    sound-effect / Visuals lanes (`replace_editor_lanes`).
 
     ``variant`` is the STAGED row, so `_prepare_editor_commit` has already
     written the validated cues and caption-meta fields onto it. The clips,
@@ -456,11 +568,17 @@ def _compile_narrated_editor_commit(
     ``ValueError``/``UnsupportedPhonePlan`` on anything unsupported, caught by
     the same broad ``except`` in `prepare_phone_editor_commit`.
     """
-    if not phone_narrated_caption_edits_supported():
+    active_sections = {key for key, value in prep["sections"].items() if value}
+    caption_active = active_sections & _NARRATED_CAPTION_SECTIONS
+    lanes_active = active_sections & _VOICEOVER_LANE_SECTIONS
+    lanes_ok = phone_voiceover_editor_lanes_supported(require_client=False)
+    if lanes_active and not lanes_ok:
+        raise ValueError("phone Voiceover sound effects and Visuals aren't editable yet")
+    if (caption_active or not lanes_active) and not phone_narrated_caption_edits_supported():
         raise ValueError("phone Narrated captions aren't editable yet")
 
-    active_sections = {key for key, value in prep["sections"].items() if value}
-    unsupported_sections = active_sections - _NARRATED_EDITOR_SECTIONS
+    allowed = _NARRATED_EDITOR_SECTIONS | (_VOICEOVER_LANE_SECTIONS if lanes_ok else frozenset())
+    unsupported_sections = active_sections - allowed
     if unsupported_sections:
         name = sorted(unsupported_sections)[0]
         raise ValueError(f"{name} isn't supported on phone Narrated edits yet")
@@ -471,13 +589,30 @@ def _compile_narrated_editor_commit(
     caption_cues_overridden = caption_cues is not None
     if caption_cues is None:
         caption_cues = variant.get("caption_cues") or []
-    recipe = replace_narrated_captions(
-        previous.recipe,
-        caption_cues=caption_cues,
-        caption_style="word" if variant.get("voiceover_caption_style") == "word" else "sentence",
-        look=caption_look_from_variant(variant),
+    recipe = previous.recipe
+    if caption_active or not lanes_active:
+        caption_style = "word" if variant.get("voiceover_caption_style") == "word" else "sentence"
+        recipe = replace_narrated_captions(
+            recipe,
+            caption_cues=caption_cues,
+            caption_style=caption_style,
+            look=caption_look_from_variant(variant),
+        )
+    lane_state = None
+    if lanes_active:
+        lane_state = _commit_voiceover_lanes(
+            recipe,
+            assembly=assembly,
+            variant=variant,
+            previous=previous,
+            prep=prep,
+            sfx_catalog_paths=sfx_catalog_paths,
+            video_track_id="narrated",
+        )
+        recipe = lane_state[0]
+    validate_phone_pilot_recipe(
+        recipe, allow_editor_media=bool(lane_state and lane_state[1].overlays)
     )
-    validate_phone_pilot_recipe(recipe)
     request = make_device_request(
         job_id=previous.identity.job_id,
         variant_id=variant_id,
@@ -495,6 +630,65 @@ def _compile_narrated_editor_commit(
         row["duration_s"] = recipe.duration
         if caption_cues_overridden:
             row["caption_cues"] = caption_cues
+        if lane_state is not None:
+            _, lanes, labels, paths = lane_state
+            _persist_lane_state(
+                row,
+                lanes,
+                labels,
+                paths,
+                caption_style=str(row.get("voiceover_caption_style") or "sentence"),
+                duck_receipt=None,
+            )
+
+
+def _compile_voiceover_montage_editor_commit(
+    staged: Any,
+    assembly: dict,
+    variant: dict,
+    variant_id: str,
+    *,
+    prep: dict,
+    previous: Any,
+    sfx_catalog_paths: Mapping[str, str],
+) -> None:
+    """Save for a phone montage `voiceover` variant (KRI-281): only the
+    sound-effect and Visuals lanes are editable; the clips, voice and music beds
+    and intro text stay exactly as pinned."""
+    if not phone_voiceover_editor_lanes_supported(require_client=False):
+        raise ValueError("phone Voiceover sound effects and Visuals aren't editable yet")
+    active_sections = {key for key, value in prep["sections"].items() if value}
+    unsupported_sections = active_sections - _VOICEOVER_LANE_SECTIONS
+    if unsupported_sections:
+        name = sorted(unsupported_sections)[0]
+        raise ValueError(f"{name} isn't supported on phone Voiceover edits yet")
+    if not isinstance(previous.recipe, EditRecipeV2):
+        raise ValueError("phone Voiceover edits need a pinned v2 recipe")
+
+    recipe, lanes, labels, paths = _commit_voiceover_lanes(
+        previous.recipe,
+        assembly=assembly,
+        variant=variant,
+        previous=previous,
+        prep=prep,
+        sfx_catalog_paths=sfx_catalog_paths,
+        video_track_id="montage",
+    )
+    validate_phone_pilot_recipe(recipe, allow_editor_media=bool(lanes.overlays))
+    request = make_device_request(
+        job_id=previous.identity.job_id,
+        variant_id=variant_id,
+        revision=previous.identity.recipe_revision + 1,
+        recipe=recipe,
+    )
+    pin_device_request(staged, request, base_generation=prep["generation"])
+    for row in staged.assembly_plan["variants"]:
+        if row.get("variant_id") != variant_id:
+            continue
+        row["render_status"] = "awaiting_device"
+        row["render_destination"] = "device"
+        row["duration_s"] = recipe.duration
+        _persist_lane_state(row, lanes, labels, paths, caption_style="sentence", duck_receipt=None)
 
 
 def _previous_keep_segments(
