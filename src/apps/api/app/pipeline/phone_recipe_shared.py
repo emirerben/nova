@@ -19,6 +19,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.kria.recipes import Canvas, MediaTransform
 from app.kria.render_assets import RenderFingerprint
 
 # Mirrors `phone_guided_plan._EXPORT_SAFETY_MARGIN_S` -- see that module's
@@ -46,6 +47,28 @@ NARRATED_FOOTAGE_BED_MAX_GAIN = 0.6
 def audio_fade(clip_duration_s: float) -> float:
     """`PHONE_AUDIO_FADE_S`, shortened so a fade never covers half a short clip."""
     return round(max(0.0, min(PHONE_AUDIO_FADE_S, clip_duration_s / 2)), 6)
+
+
+def fit_transform(
+    display_w: int, display_h: int, canvas: Canvas, landscape_fit: str
+) -> MediaTransform:
+    """Main-track ``MediaTransform`` that letterboxes a landscape source.
+
+    The phone engine cover-fills every main-track clip into the canvas, then
+    applies ``transform.scale`` about the canvas center over a black base. A
+    landscape clip (``display_w > display_h``) with ``landscape_fit == "fit"``
+    therefore needs ``scale = contain / cover`` to end up fully visible with
+    bars -- 0.31640625 for 1920x1080 into 1080x1920. Everything else (portrait,
+    square, ``"fill"``) is the identity transform, i.e. the engine's native
+    cover-fill/center-crop, which keeps those recipes byte-identical.
+
+    Mirrors the cloud's ``resolve_output_fit`` (``reframe.py``) fit semantics.
+    """
+    if landscape_fit != "fit" or display_w <= display_h:
+        return MediaTransform()
+    contain = min(canvas.width / display_w, canvas.height / display_h)
+    cover = max(canvas.width / display_w, canvas.height / display_h)
+    return MediaTransform(scale=contain / cover)
 
 
 def snap_text_overshoot(layers: Iterable[Any], timeline_end_s: float) -> None:

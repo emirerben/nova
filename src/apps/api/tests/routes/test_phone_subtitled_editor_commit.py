@@ -464,6 +464,74 @@ def _cut_phone_job(monkeypatch, *, enable=True):
     return job
 
 
+def _letterboxed_phone_job(monkeypatch, *, cut: bool):
+    """A pinned landscape (1920x1080) `subtitled` variant compiled with
+    ``landscape_fit="fit"`` (KRI-283), optionally with a speech-cleanup cut."""
+    from app.pipeline.silence_cut import CutPlan, Removal
+
+    _enable_subtitled_editor(monkeypatch)
+    monkeypatch.setattr(gj.settings, "phone_sfx_speech_duck_enabled", False)
+    bindings = (_binding(duration_s=10.0, width=1920, height=1080),)
+    cut_plan = (
+        CutPlan(
+            keep_segments=[(0.0, 4.0), (5.0, 10.0)],
+            removed=[Removal(start_s=4.0, end_s=5.0, reason="test")],
+            time_saved_s=1.0,
+        )
+        if cut
+        else None
+    )
+    cues = [{"text": "Hello everyone", "start_s": 0.0, "end_s": 1.5}]
+    recipe = compile_phone_subtitled_plan(
+        bindings, caption_cues=cues, cut_plan=cut_plan, landscape_fit="fit"
+    )
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        status="awaiting_device",
+        current_phase=None,
+        assembly_plan={
+            PHONE_SOURCES_FIELD: [b.model_dump(mode="json") for b in bindings],
+            PHONE_VISUALS_FIELD: [],
+            "variants": [
+                {
+                    "variant_id": "subtitled",
+                    "resolved_archetype": "subtitled",
+                    "render_destination": "device",
+                    "render_status": "awaiting_device",
+                    "render_generation_id": "first",
+                    "duration_s": recipe.duration,
+                    "caption_cues": cues,
+                    "voiceover_caption_style": "sentence",
+                }
+            ],
+        },
+    )
+    pin_device_request(
+        job,
+        make_device_request(job_id=job.id, variant_id="subtitled", revision=1, recipe=recipe),
+        base_generation="first",
+    )
+    return job
+
+
+def _main_track_scales(request) -> list[float]:
+    track = next(t for t in request.recipe.tracks if t.id == "subtitled")
+    return [clip.transform.scale for clip in track.clips]
+
+
+@pytest.mark.parametrize("cut", [False, True])
+def test_landscape_letterbox_is_preserved_across_a_save(monkeypatch, cut):
+    job = _letterboxed_phone_job(monkeypatch, cut=cut)
+    baseline = _main_track_scales(device_status(job, "subtitled").request)
+    assert baseline and all(scale == 0.31640625 for scale in baseline)
+
+    save(job, sound_effects=[])
+
+    after = _main_track_scales(device_status(job, "subtitled").request)
+    assert after == baseline
+
+
 def _main_track_segments(request) -> list[tuple[float, float]]:
     track = next(t for t in request.recipe.tracks if t.id == "subtitled")
     return sorted(
