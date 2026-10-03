@@ -27,6 +27,7 @@ from app.pipeline.phone_subtitled_plan import (
     SFX_DUCK_RECEIPT_FIELD,
     compile_phone_subtitled_plan,
     cutaways_from_recipe,
+    landscape_fit_from_recipe,
     sfx_duck_receipt,
     speaker_binding_from_recipe,
 )
@@ -481,6 +482,12 @@ def _compile_subtitled_editor_commit(
         if isinstance(previous.recipe, EditRecipeV2)
         else None
     )
+    # KRI-283: a letterboxed (landscape + fit) variant keeps its bars on Save.
+    landscape_fit = (
+        landscape_fit_from_recipe(previous.recipe)
+        if isinstance(previous.recipe, EditRecipeV2)
+        else "fill"
+    )
 
     recipe = compile_phone_subtitled_plan(
         (speaker,),
@@ -492,6 +499,7 @@ def _compile_subtitled_editor_commit(
         keep_segments=keep_segments,
         caption_look=caption_look,
         cutaways=cutaways,
+        landscape_fit=landscape_fit,
     )
     duck_receipt = sfx_duck_receipt(lanes, recipe)
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(lanes.overlays or cutaways))

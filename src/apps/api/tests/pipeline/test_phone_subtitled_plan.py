@@ -22,6 +22,7 @@ from app.pipeline.phone_subtitled_plan import (
     PhoneCutaway,
     compile_phone_subtitled_plan,
     cutaways_from_recipe,
+    landscape_fit_from_recipe,
     sfx_duck_receipt,
     speaker_binding_from_recipe,
     speech_windows_from_cues,
@@ -330,17 +331,94 @@ def test_rejects_more_than_one_clip():
         compile_phone_subtitled_plan(bindings, caption_cues=_CUES)
 
 
-def test_rejects_landscape_source_clip():
+_FIT_SCALE = 0.31640625
+
+
+def _speaker_clips(recipe):
+    return next(t for t in recipe.tracks if t.id == "subtitled").clips
+
+
+@pytest.mark.parametrize(
+    "binding_kwargs",
+    [
+        {"width": 1080, "height": 1920, "orientation_degrees": 90},
+        {"width": 1920, "height": 1080, "orientation_degrees": 0},
+    ],
+)
+def test_landscape_fit_letterboxes_every_cut_segment(binding_kwargs):
+    bindings = (_binding(duration_s=10.0, **binding_kwargs),)
+    plan = _cut_plan([(2.0, 3.0), (6.0, 7.0)], 10.0)
+    recipe = compile_phone_subtitled_plan(
+        bindings, caption_cues=[], cut_plan=plan, landscape_fit="fit"
+    )
+    clips = _speaker_clips(recipe)
+    assert len(clips) == 3
+    assert all(c.transform.scale == _FIT_SCALE for c in clips)
+    assert all(c.transform.position_x == 0 and c.transform.position_y == 0 for c in clips)
+    assert landscape_fit_from_recipe(recipe) == "fit"
+
+
+def test_landscape_fill_and_default_are_identity():
     bindings = (_binding(width=1920, height=1080),)
-    with pytest.raises(UnsupportedPhonePlan, match="portrait") as exc:
-        compile_phone_subtitled_plan(bindings, caption_cues=_CUES)
-    assert exc.value.capability == "semanticCamera"
+    default = compile_phone_subtitled_plan(bindings, caption_cues=_CUES)
+    fill = compile_phone_subtitled_plan(bindings, caption_cues=_CUES, landscape_fit="fill")
+    assert all(c.transform.scale == 1 for c in _speaker_clips(fill))
+    assert default.model_dump_json() == fill.model_dump_json()
+    assert landscape_fit_from_recipe(fill) == "fill"
 
 
-def test_rejects_square_source_clip():
+@pytest.mark.parametrize("fit", ["fill", "fit"])
+def test_square_source_is_identity_for_either_fit(fit):
     bindings = (_binding(width=1080, height=1080),)
-    with pytest.raises(UnsupportedPhonePlan, match="portrait"):
-        compile_phone_subtitled_plan(bindings, caption_cues=_CUES)
+    recipe = compile_phone_subtitled_plan(bindings, caption_cues=_CUES, landscape_fit=fit)
+    assert all(c.transform.scale == 1 for c in _speaker_clips(recipe))
+
+
+def test_portrait_recipe_is_byte_identical_whatever_the_fit():
+    bindings = (_binding(),)
+    base = compile_phone_subtitled_plan(bindings, caption_cues=_CUES)
+    fit = compile_phone_subtitled_plan(bindings, caption_cues=_CUES, landscape_fit="fit")
+    assert base.model_dump_json() == fit.model_dump_json()
+    assert all(c.transform.scale == 1 for c in _speaker_clips(base))
+
+
+def test_landscape_fit_leaves_captions_cutaways_and_ending_untouched():
+    speaker = _binding(width=1920, height=1080, duration_s=10.0)
+    cutaway = _cutaway("clip-1", 1.0, 2.0)
+    kwargs = {"caption_cues": _CUES, "cutaways": (cutaway,)}
+    fill = compile_phone_subtitled_plan((speaker,), **kwargs)
+    fit = compile_phone_subtitled_plan((speaker,), landscape_fit="fit", **kwargs)
+    assert fit.text_layers == fill.text_layers
+    fit_cut = next(t for t in fit.tracks if t.id == CUTAWAY_TRACK_ID)
+    fill_cut = next(t for t in fill.tracks if t.id == CUTAWAY_TRACK_ID)
+    assert fit_cut == fill_cut
+    assert all(c.transform.scale == 1 for c in fit_cut.clips)
+
+
+def test_landscape_fit_does_not_transform_the_ending_clip():
+    ending = SubtitledEndingClip(media_id=VIDEO_ID, gcs_path=VIDEO_PATH, generation="88")
+    lanes = PhoneSubtitledLanes(ending_clip=ending)
+    recipe = compile_phone_subtitled_plan(
+        (_binding(width=1920, height=1080),),
+        caption_cues=_CUES,
+        visuals=(_pool_video_visual(),),
+        lanes=lanes,
+        landscape_fit="fit",
+    )
+    speaker, ending = _speaker_clips(recipe)
+    assert speaker.transform.scale == _FIT_SCALE
+    assert ending.transform.scale == 1
+    assert landscape_fit_from_recipe(recipe) == "fit"
+
+
+def test_landscape_fit_recipe_passes_phone_pilot_validation(monkeypatch):
+    recipe = compile_phone_subtitled_plan(
+        (_binding(width=1920, height=1080),), caption_cues=_CUES, landscape_fit="fit"
+    )
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)
 
 
 def test_accepts_rotated_landscape_pixels_that_display_portrait():

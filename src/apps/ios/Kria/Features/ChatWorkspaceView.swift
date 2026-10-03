@@ -898,6 +898,9 @@ private struct CreationWorkspaceView: View {
                     ).id("failed-preparation")
                 } else {
                     FailedStage(
+                        bodyText: fullThread?.lastAssistantErrorContent
+                            ?? fullThread?.job?.failureMessage
+                            ?? "Your direction and footage are safe. Refresh the project or tell me what you want to change.",
                         retry: { Task { await send(message: "Try generating this edit again") } },
                         nonRetryableReasonCode: fullThread?.lastAssistantErrorCode
                     ).id("failed")

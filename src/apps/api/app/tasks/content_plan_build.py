@@ -765,6 +765,13 @@ PHONE_GATE_MESSAGES: dict[str, tuple[str, str]] = {
         "Remove the extra clips (or add one) and try again. No fallback edit was "
         "rendered.",
     ),
+    # KRI-283: a subtitled clip over the compiler's 5-minute cap can never
+    # render; refuse at dispatch instead of minting a Job that fails post-approval.
+    "subtitled_clip_too_long": (
+        "phone_format_unavailable",
+        "This clip is too long for talking-to-camera on your iPhone. Use a shorter "
+        "clip (under 5 minutes) and try again. No fallback edit was rendered.",
+    ),
     # KRI-118 L1 item 3: self-narration (no recorded voiceover) across 2+
     # clips has no phone compiler (`talking_head` isn't phone-supported).
     # Distinct code/copy from `unsupported_format` so the creator hears an
@@ -791,8 +798,8 @@ PHONE_GATE_MESSAGES: dict[str, tuple[str, str]] = {
 # of silently falling through to nothing.
 JOB_FAILURE_MESSAGES: dict[str, str] = {
     "phone_plan_unsupported": (
-        "This edit can't render on your iPhone the way it's set up right now. "
-        "Try again, or ask for a change to the direction."
+        "This edit uses something your iPhone can't render yet. Start a new edit "
+        "with a different clip or format."
     ),
     "phone_plan_failed": (
         "This edit couldn't render on your iPhone. Try again, or ask for a change to the direction."
@@ -2031,6 +2038,18 @@ def _dispatch_item_render(
                     phone_gate = "voiceover_unavailable"
                     raise ValueError("phone rendering does not yet support voiceover edits")
             phone_sources = bind_phone_sources(list(item.clip_assignments or []), clip_paths)
+            if phone_subtitled_eligible and phone_sources:
+                from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
+                    _MAX_CLIP_DURATION_S as _SUBTITLED_MAX_CLIP_S,
+                )
+
+                _original = getattr(phone_sources[0], "original", None)
+                _duration = getattr(_original, "duration_s", None)
+                if isinstance(_duration, int | float) and _duration > _SUBTITLED_MAX_CLIP_S:
+                    # Deterministic compiler reject otherwise: fail closed
+                    # before minting a Job that can never render.
+                    phone_gate = "subtitled_clip_too_long"
+                    raise ValueError("subtitled phone rendering clip exceeds the max duration")
         # KRI-174 Phase 1.5: admin-authored via `PUT
         # /admin/plan-items/{id}/phone-lanes` (`PlanItem.phone_lane_request`).
         # Gated on the same flag `_run_phone_subtitled_job` checks, plus the

@@ -84,6 +84,13 @@ extension CreationThread {
     var lastAssistantErrorMessage: String? {
         events.last(where: { Self.assistantFailureEventTypes.contains($0.eventType) })?.payload?["message"]?.stringValue
     }
+    /// The event's user-facing `content` (runtime-v2 failure events carry their
+    /// copy there, not in `payload["message"]`), when non-empty.
+    var lastAssistantErrorContent: String? {
+        let content = events.last(where: { Self.assistantFailureEventTypes.contains($0.eventType) })?.content
+        guard let content, !content.isEmpty else { return nil }
+        return content
+    }
 }
 
 /// Non-retryable structural/deterministic rejections: confirming again fails
@@ -98,6 +105,9 @@ extension CreationThread {
 ///   phone compiler yet -- `PHONE_GATE_MESSAGES["self_narration_multi_clip"]`)
 /// - `speech_cleanup_unavailable_on_phone` (cleanup requested on an
 ///   analysis-proxy phone source, which never carries the real audio bytes)
+/// - `phone_plan_unsupported` (a minted phone Job the compiler deterministically
+///   rejected -- a runtime-v2 `assistant_render_failed` with `recovery: ask_user`;
+///   re-sending the request fails identically)
 /// All literals verified against `origin/feat/kri118-l4-thread-api-2026-09-23`.
 /// `format_mismatch` (KRI-118 L4) was deliberately NOT added here: it is
 /// raised synchronously as a 409 detail on the confirm action itself (never a
@@ -106,6 +116,7 @@ extension CreationThread {
 let nonRetryablePhoneGateErrorCodes: Set<String> = [
     "phone_not_enrolled", "phone_plan_unapproved", "phone_format_unavailable", "phone_voiceover_unavailable",
     "strategy_invalid", "phone_self_narration_multi_clip", "speech_cleanup_unavailable_on_phone",
+    "phone_plan_unsupported",
 ]
 
 /// True for `nonRetryablePhoneGateErrorCodes`. A runtime-v2 speech-cleanup

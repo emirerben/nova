@@ -5210,6 +5210,11 @@ def _run_phone_subtitled_job(
             "apply_failed", "speech cleanup isn't available for multi-clip phone Talking yet"
         )
 
+    # KRI-283: same source as the cloud path (`all_candidates["landscape_fit"]`,
+    # content-plan items default to "fit"); a landscape clip letterboxes.
+    landscape_fit: str = all_candidates.get("landscape_fit") or "fill"
+    if landscape_fit not in ("fill", "fit"):
+        landscape_fit = "fill"
     language: str = all_candidates.get("language") or "en"
     # KRI-177: same explicit override contract as the cloud subtitled render —
     # re-validated here since a stray/legacy value must never silently win.
@@ -5637,6 +5642,7 @@ def _run_phone_subtitled_job(
                     caption_style=caption_style,
                     cut_plan=cut_plan,
                     cutaways=cutaways,
+                    landscape_fit=landscape_fit,  # type: ignore[arg-type]
                 )
             else:
                 raw_lane_request = snapshot.get(PHONE_SUBTITLED_LANES_FIELD)
@@ -5972,6 +5978,7 @@ def _run_phone_subtitled_job(
                             duck_sfx_under_speech=settings.phone_sfx_speech_duck_enabled,
                             cut_plan=cut_plan,
                             cutaways=cutaways,
+                            landscape_fit=landscape_fit,  # type: ignore[arg-type]
                         )
                         sfx_duck = sfx_duck_receipt(lanes, recipe)
                         break
@@ -6100,6 +6107,22 @@ def _run_phone_subtitled_job(
             recipe,
             allow_editor_media=bool(cutaways) or bool(lanes is not None and lanes.overlays),
         )
+    # KRI-283: receipt of how the speaker clip was framed. Recorded here, after
+    # every compile and before the FOR UPDATE session below (never under a lock).
+    try:
+        _main = next(t for t in recipe.tracks if t.id == "subtitled")
+        _letterboxed = bool(_main.clips) and _main.clips[0].transform.scale < 1
+        record_pipeline_event(
+            "phone",
+            "phone_subtitled_fit",
+            {
+                "variant_id": "subtitled",
+                "fit": "letterbox" if _letterboxed else "crop",
+                "landscape_fit": landscape_fit,
+            },
+        )
+    except Exception:  # noqa: BLE001 - observability only
+        pass
     variant_id = "subtitled"
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id=variant_id, revision=1, recipe=recipe

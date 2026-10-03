@@ -396,6 +396,8 @@ struct NativeEditorTemporaryVideo {
     @Published private(set) var canEditMix = false
     let operations: any EditorOperations
     @Published private(set) var rendersOnDevice = false
+    /// True when the last source-preview failure cannot be fixed by retrying.
+    @Published private(set) var sourcePreviewFailureIsPermanent = false
     private var deviceRenders: DeviceRenderSessions?
     private var pendingDeviceRenderIdentity: DeviceRenderIdentity?
     private var guidedRevisionNumber: Int?
@@ -1698,6 +1700,17 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
+    /// Rebuilding the same document hits the same error, so "Try again" is hidden.
+    static func isPermanentSourcePreviewFailure(_ error: Error) -> Bool {
+        switch error {
+        case NativeEditorRenderError.missingVideoTrack, NativeEditorRenderError.unsupportedLane,
+             NativeEditorRenderError.missingFont:
+            return true
+        default:
+            return false
+        }
+    }
+
     static func sourcePreviewMessage(for error: Error) -> String {
         switch error {
         case APIError.conflict:
@@ -1762,6 +1775,7 @@ struct NativeEditorTemporaryVideo {
             originalsRecoveryPool = pool
             let sources: [Int: ResolvedEditorSource]
             var phoneTalkingIndex: Int?
+            var phoneNarratedSeeds: [NativePhoneNarratedSource.Seed] = []
             if let base = NativeEditorBaseSource(variant: previewVariant, document: document) {
                 #if DEBUG
                 NativePreviewDiagnostics.record("prepare-composite-base")
@@ -1785,8 +1799,12 @@ struct NativeEditorTemporaryVideo {
             } else {
                 phoneTalkingIndex = NativePhoneTalkingSource.sourceIndex(variant: previewVariant, document: document,
                     pool: pool, lanesEditable: canEdit(.mediaOverlays) || canEdit(.soundEffects))
+                if NativePhoneNarratedSource.applies(variant: previewVariant, document: document) {
+                    phoneNarratedSeeds = await loadPhoneNarratedSeeds(pool: pool, generation: generation, sequence: sequence)
+                }
                 sources = try await resolver.resolve(pool, generation: generation,
-                    requiredIndices: Set(timelineClips.compactMap(\.sourceClipIndex) + (phoneTalkingIndex.map { [$0] } ?? []) + document.clipAudio.map(\.sourceClipIndex)))
+                    requiredIndices: Set(timelineClips.compactMap(\.sourceClipIndex) + (phoneTalkingIndex.map { [$0] } ?? [])
+                        + document.clipAudio.map(\.sourceClipIndex) + phoneNarratedSeeds.map(\.clipIndex)))
             }
             guard sequence == sourcePreviewSequence, !Task.isCancelled,
                   document.revision.baseGeneration == generation else { return }
@@ -1802,6 +1820,18 @@ struct NativeEditorTemporaryVideo {
                 chatStagedDocument = try chatStagedDocument.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration, removed: removed) }
                 undoStack = try undoStack.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration, removed: removed) }
                 redoStack = try redoStack.map { try NativePhoneTalkingSource.hydrate($0, clipIndex: phoneTalkingIndex, duration: duration, removed: removed) }
+                refreshDuration()
+            }
+            if !phoneNarratedSeeds.isEmpty {
+                // Server state, not an edit: keep history and the clean baseline consistent.
+                func seed(_ doc: EditorDocument) -> EditorDocument {
+                    NativePhoneNarratedSource.hydrate(doc, seeds: phoneNarratedSeeds, sources: sources)
+                }
+                document = seed(document)
+                cleanDocument = seed(cleanDocument)
+                chatStagedDocument = chatStagedDocument.map(seed)
+                undoStack = undoStack.map(seed)
+                redoStack = redoStack.map(seed)
                 refreshDuration()
             }
             if previewVariant["resolved_archetype"] == .string("narrated") {
@@ -1826,6 +1856,18 @@ struct NativeEditorTemporaryVideo {
             #endif
             failSourcePreview(error)
         }
+    }
+
+    /// Locked source clips for a phone Narrated/Voiceover edit whose timeline came back
+    /// empty, read from the pinned device recipe. Fail-soft: any problem leaves the
+    /// document untouched and the normal preview error path decides.
+    private func loadPhoneNarratedSeeds(pool: NativeEditorSourcePool, generation: String, sequence: Int) async -> [NativePhoneNarratedSource.Seed] {
+        guard let api, let jobID, let variantKey,
+              let status = try? await api.deviceRender(jobID: jobID, variantID: variantKey),
+              sequence == sourcePreviewSequence, !Task.isCancelled,
+              status.request.identity.jobID == jobID, status.request.identity.variantID == variantKey,
+              status.phase == "published", status.publishedGeneration == generation else { return [] }
+        return NativePhoneNarratedSource.seeds(recipe: status.request.recipe, pool: pool)
     }
 
     /// A save acknowledgement advances the document before its render is ready.
@@ -4977,6 +5019,7 @@ struct NativeEditorTemporaryVideo {
     }
 
     private func failSourcePreview(_ error: Error) {
+        sourcePreviewFailureIsPermanent = Self.isPermanentSourcePreviewFailure(error)
         restoreFinishedRenderFallback()
         sourcePreviewState = Self.isMissingOriginals(error)
             ? .originalsUnavailable
