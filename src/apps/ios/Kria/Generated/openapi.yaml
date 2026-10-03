@@ -370,6 +370,11 @@
       "AudioMixRecipe": {
         "additionalProperties": false,
         "properties": {
+          "duck_music_during_speech": {
+            "default": false,
+            "title": "Duck Music During Speech",
+            "type": "boolean"
+          },
           "duck_original_during_music": {
             "default": false,
             "title": "Duck Original During Music",
