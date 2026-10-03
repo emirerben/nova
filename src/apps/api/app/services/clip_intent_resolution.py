@@ -43,7 +43,10 @@ from app.agents._runtime import (
     ProviderOutcomeUnknownError,
     ProviderQuotaExceededError,
     RunContext,
+    SchemaError,
     TerminalError,
+    TerminalSchemaError,
+    TransientError,
 )
 from app.agents.clip_question import ClipQuestionAgent, ClipQuestionInput, ClipQuestionOutput
 from app.agents.clip_request_resolver import (
@@ -168,6 +171,11 @@ class IntentResolution:
     status: ResolutionStatus = "resolved"
     error_code: str | None = None
     deferred_queries: list[DeferredVisionQuery] = field(default_factory=list)
+    # KRI-282: non-sensitive counts/codes/latencies for THIS resolution (shard
+    # sizes + latencies, split retries, vision calls vs pending). Never creator
+    # text or model output. The Kria planner persists it on a degraded turn so
+    # the next incident needs no guessing.
+    diagnostics: dict[str, Any] | None = None
 
     @property
     def needs_creator(self) -> bool:
@@ -316,16 +324,30 @@ def _cached_answer(clip: IntentClip, question_norm: str) -> dict[str, Any] | Non
     return hit
 
 
-# The resolver's own spec allows 2 x 20s + 1s backoff; this is the hard stop the
-# chat turn waits for before it degrades to a question.
-_RESOLVER_DEADLINE_S = 45.0
+# The resolver's own spec allows 2 x 30s + 1s backoff. This is the hard stop the
+# chat turn waits for before it degrades; a timed-out shard is split and retried
+# once (see ``_run_resolver_shards``), so it must cover two sequential timeouts.
+_RESOLVER_DEADLINE_S = 70.0
 
 # KRI-282: the resolver's output grows with clips x intents (an assignment per
-# matching clip per intent). At ~47 clips one call took ~20s, i.e. right at the
-# agent's 20s timeout, so a real 47-clip montage failed as "provider unavailable".
-# Membership is decided per clip, so the clip list is sharded across concurrent
-# calls, each answering for <= this many clips. Small projects keep ONE call.
-_RESOLVER_SHARD_CLIPS = 12
+# matching clip per intent). Measured on the real 47-clip Olympics montage: a
+# 12-clip x 8-intent shard (96 cells) emits ~2000 tokens and takes 7-16s; the
+# original single call (376 cells) hit the old 20s timeout, and #1343's fixed
+# 12-clip shards still sat within a 2x latency swing of the limit (any one shard
+# timing out fails the whole turn). Shards are sized by CELLS (clips x intents)
+# so each call carries about half that load, capped at 12 clips. Small projects
+# keep ONE call.
+_RESOLVER_SHARD_MAX_CLIPS = 12
+_RESOLVER_SHARD_CELLS = 48
+_RESOLVER_MIN_SHARD_CLIPS = 3
+# Concurrent shard calls. The Gemini invoke pool has 8 slots shared per process
+# and a saturated pool fails a call after 1s, so never take the whole pool.
+_RESOLVER_MAX_CONCURRENCY = 5
+
+
+def _shard_clip_limit(intent_count: int) -> int:
+    per_shard = _RESOLVER_SHARD_CELLS // max(1, intent_count)
+    return max(_RESOLVER_MIN_SHARD_CLIPS, min(_RESOLVER_SHARD_MAX_CLIPS, per_shard))
 
 
 def _shard_resolver_input(
@@ -333,7 +355,8 @@ def _shard_resolver_input(
 ) -> list[ClipRequestResolverInput]:
     """Split the clip list into balanced shards; every shard sees every intent."""
     clips = resolver_input.clips
-    shard_count = -(-len(clips) // _RESOLVER_SHARD_CLIPS)  # ceil
+    limit = _shard_clip_limit(len(resolver_input.intents))
+    shard_count = -(-len(clips) // limit)  # ceil
     if shard_count <= 1:
         return [resolver_input]
     base, extra = divmod(len(clips), shard_count)
@@ -344,6 +367,70 @@ def _shard_resolver_input(
         shards.append(resolver_input.model_copy(update={"clips": clips[start:end]}))
         start = end
     return shards
+
+
+@dataclass
+class _ShardStats:
+    """Redacted per-turn shard telemetry (counts, codes, latencies only)."""
+
+    clips: int
+    intents: int
+    shard_ms: list[int] = field(default_factory=list)
+    shard_clips: list[int] = field(default_factory=list)
+    split_retries: int = 0
+    failed_error_types: list[str] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "clips": self.clips,
+            "intents": self.intents,
+            "shards": len(self.shard_clips),
+            "shard_clips": self.shard_clips[:24],
+            "shard_ms": self.shard_ms[:24],
+            "max_shard_ms": max(self.shard_ms, default=0),
+            "split_retries": self.split_retries,
+            "failed_error_types": self.failed_error_types[:8],
+        }
+
+
+async def _run_resolver_shards(
+    agent: ClipRequestResolverAgent,
+    shards: list[ClipRequestResolverInput],
+    ctx: RunContext,
+    stats: _ShardStats,
+) -> list[ClipRequestResolverOutput]:
+    """Run shards concurrently (bounded). A shard whose outcome is unknown (the
+    provider timed out) is NOT blindly re-sent: it is split in half and each half
+    re-asked once -- read-only, ~2x smaller work, bounded extra spend."""
+    gate = asyncio.Semaphore(_RESOLVER_MAX_CONCURRENCY)
+
+    async def call(shard: ClipRequestResolverInput) -> ClipRequestResolverOutput:
+        async with gate:
+            started = time.monotonic()
+            try:
+                return await asyncio.to_thread(agent.run, shard, ctx=ctx)
+            except BaseException as exc:
+                stats.failed_error_types.append(type(exc).__name__)
+                raise
+            finally:
+                stats.shard_ms.append(int((time.monotonic() - started) * 1000))
+                stats.shard_clips.append(len(shard.clips))
+
+    async def one(shard: ClipRequestResolverInput) -> ClipRequestResolverOutput:
+        try:
+            return await call(shard)
+        except ProviderOutcomeUnknownError:
+            if len(shard.clips) < 2:
+                raise
+            stats.split_retries += 1
+            mid = len(shard.clips) // 2
+            halves = [
+                shard.model_copy(update={"clips": shard.clips[:mid]}),
+                shard.model_copy(update={"clips": shard.clips[mid:]}),
+            ]
+            return _merge_resolver_outputs(await asyncio.gather(*(call(h) for h in halves)))
+
+    return list(await asyncio.gather(*(one(s) for s in shards)))
 
 
 def _merge_resolver_outputs(
@@ -575,6 +662,27 @@ def _failure_status_and_code(exc: BaseException) -> tuple[ResolutionStatus, str]
     return "provider_unavailable", "vision_provider_error"
 
 
+def _resolver_failure_status_and_code(exc: BaseException) -> tuple[ResolutionStatus, str]:
+    """Reason code for a failed TEXT-resolver stage (distinct from the vision stage,
+    where an OSError means an unreadable clip): every code names a different next
+    step, so an operator can tell a slow provider from a bad payload from a quota."""
+    if isinstance(exc, ProviderOutcomeUnknownError):
+        return "provider_unavailable", "provider_outcome_unknown"
+    if isinstance(exc, AiBudgetExceededError):
+        return "budget_exhausted", "ai_budget_exhausted"
+    if isinstance(exc, ProviderQuotaExceededError):
+        return "budget_exhausted", "provider_quota_exceeded"
+    if isinstance(exc, TimeoutError):
+        return "provider_unavailable", "resolver_deadline_exceeded"
+    if isinstance(exc, TransientError):
+        return "provider_unavailable", "resolver_transient_exhausted"
+    if isinstance(exc, (SchemaError, TerminalSchemaError)):
+        return "provider_unavailable", "resolver_schema_error"
+    if isinstance(exc, TerminalError):
+        return "provider_unavailable", "resolver_terminal_error"
+    return "provider_unavailable", "resolver_error"
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 
@@ -586,8 +694,13 @@ async def resolve_clip_intents_for_turn(
     run_context: Any,
     background: bool = False,
     checkpoint: Callable[[dict[str, dict[str, dict[str, Any]]]], Awaitable[None]] | None = None,
+    max_vision_requeries: int | None = None,
+    vision_deadline_s: float | None = None,
 ) -> IntentResolution:
-    """Resolve ``intents`` against ``clips``."""
+    """Resolve ``intents`` against ``clips``.
+
+    ``max_vision_requeries`` / ``vision_deadline_s`` raise the FOREGROUND vision
+    budget for callers (the Kria v2 chat turn) that have no background lane."""
     ctx: RunContext = run_context if isinstance(run_context, RunContext) else RunContext()
 
     # This resolver has no pinned narration/timeline authority. Never send
@@ -608,12 +721,11 @@ async def resolve_clip_intents_for_turn(
     )
 
     resolver_agent = ClipRequestResolverAgent(default_client())
+    shard_stats = _ShardStats(clips=len(clips), intents=len(intents))
+    resolver_started = time.monotonic()
     try:
-        resolver_call = asyncio.gather(
-            *(
-                asyncio.to_thread(resolver_agent.run, shard, ctx=ctx)
-                for shard in _shard_resolver_input(resolver_input)
-            )
+        resolver_call = _run_resolver_shards(
+            resolver_agent, _shard_resolver_input(resolver_input), ctx, shard_stats
         )
         shard_outputs: list[ClipRequestResolverOutput]
         if background:
@@ -624,17 +736,28 @@ async def resolve_clip_intents_for_turn(
                 timeout=_RESOLVER_DEADLINE_S,
             )
         resolver_output = _merge_resolver_outputs(shard_outputs)
+        resolver_ms = int((time.monotonic() - resolver_started) * 1000)
     except Exception as exc:  # noqa: BLE001 — degrade gracefully, never raise from a chat turn
         # Covers TerminalError (refusal/schema/transient-exhausted) and any
         # AI-cost-control TerminalError subclass (budget exhausted, policy
         # rejection) — none of those should ever surface as a 500 mid-chat.
+        status, error_code = _resolver_failure_status_and_code(exc)
+        failure_diagnostics = {
+            "stage": "resolver",
+            "reason": error_code,
+            "error_type": type(exc).__name__,
+            "resolver_ms": int((time.monotonic() - resolver_started) * 1000),
+            **shard_stats.as_dict(),
+        }
+        # Redacted on purpose: codes, counts and latencies only.
         log.warning(
             "clip_intent_resolver_failed",
             error_type=type(exc).__name__,
             is_terminal_error=isinstance(exc, TerminalError),
+            **{k: v for k, v in failure_diagnostics.items() if k != "error_type"},
         )
-        status, error_code = _failure_status_and_code(exc)
         return IntentResolution(
+            diagnostics=failure_diagnostics,
             intents=[
                 ResolvedClipIntent(
                     intent_id=i.intent_id,
@@ -855,8 +978,10 @@ async def resolve_clip_intents_for_turn(
     # Both membership and caption checks share one budget, cache, concurrency
     # bound and checkpoint path. Caption work is admitted only after membership.
     calls_spent = 0
-    foreground_deadline = (
-        asyncio.get_running_loop().time() + settings.clip_intents_vision_deadline_s
+    foreground_deadline = asyncio.get_running_loop().time() + (
+        vision_deadline_s
+        if vision_deadline_s is not None
+        else settings.clip_intents_vision_deadline_s
     )
 
     def record_failure(candidates, error_code):
@@ -948,7 +1073,11 @@ async def resolve_clip_intents_for_turn(
         cap = (
             max(1, min(len(intents), 6) * 50)
             if background
-            else min(4, settings.clip_intents_max_vision_requeries)
+            else (
+                max_vision_requeries
+                if max_vision_requeries is not None
+                else min(4, settings.clip_intents_max_vision_requeries)
+            )
         )
         terminal_budget = any(
             work.ai_budget_exhausted_media_ids
@@ -970,7 +1099,7 @@ async def resolve_clip_intents_for_turn(
         to_call = to_call[:allowed]
 
         question_agent = ClipQuestionAgent(default_client())
-        batch_size = 4
+        batch_size = 4 if max_vision_requeries is None else 6
         for offset in range(0, len(to_call), batch_size):
             batch = to_call[offset : offset + batch_size]
             if not background and asyncio.get_running_loop().time() >= foreground_deadline:
@@ -1280,6 +1409,23 @@ async def resolve_clip_intents_for_turn(
         (i if i.status == "resolved" else i.model_copy(update={"question": turn_question}))
         for i in resolved_intents
     ]
+    final_diagnostics = {
+        "stage": "vision" if status != "needs_creator" else "membership",
+        "reason": error_code or status,
+        "resolver_ms": resolver_ms,
+        **shard_stats.as_dict(),
+        "vision_calls": calls_spent,
+        "vision_answers": sum(len(v) for v in vision_answers.values()),
+        "pending_clips": len(set().union(*(w.pending_media_ids for w in unresolved_work))),
+        "deferred_queries": len(deferred),
+    }
+    if status not in {"resolved", "needs_creator"}:
+        log.warning(
+            "clip_intent_resolution_degraded",
+            **{k: v for k, v in final_diagnostics.items() if k != "stage"},
+            stage=final_diagnostics["stage"],
+            status=status,
+        )
     return IntentResolution(
         intents=final_intents,
         question=turn_question,
@@ -1287,6 +1433,7 @@ async def resolve_clip_intents_for_turn(
         status=status,
         error_code=error_code,
         deferred_queries=list(deferred.values()),
+        diagnostics=final_diagnostics,
     )
 
 

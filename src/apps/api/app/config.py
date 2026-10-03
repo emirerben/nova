@@ -667,6 +667,13 @@ class Settings(BaseSettings):
     # technical failures stay distinct from visual uncertainty (KRI-151).
     clip_intents_max_vision_requeries: int = Field(default=4, ge=0, le=12)
     clip_intents_vision_deadline_s: float = Field(default=25.0, gt=0, le=60)
+    # KRI-282: the Kria v2 chat turn has no background vision lane for chat
+    # clips (no asset_id to dispatch against), so a 47-clip montage that needs
+    # ~17 per-clip vision answers (measured) used to stall at the 4-call cap and answer
+    # "try again shortly" forever. Kria turns may spend more foreground vision
+    # (answers are cached per clip, so every turn only moves forward).
+    kria_clip_intents_max_vision_requeries: int = Field(default=18, ge=0, le=24)
+    kria_clip_intents_vision_deadline_s: float = Field(default=40.0, gt=0, le=60)
 
     # Kill switch for the narrated walkthrough archetype. When False, a job
     # whose plan declares edit_format="narrated" follows the existing voiceover

@@ -197,18 +197,55 @@ def _full_creator_request(rows: list[CreationThreadEvent], *, current_message: s
     return request if len(request) <= 12_000 else None
 
 
-def _clip_intent_resolution_plan(*, question: str | None, status: str) -> KriaTurnPlan:
+_CLIP_INTENT_PENDING_REPLY = (
+    "I'm still checking some of your clips against that request. "
+    "Send it again in a moment and I'll pick up where I left off."
+)
+
+
+def _clip_intent_resolution_plan(
+    *, question: str | None, status: str, diagnostics: dict[str, Any] | None = None
+) -> KriaTurnPlan:
     if status == "needs_creator":
         return KriaTurnPlan(
             mode="respond",
             turn_value="question",
             response=question or "Which clips should I use for that part?",
         )
+    # KRI-282: `pending` is NOT a failure -- the foreground vision budget ran out
+    # with answers already cached for the next turn. Saying "couldn't match" made
+    # a converging retry look like a permanent failure.
     return KriaTurnPlan(
         mode="respond",
         turn_value="recovery",
-        response="I couldn't reliably match that request to your clips. Please try again shortly.",
+        response=(
+            _CLIP_INTENT_PENDING_REPLY
+            if status == "pending"
+            else "I couldn't reliably match that request to your clips. Please try again shortly."
+        ),
+        diagnostics=_safe_diagnostics(status, diagnostics),
     )
+
+
+_DIAGNOSTIC_SCALARS = (str, int, float, bool)
+
+
+def _resolution_diagnostics(resolution: Any) -> dict[str, Any]:
+    base = {"reason": resolution.error_code or resolution.status}
+    if resolution.deferred_queries:
+        base["deferred_queries"] = len(resolution.deferred_queries)
+    return {**base, **(resolution.diagnostics or {})}
+
+
+def _safe_diagnostics(status: str, diagnostics: dict[str, Any] | None) -> dict[str, Any]:
+    """Whitelist-shaped, size-bounded diagnostics: scalars, short scalar lists only."""
+    out: dict[str, Any] = {"status": status}
+    for key, value in (diagnostics or {}).items():
+        if isinstance(value, _DIAGNOSTIC_SCALARS):
+            out[str(key)[:40]] = value if not isinstance(value, str) else value[:80]
+        elif isinstance(value, list) and all(isinstance(v, _DIAGNOSTIC_SCALARS) for v in value):
+            out[str(key)[:40]] = [v if not isinstance(v, str) else v[:80] for v in value[:24]]
+    return out
 
 
 def adapt_editor_action(
@@ -767,10 +804,29 @@ async def _plan_from_creator_output(
                     request_id=str(thread_id),
                     creator_id=str(creator_id),
                 ),
+                # KRI-282: chat clips have no background vision lane, so give the
+                # turn itself a larger (cached, converging) foreground budget.
+                max_vision_requeries=settings.kria_clip_intents_max_vision_requeries,
+                vision_deadline_s=settings.kria_clip_intents_vision_deadline_s,
             )
-        except Exception:  # noqa: BLE001 - no provider failure may mint a draft
+        except Exception as exc:  # noqa: BLE001 - no provider failure may mint a draft
+            log.warning(
+                "kria_clip_intent_planning_failed",
+                thread_id=str(thread_id),
+                error_type=type(exc).__name__,
+                clips=len(intent_clips),
+            )
             return PlannedKriaTurn(
-                plan=_clip_intent_resolution_plan(question=None, status="provider_unavailable"),
+                plan=_clip_intent_resolution_plan(
+                    question=None,
+                    status="provider_unavailable",
+                    diagnostics={
+                        "stage": "planning",
+                        "reason": "planner_exception",
+                        "error_type": type(exc).__name__,
+                        "clips": len(intent_clips),
+                    },
+                ),
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
             )
@@ -795,7 +851,9 @@ async def _plan_from_creator_output(
                 if current_item is None:
                     return PlannedKriaTurn(
                         plan=_clip_intent_resolution_plan(
-                            question=None, status="provider_unavailable"
+                            question=None,
+                            status="provider_unavailable",
+                            diagnostics={"stage": "persist", "reason": "item_unavailable"},
                         ),
                         manifest_hash=manifest.manifest_hash,
                         context_hash=manifest.context_hash,
@@ -808,10 +866,23 @@ async def _plan_from_creator_output(
                     strict=True,
                 )
                 await db.commit()
-            except Exception:  # noqa: BLE001 - cache failure must not mint a draft
+            except Exception as exc:  # noqa: BLE001 - cache failure must not mint a draft
                 await db.rollback()
+                log.warning(
+                    "kria_clip_intent_answer_persist_failed",
+                    thread_id=str(thread_id),
+                    error_type=type(exc).__name__,
+                )
                 return PlannedKriaTurn(
-                    plan=_clip_intent_resolution_plan(question=None, status="provider_unavailable"),
+                    plan=_clip_intent_resolution_plan(
+                        question=None,
+                        status="provider_unavailable",
+                        diagnostics={
+                            "stage": "persist",
+                            "reason": "answer_persist_failed",
+                            "error_type": type(exc).__name__,
+                        },
+                    ),
                     manifest_hash=manifest.manifest_hash,
                     context_hash=manifest.context_hash,
                 )
@@ -828,6 +899,7 @@ async def _plan_from_creator_output(
                         if planned.resolution.needs_creator
                         else planned.resolution.status
                     ),
+                    diagnostics=_resolution_diagnostics(planned.resolution),
                 ),
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
