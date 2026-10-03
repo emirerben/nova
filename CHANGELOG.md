@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.42.0] - 2026-10-03
+
+### Changed
+- fix(kria): iPhone montage turns no longer dead-end on "couldn't reliably match" (KRI-291) (#1351) <!-- release-pr: 1351 -->
+
 ## [0.78.41.0] - 2026-10-03
 
 ### Changed
