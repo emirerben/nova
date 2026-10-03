@@ -33,6 +33,7 @@
   "KriaUITests/EditorUITests/testNativeEditorStagesLocalEditsAndGatesUnavailableTools": 28.6,
   "KriaUITests/EditorUITests/testNativeEditorTrimHandleShortensExtendsAndUndoesAsOneGesture": 17.0,
   "KriaUITests/EditorUITests/testPreviewEmptyTapTogglesFullscreen": 15.5,
+  "KriaUITests/EditorUITests/testRetimedClipBlocksAbutWithoutGap": 12.0,
   "KriaUITests/EditorUITests/testPreviewObjectTapStillSelectsNotFullscreen": 12.1,
   "KriaUITests/NativeCaptionVisualUITests/testAddingCameraEffectOpensItsSpecificEditor": 13.5,
   "KriaUITests/NativeCaptionVisualUITests/testAnalyzingGalleryCanScrollInBothDirections": 21.3,

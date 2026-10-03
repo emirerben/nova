@@ -439,4 +439,23 @@ final class EditorUITests: XCTestCase {
     private static func clipDuration(_ clip: XCUIElement) -> Double {
         Double(clip.value as? String ?? "") ?? 0
     }
+
+    /// KRI-281: a clip slowed to fill a window longer than its source span must
+    /// still be drawn across the whole window, so adjacent video blocks abut.
+    func testRetimedClipBlocksAbutWithoutGap() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-retimed-clips"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+
+        let first = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        let second = app.descendants(matching: .any)["native-editor-clip-2"].firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 20))
+        XCTAssertTrue(second.waitForExistence(timeout: 5))
+        // Clip 1 is a 2.6s window over a 1.45s source span; its block must span 2.6s
+        // (blocks are 2.6s and 3s, so widths keep that ratio) and meet clip 2.
+        XCTAssertEqual(first.frame.maxX, second.frame.minX, accuracy: 1.0,
+                       "Gap between clip blocks: first ends \(first.frame.maxX), second starts \(second.frame.minX)")
+        XCTAssertEqual(first.frame.width / second.frame.width, 2.6 / 3.0, accuracy: 0.02)
+    }
 }

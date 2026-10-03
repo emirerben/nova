@@ -18,6 +18,7 @@ enum NativeEditorUITestFixtures {
         case autoScrollExtend = "autoscroll-extend"
         case guidedText = "guided-text"
         case talkingCaptions = "talking-captions"
+        case retimedClips = "retimed-clips"
     }
 
     struct Fixture: Sendable {
@@ -48,6 +49,7 @@ enum NativeEditorUITestFixtures {
         case .autoScrollExtend: autoScrollExtend
         case .guidedText: guidedText
         case .talkingCaptions: talkingCaptions
+        case .retimedClips: retimedClips
         }
     }
 
@@ -352,6 +354,24 @@ enum NativeEditorUITestFixtures {
     /// carries far more `source_duration_s` headroom (20s) than its 5s
     /// on-timeline duration, so extending its trailing trim past the
     /// visible window likewise requires auto-scroll to actually fire.
+    /// KRI-281: a narrated/voiceover edit whose first shot's source (1.45s
+    /// usable) is shorter than its 2.6s timeline window (slowed to fill it).
+    /// Video-lane blocks must still abut.
+    static let retimedClips: EditorDraft = {
+        let clips = [
+            clip(900, start: 0, duration: 2.6, sourceDuration: 1.5),
+            clip(901, start: 2.6, duration: 3, sourceDuration: 10),
+        ]
+        var slotValues = slots(for: clips)
+        if case .array(var items) = slotValues, case .object(var first) = items[0] {
+            first["native_source_span_s"] = .number(2.45)
+            items[0] = .object(first)
+            slotValues = .array(items)
+        }
+        return draft(clips: clips, text: [], captions: false, music: false,
+                     sections: ["timeline_slots": slotValues, "title": .string("Retimed fixture")])
+    }()
+
     static let autoScrollExtend: EditorDraft = {
         // Clip 1 is short (2s) so its trailing handle is fully on screen at
         // launch (zoom 1 shows roughly ±3s around the playhead) — its
