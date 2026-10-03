@@ -211,6 +211,7 @@ def _clip_intent_resolution_plan(
             mode="respond",
             turn_value="question",
             response=question or "Which clips should I use for that part?",
+            diagnostics=_safe_diagnostics(status, diagnostics),
         )
     # KRI-282: `pending` is NOT a failure -- the foreground vision budget ran out
     # with answers already cached for the next turn. Saying "couldn't match" made

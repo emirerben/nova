@@ -176,7 +176,7 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.clip_request_resolver",
         prompt_id="clip_request_resolver",
-        prompt_version="2026-09-22.1",  # KRI-133: preserve the full creator request.
+        prompt_version="2026-10-03.1",  # KRI-282: empty category is [] never a question.
         # Text-only match against pre-computed clip records; flash + a small
         # thinking budget mirrors clip_plan_matcher's measured setting.
         model="gemini-2.5-flash",
