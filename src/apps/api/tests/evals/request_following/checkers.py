@@ -484,7 +484,66 @@ def reply_states(
     return "unmet", f"reply omits: {', '.join(missing)}"
 
 
+def speech_excerpts(
+    req: Requirement, plan: FinalPlan, _f: Footage, _p: FinalPlan | None
+) -> CheckResult:
+    """KRI-282: spoken excerpts are grounded, play over other footage where asked, and the
+    edit returns to the speaker.
+
+    Params: ``min_excerpts`` (default 1), ``over_broll`` (bool), ``return_to_speaker`` (bool),
+    ``speaker_clip_id`` (str, optional; inferred from the speech sections when absent).
+    """
+    min_excerpts = int(req.params.get("min_excerpts", 1))
+    grounded = [s for s in plan.speech if s.grounded]
+    if not grounded:
+        return "unmet", "no grounded spoken excerpt in the edit"
+    speaker_id = str(req.params.get("speaker_clip_id") or grounded[0].clip_id)
+    checks: list[tuple[bool, str]] = [
+        (
+            len(grounded) >= min_excerpts,
+            f"{len(grounded)}/{min_excerpts} grounded excerpts",
+        )
+    ]
+    if len(grounded) < len(plan.speech):
+        checks.append((False, f"{len(plan.speech) - len(grounded)} excerpt(s) not grounded"))
+    if req.params.get("over_broll"):
+        over = [
+            s
+            for s in grounded
+            if s.visual == "cutaways"
+            and any(
+                c.clip_id != s.clip_id and _overlap(c.start_s, c.end_s, s.start_s, s.end_s) > 0.25
+                for c in plan.clips
+            )
+        ]
+        checks.append(
+            (
+                bool(over),
+                "speech plays over other footage"
+                if over
+                else "speech never plays over other footage",
+            )
+        )
+    if req.params.get("return_to_speaker"):
+        first_other = min((c.start_s for c in plan.clips if c.clip_id != speaker_id), default=None)
+        returned = first_other is not None and any(
+            s.visual == "speaker" and s.start_s >= first_other - 1e-6 for s in grounded
+        )
+        checks.append(
+            (
+                returned,
+                "returns to the speaker" if returned else "never returns to the speaker",
+            )
+        )
+    passed = sum(1 for ok, _ in checks if ok)
+    reason = "; ".join(text for _ok, text in checks)
+    if passed == len(checks):
+        return "met", reason
+    return ("partial" if passed else "unmet"), reason
+
+
 CHECKERS: dict[str, Checker] = {
+    "speech_excerpts": speech_excerpts,
     "title_exact": title_exact,
     "text_contains": text_contains,
     "label_coverage": label_coverage,

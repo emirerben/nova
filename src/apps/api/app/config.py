@@ -1598,6 +1598,15 @@ class Settings(BaseSettings):
     # knows what the footage shows (`analysis["understanding"]`). Needs a Gemini key.
     # false = no analysis; chat edits then clarify instead of describing clips.
     kria_clip_understanding_enabled: bool = True
+    # KRI-282: prompt-directed spoken-excerpt montage. A phone montage whose
+    # footage includes a talking-to-camera clip may play chosen excerpts of that
+    # speech over other footage, cut to the speaker, and return to fast montage
+    # (app/pipeline/phone_speech_montage_plan.py). true = on for everyone (the
+    # planner agent only acts when the creator asks for it); false = the legacy
+    # montage path, byte-identical, and timed transcript segments are neither
+    # stored nor shown to any prompt. Emergency rollback: `fly secrets set
+    # SPEECH_EXCERPT_MONTAGE_ENABLED=false --app nova-video` + restart api+worker.
+    speech_excerpt_montage_enabled: bool = True
     # Owner-safe "Nova steps" activity feed projected from pipeline_trace +
     # phase_log + AgentRun (app/services/nova_steps.py) onto the generative
     # job status response. Ships OFF -- `steps` stays None (byte-identical

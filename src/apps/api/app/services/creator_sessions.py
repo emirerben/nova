@@ -164,6 +164,7 @@ def _positive_duration_s(value: object) -> float | None:
 CHAT_EVIDENCE_TRANSCRIPT_CHARS = 160
 CHAT_EVIDENCE_MAX_MOMENTS = 2
 CHAT_EVIDENCE_MAX_FACTS = 6
+CHAT_EVIDENCE_SEGMENT_CHARS = 480
 CHAT_EVIDENCE_FIELD_CHARS = {
     "subject": 120,
     "summary": 200,
@@ -188,7 +189,11 @@ def _chat_evidence(analysis: object, *, kind: str, include_facts: bool = False) 
     """
     record = clip_record(analysis if isinstance(analysis, dict) else None, kind=kind)
     view = record.prompt_view(
-        transcript_chars=CHAT_EVIDENCE_TRANSCRIPT_CHARS, include_facts=include_facts
+        transcript_chars=CHAT_EVIDENCE_TRANSCRIPT_CHARS,
+        include_facts=include_facts,
+        # KRI-282: timed sentences for a talking clip (empty/omitted until stored).
+        include_segments=settings.speech_excerpt_montage_enabled,
+        segment_chars=CHAT_EVIDENCE_SEGMENT_CHARS,
     )
     view.pop("brands", None)
     for key, limit in CHAT_EVIDENCE_FIELD_CHARS.items():

@@ -444,3 +444,66 @@ def test_every_registered_checker_id_is_unique_across_plan_and_reply_registries(
     from .checkers import CHECKERS, REPLY_CHECKERS
 
     assert not set(CHECKERS) & set(REPLY_CHECKERS)
+
+
+# --- KRI-282: spoken-excerpt montage ----------------------------------------
+
+
+def _speech_plan(*, speech, clips):
+    from .models import PlanSpeech
+
+    return FinalPlan(
+        clips=[PlanClip(clip_id=c, start_s=s, end_s=e) for c, s, e in clips],
+        speech=[PlanSpeech(**row) for row in speech],
+    )
+
+
+_SPEECH_REQ = {"over_broll": True, "return_to_speaker": True, "min_excerpts": 2}
+
+
+def _speech_req(params=None):
+    return _req("speech_excerpts", params or _SPEECH_REQ, kind="audio", request_type="selection")
+
+
+def test_speech_excerpts_met_when_grounded_over_broll_and_back_to_speaker():
+    plan = _speech_plan(
+        speech=[
+            {"clip_id": "talk", "start_s": 4, "end_s": 9, "visual": "cutaways", "quote": "a"},
+            {"clip_id": "talk", "start_s": 9, "end_s": 14, "visual": "speaker", "quote": "b"},
+        ],
+        clips=[("b1", 0, 4), ("b2", 4, 6.5), ("b3", 6.5, 9), ("talk", 9, 14), ("b1", 14, 16)],
+    )
+    status, reason = _check(_speech_req(), plan)
+    assert status == "met", reason
+
+
+def test_speech_excerpts_partial_when_it_never_returns_to_the_speaker():
+    plan = _speech_plan(
+        speech=[
+            {"clip_id": "talk", "start_s": 4, "end_s": 9, "visual": "cutaways"},
+            {"clip_id": "talk", "start_s": 9, "end_s": 14, "visual": "cutaways"},
+        ],
+        clips=[("b1", 0, 14)],
+    )
+    status, reason = _check(_speech_req(), plan)
+    assert status == "partial" and "never returns to the speaker" in reason
+
+
+def test_speech_excerpts_unmet_without_grounded_speech_or_with_ungrounded_quotes():
+    assert _check(_speech_req(), _plan(["a", "b"]))[0] == "unmet"
+    plan = _speech_plan(
+        speech=[
+            {"clip_id": "talk", "start_s": 0, "end_s": 3, "visual": "speaker", "grounded": False}
+        ],
+        clips=[("talk", 0, 3)],
+    )
+    assert _check(_speech_req(), plan)[0] == "unmet"
+
+
+def test_speech_over_broll_requires_other_footage_during_the_speech():
+    plan = _speech_plan(
+        speech=[{"clip_id": "talk", "start_s": 0, "end_s": 6, "visual": "cutaways"}],
+        clips=[("talk", 0, 6)],
+    )
+    status, reason = _check(_speech_req({"over_broll": True}), plan)
+    assert status == "partial" and "never plays over other footage" in reason

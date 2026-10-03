@@ -66,6 +66,16 @@ class BeatFact:
 
 
 @dataclass(frozen=True)
+class SpeechSectionFact:
+    """One section of a spoken-excerpt montage as compiled (KRI-282)."""
+
+    kind: str  # "speech" | "montage"
+    visual: str = ""  # speech only: "speaker" | "cutaways"
+    quote: str = ""
+    media_id: str = ""
+
+
+@dataclass(frozen=True)
 class EndpointFact:
     """Where the first or last clip of the plan was filmed (place and landmark texts)."""
 
@@ -135,6 +145,11 @@ class PlanFacts:
     closing_visual_id: str | None = None
     closing_badge_requested: bool = False
     closing_badge_id: str | None = None
+    # KRI-282: the spoken-excerpt montage as the compiler laid it out, in order.
+    # None = this plan is not a spoken-excerpt montage (nothing about speech is claimed).
+    speech_sections: tuple[SpeechSectionFact, ...] | None = None
+    # Quotes the planner chose that were not found in the clip's speech.
+    speech_dropped_quotes: tuple[str, ...] = ()
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -360,6 +375,38 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         },
         label_timezone=str(record.get("label_timezone") or ""),
         label_timezone_basis=str(record.get("label_timezone_basis") or ""),
+    )
+
+
+def plan_facts_from_speech_montage(record: Mapping[str, Any] | None) -> PlanFacts:
+    """Read verifiable facts off a spoken-excerpt montage record (KRI-282).
+
+    ``record`` is what ``phone_speech_montage_job`` stored: the sections the
+    compiler actually put on the timeline (each excerpt already grounded to
+    word timings) and the quotes that could not be grounded.
+    """
+    record = record or {}
+    sections = tuple(
+        SpeechSectionFact(
+            kind=str(row.get("kind") or ""),
+            visual=str(row.get("visual") or ""),
+            quote=str(row.get("quote") or ""),
+            media_id=str(row.get("media_id") or ""),
+        )
+        for row in record.get("sections") or []
+        if isinstance(row, Mapping)
+    )
+    planned = record.get("planned") if isinstance(record.get("planned"), Mapping) else {}
+    dropped = tuple(
+        str(row.get("quote"))
+        for row in (planned or {}).get("dropped") or []
+        if isinstance(row, Mapping) and row.get("quote")
+    )
+    duration = record.get("duration_s")
+    return PlanFacts(
+        duration_s=float(duration) if isinstance(duration, (int, float)) else None,
+        speech_sections=sections,
+        speech_dropped_quotes=dropped,
     )
 
 
@@ -861,6 +908,7 @@ def _names(values: Iterable[str]) -> str:
 # two come from requirements with no checker; listing them keeps `is_judged`
 # right even if `_has_checker` and `check_requirement` drift apart.
 _CANT_CHECK_BEATS = "I can't check the pop-ins on this draft yet."
+_CANT_CHECK_SPEECH = "I can't check the spoken parts on this draft yet."
 _CANT_CHECK_TAKE = "I can't confirm this draft keeps your whole take."
 _CANT_CHECK_TITLE = "I can't confirm where this draft's title came from."
 _NO_TITLE = "I didn't add a title because no creator text or grounded brief facts were available."
@@ -872,6 +920,7 @@ _NO_CHECKER = "I can't verify this one automatically yet."
 _NEUTRAL_REASONS = frozenset(
     {
         _CANT_CHECK_BEATS,
+        _CANT_CHECK_SPEECH,
         _CANT_CHECK_TAKE,
         _CANT_CHECK_TITLE,
         _CANT_CHECK_EDITOR_CLIP_TEXT,
@@ -972,6 +1021,63 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     return _receipt(req, status, "; ".join(problems) + ".")
 
 
+_SPEECH_EXCERPT_RE = re.compile(
+    r"\b(?:excerpts?|speech|spoken|my voice|my words|what i (?:say|said|talk)|"
+    r"(?:play|use|hear|keep)\s+(?:my|the)\s+(?:\w+\s+){0,3}"
+    r"(?:line|lines|sentence|sentences|quote|quotes|"
+    r"talking|speech|voice))\b"
+)
+_SPEECH_OVER_RE = re.compile(
+    r"\b(?:over|b-?roll|other (?:footage|clips|videos)|while|on top of|under)\b"
+)
+_SPEAKER_RE = re.compile(
+    r"\b(?:cut to me|show me|back to me|cut to the speaker|me talking|on camera|me saying)\b"
+)
+_BACK_TO_MONTAGE_RE = re.compile(r"\b(?:back to|return to|then)\b.{0,30}\b(?:montage|cuts|clips)\b")
+
+
+def _wants_speech(req: BriefRequirement) -> bool:
+    return req.kind in _BEAT_KINDS and bool(_SPEECH_EXCERPT_RE.search(_req_text(req)))
+
+
+def _check_speech_excerpts(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """Spoken excerpts grounded, played over other footage where asked, back to the speaker."""
+    sections = facts.speech_sections
+    if sections is None or facts.editor:
+        return _receipt(req, "partial", _CANT_CHECK_SPEECH)
+    text = _req_text(req)
+    speech = [s for s in sections if s.kind == "speech"]
+    problems: list[str] = []
+    missing = _names(f"“{q}”" for q in facts.speech_dropped_quotes)
+    if not speech:
+        return _receipt(
+            req,
+            "not_possible",
+            "None of your lines made it in" + (f" ({missing})" if missing else ""),
+        )
+    if missing:
+        problems.append(f"I couldn't find {missing} in your clip")
+    if _SPEECH_OVER_RE.search(text) and not any(s.visual == "cutaways" for s in speech):
+        problems.append("Your words never play over the other footage")
+    if _SPEAKER_RE.search(text) and not any(s.visual == "speaker" for s in speech):
+        problems.append("It never cuts to you talking")
+    # "Return to the speaker": a speaker shot that comes AFTER something that is not the speaker.
+    first_other = next(
+        (i for i, s in enumerate(sections) if s.kind == "montage" or s.visual == "cutaways"), None
+    )
+    if (
+        first_other is not None
+        and _SPEAKER_RE.search(text)
+        and not any(s.visual == "speaker" for s in sections[first_other + 1 :])
+    ):
+        problems.append("It doesn't come back to you after the other footage")
+    if _BACK_TO_MONTAGE_RE.search(text) and not any(s.kind == "montage" for s in sections):
+        problems.append("There are no fast cuts between your lines")
+    if not problems:
+        return _receipt(req, "met", None)
+    return _receipt(req, "partial", "; ".join(problems) + ".")
+
+
 _TEXT_STYLE_RE = re.compile(
     r"\b(text|label|caption|title|font|bold|italic|colou?r|size|shadow|outline|stroke|"
     r"uppercase|lowercase|yellow|red|blue|green|white|black|pink|orange|purple|renk|yaz[i\u0131])",
@@ -1057,7 +1163,7 @@ def _has_checker(req: BriefRequirement) -> bool:
         # is checkable against the edit format and clip count.
         return _has_duration_target(req) or _wants_whole_take(req)
     if req.kind in _BEAT_KINDS:
-        return _wants_beats(req) or _wants_closing(req)
+        return _wants_beats(req) or _wants_closing(req) or _wants_speech(req)
     return req.kind == "order"
 
 
@@ -1075,6 +1181,8 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_timing(req, facts)
     elif req.kind == "style" and facts.editor:
         return _check_style(req, facts)
+    elif req.kind in _BEAT_KINDS and _wants_speech(req) and facts.speech_sections is not None:
+        return _check_speech_excerpts(req, facts)
     elif req.kind in _BEAT_KINDS and (_wants_beats(req) or _wants_closing(req)):
         return _check_reaction_beats(req, facts)
     return _receipt(req, "partial", _NO_CHECKER)
@@ -1224,7 +1332,9 @@ __all__ = [
     "build_receipts",
     "check_requirement",
     "is_judged",
+    "SpeechSectionFact",
     "plan_facts_from_editor_payload",
+    "plan_facts_from_speech_montage",
     "plan_facts_from_strategy",
     "plan_facts_from_unified_montage",
     "reply_from_receipts",

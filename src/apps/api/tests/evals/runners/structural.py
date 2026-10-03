@@ -103,6 +103,7 @@ from app.agents.song_sections import (
     SongSectionsOutput,
     _overlap_s,
 )
+from app.agents.speech_excerpt_planner import SpeechExcerptPlannerInput
 from app.agents.template_recipe import (
     _VALID_COLOR_HINTS,
     _VALID_INTERSTITIAL_TYPES,
@@ -155,6 +156,7 @@ from app.pipeline.agents.copy_writer import (
     YOUTUBE_TITLE_MAX,
 )
 from app.pipeline.intro_cluster import ROLE_CLOSER, ROLE_HERO, VALID_ROLES
+from app.schemas.speech_montage import SpeechMontagePlan
 from app.schemas.voiceover_script import target_word_count as voiceover_target_words
 
 # ── template_recipe ──────────────────────────────────────────────────────────
@@ -1288,6 +1290,33 @@ def check_clip_question(
         failures.append("empty (unknown) answer carries non-zero confidence")
     if output.confidence < 0.0 or output.confidence > 1.0:
         failures.append(f"confidence={output.confidence} outside [0, 1]")
+    return failures
+
+
+def check_speech_excerpt_planner(
+    output: SpeechMontagePlan,
+    input: SpeechExcerptPlannerInput,  # noqa: A002
+) -> list[str]:
+    """Structural floor for nova.plan.speech_excerpt_planner (KRI-282)."""
+    failures: list[str] = []
+    refs = {clip.ref: clip for clip in input.speech_clips}
+    if output.question and output.sections:
+        failures.append("a question accompanies sections")
+    if output.wants_speech_excerpts and not output.question and not output.speech_sections():
+        failures.append("wants_speech_excerpts without a speech section or a question")
+    if not output.wants_speech_excerpts and (output.sections or output.question):
+        failures.append("sections or a question on a request that does not want excerpts")
+    for section in output.speech_sections():
+        clip = refs.get(section.clip_ref)
+        if clip is None:
+            failures.append(f"clip_ref {section.clip_ref!r} is not a clip with speech")
+            continue
+        # Each quoted part (split on an ellipsis) must be words the clip actually says.
+        spoken = " ".join(str(seg.get("text", "")) for seg in clip.segments).casefold()
+        for part in section.quote.replace("…", "...").split("..."):
+            words = [w for w in part.casefold().split() if w]
+            if words and " ".join(words[:3]) not in " ".join(spoken.split()):
+                failures.append(f"quote {part.strip()!r} is not in the clip's segments")
     return failures
 
 
@@ -3107,6 +3136,8 @@ def run_structural(
         return check_clip_question(output, input)
     if agent_name == "nova.video.landmark_guess":
         return check_landmark_guess(output, input)
+    if agent_name == "nova.plan.speech_excerpt_planner":
+        return check_speech_excerpt_planner(output, input)
     if agent_name == "nova.video.clip_router":
         return check_clip_router(output, input)
     if agent_name == "nova.video.shot_ranker":

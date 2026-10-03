@@ -2288,16 +2288,34 @@ def _run_generative_job_impl(
                             job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
                         )
                     else:
-                        # KRI-190/KRI-220: one montage plan, always. The guided plan
-                        # format renders per-clip text, honours reading time and has
-                        # a phone editor. No flag: every non-voiceover montage.
-                        unified_snapshot = _run_phone_unified_montage_job(
-                            job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
+                        # KRI-282: a creator who asks to use what they SAY (excerpts of
+                        # a talking clip over other footage, cut to the speaker, back to
+                        # fast cuts) gets the spoken-excerpt montage. It declines
+                        # (returns False) unless asked, and with
+                        # SPEECH_EXCERPT_MONTAGE_ENABLED=false it is never entered, so
+                        # every other montage takes the unified path unchanged. An
+                        # unanswerable request raises SpeechMontageClarification (an
+                        # UnsupportedPhonePlan) carrying the specific question.
+                        from app.services.phone_speech_montage_job import (  # noqa: PLC0415
+                            run_phone_speech_montage_job,
                         )
-                        if unified_snapshot is not None:
-                            _run_phone_guided_job(
-                                job_id, unified_snapshot, ownership_epoch=ownership_epoch
+
+                        if not run_phone_speech_montage_job(
+                            job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
+                        ):
+                            # KRI-190/KRI-220: one montage plan, always. The guided plan
+                            # format renders per-clip text, honours reading time and has
+                            # a phone editor. No flag: every non-voiceover montage.
+                            unified_snapshot = _run_phone_unified_montage_job(
+                                job_id,
+                                phone_snapshot,
+                                candidates,
+                                ownership_epoch=ownership_epoch,
                             )
+                            if unified_snapshot is not None:
+                                _run_phone_guided_job(
+                                    job_id, unified_snapshot, ownership_epoch=ownership_epoch
+                                )
                 elif declared_format == "subtitled" or (
                     declared_format in NARRATED_EDIT_FORMATS and not has_voiceover_candidate
                 ):
