@@ -427,6 +427,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.clip_question import ClipQuestionAgent
 
         return ClipQuestionAgent
+    if agent_name == "nova.plan.speech_excerpt_planner":
+        from app.agents.speech_excerpt_planner import SpeechExcerptPlannerAgent
+
+        return SpeechExcerptPlannerAgent
     if agent_name == "nova.video.landmark_guess":
         from app.agents.landmark_guess import LandmarkGuessAgent
 

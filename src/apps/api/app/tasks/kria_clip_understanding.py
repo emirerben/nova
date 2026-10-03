@@ -114,6 +114,39 @@ def _store(item_id: uuid.UUID, entry: dict[str, Any]) -> bool:
         return True
 
 
+def _with_speech_segments(entry: dict[str, Any]) -> dict[str, Any]:
+    """KRI-282: add timed sentence segments to a clip that has speech. Best effort.
+
+    Uses the cached whisper path on the same analysis proxy the vision analyzer
+    just read. Any failure leaves the entry exactly as analysed, so this can
+    never turn a successful analysis into a failed one. Kill switch:
+    ``SPEECH_EXCERPT_MONTAGE_ENABLED=false`` (nothing is transcribed or stored).
+    """
+    if not settings.speech_excerpt_montage_enabled:
+        return entry
+    try:
+        analysis = entry.get("analysis")
+        if str(entry.get("kind") or "video") != "video" or not isinstance(analysis, dict):
+            return entry
+        speech = clip_record(analysis, kind="video").speech
+        if not speech.has_speech or speech.segments:
+            return entry
+        from app.services.speech_segments import (  # noqa: PLC0415
+            attach_segments_to_analysis,
+            transcribe_stored_clip,
+        )
+
+        words, language = transcribe_stored_clip(str(entry["gcs_path"]))
+        return {**entry, "analysis": attach_segments_to_analysis(analysis, words, language)}
+    except Exception:  # noqa: BLE001 - segments are an enhancement, never a reason to fail
+        log.warning(
+            "kria_clip_speech_segments_failed",
+            media_id=str(entry.get("media_id")),
+            exc_info=True,
+        )
+        return entry
+
+
 @celery_app.task(
     bind=True,
     name="tasks.analyze_kria_clips",
@@ -149,6 +182,7 @@ def analyze_kria_clips(self, item_id: str) -> dict[str, Any]:  # noqa: ANN001
                 ),
                 require_semantic=True,
             )
+            entry = _with_speech_segments(entry)
             if _store(identifier, entry):
                 done += 1
         except (AiBudgetExceededError, ProviderQuotaExceededError, ProviderOutcomeUnknownError):

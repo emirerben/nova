@@ -151,6 +151,13 @@ def prepare_phone_editor_commit(
             _compile_narrated_editor_commit(
                 staged, variant, variant_id, prep=prep, previous=previous
             )
+        elif variant.get("resolved_archetype") == "speech_montage":
+            # KRI-282: a spoken-excerpt montage has no guided plan to recompile; fail
+            # closed with a reason instead of a KeyError on the missing plan.
+            raise ValueError(
+                "a spoken-excerpt montage can't be re-rendered from the server editor; "
+                "edit its timeline in the app"
+            )
         else:
             plan = copy.deepcopy(
                 variant.get(PHONE_EDITOR_PLAN_FIELD) or assembly["guided_story_execution_plan"]

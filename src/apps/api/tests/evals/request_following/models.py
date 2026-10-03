@@ -113,11 +113,25 @@ class PlanText(_Strict):
     clip_id: str | None = None
 
 
+class PlanSpeech(_Strict):
+    """One spoken excerpt of a spoken-excerpt montage (KRI-282), on the OUTPUT timeline."""
+
+    clip_id: str  # the clip the speech comes from
+    start_s: float = Field(ge=0)
+    end_s: float = Field(gt=0)
+    visual: Literal["speaker", "cutaways"]
+    quote: str = ""
+    # True when the quote was grounded to real word timings (never a model claim).
+    grounded: bool = True
+
+
 class FinalPlan(_Strict):
     """What the creator would see: clips in output order + text lanes."""
 
     clips: list[PlanClip] = Field(default_factory=list)
     texts: list[PlanText] = Field(default_factory=list)
+    # Empty (and so absent from every existing fixture) unless the edit plays speech excerpts.
+    speech: list[PlanSpeech] = Field(default_factory=list)
     total_duration_s: float | None = None
 
     @property

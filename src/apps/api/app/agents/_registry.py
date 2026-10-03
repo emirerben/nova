@@ -136,6 +136,13 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "ClipRequestResolverAgent",
     ),
     ("nova.video.clip_question", "app.agents.clip_question", "ClipQuestionAgent"),
+    # KRI-282: choose spoken excerpts + lay out speech/montage sections
+    # (behind SPEECH_EXCERPT_MONTAGE_ENABLED).
+    (
+        "nova.plan.speech_excerpt_planner",
+        "app.agents.speech_excerpt_planner",
+        "SpeechExcerptPlannerAgent",
+    ),
     # KRI-189: best-guess landmark for a clip from frames + place (provenance: inferred).
     ("nova.video.landmark_guess", "app.agents.landmark_guess", "LandmarkGuessAgent"),
 )

@@ -25,6 +25,7 @@ _TEXT_LIMIT = 400
 _SHORT_TEXT_LIMIT = 200
 _TRANSCRIPT_LIMIT = 1200
 _MAX_MOMENTS = 8
+_MAX_SEGMENTS = 60
 _MAX_FACTS = 12
 _FACT_VALUE_LIMIT = 200
 
@@ -68,10 +69,56 @@ class ClipPeople(BaseModel):
         return _clean_text(v, _SHORT_TEXT_LIMIT)
 
 
+class SpeechSegment(BaseModel):
+    """One timed spoken sentence of a clip (KRI-282), from the cached whisper words.
+
+    Times are seconds in the SOURCE clip. The text is verbatim speech (sanitised
+    like every transcript), so a planner can quote it and a worker can ground the
+    quote back to word timings.
+    """
+
+    start_s: float = Field(ge=0)
+    end_s: float = Field(gt=0)
+    text: str = ""
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def _text(cls, v: object) -> str:
+        return _clean_text(v, 300)
+
+
 class ClipSpeech(BaseModel):
     has_speech: bool = False
     to_camera: bool = False
     transcript: str = ""
+    # KRI-282: timed sentence segments. Empty (and omitted from dumps, so every
+    # stored record and prompt view stays byte-identical) until the speech-excerpt
+    # montage flag is on and the clip has been transcribed.
+    segments: list[SpeechSegment] = Field(default_factory=list, exclude_if=lambda v: not v)
+    # Spoken language (ISO-639-1) when whisper reported one; omitted when unknown.
+    language: str = Field(default="", exclude_if=lambda v: not v)
+
+    @field_validator("segments", mode="before")
+    @classmethod
+    def _segments(cls, v: object) -> list[SpeechSegment]:
+        """Lenient: a malformed segment is dropped, never a reason to lose the record."""
+        if not isinstance(v, list):
+            return []
+        rows: list[SpeechSegment] = []
+        for row in v:
+            if isinstance(row, SpeechSegment):
+                rows.append(row)
+            elif isinstance(row, dict):
+                try:
+                    rows.append(SpeechSegment.model_validate(row))
+                except ValueError:
+                    continue
+        return rows[:_MAX_SEGMENTS]
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def _language(cls, v: object) -> str:
+        return _clean_text(v, 8)
 
     @field_validator("transcript", mode="before")
     @classmethod
@@ -196,12 +243,18 @@ class ClipUnderstanding(BaseModel):
         )
 
     def prompt_view(
-        self, *, transcript_chars: int = 400, include_facts: bool = False
+        self,
+        *,
+        transcript_chars: int = 400,
+        include_facts: bool = False,
+        include_segments: bool = False,
+        segment_chars: int = 900,
     ) -> dict[str, Any]:
         """Compact dict for an LLM prompt: empty fields dropped, transcript capped.
 
         ``facts`` (KRI-189) appear only when the caller opts in, so the CLIP_FACTS
-        kill switch also silences facts already stored on older analyses.
+        kill switch also silences facts already stored on older analyses. Timed
+        speech ``segments`` (KRI-282) follow the same rule via ``include_segments``.
         """
         view: dict[str, Any] = {}
         for key in ("subject", "summary", "setting", "activity", "on_screen_text"):
@@ -222,6 +275,19 @@ class ClipUnderstanding(BaseModel):
             }
             if self.speech.transcript and transcript_chars > 0:
                 speech["transcript"] = self.speech.transcript[:transcript_chars]
+            if include_segments and self.speech.segments:
+                rows: list[dict[str, Any]] = []
+                used = 0
+                for seg in self.speech.segments:
+                    if not seg.text:
+                        continue
+                    used += len(seg.text)
+                    if rows and used > segment_chars:
+                        break  # compact: whole sentences only, never a clipped one
+                    rows.append(
+                        {"s": round(seg.start_s, 1), "e": round(seg.end_s, 1), "text": seg.text}
+                    )
+                speech["segments"] = rows
             view["speech"] = speech
         if self.brands:
             view["brands"] = self.brands

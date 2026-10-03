@@ -1,0 +1,80 @@
+{
+  "agent": "nova.plan.speech_excerpt_planner",
+  "prompt_version": "2026-10-03.1",
+  "input": {
+    "creator_request": "Use what I say about the trip over the other clips.",
+    "speech_clips": [
+      {
+        "ref": "c1",
+        "duration_s": 14.0,
+        "to_camera": true,
+        "summary": "Creator talking to camera in a cafe",
+        "language": "en",
+        "segments": [
+          {
+            "s": 0.0,
+            "e": 4.2,
+            "text": "So the thing I learned in Lisbon was, never rush a good espresso."
+          },
+          {
+            "s": 4.6,
+            "e": 8.9,
+            "text": "Honestly it changed my whole morning routine!"
+          },
+          {
+            "s": 9.4,
+            "e": 12.0,
+            "text": "Anyway, we left the next day."
+          }
+        ]
+      },
+      {
+        "ref": "c2",
+        "duration_s": 9.0,
+        "to_camera": true,
+        "summary": "A friend talking to camera on the tram",
+        "language": "en",
+        "segments": [
+          {
+            "s": 0.0,
+            "e": 3.0,
+            "text": "This tram is older than my grandmother."
+          }
+        ]
+      }
+    ],
+    "other_clips": [
+      {
+        "ref": "v1",
+        "duration_s": 6.0,
+        "summary": "tram in the street"
+      },
+      {
+        "ref": "v2",
+        "duration_s": 6.0,
+        "summary": "pastel de nata"
+      },
+      {
+        "ref": "v3",
+        "duration_s": 6.0,
+        "summary": "river view"
+      },
+      {
+        "ref": "v4",
+        "duration_s": 6.0,
+        "summary": "old town stairs"
+      }
+    ]
+  },
+  "raw_text": "{\"wants_speech_excerpts\": true, \"sections\": [], \"question\": \"Two clips have someone talking: you in the cafe, and your friend on the tram. Whose words should I play?\"}",
+  "output": {
+    "wants_speech_excerpts": true,
+    "sections": [],
+    "question": "Two clips have someone talking: you in the cafe, and your friend on the tram. Whose words should I play?"
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Two speakers and no way to tell whose speech is meant: ask a specific question.",
+    "expect": "question"
+  }
+}
