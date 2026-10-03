@@ -1963,6 +1963,46 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(draft.clips.map(\.trimOut), [13.5, 22])
     }
 
+    /// KRI-281: exact shapes the server projects from the pinned device recipe (protocol 3).
+    func testServerProjectedPhoneNarratedAndVoiceoverTimelinesHydrateClips() {
+        let server = DraftSnapshot(
+            draftID: "job", itemID: "item", variantKey: "v",
+            draftRevision: 0, snapshotHash: "", etag: "", baseJobID: UUID().uuidString,
+            baseGenerationID: "generation", snapshot: [:], canUndo: false, createdAt: .now
+        )
+        let narrated: [String: JSONValue] = [
+            "variant_id": .string("narrated"), "resolved_archetype": .string("narrated"),
+            "render_destination": .string("device"),
+            "narrated_timings": .array([
+                .object(["step_id": .string("s1"), "start_s": .number(0), "end_s": .number(5), "confidence": .number(1)]),
+                .object(["step_id": .string("s2"), "start_s": .number(5), "end_s": .number(9), "confidence": .number(1)]),
+            ]),
+            "narrated_clip_assignments": .array([
+                .object(["step_id": .string("s1"), "clip_id": .string("clip_3"), "participant_key": .string("clip:clip_3"), "source_start_s": .number(2)]),
+                .object(["step_id": .string("s2"), "clip_id": .string("clip_1"), "participant_key": .string("clip:clip_1"), "source_start_s": .number(0)]),
+            ]),
+            "editor_capabilities": .object(["timeline": .bool(false)]),
+        ]
+        let draft = server.editorDraft(projectID: UUID(), authoritativeVariant: narrated)
+        XCTAssertEqual(draft.clips.map(\.sourceClipIndex), [3, 1])
+        XCTAssertEqual(draft.clips.map(\.end), [5, 9])
+
+        func slot(_ id: String, _ index: Int, _ inS: Double, _ duration: Double, _ order: Int) -> JSONValue {
+            .object(["slot_id": .string(id), "clip_index": .number(Double(index)), "source_duration_s": .number(inS + duration),
+                     "in_s": .number(inS), "duration_s": .number(duration), "order": .number(Double(order)), "removed": .bool(false)])
+        }
+        let voiceover: [String: JSONValue] = [
+            "variant_id": .string("voiceover_only"), "resolved_archetype": .string("voiceover"),
+            "render_destination": .string("device"),
+            "ai_timeline": .object(["beat_grid": .array([]), "slots": .array([slot("a", 2, 1, 4, 0), slot("b", 0, 0, 3, 1)])]),
+            "editor_capabilities": .object(["timeline": .bool(false)]),
+        ]
+        let voiced = server.editorDraft(projectID: UUID(), authoritativeVariant: voiceover)
+        XCTAssertEqual(voiced.clips.map(\.sourceClipIndex), [2, 0])
+        XCTAssertEqual(voiced.clips.map(\.end), [4, 7])
+        XCTAssertEqual(voiced.clips.map(\.trimIn), [1, 0])
+    }
+
     func testAuthoritativeVariantReplacesAdvancedCapabilitiesAndRequiredMotionHash() {
         let snapshot: [String: JSONValue] = [
             "editor_capabilities": .object([
