@@ -9,6 +9,8 @@ struct SlidePostTextPanel: View {
     @ObservedObject var session: SlidePostSession
     let slideID: String
     @Binding var tab: Tab
+    /// Keyboard up on a short phone: the pinned Add text / Apply row steps aside so the text box stays visible.
+    var compact = false
     let onDone: () -> Void
     @StateObject private var editor: SlidePostTextEditor
     @State private var appliedMessage: String?
@@ -17,8 +19,8 @@ struct SlidePostTextPanel: View {
     @State private var reportedTab: Tab
     @State private var reloadToken = 0
 
-    init(session: SlidePostSession, slideID: String, tab: Binding<Tab>, onDone: @escaping () -> Void) {
-        self.session = session; self.slideID = slideID; self._tab = tab; self.onDone = onDone
+    init(session: SlidePostSession, slideID: String, tab: Binding<Tab>, compact: Bool = false, onDone: @escaping () -> Void) {
+        self.session = session; self.slideID = slideID; self._tab = tab; self.compact = compact; self.onDone = onDone
         _editor = StateObject(wrappedValue: SlidePostTextEditor(session: session, slideID: slideID))
         _reportedTab = State(initialValue: tab.wrappedValue)
     }
@@ -54,12 +56,17 @@ struct SlidePostTextPanel: View {
                         configuration: configuration, onDone: onDone
                     )
                     .id("\(selected.id)-\(reloadToken)")
+                    // Scrolled content ends clear of the pinned action row below it.
+                    .contentMargins(.bottom, 16, for: .scrollContent)
                     .environment(\.nativeEditorConnectedPanel, true)
                     .environment(\.nativeEditorPanelContentWidth, max(0, geometry.size.width - 72))
                 } else {
                     emptyState
                 }
-                actions
+                if !(compact && tab == .edit) {
+                    Rectangle().fill(KriaColor.line.opacity(0.5)).frame(height: 1).padding(.horizontal, 24)
+                    actions
+                }
             }
             .padding(.top, 10).padding(.bottom, 8)
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)

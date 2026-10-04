@@ -239,13 +239,12 @@ import XCTest
     func testSlideTextSelectDragPinchRotateAndDeselect() {
         let app = openRichWorkspace()
         app.buttons["slidepost-tool-text"].tap()
-        let field = app.textFields["slidepost-text-field"].firstMatch
+        let field = app.textViews["slidepost-text-field"].firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap(); field.press(forDuration: 1.0)
         if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
         field.typeText("Athens")
-        app.buttons["slidepost-tab-style"].tap()
-        app.buttons["slidepost-position-center"].tap()
+        app.buttons["Style"].tap()
         let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
         let text = canvasText(app)
         XCTAssertTrue(text.waitForExistence(timeout: 5))
@@ -286,6 +285,49 @@ import XCTest
         preview.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.06)).tap()
         XCTAssertFalse(handle.waitForExistence(timeout: 2), "tapping empty canvas deselects")
         attach(app, "Slide canvas: deselected")
+    }
+
+    /// Integration: every Style control is reachable above the pinned row, and canvas gestures show the same numbers in the panel.
+    func testStyleTabScrollsToEveryControlAndCanvasAgreesWithPanel() {
+        let app = openRichWorkspace()
+        app.buttons["slidepost-tool-text"].tap()
+        let field = app.textViews["slidepost-text-field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap(); field.press(forDuration: 1.0)
+        if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
+        field.typeText("Athens")
+        app.buttons["Style"].tap()
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        let text = canvasText(app)
+        XCTAssertTrue(text.waitForExistence(timeout: 5))
+        text.tap()
+        preview.pinch(withScale: 1.4, velocity: 1)
+        preview.rotate(CGFloat.pi / 4, withVelocity: 1)
+        let value = text.value as? String ?? ""
+        let canvasSize = number(value, after: "size"), canvasRotation = number(value, after: "rotation")
+        attach(app, "Integration: canvas resized + rotated")
+        // Panel shows the same numbers.
+        let rotation = app.buttons["native-editor-text-rotation-Increment"]
+        revealInTextPanel(rotation, app: app)
+        XCTAssertEqual(rotation.value as? String, "\(Int(canvasRotation)) degrees")
+        let size = app.textFields["native-editor-text-size"]
+        revealInTextPanel(size, app: app)
+        XCTAssertEqual(Double(size.value as? String ?? ""), canvasSize)
+        // Bottom of the Style tab: every control above the pinned row.
+        let scroll = app.scrollViews["native-editor-text-inspector-scroll"]
+        for _ in 0..<8 { scroll.swipeUp() }
+        let apply = app.buttons["slidepost-apply-all"]
+        XCTAssertTrue(apply.isHittable)
+        XCTAssertLessThanOrEqual(rotation.frame.maxY, apply.frame.minY, "the last control clears the pinned row")
+        XCTAssertTrue(rotation.isHittable)
+        attach(app, "Integration: style bottom")
+        // Panel edit reaches the canvas, undo/redo round trips.
+        rotation.tap()
+        XCTAssertNotEqual(number(text.value as? String ?? "", after: "rotation"), canvasRotation)
+        app.buttons["slidepost-undo"].tap()
+        XCTAssertEqual(number(text.value as? String ?? "", after: "rotation"), canvasRotation)
+        app.buttons["slidepost-redo"].tap()
+        XCTAssertNotEqual(number(text.value as? String ?? "", after: "rotation"), canvasRotation)
     }
 
     func testMoreMenuRemoveAndCover() {

@@ -522,14 +522,14 @@ struct SlidePostWorkspaceView: View {
                 composer
             } else {
                 stage(draft, compact: panelOpen)
-                    .frame(maxHeight: panelOpen ? max(150, 0.33 * height - (keyboardUp && mode == .text ? 96 : 0)) : .infinity)
+                    .frame(maxHeight: panelOpen ? max(keyboardUp && mode == .text ? 144 : 150, 0.33 * height - (keyboardUp && mode == .text ? 96 : 0)) : .infinity)
                     .animation(.easeOut(duration: 0.2), value: keyboardUp)
                 if !(keyboardUp && mode == .text) { transportRow(draft) }
             }
             if showsChatThread {
                 EmptyView()
             } else if mode == .text, let slide {
-                SlidePostTextPanel(session: session, slideID: slide.id, tab: $textTab, onDone: finishEditing)
+                SlidePostTextPanel(session: session, slideID: slide.id, tab: $textTab, compact: keyboardUp, onDone: finishEditing)
                     .id(slide.id)
                     .frame(maxHeight: .infinity)
                     .padding(.horizontal, 12).padding(.bottom, NativeEditorIslandMetrics.bottomPadding)

@@ -275,7 +275,7 @@ struct SlidePostTextCanvas: View {
 
     private func accessibilityValue(_ element: SlidePostTextElement, selected: Bool) -> String {
         let anchor = SlidePostTextLayout.anchor(for: element)
-        var parts = ["size \(element.sizePx)", "rotation \(Int(element.rotationDeg.rounded()))",
+        var parts = ["size \(element.sizePx)", "rotation \(Int(element.rotationDeg))",
                      "position \(Int((anchor.x * 100).rounded()))%, \(Int((anchor.y * 100).rounded()))%"]
         if selected { parts.append("selected") }
         return parts.joined(separator: ", ")

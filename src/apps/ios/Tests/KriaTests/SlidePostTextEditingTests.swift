@@ -294,4 +294,44 @@ import XCTest
         element.strokeWidth = 21
         XCTAssertTrue(element.isInvalid)
     }
+
+    // MARK: Canvas <-> panel agreement (KRI-298 integration)
+
+    func testCanvasTransformAndPanelEditsAgreeOnSizeAndRotationAndSaveTopLevel() throws {
+        let session = makeSession()
+        let editor = SlidePostTextEditor(session: session, slideID: slideID)
+        // A canvas pinch+twist goes through session.updateText(applyTransform) ...
+        session.updateText(slideID: slideID, textID: "t1", coalescing: "canvas") { element in
+            let base = element.transformBaseline
+            var live = NativeTextLiveTransform()
+            live.begin(baseline: base, bounds: nil)
+            live.resize(current: base, scale: 1.5, rotation: 30, snapRotation: false)
+            element.applyTransform(from: base, live: live)
+        }
+        // ... and the panel reads the very same numbers.
+        let canvas = texts(session)[0]
+        let raw = try XCTUnwrap(editor.textElement(id: "t1")).raw
+        XCTAssertEqual(raw["size_px"]?.numberValue, Double(canvas.sizePx))
+        XCTAssertEqual(raw["rotation_deg"]?.numberValue ?? 0, canvas.rotationDeg, accuracy: 1e-9)
+        XCTAssertEqual(canvas.rotationDeg, 30, accuracy: 1e-9)
+        XCTAssertGreaterThan(canvas.sizePx, 86)
+        // A panel edit is what the canvas draws next.
+        editor.updateTextRaw(id: "t1", key: "rotation_deg", value: .number(-20))
+        editor.setTextSize(id: "t1", sizePX: 100)
+        XCTAssertEqual(texts(session)[0].rotationDeg, -20, accuracy: 1e-9)
+        XCTAssertEqual(texts(session)[0].sizePx, 100)
+        editor.updateTextRaw(id: "t1", key: "stroke_color", value: .string("#112233"))
+        editor.updateTextRaw(id: "t1", key: "shadow_opacity", value: .number(0.4))
+        // Save payload: every style key sits at the top level of the element, never nested.
+        let data = try JSONEncoder().encode(try XCTUnwrap(session.draft))
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let slides = try XCTUnwrap(root["slides"] as? [[String: Any]])
+        let edits = try XCTUnwrap(slides[0]["edits"] as? [String: Any])
+        let element = try XCTUnwrap((edits["texts"] as? [[String: Any]])?.first)
+        XCTAssertEqual(element["rotation_deg"] as? Double, -20)
+        XCTAssertEqual(element["size_px"] as? Int, 100)
+        XCTAssertEqual(element["stroke_color"] as? String, "#112233")
+        XCTAssertEqual(element["shadow_opacity"] as? Double, 0.4)
+        XCTAssertNil(element["extra"])
+    }
 }
