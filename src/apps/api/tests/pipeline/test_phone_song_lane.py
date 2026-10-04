@@ -188,13 +188,24 @@ def test_a_replaced_song_fails_closed(changes):
 def test_lipsync_refit_truncates_the_end_and_never_shifts_the_start():
     result = lipsync_plan()
     plan = compiled_plan(result)
-    footage, visuals = bindings_for(result, original_duration={"A": 14.0})
+    # The phone measures the take a hair (30 ms) shorter than the server did: the
+    # export safety margin trims the end; the start never moves.
+    footage, visuals = bindings_for(result, original_duration={"A": 15.97})
     recipe = compile_phone_guided_plan(plan, footage, visuals, song=song_bed())
     first = next(c for c in recipe.tracks[0].clips if c.id == plan.story_timeline[0].moment_id)
     moment = plan.story_timeline[0]
     assert first.source_start == pytest.approx(moment.source_start_s)  # unchanged
-    assert first.source_duration == pytest.approx(14.0 - 0.05 - moment.source_start_s)
+    assert first.source_duration == pytest.approx(15.97 - 0.05 - moment.source_start_s)
     assert first.source_duration < moment.duration_s
+
+
+def test_lipsync_refit_refuses_to_truncate_more_than_a_frame_of_footage():
+    result = lipsync_plan()
+    plan = compiled_plan(result)
+    # 2 s of the cut would be cut off while the song keeps playing: fail closed.
+    footage, visuals = bindings_for(result, original_duration={"A": 14.0})
+    with pytest.raises(UnsupportedPhonePlan, match="runs past the end"):
+        compile_phone_guided_plan(plan, footage, visuals, song=song_bed())
 
 
 def test_lipsync_refit_fails_closed_when_the_start_no_longer_fits():

@@ -18,7 +18,7 @@ from app.config import settings
 from app.kria.device_render import make_device_request
 from app.pipeline.guided_story import GuidedStoryExecutionPlan, compile_execution_plan
 from app.pipeline.lipsync_montage import lipsync_sync_error_s, plan_lipsync_montage
-from app.pipeline.phone_guided_plan import compile_phone_guided_plan
+from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
 from app.pipeline.unified_montage import plan_unified_montage
 from app.routes import generative_jobs as gj
 from app.services.device_render import device_status, pin_device_request
@@ -37,6 +37,7 @@ from tests.pipeline.user_song_helpers import (
     alignment,
     analysis,
     bindings_for,
+    compiled_plan,
     confident,
     song_bed,
     take,
@@ -267,3 +268,43 @@ def test_squeezing_a_lipsync_montage_is_refused_rather_than_sent_off_the_song():
     assert caught.value.detail["code"] == "unsupported_phone_edit"
     assert "starts before it was filmed" in caught.value.detail["reason"]
     assert device_status(job, "guided_story").request == before
+
+
+def _push_take_past_its_footage(job, media_id="A"):
+    """Move a take's pinned song offset so its cut needs footage past the take's end."""
+    plan = copy.deepcopy(job.assembly_plan["guided_story_execution_plan"])
+    moment = next(m for m in plan["story_timeline"] if m["media_id"] == media_id)
+    source_len = 20.0  # take() default duration
+    overshoot = moment["source_start_s"] + moment["duration_s"] - source_len
+    # Lower delta => later source start. Push the window end 1 s past the footage.
+    plan["user_song"]["takes"][media_id]["delta_s"] -= max(0.0, -overshoot) + 1.0
+    return plan
+
+
+def test_the_editor_commit_refuses_a_take_that_runs_past_its_footage():
+    """Probe (KRI-374 review): no source duration reached the resync, so the compiler's
+    END-only refit silently shortened the clip and left a black hole under the song."""
+    job, _result = lipsync_job()
+    plan = _push_take_past_its_footage(job)
+    with pytest.raises(HTTPException) as caught:
+        _text_only_commit(job, plan=plan)
+    assert caught.value.status_code == 422
+    assert caught.value.detail["code"] == "unsupported_phone_edit"
+    assert "runs past its end" in caught.value.detail["reason"]
+    assert device_status(job, "guided_story").request.identity.recipe_revision == 1
+
+
+def test_the_phone_compiler_refuses_to_truncate_a_lipsync_take_by_more_than_a_frame():
+    result = plan_lipsync_montage(
+        [take("A"), take("B")],
+        alignment(confident("A", 10), confident("B", 25)),
+        analysis(),
+        plan_item_id=SONG_ITEM_ID,
+    )
+    plan = compiled_plan(result)
+    # The phone measures take A 7 s shorter than the server did when it matched it.
+    bindings, _visuals = bindings_for(result, original_duration={"A": 10.0, "B": 20.0})
+    moment_a = next(m for m in plan.story_timeline if m.media_id == "A")
+    assert moment_a.source_end_s > 10.1
+    with pytest.raises(UnsupportedPhonePlan, match="runs past the end"):
+        compile_phone_guided_plan(plan, bindings, song=song_bed())

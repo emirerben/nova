@@ -151,8 +151,14 @@ def resync_moment_rows(
     return rows
 
 
-def resync_lipsync_moments(plan: Any) -> Any:
+def resync_lipsync_moments(
+    plan: Any, *, source_durations: Mapping[str, float] | None = None
+) -> Any:
     """``plan`` with each lip-sync take's source window re-derived from its pinned delta.
+
+    ``source_durations`` (media_id -> seconds) turns on the "take runs past its
+    end" check; the editor commit passes the device-measured durations, since a
+    take dragged later in the cut can need footage the singer never filmed.
 
     ``plan`` is a ``GuidedStoryExecutionPlan`` (a copy is returned) or its dict
     form. A plan without a lip-sync ``user_song`` comes back unchanged. Called by
@@ -167,12 +173,18 @@ def resync_lipsync_moments(plan: Any) -> Any:
         if song.mode != "lipsync":
             return plan
         updated = dict(plan)
-        updated["story_timeline"] = resync_moment_rows(plan["story_timeline"], song)
+        updated["story_timeline"] = resync_moment_rows(
+            plan["story_timeline"], song, source_durations=source_durations
+        )
         return updated
     song = getattr(plan, "user_song", None)
     if song is None or song.mode != "lipsync":
         return plan
-    rows = resync_moment_rows([moment.model_dump() for moment in plan.story_timeline], song)
+    rows = resync_moment_rows(
+        [moment.model_dump() for moment in plan.story_timeline],
+        song,
+        source_durations=source_durations,
+    )
     moments = [
         moment.model_copy(
             update={"source_start_s": row["source_start_s"], "source_end_s": row["source_end_s"]}

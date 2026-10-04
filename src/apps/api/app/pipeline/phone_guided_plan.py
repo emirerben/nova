@@ -443,7 +443,16 @@ def compile_phone_guided_plan(
                         "a lip-sync clip is shorter on this phone than when it was matched "
                         "to the song, so it can no longer stay in sync"
                     )
-                source_duration = round(min(source_duration, available - source_start), 6)
+                refit_duration = round(min(source_duration, available - source_start), 6)
+                # The export safety margin is an intended trim; anything beyond
+                # one frame past it is footage the singer never filmed, and
+                # trimming it would leave a hole while the song keeps playing.
+                if source_duration - refit_duration - _EXPORT_SAFETY_MARGIN_S > _FRAME_S:
+                    raise UnsupportedPhonePlan(
+                        "a lip-sync clip runs past the end of its footage, so it can no "
+                        "longer stay in sync with the song"
+                    )
+                source_duration = refit_duration
         elif moment.source_end_s > source.duration_s or source_start >= source.duration_s:
             # `moment.source_start_s`/`source_end_s` are planned against the
             # analysis proxy's server-measured (ffprobe) duration;

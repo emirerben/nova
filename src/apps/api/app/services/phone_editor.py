@@ -311,7 +311,15 @@ def prepare_phone_editor_commit(
             song = None
             if plan.get("user_song") is not None:
                 refuse_lipsync_rate_change(plan)
-                plan = resync_lipsync_moments(plan)
+                # The device-measured length of each take: a take dragged later in
+                # the cut can need footage that was never filmed. That is refused
+                # here (422 + reason), not silently shortened at compile time.
+                plan = resync_lipsync_moments(
+                    plan,
+                    source_durations={
+                        binding.media_id: float(binding.original.duration_s) for binding in bindings
+                    },
+                )
                 song = _pinned_song_bed(previous.recipe)
             allow_editor_media = bool(plan.get("editor_visual_blocks"))
             recipe = compile_phone_guided_plan(
