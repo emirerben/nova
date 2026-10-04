@@ -89,7 +89,31 @@ private final class CreationChatFixture: @unchecked Sendable {
             }
             return response(capabilities)
         }
+        // `KRIA_SLIDE_POST_READY_THREAD=1`: a READY slide post already exists. The LIST (drawer) payload is the
+        // worst case (no `state.format`, no variants), while the FULL projection carries the format, which is
+        // what the app only learns after the thread loads.
+        let readySlideID = "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"
+        if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_READY_THREAD"] == "1", threads[readySlideID] == nil {
+            func event(_ seq: Int, _ type: String, _ payload: [String: Any] = [:]) -> [String: Any] {
+                ["id": UUID().uuidString, "sequence": seq, "revision": seq + 1, "role": "assistant", "event_type": type, "content": "", "payload": payload, "created_at": "2026-09-10T10:00:00Z"]
+            }
+            threads[readySlideID] = ["id": readySlideID, "title": "Weekend trip", "status": "active", "revision": 3, "runtime_version": 2,
+                "state": ["format": "slides", "edit_format": "slides"],
+                "events": [event(0, "thread_created"), event(1, "format_prompt"), event(2, "action_select_format", ["format": "slides"])],
+                "active_plan_item_id": readySlideID, "active_job_id": readySlideID,
+                "job": ["id": readySlideID, "status": "ready", "variants": [["variant_id": "slides", "render_status": "ready"]]],
+                "updated_at": "2026-09-10T10:00:00Z"]
+        }
         if path == "/creation-threads" {
+            if request.httpMethod != "POST", ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_READY_THREAD"] == "1" {
+                let listed: [[String: Any]] = threads.values.map { thread in
+                    guard thread["id"] as? String == readySlideID else { return thread }
+                    var stripped = thread; stripped["state"] = [:]; stripped["events"] = []
+                    stripped["job"] = ["id": readySlideID, "status": "ready", "variants": []]
+                    return stripped
+                }
+                return response(listed)
+            }
             if request.httpMethod == "POST" {
                 let id = UUID().uuidString
                 let fixtureEvents: [[String: Any]] = ProcessInfo.processInfo.environment["KRIA_CHAT_LONG_HISTORY"] == "1"

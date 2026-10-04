@@ -505,6 +505,8 @@ private struct CreationWorkspaceView: View {
 
     /// Presents the editor with no slide-up animation; `WorkspaceCrossfade` fades it in.
     private func openEditor() {
+        // Format still unknown (thread not loaded): no editor entry at all.
+        guard isFormatKnown else { return }
         // A slide post has no video timeline: every "open editor" entry lands in the slide workspace.
         if SlidePostRouting.editorDestination(isSlidePost: isSlidePostProject) == .slideWorkspace {
             isChoosingFormat = false
@@ -597,6 +599,16 @@ private struct CreationWorkspaceView: View {
     /// The one slide-post decision (format, library/project row, or thread projection). The
     /// plan-item id is NOT part of it: `SlidePostWorkspaceView` resolves it itself and shows
     /// "Setting up your post…" while it is unavailable, instead of falling to the video editor.
+    private var isFormatKnown: Bool {
+        SlidePostRouting.isFormatKnown(selectedFormat: selectedFormat, project: currentProject, thread: fullThread)
+    }
+
+    /// Editor entries (header switch, Open editor, Open current cut) exist only when this is
+    /// definitely not a slide post. A ready project of unknown format shows a loading state.
+    private var canOpenVideoEditor: Bool {
+        SlidePostRouting.canOpenVideoEditor(selectedFormat: selectedFormat, project: currentProject, thread: fullThread)
+    }
+
     private var isSlidePostProject: Bool {
         SlidePostRouting.isSlidePost(selectedFormat: selectedFormat, project: currentProject, thread: fullThread)
     }
@@ -630,6 +642,14 @@ private struct CreationWorkspaceView: View {
         .task {
             // History should not wait for the independent capability request.
             async let capabilities: Void = refreshCapabilities()
+            // Format unknown (list row had no signal): fetch the full projection NOW. The delta poll only
+            // pulls it when the revision advances, which a quiet ready project never does.
+            var attempts = 0
+            while !isFormatKnown, attempts < 5, !Task.isCancelled {
+                if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
+                attempts += 1
+                if !isFormatKnown { try? await Task.sleep(for: .seconds(1)) }
+            }
             await pollUntilDismissed()
             await capabilities
         }
@@ -735,7 +755,7 @@ private struct CreationWorkspaceView: View {
                 // `currentProject.status` (not `workspaceStage`) so the switch
                 // to the existing cut stays available even while a new plan's
                 // confirmation card is showing on top of it.
-                showsEditorSwitch: currentProject.status == .ready,
+                showsEditorSwitch: currentProject.status == .ready && canOpenVideoEditor,
                 openProjects: openProjects,
                 openEditor: openEditor,
                 openAccount: openAccount
@@ -841,7 +861,7 @@ private struct CreationWorkspaceView: View {
             // A new plan's confirmation card can appear over an already-ready
             // cut (see `WorkspaceStage.resolve`); confirming it is a choice,
             // not something the old cut's reachability should be sacrificed for.
-            if currentProject.status == .ready {
+            if currentProject.status == .ready && canOpenVideoEditor {
                 Button("Open current cut", action: openEditor)
                     .buttonStyle(CanonicalSecondaryButtonStyle())
                     .disabled(isActing)
@@ -861,6 +881,12 @@ private struct CreationWorkspaceView: View {
                     preparationTotal: fullThread?.preparationTotal ?? 0
                 ).id("rendering")
             }
+        case .ready where !isFormatKnown:
+            // Ready but we cannot tell a slide post from a video yet: wait for the thread.
+            ProgressView("Opening your project…")
+                .frame(maxWidth: .infinity, minHeight: 120)
+                .accessibilityIdentifier("format-resolving")
+                .id("format-resolving")
         case .ready:
             ReadyStage(
                 project: currentProject,

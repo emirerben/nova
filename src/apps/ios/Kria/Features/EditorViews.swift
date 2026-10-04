@@ -209,6 +209,15 @@ struct ResultsView: View {
     }
 
     var body: some View {
+        // A slide post has no video timeline: never offer "Edit video" for one.
+        if project.isSlidePost {
+            SlidePostWorkspaceView(project: project)
+        } else {
+            videoBody
+        }
+    }
+
+    private var videoBody: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("Your video is ready.").font(KriaFont.display(34))
             Group {

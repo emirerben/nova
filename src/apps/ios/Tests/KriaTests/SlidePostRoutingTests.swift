@@ -46,4 +46,57 @@ final class SlidePostRoutingTests: XCTestCase {
         XCTAssertEqual(SlidePostRouting.editorDestination(isSlidePost: true), .slideWorkspace)
         XCTAssertEqual(SlidePostRouting.editorDestination(isSlidePost: false), .videoEditor)
     }
+
+    // MARK: Drawer list payload (the real GET /creation-threads shape)
+
+    /// What `list_threads` returns for a READY slide post: `events: []`, a URL-free job whose variants carry only
+    /// `variant_id` + `render_status`, and `state` copied from the row.
+    private func listedSummary(state: [String: Any], variants: [[String: Any]]) throws -> ProjectSummary {
+        let id = UUID().uuidString
+        let object: [String: Any] = [
+            "id": id, "title": "Weekend trip", "status": "active", "revision": 3, "runtime_version": 2,
+            "state": state, "events": [], "active_plan_item_id": id, "active_job_id": id,
+            "job": ["id": id, "status": "ready", "variants": variants],
+            "updated_at": "2026-10-04T10:00:00Z"
+        ]
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(CreationThread.self, from: JSONSerialization.data(withJSONObject: object)).summary
+    }
+
+    func testListedSlidePostWithStateOrVariantIsRecognisedBeforeThreadLoads() throws {
+        let byState = try listedSummary(state: ["format": "slides", "edit_format": "slides"], variants: [])
+        XCTAssertEqual(byState.status, .ready)
+        XCTAssertTrue(SlidePostRouting.isSlidePost(selectedFormat: nil, project: byState, thread: nil))
+        let byVariant = try listedSummary(state: [:], variants: [["variant_id": "slides", "render_status": "ready"]])
+        XCTAssertTrue(SlidePostRouting.isSlidePost(selectedFormat: nil, project: byVariant, thread: nil))
+    }
+
+    /// The gap: a READY project whose list row carries NO format signal. Before the fix `isSlidePost` is false and the
+    /// generic chat (Chat|Editor switch, Open editor, Open current cut) was reachable, i.e. NativeEditorView could open.
+    func testReadyProjectWithoutAnyFormatSignalExposesNoVideoEditorEntry() throws {
+        let bare = try listedSummary(state: [:], variants: [])
+        XCTAssertEqual(bare.status, .ready)
+        XCTAssertFalse(SlidePostRouting.isSlidePost(selectedFormat: nil, project: bare, thread: nil))
+        XCTAssertFalse(SlidePostRouting.isFormatKnown(selectedFormat: nil, project: bare, thread: nil))
+        XCTAssertFalse(SlidePostRouting.canOpenVideoEditor(selectedFormat: nil, project: bare, thread: nil))
+        // Once the full thread loads and says slides, the destination is the slide workspace.
+        let t = try thread(state: ["format": "slides"])
+        XCTAssertTrue(SlidePostRouting.isSlidePost(selectedFormat: nil, project: bare, thread: t))
+        XCTAssertFalse(SlidePostRouting.canOpenVideoEditor(selectedFormat: nil, project: bare, thread: t))
+    }
+
+    func testVideoEditorOpensOnlyForKnownNonSlideProjects() throws {
+        let montage = try thread(state: ["format": "montage"])
+        XCTAssertTrue(SlidePostRouting.canOpenVideoEditor(selectedFormat: nil, project: project(), thread: montage))
+        XCTAssertTrue(SlidePostRouting.canOpenVideoEditor(selectedFormat: .montage, project: project(), thread: nil))
+        XCTAssertTrue(SlidePostRouting.canOpenVideoEditor(selectedFormat: nil, project: project(variant: "original_text"), thread: nil))
+        XCTAssertFalse(SlidePostRouting.canOpenVideoEditor(selectedFormat: nil, project: project(variant: "slides"), thread: nil))
+        XCTAssertFalse(SlidePostRouting.canOpenVideoEditor(selectedFormat: .slides, project: project(), thread: montage))
+    }
+
+    func testSwiftDataCachePersistsTheFormat() throws {
+        let cached = CachedProject(id: UUID(), title: "t", status: .ready, updatedAt: .now, posterURL: nil)
+        cached.editFormat = "slides"; cached.outputVariantID = "slides"
+        XCTAssertTrue(cached.summary.isSlidePost)
+    }
 }

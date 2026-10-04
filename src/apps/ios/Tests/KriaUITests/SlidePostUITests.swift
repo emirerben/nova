@@ -1,6 +1,31 @@
 import XCTest
 
 @MainActor final class SlidePostUITests: XCTestCase {
+    /// A READY slide post whose drawer row has no format signal must land in the slide workspace; the video
+    /// editor (`native-editor-*`) and its Chat|Editor entry must never appear.
+    func testReadySlidePostOpenedFromDrawerNeverReachesVideoEditor() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
+        app.launchEnvironment["KRIA_SLIDE_POST_FIXTURE"] = "1"
+        app.launchEnvironment["KRIA_SLIDE_POST_READY_THREAD"] = "1"
+        app.launch()
+        // The only project is selected on launch (same `selectProject` state the drawer sets); when the
+        // chat chrome is showing, also go through the drawer row like a user would.
+        let menu = app.buttons["Open projects"]
+        if menu.waitForExistence(timeout: 4) {
+            menu.tap()
+            let row = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Weekend trip'")).firstMatch
+            if row.waitForExistence(timeout: 4) { row.tap() }
+        }
+        let slide = app.buttons["Add photos & videos"].firstMatch
+        _ = slide.waitForExistence(timeout: 15)
+        XCTAssertTrue(slide.exists, "slide workspace appears")
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-preview"].exists)
+        XCTAssertFalse(app.buttons["Editor"].exists, "no Chat|Editor switch for a slide post")
+        XCTAssertFalse(app.buttons["open-current-cut"].exists)
+    }
+
     func testSlidePostCreationUsesExplicitProposalAndCreateThenContextualKria() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
