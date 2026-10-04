@@ -6,9 +6,8 @@ source_kind: put_page
 ingested_via: put_page
 ---
 
-> **Backlog moved to Linear (partially) on 2026-10-04.** New work and ideas go to Linear (see `docs/runbooks/linear-workflow.md`); do not add entries here.
-> 51 open entries below were copied to Linear and are listed in the table. 43 more open entries were NOT copied because the Linear workspace hit its free issue limit; they still live only in this file until that is resolved. Shipped and obsolete entries were not migrated.
-> All migrated issues carry the `From TODOS.md` label and were not re-verified.
+> **Backlog moved to Linear on 2026-10-04.** New work and ideas go to Linear (see `docs/runbooks/linear-workflow.md`); do not add entries here.
+> The 94 open entries below were copied to Linear (label `From TODOS.md`, not re-verified). Shipped and obsolete entries, and 8 web-only or informational ones, were not migrated; their text stays below as history.
 
 | TODOS.md entry | Linear |
 | --- | --- |
@@ -63,6 +62,49 @@ ingested_via: put_page
 | T-CAP011-3 — Prod-image parity render before the face-placement flag flip | KRI-357 |
 | T-CAP011-1 — Emphasis styling lane for standalone cues | KRI-358 |
 | T-CAP012-1 — Extract the merge-back pass out of build_semantic_caption_cues | KRI-359 |
+| Variant-level render heartbeat (reburn/regen blindness) | KRI-378 |
+| T-CAP011-4 — Card-arbitration face sampler still runs on the 2.0s default | KRI-379 |
+| T-CAPFX-2 — Evaluate AI overlay-suggestion quality on speech content | KRI-380 |
+| T-SMART-COMP-1 — Consolidate Smart Captions visual rendering into one compositor pass | KRI-381 |
+| T-SMART-REVIEW — v0.11.0.0 pre-merge review deferrals (2026-07-20) | KRI-382 |
+| T-LANDSCAPE-3 — Landscape support for still photos (image_to_video path) | KRI-383 |
+| Persistent media library (supersedes the per-plan footage pool) | KRI-384 |
+| sequence_quote_writer anti-slop pass (plans/015 follow-up) | KRI-385 |
+| Plan-footage mismatch detection (plans/015 outside-voice #10) | KRI-386 |
+| Time-boxed hook text (judge-workflow finding, 2026-06-10) | KRI-387 |
+| Hook visible on literal first frame + contrast scrim (judge finding) | KRI-388 |
+| Save the variable-font instancing helper as a committed script | KRI-389 |
+| `--record` mode on agent runtime | KRI-390 |
+| Gemini Integration Tests | KRI-391 |
+| TikTok Content Posting audit approval | KRI-392 |
+| Scheduled TikTok publishing (draft handoff shipped in v0.25.8.0) | KRI-393 |
+| Platform Posting (Phase 2) | KRI-394 |
+| Automated Visual Regression Testing | KRI-395 |
+| Vertex AI service-account auth swap (P2 follow-up to v0.4.9.0) | KRI-396 |
+| Worker memory telemetry | KRI-397 |
+| Lint check: bump `AgentSpec.prompt_version` when agent code touches prompts/schemas | KRI-398 |
+| Tonemap only the footage the variants actually use, not whole clips | KRI-399 |
+| Render the 3 generative variants in parallel across workers | KRI-400 |
+| Cheaper / adaptive HDR tonemap + cap source resolution before zscale | KRI-401 |
+| Narrative caption arc across body clips (the other half of the reference aesthetic) | KRI-402 |
+| Auto-scrim for editorial text on busy footage (from 2026-06-12 design review, D7) | KRI-403 |
+| Editable music-bed trims | KRI-404 |
+| T-PLAN-2 — Talking-to-camera "talking points" recording helper | KRI-405 |
+| T-AUTO-1 — Follow-up plan: generated diagram B-roll | KRI-406 |
+| T-AUTO-2 — Standalone sound-only SFX suggestions | KRI-407 |
+| T-CUT-1 — v1.1: caption cue re-burn over cutaways | KRI-408 |
+| Intro-placement snapshot — deferrals (from the `intro_placement` review, 2026-07-30) | KRI-409 |
+| Generative clip-ingest bypasses the existing Redis clip-analysis cache | KRI-410 |
+| Bake CLIP ViT-B/32 weights into the Docker image | KRI-411 |
+| Retention decision: should music/template job SOURCES outlive their lifecycle windows? | KRI-412 |
+| Preview-resolution logic exists in three places | KRI-413 |
+| AI copilot cannot see or edit guided-story captions | KRI-414 |
+| `subtitled` and `talking_head` can lose caption identity entirely | KRI-415 |
+| Copilot reply claims success on an `unsupported` outcome | KRI-416 |
+| T-CAP025-1 — Text tool: adopt the fill-above-bar typing layout? | KRI-417 |
+| T-CAP025-2 — Locale-aware `text_case: upper` across Python, web and iOS | KRI-418 |
+| T-CAP025-3 — Run the KriaMediaEngine package tests in CI | KRI-419 |
+| T-KRI282-1 — Persist an `agent_run` row for the kria v2 clip-intent planner | KRI-420 |
 
 
 # Nova — Deferred Work

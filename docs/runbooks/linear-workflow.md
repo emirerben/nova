@@ -6,7 +6,7 @@ Use the `/roadmap` skill (`.agents/skills/roadmap/SKILL.md`) to file ideas, tria
 
 ## Capacity limit (found 2026-10-04)
 
-The Linear workspace is on the free plan, which caps active issues. The `TODOS.md` import stopped at the limit (`You've exceeded the free issue limit for this workspace`), so about 43 open entries are still only in `TODOS.md`; its header lists what was copied. If a create call fails with that error, stop and tell Emir. Do not archive or delete issues to make room, and do not silently fall back to `TODOS.md`.
+The Linear workspace is on a plan that caps active issues; the `TODOS.md` import hit `You've exceeded the free issue limit for this workspace` once and was finished after space was freed. If a create call fails with that error, stop and tell Emir. Do not archive or delete issues to make room, and do not silently fall back to `TODOS.md`.
 
 ## The model
 
