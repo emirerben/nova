@@ -7,6 +7,81 @@ import UIKit
     override func setUp() { super.setUp(); UploadRetryProtocol.beginTest() }
     override func tearDown() { UploadRetryProtocol.endTest(); super.tearDown() }
 
+    // MARK: KRI-300 capture-context cleanup
+
+    private func visualCoordinator(attach: Bool) throws -> (BackgroundUploadCoordinator, UUID, URL, () -> Void) {
+        let key = "kria.test.visualcapture.\(UUID().uuidString)"
+        let projectID = UUID()
+        let source = FileManager.default.temporaryDirectory.appending(path: "photo-\(UUID().uuidString).jpg")
+        try Data([0xFF, 0xD8, 0xFF, 0xD9]).write(to: source)
+        let projectDirectory = BackgroundUploadCoordinator.projectDirectory(projectID)
+        UploadRetryProtocol.handler = { transport in
+            let path = transport.request.url?.path ?? ""
+            if transport.request.httpMethod == "PUT" { if attach { transport.finish(200, Data()) }; return }
+            if path.hasSuffix("upload-urls") { transport.finish(200, Data(#"{"urls":[{"reservation_id":"res-1","upload_url":"https://uploads.test/put","gcs_path":"pool/photo.jpg","upload_headers":{}}]}"#.utf8)); return }
+            if path.hasSuffix("/assets") { transport.finish(200, Data(#"{"id":"asset-1","kind":"image","status":"ready","source_filename":"photo.jpg","display_url":null,"preview_url":null,"retryable":false}"#.utf8)); return }
+            if path.contains("creation-threads") { transport.finish(200, Data(#"{"id":"\#(projectID.uuidString)","title":"t","status":"draft","revision":1,"runtime_version":2,"updated_at":"2026-09-09T12:00:00Z","events":[]}"#.utf8)); return }
+            transport.finish(200, Data("{}".utf8))
+        }
+        let configuration = UploadRetryProtocol.configuration()
+        let api = KriaAPI(baseURL: URL(string: "https://uploads.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: configuration))
+        let coordinator = BackgroundUploadCoordinator(api: api, defaultsKey: key, sessionConfiguration: configuration, backgroundActivity: RecordingBackgroundActivityAssertion())
+        let cleanup = {
+            UserDefaults.standard.removeObject(forKey: key)
+            UserDefaults.standard.removeObject(forKey: "\(key).preparing")
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: projectDirectory.root)
+        }
+        return (coordinator, projectID, source, cleanup)
+    }
+
+    private let capturedRaw = ClipCaptureRaw(captureTime: Date(), latitude: 41.19, longitude: 28.74)
+
+    func testVisualCaptureIsForgottenWhenTheUploadFailsBeforeItStarts() async throws {
+        let (coordinator, projectID, source, cleanup) = try visualCoordinator(attach: false)
+        defer { cleanup() }
+        UploadRetryProtocol.handler = { $0.finish(500, Data()) }
+        let recordID = UUID()
+        ClipCaptureStore.shared.set(capturedRaw, for: recordID)
+        defer { ClipCaptureStore.shared.remove(recordID) }
+
+        let accepted = await coordinator.enqueue(fileURL: source, projectID: projectID, source: .photos, consentGiven: true, purpose: .cloudRenderSource, role: .visual, itemID: "item-1", recordID: recordID)
+
+        XCTAssertFalse(accepted)
+        XCTAssertNil(ClipCaptureStore.shared.capture(for: recordID), "coarse lat/lon + time must not linger for an upload that never started")
+    }
+
+    func testVisualCaptureIsForgottenWhenTheUploadIsCancelled() async throws {
+        let (coordinator, projectID, source, cleanup) = try visualCoordinator(attach: false)
+        defer { cleanup() }
+        let recordID = UUID()
+        ClipCaptureStore.shared.set(capturedRaw, for: recordID)
+        defer { ClipCaptureStore.shared.remove(recordID) }
+
+        let accepted = await coordinator.enqueue(fileURL: source, projectID: projectID, source: .photos, consentGiven: true, purpose: .cloudRenderSource, role: .visual, itemID: "item-1", recordID: recordID)
+        XCTAssertTrue(accepted)
+        XCTAssertNotNil(ClipCaptureStore.shared.capture(for: recordID), "kept while the upload is in flight, the attach still needs it")
+
+        await coordinator.cancel(recordID: recordID)
+
+        XCTAssertNil(ClipCaptureStore.shared.capture(for: recordID))
+    }
+
+    func testVisualCaptureIsForgottenAfterTheUploadCompletes() async throws {
+        let (coordinator, projectID, source, cleanup) = try visualCoordinator(attach: true)
+        defer { cleanup() }
+        let recordID = UUID()
+        ClipCaptureStore.shared.set(capturedRaw, for: recordID)
+        defer { ClipCaptureStore.shared.remove(recordID) }
+
+        let accepted = await coordinator.enqueue(fileURL: source, projectID: projectID, source: .photos, consentGiven: true, purpose: .cloudRenderSource, role: .visual, itemID: "item-1", recordID: recordID)
+        XCTAssertTrue(accepted)
+        for _ in 0..<100 where ClipCaptureStore.shared.capture(for: recordID) != nil { try await Task.sleep(for: .milliseconds(50)) }
+
+        XCTAssertNil(ClipCaptureStore.shared.capture(for: recordID), "removed once the visual is registered with the server")
+        XCTAssertTrue(coordinator.records.isEmpty)
+    }
+
     func testProxyCannotEnterCloudSourceReservationContract() throws {
         XCTAssertThrowsError(try BackgroundUploadCoordinator.validateProjectUploadPurpose(.analysisProxy))
         XCTAssertNoThrow(try BackgroundUploadCoordinator.validateProjectUploadPurpose(.cloudRenderSource))

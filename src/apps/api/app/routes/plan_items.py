@@ -44,6 +44,12 @@ from app.auth import SYNTHETIC_USER_ID, CurrentUser
 from app.config import settings
 from app.database import get_db
 from app.db_locks import CONTENT_PLAN_LOCK
+from app.kria.media_sources import (
+    ClipCapture,
+    ClipPlace,
+    CoarseLocation,
+    lenient_capture_field,
+)
 from app.limiter import limiter
 from app.models import (
     ContentPlan,
@@ -4304,6 +4310,10 @@ class SlidePostStateAsset(BaseModel):
     source_url: str | None = None
     duration_s: float | None = None
     media_status: str
+    # KRI-300: when/where the photo or video was taken, as the phone read it.
+    # {capture_time?: ISO-8601 UTC, coarse_location?: {lat, lon},
+    #  place?: {sub_locality?, locality?, country?}}; null when none was sent.
+    capture: ClipCapture | None = None
 
 
 class SlidePostStateSlide(BaseModel):
@@ -4761,6 +4771,18 @@ def _slide_post_job_outputs_allowed(job: Job | None) -> bool:
     return job is not None and job.status not in {"cancelled", "superseded"}
 
 
+def _stored_asset_capture(asset: PlanItemAsset) -> ClipCapture | None:
+    """The asset's stored filming context; a malformed stored value is "no capture"."""
+    raw = getattr(asset, "capture", None)
+    if not isinstance(raw, dict) or not raw:
+        return None
+    try:
+        capture = ClipCapture.model_validate(raw)
+    except ValidationError:
+        return None
+    return None if capture.is_empty() else capture
+
+
 @router.get("/{item_id}/slide-post", response_model=SlidePostState)
 async def get_slide_post_state(
     item_id: str, user: CurrentUser, db: AsyncSession = Depends(get_db)
@@ -4793,9 +4815,10 @@ async def get_slide_post_state(
                     "duration_s",
                     "media_status",
                 }
-            )
+            ),
+            capture=_stored_asset_capture(asset),
         )
-        for out in asset_outs
+        for out, asset in zip(asset_outs, assets, strict=True)
     ]
     job = await db.get(Job, item.current_job_id) if item.current_job_id else None
     variant = _find_variant(job, "slides") if job is not None else None
@@ -8553,6 +8576,28 @@ class RegisterAssetBody(BaseModel):
     content_hash: str | None = None
     source_filename: str | None = None
     user_context: str | None = Field(default=None, max_length=_MAX_POOL_CONTEXT_CHARS)
+    # KRI-300: filming context read from the Photos asset (same shape and lenient
+    # rules as `MediaInput`): a part that fails validation is dropped, never a 422.
+    capture_time: datetime | None = None
+    coarse_location: CoarseLocation | None = None
+    place: ClipPlace | None = None
+
+    @field_validator("capture_time", "coarse_location", "place", mode="wrap")
+    @classmethod
+    def _lenient_capture_field(cls, value: object, handler: Any) -> Any:
+        return lenient_capture_field(value, handler)
+
+    def capture(self) -> ClipCapture | None:
+        """The (possibly partial) filming context, or None when nothing usable came."""
+        try:
+            capture = ClipCapture(
+                capture_time=self.capture_time,
+                coarse_location=self.coarse_location,
+                place=self.place,
+            )
+        except ValidationError:
+            return None
+        return None if capture.is_empty() else capture
 
 
 def _server_content_fingerprint(metadata: object) -> str:
@@ -9093,6 +9138,11 @@ async def register_pool_asset(
             if existing.status == "uploaded":
                 await _queue_pool_asset_analysis(existing, db)
             cleaned_context = _clean_pool_asset_context(body.user_context)
+            deduped_capture = body.capture()
+            if deduped_capture is not None and not existing.capture:
+                existing.capture = deduped_capture.model_dump(mode="json", exclude_none=True)
+                await db.commit()
+                await db.refresh(existing)
             if body.user_context is not None and existing.user_context != cleaned_context:
                 existing.user_context = cleaned_context
                 from app.services.edit_proposals import mark_edit_proposal_stale  # noqa: PLC0415
@@ -9251,6 +9301,10 @@ async def register_pool_asset(
     asset.content_hash = body.content_hash if not getattr(metadata, "md5_hash", None) else None
     asset.source_filename = body.source_filename or asset.source_filename
     asset.user_context = _clean_pool_asset_context(body.user_context)
+    # KRI-300: keep a previously stored capture when a retry arrives without one.
+    registered_capture = body.capture()
+    if registered_capture is not None:
+        asset.capture = registered_capture.model_dump(mode="json", exclude_none=True)
     asset.gcs_generation = metadata.generation
     asset.upload_content_type = expected_type
     asset.upload_size_bytes = metadata.size
