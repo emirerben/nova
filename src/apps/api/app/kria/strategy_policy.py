@@ -25,8 +25,7 @@ from dataclasses import dataclass
 
 from app.agents._schemas.creator_agent import CreativeStrategy, ResolvedCreatorManifest
 from app.agents._schemas.creator_policy import (
-    USER_SONG_CONTRACT_CODE,
-    USER_SONG_CONTRACT_MESSAGE,
+    USER_SONG_CONTRACT_NOTICE,
     USER_SONG_MISSING_CODE,
     USER_SONG_MISSING_MESSAGE,
     USER_SONG_PHONE_ONLY_CODE,
@@ -56,7 +55,6 @@ TRANSCRIPT_LABELS_DROPPED_NOTICE = (
 _USER_SONG_REFUSALS = {
     USER_SONG_PHONE_ONLY_CODE: USER_SONG_PHONE_ONLY_MESSAGE,
     USER_SONG_MISSING_CODE: USER_SONG_MISSING_MESSAGE,
-    USER_SONG_CONTRACT_CODE: USER_SONG_CONTRACT_MESSAGE,
 }
 
 
@@ -210,9 +208,11 @@ def check_strategy_for_runtime_v2(
         and strategy.song_sync == "lipsync"
         and strategy.execution_contract is not None
     ):
-        # KRI-374: refuse before the voiceover downgrade below would silently
-        # clear the contract -- a lip-sync edit follows the song, not a voiceover.
-        return RefusedStrategy(question=USER_SONG_CONTRACT_MESSAGE, code=USER_SONG_CONTRACT_CODE)
+        # KRI-374: a lip-sync edit follows the song, not a voiceover. Repair (clear the
+        # contract, say so) before the voiceover downgrade below, which would otherwise
+        # rewrite the selection and could refuse a project that has no video.
+        strategy = strategy.model_copy(update={"execution_contract": None})
+        notices.append(USER_SONG_CONTRACT_NOTICE)
     if strategy.execution_contract is not None:
         downgraded = _downgrade_guided_voiceover(manifest, strategy)
         if isinstance(downgraded, RefusedStrategy):

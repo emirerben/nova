@@ -92,11 +92,14 @@ async def _gate(db, manifest, strategy):  # noqa: ANN001, ANN202
     )
 
 
-async def test_alignment_missing_returns_the_existing_pending_reply() -> None:
+async def test_alignment_missing_returns_the_song_pending_reply() -> None:
     db = _Db(_item(None))
     result = await _gate(db, _manifest("a", "b"), _strategy())
     assert result.plan is not None and result.plan.turn_value == "recovery"
-    assert result.plan.response == planner._CLIP_INTENT_PENDING_REPLY
+    # Its own wording -- not the clip-picker "checking some of your clips" copy.
+    assert result.plan.response == planner._SONG_PENDING_REPLY
+    assert "song" in result.plan.response
+    assert result.plan.response != planner._CLIP_INTENT_PENDING_REPLY
     assert result.plan.diagnostics["reason"] == "song_alignment_pending"
     assert result.plan.song_order_question is None
 
@@ -169,6 +172,23 @@ async def test_answer_resolves_uncertain_takes_onto_the_strategy_payload(monkeyp
         {"media_id": "c", "delta_s": 60.0, "status": "confident", "confirmed_by_creator": False},
         {"media_id": "b", "delta_s": 80.0, "status": "confident", "confirmed_by_creator": True},
     ]
+
+
+async def test_answer_for_a_previous_song_generation_is_asked_again(monkeypatch) -> None:
+    """The song was replaced after the creator answered: the old order is not reused."""
+    alignment = _alignment(_conf("a", 10.0), _amb("b", 30.0, [(30.0, 0.9), (80.0, 0.8)]))
+    old = build_song_order_question(
+        SongAlignment.model_validate(alignment), ["a", "b"], question_id="old"
+    ).model_copy(update={"song_generation": GEN - 1})
+    events = [
+        ("assistant", {"song_order_question": old.model_dump(mode="json")}),
+        ("user", {"song_order": {"question_id": "old", "ordered_media_ids": ["a", "b"]}}),
+    ]
+    monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=events))
+    result = await _gate(_Db(_item(alignment)), _manifest("a", "b"), _strategy())
+    assert result.resolved_takes is None
+    assert result.plan is not None
+    assert result.plan.song_order_question.song_generation == GEN
 
 
 async def test_answer_for_a_different_take_set_is_asked_again(monkeypatch) -> None:
@@ -325,3 +345,101 @@ async def test_resolved_takes_are_written_onto_the_strategy_for_the_draft(monkey
     monkeypatch.setattr(planner, "adapt_creator_action", _spy)
     await _call(SimpleNamespace(), _propose())
     assert getattr(seen["strategy"], "resolved_song_takes", None) == resolved
+
+
+# -- the answer turn re-runs the model, which may drop lip-sync -------------------------
+
+
+def _answered_events(alignment: dict, *, generation: int | None = GEN, answered: bool = True):
+    q = build_song_order_question(SongAlignment.model_validate(alignment), ["a", "b"])
+    if generation != GEN:
+        q = q.model_copy(update={"song_generation": generation})
+    events = [("assistant", {"song_order_question": q.model_dump(mode="json")})]
+    if answered:
+        events.append(
+            (
+                "user",
+                {"song_order": {"question_id": q.question_id, "ordered_media_ids": ["b", "a"]}},
+            )
+        )
+    return events
+
+
+async def test_a_flipped_song_sync_on_the_answer_turn_still_applies_the_answer(monkeypatch) -> None:
+    """Probe: the model said `background` on the answer turn, the gate was skipped and the
+    creator's confirmed order was silently dropped."""
+    alignment = _alignment(_conf("a", 10.0), _amb("b", 80.0, [(5.0, 0.9), (80.0, 0.8)]))
+    events = _answered_events(alignment)
+    monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=events))
+    flipped = _strategy(song_sync="background")
+
+    result = await _gate(_Db(_item(alignment)), _manifest("a", "b"), flipped)
+
+    assert result.plan is None
+    assert result.strategy is not None and result.strategy.song_sync == "lipsync"
+    assert [t["media_id"] for t in result.resolved_takes] == ["b", "a"]
+
+
+async def test_a_flipped_song_sync_with_an_open_question_asks_it_again(monkeypatch) -> None:
+    alignment = _alignment(_conf("a", 10.0), _amb("b", 80.0, [(5.0, 0.9), (80.0, 0.8)]))
+    events = _answered_events(alignment, answered=False)
+    monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=events))
+
+    result = await _gate(_Db(_item(alignment)), _manifest("a", "b"), _strategy(song_sync=None))
+
+    assert result.plan is not None and result.plan.song_order_question is not None
+
+
+async def test_a_later_background_request_is_not_overridden(monkeypatch) -> None:
+    alignment = _alignment(_conf("a", 10.0), _amb("b", 80.0, [(5.0, 0.9), (80.0, 0.8)]))
+    events = [
+        *_answered_events(alignment),
+        ("user", {"text": "actually just use it as background music"}),
+    ]
+    monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=events))
+
+    result = await _gate(
+        _Db(_item(alignment)), _manifest("a", "b"), _strategy(song_sync="background")
+    )
+
+    assert result.plan is None and result.strategy is None and result.resolved_takes is None
+
+
+async def test_a_flip_after_the_song_was_replaced_is_not_overridden(monkeypatch) -> None:
+    alignment = _alignment(_conf("a", 10.0), _amb("b", 80.0, [(5.0, 0.9), (80.0, 0.8)]))
+    events = _answered_events(alignment, generation=GEN - 1)
+    monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=events))
+
+    result = await _gate(
+        _Db(_item(alignment)), _manifest("a", "b"), _strategy(song_sync="background")
+    )
+
+    assert result.plan is None and result.strategy is None
+
+
+async def test_the_planner_recompiles_the_kept_lipsync_strategy(monkeypatch) -> None:
+    _patch_policy(monkeypatch)
+    kept = _propose().strategy.model_copy(update={"song_sync": "lipsync"})
+    seen = []
+
+    def _check(_m, strategy):  # noqa: ANN001, ANN202
+        seen.append(strategy)
+        return CheckedStrategy(strategy=strategy, notices=("extra notice.",))
+
+    monkeypatch.setattr(planner, "check_strategy_for_runtime_v2", _check)
+
+    async def _gate_stub(*_a, **_k):  # noqa: ANN002, ANN003, ANN202
+        return planner._SongGateResult(strategy=kept)
+
+    monkeypatch.setattr(planner, "_song_order_gate", _gate_stub)
+    adapted = {}
+
+    def _spy(action, **kw):  # noqa: ANN001, ANN003, ANN202
+        adapted["action"] = action
+        return adapt_creator_action(action, **kw)
+
+    monkeypatch.setattr(planner, "adapt_creator_action", _spy)
+    await _call(SimpleNamespace(), _propose())
+    assert seen[-1] is kept
+    assert adapted["action"].strategy is kept
+    assert "extra notice." in adapted["action"].summary

@@ -22,7 +22,6 @@ from app.agents._schemas.creator_agent import (
 )
 from app.agents._schemas.creator_policy import (
     CAPABILITY_USER_SONG,
-    UserSongUnavailableError,
     effective_render_program,
     repair_creator_user_song,
 )
@@ -300,18 +299,18 @@ def test_lipsync_clears_the_story_shape_and_source_audio(song_on) -> None:
     assert any("lip-sync" in notice for notice in plan.notices)
 
 
-def test_lipsync_refuses_the_guided_voiceover_contract(song_on) -> None:
+def test_lipsync_clears_the_guided_voiceover_contract_with_a_notice(song_on) -> None:
+    """Repair, never reject for taste (KRI-129): the song is the master clock."""
     manifest = _manifest(song=_song())
-    with pytest.raises(CreatorCapabilityError) as raised:
-        capabilities.compile_strategy_to_plan(
-            manifest,
-            _song_strategy(song_sync="lipsync", execution_contract="guided_voiceover_v1"),
-        )
-    assert raised.value.code == "user_song_voiceover_contract"
-    with pytest.raises(UserSongUnavailableError):
-        effective_render_program(
-            manifest, _song_strategy(song_sync="lipsync", execution_contract="guided_voiceover_v1")
-        )
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        _song_strategy(song_sync="lipsync", execution_contract="guided_voiceover_v1"),
+    )
+    assert plan.strategy.execution_contract is None
+    assert plan.strategy.song_sync == "lipsync"
+    assert any("voiceover" in notice for notice in plan.notices)
+    # The render-program guard no longer refuses what the repair has already cleared.
+    effective_render_program(manifest, plan.strategy)
 
 
 def test_song_strategy_without_a_song_asks_to_upload_it_first(song_on) -> None:
@@ -434,13 +433,15 @@ def test_runtime_v2_refuses_with_stable_codes_and_plain_questions(song_on) -> No
     assert cloud.question.endswith("?")
 
 
-def test_runtime_v2_refuses_lipsync_with_a_voiceover_contract_before_downgrading(song_on) -> None:
-    refused = check_strategy_for_runtime_v2(
+def test_runtime_v2_clears_a_voiceover_contract_on_lipsync_instead_of_refusing(song_on) -> None:
+    checked = check_strategy_for_runtime_v2(
         _manifest(song=_song()),
         _song_strategy(song_sync="lipsync", execution_contract="guided_voiceover_v1"),
     )
-    assert isinstance(refused, RefusedStrategy)
-    assert refused.code == "user_song_voiceover_contract"
+    assert isinstance(checked, CheckedStrategy)
+    assert checked.strategy.execution_contract is None
+    assert checked.strategy.song_sync == "lipsync"
+    assert sum("voiceover" in notice for notice in checked.notices) == 1
 
 
 # ── approval: audio mode + draft-time defer ────────────────────────────────

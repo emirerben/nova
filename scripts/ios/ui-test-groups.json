@@ -210,12 +210,6 @@
     "src/apps/ios/Kria/Features/ClipSelectionCard.swift": "creation",
     "src/apps/ios/Kria/Core/SongOrder.swift": "creation",
     "src/apps/ios/Kria/Features/SongOrderCard.swift": "creation",
-    "src/apps/ios/Tests/KriaUITests/SongOrderUITests.swift": "creation",
-    "src/apps/ios/Kria/Features/ChatUITestTransport.swift": "creation",
-    "src/apps/ios/Kria/Features/ChatWorkspaceView.swift": "creation",
-    "src/apps/ios/Kria/Features/CanonicalChatComponents.swift": "creation",
-    "src/apps/ios/Kria/Core/Services.swift": "creation",
-    "src/apps/ios/Kria/Core/BackgroundUploads.swift": "creation",
-    "src/apps/ios/Kria/Core/DeviceRendering.swift": "creation"
+    "src/apps/ios/Tests/KriaUITests/SongOrderUITests.swift": "creation"
   }
 }

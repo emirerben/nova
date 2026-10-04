@@ -89,6 +89,7 @@ from app.services.song_order import (
     resolve_uncertain_takes,
     resolved_song_takes_payload,
     song_order_question_text,
+    thread_keeps_lipsync,
     uncertain_media_ids,
 )
 
@@ -280,10 +281,39 @@ def _song_take_ids(manifest: Any, strategy: Any) -> list[str]:
 class _SongGateResult:
     """`plan` set => answer the turn with it (pending / question). Otherwise proceed,
     with `resolved_takes` (the strategy's `resolved_song_takes`) when the creator's
-    confirmed order was applied."""
+    confirmed order was applied, and `strategy` when the gate had to keep a lip-sync
+    strategy the model flipped away from mid-exchange."""
 
     plan: KriaTurnPlan | None = None
     resolved_takes: list[dict[str, Any]] | None = None
+    strategy: Any | None = None
+
+
+_SONG_PENDING_REPLY = (
+    "I'm still analysing your song and matching your clips to it. "
+    "Send your message again in a moment and I'll pick up where I left off."
+)
+
+
+def _song_pending_plan() -> KriaTurnPlan:
+    """The wait-timed-out reply. Its own wording: the clip-picker copy ("checking some
+    of your clips against that request") describes something else entirely."""
+    return KriaTurnPlan(
+        mode="respond",
+        turn_value="recovery",
+        response=_SONG_PENDING_REPLY,
+        diagnostics=_safe_diagnostics(
+            "pending", {"stage": "song_alignment", "reason": "song_alignment_pending"}
+        ),
+    )
+
+
+def _with_song_sync(strategy: Any, song_sync: str) -> Any:
+    if hasattr(strategy, "model_copy"):
+        return strategy.model_copy(update={"song_sync": song_sync})
+    clone = copy.copy(strategy)
+    clone.song_sync = song_sync
+    return clone
 
 
 async def _load_thread_events(db: AsyncSession, thread_id: uuid.UUID) -> list[tuple[str, Any]]:
@@ -317,22 +347,38 @@ async def _song_order_gate(
     3. answered -> `resolve_uncertain_takes` -> `resolved_takes`;
     4. all takes confident -> proceed untouched.
     """
-    if not settings.user_song_montage_enabled or not _is_lipsync_song_strategy(strategy):
+    if not settings.user_song_montage_enabled:
+        return _SongGateResult()
+    lipsync = _is_lipsync_song_strategy(strategy)
+    if not lipsync and getattr(strategy, "audio_strategy", None) != "user_song":
         return _SongGateResult()
     take_ids = _song_take_ids(manifest, strategy)
     if not take_ids:
         return _SongGateResult()
 
+    events: list[tuple[str, Any]] | None = None
+    kept_strategy: Any | None = None
+    if not lipsync:
+        # The answer turn re-runs the model, which may now say `background`. Without
+        # this the gate is skipped and the creator's confirmed order is dropped.
+        events = await _load_thread_events(db, thread_id)
+        if not thread_keeps_lipsync(events, None):
+            return _SongGateResult()
+        kept_strategy = _with_song_sync(strategy, "lipsync")
+        strategy = kept_strategy
+
     loop = asyncio.get_running_loop()
     deadline = loop.time() + max(0.0, float(settings.song_alignment_turn_deadline_s))
+    song_generation: int | None = None
     while True:
         item = await db.get(PlanItem, item_id, populate_existing=True)
         if item is None:
             raise RuntimeError("Kria target item is unavailable")
+        song_generation = getattr(item, "song_generation", None)
         alignment = load_ready_alignment(
             getattr(item, "song_alignment", None),
             media_ids=take_ids,
-            song_generation=getattr(item, "song_generation", None),
+            song_generation=song_generation,
             raw_analysis=getattr(item, "song_analysis", None),
         )
         await db.rollback()  # never hold a read snapshot across the sleep
@@ -340,22 +386,25 @@ async def _song_order_gate(
             break
         remaining = deadline - loop.time()
         if remaining <= 0:
-            return _SongGateResult(
-                plan=_clip_intent_resolution_plan(
-                    question=None,
-                    status="pending",
-                    diagnostics={"stage": "song_alignment", "reason": "song_alignment_pending"},
-                )
-            )
+            return _SongGateResult(plan=_song_pending_plan())
         await asyncio.sleep(min(_SONG_ALIGNMENT_POLL_S, remaining))
 
+    if kept_strategy is not None and events is not None:
+        # Only keep lip-sync for an exchange about THIS song generation.
+        if not thread_keeps_lipsync(events, song_generation):
+            return _SongGateResult()
+
     if not uncertain_media_ids(alignment, take_ids):
-        return _SongGateResult()
-    folded = fold_song_orders(await _load_thread_events(db, thread_id))
+        return _SongGateResult(strategy=kept_strategy)
+    if events is None:
+        events = await _load_thread_events(db, thread_id)
+    folded = fold_song_orders(events, song_generation)
     if folded and folded.covers(take_ids):
         resolved = resolve_uncertain_takes(alignment, folded.ordered_media_ids)
-        return _SongGateResult(resolved_takes=resolved_song_takes_payload(resolved))
-    question = build_song_order_question(alignment, take_ids)
+        return _SongGateResult(
+            resolved_takes=resolved_song_takes_payload(resolved), strategy=kept_strategy
+        )
+    question = build_song_order_question(alignment, take_ids, song_generation=song_generation)
     return _SongGateResult(
         plan=KriaTurnPlan(
             mode="respond",
@@ -952,6 +1001,26 @@ async def _plan_from_creator_output(
                 plan=gate.plan,
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
+            )
+        if gate.strategy is not None:
+            # The model flipped away from lip-sync mid-exchange and the gate kept it:
+            # compile the lip-sync strategy through the same policy so the repairs a
+            # lip-sync edit needs (no hero shape, no source-audio plan) apply.
+            kept = check_strategy_for_runtime_v2(manifest, gate.strategy)
+            if isinstance(kept, RefusedStrategy):
+                return PlannedKriaTurn(
+                    plan=KriaTurnPlan(
+                        mode="respond", turn_value="question", response=kept.question
+                    ),
+                    manifest_hash=manifest.manifest_hash,
+                    context_hash=manifest.context_hash,
+                )
+            extra = [n for n in kept.notices if n not in policy_notices]
+            action = action.model_copy(
+                update={
+                    "strategy": kept.strategy,
+                    "summary": " ".join([action.summary.strip(), *extra]).strip(),
+                }
             )
         if gate.resolved_takes is not None:
             server_song_takes = gate.resolved_takes

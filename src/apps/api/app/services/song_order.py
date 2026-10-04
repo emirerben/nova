@@ -133,6 +133,7 @@ def build_song_order_question(
     media_ids: Sequence[str],
     *,
     question_id: str | None = None,
+    song_generation: int | None = None,
 ) -> SongOrderQuestion:
     """The question for ``media_ids`` (the current takes, in their stored order).
 
@@ -160,6 +161,9 @@ def build_song_order_question(
         question_id=question_id or str(uuid.uuid4()),
         proposed_order=[i.media_id for i in ordered],
         items=ordered,
+        song_generation=(
+            song_generation if song_generation is not None else alignment.song_generation
+        ),
     )
 
 
@@ -189,6 +193,15 @@ def _parse_question(raw: Any) -> SongOrderQuestion | None:
         return SongOrderQuestion.model_validate(raw)
     except ValidationError:
         return None
+
+
+def _same_generation(question: SongOrderQuestion, song_generation: int | None) -> bool:
+    """A question asked before generations were recorded (``None``) is trusted as before."""
+    return (
+        song_generation is None
+        or question.song_generation is None
+        or question.song_generation == song_generation
+    )
 
 
 def latest_open_song_order_question(events: Iterable[Event]) -> SongOrderQuestion | None:
@@ -228,11 +241,14 @@ class SongOrderFold:
         return set(self.ordered_media_ids) == set(media_ids)
 
 
-def fold_song_orders(events: Iterable[Event]) -> SongOrderFold:
+def fold_song_orders(events: Iterable[Event], song_generation: int | None = None) -> SongOrderFold:
     """Replay question/answer events (chronological) into the standing order.
 
     Only answers that match a question the server really asked, and that ordered
-    exactly that question's takes, count; the latest such answer wins.
+    exactly that question's takes, count; the latest such answer wins. With
+    ``song_generation`` given, an answer to a question asked about another song
+    generation is ignored, so a replaced song re-asks instead of reusing an order
+    the creator confirmed against different audio.
     """
     questions: dict[str, SongOrderQuestion] = {}
     folded = SongOrderFold()
@@ -253,8 +269,40 @@ def fold_song_orders(events: Iterable[Event]) -> SongOrderFold:
             continue
         if len(set(ordered)) != len(ordered) or set(ordered) != set(question.proposed_order):
             continue
+        if not _same_generation(question, song_generation):
+            continue
         folded = SongOrderFold(question.question_id, tuple(str(m) for m in ordered))
     return folded
+
+
+def thread_keeps_lipsync(events: Iterable[Event], song_generation: int | None) -> bool:
+    """True when the thread is mid-way through the song-order exchange for this song.
+
+    That is: a question for the current song generation is still open, or the
+    latest user event IS the answer to such a question (the turn being planned is
+    the answer turn). The Main Creator model re-runs on that turn and may now say
+    ``song_sync != "lipsync"``; the planner keeps lip-sync so the answer is applied
+    instead of silently dropped.
+    """
+    rows = list(events)
+    questions: dict[str, SongOrderQuestion] = {}
+    for role, payload in rows:
+        if role == "assistant" and isinstance(payload, dict):
+            question = _parse_question(payload.get(SONG_ORDER_QUESTION_KEY))
+            if question is not None:
+                questions[question.question_id] = question
+    open_question = latest_open_song_order_question(rows)
+    if open_question is not None and _same_generation(open_question, song_generation):
+        return True
+    for role, payload in reversed(rows):
+        if role != "user":
+            continue
+        answer = payload.get(SONG_ORDER_ANSWER_KEY) if isinstance(payload, dict) else None
+        if not isinstance(answer, dict):
+            return False  # the latest user turn is something else
+        question = questions.get(str(answer.get("question_id")))
+        return question is not None and _same_generation(question, song_generation)
+    return False
 
 
 def validate_song_order_answer(

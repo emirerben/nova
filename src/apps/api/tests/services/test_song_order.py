@@ -22,6 +22,7 @@ from app.services.song_order import (
     load_ready_alignment,
     resolve_uncertain_takes,
     resolved_song_takes_payload,
+    thread_keeps_lipsync,
     uncertain_media_ids,
     validate_song_order_answer,
 )
@@ -322,3 +323,66 @@ def test_apply_resolved_takes_without_an_answer_changes_nothing() -> None:
     )
     patched, order = apply_resolved_song_takes(alignment, None)
     assert (patched, order) == (alignment, [])
+
+
+# -- KRI-374 review: answers are tied to the song generation ------------------------
+
+
+def _qg(qid: str, ids: list[str], generation: int | None) -> dict:
+    payload = _q(qid, ids)
+    if generation is None:  # a question written before the field existed
+        payload["song_order_question"].pop("song_generation", None)
+    else:
+        payload["song_order_question"]["song_generation"] = generation
+    return payload
+
+
+def _answer(qid: str, ids: list[str]) -> dict:
+    return {"song_order": {"question_id": qid, "ordered_media_ids": ids}}
+
+
+def test_built_questions_record_the_song_generation_and_old_ones_serialize_unchanged() -> None:
+    question = build_song_order_question(_alignment(_confident("a", 1.0)), ["a"])
+    assert question.song_generation == 3
+    assert question.model_dump(mode="json")["song_generation"] == 3
+    legacy = SongOrderQuestion.model_validate(_qg("q1", ["a", "b"], None)["song_order_question"])
+    assert legacy.song_generation is None
+    assert "song_generation" not in legacy.model_dump(mode="json")
+
+
+def test_an_answer_to_a_previous_song_generation_is_ignored_and_re_asked() -> None:
+    """Probe: after the creator replaced the song, the old confirmed order still applied."""
+    events = [
+        ("assistant", _qg("q1", ["a", "b"], 3)),
+        ("user", _answer("q1", ["b", "a"])),
+    ]
+    assert fold_song_orders(events, song_generation=3).ordered_media_ids == ("b", "a")
+    assert not fold_song_orders(events, song_generation=4)  # the song changed
+    # No generation to compare against, or a question from before the field existed:
+    assert fold_song_orders(events)
+    legacy = [("assistant", _qg("q1", ["a", "b"], None)), ("user", _answer("q1", ["b", "a"]))]
+    assert fold_song_orders(legacy, song_generation=4)
+
+
+def test_a_newer_generation_answer_wins_over_an_older_one() -> None:
+    events = [
+        ("assistant", _qg("q1", ["a", "b"], 3)),
+        ("user", _answer("q1", ["b", "a"])),
+        ("assistant", _qg("q2", ["a", "b"], 4)),
+        ("user", _answer("q2", ["a", "b"])),
+    ]
+    assert fold_song_orders(events, song_generation=4).ordered_media_ids == ("a", "b")
+    assert fold_song_orders(events, song_generation=3).ordered_media_ids == ("b", "a")
+
+
+def test_thread_keeps_lipsync_while_a_question_is_open_or_being_answered() -> None:
+    asked = [("assistant", _qg("q1", ["a", "b"], 3))]
+    answered = [*asked, ("user", _answer("q1", ["b", "a"]))]
+    assert thread_keeps_lipsync(asked, 3)
+    assert thread_keeps_lipsync(answered, 3)  # the answer turn itself
+    # A later, unrelated message is the creator's own call again.
+    assert not thread_keeps_lipsync([*answered, ("user", {"text": "use it as background"})], 3)
+    # Another song generation, or no exchange at all, never forces lip-sync.
+    assert not thread_keeps_lipsync(answered, 4)
+    assert not thread_keeps_lipsync([], 3)
+    assert not thread_keeps_lipsync([("user", None)], 3)

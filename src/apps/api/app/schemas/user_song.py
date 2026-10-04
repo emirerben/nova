@@ -176,6 +176,11 @@ class SongOrderQuestion(BaseModel):
     # Media ids in the order we propose, earliest song position first.
     proposed_order: list[str]
     items: list[SongOrderItem]
+    # The song generation the question was asked about. An answer to a question for
+    # another generation is ignored (the song changed, so the positions it chose are
+    # meaningless) and the creator is asked again. Omitted from the wire when unset so
+    # questions written before this field existed serialize byte-identically.
+    song_generation: int | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class SongOrderAnswerIn(BaseModel):

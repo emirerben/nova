@@ -129,7 +129,6 @@ CAPABILITY_USER_SONG = "user_song"
 USER_SONG_AUDIO_STRATEGY = "user_song"
 USER_SONG_PHONE_ONLY_CODE = "user_song_phone_only"
 USER_SONG_MISSING_CODE = "user_song_missing"
-USER_SONG_CONTRACT_CODE = "user_song_voiceover_contract"
 
 
 def _requires_guided_voiceover(
@@ -199,9 +198,8 @@ USER_SONG_MISSING_MESSAGE = (
     "Upload the song first, then I'll build the edit around it. Or should I use licensed "
     "music instead?"
 )
-USER_SONG_CONTRACT_MESSAGE = (
-    "A lip-sync edit follows your song, so it can't be timed to a recorded voiceover. "
-    "Which one do you want to keep?"
+USER_SONG_CONTRACT_NOTICE = (
+    "A lip-sync edit follows your song, so I'm not timing it to a recorded voiceover."
 )
 USER_SONG_BACKGROUND_NOTICE = "I'll use your song as the background music for this edit."
 USER_SONG_LIPSYNC_SHAPE_NOTICE = (
@@ -252,8 +250,6 @@ def effective_render_program(
         # KRI-374: refuse before any render-program inference so a strategy that
         # can never render (cloud path, no song, a voiceover contract) fails here.
         require_user_song(manifest)
-        if strategy.song_sync == "lipsync" and strategy.execution_contract is not None:
-            raise UserSongUnavailableError(USER_SONG_CONTRACT_MESSAGE, code=USER_SONG_CONTRACT_CODE)
     montage_audio_requires_guided = bool(
         strategy.montage_audio is not None
         and (
@@ -845,7 +841,7 @@ def repair_creator_user_song(
     * ``song_sync`` unset: repaired to ``background`` with a notice.
     * ``lipsync``: clears the story shape (the song is the master clock) and the
       source-audio plan (camera audio is muted), and refuses the
-      ``guided_voiceover_v1`` execution contract.
+      ``guided_voiceover_v1`` execution contract (cleared with a notice).
     """
 
     if strategy.audio_strategy != USER_SONG_AUDIO_STRATEGY:
@@ -863,7 +859,10 @@ def repair_creator_user_song(
         notices.append(USER_SONG_BACKGROUND_NOTICE)
     if sync == "lipsync":
         if strategy.execution_contract is not None:
-            raise UserSongUnavailableError(USER_SONG_CONTRACT_MESSAGE, code=USER_SONG_CONTRACT_CODE)
+            # Repair, never reject for taste (KRI-129): the song is the master clock, so
+            # a voiceover timing contract cannot apply. Drop it and say so.
+            update["execution_contract"] = None
+            notices.append(USER_SONG_CONTRACT_NOTICE)
         if strategy.archetype is not None or strategy.hero_media_id is not None:
             update["archetype"] = None
             update["hero_media_id"] = None
@@ -878,7 +877,7 @@ def repair_creator_user_song(
 
 __all__ = [
     "CAPABILITY_USER_SONG",
-    "USER_SONG_CONTRACT_CODE",
+    "USER_SONG_CONTRACT_NOTICE",
     "USER_SONG_MISSING_CODE",
     "USER_SONG_PHONE_ONLY_CODE",
     "UserSongUnavailableError",
