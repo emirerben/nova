@@ -132,6 +132,7 @@ from app.services.render_shape import (
 )
 from app.services.speech_cleanup_terminal import classify_route_speech_cut_rollback
 from app.services.tiktok_style_observations import effective_persona_style
+from app.services.user_song_projection import UserSongOut
 from app.services.variant_generation_guard import (
     VariantInitialRenderInProgress,
     assert_required_speech_dispatch_quiescent,
@@ -598,6 +599,11 @@ class GenerativeVariant(BaseModel):
     music_preview_url: str | None = None
     music_preview_start_s: float | None = None
     background_music: BackgroundMusicOut | None = None
+    # KRI-374: the creator's OWN song on a phone montage, for the editor's Sounds tab.
+    # Omitted (not null) for every variant without one so those responses stay
+    # byte-identical. Display-only: never a catalog track, never editable via
+    # music_track_id / mix / music_operations.
+    user_song: UserSongOut | None = Field(default=None, exclude_if=lambda value: value is None)
     editor_capabilities: EditorCapabilitiesOut | None = None
     speech_cut_candidates: list[dict] | None = None
     speech_cut_revision: str | None = None
@@ -11642,6 +11648,32 @@ async def _attach_music_previews(variants: list[dict], db: AsyncSession, *, job:
             variant["background_music"] = None
 
 
+async def _attach_user_song(variants: list[dict], db: AsyncSession, *, job: Job) -> None:
+    """Add the optional ``user_song`` field to variants whose plan has a creator song.
+
+    No query at all unless a variant actually has one (the common case), and a single
+    column read of the owning PlanItem otherwise -- never per variant. Best-effort: a
+    lookup failure only drops the title.
+    """
+    from app.services.user_song_projection import (  # noqa: PLC0415
+        attach_user_song,
+        job_has_user_song,
+    )
+
+    if not job_has_user_song(job):
+        return
+    song_filename: str | None = None
+    item_id = getattr(job, "content_plan_item_id", None)
+    if item_id is not None:
+        try:
+            song_filename = (
+                await db.execute(select(PlanItem.song_filename).where(PlanItem.id == item_id))
+            ).scalar_one_or_none()
+        except Exception:  # noqa: BLE001 -- the title is cosmetic; never fail a status read
+            song_filename = None
+    attach_user_song(variants, job, song_filename=song_filename)
+
+
 # Non-terminal statuses an orchestrate_generative_job run passes through while
 # its heartbeat thread is expected to be beating ("processing" → "rendering";
 # generative_build.py sets no others). Deliberately NOT "queued" (no attempt
@@ -11752,6 +11784,7 @@ async def get_generative_job_status(
     await attach_saved_editor_drafts(db, job)
     variants = _variants_for_response(job)
     await _attach_music_previews(variants, db, job=job)
+    await _attach_user_song(variants, db, job=job)
 
     # Null-safe, never-raising read of the style-downgrade stash: a corrupt or
     # non-dict value from a hand-edited row degrades to null rather than a 500.
