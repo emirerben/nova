@@ -6,6 +6,107 @@ source_kind: put_page
 ingested_via: put_page
 ---
 
+> **Backlog moved to Linear on 2026-10-04.** New work and ideas go to Linear (see `docs/runbooks/linear-workflow.md`); do not add entries here.
+> The 94 open entries below were copied to Linear (label `From TODOS.md`, not re-verified). Shipped and obsolete entries, and 8 web-only or informational ones, were not migrated; their text stays below as history.
+
+| TODOS.md entry | Linear |
+| --- | --- |
+| Fit `run_kria_turn`'s time limits to its agent deadlines | KRI-308 |
+| Verify the floating chat chrome on device (keyboard up, iOS 26) | KRI-309 |
+| `testIncomingResponseDoesNotPullReaderFromScrolledHistory` fails on `main` locally | KRI-310 |
+| `testTextReturnAndDeleteKeepCanvasLinesAligned` fails on `main` locally | KRI-311 |
+| Editor Chat/Editor switch-transition: no UI-test fixture opens it from chat | KRI-312 |
+| `testPreviewResizeIsAvailableAcrossEditorPanels` fails locally — simulator artifact, not a | KRI-313 |
+| Wire the dead clip-inspector transition picker into a more discoverable spot, or remove th | KRI-314 |
+| `wipe_left` / `wipe_right` transitions aren't offered anywhere | KRI-315 |
+| "Retry generation" is misleading for a deterministic compile rejection | KRI-316 |
+| Runtime-v1 / v2 failure-card inconsistency | KRI-317 |
+| Seed creation threads for the reviewer account | KRI-318 |
+| Hide "Sign in with email" from real users | KRI-319 |
+| Per-account lockout on reviewer login | KRI-320 |
+| Move seed storage copies off the event loop | KRI-321 |
+| Complete looks and adjustments | KRI-322 |
+| Compile carousel and supporting cards | KRI-323 |
+| Complete advanced audio parity | KRI-324 |
+| Complete specialized text parity | KRI-325 |
+| Finish native/cloud comparison matrix | KRI-326 |
+| Finish design and live creation qualification | KRI-327 |
+| Qualify target devices and accessibility | KRI-328 |
+| Bound native preview cache retention | KRI-329 |
+| Consolidate the paid-call lifecycle adapters | KRI-330 |
+| Share one retention protected-reference specification | KRI-331 |
+| Bound long-term reservation-ledger growth and lock contention | KRI-332 |
+| Broker inspect runs inside the row lock | KRI-333 |
+| Unrepairable rows starve the LIMIT 50 head | KRI-334 |
+| Two Kria runtime Postgres tests fail locally on a reused test DB | KRI-335 |
+| Learn from accepted edits across projects | KRI-336 |
+| Envelope mode gives up merged-carrier flanks | KRI-337 |
+| Generate a complete video from narration audio alone | KRI-338 |
+| Eval/golden-fixture refresh for the `edit_guide`/`edit_proposal` prompt bumps | KRI-339 |
+| `alembic upgrade head` cannot express a staged two-release migration | KRI-340 |
+| A dead re-render shows a confidently climbing clock, and never surfaces the recovery copy | KRI-341 |
+| Backend tests fail under load, not under logic (CI flakiness) | KRI-342 |
+| Legacy dispatchers enqueue before the route commits | KRI-343 |
+| Surface behind-subject fallbacks to users (editor/copilot) | KRI-344 |
+| Relax match_overlay_format prompt for landmark shots | KRI-345 |
+| Depth perf/quality levers: reduced input, adaptive stride, ROI refinement | KRI-346 |
+| Depth review deferrals (red team, 2026-08-19) | KRI-347 |
+| Matte cache staleness vs visual-blocks / motion / camera bases | KRI-348 |
+| Caption-variant /edit rejection is a silent no-op | KRI-349 |
+| In-montage visual effects for generative renders (transitions / zoom / speed ramps) | KRI-350 |
+| SFX/speech review deferrals (from the word-level sound design review, 2026-07-21) | KRI-351 |
+| Speech map for montage variants without persisted words | KRI-352 |
+| clip_metadata mood/humor tag on best_moments | KRI-353 |
+| Comedic/meme SFX library content | KRI-354 |
+| Speech-mark snapping / server rejection of invented copilot times | KRI-355 |
+| T-CAP011-3 — Prod-image parity render before the face-placement flag flip | KRI-357 |
+| T-CAP011-1 — Emphasis styling lane for standalone cues | KRI-358 |
+| T-CAP012-1 — Extract the merge-back pass out of build_semantic_caption_cues | KRI-359 |
+| Variant-level render heartbeat (reburn/regen blindness) | KRI-378 |
+| T-CAP011-4 — Card-arbitration face sampler still runs on the 2.0s default | KRI-379 |
+| T-CAPFX-2 — Evaluate AI overlay-suggestion quality on speech content | KRI-380 |
+| T-SMART-COMP-1 — Consolidate Smart Captions visual rendering into one compositor pass | KRI-381 |
+| T-SMART-REVIEW — v0.11.0.0 pre-merge review deferrals (2026-07-20) | KRI-382 |
+| T-LANDSCAPE-3 — Landscape support for still photos (image_to_video path) | KRI-383 |
+| Persistent media library (supersedes the per-plan footage pool) | KRI-384 |
+| sequence_quote_writer anti-slop pass (plans/015 follow-up) | KRI-385 |
+| Plan-footage mismatch detection (plans/015 outside-voice #10) | KRI-386 |
+| Time-boxed hook text (judge-workflow finding, 2026-06-10) | KRI-387 |
+| Hook visible on literal first frame + contrast scrim (judge finding) | KRI-388 |
+| Save the variable-font instancing helper as a committed script | KRI-389 |
+| `--record` mode on agent runtime | KRI-390 |
+| Gemini Integration Tests | KRI-391 |
+| TikTok Content Posting audit approval | KRI-392 |
+| Scheduled TikTok publishing (draft handoff shipped in v0.25.8.0) | KRI-393 |
+| Platform Posting (Phase 2) | KRI-394 |
+| Automated Visual Regression Testing | KRI-395 |
+| Vertex AI service-account auth swap (P2 follow-up to v0.4.9.0) | KRI-396 |
+| Worker memory telemetry | KRI-397 |
+| Lint check: bump `AgentSpec.prompt_version` when agent code touches prompts/schemas | KRI-398 |
+| Tonemap only the footage the variants actually use, not whole clips | KRI-399 |
+| Render the 3 generative variants in parallel across workers | KRI-400 |
+| Cheaper / adaptive HDR tonemap + cap source resolution before zscale | KRI-401 |
+| Narrative caption arc across body clips (the other half of the reference aesthetic) | KRI-402 |
+| Auto-scrim for editorial text on busy footage (from 2026-06-12 design review, D7) | KRI-403 |
+| Editable music-bed trims | KRI-404 |
+| T-PLAN-2 — Talking-to-camera "talking points" recording helper | KRI-405 |
+| T-AUTO-1 — Follow-up plan: generated diagram B-roll | KRI-406 |
+| T-AUTO-2 — Standalone sound-only SFX suggestions | KRI-407 |
+| T-CUT-1 — v1.1: caption cue re-burn over cutaways | KRI-408 |
+| Intro-placement snapshot — deferrals (from the `intro_placement` review, 2026-07-30) | KRI-409 |
+| Generative clip-ingest bypasses the existing Redis clip-analysis cache | KRI-410 |
+| Bake CLIP ViT-B/32 weights into the Docker image | KRI-411 |
+| Retention decision: should music/template job SOURCES outlive their lifecycle windows? | KRI-412 |
+| Preview-resolution logic exists in three places | KRI-413 |
+| AI copilot cannot see or edit guided-story captions | KRI-414 |
+| `subtitled` and `talking_head` can lose caption identity entirely | KRI-415 |
+| Copilot reply claims success on an `unsupported` outcome | KRI-416 |
+| T-CAP025-1 — Text tool: adopt the fill-above-bar typing layout? | KRI-417 |
+| T-CAP025-2 — Locale-aware `text_case: upper` across Python, web and iOS | KRI-418 |
+| T-CAP025-3 — Run the KriaMediaEngine package tests in CI | KRI-419 |
+| T-KRI282-1 — Persist an `agent_run` row for the kria v2 clip-intent planner | KRI-420 |
+
+
 # Nova — Deferred Work
 
 ## Kria runtime-v2 turn failures — deferred follow-ups (2026-09-24)

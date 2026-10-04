@@ -1996,6 +1996,10 @@ def _job_projection(job: Job | None) -> dict[str, Any] | None:
     ) + render_notes_from_overlay_receipt(
         primary_variant.get("phone_overlay_receipt") if primary_variant is not None else None
     )
+    # KRI-286: what the phone compiler repaired so this plan could render (never silent).
+    repair_notes = primary_variant.get("phone_repair_notes") if primary_variant else None
+    if isinstance(repair_notes, list):
+        render_notes += [note for note in repair_notes if isinstance(note, str) and note]
     return {
         "id": str(job.id),
         "status": job.status,

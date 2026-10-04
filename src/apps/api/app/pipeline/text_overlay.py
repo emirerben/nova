@@ -2522,6 +2522,34 @@ def _authored_pillow_paint(overlay: dict) -> dict:
     return paint
 
 
+class _SpacedDraw:
+    """ImageDraw stand-in adding per-character tracking (em x font size).
+
+    Only the calls `_draw_text_png` makes: text() and textbbox(). Draws glyph
+    by glyph (no kerning) so tracking is uniform; wrap/measure see the spaced
+    width so lines break where they will actually fit.
+    """
+
+    def __init__(self, inner, spacing_em: float) -> None:
+        self._inner = inner
+        self._em = float(spacing_em)
+
+    def _px(self, font) -> float:
+        return self._em * float(getattr(font, "size", 0) or 0)
+
+    def textbbox(self, xy, text, font=None, anchor=None, **kw):
+        box = self._inner.textbbox(xy, text, font=font, anchor=anchor, **kw)
+        extra = round(self._px(font) * max(0, len(text) - 1))
+        return (box[0], box[1], box[2] + extra, box[3])
+
+    def text(self, xy, text, font=None, fill=None, anchor=None, **kw):
+        x, y = xy
+        step = self._px(font)
+        for ch in text:
+            self._inner.text((x, y), ch, font=font, fill=fill, anchor=anchor, **kw)
+            x += font.getlength(ch) + step
+
+
 def _draw_text_png(
     text: str,
     position: str,
@@ -2548,8 +2576,14 @@ def _draw_text_png(
     rotation_degrees: float = 0,
     max_width_frac: float | None = None,
     wrap_lines: bool = True,
+    letter_spacing: float | None = None,
+    line_spacing: float | None = None,
 ) -> None:
     """Draw styled text on a transparent 1080x1920 canvas.
+
+    `letter_spacing` (em) / `line_spacing` (multiplier) are opt-in; None keeps
+    the historical pixels byte-for-byte (used by slide posts for Text-tool
+    parity with the Skia renderer's per-character tracking).
 
     Font resolution priority:
       1. ``font`` — pre-loaded ImageFont (used by font-cycle, skip resolution)
@@ -2578,6 +2612,8 @@ def _draw_text_png(
 
     img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
+    if letter_spacing:
+        draw = _SpacedDraw(draw, letter_spacing)
 
     # Resolve font: pre-loaded > font_family > font_style
     # Track whether we own font resolution — only then do we shrink on overflow.
@@ -2630,6 +2666,7 @@ def _draw_text_png(
     # Compute per-line metrics + total block height for vertical centering.
     line_heights: list[int] = []
     line_widths: list[int] = []
+    line_mult = _TEXT_LINE_SPACING if line_spacing is None else resolve_line_spacing(line_spacing)
     for ln in lines:
         b = draw.textbbox((0, 0), ln, font=font)
         line_widths.append(b[2] - b[0])
@@ -2654,12 +2691,12 @@ def _draw_text_png(
     if (not wrap_lines or resolved_vertical_anchor == "top") and line_heights:
         try:
             ascent, descent = font.getmetrics()
-            line_step = int((ascent + descent) * _TEXT_LINE_SPACING)
+            line_step = int((ascent + descent) * line_mult)
         except AttributeError:
             # Bitmap fonts / default fonts may not expose getmetrics; fall back.
-            line_step = int(max(line_heights) * _TEXT_LINE_SPACING)
+            line_step = int(max(line_heights) * line_mult)
     else:
-        line_step = int(max(line_heights) * _TEXT_LINE_SPACING) if line_heights else 0
+        line_step = int(max(line_heights) * line_mult) if line_heights else 0
     block_h = (
         sum(line_heights[:-1])
         + (line_step - max(line_heights)) * (len(lines) - 1)
@@ -2697,6 +2734,9 @@ def _draw_text_png(
     shadow_draw = ImageDraw.Draw(shadow_layer)
     fg_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     fg_draw = ImageDraw.Draw(fg_layer)
+    if letter_spacing:
+        shadow_draw = _SpacedDraw(shadow_draw, letter_spacing)
+        fg_draw = _SpacedDraw(fg_draw, letter_spacing)
 
     # Pre-compute emoji metrics so we can offset the FIRST line's x position
     # to keep emoji + line 1 visually centered as one block. Without this

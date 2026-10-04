@@ -114,6 +114,35 @@ async def test_authored_label_stays_a_text_question(monkeypatch) -> None:
     assert result.needs_creator and result.clip_question is None
 
 
+@pytest.mark.asyncio
+async def test_mixed_tappable_and_authored_keeps_picker_plus_text(monkeypatch) -> None:
+    """Prod thread c66af8e4: unresolved `dodgeball` group + a per-clip authored label.
+
+    The authored label used to drop the picker for EVERY intent (plain text question).
+    The tappable intent must still get its picker; the label stays in the question text.
+    """
+    monkeypatch.setattr(service.settings, "kria_clip_selection_questions_enabled", True)
+    _no_candidates(monkeypatch)
+    clips = _clips()
+    result = await resolve_clip_intents_for_turn(
+        intents=[
+            _dodgeball(),
+            ClipIntent(intent_id="l1", op="label", attribute="sport being played"),
+        ],
+        creator_request="group dodgeball and label the sport",
+        clips=clips,
+        run_context=RunContext(),
+    )
+    assert result.needs_creator
+    q = result.clip_question
+    assert q is not None
+    (cat,) = q["categories"]
+    assert cat["key"] == "group:dodgeball"
+    assert cat["candidate_media_ids"] == [c.media_id for c in clips]
+    assert "Tap the clips" in result.question
+    assert "sport being played" in result.question
+
+
 def test_plan_carries_the_clip_question_only_when_given() -> None:
     cq = {"version": 1, "question_id": "q", "categories": [], "allow_none": True}
     plan = _clip_intent_resolution_plan(question="Tap.", status="needs_creator", clip_question=cq)

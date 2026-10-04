@@ -2373,17 +2373,11 @@ def validate_proposal_timing(snapshot: EditProposalSnapshot) -> None:
     validate_proposal_compiles(snapshot)
 
 
-def validate_proposal_compiles(snapshot: EditProposalSnapshot) -> None:
-    """Dry-run the strict compiler: can the renderer allocate this proposal at all?
-
-    Narrower than `validate_proposal_timing`, which also applies editorial
-    fast-cut rules meant for creator revisions. Every freshly planned draft is
-    checked with this before it is saved, so a plan the renderer cannot
-    allocate fails at planning time instead of after approval (KRI-129).
-    """
+def compile_proposal_execution_plan(snapshot: EditProposalSnapshot) -> dict[str, Any]:
+    """The strict compiler's execution plan for a freshly planned proposal (no track)."""
 
     media_digest = canonical_media_digest(snapshot.media, snapshot.narration)
-    compile_execution_plan(
+    return compile_execution_plan(
         {
             "proposal_version": 1,
             "media_digest": media_digest,
@@ -2401,6 +2395,18 @@ def validate_proposal_compiles(snapshot: EditProposalSnapshot) -> None:
         },
         track=None,
     )
+
+
+def validate_proposal_compiles(snapshot: EditProposalSnapshot) -> None:
+    """Dry-run the strict compiler: can the renderer allocate this proposal at all?
+
+    Narrower than `validate_proposal_timing`, which also applies editorial
+    fast-cut rules meant for creator revisions. Every freshly planned draft is
+    checked with this before it is saved, so a plan the renderer cannot
+    allocate fails at planning time instead of after approval (KRI-129).
+    """
+
+    compile_proposal_execution_plan(snapshot)
 
 
 def validate_execution_plan(plan: object, guided_snapshot: object) -> dict[str, Any]:

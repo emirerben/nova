@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.63.0] - 2026-10-04
+
+### Fixed
+- fix(phone): repair phone-inexpressible plans at planning time + split capability errors (KRI-286) (#1370) <!-- release-pr: 1370 -->
+
+## [0.78.62.0] - 2026-10-04
+
+### Changed
+- feat(slide-post): server renders the full text style on slides (rotation, outline/shadow color, highlight, spacing) (#1368) <!-- release-pr: 1368 -->
+
+## [0.78.61.0] - 2026-10-04
+
+### Fixed
+- fix(phone): letterboxed landscape fit for voiceover montage + guided (KRI-285) (#1369) <!-- release-pr: 1369 -->
+
+## [0.78.60.0] - 2026-10-04
+
+### Changed
+- KRI-282: sport/chapter text from the creator's words + truthful receipt (#1377) <!-- release-pr: 1377 -->
+
+## [0.78.59.0] - 2026-10-04
+
+### Changed
+- docs(linear): feature roadmap workflow, /roadmap skill, TODOS.md moved to Linear (KRI-421) (#1375) <!-- release-pr: 1375 -->
+
+## [0.78.58.0] - 2026-10-04
+
+### Changed
+- fix(kria): KRI-282 keep clip picker when only some unresolved intents are tappable (#1374) <!-- release-pr: 1374 -->
+
 ## [0.78.57.0] - 2026-10-04
 
 ### Changed

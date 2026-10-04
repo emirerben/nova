@@ -1879,3 +1879,36 @@ async def test_foreground_budget_stop_does_not_escape_through_overflow_worker(mo
     )
     assert result.status == "budget_exhausted"
     assert not result.deferred_queries
+
+
+async def test_text_for_a_chapter_prints_its_name_not_a_sentence_about_the_footage(
+    monkeypatch,
+) -> None:
+    """KRI-282: "a text for the pub" is the creator's own name for the chapter."""
+    intent = ClipIntent(
+        intent_id="i_pub", op="caption", attribute="the pub", caption_attribute="The Pub"
+    )
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="i_pub",
+                    assignments=[ResolverAssignment(media="m001", confidence=0.9)],
+                    caption="rainy bench",
+                )
+            ]
+        ),
+    )
+    _patch_vision_forbidden(monkeypatch)
+
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request="We ended the day at the pub. Add a text for the pub.",
+        clips=[_video_clip("m1", subject="a rainy bench")],
+        run_context=RunContext(),
+    )
+
+    resolved = result.intents[0]
+    assert resolved.caption_text == "The Pub"
+    assert resolved.caption_grounding == "creator_text"

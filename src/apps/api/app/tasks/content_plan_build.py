@@ -801,6 +801,12 @@ JOB_FAILURE_MESSAGES: dict[str, str] = {
         "This edit uses something your iPhone can't render yet. Start a new edit "
         "with a different clip or format."
     ),
+    # KRI-286: retryable -- the device capability this edit needs is not switched on
+    # yet (a rollout decision), so the same edit works once it is.
+    "phone_capability_unavailable": (
+        "This edit needs an iPhone feature that isn't available yet. "
+        "Try again later, or ask for a different style."
+    ),
     "phone_plan_failed": (
         "This edit couldn't render on your iPhone. Try again, or ask for a change to the direction."
     ),
