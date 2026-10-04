@@ -842,6 +842,68 @@
           "title": "CarouselMomentEditRequest",
           "type": "object"
         },
+        "ClipSelectionAnswerIn": {
+          "additionalProperties": false,
+          "properties": {
+            "key": {
+              "maxLength": 120,
+              "minLength": 1,
+              "title": "Key",
+              "type": "string"
+            },
+            "media_ids": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 50,
+              "title": "Media Ids",
+              "type": "array"
+            }
+          },
+          "required": [
+            "key"
+          ],
+          "title": "ClipSelectionAnswerIn",
+          "type": "object"
+        },
+        "ClipSelectionIn": {
+          "additionalProperties": false,
+          "description": "The app's answer to a ``clip_question`` (SubmitTurnBody.clip_selection).",
+          "properties": {
+            "answers": {
+              "items": {
+                "$ref": "#/$defs/ClipSelectionAnswerIn"
+              },
+              "maxItems": 8,
+              "title": "Answers",
+              "type": "array"
+            },
+            "none_keys": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 8,
+              "title": "None Keys",
+              "type": "array"
+            },
+            "question_id": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Question Id",
+              "type": "string"
+            },
+            "skipped": {
+              "default": false,
+              "title": "Skipped",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "question_id"
+          ],
+          "title": "ClipSelectionIn",
+          "type": "object"
+        },
         "Crop": {
           "properties": {
             "scale": {
@@ -2771,6 +2833,17 @@
           "minLength": 1,
           "title": "Client Event Id",
           "type": "string"
+        },
+        "clip_selection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClipSelectionIn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "editor_state": {
           "anyOf": [

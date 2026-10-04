@@ -25,7 +25,7 @@ docs/           — pipeline internals, runbooks, specs, designs (start at docs/
 CLAUDE.md       — working agreements, invariants, key paths, env vars
 DESIGN.md       — design-system tokens, loading rules, anti-slop rules, a11y baseline
 LICENSES.md     — third-party component and font licenses
-TODOS.md        — deferred work backlog, grouped by the PR that deferred it
+TODOS.md        — backlog moved to Linear 2026-10-04 (see its header and docs/runbooks/linear-workflow.md); add nothing new here
 ```
 
 Native setup, build commands, and architecture boundaries are in the [Kria iOS development runbook](docs/runbooks/ios-development.md). The [phone-rendering pilot runbook](docs/runbooks/phone-rendering.md) describes the account-gated experimental path, supported edits, consent, and remaining KRI-29 release gates. The [iOS-device-only runtime cutover runbook](docs/runbooks/ios-device-only-runtime.md) covers the staged production retirement of web/cloud creation while preserving reads and device publication. The [KRI-37 native editor validation record](docs/runbooks/kri-37-native-editor-validation.md) covers source previews, authored text controls, verified release scope, and deferred qualification; consult current runtime evidence for capability rollout state. The [KRI-43 captions and visuals runbook](docs/runbooks/native-caption-visual-editor.md) documents caption styling, visual authoring, additive API fields, timeline behavior, and API-first rollout.

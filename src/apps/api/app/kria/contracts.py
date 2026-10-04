@@ -49,6 +49,9 @@ class KriaTurnPlan(_KriaModel):
     # (never creator text or model output), readable via the admin turns view.
     # Omitted from the dump when unset so every other plan stays byte-identical.
     diagnostics: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: not value)
+    # KRI-282: thumbnail clip-picker payload for a "which clips show X?" question.
+    # Omitted from the dump when unset so every other plan stays byte-identical.
+    clip_question: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: not value)
 
     @field_validator("intents")
     @classmethod

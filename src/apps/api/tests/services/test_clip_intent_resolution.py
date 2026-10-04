@@ -41,6 +41,12 @@ from app.services.clip_intent_resolution import (
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture(autouse=True)
+def _text_only_clip_questions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests pin the text question; the picker has its own suite (test_clip_selection)."""
+    monkeypatch.setattr("app.config.settings.kria_clip_selection_questions_enabled", False)
+
+
 def _record_analysis(subject: str = "", description: str = "") -> dict:
     return {"subject": subject, "description": description}
 
