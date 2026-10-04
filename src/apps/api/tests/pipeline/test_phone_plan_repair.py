@@ -17,7 +17,7 @@ import pytest
 from app.agents._schemas.text_element import TextElement
 from app.config import settings
 from app.kria.recipes import MediaCapability
-from app.pipeline import phone_plan_repair
+from app.pipeline import phone_guided_plan, phone_plan_repair
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
 from app.pipeline.phone_plan_repair import (
     COMPOSITE_SAFE_SEQUENCE_EFFECTS,
@@ -183,13 +183,13 @@ def test_capability_unavailable_is_never_repaired(monkeypatch):
 def test_kwargs_are_forwarded_verbatim(monkeypatch):
     plan, bindings = fixture()
     seen: list[dict] = []
-    real = phone_plan_repair.compile_phone_guided_plan
+    real = phone_guided_plan.compile_phone_guided_plan
 
     def spy(*args, **kwargs):
         seen.append({"args": args, "kwargs": kwargs})
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(phone_plan_repair, "compile_phone_guided_plan", spy)
+    monkeypatch.setattr(phone_guided_plan, "compile_phone_guided_plan", spy)
     compile_phone_guided_with_repairs(
         plan, bindings, visuals=(), narration=None, allow_editor_media=False
     )
@@ -212,7 +212,7 @@ def test_a_repair_that_does_not_help_stops_after_one_pass(monkeypatch):
             "sequence effect needs composite-stream parity", reason="sequence_effect"
         )
 
-    monkeypatch.setattr(phone_plan_repair, "compile_phone_guided_plan", always_failing)
+    monkeypatch.setattr(phone_guided_plan, "compile_phone_guided_plan", always_failing)
     with pytest.raises(UnsupportedPhonePlan):
         compile_phone_guided_with_repairs(plan, bindings)
     assert len(calls) == 2  # original + exactly one repaired retry
@@ -300,7 +300,7 @@ def test_a_second_font_cause_is_repaired_in_a_second_pass(monkeypatch):
             raise rejects.pop(0)
         return "recipe"
 
-    monkeypatch.setattr(phone_plan_repair, "compile_phone_guided_plan", staged)
+    monkeypatch.setattr(phone_guided_plan, "compile_phone_guided_plan", staged)
     monkeypatch.setattr(phone_plan_repair, "validate_phone_pilot_recipe", lambda *_a, **_k: None)
     result = compile_phone_guided_repaired(plan, bindings)
     element = result.plan.text_elements[0]
@@ -330,13 +330,13 @@ def test_dry_run_forwards_compile_kwargs_verbatim(monkeypatch):
     plan.text_elements = _sequence("fade-in")
     _stub_dry_run(monkeypatch, plan, bindings)
     seen = []
-    real = phone_plan_repair.compile_phone_guided_plan
+    real = phone_guided_plan.compile_phone_guided_plan
 
     def spy(plan_, bindings_, **kwargs):
         seen.append(kwargs)
         return real(plan_, bindings_, **{k: v for k, v in kwargs.items() if k != "extra_kw"})
 
-    monkeypatch.setattr(phone_plan_repair, "compile_phone_guided_plan", spy)
+    monkeypatch.setattr(phone_guided_plan, "compile_phone_guided_plan", spy)
     validate_proposal_phone_compiles(_snapshot_for(plan, bindings), [], extra_kw="x")
     assert seen[0]["extra_kw"] == "x"
 
@@ -390,13 +390,13 @@ def test_landscape_fit_survives_the_repair_wrapper(monkeypatch):
     plan, bindings = fixture()  # 1920x1080 source on the portrait canvas
     plan.text_elements = _sequence("pop-in")
     seen: list[str | None] = []
-    real = phone_plan_repair.compile_phone_guided_plan
+    real = phone_guided_plan.compile_phone_guided_plan
 
     def spy(plan_, bindings_, **kwargs):
         seen.append(kwargs.get("landscape_fit"))
         return real(plan_, bindings_, **kwargs)
 
-    monkeypatch.setattr(phone_plan_repair, "compile_phone_guided_plan", spy)
+    monkeypatch.setattr(phone_guided_plan, "compile_phone_guided_plan", spy)
     fit = compile_phone_guided_repaired(plan, bindings, landscape_fit="fit")
     fill = compile_phone_guided_repaired(plan, bindings, landscape_fit="fill")
 

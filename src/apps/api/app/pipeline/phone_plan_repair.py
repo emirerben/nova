@@ -32,7 +32,8 @@ from typing import Any, NamedTuple
 
 import structlog
 
-from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
+from app.pipeline import phone_guided_plan
+from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.services.phone_rollout import (
     PhoneCapabilityUnavailable,
     PhoneFontUnqualified,
@@ -148,7 +149,8 @@ def compile_phone_guided_repaired(plan, bindings, **kwargs: Any) -> RepairedComp
     current = plan
     for _ in range(_MAX_REPAIR_PASSES + 1):
         try:
-            recipe = compile_phone_guided_plan(current, bindings, **kwargs)
+            # Looked up on the module at call time so a patched compiler is honoured.
+            recipe = phone_guided_plan.compile_phone_guided_plan(current, bindings, **kwargs)
             validate_phone_pilot_recipe(recipe, allow_editor_media=allow_editor_media)
             return RepairedCompile(recipe, notes, current)
         except (UnsupportedPhonePlan, ValueError) as exc:
