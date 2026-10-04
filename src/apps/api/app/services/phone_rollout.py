@@ -38,6 +38,19 @@ _FONT_REGISTRY_PATH = (
 )
 
 
+@cache
+def _registry_fonts() -> dict[str, dict]:
+    """The checked-in `font-registry.json` ``fonts`` table (family -> config)."""
+    try:
+        registry = json.loads(_FONT_REGISTRY_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    fonts = registry.get("fonts") if isinstance(registry, dict) else None
+    if not isinstance(fonts, dict):
+        return {}
+    return {name: config for name, config in fonts.items() if isinstance(config, dict)}
+
+
 def _load_registered_font_filenames() -> frozenset[str]:
     """Every filename `bundled_font_asset` (render_library.py) can serve.
 
@@ -46,21 +59,55 @@ def _load_registered_font_filenames() -> frozenset[str]:
     families against, so a filename appearing here is exactly the set of
     bundled fonts the iOS app ships with their license files.
     """
-    try:
-        registry = json.loads(_FONT_REGISTRY_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return frozenset()
-    fonts = registry.get("fonts") if isinstance(registry, dict) else None
-    if not isinstance(fonts, dict):
-        return frozenset()
     return frozenset(
         config["file"]
-        for config in fonts.values()
-        if isinstance(config, dict) and isinstance(config.get("file"), str)
+        for config in _registry_fonts().values()
+        if isinstance(config.get("file"), str)
     )
 
 
 _REGISTERED_FONT_FILENAMES = _load_registered_font_filenames()
+
+
+class PhoneCapabilityUnavailable(ValueError):
+    """The recipe needs a device capability that is not verified (yet).
+
+    Unlike every other phone-plan reject this one is NOT a property of the plan:
+    flipping the capability into ``phone_render_verified_features`` (or the
+    rollout flag behind it) makes the very same plan render. Callers must keep
+    it retryable (``phone_capability_unavailable``) instead of folding it into
+    the deterministic ``phone_plan_unsupported`` bucket (KRI-286).
+
+    ``capability`` names what is missing (comma-joined when several are).
+    Subclasses ``ValueError`` so every existing ``except ValueError`` and
+    ``pytest.raises(ValueError, match=...)`` keeps working byte-for-byte.
+    """
+
+    def __init__(self, message: str, *, capability: str) -> None:
+        super().__init__(message)
+        self.capability = capability
+
+
+class PhoneFontUnqualified(ValueError):
+    """A text layer's font/effect combination is not device-qualified.
+
+    Deterministic (a property of the plan), but repairable at planning time:
+    ``font_files`` are the bundled font filenames and ``effects`` the text
+    effects that tripped the gate, so ``app.pipeline.phone_plan_repair`` can
+    swap them for a qualified default instead of failing after approval.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        font_files: frozenset[str] = frozenset(),
+        effects: frozenset[str] = frozenset(),
+    ) -> None:
+        super().__init__(message)
+        self.font_files = font_files
+        self.effects = effects
+
 
 # docs/reviews/kri-29/coverage.md ("## Text"): "All shared editor effect names
 # now have native implementations and compiler paths" lists exactly these 17
@@ -154,19 +201,88 @@ def _default_font_instance_unqualified(
     return False
 
 
-def _has_unqualified_font_instance(recipe: EditRecipeV2) -> bool:
-    manifest = {asset.id: asset for asset in recipe.asset_manifest.assets}
-    checker = (
+def _font_instance_checker():  # noqa: ANN202
+    return (
         _strict_font_instance_unqualified
         if settings.phone_font_qualification_strict
         else _default_font_instance_unqualified
     )
+
+
+def _has_unqualified_font_instance(recipe: EditRecipeV2) -> bool:
+    manifest = {asset.id: asset for asset in recipe.asset_manifest.assets}
+    checker = _font_instance_checker()
     for layer in recipe.text_layers:
         for run in layer.runs:
             asset = manifest.get(run.font_asset_id)
             if checker(layer, run, asset):
                 return True
     return False
+
+
+def unqualified_font_causes(recipe: EditRecipeV2) -> tuple[frozenset[str], frozenset[str]]:
+    """``(font_files, effects)`` behind every layer `_has_unqualified_font_instance` flags.
+
+    Uses the SAME per-run predicate as the gate, so the planning-time repair can
+    never disagree with what `validate_phone_pilot_recipe` rejects. A layer whose
+    effect has no native painter is attributed to its effect (its font may be
+    fine); anything else is attributed to its bundled font file.
+    """
+    manifest = {asset.id: asset for asset in recipe.asset_manifest.assets}
+    checker = _font_instance_checker()
+    strict = settings.phone_font_qualification_strict
+    files: set[str] = set()
+    effects: set[str] = set()
+    for layer in recipe.text_layers:
+        for run in layer.runs:
+            asset = manifest.get(run.font_asset_id)
+            if not checker(layer, run, asset):
+                continue
+            if not strict and layer.effect not in _NATIVE_TEXT_EFFECTS:
+                effects.add(layer.effect)
+            elif asset is not None and getattr(asset, "catalog_id", None):
+                files.add(asset.catalog_id)
+    return frozenset(files), frozenset(effects)
+
+
+def registry_font_file(font_family: str | None, *, font_style: str = "display") -> str | None:
+    """The bundled filename the compiler resolves ``font_family`` to (None if unknown).
+
+    Mirrors `text_overlay_skia._resolve_typeface_for_overlay` without needing a
+    loaded typeface: exact registry key, else the registry's style default.
+    """
+    fonts = _registry_fonts()
+    entry = fonts.get(font_family) if font_family else None
+    if entry is None:
+        try:
+            registry = json.loads(_FONT_REGISTRY_PATH.read_text(encoding="utf-8"))
+            default = (registry.get("style_defaults") or {}).get(font_style)
+        except (OSError, ValueError, TypeError, AttributeError):
+            default = None
+        entry = fonts.get(default) if default else None
+    file = entry.get("file") if entry else None
+    return file if isinstance(file, str) else None
+
+
+def qualified_default_font_family() -> str | None:
+    """A bundled family that passes the default-mode font gate on any native effect.
+
+    Static (no variation axes) faces only: a variable face left without resolved
+    coordinates is exactly what the gate rejects. None when the registry has no
+    such face or strict per-instance qualification is on (that mode qualifies
+    exact byte/coordinate instances only, so no family can be assumed).
+    """
+    if settings.phone_font_qualification_strict:
+        return None
+    for family in ("Inter", "Inter Tight", "Montserrat"):
+        file = (_registry_fonts().get(family) or {}).get("file")
+        if (
+            isinstance(file, str)
+            and file in _REGISTERED_FONT_FILENAMES
+            and not _bundled_font_is_variable(file)
+        ):
+            return family
+    return None
 
 
 def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: bool = False) -> None:
@@ -188,7 +304,10 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         (getattr(settings, "phone_editor_media_enabled", False) or allow_editor_media)
         and "visualBlocks" in settings.phone_render_verified_features
     ):
-        raise ValueError("Visual blocks await native parity and device qualification")
+        raise PhoneCapabilityUnavailable(
+            "Visual blocks await native parity and device qualification",
+            capability="visualBlocks",
+        )
     if any(
         clip.overlay_dissolve_seed is not None
         or clip.hold_duration is not None
@@ -204,7 +323,12 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
     if recipe.camera_pulses:
         raise ValueError("Camera effects await native parity and device qualification")
     if _has_unqualified_font_instance(recipe):
-        raise ValueError("This font instance awaits native parity and device qualification")
+        font_files, font_effects = unqualified_font_causes(recipe)
+        raise PhoneFontUnqualified(
+            "This font instance awaits native parity and device qualification",
+            font_files=font_files,
+            effects=font_effects,
+        )
     authored_text_features = any(
         layer.animation_phases is not None
         or layer.background is not None
@@ -216,15 +340,23 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
     # the capability gate explicit: callers may mutate a recipe after compile
     # without recomputing ``required_capabilities``.
     if authored_text_features and "authoredText" not in settings.phone_render_verified_features:
-        raise ValueError(
-            "Authored text phases and backgrounds await native parity and device qualification"
+        raise PhoneCapabilityUnavailable(
+            "Authored text phases and backgrounds await native parity and device qualification",
+            capability="authoredText",
         )
     if any(
         clip.source_crop is not None for track in recipe.tracks for clip in track.clips
     ) and "sourceCrop" not in set(settings.phone_render_verified_features):
-        raise ValueError("Cropped clips await native parity and device qualification")
-    if not recipe.required_capabilities.issubset(settings.phone_render_verified_features):
-        raise ValueError("This edit needs a phone capability that is not enabled")
+        raise PhoneCapabilityUnavailable(
+            "Cropped clips await native parity and device qualification",
+            capability="sourceCrop",
+        )
+    missing = recipe.required_capabilities - set(settings.phone_render_verified_features)
+    if missing:
+        raise PhoneCapabilityUnavailable(
+            "This edit needs a phone capability that is not enabled",
+            capability=",".join(sorted(str(item) for item in missing)),
+        )
     if any(
         layer.giant_title is not None and layer.effect == "handwriting"
         for layer in recipe.text_layers

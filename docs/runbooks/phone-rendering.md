@@ -2128,3 +2128,21 @@ lanes above are on. Rollback: `PHONE_VOICEOVER_EDITOR_LANES_ENABLED=false`
 guided-story media imports). Saved media keeps rendering either way.
 Tests: `tests/routes/test_phone_voiceover_editor_media.py`; iOS
 `NativeEditorSessionTests.testPhoneVoiceoverEdit*`.
+
+## Planning-time phone repair + failure split (KRI-286)
+
+Phone-inexpressible plans used to fail only after approval. Now:
+
+- `app/pipeline/phone_plan_repair.py`: `validate_proposal_phone_compiles` dry-runs
+  the phone compiler on every phone-destination draft (`edit_proposal_build`), and
+  `compile_phone_guided_with_repairs` is the worker's compile call in
+  `_run_phone_guided_job`. Deterministic repairs, each noted (never silent):
+  sequence effect outside the composite-safe set becomes `fade-in`; an unqualified
+  font becomes a qualified default (Inter). Notes land in the proposal's
+  `adjustments` and the variant's `phone_repair_notes` (job `render_notes`).
+- A genuine transition hole (outgoing source too short) is NOT repairable; the
+  dry run rejects it so the draft takes the deterministic fallback.
+- `PhoneCapabilityUnavailable` (`phone_rollout.py`) is raised for gates that depend on
+  `phone_render_verified_features`; the worker maps it to the retryable
+  `phone_capability_unavailable`. Everything else stays the deterministic
+  `phone_plan_unsupported`. Grep Fly logs for both after a deploy.

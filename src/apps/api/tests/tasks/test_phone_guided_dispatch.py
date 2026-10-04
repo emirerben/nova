@@ -14,6 +14,7 @@ from app.schemas.edit_proposal import NarrationTrack
 from app.services import phone_visuals
 from app.services.device_render import device_status
 from app.services.generative_jobs import build_generative_job
+from app.services.phone_rollout import PhoneCapabilityUnavailable
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD
 from app.services.pool_asset_refs import job_references_pool_asset
 from app.tasks import generative_build as gb
@@ -74,6 +75,42 @@ def test_worker_stops_at_immutable_device_request(monkeypatch):
     gb._run_generative_job(str(job.id))
     assert device_status(job, "guided_story").request == request
     assert planner.call_count == 1
+
+
+def test_worker_repairs_a_sequence_pop_in_instead_of_failing_after_approval(monkeypatch):
+    """KRI-286 (prod 76db6913): the worker repairs, notes it, and persists the repaired rows."""
+    from app.agents._schemas.text_element import TextElement
+
+    job, snapshot, _, planner, cloud = setup(monkeypatch)
+    plan, _bindings = fixture()
+    plan.text_elements = [
+        TextElement(
+            id="seq0",
+            text="First",
+            role="generative_sequence",
+            effect="pop-in",
+            start_s=0.0,
+            end_s=2.5,
+        )
+    ]
+    planner.return_value = (plan.model_dump(mode="json"), None)
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        ["basicComposition", "local1080Export", "audioMix", "positionedText", "animatedText"],
+    )
+
+    gb._run_phone_guided_job(str(job.id), snapshot, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    variant = job.assembly_plan["variants"][0]
+    assert variant["phone_repair_notes"] == [
+        "Swapped a text animation your iPhone can't play yet for a simple fade-in"
+    ]
+    assert [row["effect"] for row in variant["text_elements"]] == ["fade-in"]
+    recipe = device_status(job, "guided_story").request.recipe
+    assert [layer.effect for layer in recipe.text_layers] == ["fade-in"]
+    cloud.assert_not_called()
 
 
 def test_device_only_mode_compiles_guided_plan_when_phone_flag_is_off(monkeypatch):
@@ -245,6 +282,16 @@ def test_dispatcher_rejects_phone_snapshot_without_a_registered_renderer(monkeyp
             id="pilot_validation_value_error",
         ),
         pytest.param(lambda: RuntimeError("boom"), "phone_plan_failed", id="unexpected_error"),
+        # KRI-286: a capability reject is retryable, so it must NOT map to the
+        # deterministic `phone_plan_unsupported` even though it is a ValueError.
+        pytest.param(
+            lambda: PhoneCapabilityUnavailable(
+                "Cropped clips await native parity and device qualification",
+                capability="sourceCrop",
+            ),
+            "phone_capability_unavailable",
+            id="phone_capability_unavailable",
+        ),
     ],
 )
 def test_phone_plan_failure_persists_failure_reason(monkeypatch, raised, expected_reason):

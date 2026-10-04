@@ -835,3 +835,83 @@ def test_phone_talking_head_unsupported_when_any_condition_fails(monkeypatch, se
 
 def test_phone_talking_head_off_by_default():
     assert type(settings).model_fields["phone_talking_head_rendering_enabled"].default is False
+
+
+# --- KRI-286: capability rejects are typed (retryable), plan defects are not ---
+
+
+def test_unverified_required_capability_raises_the_typed_capability_error(monkeypatch):
+    from app.services.phone_rollout import PhoneCapabilityUnavailable
+
+    plan, bindings = fixture()
+    recipe = compile_phone_guided_plan(plan, bindings)
+    others = sorted(recipe.required_capabilities - {"local1080Export"})
+    monkeypatch.setattr(settings, "phone_render_verified_features", others)
+    with pytest.raises(PhoneCapabilityUnavailable, match="not enabled") as raised:
+        validate_phone_pilot_recipe(recipe)
+    assert raised.value.capability == "local1080Export"
+    assert isinstance(raised.value, ValueError)  # every existing `except ValueError` keeps working
+
+
+def test_unverified_source_crop_raises_the_typed_capability_error(monkeypatch):
+    from app.services.phone_rollout import PhoneCapabilityUnavailable
+
+    crop = {"x": 0.1, "y": 0.1, "width": 0.5, "height": 0.5}
+    plan, bindings = fixture()
+    plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={"source_crop": crop})
+    recipe = compile_phone_guided_plan(plan, bindings)
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        sorted(recipe.required_capabilities - {"sourceCrop"}),
+    )
+    with pytest.raises(PhoneCapabilityUnavailable) as raised:
+        validate_phone_pilot_recipe(recipe)
+    assert raised.value.capability == "sourceCrop"
+
+
+def test_unverified_authored_text_raises_the_typed_capability_error(monkeypatch):
+    from app.agents._schemas.text_animation_phases import TextAnimationPhases
+    from app.services.phone_rollout import PhoneCapabilityUnavailable
+
+    monkeypatch.setattr(settings, "phone_font_qualification_strict", False)
+    recipe = _default_font_recipe("Inter")
+    recipe.text_layers[0].animation_phases = TextAnimationPhases(loop="float")
+    monkeypatch.setattr(
+        settings,
+        "phone_render_verified_features",
+        sorted(recipe.required_capabilities - {"authoredText"}),
+    )
+    with pytest.raises(PhoneCapabilityUnavailable) as raised:
+        validate_phone_pilot_recipe(recipe)
+    assert raised.value.capability == "authoredText"
+
+
+def test_font_and_muted_section_rejects_are_not_capability_errors(monkeypatch):
+    from app.services.phone_rollout import PhoneCapabilityUnavailable, PhoneFontUnqualified
+
+    monkeypatch.setattr(settings, "phone_font_qualification_strict", False)
+    recipe = _default_font_recipe("Fraunces")
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    recipe.text_layers[0].runs[0].font_variations.clear()
+    with pytest.raises(PhoneFontUnqualified) as raised:
+        validate_phone_pilot_recipe(recipe)
+    assert not isinstance(raised.value, PhoneCapabilityUnavailable)
+    assert raised.value.font_files == {"Fraunces-Bold.ttf"}
+
+
+def test_qualified_default_font_is_a_static_registered_face():
+    from app.services.phone_rollout import (
+        _bundled_font_is_variable,
+        qualified_default_font_family,
+        registry_font_file,
+    )
+
+    family = qualified_default_font_family()
+    assert family == "Inter"
+    assert not _bundled_font_is_variable(registry_font_file(family))
+    assert registry_font_file("Outfit") == "Outfit-VF.ttf"
+    # An unknown family resolves like the compiler: through the registry's style default.
+    assert registry_font_file("Not A Font") == registry_font_file(None)
