@@ -118,6 +118,9 @@ class _ApprovalDispatchClaim:
     preflight_analysis_id: uuid.UUID | None = None
     speech_cleanup_analysis_id: uuid.UUID | None = None
     speech_cleanup_choice: str | None = None
+    # KRI-306: the creator's explicit output-shape choice (`{"output_orientation",
+    # "landscape_fit"}`), stashed by `decide_approval`; None = they never chose.
+    render_shape: dict[str, str] | None = None
     # What the plan item pointed at BEFORE a strategy dispatch mints its new Job, so a
     # failure after the pointer moves can put it back (never leave an orphan target).
     prior_item_status: str | None = None
@@ -1775,6 +1778,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
         preflight_analysis_id: uuid.UUID | None = None
         speech_cleanup_analysis_id: uuid.UUID | None = None
         speech_cleanup_choice: str | None = None
+        render_shape_choice: dict[str, str] | None = None
         target_variant_id = approval.target_variant_id
         target_generation_id = approval.target_generation_id
         if document.kind == "strategy":
@@ -1864,6 +1868,19 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                 except (TypeError, ValueError):
                     speech_cleanup_analysis_id = None
                 speech_cleanup_choice = stash.get("choice")
+            # KRI-306: apply the creator's output-shape choice HERE (not at
+            # approval time) so a deny, which never reaches the claim, has
+            # nothing to undo. Landscape never has bars, so it leaves the
+            # item's remembered bars/crop preference alone.
+            from app.services.render_shape import shape_from_all_candidates  # noqa: PLC0415
+
+            render_shape_choice = shape_from_all_candidates(
+                {"creator_render_shape": (execution.result or {}).get("render_shape")}
+            )
+            if render_shape_choice is not None and render_shape_choice["output_orientation"] == (
+                "portrait"
+            ):
+                item.landscape_fit = render_shape_choice["landscape_fit"]
         else:
             if current_job is None or not approval.target_variant_id:
                 return None
@@ -1996,6 +2013,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             preflight_analysis_id=preflight_analysis_id,
             speech_cleanup_analysis_id=speech_cleanup_analysis_id,
             speech_cleanup_choice=speech_cleanup_choice,
+            render_shape=render_shape_choice,
             prior_item_status=(
                 str(getattr(item, "item_status", None))
                 if getattr(item, "item_status", None) is not None
@@ -2469,6 +2487,7 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
                 else None
             ),
             speech_cleanup_choice=claim.speech_cleanup_choice,
+            creator_render_shape=getattr(claim, "render_shape", None),
         )
         outcome = result.outcome
         result_job_id = result.job_id

@@ -1258,6 +1258,50 @@ async def _expire_blocking_approval(
     )
 
 
+async def _validated_render_shape(
+    db: AsyncSession,
+    *,
+    body: ApprovalDecisionBody,
+    plan_item: PlanItem | None,
+    strategy_payload: dict[str, Any] | None,
+    creator_id: uuid.UUID,
+) -> dict[str, str]:
+    """The ``creator_render_shape`` payload for an approve request, or a 422.
+
+    Only a strategy approval has a shape to choose (an editor-kind approval is a
+    Save against an existing variant -- the device editor owns that choice).
+    """
+    from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+    from app.services import render_shape  # noqa: PLC0415
+
+    if plan_item is None or strategy_payload is None:
+        raise RuntimeFailure(
+            422,
+            "render_shape_not_applicable",
+            "There is no output shape to choose for this action.",
+            phase="approval",
+            recovery="ask_user",
+        )
+    offer = await render_shape.offer_for_item(
+        db, plan_item, CreativeStrategy.model_validate(strategy_payload), creator_id
+    )
+    try:
+        chosen = render_shape.resolve_choice(offer, body.output_orientation, body.landscape_fit)
+    except render_shape.RenderShapeError as exc:
+        raise RuntimeFailure(
+            422, exc.code, exc.message, phase="approval", recovery="ask_user"
+        ) from exc
+    if chosen is None:  # unreachable: the caller only asks when a field was sent
+        raise RuntimeFailure(
+            422,
+            "render_shape_not_applicable",
+            "There is no output shape to choose for this action.",
+            phase="approval",
+            recovery="ask_user",
+        )
+    return chosen
+
+
 async def decide_approval(
     db: AsyncSession,
     *,
@@ -1535,8 +1579,27 @@ async def decide_approval(
             current_revision=int(thread.revision),
         )
 
+    # KRI-306: validate the creator's output-shape choice against what this
+    # strategy offers BEFORE any media mutation or commit, so a bad choice
+    # changes nothing. The validated choice is stashed on the render execution
+    # and applied at claim time (`_claim_approval_dispatch`), so a deny -- which
+    # never reaches the claim -- has nothing to undo.
+    render_shape_stash: dict[str, str] | None = None
+    if decision == "approve" and (
+        body.output_orientation is not None or body.landscape_fit is not None
+    ):
+        render_shape_stash = await _validated_render_shape(
+            db,
+            body=body,
+            plan_item=plan_item if is_strategy_approval else None,
+            strategy_payload=document_peek.strategy if is_strategy_approval else None,
+            creator_id=creator_id,
+        )
+
     strategy_media: _StrategyApprovalMedia | None = None
     preflight_analysis_id_to_publish: uuid.UUID | None = None
+    if render_shape_stash is not None and execution is not None:
+        execution.result = {**(execution.result or {}), "render_shape": render_shape_stash}
     if is_strategy_approval and decision == "approve" and plan_item is not None:
         strategy_media = await _apply_strategy_approval_media(
             db,
