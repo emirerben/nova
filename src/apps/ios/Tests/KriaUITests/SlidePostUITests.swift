@@ -128,48 +128,101 @@ import XCTest
         attach(app, "Workspace 4:5")
     }
 
+    private func revealInTextPanel(_ element: XCUIElement, app: XCUIApplication) {
+        let scroll = app.scrollViews["native-editor-text-inspector-scroll"]
+        for _ in 0..<6 where !(element.exists && element.isHittable) { scroll.swipeUp() }
+    }
+
     func testAddStyleAndApplyTextToAllSlides() {
         let app = openRichWorkspace()
-        // Slide 1: add text.
+        // Slide 1: add text (the real native Text panel opens on Edit with the box focused).
         app.buttons["slidepost-tool-text"].tap()
-        let field = app.textFields["slidepost-text-field"].firstMatch
+        let field = app.textViews["slidepost-text-field"].firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap(); field.press(forDuration: 1.0)
         if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
         field.typeText("Athens")
         attach(app, "Text mode: edit tab")
-        app.buttons["slidepost-tab-style"].tap()
-        app.buttons["slidepost-color-FFF0A6"].tap()
-        app.buttons["slidepost-toggle-outline"].tap()
-        app.buttons["slidepost-position-top"].tap()
-        XCTAssertTrue(app.buttons["slidepost-color-FFF0A6"].isSelected)
+        app.buttons["Style"].tap()
+        let preset = app.buttons["native-editor-text-preset"]
+        XCTAssertTrue(preset.waitForExistence(timeout: 5))
+        preset.tap(); app.buttons["Highlight"].tap()
+        XCTAssertTrue(preset.label.contains("Highlight"))
+        let rotation = app.buttons["native-editor-text-rotation-Increment"]
+        revealInTextPanel(rotation, app: app)
+        rotation.tap()
         attach(app, "Text mode: style tab")
         app.buttons["slidepost-done"].tap()
         // Slide 2: add text with the default look.
         app.buttons["slidepost-tile-2"].tap()
         app.buttons["slidepost-tool-text"].tap()
-        XCTAssertTrue(app.textFields["slidepost-text-field"].firstMatch.waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["slidepost-color-FFF0A6"].exists, "the edit tab does not show style controls")
+        XCTAssertTrue(app.textViews["slidepost-text-field"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["native-editor-text-preset"].exists, "the edit tab does not show style controls")
         app.buttons["slidepost-done"].tap()
         // Back on slide 1: apply its whole look to every slide.
         app.buttons["slidepost-tile-1"].tap()
         app.buttons["slidepost-tool-text"].tap()
-        app.buttons["slidepost-tab-style"].tap()
+        app.buttons["Style"].tap()
         let applyAll = app.buttons["slidepost-apply-all"]
         XCTAssertTrue(applyAll.waitForExistence(timeout: 5)); applyAll.tap()
         XCTAssertTrue(app.staticTexts["slidepost-apply-all-result"].waitForExistence(timeout: 3))
         app.buttons["slidepost-done"].tap()
-        // Slide 2 now carries slide 1's colour, outline and position, but its own words.
+        // Slide 2 now carries slide 1's preset and rotation, but its own words.
         app.buttons["slidepost-tile-2"].tap()
         app.buttons["slidepost-tool-text"].tap()
-        app.buttons["slidepost-tab-style"].tap()
-        XCTAssertTrue(app.buttons["slidepost-color-FFF0A6"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["slidepost-color-FFF0A6"].isSelected)
-        XCTAssertTrue(app.buttons["slidepost-toggle-outline"].isSelected)
-        XCTAssertTrue(app.buttons["slidepost-position-top"].isSelected)
-        app.buttons["slidepost-tab-edit"].tap()
-        XCTAssertEqual(app.textFields["slidepost-text-field"].firstMatch.value as? String, "Your text", "words are never copied")
+        app.buttons["Style"].tap()
+        XCTAssertTrue(app.buttons["native-editor-text-preset"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["native-editor-text-preset"].label.contains("Highlight"))
+        let target = app.buttons["native-editor-text-rotation-Increment"]
+        revealInTextPanel(target, app: app)
+        XCTAssertEqual(target.value as? String, "5 degrees")
+        app.buttons["Edit text"].tap()
+        XCTAssertEqual(app.textViews["slidepost-text-field"].firstMatch.value as? String, "Your text", "words are never copied")
         attach(app, "Style applied to all slides")
+    }
+
+    /// The slide Text tab IS the native Text panel: same Edit text / Style tabs and controls, no timing, no Animation tab.
+    func testSlideTextTabIsTheNativeTextPanel() {
+        let app = openRichWorkspace()
+        app.buttons["slidepost-tool-text"].tap()
+        let field = app.textViews["slidepost-text-field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["native-editor-text-time-start"].exists, "slides have no timeline")
+        XCTAssertFalse(app.buttons["Animation"].exists)
+        field.tap(); field.press(forDuration: 1.0)
+        if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
+        field.typeText("Parity")
+        attach(app, "Slide text tab: Edit text")
+        app.buttons["Style"].tap()
+        let preset = app.buttons["native-editor-text-preset"]
+        XCTAssertTrue(preset.waitForExistence(timeout: 5))
+        preset.tap(); app.buttons["Bold"].tap()
+        XCTAssertTrue(preset.label.contains("Bold"))
+        attach(app, "Slide text tab: Style top")
+        let font = app.buttons["native-editor-text-font"]
+        XCTAssertTrue(font.exists)
+        let size = app.textFields["native-editor-text-size"]
+        revealInTextPanel(size, app: app)
+        let before = size.value as? String
+        app.buttons["Increase text size"].tap()
+        XCTAssertNotEqual(size.value as? String, before)
+        let rotation = app.buttons["native-editor-text-rotation-Increment"]
+        revealInTextPanel(rotation, app: app)
+        rotation.tap(); rotation.tap()
+        XCTAssertEqual(rotation.value as? String, "10 degrees")
+        let outline = app.sliders["Outline"]
+        revealInTextPanel(outline, app: app)
+        outline.adjust(toNormalizedSliderPosition: 0.5)
+        attach(app, "Slide text tab: Style")
+        app.buttons["slidepost-done"].tap()
+        // Reopening shows the saved style.
+        app.buttons["slidepost-tool-text"].tap()
+        app.buttons["Style"].tap()
+        XCTAssertTrue(app.buttons["native-editor-text-preset"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["native-editor-text-preset"].label.contains("Bold"))
+        let again = app.buttons["native-editor-text-rotation-Increment"]
+        revealInTextPanel(again, app: app)
+        XCTAssertEqual(again.value as? String, "10 degrees")
     }
 
     func testMoreMenuRemoveAndCover() {
@@ -260,7 +313,7 @@ import XCTest
     func testTextPanelKeepsEditFieldVisibleWithKeyboardUp() {
         let app = openRichWorkspace()
         app.buttons["slidepost-tool-text"].tap()
-        let field = app.textFields["slidepost-text-field"].firstMatch
+        let field = app.textViews["slidepost-text-field"].firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
@@ -271,7 +324,7 @@ import XCTest
         XCTAssertTrue(preview.exists, "the preview stays on screen too")
         XCTAssertLessThan(preview.frame.maxY, field.frame.minY + 1, "the stage shrinks above the field")
         attach(app, "Text panel with keyboard up")
-        app.buttons["slidepost-tab-style"].tap()
+        app.buttons["Style"].tap()
         attach(app, "Text panel style chips")
     }
 

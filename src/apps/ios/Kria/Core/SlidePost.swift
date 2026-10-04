@@ -12,7 +12,7 @@ struct SlidePostText: Codable, Equatable, Sendable {
 struct SlidePostTextElement: Codable, Equatable, Identifiable, Sendable {
     static let defaultFont = "Inter-Bold"
     static let maxLength = 120
-    static let sizeRange = 24...200
+    static let sizeRange = 8...200
     var id: String
     var text: String
     var role = "text"
@@ -99,6 +99,9 @@ struct SlidePostTextElement: Codable, Equatable, Identifiable, Sendable {
         fontFamily = other.fontFamily; color = other.color; sizePx = other.sizePx; alignment = other.alignment
         position = other.position; xFrac = other.xFrac; yFrac = other.yFrac; maxWidthFrac = other.maxWidthFrac
         strokeWidth = other.strokeWidth; shadowEnabled = other.shadowEnabled; background = other.background
+        // Style keys not typed yet (rotation, outline colour, shadow, preset ...) move as a set: a default
+        // on the source clears the target's value instead of leaving it behind.
+        for key in Self.styleExtraKeys { extra[key] = nil }
         for (key, value) in other.extra { extra[key] = value }
     }
     var isInvalid: Bool {
@@ -106,7 +109,7 @@ struct SlidePostTextElement: Codable, Equatable, Identifiable, Sendable {
         text.isEmpty || text.unicodeScalars.count > Self.maxLength || fontFamily.isEmpty || !Self.sizeRange.contains(sizePx)
             || (maxWidthFrac.map { !(0.2...1).contains($0) } ?? false)
             || !["left", "center", "right"].contains(alignment) || !["top", "center", "bottom", "custom"].contains(position)
-            || !["none", "box"].contains(background) || !Self.isHex(color) || !(0...12).contains(strokeWidth)
+            || !["none", "box"].contains(background) || !Self.isHex(color) || !Self.strokeRange.contains(strokeWidth)
             || [xFrac, yFrac].contains { $0.map { !(0...1).contains($0) } ?? false }
     }
     /// Font chips for the Style tab: the default face first, then every live registry font, with

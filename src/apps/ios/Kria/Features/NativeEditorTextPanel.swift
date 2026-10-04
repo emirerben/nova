@@ -1,13 +1,33 @@
 import SwiftUI
 import UIKit
 
-struct NativeEditorTextPanel: View {
-    enum Tab: String, CaseIterable { case edit = "Edit text", style = "Style", animation = "Animation" }
+enum NativeTextPanelTab: String, CaseIterable { case edit = "Edit text", style = "Style", animation = "Animation" }
+
+/// What a host changes about the real Text panel. The defaults ARE the video editor's panel, so the
+/// native path passes nothing. Slide posts hide the timeline-only controls and keep their own test ids.
+struct NativeTextPanelConfiguration {
+    /// Start/End fields under the text box (video timeline only).
+    var hidesTiming = false
+    /// The Animation tab (video text animations only).
+    var hidesAnimation = false
+    var doneIdentifier = "native-editor-text-inspector-done"
+    var contentIdentifier = "native-editor-text-content"
+    /// Longest text the box accepts, in Unicode scalars (nil = unlimited).
+    var maxTextLength: Int?
+    /// Focus the text box on appear when the panel opens on Edit (a freshly added text).
+    var focusesContentOnAppear = false
+    /// Called when the user switches tabs, so a host can mirror the selection.
+    var onTabChange: ((NativeTextPanelTab) -> Void)?
+}
+
+struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
+    typealias Tab = NativeTextPanelTab
     enum Phase: String, CaseIterable { case entrance = "In", exit = "Out", loop = "Loop" }
     let id: String
-    @ObservedObject var session: NativeEditorSession
+    @ObservedObject var session: Session
     let onDone: () -> Void
     let embeddedAnimation: Bool
+    let configuration: NativeTextPanelConfiguration
     @State private var tab: Tab = .style
     @State private var phase: Phase = .entrance
     @State private var typing = false
@@ -23,13 +43,16 @@ struct NativeEditorTextPanel: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .body) private var editorHeight: CGFloat = 100
 
-    init(id: String, session: NativeEditorSession, initialTab: Tab = .style, embeddedAnimation: Bool = false, onDone: @escaping () -> Void) {
+    init(id: String, session: Session, initialTab: Tab = .style, embeddedAnimation: Bool = false,
+         configuration: NativeTextPanelConfiguration = NativeTextPanelConfiguration(), onDone: @escaping () -> Void) {
         self.id = id; self.session = session; self.onDone = onDone
         self.embeddedAnimation = embeddedAnimation
-        _tab = State(initialValue: initialTab)
+        self.configuration = configuration
+        _tab = State(initialValue: configuration.hidesAnimation && initialTab == .animation ? .style : initialTab)
     }
 
-    private var item: EditorTextElement? { session.document.textElements.first { $0.id == id } }
+    private var tabs: [Tab] { configuration.hidesAnimation ? [.edit, .style] : Tab.allCases }
+    private var item: EditorTextElement? { session.textElement(id: id) }
     private let palette = ["#FFFFFF", "#30352C", "#FFF0A6", "#9BCAFF", "#E7DDF5"]
     private var usesAccessibilityLayout: Bool { dynamicTypeSize.isAccessibilitySize || panelContentWidth < 300 }
 
@@ -66,9 +89,9 @@ struct NativeEditorTextPanel: View {
                         Text("Done").frame(minWidth: 64, minHeight: 44)
                             .background(isConnectedPanel ? KriaColor.ink.opacity(0.06) : Color.clear, in: Capsule())
                     }
-                        .accessibilityIdentifier("native-editor-text-inspector-done")
+                        .accessibilityIdentifier(configuration.doneIdentifier)
                 }
-                NativeEditorPanelTabs(tabs: Tab.allCases, selection: $tab, accessibilityPrefix: "native-editor-text-tabs")
+                NativeEditorPanelTabs(tabs: tabs, selection: $tab, accessibilityPrefix: "native-editor-text-tabs")
                     .accessibilityIdentifier("native-editor-text-tabs")
             }
             .nativeEditorPanelResizeSurface()
@@ -78,11 +101,13 @@ struct NativeEditorTextPanel: View {
                     case .edit:
                         NativeExplicitLineTextEditor(text: Binding(
                             get: { item?.text ?? "" }, set: { session.updateTextContent(id: id, content: $0) }
-                        ), focused: $typing, identifier: "native-editor-text-content")
+                        ), focused: $typing, identifier: configuration.contentIdentifier, configuration: textEditorConfiguration)
                         .frame(minHeight: editorHeight)
                         .padding(8)
                         .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
-                        if usesAccessibilityLayout {
+                        if configuration.hidesTiming {
+                            EmptyView()
+                        } else if usesAccessibilityLayout {
                             VStack(spacing: 8) {
                                 timingField("Start", isStart: true)
                                 timingField("End", isStart: false)
@@ -112,6 +137,7 @@ struct NativeEditorTextPanel: View {
         .font(KriaFont.body(14))
         .tint(KriaColor.ink)
         .onChange(of: tab) { _, tab in
+            configuration.onTabChange?(tab)
             commitSize(); editingSize = false; typing = tab == .edit
             if tab == .edit, let item {
                 session.beginTransaction()
@@ -126,6 +152,7 @@ struct NativeEditorTextPanel: View {
         }
         .onAppear {
             guard !embeddedAnimation else { return }
+            if configuration.focusesContentOnAppear && tab == .edit { typing = true }
             panelLifecycle?.register(owner: ownerUUID, prepareToClose: {
                 performOutgoingCleanup()
             })
@@ -136,6 +163,12 @@ struct NativeEditorTextPanel: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("native-editor-text-panel")
+    }
+
+    private var textEditorConfiguration: LineEditorConfiguration {
+        var value = LineEditorConfiguration()
+        value.maxLength = configuration.maxTextLength
+        return value
     }
 
     private func timingField(_ title: String, isStart: Bool) -> some View {

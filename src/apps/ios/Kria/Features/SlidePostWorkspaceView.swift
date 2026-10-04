@@ -530,6 +530,7 @@ struct SlidePostWorkspaceView: View {
                 EmptyView()
             } else if mode == .text, let slide {
                 SlidePostTextPanel(session: session, slideID: slide.id, tab: $textTab, onDone: finishEditing)
+                    .id(slide.id)
                     .frame(maxHeight: .infinity)
                     .padding(.horizontal, 12).padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
             } else if mode == .look, let slide {

@@ -24,6 +24,7 @@
       "KriaUITests/SlidePostUITests/testSlideStripSwipeDoesNotOpenDrawer",
       "KriaUITests/SlidePostUITests/testSlidePreviewLeavesToolbarAndStripVisible",
       "KriaUITests/SlidePostUITests/testAddStyleAndApplyTextToAllSlides",
+      "KriaUITests/SlidePostUITests/testSlideTextTabIsTheNativeTextPanel",
       "KriaUITests/SlidePostUITests/testMoreMenuRemoveAndCover",
       "KriaUITests/SlidePostUITests/testSlideChatEditStagesAndSaves",
       "KriaUITests/SlidePostUITests/testArrangeDragReordersAndKeepsTheCover",
