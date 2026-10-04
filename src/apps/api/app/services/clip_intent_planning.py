@@ -17,13 +17,22 @@ from app.agents.clip_intent_planner import (
     salvage_question,
 )
 from app.config import settings
-from app.schemas.clip_intents import ClipAssignment, ClipIntent, ResolvedClipIntent
+from app.schemas.clip_intents import (
+    ClipAssignment,
+    ClipIntent,
+    ResolvedClipIntent,
+    ground_caption,
+    ground_label,
+    ground_placeholder_label,
+)
 from app.services.clip_intent_resolution import (
     IntentClip,
     IntentResolution,
+    picker_eligible,
     resolve_clip_intents_for_turn,
 )
-from app.services.clip_understanding import understanding_incomplete
+from app.services.clip_selection import ClipSelections
+from app.services.clip_understanding import clip_record, understanding_incomplete
 
 log = structlog.get_logger()
 
@@ -55,6 +64,107 @@ def resolve_order_by_intent(intent: ClipIntent, clips: list[IntentClip]) -> Reso
     )
 
 
+def apply_creator_selections(
+    intents: list[ClipIntent],
+    *,
+    clips: list[IntentClip],
+    selections: ClipSelections | None,
+    creator_request: str,
+) -> tuple[list[ResolvedClipIntent], list[ClipIntent], set[str]]:
+    """Honour the creator's clip-picker answers BEFORE the resolver runs (KRI-282).
+
+    Returns ``(settled, remaining, dropped_ids)``:
+
+    * ``settled``   intents the creator's tapped clips fully answer, as resolved intents
+                    (confidence 1.0, evidence "creator selected"); they never reach the
+                    resolver or the vision lane.
+    * ``remaining`` everything else, resolved as usual.
+    * ``dropped``   intents the creator said have no clips: empty-by-creator, removed from
+                    the request entirely so they are never asked about again.
+    """
+    if not selections:
+        return [], list(intents), set()
+    by_id = {c.media_id: c for c in clips}
+    order = {c.media_id: i for i, c in enumerate(clips)}
+    settled: list[ResolvedClipIntent] = []
+    remaining: list[ClipIntent] = []
+    dropped: set[str] = set()
+    for intent in intents:
+        entry = selections.match(intent)
+        if entry is None:
+            remaining.append(intent)
+            continue
+        if entry.none:
+            dropped.add(intent.intent_id)
+            continue
+        media_ids = sorted((m for m in entry.media_ids if m in by_id), key=order.__getitem__)
+        assignments = _selected_assignments(intent, media_ids, by_id, creator_request)
+        if not media_ids or not picker_eligible(intent) or assignments is None:
+            remaining.append(intent)
+            continue
+        caption_text = caption_grounding = None
+        if intent.op == "caption":
+            grounded = ground_caption(
+                value=intent.creator_text,
+                confidence=1.0,
+                creator_request=creator_request,
+                records=[clip_record(by_id[m].analysis, kind=by_id[m].kind) for m in media_ids],
+                intent_id=intent.intent_id,
+            )
+            if grounded is None:
+                remaining.append(intent)
+                continue
+            caption_text, caption_grounding = grounded.text, grounded.grounding
+        settled.append(
+            ResolvedClipIntent(
+                **intent.model_dump(),
+                status="resolved",
+                assignments=assignments,
+                caption_text=caption_text,
+                caption_grounding=caption_grounding,
+            )
+        )
+    return settled, remaining, dropped
+
+
+def _selected_assignments(
+    intent: ClipIntent,
+    media_ids: list[str],
+    by_id: dict[str, IntentClip],
+    creator_request: str,
+) -> list[ClipAssignment] | None:
+    """Assignments for tapped clips, or None when the intent's text cannot be grounded."""
+    assignments: list[ClipAssignment] = []
+    for media_id in media_ids:
+        value = grounding = None
+        if intent.op == "label":
+            if intent.placeholder:
+                label = ground_placeholder_label(media_id=media_id, intent_id=intent.intent_id)
+            else:
+                clip = by_id[media_id]
+                label = ground_label(
+                    media_id=media_id,
+                    value=intent.creator_text,
+                    confidence=1.0,
+                    creator_request=creator_request,
+                    record=clip_record(clip.analysis, kind=clip.kind),
+                    intent_id=intent.intent_id,
+                )
+            if label is None:
+                return None
+            value, grounding = label.text, label.grounding
+        assignments.append(
+            ClipAssignment(
+                media_id=media_id,
+                value=value,
+                evidence="creator selected",
+                confidence=1.0,
+                grounding=grounding,
+            )
+        )
+    return assignments
+
+
 async def plan_and_resolve_clip_intents(
     *,
     creator_request: str,
@@ -68,6 +178,7 @@ async def plan_and_resolve_clip_intents(
     max_vision_requeries: int | None = None,
     vision_deadline_s: float | None = None,
     require_clip_understanding: bool = False,
+    clip_selections: ClipSelections | None = None,
 ) -> PlannedIntentResolution:
     if len(creator_request) > CREATOR_REQUEST_MAX_CHARS:
         return PlannedIntentResolution(
@@ -155,6 +266,14 @@ async def plan_and_resolve_clip_intents(
     order_by_intents = [intent for intent in visual_intents if intent.order_by]
     visual_intents = [intent for intent in visual_intents if not intent.order_by]
     resolved_orders = [resolve_order_by_intent(intent, clips) for intent in order_by_intents]
+    # KRI-282: the creator's tapped clips are authoritative for the intents they answer.
+    # Fact-ordered intents stay deterministic and are never matched to a selection.
+    selected, visual_intents, dropped_ids = apply_creator_selections(
+        visual_intents, clips=clips, selections=clip_selections, creator_request=creator_request
+    )
+    if dropped_ids:
+        intents = [intent for intent in intents if intent.intent_id not in dropped_ids]
+    resolved_orders = [*selected, *resolved_orders]
     # Transcript labels are fulfilled later from the pinned narration and
     # final timeline. They remain in the complete requested inventory, but
     # must never enter the vision resolver.

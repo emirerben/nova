@@ -195,6 +195,7 @@ def _complete_response_turn(
                 "receipt_ids": [],
                 "next_actions": [],
                 "schema_version": plan.schema_version,
+                **({"clip_question": plan.clip_question} if plan.clip_question else {}),
             },
         )
         turn.plan_json = plan.model_dump(mode="json")
