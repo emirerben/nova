@@ -489,6 +489,88 @@ final class CreationUITests: XCTestCase {
         XCTAssertLessThan(user.frame.maxY, assistant.frame.minY)
     }
 
+    // MARK: KRI-282 clip picker
+
+    /// Runtime-v2 chat whose reply to "Send clips" is a clip question over four fixture clips
+    /// (none has a cached thumbnail, so every tile uses the placeholder + "Clip N" fallback).
+    private func launchClipQuestionFixture(capability: String) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_CHAT_CLIP_QUESTION"] = capability
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+        let next = app.buttons["Send clips"]
+        XCTAssertTrue(next.waitForExistence(timeout: 5))
+        next.tap()
+        return app
+    }
+
+    func testClipPickerSelectsClipsAndSendsStructuredAnswerWithMissingThumbnailFallback() {
+        let app = launchClipQuestionFixture(capability: "1")
+        let card = app.descendants(matching: .any)["clip-card"]
+        XCTAssertTrue(card.waitForExistence(timeout: 15))
+        // Missing thumbnail cache: placeholder tile labelled "Clip N", never a blank or a crash.
+        XCTAssertEqual(app.buttons["clip-thumb-dodgeball-fixture-clip-2"].label, "Clip 2")
+        let suggested = app.buttons["clip-thumb-dodgeball-fixture-clip-2"]
+        XCTAssertTrue(suggested.waitForExistence(timeout: 3))
+        XCTAssertEqual(suggested.value as? String, "Selected", "suggested clips start ticked")
+        let first = app.buttons["clip-thumb-dodgeball-fixture-clip"]
+        first.tap()
+        XCTAssertEqual(first.value as? String, "Selected")
+        first.tap()
+        XCTAssertEqual(first.value as? String, "Not selected", "tapping twice unselects")
+        first.tap()
+        scrollIntoView(app.buttons["clip-thumb-football-fixture-clip-4"], in: app)
+        app.buttons["clip-thumb-football-fixture-clip-4"].tap()
+        scrollIntoView(app.buttons["clip-send"], in: app)
+        XCTAssertTrue(app.buttons["clip-send"].isEnabled)
+        app.buttons["clip-send"].tap()
+        XCTAssertTrue(app.staticTexts["You: Dodgeball: clips 1, 2. Football: clip 4"].waitForExistence(timeout: 10))
+        let echo = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "dodgeball=fixture-clip+fixture-clip-2;football=fixture-clip-4")).firstMatch
+        XCTAssertTrue(echo.waitForExistence(timeout: 10), "server received the structured clip_selection")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "skipped[false]")).firstMatch.exists)
+        // Answered: the card collapses to a read-only summary.
+        XCTAssertTrue(app.descendants(matching: .any)["clip-card-answered"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["clip-send"].exists)
+    }
+
+    func testClipPickerNoneOfTheseSendsNoneKeys() {
+        let app = launchClipQuestionFixture(capability: "1")
+        XCTAssertTrue(app.descendants(matching: .any)["clip-card"].waitForExistence(timeout: 15))
+        let send = app.buttons["clip-send"]
+        scrollIntoView(send, in: app)
+        // Dodgeball starts with its suggestion ticked; "None of these" clears it and is exclusive.
+        let none = app.buttons["clip-none-dodgeball"]
+        scrollIntoView(none, in: app)
+        none.tap()
+        XCTAssertEqual(app.buttons["clip-thumb-dodgeball-fixture-clip-2"].value as? String, "Not selected")
+        scrollIntoView(send, in: app)
+        send.tap()
+        XCTAssertTrue(app.staticTexts["You: None of these for Dodgeball"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "none[dodgeball]")).firstMatch.waitForExistence(timeout: 10))
+    }
+
+    func testClipPickerSkipSendsSkipped() {
+        let app = launchClipQuestionFixture(capability: "1")
+        XCTAssertTrue(app.descendants(matching: .any)["clip-card"].waitForExistence(timeout: 15))
+        let skip = app.buttons["clip-skip"]
+        scrollIntoView(skip, in: app)
+        skip.tap()
+        XCTAssertTrue(app.staticTexts["You: Skip, decide for me"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "skipped[true]")).firstMatch.waitForExistence(timeout: 10))
+    }
+
+    func testClipQuestionFallsBackToTextWhenServerLacksCapability() {
+        let app = launchClipQuestionFixture(capability: "legacy")
+        // The reply still arrives as plain text; no picker, no structured payload.
+        XCTAssertTrue(app.staticTexts["Kria: I couldn't verify any clips for dodgeball. Could you clarify?"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.descendants(matching: .any)["clip-card"].exists)
+        XCTAssertFalse(app.buttons["clip-send"].exists)
+    }
+
     func testSlowDirectionAndPreJobFailureNeverReturnToUploading() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]

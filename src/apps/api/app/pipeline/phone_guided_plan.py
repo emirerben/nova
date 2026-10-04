@@ -7,6 +7,7 @@ their native implementations and parity fixtures are available.
 from __future__ import annotations
 
 import math
+from typing import Literal
 
 from app.kria.recipes import (
     AssetFingerprint,
@@ -14,6 +15,7 @@ from app.kria.recipes import (
     Canvas,
     MediaAsset,
     MediaSize,
+    MediaTransform,
     NormalizedSourceCrop,
     TimelineClip,
     TimelineTrack,
@@ -29,6 +31,8 @@ from app.pipeline.guided_story import (
 )
 from app.pipeline.phone_recipe_shared import (
     PhoneNarrationBed,
+    display_dims,
+    fit_transform,
     snap_text_overshoot,
     timeline_end_s,
 )
@@ -134,6 +138,7 @@ def compile_phone_guided_plan(
     *,
     narration: PhoneNarrationBed | None = None,
     allow_editor_media: bool = False,
+    landscape_fit: Literal["fill", "fit"] = "fill",
 ) -> EditRecipeV2:
     """``visuals`` pins approved Visuals-pool photos and videos (KRI-121). Callers
     bind each kind only while its feature (``stillImages`` / ``visualVideos``)
@@ -151,6 +156,15 @@ def compile_phone_guided_plan(
     REPLACES the footage's own audio (`original_volume=0.0`, no ducking, no
     gain, no matched bed) -- see that function in `app.pipeline.guided_story`
     for why (`-map 1:a:0`, never `-filter_complex amix`).
+
+    ``landscape_fit`` (KRI-285, ``"fill"`` default = unchanged output): ``"fit"``
+    letterboxes a landscape (display-wide) video moment inside a PORTRAIT canvas
+    with ``phone_recipe_shared.fit_transform`` instead of center-cropping it.
+    Callers pass ``"fit"`` only when the creator explicitly chose black bars
+    (``all_candidates["creator_render_shape"]``), so existing guided output
+    never changes. Clips with a ``source_crop`` (the creator's own re-frame) or
+    a ``look`` (the device throws on a look + transform), stills, and any
+    landscape output canvas keep the identity transform.
     """
     # Import lazily: guided_story owns the shared caption-meta projection and
     # imports this compiler for its device path.
@@ -421,6 +435,16 @@ def compile_phone_guided_plan(
             # bytes are already on the server.
             is_proxy_available=binding is not None,
         )
+        source_crop = _phone_source_crop(moment.source_crop)
+        transform = MediaTransform()
+        if (
+            landscape_fit == "fit"
+            and canvas.height > canvas.width
+            and source_crop is None
+            and moment.look_preset != "golden_hour"
+        ):
+            display_w, display_h = display_dims(source)
+            transform = fit_transform(display_w, display_h, canvas, landscape_fit)
         clips.append(
             TimelineClip(
                 id=moment.moment_id,
@@ -429,9 +453,10 @@ def compile_phone_guided_plan(
                 source_duration=source_duration,
                 timeline_start=moment.output_start_s,
                 rate=1,
+                transform=transform,
                 transition=incoming,
                 look="golden_hour" if moment.look_preset == "golden_hour" else None,
-                source_crop=_phone_source_crop(moment.source_crop),
+                source_crop=source_crop,
             )
         )
         cursor = moment.output_end_s

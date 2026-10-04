@@ -383,3 +383,25 @@ def test_dry_run_skips_a_pool_video_it_cannot_describe(monkeypatch):
         ]
     )
     assert phone_plan_repair._dry_run_bindings(plan, snapshot, []) is None
+
+
+def test_landscape_fit_survives_the_repair_wrapper(monkeypatch):
+    """Lane 1's `landscape_fit` kwarg reaches the compiler untouched, also across a repair."""
+    plan, bindings = fixture()  # 1920x1080 source on the portrait canvas
+    plan.text_elements = _sequence("pop-in")
+    seen: list[str | None] = []
+    real = phone_plan_repair.compile_phone_guided_plan
+
+    def spy(plan_, bindings_, **kwargs):
+        seen.append(kwargs.get("landscape_fit"))
+        return real(plan_, bindings_, **kwargs)
+
+    monkeypatch.setattr(phone_plan_repair, "compile_phone_guided_plan", spy)
+    fit = compile_phone_guided_repaired(plan, bindings, landscape_fit="fit")
+    fill = compile_phone_guided_repaired(plan, bindings, landscape_fit="fill")
+
+    assert seen == ["fit", "fit", "fill", "fill"]  # reject + repaired retry, both forwarded
+    assert fit.notes  # the sequence repair happened alongside the fit
+    fit_transform = fit.recipe.tracks[0].clips[0].transform
+    fill_transform = fill.recipe.tracks[0].clips[0].transform
+    assert fit_transform != fill_transform  # letterboxed vs cropped: the kwarg took effect
