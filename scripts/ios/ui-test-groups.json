@@ -42,6 +42,8 @@
       "KriaUITests/SlidePostUITests/testAddBlockIsTheLastStripItemWithTheTileFootprint",
       "KriaUITests/SlidePostUITests/testNewlyReadyAssetBecomesASlideWithoutTapping",
       "KriaUITests/SlidePostUITests/testTappingATextInBrowseOpensTheEditTabWithTheKeyboard",
+      "KriaUITests/SlidePostUITests/testTappingTextOnACreatedPostOpensEditTextWithKeyboard",
+      "KriaUITests/SlidePostUITests/testHoldAndDragTextOnACreatedPostMovesItDirectly",
       "KriaUITests/SlidePostUITests/testHoldThenDragMovesTextWithoutOpeningThePanel",
       "KriaUITests/SlidePostUITests/testHoldSelectThenCornerHandleResizesWithoutPanel",
       "KriaUITests/SlidePostUITests/testTapOnHoldSelectedTextOpensEditTextWithKeyboard",

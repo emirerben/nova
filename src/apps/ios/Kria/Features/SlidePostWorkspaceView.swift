@@ -154,8 +154,9 @@ struct SlidePostWorkspaceView: View {
     }
 
     /// The selected slide's media (still, video or rendered output) with its player lifecycle.
-    private var previewMediaView: some View {
+    private func previewMediaView(rich: Bool) -> some View {
         let asset = session.selectedAsset
+        let previewURL = previewURL(rich: rich)
         return Group {
             if let url = previewURL {
                 if asset?.kind == "video" { VideoPlayer(player: previewPlayer) }
@@ -185,11 +186,11 @@ struct SlidePostWorkspaceView: View {
         .onDisappear { previewPlayer?.pause() }
     }
 
-    private var previewURL: URL? {
-        if session.canExport, let id = session.selectedSlide?.id,
-           let rendered = session.state?.slides.first(where: { $0.id == id })?.url { return rendered }
-        let asset = session.selectedAsset
-        return asset?.sourceURL ?? asset?.displayURL ?? asset?.previewURL
+    /// Rich editor: always the SOURCE media (the live canvas draws the editable text over it); the render is
+    /// for export only. Legacy layout: the render once the post is ready.
+    private func previewURL(rich: Bool) -> URL? {
+        let rendered = session.selectedSlide.flatMap { slide in session.state?.slides.first(where: { $0.id == slide.id })?.url }
+        return SlidePostPreviewPolicy.mediaURL(rich: rich, canExport: session.canExport, renderedURL: rendered, asset: session.selectedAsset)
     }
     // MARK: Redesigned workspace (capability `slide_post_rich_text`)
 
@@ -389,14 +390,14 @@ struct SlidePostWorkspaceView: View {
 
     private func richPreview(_ draft: SlidePostDraft, size: CGSize) -> some View {
         let index = (draft.slides.firstIndex { $0.id == session.selectedSlide?.id } ?? 0) + 1
-        let texts = session.canExport ? [] : (session.selectedSlide?.edits?.effectiveTexts ?? [])
+        let texts = SlidePostPreviewPolicy.editableTexts(rich: true, edits: session.selectedSlide?.edits)
         return ZStack(alignment: .topLeading) {
             Rectangle().fill(KriaColor.softZinc)
                 .frame(width: size.width, height: size.height)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Slide preview")
                 .accessibilityIdentifier("slidepost-preview")
-            previewMediaView.frame(width: size.width, height: size.height).clipped()
+            previewMediaView(rich: true).frame(width: size.width, height: size.height).clipped()
             SlidePostTextCanvas(
                 texts: texts, size: size, selectedID: session.selectedTextID, interactive: mode == .text,
                 directSelected: mode == .browse && session.selectedTextID != nil, tapsToEdit: mode != .text,
