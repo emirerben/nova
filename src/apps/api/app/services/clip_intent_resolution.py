@@ -33,6 +33,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal
 
 import structlog
@@ -159,6 +160,9 @@ class IntentClip:
     # Storage generation captured with the clip. Generation-bearing cache
     # entries are only valid for this exact media generation.
     generation: str | None = None
+    # When the phone says it was filmed (UTC). Only the conflict detector reads it
+    # (KRI-282): never sent to a model.
+    capture_time: datetime | None = None
 
 
 @dataclass(frozen=True)

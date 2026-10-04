@@ -42,7 +42,9 @@
       "KriaUITests/CreationUITests/testClipPickerSelectsClipsAndSendsStructuredAnswerWithMissingThumbnailFallback",
       "KriaUITests/CreationUITests/testClipPickerNoneOfTheseSendsNoneKeys",
       "KriaUITests/CreationUITests/testClipPickerSkipSendsSkipped",
-      "KriaUITests/CreationUITests/testClipQuestionFallsBackToTextWhenServerLacksCapability"
+      "KriaUITests/CreationUITests/testClipQuestionFallsBackToTextWhenServerLacksCapability",
+      "KriaUITests/CreationUITests/testChoiceQuestionShowsRecommendedOptionAndSendsStructuredAnswerOnce",
+      "KriaUITests/CreationUITests/testChoiceQuestionFallsBackToTextWhenServerLacksCapability"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",

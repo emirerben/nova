@@ -52,6 +52,8 @@ class KriaTurnPlan(_KriaModel):
     # KRI-282: thumbnail clip-picker payload for a "which clips show X?" question.
     # Omitted from the dump when unset so every other plan stays byte-identical.
     clip_question: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: not value)
+    # KRI-282: conflict-choice payload (options to tap). Same omit-when-unset rule.
+    choice_question: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: not value)
 
     @field_validator("intents")
     @classmethod

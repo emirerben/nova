@@ -84,6 +84,9 @@ private final class CreationChatFixture: @unchecked Sendable {
             // KRIA_CHAT_CLIP_QUESTION: "1" = server advertises clip_selection_questions; "legacy" = it still
             // sends the clip_question payload but does not advertise the capability (old-server fallback).
             if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] == "1" { capabilities["clip_selection_questions"] = true }
+            // KRIA_CHAT_CHOICE_QUESTION: "1" = server advertises choice_questions; "legacy" = it still sends the
+            // choice_question payload but does not advertise the capability (old-server text fallback).
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] == "1" { capabilities["choice_questions"] = true }
             if DeviceRenderUITestFixture.scenario != nil {
                 capabilities["phone_rendering"] = ["enabled": true, "recipe_versions": [1, 2], "verified_features": MediaCapability.allCases.map(\.rawValue)]
             }
@@ -203,7 +206,24 @@ private final class CreationChatFixture: @unchecked Sendable {
         } else if parts.last == "messages" || parts.last == "turns" {
             let turnID = body["client_event_id"] as? String ?? id
             append("user_message", role: "user", text: body["message"] as? String, clientEventID: turnID)
-            if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] != nil {
+            if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] != nil {
+                if let selection = body["choice_selection"] as? [String: Any] {
+                    // Echo what the server received so the UI test can pin the structured payload.
+                    append("assistant_response", text: "Got it. choice[\(selection["option_key"] ?? "")] question[\(selection["question_id"] ?? "")]")
+                } else {
+                    append("assistant_response", text: "You asked for a chronological video and for the clips grouped by sport. Unfortunately your football and dodgeball clips were filmed mixed together, so I can't do both. Which do you prefer?\n1. Group by sport, chronological inside each sport (recommended)\n2. Keep it strictly chronological; sports may interleave\nTap an option, or tell me in your own words.", payload: [
+                        "turn_id": turnID, "turn_value": "question",
+                        "choice_question": [
+                            "version": 1, "question_id": "choice-q-\(events.count)", "conflict": "order_vs_group", "allow_free_text": true,
+                            "options": [
+                                ["key": "group_first", "label": "Group by sport, chronological inside each sport", "recommended": true,
+                                 "description": "Each sport plays as one block."],
+                                ["key": "chronological", "label": "Keep it strictly chronological; sports may interleave", "recommended": false],
+                            ],
+                        ] as [String: Any],
+                    ])
+                }
+            } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] != nil {
                 if let selection = body["clip_selection"] as? [String: Any] {
                     // Echo what the server received so the UI test can pin the structured payload.
                     let answers = (selection["answers"] as? [[String: Any]] ?? []).map { "\($0["key"] ?? "")=" + ((($0["media_ids"] as? [String]) ?? []).joined(separator: "+")) }

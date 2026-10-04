@@ -13,6 +13,7 @@ from app.agents._schemas.visual_block import VisualBlock
 from app.kria.contracts import KriaProblem
 from app.kria.draft_schemas import DraftSnapshotOut as DraftSnapshotOut
 from app.routes.generative_jobs import EditorCommitRequest, TimelineSlotEdit
+from app.services.choice_questions import ChoiceSelectionIn
 from app.services.clip_selection import ClipSelectionIn
 
 TurnStatus = Literal[
@@ -105,6 +106,8 @@ class SubmitTurnBody(_StrictBody):
     editor_state: EditorStateIn | None = None
     # KRI-282: the answer to a thumbnail clip question; old clients omit it.
     clip_selection: ClipSelectionIn | None = None
+    # KRI-282: the answer to a conflict-choice question; old clients omit it.
+    choice_selection: ChoiceSelectionIn | None = None
 
     @field_validator("message")
     @classmethod

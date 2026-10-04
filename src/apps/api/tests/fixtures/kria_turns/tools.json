@@ -874,6 +874,30 @@
           "title": "CarouselMomentEditRequest",
           "type": "object"
         },
+        "ChoiceSelectionIn": {
+          "additionalProperties": false,
+          "description": "The app's answer to a ``choice_question`` (SubmitTurnBody.choice_selection).",
+          "properties": {
+            "option_key": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Option Key",
+              "type": "string"
+            },
+            "question_id": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Question Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "question_id",
+            "option_key"
+          ],
+          "title": "ChoiceSelectionIn",
+          "type": "object"
+        },
         "ClipSelectionAnswerIn": {
           "additionalProperties": false,
           "properties": {
@@ -2876,6 +2900,17 @@
       },
       "additionalProperties": false,
       "properties": {
+        "choice_selection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChoiceSelectionIn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "client_event_id": {
           "maxLength": 160,
           "minLength": 1,

@@ -631,6 +631,18 @@ async def creator_media_truncation_notice(
     return f"I used {MAX_CREATOR_MEDIA_REFS} of {total} items."
 
 
+def _assignment_capture_time(assignment: dict) -> datetime | None:
+    """The clip's filming moment (UTC) from its stored capture, else None."""
+    from app.services.clip_facts import (  # noqa: PLC0415
+        capture_facts,
+        capture_from_assignment,
+        capture_time_from_facts,
+    )
+
+    facts = capture_facts(capture_from_assignment(assignment))
+    return capture_time_from_facts(fact.prompt_dict() for fact in facts)
+
+
 async def load_intent_clips_for_item(
     db: AsyncSession, item: PlanItem, persona: Persona
 ) -> list[IntentClip]:
@@ -670,6 +682,7 @@ async def load_intent_clips_for_item(
                     assignment.get("storage_generation") or assignment.get("generation") or ""
                 )
                 or None,
+                capture_time=_assignment_capture_time(assignment),
             )
         )
 
@@ -707,6 +720,9 @@ async def load_intent_clips_for_item(
                     gcs_path=asset.gcs_path,
                     asset_id=str(asset.id),
                     generation=str(asset.gcs_generation or "") or None,
+                    capture_time=_assignment_capture_time(
+                        {"capture": getattr(asset, "capture", None)}
+                    ),
                 )
             )
 

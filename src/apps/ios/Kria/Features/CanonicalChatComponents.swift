@@ -169,6 +169,8 @@ struct ChatMessageRow: View {
     /// KRI-282: how to present `message.clipQuestion`. nil (old server, flag off, not a question) = text question only.
     var clipSelectionMode: ClipSelectionCardMode? = nil
     var clipSelectionMedia: [CreationAttachedMedia] = []
+    /// KRI-282: how to present `message.choiceQuestion`. nil (old server, flag off, not a question) = text question only.
+    var choiceQuestionMode: ChoiceQuestionCardMode? = nil
 
     private static let userBubbleShape = UnevenRoundedRectangle(
         topLeadingRadius: 18,
@@ -221,6 +223,10 @@ struct ChatMessageRow: View {
                 }
                 if let question = message.clipQuestion, let clipSelectionMode {
                     ClipSelectionCard(question: question, media: clipSelectionMedia, mode: clipSelectionMode)
+                        .id(question.questionID)
+                }
+                if let question = message.choiceQuestion, let choiceQuestionMode {
+                    ChoiceQuestionCard(question: question, mode: choiceQuestionMode)
                         .id(question.questionID)
                 }
                 if !message.receipts.isEmpty {
@@ -928,9 +934,11 @@ struct QuestionOptionsRow: View {
     }
 }
 
-private struct QuestionOptionButton: View {
+struct QuestionOptionButton: View {
     let text: String
     let isRecommended: Bool
+    var detail: String? = nil
+    var isDisabled = false
     let action: () -> Void
 
     var body: some View {
@@ -947,6 +955,13 @@ private struct QuestionOptionButton: View {
                     .foregroundStyle(KriaColor.ink)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
+                if let detail {
+                    Text(detail)
+                        .font(KriaFont.body(12))
+                        .foregroundStyle(KriaColor.mutedInk)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12)
@@ -958,6 +973,8 @@ private struct QuestionOptionButton: View {
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.55 : 1)
         .accessibilityLabel(isRecommended ? "\(text) (recommended)" : text)
     }
 }

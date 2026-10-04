@@ -361,6 +361,12 @@ class CreativeStrategy(_CreatorModel):
     resolved_clip_intents: SkipJsonSchema[list[ResolvedClipIntent] | None] = Field(
         default=None, max_length=MAX_CLIP_INTENTS
     )
+    # KRI-282: the creator's answer to an instruction conflict (chronological vs grouped
+    # by sport). Server-owned like ``resolved_clip_intents``: the planner always sets it
+    # from the thread's stored ``choice_selection``, never from model output.
+    ordering_choice: SkipJsonSchema[Literal["group_first", "chronological"] | None] = Field(
+        default=None
+    )
     # KRI-178 (flag PHONE_SUBTITLED_REACTION_BEATS_ENABLED). Same rationale as
     # clip_intents immediately above: default None keeps stored strategies and
     # every exclude_none hash byte-identical when unused, and SkipJsonSchema
@@ -401,6 +407,7 @@ class CreativeStrategy(_CreatorModel):
         for key in (
             "clip_intents",
             "resolved_clip_intents",
+            "ordering_choice",
             "reaction_beats",
             "closing_media",
         ):
