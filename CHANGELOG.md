@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.67.0] - 2026-10-04
+
+### Added
+- feat(ios): choose video shape (vertical/landscape + black bars/crop) before generating and in the editor (KRI-306) (#1373) <!-- release-pr: 1373 -->
+
 ## [0.78.66.0] - 2026-10-04
 
 ### Changed
