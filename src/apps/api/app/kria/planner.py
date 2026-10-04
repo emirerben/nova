@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import copy
 import re
 import uuid
 from dataclasses import dataclass, replace
@@ -80,6 +81,15 @@ from app.services.kria_editor_ops import (
     coalesce_text_style_ops,
     editor_state_has_lanes,
     resolve_editor_base,
+)
+from app.services.song_order import (
+    build_song_order_question,
+    fold_song_orders,
+    load_ready_alignment,
+    resolve_uncertain_takes,
+    resolved_song_takes_payload,
+    song_order_question_text,
+    uncertain_media_ids,
 )
 
 log = structlog.get_logger()
@@ -232,6 +242,134 @@ def _clip_intent_resolution_plan(
         ),
         diagnostics=_safe_diagnostics(status, diagnostics),
     )
+
+
+# -- KRI-374: uncertain-takes gate for lip-sync song montages ------------------
+
+_SONG_ALIGNMENT_POLL_S = 1.5
+
+
+def _is_lipsync_song_strategy(strategy: Any) -> bool:
+    """`audio_strategy`/`song_sync` are read defensively (Lane C adds them to
+    CreativeStrategy); anything that is not a user-song lip-sync strategy is untouched."""
+    return (
+        getattr(strategy, "audio_strategy", None) == "user_song"
+        and getattr(strategy, "song_sync", None) == "lipsync"
+    )
+
+
+def _song_take_ids(manifest: Any, strategy: Any) -> list[str]:
+    """The raw video takes this strategy places: owned video media, narrowed to the
+    strategy's own selection when it made one (curated `asset-*` stock is never a take)."""
+    selected = set(getattr(strategy, "selected_media_ids", None) or ())
+    return [
+        media.media_id
+        for media in getattr(manifest, "media", None) or ()
+        if media.kind == "video"
+        and not media.media_id.startswith("asset-")
+        and (not selected or media.media_id in selected)
+    ]
+
+
+@dataclass(frozen=True)
+class _SongGateResult:
+    """`plan` set => answer the turn with it (pending / question). Otherwise proceed,
+    with `resolved_takes` (the strategy's `resolved_song_takes`) when the creator's
+    confirmed order was applied."""
+
+    plan: KriaTurnPlan | None = None
+    resolved_takes: list[dict[str, Any]] | None = None
+
+
+async def _load_thread_events(db: AsyncSession, thread_id: uuid.UUID) -> list[tuple[str, Any]]:
+    rows = (
+        await db.execute(
+            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == thread_id,
+                CreationThreadEvent.role.in_({"user", "assistant"}),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    await db.rollback()  # no connection pinned across what follows
+    return [(role, payload) for role, payload in rows]
+
+
+async def _song_order_gate(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    item_id: uuid.UUID,
+    manifest: Any,
+    strategy: Any,
+) -> _SongGateResult:
+    """Hold a lip-sync song strategy until every take has a trustworthy song position.
+
+    1. alignment missing/stale/incomplete -> bounded wait
+       (`song_alignment_turn_deadline_s`), then the "still checking" pending reply;
+    2. any ambiguous/unmatched take and no folded creator answer -> `song_order_question`;
+    3. answered -> `resolve_uncertain_takes` -> `resolved_takes`;
+    4. all takes confident -> proceed untouched.
+    """
+    if not settings.user_song_montage_enabled or not _is_lipsync_song_strategy(strategy):
+        return _SongGateResult()
+    take_ids = _song_take_ids(manifest, strategy)
+    if not take_ids:
+        return _SongGateResult()
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max(0.0, float(settings.song_alignment_turn_deadline_s))
+    while True:
+        item = await db.get(PlanItem, item_id, populate_existing=True)
+        if item is None:
+            raise RuntimeError("Kria target item is unavailable")
+        alignment = load_ready_alignment(
+            getattr(item, "song_alignment", None),
+            media_ids=take_ids,
+            song_generation=getattr(item, "song_generation", None),
+            raw_analysis=getattr(item, "song_analysis", None),
+        )
+        await db.rollback()  # never hold a read snapshot across the sleep
+        if alignment is not None:
+            break
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return _SongGateResult(
+                plan=_clip_intent_resolution_plan(
+                    question=None,
+                    status="pending",
+                    diagnostics={"stage": "song_alignment", "reason": "song_alignment_pending"},
+                )
+            )
+        await asyncio.sleep(min(_SONG_ALIGNMENT_POLL_S, remaining))
+
+    if not uncertain_media_ids(alignment, take_ids):
+        return _SongGateResult()
+    folded = fold_song_orders(await _load_thread_events(db, thread_id))
+    if folded and folded.covers(take_ids):
+        resolved = resolve_uncertain_takes(alignment, folded.ordered_media_ids)
+        return _SongGateResult(resolved_takes=resolved_song_takes_payload(resolved))
+    question = build_song_order_question(alignment, take_ids)
+    return _SongGateResult(
+        plan=KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=song_order_question_text(question),
+            song_order_question=question,
+        )
+    )
+
+
+def _with_resolved_song_takes(strategy: Any, takes: list[dict[str, Any]]) -> Any:
+    """Write the server-owned `resolved_song_takes`:
+    `[{media_id, delta_s: float | None, status: "confident"|"unmatched",
+    confirmed_by_creator: bool}]` (delta_s None => B-roll, never placed by song time)."""
+    if hasattr(strategy, "model_copy"):
+        return strategy.model_copy(update={"resolved_song_takes": takes})
+    clone = copy.copy(strategy)
+    clone.resolved_song_takes = takes
+    return clone
 
 
 _DIAGNOSTIC_SCALARS = (str, int, float, bool)
@@ -795,6 +933,24 @@ async def _plan_from_creator_output(
         policy_notices = checked.notices
         summary = " ".join([action.summary.strip(), *policy_notices]).strip()
         action = action.model_copy(update={"strategy": checked.strategy, "summary": summary})
+        # KRI-374: user-song lip-sync -- never place an uncertain take at a guessed time.
+        gate = await _song_order_gate(
+            db,
+            thread_id=thread_id,
+            item_id=item_id,
+            manifest=manifest,
+            strategy=action.strategy,
+        )
+        if gate.plan is not None:
+            return PlannedKriaTurn(
+                plan=gate.plan,
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
+            )
+        if gate.resolved_takes is not None:
+            action = action.model_copy(
+                update={"strategy": _with_resolved_song_takes(action.strategy, gate.resolved_takes)}
+            )
     intent_clips = inputs.intent_clips
     creator_request = inputs.creator_request
     if (
@@ -966,18 +1122,7 @@ async def _plan_from_creator_output(
 
 async def _load_clip_selections(db: AsyncSession, thread_id: uuid.UUID) -> ClipSelections:
     """Standing clip-picker answers, replayed from the thread's own events (KRI-282)."""
-    rows = (
-        await db.execute(
-            select(CreationThreadEvent.role, CreationThreadEvent.payload)
-            .where(
-                CreationThreadEvent.thread_id == thread_id,
-                CreationThreadEvent.role.in_({"user", "assistant"}),
-            )
-            .order_by(CreationThreadEvent.sequence)
-        )
-    ).all()
-    await db.rollback()  # no connection pinned across the provider calls that follow
-    return fold_clip_selections((role, payload) for role, payload in rows)
+    return fold_clip_selections(await _load_thread_events(db, thread_id))
 
 
 async def _refetch_item(db: AsyncSession, item_id: uuid.UUID) -> PlanItem:
