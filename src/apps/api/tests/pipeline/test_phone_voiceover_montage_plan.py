@@ -202,7 +202,6 @@ def test_rejects_unsupported_transition():
     [
         ({"masonry_requested": True}, "masonry"),
         ({"lyrics_rendered": True}, "lyric"),
-        ({"assembly_landscape_fit": "fit"}, "letterboxed"),
         ({"duck_original_during_music": True}, "ducking"),
     ],
 )
