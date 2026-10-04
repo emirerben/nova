@@ -65,6 +65,7 @@ from app.schemas.clip_intents import (
     ClipIntent,
     GroundedLabel,
     ResolvedClipIntent,
+    chapter_name_caption,
     clean_caption_text,
     clean_label_text,
     ground_caption,
@@ -1467,6 +1468,26 @@ async def resolve_clip_intents_for_turn(
             else:
                 work.intent_question = _caption_question(intent)
             continue
+
+        # KRI-282: "a text for the pub" wants the chapter's own name, in the
+        # creator's words, not a sentence the resolver writes about the footage.
+        chapter_name = chapter_name_caption(
+            attribute=intent.attribute,
+            caption_attribute=intent.caption_attribute,
+            creator_request=creator_request,
+        )
+        if chapter_name is not None:
+            named = ground_caption(
+                value=chapter_name,
+                confidence=1.0,
+                creator_request=creator_request,
+                records=member_records,
+                intent_id=intent.intent_id,
+            )
+            if named is not None:
+                work.caption_text = named.text
+                work.caption_grounding = named.grounding
+                continue
 
         # Described caption: ground the resolver's authored phrase first —
         # confidence is fixed at the label bar (there is no per-intent
