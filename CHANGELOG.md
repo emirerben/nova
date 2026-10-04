@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.60.0] - 2026-10-04
+
+### Changed
+- KRI-282: sport/chapter text from the creator's words + truthful receipt (#1377) <!-- release-pr: 1377 -->
+
 ## [0.78.59.0] - 2026-10-04
 
 ### Changed
