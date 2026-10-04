@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.53.0] - 2026-10-04
+
+### Changed
+- feat(slide-post): chat-edit slide posts via the edit copilot (KRI-301) - stacked on #1356, retarget to main after #1356 merges (#1358) <!-- release-pr: 1358 -->
+
 ## [0.78.52.0] - 2026-10-04
 
 ### Changed
