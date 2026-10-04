@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.52.0] - 2026-10-04
+
+### Changed
+- feat(ios): slide-post workspace redesign + text editing (KRI-303) (#1359) <!-- release-pr: 1359 -->
+
 ## [0.78.51.0] - 2026-10-04
 
 ### Changed
