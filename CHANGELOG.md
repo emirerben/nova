@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.69.0] - 2026-10-04
+
+### Changed
+- KRI-282 clip picker UI (#1383) <!-- release-pr: 1383 -->
+
 ## [0.78.68.0] - 2026-10-04
 
 ### Changed
