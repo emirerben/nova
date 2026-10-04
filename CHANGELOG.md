@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.62.0] - 2026-10-04
+
+### Changed
+- feat(slide-post): server renders the full text style on slides (rotation, outline/shadow color, highlight, spacing) (#1368) <!-- release-pr: 1368 -->
+
 ## [0.78.61.0] - 2026-10-04
 
 ### Fixed
