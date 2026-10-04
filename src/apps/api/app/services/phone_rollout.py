@@ -405,6 +405,20 @@ def phone_guided_narration_supported() -> bool:
     )
 
 
+def phone_user_song_supported() -> bool:
+    """Single source of truth for "can a creator-uploaded song render on the phone"
+    (KRI-374): the kill switch plus the two device capabilities the song lane
+    needs. The manifest, the attach route's capability advertisement, the dispatch
+    gate and the worker all call this so they cannot disagree.
+    """
+    from app.schemas.user_song import USER_SONG_REQUIRED_CAPABILITIES
+
+    return bool(
+        settings.user_song_montage_enabled
+        and USER_SONG_REQUIRED_CAPABILITIES.issubset(settings.phone_render_verified_features)
+    )
+
+
 # Device features the subtitled overlay lane needs at compile + validation
 # time: `compile_phone_subtitled_plan` adds `visualBlocks`/`alphaOverlay`/
 # `audioMix` to `required_capabilities` for the `subtitled-overlays` track,

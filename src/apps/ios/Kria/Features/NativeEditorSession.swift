@@ -314,12 +314,112 @@ struct NativeEditorTemporaryVideo {
     /// successful empty resolution for this generation so ordinary editor
     /// rebuilds do not repeatedly poll the device-render endpoint.
     private var deviceNarrationResolutionGeneration: String?
+    /// How the pinned device recipe plays the creator's song (KRI-374); nil when
+    /// the recipe has none. Resolved with the narration, from the same recipe.
+    @Published private(set) var deviceSongBed: NativeEditorSongBed?
+    /// The creator's song file once the preview has resolved it (KRI-428): the start-point bar draws
+    /// its waveform from it. Nil until then; the bar degrades to a plain slider.
+    @Published private(set) var userSongAudioURL: URL?
+    /// Song edits the server has acknowledged since the current variant loaded (KRI-428). They are
+    /// folded out of `document.userSong` on Save so a retry or a rebase never sends them again.
+    private var acknowledgedUserSong: EditorUserSongState?
+    /// Re-maps unsaved song edits (in the document and its undo history) onto the song as just saved.
+    private var userSongRebase: (EditorUserSongState?) -> EditorUserSongState? = { $0 }
+    /// The acknowledged volume / start a render retry sends again (a removal is never resent).
+    private var userSongRetry: EditorUserSongState?
+    private var songRemovalAlreadyApplied = false
     private var previewVariant: [String: JSONValue] = [:] {
         didSet { timelineClipsCache = nil }
     }
     /// Narrated footage slows to fill its voiceover step (`timelineClips`).
     private var usesNarratedSourceFit: Bool { previewVariant["resolved_archetype"] == .string("narrated") }
     var musicPlaybackMode: NativeMusicPlaybackMode { .init(variant: previewVariant) }
+    /// The creator's own song, for the Sounds tab. The server's `user_song` wins; an
+    /// older server falls back to the recipe's `song` clip.
+    var yourSong: NativeEditorYourSong? {
+        guard !userSongRemoved else { return nil }
+        return NativeEditorYourSong.make(userSong: effectiveUserSong, bed: effectiveSongBed)
+    }
+    /// The server's song (`user_song`) exactly as the loaded variant lists it.
+    private var baseUserSong: NativeUserSong? { NativeUserSong(variant: previewVariant) }
+    /// The song as last SAVED: the variant plus every edit the server has acknowledged since that
+    /// variant loaded (a refresh of the variant resets the acknowledged edits, see `configureCapabilities`).
+    /// The unsaved edits in `document.userSong` are relative to this. Nil once a removal was saved.
+    private var savedUserSong: NativeUserSong? { baseUserSong?.applying(acknowledgedUserSong) }
+    /// The latest start that still lets the song cover the video. One frame (1/30s) of margin: every
+    /// server Save re-times the video onto a 1/30s clock, and the server bounds the start with that length.
+    private func maxUserSongStart(for song: NativeUserSong) -> Double? {
+        guard let songDuration = song.durationS else { return nil }
+        let videoLength = duration > 0 ? duration : song.windowLengthS
+        return max(0, songDuration - videoLength - Self.userSongStartMargin)
+    }
+    static let userSongStartMargin = 0.05
+    /// Acknowledged plus unsaved edits, with a pending start re-clamped to the CURRENT video length
+    /// (the video may have grown since the start was set).
+    private var effectiveUserSongState: EditorUserSongState? {
+        guard var state = EditorUserSongState.merged(acknowledgedUserSong, document.userSong) else { return nil }
+        if !state.removed, let start = state.windowStartS, let song = baseUserSong, let limit = maxUserSongStart(for: song) {
+            state.windowStartS = min(start, limit)
+        }
+        return state
+    }
+    /// The song as the editor currently shows it: saved values plus unsaved volume / start edits.
+    var effectiveUserSong: NativeUserSong? { baseUserSong?.applying(effectiveUserSongState) }
+    /// The creator removed the song, saved or not.
+    var userSongRemoved: Bool {
+        (acknowledgedUserSong?.removed == true || document.userSong?.removed == true)
+            && (baseUserSong != nil || deviceSongBed != nil)
+    }
+    /// What the preview plays: the pinned recipe's bed with the user's unsaved volume / start applied,
+    /// the same values the server writes into the recipe on Save. Nil after Remove.
+    private var effectiveSongBed: NativeEditorSongBed? {
+        guard let bed = deviceSongBed, !userSongRemoved else { return nil }
+        guard let edit = effectiveUserSongState else { return bed }
+        return NativeEditorSongBed(assetID: bed.assetID, sourceStart: edit.windowStartS ?? bed.sourceStart,
+                                   sourceDuration: bed.sourceDuration, volume: edit.volume ?? bed.volume,
+                                   fadeIn: bed.fadeIn, fadeOut: bed.fadeOut)
+    }
+    /// The Sounds-tab controls for the song, nil for a server that sends no `user_song`.
+    var yourSongControls: NativeEditorYourSongControls? {
+        guard !userSongRemoved, let song = effectiveUserSong else { return nil }
+        let videoLength = duration > 0 ? duration : song.windowLengthS
+        return NativeEditorYourSongControls(
+            mode: song.mode, volume: song.volume, startS: song.windowStartS, windowLengthS: videoLength,
+            songDurationS: song.durationS,
+            maxStartS: baseUserSong.flatMap(maxUserSongStart(for:)),
+            canEditVolume: canEditOperation(["user_song.volume"], section: .userSong),
+            canEditStart: song.mode == .background && canEditOperation(["user_song.window"], section: .userSong),
+            canRemove: canEditOperation(["user_song.remove"], section: .userSong))
+    }
+    private func updateUserSong(_ body: (inout EditorUserSongState, NativeUserSong) -> Void) {
+        guard let saved = savedUserSong, document.userSong?.removed != true else { return }
+        transactDocument(section: .userSong) { doc in
+            var state = doc.userSong ?? EditorUserSongState()
+            body(&state, saved)
+            doc.userSong = state.isEmpty ? nil : state
+        }
+    }
+    /// Song level 0...1. An edit equal to the saved level clears itself, so dragging back is not a change.
+    func setUserSongVolume(_ value: Double) {
+        guard value.isFinite, canEditOperation(["user_song.volume"], section: .userSong) else { return }
+        let level = (min(1, max(0, value)) * 100).rounded() / 100
+        updateUserSong { state, saved in state.volume = abs(level - saved.volume) < 0.0005 ? nil : level }
+    }
+    /// Where the song starts, in seconds into the file. Background only: a lip-sync take's offset depends
+    /// on the song start. Clamped so the song still covers the whole video.
+    func setUserSongStart(_ value: Double) {
+        guard value.isFinite, savedUserSong?.mode == .background,
+              canEditOperation(["user_song.window"], section: .userSong) else { return }
+        // Round first, clamp after: rounding up past the limit would be rejected by the server.
+        var start = (max(0, value) * 100).rounded() / 100
+        if let song = baseUserSong, let limit = maxUserSongStart(for: song) { start = min(start, limit) }
+        updateUserSong { state, saved in state.windowStartS = abs(start - saved.windowStartS) < 0.0005 ? nil : start }
+    }
+    /// Drops the song for this edit; camera audio plays again. Undoable until Save.
+    func removeUserSong() {
+        guard savedUserSong != nil, document.userSong?.removed != true, canEditOperation(["user_song.remove"], section: .userSong) else { return }
+        updateUserSong { state, _ in state = EditorUserSongState(removed: true) }
+    }
     var songReference: NativeSongReference? {
         guard musicPlaybackMode == .referenceOnly else { return nil }
         return NativeSongReference(variant: previewVariant)
@@ -830,6 +930,15 @@ struct NativeEditorTemporaryVideo {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-song-reference") {
             previewVariant = NativeEditorUITestFixtures.songReferenceVariant
         }
+        let userSongLipSync = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-user-song-lipsync")
+        if userSongLipSync || ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-user-song") {
+            previewVariant = userSongLipSync ? NativeEditorUITestFixtures.userSongLipSyncVariant : NativeEditorUITestFixtures.userSongVariant
+            // The server advertises these on a real load; a fixture has no status response to read them from.
+            for (key, capability) in NativeEditorUITestFixtures.userSongCapabilities(lipSync: userSongLipSync) {
+                document.capabilities[key] = capability
+            }
+            cleanDocument.capabilities = document.capabilities
+        }
         // KRI-167: draft-based fixtures never go through `configureCapabilities(from:)`
         // (that only runs off a network-fetched `variant`), so `rendersOnDevice`
         // is otherwise unreachable as `true` in a UI test -- and the Visuals
@@ -854,6 +963,20 @@ struct NativeEditorTemporaryVideo {
         // KRI-167: no existing shape fixture closes `clips.transitions`, and
         // UI tests can't construct an EditorDocument directly -- they only
         // get a process launch arg.
+        // KRI-306: the video-shape picker, open or closed by the server capability.
+        // Values stay nil on the document so the fixture loads clean (no unsaved edit).
+        // `-video-shape-fit-only`: orientation closed, bars/crop open (a voiceover montage).
+        // `-video-shape-closed`: both closed (a cloud editor): no header button.
+        let shapeOpen = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-video-shape")
+        let shapeFitOnly = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-video-shape-fit-only")
+        if shapeOpen || shapeFitOnly || ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-video-shape-closed") {
+            document.capabilities["orientation"] = EditorCapability(
+                editable: shapeOpen, reason: shapeOpen ? nil : "orientation_unsupported", value: "portrait")
+            document.capabilities["landscape_fit"] = EditorCapability(
+                editable: shapeOpen || shapeFitOnly, reason: shapeOpen || shapeFitOnly ? nil : "cloud_unsupported", value: "fit")
+            // The loaded baseline carries the same capabilities, as a real load does.
+            cleanDocument.capabilities = document.capabilities
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-transitions-closed") {
             document.capabilities["clips.transitions"] = EditorCapability(editable: false, reason: "transitions_disabled")
         }
@@ -919,6 +1042,11 @@ struct NativeEditorTemporaryVideo {
     func capabilityReason(_ key: String) -> String? { document.capabilities[key]?.reason }
     func canEdit(_ key: String) -> Bool { document.capabilities[key]?.editable ?? false }
     func canEdit(_ section: EditorSection) -> Bool { canEditSection(section) }
+    /// KRI-306: the server advertises the video-shape controls (either capability present).
+    var hasVideoShapeCapability: Bool { document.capabilities["orientation"] != nil || document.capabilities["landscape_fit"] != nil }
+    /// At least one axis can be changed: the header button exists only then. A cloud editor
+    /// carries a closed `landscape_fit` on every map and keeps its read-only orientation row.
+    var canEditVideoShape: Bool { canEditSection(.orientation) || canEditSection(.landscapeFit) }
     func capability(for section: EditorSection) -> EditorCapability? {
         for key in sectionCapabilityKeys(section) { if let capability = document.capabilities[key] { return capability } }
         return nil
@@ -955,7 +1083,7 @@ struct NativeEditorTemporaryVideo {
         }
     }
     var previewAspectRatio: CGFloat {
-        switch document.orientation {
+        switch EditorDocument.canonicalOrientation(document.orientation) {
         case "landscape": 16.0 / 9.0
         case "square": 1
         default: 9.0 / 16.0
@@ -1940,21 +2068,31 @@ struct NativeEditorTemporaryVideo {
     }
 
     /// Device-rendered variants have no cloud receipt or base-video URL. Their
-    /// current recipe is the authority for narration, and its published
-    /// generation must still be the document we are reconstructing.
-    static func currentDeviceNarrationRequest(
+    /// current recipe is the authority for narration and the creator's song, and
+    /// its published generation must still be the document we are reconstructing.
+    static func currentDeviceRecipeRequest(
         _ status: DeviceRenderStatusResponse,
         jobID: UUID,
         variantID: String,
         generation: String
-    ) throws -> DeviceRenderRequest? {
+    ) throws -> DeviceRenderRequest {
         guard status.request.identity.jobID == jobID,
               status.request.identity.variantID == variantID,
               status.phase == "published",
               status.publishedGeneration == generation else {
             throw APIError.conflict
         }
-        return status.request.recipe.audio.narrationAssetID == nil ? nil : status.request
+        return status.request
+    }
+
+    static func currentDeviceNarrationRequest(
+        _ status: DeviceRenderStatusResponse,
+        jobID: UUID,
+        variantID: String,
+        generation: String
+    ) throws -> DeviceRenderRequest? {
+        let request = try currentDeviceRecipeRequest(status, jobID: jobID, variantID: variantID, generation: generation)
+        return request.recipe.audio.narrationAssetID == nil ? nil : request
     }
 
     /// Narration is a generation-owned preview input: it belongs to the
@@ -1968,20 +2106,26 @@ struct NativeEditorTemporaryVideo {
         previewGeneration ?? documentGeneration
     }
 
-    private func resolveDeviceNarration(document: EditorDocument, sequence: Int) async throws -> ResolvedEditorSource? {
+    /// The pinned recipe's audio the preview must reconstruct on a cold launch.
+    private struct DeviceRecipeAudio {
+        var narration: ResolvedEditorSource?
+        var song: (source: ResolvedEditorSource, bed: NativeEditorSongBed)?
+    }
+
+    private func resolveDeviceRecipeAudio(document: EditorDocument, sequence: Int) async throws -> DeviceRecipeAudio {
         guard let api, let jobID, let variantKey else { throw APIError.invalidResponse }
         let status = try await api.deviceRender(jobID: jobID, variantID: variantKey)
         guard sequence == sourcePreviewSequence, !Task.isCancelled,
               document.revision.baseGeneration == self.document.revision.baseGeneration else {
             throw CancellationError()
         }
-        guard let request = try Self.currentDeviceNarrationRequest(
+        let request = try Self.currentDeviceRecipeRequest(
             status, jobID: jobID, variantID: variantKey, generation: narrationOwnerGeneration(document)
-        ) else { return nil }
-        guard let narrationID = request.recipe.audio.narrationAssetID,
-              var asset = request.recipe.assets.first(where: { $0.id == narrationID }) else {
-            throw MediaEngineError.missingAsset("narration")
-        }
+        )
+        let narrationAssetID = request.recipe.audio.narrationAssetID
+        let songBed = NativeEditorSongBed(recipe: request.recipe)
+        var result = DeviceRecipeAudio()
+        guard narrationAssetID != nil || songBed != nil else { return result }
         let project = BackgroundUploadCoordinator.projectDirectory(threadID ?? projectID)
         let authorized = AuthorizedDeviceSourceResolver(
             api: api,
@@ -1989,15 +2133,32 @@ struct NativeEditorTemporaryVideo {
             originals: SourceAssetStore(project: project),
             library: RenderLibraryCache(root: project.root.appending(path: "library", directoryHint: .isDirectory))
         )
-        let url = try await authorized.resolveNarration()
-        let duration = try await AVURLAsset(url: url).load(.duration).seconds
-        guard duration.isFinite, duration > 0 else { throw APIError.invalidResponse }
-        asset.duration = duration
+        func measured(_ url: URL, _ asset: MediaAsset) async throws -> MediaAsset {
+            let duration = try await AVURLAsset(url: url).load(.duration).seconds
+            guard duration.isFinite, duration > 0 else { throw APIError.invalidResponse }
+            var asset = asset
+            asset.duration = duration
+            return asset
+        }
+        if let narrationID = narrationAssetID {
+            guard let asset = request.recipe.assets.first(where: { $0.id == narrationID }) else {
+                throw MediaEngineError.missingAsset("narration")
+            }
+            let url = try await authorized.resolveNarration()
+            result.narration = ResolvedEditorSource(clipIndex: -1, mediaID: narrationID, asset: try await measured(url, asset), url: url)
+        }
+        if let songBed {
+            guard let asset = request.recipe.assets.first(where: { $0.id == songBed.assetID }) else {
+                throw MediaEngineError.missingAsset(NativeEditorSongBed.trackID)
+            }
+            let url = try await authorized.resolveSong()
+            result.song = (ResolvedEditorSource(clipIndex: -1, mediaID: songBed.assetID, asset: try await measured(url, asset), url: url), songBed)
+        }
         guard sequence == sourcePreviewSequence, !Task.isCancelled,
               document.revision.baseGeneration == self.document.revision.baseGeneration else {
             throw CancellationError()
         }
-        return ResolvedEditorSource(clipIndex: -1, mediaID: narrationID, asset: asset, url: url)
+        return result
     }
 
     private func preparePreviewAudio(document: EditorDocument, sequence: Int) async throws -> [String: ResolvedEditorSource] {
@@ -2009,12 +2170,19 @@ struct NativeEditorTemporaryVideo {
             // visibly instead of silently exporting an AAC silence track.
             if resolvedAudio["narration"] == nil,
                deviceNarrationResolutionGeneration != narrationOwnerGeneration(document) {
-                let narration = try await resolveDeviceNarration(document: document, sequence: sequence)
+                let recipeAudio = try await resolveDeviceRecipeAudio(document: document, sequence: sequence)
                 guard sequence == sourcePreviewSequence, !Task.isCancelled,
                       document.revision.baseGeneration == self.document.revision.baseGeneration else {
                     throw CancellationError()
                 }
-                if let narration { resolvedAudio["narration"] = narration }
+                if let narration = recipeAudio.narration { resolvedAudio["narration"] = narration }
+                // The creator's own song plays from the recipe's `song` clip whatever
+                // `music_playback_mode` says; a recipe without one leaves the bed nil.
+                if let song = recipeAudio.song {
+                    resolvedAudio[NativeEditorRenderCompiler.songSourceKey] = song.source
+                    userSongAudioURL = song.source.url
+                }
+                deviceSongBed = recipeAudio.song?.bed
                 deviceNarrationResolutionGeneration = narrationOwnerGeneration(document)
             }
         } else if Self.usesRenderedNarration(previewVariant), resolvedAudio["narration"] == nil {
@@ -2032,7 +2200,7 @@ struct NativeEditorTemporaryVideo {
             resolvedAudio["narration"] = resolved
         }
         let referenceOnlyMusic = musicPlaybackMode == .referenceOnly
-        let ids = Set([referenceOnlyMusic || resolvedAudio["narration"] != nil ? nil : document.music?.trackID,
+        let ids = Set([referenceOnlyMusic || resolvedAudio["narration"] != nil || resolvedAudio[NativeEditorRenderCompiler.songSourceKey] != nil ? nil : document.music?.trackID,
                        !referenceOnlyMusic && document.backgroundMusic?.enabled == true && document.backgroundMusic?.muted != true
                         ? document.backgroundMusic?.trackID : nil].compactMap { $0 })
         for id in ids where resolvedAudio[id] == nil {
@@ -2168,7 +2336,18 @@ struct NativeEditorTemporaryVideo {
             #if DEBUG
             NativePreviewDiagnostics.record("prepare-audio")
             #endif
-            let audio = try await preparePreviewAudio(document: snapshot, sequence: sequence)
+            var audio = try await preparePreviewAudio(document: snapshot, sequence: sequence)
+            // KRI-428: the unsaved song edits play the way the server will render them. A removed song
+            // leaves no song source (so the compiler stops muting the camera) and no bed; otherwise the
+            // pinned recipe's bed carries the edited volume / start.
+            let songRemoved = userSongRemoved
+            if songRemoved {
+                audio.removeValue(forKey: NativeEditorRenderCompiler.songSourceKey)
+                // The server's recipe falls back to the camera's own level once the song is gone.
+                if snapshot.mix["original_level"]?.numberValue.map({ $0 <= 0 }) == true {
+                    snapshot.mix.removeValue(forKey: "original_level")
+                }
+            }
             #if DEBUG
             NativePreviewDiagnostics.record("prepare-media")
             #endif
@@ -2188,7 +2367,8 @@ struct NativeEditorTemporaryVideo {
             let program = try compiler.compile(document: snapshot, clips: clips, items: items,
                                                sources: sources, audioSources: audio, mediaSources: media,
                                                referenceOnlyMusic: musicPlaybackMode == .referenceOnly,
-                                               sourceAudioPreserved: sourceAudioPreserved,
+                                               sourceAudioPreserved: sourceAudioPreserved || songRemoved,
+                                               songBed: audio[NativeEditorRenderCompiler.songSourceKey] != nil ? effectiveSongBed : nil,
                                                deviceCaptions: rendersOnDevice)
             // The in-place text update only applies while the canvas is still
             // on this composition. After a transient compile failure handed
@@ -4258,6 +4438,19 @@ struct NativeEditorTemporaryVideo {
         guard canEditSection(.backgroundMusic) else { return }
         transactDocument(section: .backgroundMusic) { $0.backgroundMusic = value }
     }
+    /// KRI-306: finished-video shape. `orientation` is "portrait" | "landscape"
+    /// (the wire values `PUT .../orientation` accepts); `landscapeFit` is
+    /// "fit" (black bars) | "fill" (crop). Each is gated by its own server
+    /// capability, which the picker already reflects; the guard keeps a stale
+    /// UI from dirtying a closed section.
+    func setVideoShape(orientation newOrientation: String? = nil, landscapeFit newFit: String? = nil) {
+        if let newOrientation, newOrientation != document.orientation, canEditSection(.orientation) {
+            transactDocument(section: .orientation) { $0.orientation = newOrientation }
+        }
+        if let newFit, newFit != document.effectiveLandscapeFit, canEditSection(.landscapeFit) {
+            transactDocument(section: .landscapeFit) { $0.landscapeFit = newFit }
+        }
+    }
     func setBackgroundMusicLevel(_ levelDB: Double?) {
         guard canEditSection(.backgroundMusic) else { return }
         transactDocument(section: .backgroundMusic) { $0.backgroundMusic?.gainDB = levelDB }
@@ -4274,6 +4467,15 @@ struct NativeEditorTemporaryVideo {
     }
 
     func save() async {
+        await saveOnce()
+        // A removal the server already had: the local state was folded, so send what else is pending.
+        guard songRemovalAlreadyApplied else { return }
+        songRemovalAlreadyApplied = false
+        if hasUnsavedChanges { await saveOnce() }
+    }
+
+    private func saveOnce() async {
+        defer { userSongRetry = nil }
         guard !isSaving, hasUnsavedChanges else { return }
         guard let api, let itemID, let variantKey else { saveState = .failed("Load the project before saving edits."); return }
         isSaving = true; saveState = .saving
@@ -4352,15 +4554,18 @@ struct NativeEditorTemporaryVideo {
             acknowledge(acknowledged, generation: response.generation, submittedDocument: submittedDocument)
             if hasPostSubmitEdits {
                 let acknowledgedRevision = document.revision
+                let rebaseSong = userSongRebase
                 undoStack = postSubmitUndo.map { value in
                     var rebased = value
                     rebased.revision = acknowledgedRevision
+                    if acknowledged.contains(.userSong) { rebased.userSong = rebaseSong(rebased.userSong) }
                     return rebased
                 }
                 redoStack.removeAll()
             } else {
                 undoStack.removeAll(); redoStack.removeAll()
             }
+            userSongRebase = { $0 }
             // A successful response has durably applied the exact deletion
             // intent sent with this commit. Remove only those IDs: a later
             // edit may have appended a different intent while awaiting it.
@@ -4411,6 +4616,19 @@ struct NativeEditorTemporaryVideo {
         } catch APIError.conflict {
             guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             saveState = .conflict
+        } catch EditorSaveError.userSongUnavailable where submittedDocument.userSong?.removed == true {
+            // The song is already gone on the server (an earlier removal reached it): that is what the
+            // creator asked for. Fold the removal in locally and carry on with whatever else is pending.
+            guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
+            foldAcknowledgedUserSong(submittedDocument.userSong)
+            let rebaseSong = userSongRebase
+            undoStack = undoStack.map { var value = $0; value.userSong = rebaseSong(value.userSong); return value }
+            redoStack = redoStack.map { var value = $0; value.userSong = rebaseSong(value.userSong); return value }
+            userSongRebase = { $0 }
+            changedSections.remove(.userSong); explicitlyDirtySections.remove(.userSong); pendingRenderRetrySections.remove(.userSong)
+            refreshDirtyState()
+            songRemovalAlreadyApplied = true
+            saveState = hasUnsavedChanges ? .idle : .saved
         } catch {
             guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             saveState = .failed(error.localizedDescription)
@@ -4498,7 +4716,9 @@ struct NativeEditorTemporaryVideo {
         invalidateDurationSources(for: Set([section]))
         let before = document
         if transactionBaseline == nil { appendUndo(document); redoStack.removeAll() }
+        let song = document.userSong
         replace(with: next)
+        document.userSong = song
         if section == .timeline { var rebased = document; rebaseGuidedLabels(&rebased, from: before); if rebased != document { document = rebased } }
         changedSections.insert(section); refreshDirtyState(); refreshDuration()
     }
@@ -4777,7 +4997,11 @@ struct NativeEditorTemporaryVideo {
         case .captions, .captionMeta: return canEditCaptions
         case .mix, .music, .backgroundMusic: return canEditMix
         case .soundEffects, .mediaOverlays, .visualBlocks, .motionScenes, .cameraEffects,
-             .carouselMoment, .lyrics, .orientation, .title: return false
+             .carouselMoment, .lyrics, .title: return false
+        // KRI-306: the server capability decides; with no capability the section stays closed.
+        case .orientation, .landscapeFit: return false
+        // KRI-428: only the per-operation `user_song.*` capabilities open it.
+        case .userSong: return false
         }
     }
 
@@ -4799,6 +5023,7 @@ struct NativeEditorTemporaryVideo {
             case .backgroundMusic: differs = document.backgroundMusic != cleanDocument.backgroundMusic
             case .lyrics: differs = document.lyrics != cleanDocument.lyrics
             case .orientation: differs = document.orientation != cleanDocument.orientation
+            case .landscapeFit: differs = document.effectiveLandscapeFit != cleanDocument.effectiveLandscapeFit
             case .soundEffects: differs = document.soundEffects != cleanDocument.soundEffects
             case .mediaOverlays: differs = document.mediaOverlays != cleanDocument.mediaOverlays
             case .visualBlocks: differs = document.visualBlocks != cleanDocument.visualBlocks
@@ -4806,6 +5031,7 @@ struct NativeEditorTemporaryVideo {
             case .cameraEffects: differs = document.cameraEffects != cleanDocument.cameraEffects
             case .carouselMoment: differs = document.carouselMoment != cleanDocument.carouselMoment
             case .title: differs = document.title != cleanDocument.title
+            case .userSong: differs = document.userSong != cleanDocument.userSong
             }
             if differs { changedSections.insert(section) }
             else if !explicitlyDirtySections.contains(section) { changedSections.remove(section) }
@@ -4937,8 +5163,10 @@ struct NativeEditorTemporaryVideo {
             musicWindow: changedSections.contains(.music) && document.music != nil
                 ? EditorCommitMusicWindow(startS: Self.number(musicObject?["start_s"]) ?? document.music?.startS ?? 0, alignment: EditorMusicAlignment(rawValue: musicObject?["alignment"]?.stringValue ?? document.music?.alignment ?? "preserve_cuts") ?? .preserveCuts) : nil,
             backgroundMusic: changedSections.contains(.backgroundMusic) ? (backgroundObject.map { EditorCommitBackgroundMusic(trackID: $0["track_id"]?.stringValue, enabled: Self.bool($0["enabled"]) ?? true, startS: Self.number($0["start_s"]), endS: Self.number($0["end_s"]), gainDB: Self.number($0["gain_db"]), muted: Self.bool($0["muted"]) ?? false) } ?? EditorCommitBackgroundMusic(enabled: false)) : nil,
+            userSong: changedSections.contains(.userSong) ? commitUserSong() : nil,
             lyrics: changedSections.contains(.lyrics) ? (lyricsObject.map { EditorCommitLyrics(enabled: Self.bool($0["enabled"]), lineOverrides: Self.object($0["line_overrides"])) } ?? EditorCommitLyrics(enabled: false)) : nil,
             orientation: changedSections.contains(.orientation) ? value["orientation"]?.stringValue : nil,
+            landscapeFit: changedSections.contains(.landscapeFit) ? value["landscape_fit"]?.stringValue : nil,
             soundEffects: array("sound_effects", .soundEffects),
             mediaOverlays: array("media_overlays", .mediaOverlays),
             visualBlocks: array("visual_blocks", .visualBlocks),
@@ -4954,6 +5182,16 @@ struct NativeEditorTemporaryVideo {
         )
     }
 
+    /// What Save sends for the song: the unsaved edits (or, on a render retry, the acknowledged volume /
+    /// start), with the start re-clamped to the current video length so the server never rejects it.
+    private func commitUserSong() -> EditorCommitUserSong? {
+        guard var state = document.userSong ?? userSongRetry else { return nil }
+        if !state.removed, let start = state.windowStartS, let song = baseUserSong, let limit = maxUserSongStart(for: song) {
+            state.windowStartS = min(start, limit)
+        }
+        return state.commit
+    }
+
     private func acknowledgedSections(
         _ sections: EditorCommitSections,
         submittedSections: Set<EditorSection>
@@ -4963,10 +5201,13 @@ struct NativeEditorTemporaryVideo {
         if sections.captionCues { result.insert(.captions) }; if sections.captionMeta { result.insert(.captionMeta) }
         if sections.mix { result.insert(.mix) }; if sections.music { result.insert(.music) }
         if sections.backgroundMusic { result.insert(.backgroundMusic) }; if sections.lyrics { result.insert(.lyrics) }
-        if sections.orientation { result.insert(.orientation) }; if sections.soundEffects { result.insert(.soundEffects) }
+        if sections.orientation { result.insert(.orientation) }; if sections.landscapeFit { result.insert(.landscapeFit) }; if sections.soundEffects { result.insert(.soundEffects) }
         if sections.mediaOverlays { result.insert(.mediaOverlays) }; if sections.visualBlocks { result.insert(.visualBlocks) }
         if sections.motionScenes { result.insert(.motionScenes) }; if sections.cameraEffects { result.insert(.cameraEffects) }
         if sections.carouselMoment { result.insert(.carouselMoment) }; if sections.title { result.insert(.title) }
+        // KRI-428: a user_song the server accepted is saved even if it does not echo the section
+        // (a rejected one answers 422 and never reaches here).
+        if sections.userSong || submittedSections.contains(.userSong) { result.insert(.userSong) }
         return result.intersection(submittedSections)
     }
 
@@ -4974,13 +5215,36 @@ struct NativeEditorTemporaryVideo {
         guard !sections.isEmpty else { return }
         document.revision.baseGeneration = generation
         let acknowledgedRevision = document.revision
-        for section in sections {
+        for section in sections where section != .userSong {
             copy(section, from: submittedDocument, into: &cleanDocument)
         }
+        if sections.contains(.userSong) { foldAcknowledgedUserSong(submittedDocument.userSong) }
         cleanDocument.revision = acknowledgedRevision
         changedSections.subtract(sections)
         explicitlyDirtySections.subtract(sections)
         refreshDirtyState()
+    }
+
+    /// The server accepted these song edits: they become part of the saved song, the unsaved state
+    /// starts empty again, and any unsaved edit made while the save was in flight is re-expressed
+    /// against the new saved song (so "drag back to the old value" is a real change).
+    private func foldAcknowledgedUserSong(_ submitted: EditorUserSongState?) {
+        guard let submitted else { return }
+        let oldSaved = savedUserSong
+        acknowledgedUserSong = EditorUserSongState.merged(acknowledgedUserSong, submitted)
+        userSongRebase = { post in
+            if post == submitted { return nil }
+            if post?.removed == true { return post }
+            guard let oldSaved, !submitted.removed else { return nil }
+            var rebased = EditorUserSongState()
+            let volume = post?.volume ?? oldSaved.volume, savedVolume = submitted.volume ?? oldSaved.volume
+            if abs(volume - savedVolume) > 0.0005 { rebased.volume = volume }
+            let start = post?.windowStartS ?? oldSaved.windowStartS, savedStart = submitted.windowStartS ?? oldSaved.windowStartS
+            if abs(start - savedStart) > 0.0005 { rebased.windowStartS = start }
+            return rebased.isEmpty ? nil : rebased
+        }
+        document.userSong = userSongRebase(document.userSong)
+        cleanDocument.userSong = nil
     }
 
     private func consumeSubmittedDeletions(from submittedDocument: EditorDocument) {
@@ -5008,6 +5272,7 @@ struct NativeEditorTemporaryVideo {
         case .backgroundMusic: baseline.backgroundMusic = submitted.backgroundMusic
         case .lyrics: baseline.lyrics = submitted.lyrics
         case .orientation: baseline.orientation = submitted.orientation
+        case .landscapeFit: baseline.landscapeFit = submitted.landscapeFit
         case .soundEffects: baseline.soundEffects = submitted.soundEffects
         case .mediaOverlays: baseline.mediaOverlays = submitted.mediaOverlays
         case .visualBlocks: baseline.visualBlocks = submitted.visualBlocks
@@ -5017,6 +5282,7 @@ struct NativeEditorTemporaryVideo {
         case .cameraEffects: baseline.cameraEffects = submitted.cameraEffects
         case .carouselMoment: baseline.carouselMoment = submitted.carouselMoment
         case .title: baseline.title = submitted.title
+        case .userSong: baseline.userSong = submitted.userSong
         }
     }
     private func reflow(_ clips: inout [EditorClip], from index: Int) {
@@ -5319,6 +5585,8 @@ struct NativeEditorTemporaryVideo {
 
     private func configureCapabilities(from variant: [String: JSONValue]?) {
         previewVariant = variant ?? [:]
+        // The variant is the server's word on the song: what it lists already includes saved edits.
+        acknowledgedUserSong = nil
         rendersOnDevice = variant?["render_destination"]?.stringValue == "device"
         guidedRevisionNumber = Self.number(variant?["editor_revision_number"]).flatMap { $0 >= 1 && $0 <= Double(Int32.max) ? Int($0) : nil }
         guard let variant else {
@@ -5579,6 +5847,8 @@ struct NativeEditorTemporaryVideo {
     func retryRender() async {
         guard !isSaving, !pendingRenderRetrySections.isEmpty else { return }
         explicitlyDirtySections.formUnion(pendingRenderRetrySections)
+        // Re-send an acknowledged volume / start so the render restarts; never a removal.
+        if pendingRenderRetrySections.contains(.userSong), let saved = acknowledgedUserSong, !saved.removed { userSongRetry = saved }
         refreshDirtyState()
         await save()
     }

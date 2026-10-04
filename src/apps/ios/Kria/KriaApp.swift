@@ -23,6 +23,7 @@ import SwiftData
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") {
             let container = Self.fallbackContainer()
             self.container = container
+            CreationChatFixture.seedClipThumbnails()
             _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore()))
             _model = StateObject(wrappedValue: AppModel(api: ChatUITestTransport.api(), cache: CacheRepository(context: container.mainContext)))
             return

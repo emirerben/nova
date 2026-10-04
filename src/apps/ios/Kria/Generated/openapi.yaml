@@ -700,6 +700,30 @@
         "title": "CarouselMomentEditRequest",
         "type": "object"
       },
+      "ChoiceSelectionIn": {
+        "additionalProperties": false,
+        "description": "The app's answer to a ``choice_question`` (SubmitTurnBody.choice_selection).",
+        "properties": {
+          "option_key": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Option Key",
+            "type": "string"
+          },
+          "question_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Question Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question_id",
+          "option_key"
+        ],
+        "title": "ChoiceSelectionIn",
+        "type": "object"
+      },
       "ClipCapture": {
         "additionalProperties": false,
         "description": "Optional filming context for one original. Every part may be absent.",
@@ -871,6 +895,11 @@
       },
       "CreationCapabilitiesOut": {
         "properties": {
+          "choice_questions": {
+            "default": false,
+            "title": "Choice Questions",
+            "type": "boolean"
+          },
           "clip_selection_questions": {
             "default": false,
             "title": "Clip Selection Questions",
@@ -932,6 +961,11 @@
           "slide_post_rich_text": {
             "default": false,
             "title": "Slide Post Rich Text",
+            "type": "boolean"
+          },
+          "song_order_questions": {
+            "default": false,
+            "title": "Song Order Questions",
             "type": "boolean"
           },
           "visuals_enabled": {
@@ -1004,6 +1038,11 @@
         "properties": {
           "clips": {
             "$ref": "#/components/schemas/CreationClipCapabilitiesOut"
+          },
+          "song": {
+            "$ref": "#/components/schemas/CreationVoiceoverCapabilitiesOut",
+            "default": null,
+            "nullable": true
           },
           "visuals": {
             "$ref": "#/components/schemas/CreationVisualCapabilitiesOut"
@@ -2626,6 +2665,11 @@
             "title": "Title",
             "type": "string"
           },
+          "user_song": {
+            "$ref": "#/components/schemas/EditorCommitUserSong",
+            "default": null,
+            "nullable": true
+          },
           "visual_blocks": {
             "default": null,
             "items": {
@@ -2803,6 +2847,34 @@
           "title"
         ],
         "title": "EditorCommitSections",
+        "type": "object"
+      },
+      "EditorCommitUserSong": {
+        "additionalProperties": false,
+        "description": "Editor Save section for the creator's own song (KRI-428), phone guided variants.\n\nEvery field is optional so a Save can change only what the creator touched:\n``volume`` (0-1), ``window_start_s`` (background songs only; a lip-sync song's\nstart is locked to where the takes were filmed) and ``removed`` (falls back to the\ncamera's own sound).",
+        "properties": {
+          "removed": {
+            "default": false,
+            "title": "Removed",
+            "type": "boolean"
+          },
+          "volume": {
+            "default": null,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Volume",
+            "type": "number"
+          },
+          "window_start_s": {
+            "default": null,
+            "minimum": 0.0,
+            "nullable": true,
+            "title": "Window Start S",
+            "type": "number"
+          }
+        },
+        "title": "EditorCommitUserSong",
         "type": "object"
       },
       "EditorDeletionRequest": {
@@ -3180,6 +3252,11 @@
             "nullable": true,
             "title": "Title",
             "type": "string"
+          },
+          "user_song": {
+            "$ref": "#/components/schemas/EditorCommitUserSong",
+            "default": null,
+            "nullable": true
           },
           "visual_blocks": {
             "default": null,
@@ -4707,6 +4784,16 @@
             "$ref": "#/components/schemas/ClipPlace",
             "default": null,
             "nullable": true
+          },
+          "role": {
+            "default": null,
+            "enum": [
+              "voiceover",
+              "song"
+            ],
+            "nullable": true,
+            "title": "Role",
+            "type": "string"
           }
         },
         "required": [
@@ -6198,6 +6285,7 @@
                 "mapping": {
                   "library": "#/components/schemas/LibraryRenderAsset",
                   "original": "#/components/schemas/OriginalRenderAsset",
+                  "song": "#/components/schemas/SongRenderAsset",
                   "visual": "#/components/schemas/VisualRenderAsset",
                   "voiceover": "#/components/schemas/VoiceoverRenderAsset"
                 },
@@ -6215,6 +6303,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/VoiceoverRenderAsset"
+                },
+                {
+                  "$ref": "#/components/schemas/SongRenderAsset"
                 }
               ]
             },
@@ -7404,6 +7495,76 @@
         "title": "SolidBackground",
         "type": "object"
       },
+      "SongOrderAnswerIn": {
+        "additionalProperties": false,
+        "description": "The creator's answer: the order they confirmed.",
+        "properties": {
+          "ordered_media_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Ordered Media Ids",
+            "type": "array"
+          },
+          "question_id": {
+            "title": "Question Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question_id",
+          "ordered_media_ids"
+        ],
+        "title": "SongOrderAnswerIn",
+        "type": "object"
+      },
+      "SongRenderAsset": {
+        "additionalProperties": false,
+        "description": "A creator-uploaded song for one content-plan item, pinned to one storage\ngeneration (KRI-374).\n\nPrivate creator media addressed by its owning plan item, exactly like\n``VoiceoverRenderAsset`` but a distinct kind: the song grant is authorised\nonly for an item whose ``audio_mode`` is ``song``, and the device mixes it\nas the music bed (``AudioMixRecipe.music_asset_id``) rather than as\nnarration. The grant re-checks that the job's own plan item still carries\nthis exact ``(path, generation)``; the device re-hashes the downloaded\nbytes against ``fingerprint``.",
+        "properties": {
+          "fingerprint": {
+            "$ref": "#/components/schemas/RenderFingerprint"
+          },
+          "generation": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Generation",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "song",
+            "enum": [
+              "song"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "plan_item_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Plan Item Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "plan_item_id",
+          "generation",
+          "fingerprint"
+        ],
+        "title": "SongRenderAsset",
+        "type": "object"
+      },
       "SourceCrop": {
         "additionalProperties": false,
         "properties": {
@@ -7513,6 +7674,11 @@
       "SubmitTurnBody": {
         "additionalProperties": false,
         "properties": {
+          "choice_selection": {
+            "$ref": "#/components/schemas/ChoiceSelectionIn",
+            "default": null,
+            "nullable": true
+          },
           "client_event_id": {
             "maxLength": 160,
             "minLength": 1,
@@ -7539,6 +7705,11 @@
             "minLength": 1,
             "title": "Message",
             "type": "string"
+          },
+          "song_order": {
+            "$ref": "#/components/schemas/SongOrderAnswerIn",
+            "default": null,
+            "nullable": true
           }
         },
         "required": [
@@ -8741,6 +8912,16 @@
             "maxLength": 240,
             "minLength": 1,
             "title": "Filename",
+            "type": "string"
+          },
+          "role": {
+            "default": null,
+            "enum": [
+              "voiceover",
+              "song"
+            ],
+            "nullable": true,
+            "title": "Role",
             "type": "string"
           },
           "upload_contract": {

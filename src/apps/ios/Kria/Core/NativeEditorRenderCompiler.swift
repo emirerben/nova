@@ -24,6 +24,11 @@ enum NativeEditorRenderError: Error, Equatable {
     private let handwritingLayout: AuthoredHandwritingLayout
     private var fontAssets: [String: MediaAsset] = [:]
 
+    /// The `audioSources` key of the creator's own song. Catalog tracks are keyed by their id, so this
+    /// can never be a plain word like "song" that a track id could equal.
+    static let songSourceKey = "user_song"
+    private static let songTrackID = NativeEditorSongBed.trackID
+
     init(fontDirectory: URL) throws {
         handwritingLayout = try AuthoredHandwritingLayout(url: fontDirectory.appendingPathComponent("handwriting-strokes.json"))
         // Last-wins, like the backend: the registry repeats "Outfit" (see NativeFontRegistry).
@@ -45,6 +50,7 @@ enum NativeEditorRenderError: Error, Equatable {
     func compile(document: EditorDocument, clips: [EditorClip], items: [NativeEditorTimelineItem],
                  sources: [Int: ResolvedEditorSource], audioSources: [String: ResolvedEditorSource] = [:], mediaSources: [String: ResolvedEditorSource] = [:],
                  referenceOnlyMusic: Bool = false, sourceAudioPreserved: Bool = true,
+                 songBed: NativeEditorSongBed? = nil,
                  deviceCaptions: Bool = false) throws -> NativeEditorRenderProgram {
         for (name, populated) in [
             ("carousel", document.carouselMoment != nil),
@@ -56,7 +62,7 @@ enum NativeEditorRenderError: Error, Equatable {
             #endif
             throw NativeEditorRenderError.unsupportedLane("unknown")
         }
-        let canvas: KriaMediaEngine.Canvas = switch document.orientation {
+        let canvas: KriaMediaEngine.Canvas = switch EditorDocument.canonicalOrientation(document.orientation) {
         case "landscape": .init(width: 1920, height: 1080)
         case "square": .init(width: 1080, height: 1080)
         default: .init(width: 1080, height: 1920)
@@ -65,6 +71,10 @@ enum NativeEditorRenderError: Error, Equatable {
         var references: [String: RenderAssetReference] = [:]
         var urls: [String: URL] = [:]
         var video: [TimelineClip] = []
+        /// Each video clip's camera level if no song plays. The creator's song mutes the camera only
+        /// while a song bed is actually applied (KRI-428); removing the song, or a bed that cannot
+        /// play, restores these levels.
+        var cameraLevelWithoutSong: [Double] = []
         let requestedOriginalGain = document.mix["original_level"]?.numberValue ?? 1
         let originalGain = requestedOriginalGain.isFinite ? min(max(0, requestedOriginalGain), 1) : 1
         let hasExplicitOriginalGain = document.mix["original_level"] != nil
@@ -134,12 +144,23 @@ enum NativeEditorRenderError: Error, Equatable {
             let holdDuration = max(0, outputDuration - movingDuration)
             let hasExplicitClipAudio = authoredSlot?.raw["muted"] != nil
             let sourceGain: Double = hasExplicitOriginalGain || hasExplicitClipAudio || sourceAudioPreserved ? 1 : 0
+            let cameraLevel: Double = clip.muted || authoredSlot?.raw["muted"] == .bool(true) || audioSources["narration"] != nil ? 0 : sourceGain
+            cameraLevelWithoutSong.append(cameraLevel)
             video.append(TimelineClip(id: clip.slotID ?? clip.id.uuidString, sourceAssetID: id,
                 sourceStart: clip.trimIn, sourceDuration: consumedSourceDuration, timelineStart: clip.start,
                 rate: requestedRate, transition: transition,
-                volume: clip.muted || authoredSlot?.raw["muted"] == .bool(true) || audioSources["narration"] != nil ? 0 : sourceGain, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
+                volume: audioSources[Self.songSourceKey] != nil ? 0 : cameraLevel, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
                 holdDuration: holdDuration > 0 ? holdDuration : nil,
                 sourceCrop: try Self.sourceCrop(authoredSlot?.raw["source_crop"])))
+            // KRI-306: letterbox a sideways clip when the creator chose black
+            // bars. Cropped and graded clips keep the engine's cover-fill: the
+            // engine rejects a look combined with a non-identity transform, and
+            // the backend refuses that combination for the same reason.
+            // Held (slow / short source) clips are excluded like the backend's `_fit_eligible`.
+            if document.previewLetterboxesSidewaysClips, canvas.height > canvas.width, holdDuration <= 0,
+               authoredSlot?.lookPreset != "golden_hour", video[video.count - 1].sourceCrop == nil {
+                video[video.count - 1].transform = Self.fitTransform(display: source.asset.naturalSize, canvas: canvas, landscapeFit: "fit")
+            }
         }
         // The video track is the composition's clock. Without it text and
         // captions clip to nothing, yet an unclamped media overlay still makes
@@ -180,8 +201,33 @@ enum NativeEditorRenderError: Error, Equatable {
                 TimelineClip(id: id, sourceAssetID: id, sourceStart: 0, sourceDuration: min(total, available), timelineStart: 0, volume: 1)
             ]))
         }
+        // The creator's own song (KRI-374) is the project's soundtrack, played from the pinned
+        // device recipe's `song` clip. Camera audio is forced to 0 above while a song source is
+        // present, whatever a slot's `muted` / `mix.original_level` says, so it never leaks over
+        // the song. A caller that removed the song passes no song source at all.
+        if let song = audioSources[Self.songSourceKey] {
+            guard let fingerprint = song.asset.fingerprint, let available = song.asset.duration,
+                  available.isFinite, available > 0 else { throw MediaEngineError.missingAsset(Self.songTrackID) }
+            let bed = songBed ?? NativeEditorSongBed(assetID: song.mediaID)
+            let start = min(max(0, bed.sourceStart), available)
+            let length = min(total, bed.sourceDuration, available - start)
+            if length > 0 {
+                let id = Self.songTrackID
+                assets[id] = MediaAsset(id: id, relativePath: id, fingerprint: fingerprint, duration: available)
+                references[id] = RenderAssetReference(id: id, fingerprint: try RenderFingerprint(fingerprint), source: .original(mediaID: song.mediaID))
+                urls[id] = song.url
+                var clip = TimelineClip(id: id, sourceAssetID: id, sourceStart: start, sourceDuration: length,
+                                        timelineStart: 0, volume: bed.volume)
+                clip.audioFadeIn = bed.fadeIn.map { min($0, length / 2) }
+                clip.audioFadeOut = bed.fadeOut.map { min($0, length / 2) }
+                audioTracks.append(TimelineTrack(id: id, kind: .audio, clips: [clip]))
+            } else {
+                // No song plays (its window is past the end of the file): the camera is not muted for nothing.
+                for index in video.indices { video[index].volume = cameraLevelWithoutSong[index] }
+            }
+        }
         // The rendered narration source already includes its approved music bed.
-        if !referenceOnlyMusic, let music = document.music, audioSources["narration"] == nil {
+        if !referenceOnlyMusic, let music = document.music, audioSources["narration"] == nil, audioSources[Self.songSourceKey] == nil {
             guard music.alignment == nil || music.alignment == "preserve_cuts" else {
                 throw NativeEditorRenderError.unsupportedLane("beat alignment")
             }
@@ -680,6 +726,21 @@ enum NativeEditorRenderError: Error, Equatable {
         let style = try JSONDecoder().decode(VisualEditorStyle.self, from: JSONEncoder().encode(raw))
         try style.validate()
         return style
+    }
+
+    /// Mirrors the backend's `phone_recipe_shared.fit_transform`. The engine
+    /// cover-fills each main-track clip and then scales about the canvas centre
+    /// over black, so a sideways clip needs `contain / cover` to end up whole
+    /// with bars (0.31640625 for 1920x1080 into 1080x1920). Portrait, square,
+    /// unknown-size and "fill" are the identity, which keeps those previews
+    /// byte-identical. `display` is the oriented (post-rotation) size.
+    static func fitTransform(display: MediaSize?, canvas: KriaMediaEngine.Canvas, landscapeFit: String) -> MediaTransform {
+        guard landscapeFit == "fit", canvas.height > canvas.width,
+              let display, display.width > display.height, display.height > 0 else { return .identity }
+        let canvasWidth = Double(canvas.width), canvasHeight = Double(canvas.height)
+        let contain = min(canvasWidth / display.width, canvasHeight / display.height)
+        let cover = max(canvasWidth / display.width, canvasHeight / display.height)
+        return MediaTransform(scale: contain / cover)
     }
 
     static func sourceCrop(_ raw: JSONValue?) throws -> NormalizedSourceRect? {

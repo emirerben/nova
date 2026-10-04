@@ -577,7 +577,18 @@ def _audio_notes(job: Any, variant: dict[str, Any]) -> list[str]:
     """Plain-language audio limits so the copilot answers honestly instead of
     redirecting to a control that does not exist for this edit."""
     notes: list[str] = []
-    if variant.get("music_playback_mode") == "reference_only":
+    from app.services.user_song_projection import user_song_for_variant  # noqa: PLC0415
+
+    if user_song_for_variant(job, variant, song_filename=None) is not None:
+        # The creator's own song (KRI-374) is part of the render. The editor's Sounds tab
+        # changes its volume, start point (not lip-sync) or removes it (KRI-428); this
+        # copilot has no operation for it, so point there instead of denying it exists.
+        notes.append(
+            "This edit plays the creator's own song. They can change its volume, start "
+            "point (not for lip-sync) or remove it in the editor's Sounds tab; you cannot "
+            "change it from chat."
+        )
+    elif variant.get("music_playback_mode") == "reference_only":
         notes.append(
             "The matched song is added when the creator posts. It is not part of this "
             "render, so there is no music to make quieter, swap or remove here; the "

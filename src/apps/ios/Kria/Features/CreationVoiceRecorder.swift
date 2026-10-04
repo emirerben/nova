@@ -1,6 +1,12 @@
 import AVFoundation
 import SwiftUI
 
+extension Notification.Name {
+    /// Posted just before the voiceover recorder takes over the shared audio session (recording or playback), so
+    /// other in-chat players (the song-order preview) can stop instead of fighting it for the session.
+    static let kriaAudioCaptureWillStart = Notification.Name("kria.audioCaptureWillStart")
+}
+
 /// A local take stays local until the creator explicitly chooses "Use recording".
 /// The sheet owns the file after a Files import; this object only deletes it after
 /// the coordinator accepts the upload or the creator discards it.
@@ -55,6 +61,7 @@ import SwiftUI
             return
         }
         do {
+            NotificationCenter.default.post(name: .kriaAudioCaptureWillStart, object: nil)
             removeLocalTake()
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker])
@@ -137,6 +144,7 @@ import SwiftUI
         guard let fileURL else { return }
         if isPlaying { pausePlayback(); return }
         do {
+            NotificationCenter.default.post(name: .kriaAudioCaptureWillStart, object: nil)
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .spokenAudio)
             try session.setActive(true)

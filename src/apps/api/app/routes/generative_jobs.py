@@ -132,6 +132,7 @@ from app.services.render_shape import (
 )
 from app.services.speech_cleanup_terminal import classify_route_speech_cut_rollback
 from app.services.tiktok_style_observations import effective_persona_style
+from app.services.user_song_projection import UserSongOut, user_song_for_variant
 from app.services.variant_generation_guard import (
     VariantInitialRenderInProgress,
     assert_required_speech_dispatch_quiescent,
@@ -598,6 +599,11 @@ class GenerativeVariant(BaseModel):
     music_preview_url: str | None = None
     music_preview_start_s: float | None = None
     background_music: BackgroundMusicOut | None = None
+    # KRI-374: the creator's OWN song on a phone montage, for the editor's Sounds tab.
+    # Omitted (not null) for every variant without one so those responses stay
+    # byte-identical. Display-only: never a catalog track, never editable via
+    # music_track_id / mix / music_operations.
+    user_song: UserSongOut | None = Field(default=None, exclude_if=lambda value: value is None)
     editor_capabilities: EditorCapabilitiesOut | None = None
     speech_cut_candidates: list[dict] | None = None
     speech_cut_revision: str | None = None
@@ -1143,6 +1149,22 @@ class EditorCommitMusicWindow(BaseModel):
         return value
 
 
+class EditorCommitUserSong(BaseModel):
+    """Editor Save section for the creator's own song (KRI-428), phone guided variants.
+
+    Every field is optional so a Save can change only what the creator touched:
+    ``volume`` (0-1), ``window_start_s`` (background songs only; a lip-sync song's
+    start is locked to where the takes were filmed) and ``removed`` (falls back to the
+    camera's own sound).
+    """
+
+    model_config = {"extra": "forbid"}
+
+    volume: float | None = Field(None, ge=0.0, le=1.0, allow_inf_nan=False)
+    window_start_s: float | None = Field(None, ge=0.0, allow_inf_nan=False)
+    removed: bool = False
+
+
 class EditorCommitBackgroundMusic(BaseModel):
     """Full replacement background bed for editor commits.
 
@@ -1228,6 +1250,9 @@ class EditorCommitRequest(BaseModel):
     remove_music: bool = False
     music_window: EditorCommitMusicWindow | None = None
     background_music: EditorCommitBackgroundMusic | None = None
+    # KRI-428: the creator's own song (volume / start point / remove). Distinct from the
+    # catalog-music fields above, which a reference-only guided variant still refuses.
+    user_song: EditorCommitUserSong | None = None
     lyrics: LyricsSectionRequest | None = None
     orientation: str | None = None
     # KRI-306: bars ("fit") or crop ("fill") for sideways clips on a portrait
@@ -7120,6 +7145,19 @@ def _base_editor_capabilities(job: Job, variant: dict) -> dict:
                 settings.edit_wide_looks_enabled,
                 None if settings.edit_wide_looks_enabled else "disabled",
             )
+            # KRI-428: the creator's own song gets its own controls, separate from the
+            # catalog-music operations below (which stay closed for reference-only).
+            creator_song = _variant_user_song(job, variant)
+            user_song_capability: dict[str, Any] = {}
+            if creator_song is not None:
+                background = creator_song["mode"] == "background"
+                user_song_capability["user_song"] = {
+                    "volume": operation(),
+                    "window": operation(
+                        background, None if background else "user_song_lipsync_locked"
+                    ),
+                    "remove": operation(),
+                }
             reference_only = variant.get("music_playback_mode") == "reference_only"
             music_operations = {
                 name: operation(
@@ -7138,6 +7176,7 @@ def _base_editor_capabilities(job: Job, variant: dict) -> dict:
                 "split_clips": bool(revision is not None),
                 "clips": clips,
                 "music_operations": music_operations,
+                **user_song_capability,
                 "automatic_cut": False,
                 "automatic_cut_reason": "guided_story_edit_unsupported",
                 "mix": False,
@@ -9344,6 +9383,40 @@ def _guided_text_revision_state(
     return resolved, resolved_tombstones
 
 
+def _merge_user_song_edit(
+    job: Job,
+    variant: dict,
+    saved: dict[str, Any] | None,
+    payload: EditorCommitRequest,
+) -> dict[str, Any]:
+    """Fold a Save's ``user_song`` section into the revision's creator-song state."""
+    song = _variant_user_song(job, variant)
+    edit = payload.user_song
+    if song is None or edit is None:
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "user_song_unavailable")
+    merged = dict(saved or {})
+    if edit.removed:
+        # Removal wins outright: whatever else rode along (a start the lip-sync lock would
+        # refuse, a volume) is moot once the song is gone.
+        merged["removed"] = True
+        return merged
+    if edit.volume is not None:
+        merged["volume"] = float(edit.volume)
+    if edit.window_start_s is not None:
+        if song["mode"] == "lipsync":
+            # Each take's source offset is pinned to the song start; an unchanged
+            # echo is fine, a moved start would pull the footage off the song.
+            if abs(float(edit.window_start_s) - float(song["window_start_s"])) > 1e-3:
+                raise _timeline_error(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "user_song_lipsync_locked",
+                    reason="Lip-sync keeps the song where you filmed it.",
+                )
+        else:
+            merged["window_start_s"] = float(edit.window_start_s)
+    return merged
+
+
 def _guided_v2_revision_from_commit(
     job: Job,
     variant: dict,
@@ -9395,6 +9468,13 @@ def _guided_v2_revision_from_commit(
     # Audio identity is server-owned. Timeline/full-revision payloads may not
     # smuggle an arbitrary GCS object past the conventional music validators.
     raw["audio"] = dict(current.get("audio") or {"mode": "none"})
+    # The creator's song choices are server-owned too: start from the saved revision's
+    # (never the client's), then merge only what this Save's `user_song` section sets.
+    raw.pop("user_song", None)
+    if current.get("user_song") is not None:
+        raw["user_song"] = dict(current["user_song"])
+    if payload.user_song is not None:
+        raw["user_song"] = _merge_user_song_edit(job, variant, raw.get("user_song"), payload)
     if payload.orientation is not None:
         raw["orientation"] = payload.orientation
     if text_elements is not None:
@@ -9579,6 +9659,11 @@ def variant_render_baseline(variant: dict) -> str:
     return str(variant.get("render_generation_id") or variant.get("render_finished_at") or "")
 
 
+def _variant_user_song(job: Job, variant: dict) -> dict[str, Any] | None:
+    """The creator's own song on this variant's CURRENT plan (KRI-428), else None."""
+    return user_song_for_variant(job, variant, song_filename=None)
+
+
 def require_guided_story_editor_commit(
     job: Job, variant_id: str, payload: EditorCommitRequest
 ) -> None:
@@ -9586,6 +9671,10 @@ def require_guided_story_editor_commit(
 
     variant = _find_variant(job, variant_id)
     if not isinstance(variant, dict) or variant.get("resolved_archetype") != "guided_story":
+        if isinstance(variant, dict) and payload.user_song is not None:
+            # The creator's song only exists on a guided creator-song variant; never let
+            # the section reach another archetype as a render section.
+            raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "user_song_unavailable")
         return
     if variant.get("music_playback_mode") == "reference_only" and (
         payload.music_track_id is not None
@@ -9595,6 +9684,19 @@ def require_guided_story_editor_commit(
         or payload.mix is not None
     ):
         raise HTTPException(status_code=422, detail="song_added_when_posting")
+    if payload.user_song is not None:
+        # KRI-428: the creator's own song is not catalog music, so the reference-only
+        # gate above never applies to it -- but it only exists on a phone guided-v2
+        # variant whose current plan actually carries one.
+        if variant.get("editor_timeline_mode") == "authored" or not getattr(
+            settings, "guided_story_editor_v2_enabled", False
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=_GUIDED_STORY_EDIT_ERROR,
+            )
+        if _variant_user_song(job, variant) is None:
+            raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "user_song_unavailable")
     if variant.get("editor_timeline_mode") == "authored":
         return
     if getattr(settings, "guided_story_editor_v2_enabled", False):
@@ -9629,6 +9731,7 @@ def require_guided_story_editor_commit(
         and payload.music_track_id is None
         and payload.music_window is None
         and payload.background_music is None
+        and payload.user_song is None
         and payload.lyrics is None
         and payload.sound_effects is None
         and payload.media_overlays is None
@@ -9935,6 +10038,7 @@ def _prepare_editor_commit(
         and payload.music_track_id is None
         and payload.music_window is None
         and payload.background_music is None
+        and payload.user_song is None
         and payload.lyrics is None
         and payload.orientation is None
         and payload.landscape_fit is None
@@ -10763,6 +10867,7 @@ def _prepare_editor_commit(
         or payload.remove_music
         or payload.music_window is not None
         or payload.background_music is not None
+        or payload.user_song is not None
         or validated_lyrics is not None
         or validated_orientation is not None
         or validated_landscape_fit is not None
@@ -10783,6 +10888,7 @@ def _prepare_editor_commit(
         or payload.music_track_id is not None
         or payload.remove_music
         or payload.music_window is not None
+        or payload.user_song is not None
         or validated_lyrics is not None
         or validated_orientation is not None
         or validated_camera_effects is not None
@@ -11053,6 +11159,7 @@ def _prepare_editor_commit(
                 or payload.remove_music
             ),
             "background_music": payload.background_music is not None,
+            "user_song": payload.user_song is not None,
             "lyrics": payload.lyrics is not None or payload._lyric_line_suppressions is not None,
             "orientation": payload.orientation is not None,
             "landscape_fit": validated_landscape_fit is not None,
@@ -11642,6 +11749,32 @@ async def _attach_music_previews(variants: list[dict], db: AsyncSession, *, job:
             variant["background_music"] = None
 
 
+async def _attach_user_song(variants: list[dict], db: AsyncSession, *, job: Job) -> None:
+    """Add the optional ``user_song`` field to variants whose plan has a creator song.
+
+    No query at all unless a variant actually has one (the common case), and a single
+    column read of the owning PlanItem otherwise -- never per variant. Best-effort: a
+    lookup failure only drops the title.
+    """
+    from app.services.user_song_projection import (  # noqa: PLC0415
+        attach_user_song,
+        job_has_user_song,
+    )
+
+    if not job_has_user_song(job):
+        return
+    song_filename: str | None = None
+    item_id = getattr(job, "content_plan_item_id", None)
+    if item_id is not None:
+        try:
+            song_filename = (
+                await db.execute(select(PlanItem.song_filename).where(PlanItem.id == item_id))
+            ).scalar_one_or_none()
+        except Exception:  # noqa: BLE001 -- the title is cosmetic; never fail a status read
+            song_filename = None
+    attach_user_song(variants, job, song_filename=song_filename)
+
+
 # Non-terminal statuses an orchestrate_generative_job run passes through while
 # its heartbeat thread is expected to be beating ("processing" → "rendering";
 # generative_build.py sets no others). Deliberately NOT "queued" (no attempt
@@ -11752,6 +11885,7 @@ async def get_generative_job_status(
     await attach_saved_editor_drafts(db, job)
     variants = _variants_for_response(job)
     await _attach_music_previews(variants, db, job=job)
+    await _attach_user_song(variants, db, job=job)
 
     # Null-safe, never-raising read of the style-downgrade stash: a corrupt or
     # non-dict value from a hand-edited row degrades to null rather than a 500.

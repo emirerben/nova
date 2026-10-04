@@ -16,6 +16,11 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostChatEdit: Bool? = nil
     /// Server sends `clip_question` payloads and accepts `clip_selection` on a turn (KRI-282). Nil/false = text question only.
     var clipSelectionQuestions: Bool? = nil
+    /// Server sends `song_order_question` payloads and accepts `song_order` on a turn (KRI-374). Nil/false = no order card.
+    var songOrderQuestions: Bool? = nil
+    /// Server sends `choice_question` payloads (tappable options for a conflict in the instructions) and accepts
+    /// `choice_selection` on a turn (KRI-282). Nil/false = the plain text question only.
+    var choiceQuestions: Bool? = nil
     /// Additive server admission metadata. Nil preserves compatibility with a
     /// server predating iOS-only creation rollout.
     var creationMode: CreationMode? = nil
@@ -24,6 +29,12 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostRichTextEnabled: Bool { slidePostRichText == true }
     var slidePostChatEditEnabled: Bool { slidePostChatEdit == true }
     var clipSelectionQuestionsEnabled: Bool { clipSelectionQuestions == true }
+    var songOrderQuestionsEnabled: Bool { songOrderQuestions == true }
+    /// The server's limits for a creator-uploaded song (KRI-374). Nil hides every "Add your song" surface:
+    /// the server only advertises it when the feature is on for this account and this app's protocol.
+    var songLimit: CreationMediaLimit? { media?[CreationMediaRole.song.capabilityKey] }
+    var songUploadEnabled: Bool { songLimit != nil }
+    var choiceQuestionsEnabled: Bool { choiceQuestions == true }
     /// The chat composer needs BOTH flags: the server only reports chat-edit as on with rich text, and
     /// a stale cached capability must not enable it when rich text is off.
     var slidePostChatComposerEnabled: Bool { slidePostRichTextEnabled && slidePostChatEditEnabled }
@@ -36,7 +47,32 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case slidePostRichText = "slide_post_rich_text"
         case slidePostChatEdit = "slide_post_chat_edit"
         case clipSelectionQuestions = "clip_selection_questions"
+        case songOrderQuestions = "song_order_questions"
+        case choiceQuestions = "choice_questions"
         case creationMode = "creation_mode", minimumClientProtocol = "minimum_client_protocol"
+    }
+}
+
+// Decoding lives in an extension so the synthesized memberwise initializer stays available to callers and tests.
+extension CreationCapabilities {
+    /// Tolerant decode: a `null` entry under `media` (e.g. `"song": null`) means "not offered" and is dropped,
+    /// so one absent capability can never fail the whole capabilities load. Every other field is unchanged.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        formats = try container.decode([CreationFormatCapability].self, forKey: .formats)
+        media = try container.decodeIfPresent([String: CreationMediaLimit?].self, forKey: .media)?.compactMapValues { $0 }
+        runtimeVersions = try container.decodeIfPresent([Int].self, forKey: .runtimeVersions)
+        visualsEnabled = try container.decodeIfPresent(Bool.self, forKey: .visualsEnabled)
+        phoneRendering = try container.decodeIfPresent(PhoneRenderingCapabilities.self, forKey: .phoneRendering)
+        editorStateTurns = try container.decodeIfPresent(Bool.self, forKey: .editorStateTurns)
+        editorStateMaxBytes = try container.decodeIfPresent(Int.self, forKey: .editorStateMaxBytes)
+        slidePostRichText = try container.decodeIfPresent(Bool.self, forKey: .slidePostRichText)
+        slidePostChatEdit = try container.decodeIfPresent(Bool.self, forKey: .slidePostChatEdit)
+        clipSelectionQuestions = try container.decodeIfPresent(Bool.self, forKey: .clipSelectionQuestions)
+        songOrderQuestions = try container.decodeIfPresent(Bool.self, forKey: .songOrderQuestions)
+        choiceQuestions = try container.decodeIfPresent(Bool.self, forKey: .choiceQuestions)
+        creationMode = try container.decodeIfPresent(CreationMode.self, forKey: .creationMode)
+        minimumClientProtocol = try container.decodeIfPresent(Int.self, forKey: .minimumClientProtocol)
     }
 }
 
@@ -69,14 +105,16 @@ struct CreationMediaLimit: Codable, Equatable, Sendable {
 }
 
 enum CreationMediaRole: String, Codable, CaseIterable, Sendable {
-    case clip, visual, voiceover
-    var title: String { switch self { case .clip: "Footage"; case .visual: "Visuals"; case .voiceover: "Voiceover" } }
-    var capabilityKey: String { switch self { case .clip: "clips"; case .visual: "visuals"; case .voiceover: "voiceover" } }
+    case clip, visual, voiceover, song
+    var title: String { switch self { case .clip: "Footage"; case .visual: "Visuals"; case .voiceover: "Voiceover"; case .song: "Song" } }
+    var capabilityKey: String { switch self { case .clip: "clips"; case .visual: "visuals"; case .voiceover: "voiceover"; case .song: "song" } }
+    /// Audio roles upload their full file as an audio attachment (never an analysis proxy).
+    var isAudio: Bool { self == .voiceover || self == .song }
     func accepts(_ contentType: String) -> Bool {
         switch self {
         case .clip: contentType.hasPrefix("video/")
         case .visual: contentType.hasPrefix("image/") || contentType.hasPrefix("video/")
-        case .voiceover: contentType.hasPrefix("audio/")
+        case .voiceover, .song: contentType.hasPrefix("audio/")
         }
     }
 }
@@ -205,6 +243,12 @@ struct CreationAttachedMedia: Identifiable {
     var uploadPurpose: String = UploadPurpose.cloudRenderSource.rawValue
     /// Server-probed media duration, when it is usable for creation timing.
     var durationS: Double? = nil
+    /// The server's media role (`"song"` for a creator-uploaded song, KRI-374). Nil for footage and voiceover,
+    /// and for any server that does not label it.
+    var role: String? = nil
+    var isSong: Bool { role == "song" || kind == "song" }
+    /// A recorded or uploaded voiceover: audio that is not the creator's song.
+    var isVoiceover: Bool { kind == "audio" && !isSong }
     static func parse(_ state: [String: JSONValue]) -> [Self] {
         guard case .array(let media) = state["media"] else { return [] }
         return media.compactMap { entry in
@@ -215,8 +259,17 @@ struct CreationAttachedMedia: Identifiable {
             let duration = fields["duration_s"]?.numberValue.flatMap { value in
                 value.isFinite && value > 0 ? value : nil
             }
-            return Self(id: id, filename: fields["filename"]?.stringValue ?? "Attached media", kind: fields["kind"]?.stringValue ?? "video", previewURL: url.flatMap(URL.init(string:)), uploadPurpose: purpose, durationS: duration)
+            return Self(id: id, filename: fields["filename"]?.stringValue ?? "Attached media", kind: fields["kind"]?.stringValue ?? "video", previewURL: url.flatMap(URL.init(string:)), uploadPurpose: purpose, durationS: duration, role: fields["role"]?.stringValue)
         }
+    }
+    /// The attached song, if the server reports one (KRI-374): a `media` entry with `role == "song"`, or a
+    /// top-level `song` object. Absent on a server without the feature.
+    static func song(_ state: [String: JSONValue]) -> Self? {
+        if let entry = parse(state).first(where: \.isSong) { return entry }
+        guard let fields = state["song"]?.objectValue,
+              let id = fields["media_id"]?.stringValue ?? fields["id"]?.stringValue, !id.isEmpty else { return nil }
+        let duration = fields["duration_s"]?.numberValue.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        return Self(id: id, filename: fields["filename"]?.stringValue ?? "Your song", kind: "audio", previewURL: nil, durationS: duration, role: "song")
     }
 }
 
@@ -258,6 +311,15 @@ enum ProjectUploadDestination: Equatable {
     /// have loaded nothing uploads: guessing `.cloud` would send full originals
     /// to the cloud and lock an iPhone account's project there.
     static func resolve(capabilities: PhoneRenderingCapabilities?, capabilitiesLoaded: Bool = true, sourcePurposes: [String], role: CreationMediaRole) -> Self {
+        // KRI-374: a creator's song always uploads in full (the server needs the bytes for beats,
+        // transcription and the render grant). It never joins the analysis-proxy contract, never
+        // makes a project `.mixed`, and needs no `narrationAudio` verification: the song plays through
+        // the existing music-bed lane (`musicBed` + `audioMix`), which the server gates before it
+        // advertises `media.song`. Like every upload it still waits for the account's capabilities.
+        if role == .song {
+            if Set(sourcePurposes).contains(UploadPurpose.cloudRenderSource.rawValue) { return .cloud }
+            return capabilitiesLoaded ? .cloud : .checking
+        }
         let known = Set(sourcePurposes)
         let phone = UploadPurpose.analysisProxy.rawValue, cloud = UploadPurpose.cloudRenderSource.rawValue
         guard known.isSubset(of: [phone, cloud]), known.count <= 1 else { return .mixed }
@@ -284,6 +346,7 @@ enum ProjectUploadDestination: Equatable {
         // still uploads through the unchanged cloud contract (`sourcePurposes`
         // below deliberately never sees it) -- only footage stays on iPhone.
         case .voiceover: return verified.contains(MediaCapability.narrationAudio.rawValue) ? .phone : .voiceoverUnavailableOnPhone
+        case .song: return .cloud
         }
     }
 
@@ -294,7 +357,7 @@ enum ProjectUploadDestination: Equatable {
     /// make a phone project `.mixed` or pull an empty project to the cloud.
     static func sourcePurposes(media: [CreationAttachedMedia], records: [UploadRecoveryRecord], projectID: UUID) -> [String] {
         media.filter { $0.kind != "audio" }.map(\.uploadPurpose)
-            + records.filter { $0.projectID == projectID && $0.role != .visual && $0.role != .voiceover }.map(\.purpose.rawValue)
+            + records.filter { $0.projectID == projectID && $0.role != .visual && $0.role != .voiceover && $0.role != .song }.map(\.purpose.rawValue)
     }
 }
 

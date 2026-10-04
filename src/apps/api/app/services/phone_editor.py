@@ -13,10 +13,17 @@ from app.config import settings
 from app.kria.device_render import make_device_request
 from app.kria.recipes_v2 import EditRecipeV2
 from app.pipeline.guided_story import (
+    USER_SONG_LIPSYNC_LOCKED,
+    USER_SONG_WINDOW_OUT_OF_RANGE,
     GuidedStoryError,
     GuidedStoryExecutionPlan,
     compile_guided_runtime_plan,
     song_reference_variant_fields,
+)
+from app.pipeline.lipsync_montage import (
+    LipsyncSyncError,
+    refuse_lipsync_rate_change,
+    resync_lipsync_moments,
 )
 from app.pipeline.phone_captions import caption_look_from_variant
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
@@ -29,6 +36,7 @@ from app.pipeline.phone_narrated_plan import (
 )
 from app.pipeline.phone_recipe_shared import (
     PhoneNarrationBed,
+    PhoneSongBed,
     apply_landscape_fit,
     timeline_end_s,
 )
@@ -297,6 +305,24 @@ def prepare_phone_editor_commit(
                     fingerprint=voice.fingerprint,
                     duration_s=media.duration,
                 )
+            # KRI-374: a creator song is pinned in the previous immutable recipe too
+            # (never re-hashed on Save). The song window was already re-fitted to the
+            # committed duration (`compile_guided_runtime_plan`); a lip-sync take is
+            # re-synced to its pinned delta, and a retimed one is refused, because the
+            # song is the master clock and a take at another speed drifts off it.
+            song = None
+            if plan.get("user_song") is not None:
+                refuse_lipsync_rate_change(plan)
+                # The device-measured length of each take: a take dragged later in
+                # the cut can need footage that was never filmed. That is refused
+                # here (422 + reason), not silently shortened at compile time.
+                plan = resync_lipsync_moments(
+                    plan,
+                    source_durations={
+                        binding.media_id: float(binding.original.duration_s) for binding in bindings
+                    },
+                )
+                song = _pinned_song_bed(previous.recipe, plan["user_song"])
             allow_editor_media = bool(plan.get("editor_visual_blocks"))
             recipe = compile_phone_guided_plan(
                 GuidedStoryExecutionPlan.model_validate(plan),
@@ -304,6 +330,7 @@ def prepare_phone_editor_commit(
                 visuals=visuals,
                 narration=narration,
                 allow_editor_media=allow_editor_media,
+                song=song,
                 # KRI-306/285: an editor Save keeps (or changes) the bars; without
                 # this every guided Save would silently drop a letterbox.
                 landscape_fit=_resolved_landscape_fit(
@@ -326,33 +353,71 @@ def prepare_phone_editor_commit(
                     variant[PHONE_EDITOR_SAVED_PLAN_FIELD] = plan
                     variant.update(song_reference_variant_fields(plan))
         staged.status = "awaiting_device"
+    except LipsyncSyncError as exc:
+        # The message is written for the creator (it says what to undo).
+        log.warning(
+            "phone_editor_commit_lipsync_refused",
+            job_id=str(job.id),
+            variant_id=variant_id,
+            reason=str(exc),
+        )
+        raise HTTPException(
+            422, detail={"code": "unsupported_phone_edit", "reason": str(exc)[:300]}
+        ) from exc
+    except GuidedStoryError as exc:
+        if exc.code not in {USER_SONG_WINDOW_OUT_OF_RANGE, USER_SONG_LIPSYNC_LOCKED}:
+            raise _unsupported_phone_edit(job, variant_id, exc) from exc
+        # KRI-428: a song-bound refusal keeps its own code so the editor words it as a
+        # song problem, not a text-style one.
+        raise HTTPException(422, detail={"code": exc.code, "reason": str(exc)[:300]}) from exc
     except (
         KeyError,
         StopIteration,
         TypeError,
         ValueError,
-        GuidedStoryError,
         UnsupportedPhonePlan,
     ) as exc:
-        # The cause was invisible: a bare code reached the creator and nothing
-        # reached the logs (2026-09-19 phone chat-edit incident). Keep the
-        # wire code stable; name the failing step for operators.
-        reason = f"{type(exc).__name__}: {exc}"[:300]
-        log.warning(
-            "phone_editor_commit_unsupported",
-            job_id=str(job.id),
-            variant_id=variant_id,
-            reason=reason,
-            exc_info=True,
-        )
-        raise HTTPException(
-            422, detail={"code": "unsupported_phone_edit", "reason": reason}
-        ) from exc
+        raise _unsupported_phone_edit(job, variant_id, exc) from exc
     job.assembly_plan = staged.assembly_plan
     job.status = staged.status
     if "started_at" in vars(staged):
         job.started_at = staged.started_at
     return {**prep, "render_destination": "device", "render_task_id": None}
+
+
+def _unsupported_phone_edit(job: Any, variant_id: str, exc: Exception) -> HTTPException:
+    # The cause was invisible: a bare code reached the creator and nothing
+    # reached the logs (2026-09-19 phone chat-edit incident). Keep the
+    # wire code stable; name the failing step for operators.
+    reason = f"{type(exc).__name__}: {exc}"[:300]
+    log.warning(
+        "phone_editor_commit_unsupported",
+        job_id=str(job.id),
+        variant_id=variant_id,
+        reason=reason,
+        exc_info=True,
+    )
+    return HTTPException(422, detail={"code": "unsupported_phone_edit", "reason": reason})
+
+
+def _pinned_song_bed(recipe: EditRecipeV2, user_song: dict[str, Any]) -> PhoneSongBed:
+    """The song receipt already pinned in ``recipe`` (KRI-374); Save never re-hashes it.
+
+    The creator's editor volume (KRI-428) lives on the plan, so it is carried over here
+    rather than reset to 1.0 on every Save. The start point is left unset: the compiler
+    reads it from the plan.
+    """
+    asset = next((a for a in recipe.asset_manifest.assets if a.kind == "song"), None)
+    if asset is None:
+        raise ValueError("the previous phone recipe carries no song to keep")
+    media = next(a for a in recipe.assets if a.id == asset.id)
+    return PhoneSongBed(
+        plan_item_id=asset.plan_item_id,
+        generation=asset.generation,
+        fingerprint=asset.fingerprint,
+        duration_s=media.duration,
+        volume=float(user_song.get("volume", 1.0)),
+    )
 
 
 def _assembly_visuals(assembly: dict) -> tuple[PhoneVisualBinding, ...]:

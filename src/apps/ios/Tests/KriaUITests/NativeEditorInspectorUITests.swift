@@ -992,6 +992,97 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(preview.frame.height, previewHeightBeforeSelection, accuracy: 1, "selecting a clip must not resize the preview")
     }
 
+    /// KRI-374: a montage built on the creator's own song shows it, connected and read-only, in Sounds.
+    func testSoundsTabShowsCreatorsOwnSongWithoutCatalogControls() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes", "-ui-testing-editor-user-song"]
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
+
+        app.buttons["native-editor-tool-sounds"].tap()
+        let row = app.descendants(matching: .any)["native-editor-your-song"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 4))
+        XCTAssertEqual(row.label, "Midnight Drive, Plays 1:48 – 2:03, Background")
+        XCTAssertTrue(app.staticTexts["Midnight Drive"].exists)
+        XCTAssertTrue(app.staticTexts["Plays 1:48 – 2:03"].exists)
+        XCTAssertTrue(app.staticTexts["Background"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song-note"].firstMatch.exists)
+        XCTAssertGreaterThanOrEqual(row.frame.height, 44)
+
+        XCTAssertFalse(app.textFields["native-editor-music-track-input"].exists, "the song is a project asset, not a track ID")
+        XCTAssertFalse(app.buttons["native-editor-add-music"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-music-volume"].firstMatch.exists)
+    }
+
+    /// KRI-428: a background song carries a volume slider, a start-point bar and Remove; removing it is an
+    /// unsaved, undoable edit that falls back to the camera audio without offering any catalog controls.
+    func testSoundsTabShowsSongVolumeStartAndRemove() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes", "-ui-testing-editor-user-song"]
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
+
+        app.buttons["native-editor-tool-sounds"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song"].firstMatch.waitForExistence(timeout: 4))
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song-volume"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["80%"].exists, "the saved song level is shown")
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song-start"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Starts at 1:48"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-your-song-start-locked"].firstMatch.exists)
+        XCTAssertFalse(app.buttons["native-editor-save"].isEnabled, "opening the controls is not an edit")
+
+        // Sliding the start window is one unsaved edit and moves the label.
+        let bar = app.descendants(matching: .any)["native-editor-your-song-start-bar"].firstMatch
+        XCTAssertTrue(bar.waitForExistence(timeout: 4))
+        XCTAssertTrue(bar.isEnabled)
+        // The Sounds panel starts short: raise it so the whole bar sits inside, where a drag reaches it.
+        let handle = app.descendants(matching: .any)["native-editor-panel-resize"].firstMatch
+        let grab = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 10))
+        grab.press(forDuration: 0.1, thenDragTo: grab.withOffset(CGVector(dx: 0, dy: -300)))
+        let scroll = app.scrollViews["native-editor-sounds-scroll"]
+        XCTAssertTrue(scroll.frame.contains(CGPoint(x: bar.frame.midX, y: bar.frame.midY)), "the start bar must sit inside the raised Sounds panel")
+        bar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: bar.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)),
+                   withVelocity: 100, thenHoldForDuration: 0.2)
+        XCTAssertFalse(app.staticTexts["Starts at 1:48"].exists, "the label follows the drag")
+        XCTAssertTrue(app.buttons["native-editor-save"].isEnabled)
+
+        let remove = app.buttons["native-editor-your-song-remove"]
+        XCTAssertTrue(remove.exists)
+        remove.tap()
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-your-song"].firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song-removed"].firstMatch.waitForExistence(timeout: 4))
+        XCTAssertFalse(app.textFields["native-editor-music-track-input"].exists, "no catalog controls after removing the song")
+        XCTAssertFalse(app.buttons["native-editor-add-music"].exists)
+        XCTAssertTrue(app.buttons["native-editor-save"].isEnabled)
+
+        // Undo lives on the timeline strip, behind the open Sounds panel.
+        app.buttons["native-editor-sounds-done"].tap()
+        app.buttons["native-editor-undo"].tap()
+        app.buttons["native-editor-tool-sounds"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song"].firstMatch.waitForExistence(timeout: 4))
+    }
+
+    /// KRI-428: a lip-sync song keeps its start where the takes were filmed; volume and Remove still work.
+    func testLipSyncSongLocksStartButKeepsVolumeAndRemove() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes", "-ui-testing-editor-user-song-lipsync"]
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
+
+        app.buttons["native-editor-tool-sounds"].tap()
+        let row = app.descendants(matching: .any)["native-editor-your-song"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 4))
+        XCTAssertEqual(row.label, "Midnight Drive, Plays 1:48 – 2:03, Lip-sync · master audio")
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song-volume"].firstMatch.exists)
+        XCTAssertTrue(app.buttons["native-editor-your-song-remove"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song-start-locked"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Lip-sync keeps the song where you filmed it."].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-your-song-start"].firstMatch.exists, "no start bar to drag")
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-your-song-start-bar"].firstMatch.exists)
+        XCTAssertFalse(app.buttons["native-editor-save"].isEnabled)
+    }
+
     func testSongReferenceBarKeepsTimelineAndToolsOnScreen() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes", "-ui-testing-editor-song-reference"]
@@ -1368,6 +1459,112 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let row = app.descendants(matching: .any)["native-editor-caption-row-native-caption-0"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 3))
         XCTAssertTrue(row.label.contains("Bu alan var mı? tamam"), "the open line's edit was committed: \(row.label)")
+    }
+
+    /// KRI-306: the header's video-shape button opens Vertical / Landscape and Black bars / Crop, enabled
+    /// from the server capability; picking Landscape hides the fit row and reshapes the preview.
+    func testVideoShapePickerIsEnabledFromTheCapabilityAndReshapesThePreview() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-video-shape"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 20))
+        app.buttons["native-editor-video-shape-button"].tap()
+        let section = app.descendants(matching: .any)["native-editor-video-shape-section"].firstMatch
+        XCTAssertTrue(section.waitForExistence(timeout: 5))
+
+        let vertical = app.buttons["native-editor-video-shape-orientation-portrait"]
+        let landscape = app.buttons["native-editor-video-shape-orientation-landscape"]
+        let blackBars = app.buttons["native-editor-video-shape-fit-fit"]
+        let crop = app.buttons["native-editor-video-shape-fit-fill"]
+        XCTAssertTrue(vertical.isEnabled && landscape.isEnabled && blackBars.isEnabled && crop.isEnabled)
+        XCTAssertTrue(vertical.isSelected && blackBars.isSelected, "current values come from the capability")
+        // The sheet reports its content at ~0.96 of layout size (every row measures 42.25 for a 44pt
+        // minimum), so allow that scale here; the unscaled 44pt check runs on the confirm screen.
+        for control in [vertical, landscape, blackBars, crop] {
+            XCTAssertGreaterThanOrEqual(control.frame.height, 42, "touch target \(control.identifier): \(control.frame)")
+        }
+        XCTAssertFalse(app.staticTexts["native-editor-video-shape-locked-reason"].exists)
+
+        crop.tap()
+        XCTAssertTrue(crop.isSelected)
+        XCTAssertFalse(blackBars.isSelected)
+        landscape.tap()
+        XCTAssertTrue(landscape.isSelected)
+        XCTAssertFalse(crop.exists, "Landscape always crops, so the fit row goes away")
+        vertical.tap()
+        XCTAssertTrue(app.buttons["native-editor-video-shape-fit-fill"].waitForExistence(timeout: 3), "back to Vertical shows the fit row again")
+        XCTAssertTrue(app.buttons["native-editor-video-shape-fit-fill"].isSelected, "the Crop pick survived the round trip")
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "video-shape-editor-open"
+        capture.lifetime = .keepAlways
+        add(capture)
+
+        // The pick reshapes the preview behind the sheet: the frame goes wide.
+        landscape.tap()
+        app.buttons["native-editor-inspector-done"].tap()
+        XCTAssertTrue(app.buttons["native-editor-save"].isEnabled, "the pick is an unsaved edit")
+        let ratio = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in preview.frame.width > preview.frame.height }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ratio], timeout: 5), .completed, "preview is landscape: \(preview.frame)")
+    }
+
+    /// KRI-306: a cloud editor closes both axes (reason `cloud_unsupported` on every map), so the
+    /// header carries no video-shape button at all.
+    func testVideoShapeButtonIsHiddenWhenBothCapabilitiesAreClosed() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-video-shape-closed"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["native-editor-export"].exists)
+        XCTAssertFalse(app.buttons["native-editor-video-shape-button"].exists)
+    }
+
+    /// KRI-306: a format that can re-fit but not re-shape (voiceover montage) keeps the button; the
+    /// closed orientation row is disabled and says why while bars/crop stays usable.
+    func testVideoShapeShowsTheServerReasonWhenOnlyOrientationIsClosed() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-video-shape-fit-only"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 20))
+        app.buttons["native-editor-video-shape-button"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-video-shape-section"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["native-editor-video-shape-orientation-portrait"].isEnabled)
+        XCTAssertFalse(app.buttons["native-editor-video-shape-orientation-landscape"].isEnabled)
+        XCTAssertTrue(app.buttons["native-editor-video-shape-fit-fill"].isEnabled)
+        XCTAssertTrue(app.buttons["native-editor-video-shape-fit-fit"].isSelected, "the capability value seeds the picker")
+        let reason = app.descendants(matching: .any)["native-editor-video-shape-locked-reason"].firstMatch
+        XCTAssertTrue(reason.waitForExistence(timeout: 3))
+        XCTAssertTrue(reason.label.contains("can’t change shape"), reason.label)
+        app.buttons["native-editor-video-shape-fit-fill"].tap()
+        XCTAssertTrue(app.buttons["native-editor-video-shape-fit-fill"].isSelected)
+        app.buttons["native-editor-video-shape-fit-fit"].tap()
+        app.buttons["native-editor-inspector-done"].tap()
+        XCTAssertFalse(app.buttons["native-editor-save"].isEnabled, "toggling back to the loaded value is not an edit")
+    }
+
+    /// KRI-306: at accessibility text sizes the picker stacks its options and keeps 44pt targets.
+    func testVideoShapePickerStacksAtAccessibilityTextSize() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-video-shape"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launchEnvironment["UI_TEST_DYNAMIC_TYPE_SIZE"] = "accessibility3"
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 20))
+        app.buttons["native-editor-video-shape-button"].tap()
+        let vertical = app.buttons["native-editor-video-shape-orientation-portrait"]
+        let landscape = app.buttons["native-editor-video-shape-orientation-landscape"]
+        XCTAssertTrue(vertical.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(landscape.frame.minY, vertical.frame.maxY - 1, "options stack vertically")
+        XCTAssertEqual(landscape.frame.minX, vertical.frame.minX, accuracy: 2)
+        for control in [vertical, landscape] {
+            XCTAssertGreaterThanOrEqual(control.frame.height, 42, "\(control.identifier): \(control.frame)")
+        }
+        let blackBars = app.buttons["native-editor-video-shape-fit-fit"]
+        XCTAssertTrue(blackBars.exists)
+        XCTAssertGreaterThanOrEqual(blackBars.frame.height, 42)
     }
 
     func testAllPersistedLanesExposeStableTimelineIdentityAndInspector() {

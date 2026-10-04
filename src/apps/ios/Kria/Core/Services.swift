@@ -155,6 +155,13 @@ protocol KriaAPIClient: Sendable {
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?) async throws -> TurnAccepted
     /// `clipSelection` answers a clip-picker question (KRI-282, server capability `clip_selection_questions`); nil = omitted.
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?) async throws -> TurnAccepted
+    /// `songOrder` answers a take-order question (KRI-374, server capability `song_order_questions`); nil = omitted.
+    /// A 409 with code `song_order_stale` means the question was replaced: refresh the thread.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?) async throws -> TurnAccepted
+    /// `choiceSelection` answers a conflict-choice question (KRI-282, server capability `choice_questions`); nil = omitted.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted
+    /// `songOrder` and `choiceSelection` are independent structured answers (a turn carries at most one); each is nil = omitted.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread
     func threadDelta(threadID: UUID, afterSequence: Int) async throws -> ThreadDelta
     func draft(threadID: UUID) async throws -> DraftSnapshot
@@ -176,7 +183,11 @@ protocol KriaAPIClient: Sendable {
     /// on them is safe. `speechCleanupAnalysisID`/`speechCleanupChoice` are only
     /// meaningful on "approve" ("clean" / "keep_original" / "create_without_cleanup")
     /// and are encoded absent, never null, when nil.
-    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?) async throws
+    /// `outputOrientation` ("portrait" | "landscape") / `landscapeFit` ("fit" | "fill")
+    /// are the creator's video-shape pick (KRI-306). They are passed ONLY when the
+    /// thread offered a `render_shape` -- the API rejects unknown keys and a
+    /// choice nothing offered -- and are encoded absent, never null, when nil.
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?) async throws
     func playbackURL(jobID: UUID) async throws -> URL
     /// KRI-200: best-effort report of an editor player item that failed on this phone.
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws
@@ -184,11 +195,18 @@ protocol KriaAPIClient: Sendable {
     func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose?) async throws -> UploadReservation
     func cancelUpload(reservationID: UUID) async throws
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> ProjectUploadReservation
+    /// KRI-374: the same reservation, declaring the audio's purpose. Only `.song` is sent (as `role: "song"`) so
+    /// the server can refuse a disabled or second song before the upload; every other role encodes exactly as the
+    /// role-less call, so footage and voiceover reservations are byte-identical.
+    func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, role: CreationMediaRole) async throws -> ProjectUploadReservation
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
     /// KRI-189: the same attach, plus when/where the clip was filmed. `capture` is nil when the user turned
     /// the setting off or nothing could be read; a client that does not implement this drops it.
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread
+    /// KRI-374: the same attach with an explicit server media role. Only `.song` is sent (as `role: "song"`);
+    /// every other role encodes exactly as before, so existing attaches are byte-identical.
+    func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, role: CreationMediaRole) async throws -> CreationThread
     /// Append a newly-uploaded clip/photo to a generative job's shared footage
     /// pool (`job.all_candidates["clip_paths"]`), minting the `clip_index` the
     /// editor then references in a new timeline slot. See `reserveUpload` for
@@ -200,6 +218,13 @@ protocol KriaAPIClient: Sendable {
     /// call) so callers stay testable through the same fake used for every
     /// other native-editor network call.
     func uploadFile(to reservation: UploadReservation, fileURL: URL) async throws
+}
+
+extension KriaAPIClient {
+    /// Decisions that carry no video-shape pick (denials, and threads that offered none).
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?) async throws {
+        try await decideApproval(threadID: threadID, approvalID: approvalID, decision: decision, expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice, outputOrientation: nil, landscapeFit: nil)
+    }
 }
 
 /// Existing API test doubles can remain focused on the older protocol. Native
@@ -217,8 +242,15 @@ extension KriaAPIClient {
     func currentUser() async throws -> MobileUser { throw APIError.unsupported }
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws { throw APIError.unsupported }
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation { throw APIError.invalidResponse }
+    func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, role: CreationMediaRole) async throws -> ProjectUploadReservation {
+        try await reserveProjectUpload(threadID: threadID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size)
+    }
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread {
         try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID)
+    }
+
+    func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, role: CreationMediaRole) async throws -> CreationThread {
+        try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID, capture: nil)
     }
 
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse { throw APIError.unsupported }
@@ -240,6 +272,20 @@ extension KriaAPIClient {
     }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?) async throws -> TurnAccepted {
         try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection)
+    }
+
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection)
+    }
+
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted {
+        if let choiceSelection, songOrder == nil {
+            return try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, choiceSelection: choiceSelection)
+        }
+        return try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder)
     }
 
     func creationCapabilities() async throws -> CreationCapabilities { throw APIError.unsupported }
@@ -271,7 +317,27 @@ extension KriaAPIClient {
     }
 }
 
-struct TurnAccepted: Codable, Sendable { let turnID: String; let threadRevision: Int; let status: String; enum CodingKeys: String, CodingKey { case turnID = "turn_id"; case threadRevision = "thread_revision"; case status } }
+struct TurnAccepted: Codable, Sendable {
+    let turnID: String; let threadRevision: Int; let status: String
+    /// KRI-374: a take-order question carried on the turn response, when the server sends it there. Decoded
+    /// leniently: a malformed or newer shape is dropped (nil), never a decode failure for the turn.
+    var songOrderQuestion: SongOrderQuestion? = nil
+    enum CodingKeys: String, CodingKey { case turnID = "turn_id"; case threadRevision = "thread_revision"; case status; case songOrderQuestion = "song_order_question" }
+    init(turnID: String, threadRevision: Int, status: String, songOrderQuestion: SongOrderQuestion? = nil) {
+        self.turnID = turnID; self.threadRevision = threadRevision; self.status = status; self.songOrderQuestion = songOrderQuestion
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        turnID = try c.decode(String.self, forKey: .turnID)
+        threadRevision = try c.decode(Int.self, forKey: .threadRevision)
+        status = try c.decode(String.self, forKey: .status)
+        songOrderQuestion = (try? c.decodeIfPresent(JSONValue.self, forKey: .songOrderQuestion)).flatMap { $0 }.flatMap(SongOrderQuestion.init(json:))
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(turnID, forKey: .turnID); try c.encode(threadRevision, forKey: .threadRevision); try c.encode(status, forKey: .status)
+    }
+}
 /// Mirrors the server's `MobileUserOut` (`GET /auth/mobile/me`) — the account screen's
 /// only source of a real name/email; nothing here is persisted to the Keychain.
 struct MobileUser: Codable, Sendable, Equatable {
@@ -310,6 +376,10 @@ struct CreationThread: Codable, Identifiable, Sendable {
     let events: [ThreadEvent]
     let creatorAgent: [String: JSONValue]?
     let speechCleanup: [String: JSONValue]?
+    /// KRI-306: the video shapes the server will let the creator pick while a
+    /// strategy approval or plan is pending. Nil from an older server, when nothing
+    /// is choosable, or when the projection is malformed -- the picker stays hidden.
+    let renderShape: RenderShapeOffer?
     /// Per-role upload counts and limits; older servers omit it.
     let mediaCapabilities: [String: JSONValue]?
     /// Visuals in this project's pool, so a project made only of Visuals can continue.
@@ -332,7 +402,7 @@ struct CreationThread: Codable, Identifiable, Sendable {
     var preparationMessage: String? { preparation?["message"]?.stringValue }
     var preparationCompleted: Int { max(0, Int(preparation?["completed"]?.numberValue ?? 0)) }
     var preparationTotal: Int { max(0, Int(preparation?["total"]?.numberValue ?? 0)) }
-    enum CodingKeys: String, CodingKey { case id, title, status, revision, job, state, events; case creatorAgent = "creator_agent"; case speechCleanup = "speech_cleanup"; case mediaCapabilities = "media_capabilities"; case runtimeVersion = "runtime_version"; case activeJobID = "active_job_id"; case activePlanItemID = "active_plan_item_id"; case updatedAt = "updated_at" }
+    enum CodingKeys: String, CodingKey { case id, title, status, revision, job, state, events; case creatorAgent = "creator_agent"; case speechCleanup = "speech_cleanup"; case renderShape = "render_shape"; case mediaCapabilities = "media_capabilities"; case runtimeVersion = "runtime_version"; case activeJobID = "active_job_id"; case activePlanItemID = "active_plan_item_id"; case updatedAt = "updated_at" }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -349,6 +419,7 @@ struct CreationThread: Codable, Identifiable, Sendable {
         events = try values.decodeIfPresent([ThreadEvent].self, forKey: .events) ?? []
         creatorAgent = try values.decodeIfPresent([String: JSONValue].self, forKey: .creatorAgent)
         speechCleanup = try values.decodeIfPresent([String: JSONValue].self, forKey: .speechCleanup)
+        renderShape = (try? values.decodeIfPresent(RenderShapeOffer.self, forKey: .renderShape)).flatMap { $0?.isChoosable == true ? $0 : nil }
         mediaCapabilities = try values.decodeIfPresent([String: JSONValue].self, forKey: .mediaCapabilities)
     }
 
@@ -531,6 +602,19 @@ struct EditorCommitMusicWindow: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey { case startS = "start_s"; case alignment }
 }
 
+/// The creator's own song (KRI-428). Sent only when the user_song section changed:
+/// `volume` 0...1 and `window_start_s` are omitted when untouched; `removed`
+/// falls the edit back to the camera audio.
+struct EditorCommitUserSong: Codable, Equatable, Sendable {
+    var volume: Double?
+    var windowStartS: Double?
+    var removed: Bool
+    init(volume: Double? = nil, windowStartS: Double? = nil, removed: Bool = false) {
+        self.volume = volume; self.windowStartS = windowStartS; self.removed = removed
+    }
+    private enum CodingKeys: String, CodingKey { case volume; case windowStartS = "window_start_s"; case removed }
+}
+
 struct EditorCommitBackgroundMusic: Codable, Equatable, Sendable {
     var trackID: String?
     var enabled: Bool
@@ -602,8 +686,12 @@ struct EditorCommitRequest: Codable, Sendable {
     var removeMusic: Bool
     var musicWindow: EditorCommitMusicWindow?
     var backgroundMusic: EditorCommitBackgroundMusic?
+    /// KRI-428: the creator's own song (volume / start / remove); nil = untouched.
+    var userSong: EditorCommitUserSong?
     var lyrics: EditorCommitLyrics?
     var orientation: String?
+    /// "fit" | "fill"; only present when the creator changed it (KRI-306).
+    var landscapeFit: String?
     var soundEffects: [JSONValue]?
     var mediaOverlays: [JSONValue]?
     var visualBlocks: [JSONValue]?
@@ -621,29 +709,31 @@ struct EditorCommitRequest: Codable, Sendable {
     var deletions: [EditorDeletion]?
     var baseGeneration: String
 
-    init(timelineSlots: [JSONValue]? = nil, textElements: [JSONValue]? = nil, captionCues: [JSONValue]? = nil, captionMeta: [String: JSONValue]? = nil, mix: [String: JSONValue]? = nil, musicTrackID: String? = nil, removeMusic: Bool = false, musicWindow: EditorCommitMusicWindow? = nil, backgroundMusic: EditorCommitBackgroundMusic? = nil, lyrics: EditorCommitLyrics? = nil, orientation: String? = nil, soundEffects: [JSONValue]? = nil, mediaOverlays: [JSONValue]? = nil, visualBlocks: [JSONValue]? = nil, motionScenes: [JSONValue]? = nil, motionRuntimeHash: String? = nil, cameraEffects: [JSONValue]? = nil, carouselMoment: EditorCarouselMomentPatch = .omitted, title: String? = nil, acceptedSuggestionIDs: [String]? = nil, copilotReceiptIDs: [UUID] = [], guidedRevision: [String: JSONValue]? = nil, guidedRevisionNumber: Int? = nil, retryGuidedRevision: Bool = false, editorStateVersion: Int? = nil, deletions: [EditorDeletion]? = nil, baseGeneration: String) {
-        self.timelineSlots = timelineSlots; self.textElements = textElements; self.captionCues = captionCues; self.captionMeta = captionMeta; self.mix = mix; self.musicTrackID = musicTrackID; self.removeMusic = removeMusic; self.musicWindow = musicWindow; self.backgroundMusic = backgroundMusic; self.lyrics = lyrics; self.orientation = orientation; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.motionRuntimeHash = motionRuntimeHash; self.cameraEffects = cameraEffects; self.carouselMoment = carouselMoment; self.title = title; self.acceptedSuggestionIDs = acceptedSuggestionIDs; self.copilotReceiptIDs = copilotReceiptIDs; self.guidedRevision = guidedRevision; self.guidedRevisionNumber = guidedRevisionNumber; self.retryGuidedRevision = retryGuidedRevision; self.editorStateVersion = editorStateVersion; self.deletions = deletions; self.baseGeneration = baseGeneration
+    init(timelineSlots: [JSONValue]? = nil, textElements: [JSONValue]? = nil, captionCues: [JSONValue]? = nil, captionMeta: [String: JSONValue]? = nil, mix: [String: JSONValue]? = nil, musicTrackID: String? = nil, removeMusic: Bool = false, musicWindow: EditorCommitMusicWindow? = nil, backgroundMusic: EditorCommitBackgroundMusic? = nil, userSong: EditorCommitUserSong? = nil, lyrics: EditorCommitLyrics? = nil, orientation: String? = nil, landscapeFit: String? = nil, soundEffects: [JSONValue]? = nil, mediaOverlays: [JSONValue]? = nil, visualBlocks: [JSONValue]? = nil, motionScenes: [JSONValue]? = nil, motionRuntimeHash: String? = nil, cameraEffects: [JSONValue]? = nil, carouselMoment: EditorCarouselMomentPatch = .omitted, title: String? = nil, acceptedSuggestionIDs: [String]? = nil, copilotReceiptIDs: [UUID] = [], guidedRevision: [String: JSONValue]? = nil, guidedRevisionNumber: Int? = nil, retryGuidedRevision: Bool = false, editorStateVersion: Int? = nil, deletions: [EditorDeletion]? = nil, baseGeneration: String) {
+        self.timelineSlots = timelineSlots; self.textElements = textElements; self.captionCues = captionCues; self.captionMeta = captionMeta; self.mix = mix; self.musicTrackID = musicTrackID; self.removeMusic = removeMusic; self.musicWindow = musicWindow; self.backgroundMusic = backgroundMusic; self.userSong = userSong; self.lyrics = lyrics; self.orientation = orientation; self.landscapeFit = landscapeFit; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.motionRuntimeHash = motionRuntimeHash; self.cameraEffects = cameraEffects; self.carouselMoment = carouselMoment; self.title = title; self.acceptedSuggestionIDs = acceptedSuggestionIDs; self.copilotReceiptIDs = copilotReceiptIDs; self.guidedRevision = guidedRevision; self.guidedRevisionNumber = guidedRevisionNumber; self.retryGuidedRevision = retryGuidedRevision; self.editorStateVersion = editorStateVersion; self.deletions = deletions; self.baseGeneration = baseGeneration
     }
 
-    private enum CodingKeys: String, CodingKey { case timelineSlots = "timeline_slots"; case textElements = "text_elements"; case captionCues = "caption_cues"; case captionMeta = "caption_meta"; case mix; case musicTrackID = "music_track_id"; case removeMusic = "remove_music"; case musicWindow = "music_window"; case backgroundMusic = "background_music"; case lyrics; case orientation; case soundEffects = "sound_effects"; case mediaOverlays = "media_overlays"; case visualBlocks = "visual_blocks"; case motionScenes = "motion_scenes"; case motionRuntimeHash = "motion_runtime_hash"; case cameraEffects = "camera_effects"; case carouselMoment = "carousel_moment"; case title; case acceptedSuggestionIDs = "accepted_suggestion_ids"; case copilotReceiptIDs = "copilot_receipt_ids"; case guidedRevision = "guided_revision"; case guidedRevisionNumber = "guided_revision_number"; case retryGuidedRevision = "retry_guided_revision"; case editorStateVersion = "editor_state_version"; case deletions; case baseGeneration = "base_generation" }
+    private enum CodingKeys: String, CodingKey { case timelineSlots = "timeline_slots"; case textElements = "text_elements"; case captionCues = "caption_cues"; case captionMeta = "caption_meta"; case mix; case musicTrackID = "music_track_id"; case removeMusic = "remove_music"; case musicWindow = "music_window"; case backgroundMusic = "background_music"; case userSong = "user_song"; case lyrics; case orientation; case landscapeFit = "landscape_fit"; case soundEffects = "sound_effects"; case mediaOverlays = "media_overlays"; case visualBlocks = "visual_blocks"; case motionScenes = "motion_scenes"; case motionRuntimeHash = "motion_runtime_hash"; case cameraEffects = "camera_effects"; case carouselMoment = "carousel_moment"; case title; case acceptedSuggestionIDs = "accepted_suggestion_ids"; case copilotReceiptIDs = "copilot_receipt_ids"; case guidedRevision = "guided_revision"; case guidedRevisionNumber = "guided_revision_number"; case retryGuidedRevision = "retry_guided_revision"; case editorStateVersion = "editor_state_version"; case deletions; case baseGeneration = "base_generation" }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encodeIfPresent(timelineSlots, forKey: .timelineSlots); try c.encodeIfPresent(textElements, forKey: .textElements); try c.encodeIfPresent(captionCues, forKey: .captionCues); try c.encodeIfPresent(captionMeta, forKey: .captionMeta); try c.encodeIfPresent(mix, forKey: .mix); try c.encodeIfPresent(musicTrackID, forKey: .musicTrackID); try c.encode(removeMusic, forKey: .removeMusic); try c.encodeIfPresent(musicWindow, forKey: .musicWindow); try c.encodeIfPresent(backgroundMusic, forKey: .backgroundMusic); try c.encodeIfPresent(lyrics, forKey: .lyrics); try c.encodeIfPresent(orientation, forKey: .orientation); try c.encodeIfPresent(soundEffects, forKey: .soundEffects); try c.encodeIfPresent(mediaOverlays, forKey: .mediaOverlays); try c.encodeIfPresent(visualBlocks, forKey: .visualBlocks); try c.encodeIfPresent(motionScenes, forKey: .motionScenes); try c.encodeIfPresent(motionRuntimeHash, forKey: .motionRuntimeHash); try c.encodeIfPresent(cameraEffects, forKey: .cameraEffects)
+        try c.encodeIfPresent(timelineSlots, forKey: .timelineSlots); try c.encodeIfPresent(textElements, forKey: .textElements); try c.encodeIfPresent(captionCues, forKey: .captionCues); try c.encodeIfPresent(captionMeta, forKey: .captionMeta); try c.encodeIfPresent(mix, forKey: .mix); try c.encodeIfPresent(musicTrackID, forKey: .musicTrackID); try c.encode(removeMusic, forKey: .removeMusic); try c.encodeIfPresent(musicWindow, forKey: .musicWindow); try c.encodeIfPresent(backgroundMusic, forKey: .backgroundMusic); try c.encodeIfPresent(userSong, forKey: .userSong); try c.encodeIfPresent(lyrics, forKey: .lyrics); try c.encodeIfPresent(orientation, forKey: .orientation); try c.encodeIfPresent(landscapeFit, forKey: .landscapeFit); try c.encodeIfPresent(soundEffects, forKey: .soundEffects); try c.encodeIfPresent(mediaOverlays, forKey: .mediaOverlays); try c.encodeIfPresent(visualBlocks, forKey: .visualBlocks); try c.encodeIfPresent(motionScenes, forKey: .motionScenes); try c.encodeIfPresent(motionRuntimeHash, forKey: .motionRuntimeHash); try c.encodeIfPresent(cameraEffects, forKey: .cameraEffects)
         switch carouselMoment { case .omitted: break; case .remove: try c.encodeNil(forKey: .carouselMoment); case let .replace(value): try c.encode(value, forKey: .carouselMoment) }
         try c.encodeIfPresent(title, forKey: .title)
         try c.encodeIfPresent(acceptedSuggestionIDs, forKey: .acceptedSuggestionIDs); if !copilotReceiptIDs.isEmpty { try c.encode(copilotReceiptIDs, forKey: .copilotReceiptIDs) }; try c.encodeIfPresent(guidedRevision, forKey: .guidedRevision); try c.encodeIfPresent(guidedRevisionNumber, forKey: .guidedRevisionNumber); if retryGuidedRevision { try c.encode(retryGuidedRevision, forKey: .retryGuidedRevision) }; try c.encodeIfPresent(editorStateVersion, forKey: .editorStateVersion); try c.encodeIfPresent(deletions, forKey: .deletions); try c.encode(baseGeneration, forKey: .baseGeneration)
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        timelineSlots = try c.decodeIfPresent([JSONValue].self, forKey: .timelineSlots); textElements = try c.decodeIfPresent([JSONValue].self, forKey: .textElements); captionCues = try c.decodeIfPresent([JSONValue].self, forKey: .captionCues); captionMeta = try c.decodeIfPresent([String: JSONValue].self, forKey: .captionMeta); mix = try c.decodeIfPresent([String: JSONValue].self, forKey: .mix); musicTrackID = try c.decodeIfPresent(String.self, forKey: .musicTrackID); removeMusic = try c.decodeIfPresent(Bool.self, forKey: .removeMusic) ?? false; musicWindow = try c.decodeIfPresent(EditorCommitMusicWindow.self, forKey: .musicWindow); backgroundMusic = try c.decodeIfPresent(EditorCommitBackgroundMusic.self, forKey: .backgroundMusic); lyrics = try c.decodeIfPresent(EditorCommitLyrics.self, forKey: .lyrics); orientation = try c.decodeIfPresent(String.self, forKey: .orientation); soundEffects = try c.decodeIfPresent([JSONValue].self, forKey: .soundEffects); mediaOverlays = try c.decodeIfPresent([JSONValue].self, forKey: .mediaOverlays); visualBlocks = try c.decodeIfPresent([JSONValue].self, forKey: .visualBlocks); motionScenes = try c.decodeIfPresent([JSONValue].self, forKey: .motionScenes); motionRuntimeHash = try c.decodeIfPresent(String.self, forKey: .motionRuntimeHash); cameraEffects = try c.decodeIfPresent([JSONValue].self, forKey: .cameraEffects); if !c.contains(.carouselMoment) { carouselMoment = .omitted } else if try c.decodeNil(forKey: .carouselMoment) { carouselMoment = .remove } else { carouselMoment = .replace(try c.decode([String: JSONValue].self, forKey: .carouselMoment)) }; title = try c.decodeIfPresent(String.self, forKey: .title); acceptedSuggestionIDs = try c.decodeIfPresent([String].self, forKey: .acceptedSuggestionIDs); copilotReceiptIDs = try c.decodeIfPresent([UUID].self, forKey: .copilotReceiptIDs) ?? []; guidedRevision = try c.decodeIfPresent([String: JSONValue].self, forKey: .guidedRevision); guidedRevisionNumber = try c.decodeIfPresent(Int.self, forKey: .guidedRevisionNumber); retryGuidedRevision = try c.decodeIfPresent(Bool.self, forKey: .retryGuidedRevision) ?? false; editorStateVersion = try c.decodeIfPresent(Int.self, forKey: .editorStateVersion); deletions = try c.decodeIfPresent([EditorDeletion].self, forKey: .deletions); baseGeneration = try c.decodeIfPresent(String.self, forKey: .baseGeneration) ?? ""
+        timelineSlots = try c.decodeIfPresent([JSONValue].self, forKey: .timelineSlots); textElements = try c.decodeIfPresent([JSONValue].self, forKey: .textElements); captionCues = try c.decodeIfPresent([JSONValue].self, forKey: .captionCues); captionMeta = try c.decodeIfPresent([String: JSONValue].self, forKey: .captionMeta); mix = try c.decodeIfPresent([String: JSONValue].self, forKey: .mix); musicTrackID = try c.decodeIfPresent(String.self, forKey: .musicTrackID); removeMusic = try c.decodeIfPresent(Bool.self, forKey: .removeMusic) ?? false; musicWindow = try c.decodeIfPresent(EditorCommitMusicWindow.self, forKey: .musicWindow); backgroundMusic = try c.decodeIfPresent(EditorCommitBackgroundMusic.self, forKey: .backgroundMusic); userSong = try c.decodeIfPresent(EditorCommitUserSong.self, forKey: .userSong); lyrics = try c.decodeIfPresent(EditorCommitLyrics.self, forKey: .lyrics); orientation = try c.decodeIfPresent(String.self, forKey: .orientation); landscapeFit = try c.decodeIfPresent(String.self, forKey: .landscapeFit); soundEffects = try c.decodeIfPresent([JSONValue].self, forKey: .soundEffects); mediaOverlays = try c.decodeIfPresent([JSONValue].self, forKey: .mediaOverlays); visualBlocks = try c.decodeIfPresent([JSONValue].self, forKey: .visualBlocks); motionScenes = try c.decodeIfPresent([JSONValue].self, forKey: .motionScenes); motionRuntimeHash = try c.decodeIfPresent(String.self, forKey: .motionRuntimeHash); cameraEffects = try c.decodeIfPresent([JSONValue].self, forKey: .cameraEffects); if !c.contains(.carouselMoment) { carouselMoment = .omitted } else if try c.decodeNil(forKey: .carouselMoment) { carouselMoment = .remove } else { carouselMoment = .replace(try c.decode([String: JSONValue].self, forKey: .carouselMoment)) }; title = try c.decodeIfPresent(String.self, forKey: .title); acceptedSuggestionIDs = try c.decodeIfPresent([String].self, forKey: .acceptedSuggestionIDs); copilotReceiptIDs = try c.decodeIfPresent([UUID].self, forKey: .copilotReceiptIDs) ?? []; guidedRevision = try c.decodeIfPresent([String: JSONValue].self, forKey: .guidedRevision); guidedRevisionNumber = try c.decodeIfPresent(Int.self, forKey: .guidedRevisionNumber); retryGuidedRevision = try c.decodeIfPresent(Bool.self, forKey: .retryGuidedRevision) ?? false; editorStateVersion = try c.decodeIfPresent(Int.self, forKey: .editorStateVersion); deletions = try c.decodeIfPresent([EditorDeletion].self, forKey: .deletions); baseGeneration = try c.decodeIfPresent(String.self, forKey: .baseGeneration) ?? ""
     }
 }
 
 struct EditorCommitSections: Codable, Sendable, Equatable {
-    var textElements: Bool; var captionMeta: Bool; var timeline: Bool; var mix: Bool; var captionCues: Bool; var music: Bool; var backgroundMusic: Bool; var lyrics: Bool; var orientation: Bool; var soundEffects: Bool; var mediaOverlays: Bool; var visualBlocks: Bool; var motionScenes: Bool; var cameraEffects: Bool; var carouselMoment: Bool; var title: Bool
-    init(textElements: Bool, captionMeta: Bool, timeline: Bool, mix: Bool, captionCues: Bool = false, music: Bool = false, backgroundMusic: Bool = false, lyrics: Bool = false, orientation: Bool = false, soundEffects: Bool = false, mediaOverlays: Bool = false, visualBlocks: Bool = false, motionScenes: Bool = false, cameraEffects: Bool = false, carouselMoment: Bool = false, title: Bool = false) { self.textElements = textElements; self.captionMeta = captionMeta; self.timeline = timeline; self.mix = mix; self.captionCues = captionCues; self.music = music; self.backgroundMusic = backgroundMusic; self.lyrics = lyrics; self.orientation = orientation; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.cameraEffects = cameraEffects; self.carouselMoment = carouselMoment; self.title = title }
-    private enum CodingKeys: String, CodingKey { case textElements = "text_elements"; case captionMeta = "caption_meta"; case timeline, mix; case captionCues = "caption_cues"; case music; case backgroundMusic = "background_music"; case lyrics, orientation; case soundEffects = "sound_effects"; case mediaOverlays = "media_overlays"; case visualBlocks = "visual_blocks"; case motionScenes = "motion_scenes"; case cameraEffects = "camera_effects"; case carouselMoment = "carousel_moment"; case title }
-    init(from decoder: Decoder) throws { let c = try decoder.container(keyedBy: CodingKeys.self); textElements = try c.decodeIfPresent(Bool.self, forKey: .textElements) ?? false; captionMeta = try c.decodeIfPresent(Bool.self, forKey: .captionMeta) ?? false; timeline = try c.decodeIfPresent(Bool.self, forKey: .timeline) ?? false; mix = try c.decodeIfPresent(Bool.self, forKey: .mix) ?? false; captionCues = try c.decodeIfPresent(Bool.self, forKey: .captionCues) ?? false; music = try c.decodeIfPresent(Bool.self, forKey: .music) ?? false; backgroundMusic = try c.decodeIfPresent(Bool.self, forKey: .backgroundMusic) ?? false; lyrics = try c.decodeIfPresent(Bool.self, forKey: .lyrics) ?? false; orientation = try c.decodeIfPresent(Bool.self, forKey: .orientation) ?? false; soundEffects = try c.decodeIfPresent(Bool.self, forKey: .soundEffects) ?? false; mediaOverlays = try c.decodeIfPresent(Bool.self, forKey: .mediaOverlays) ?? false; visualBlocks = try c.decodeIfPresent(Bool.self, forKey: .visualBlocks) ?? false; motionScenes = try c.decodeIfPresent(Bool.self, forKey: .motionScenes) ?? false; cameraEffects = try c.decodeIfPresent(Bool.self, forKey: .cameraEffects) ?? false; carouselMoment = try c.decodeIfPresent(Bool.self, forKey: .carouselMoment) ?? false; title = try c.decodeIfPresent(Bool.self, forKey: .title) ?? false }
+    var textElements: Bool; var captionMeta: Bool; var timeline: Bool; var mix: Bool; var captionCues: Bool; var music: Bool; var backgroundMusic: Bool; var lyrics: Bool; var orientation: Bool; var landscapeFit: Bool; var soundEffects: Bool; var mediaOverlays: Bool; var visualBlocks: Bool; var motionScenes: Bool; var cameraEffects: Bool; var carouselMoment: Bool; var title: Bool
+    /// KRI-428: echoed by servers that know the user_song section; absent = false.
+    var userSong: Bool = false
+    init(textElements: Bool, captionMeta: Bool, timeline: Bool, mix: Bool, captionCues: Bool = false, music: Bool = false, backgroundMusic: Bool = false, lyrics: Bool = false, orientation: Bool = false, landscapeFit: Bool = false, soundEffects: Bool = false, mediaOverlays: Bool = false, visualBlocks: Bool = false, motionScenes: Bool = false, cameraEffects: Bool = false, carouselMoment: Bool = false, title: Bool = false) { self.textElements = textElements; self.captionMeta = captionMeta; self.timeline = timeline; self.mix = mix; self.captionCues = captionCues; self.music = music; self.backgroundMusic = backgroundMusic; self.lyrics = lyrics; self.orientation = orientation; self.landscapeFit = landscapeFit; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.cameraEffects = cameraEffects; self.carouselMoment = carouselMoment; self.title = title }
+    private enum CodingKeys: String, CodingKey { case textElements = "text_elements"; case captionMeta = "caption_meta"; case timeline, mix; case captionCues = "caption_cues"; case music; case backgroundMusic = "background_music"; case lyrics, orientation; case landscapeFit = "landscape_fit"; case soundEffects = "sound_effects"; case mediaOverlays = "media_overlays"; case visualBlocks = "visual_blocks"; case motionScenes = "motion_scenes"; case cameraEffects = "camera_effects"; case carouselMoment = "carousel_moment"; case title; case userSong = "user_song" }
+    init(from decoder: Decoder) throws { let c = try decoder.container(keyedBy: CodingKeys.self); userSong = try c.decodeIfPresent(Bool.self, forKey: .userSong) ?? false; textElements = try c.decodeIfPresent(Bool.self, forKey: .textElements) ?? false; captionMeta = try c.decodeIfPresent(Bool.self, forKey: .captionMeta) ?? false; timeline = try c.decodeIfPresent(Bool.self, forKey: .timeline) ?? false; mix = try c.decodeIfPresent(Bool.self, forKey: .mix) ?? false; captionCues = try c.decodeIfPresent(Bool.self, forKey: .captionCues) ?? false; music = try c.decodeIfPresent(Bool.self, forKey: .music) ?? false; backgroundMusic = try c.decodeIfPresent(Bool.self, forKey: .backgroundMusic) ?? false; lyrics = try c.decodeIfPresent(Bool.self, forKey: .lyrics) ?? false; orientation = try c.decodeIfPresent(Bool.self, forKey: .orientation) ?? false; landscapeFit = try c.decodeIfPresent(Bool.self, forKey: .landscapeFit) ?? false; soundEffects = try c.decodeIfPresent(Bool.self, forKey: .soundEffects) ?? false; mediaOverlays = try c.decodeIfPresent(Bool.self, forKey: .mediaOverlays) ?? false; visualBlocks = try c.decodeIfPresent(Bool.self, forKey: .visualBlocks) ?? false; motionScenes = try c.decodeIfPresent(Bool.self, forKey: .motionScenes) ?? false; cameraEffects = try c.decodeIfPresent(Bool.self, forKey: .cameraEffects) ?? false; carouselMoment = try c.decodeIfPresent(Bool.self, forKey: .carouselMoment) ?? false; title = try c.decodeIfPresent(Bool.self, forKey: .title) ?? false }
 }
 struct EditorCommitResponse: Codable, Sendable {
     let ok: Bool
@@ -922,7 +1012,16 @@ struct KriaAPI: KriaAPIClient {
         try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: nil)
     }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?) async throws -> TurnAccepted {
-        try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState, clipSelection: clipSelection)), decode: TurnAccepted.self)
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: nil)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: nil)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: nil, choiceSelection: choiceSelection)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted {
+        try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection)), decode: TurnAccepted.self)
     }
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread {
         try await request(
@@ -982,7 +1081,7 @@ struct KriaAPI: KriaAPIClient {
     }
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/draft/undo", method: "POST", bodyData: try JSONEncoder().encode(DraftUndoRequest(expectedRevision: expectedRevision)), decode: DraftSnapshot.self) }
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)", method: "GET", bodyData: nil, decode: ApprovalSnapshot.self) }
-    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice)), decode: ApprovalResponse.self) }
+    func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice, outputOrientation: outputOrientation, landscapeFit: landscapeFit)), decode: ApprovalResponse.self) }
     func playbackURL(jobID: UUID) async throws -> URL { let response = try await request(path: "me/jobs/\(jobID.uuidString)/playback-url", method: "GET", bodyData: nil, decode: PlaybackResponse.self); guard let url = URL(string: response.videoURL) else { throw APIError.invalidResponse }; return url }
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws {
         _ = try await request(path: "me/jobs/\(jobID.uuidString)/playback-diagnostics", method: "POST", bodyData: try JSONEncoder().encode(report), decode: EmptyProjectResponse.self)
@@ -1005,7 +1104,10 @@ struct KriaAPI: KriaAPIClient {
     }
     func cancelUpload(reservationID: UUID) async throws { _ = try await request(path: "generative-jobs/uploads/\(reservationID.uuidString)", method: "DELETE", bodyData: nil, decode: UploadCancellation.self) }
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> ProjectUploadReservation {
-        let body = ProjectUploadReservationRequest(files: [.init(filename: filename, contentType: contentType, fileSizeBytes: size, clientUploadID: clientUploadID)])
+        try await reserveProjectUpload(threadID: threadID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size, role: .clip)
+    }
+    func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, role: CreationMediaRole) async throws -> ProjectUploadReservation {
+        let body = ProjectUploadReservationRequest(files: [.init(filename: filename, contentType: contentType, fileSizeBytes: size, clientUploadID: clientUploadID, role: role == .song ? "song" : nil)])
         let reservations = try await request(path: "creation-threads/\(threadID.uuidString)/upload-urls", method: "POST", bodyData: try JSONEncoder().encode(body), decode: [ProjectUploadReservation].self)
         guard let reservation = reservations.first, reservations.count == 1 else { throw APIError.invalidResponse }
         return reservation
@@ -1021,10 +1123,17 @@ struct KriaAPI: KriaAPIClient {
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread {
         try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID, capture: nil)
     }
+    func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, role: CreationMediaRole) async throws -> CreationThread {
+        try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID, capture: nil, wireRole: role == .song ? "song" : nil)
+    }
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread {
+        try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID, capture: capture, wireRole: nil)
+    }
+    private func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?, wireRole: String?) async throws -> CreationThread {
         let kind = contentType.hasPrefix("audio/") ? "audio" : "video"
-        // Filming context belongs to footage; a voiceover never carries it.
-        let media = ProjectMediaInput(mediaID: mediaID, gcsPath: gcsPath, kind: kind, filename: filename, contentType: contentType, capture: kind == "video" ? capture : nil)
+        // Filming context belongs to footage; a voiceover or song never carries it.
+        var media = ProjectMediaInput(mediaID: mediaID, gcsPath: gcsPath, kind: kind, filename: filename, contentType: contentType, capture: kind == "video" ? capture : nil)
+        media.role = wireRole
         let body = ProjectMediaAttachmentRequest(media: [media], clientEventID: clientEventID, expectedRevision: expectedRevision)
         return try await request(path: "creation-threads/\(threadID.uuidString)/media", method: "POST", bodyData: try JSONEncoder().encode(body), decode: CreationThread.self)
     }
@@ -1183,6 +1292,10 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
     case phoneRenderingUnavailable
     case guidedStorySourceStale
     case invalidTextSettings
+    /// KRI-428: the creator's song is gone from this edit; `reason` is the server's own words.
+    case userSongUnavailable(reason: String?)
+    case userSongLipsyncLocked
+    case userSongWindowOutOfRange
     case rejected
 
     var errorDescription: String? {
@@ -1195,6 +1308,13 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "The source changed or is unavailable. Your edits are still here."
         case .invalidTextSettings:
             "Text settings are invalid. Your edits are still here; review text, style, and timing."
+        case .userSongUnavailable(let reason):
+            reason?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmptyString
+                ?? "This edit no longer has a song. Reopen the editor to continue."
+        case .userSongLipsyncLocked:
+            "Lip-sync keeps the song where you filmed it."
+        case .userSongWindowOutOfRange:
+            "That start point runs past the end of your song. Slide it earlier."
         case .rejected:
             "This save was rejected. Your edits are still here."
         }
@@ -1206,6 +1326,9 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
         case .phoneRenderingUnavailable: "phone_rendering_unavailable"
         case .guidedStorySourceStale: "guided_story_source_stale"
         case .invalidTextSettings: "text_validation"
+        case .userSongUnavailable: "user_song_unavailable"
+        case .userSongLipsyncLocked: "user_song_lipsync_locked"
+        case .userSongWindowOutOfRange: "user_song_window_out_of_range"
         case .rejected: "unknown"
         }
     }
@@ -1213,9 +1336,12 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
     fileprivate static func from(responseData data: Data) -> Self {
         guard let detail = (try? JSONDecoder().decode(EditorSaveErrorEnvelope.self, from: data))?.detail else { return .rejected }
         switch detail {
-        case .code("unsupported_phone_edit"): return .unsupportedPhoneEdit
-        case .code("phone_rendering_unavailable"): return .phoneRenderingUnavailable
-        case .code("guided_story_source_stale"): return .guidedStorySourceStale
+        case .code("unsupported_phone_edit", _): return .unsupportedPhoneEdit
+        case .code("phone_rendering_unavailable", _): return .phoneRenderingUnavailable
+        case .code("guided_story_source_stale", _): return .guidedStorySourceStale
+        case .code("user_song_unavailable", let reason): return .userSongUnavailable(reason: reason)
+        case .code("user_song_lipsync_locked", _): return .userSongLipsyncLocked
+        case .code("user_song_window_out_of_range", _): return .userSongWindowOutOfRange
         case .validation(let issues) where issues.contains(where: { $0.loc?.contains(.string("text_elements")) == true }):
             return .invalidTextSettings
         default: return .rejected
@@ -1228,25 +1354,36 @@ private struct EditorSaveErrorEnvelope: Decodable {
 }
 
 private enum EditorSaveErrorDetail: Decodable {
-    case code(String)
+    case code(String, reason: String?)
     case validation([EditorSaveValidationIssue])
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         if let code = try? container.decode(String.self) {
-            self = .code(code)
+            self = .code(code, reason: nil)
         } else if let object = try? container.decode(EditorSaveErrorObject.self), let code = object.code {
-            self = .code(code)
+            self = .code(code, reason: object.reason)
         } else if let issues = try? container.decode([EditorSaveValidationIssue].self) {
             self = .validation(issues)
         } else {
-            self = .code("")
+            self = .code("", reason: nil)
         }
     }
 }
 
 private struct EditorSaveErrorObject: Decodable {
     let code: String?
+    let reason: String?
+    private enum CodingKeys: String, CodingKey { case code, reason }
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        code = try? container.decodeIfPresent(String.self, forKey: .code)
+        reason = try? container.decodeIfPresent(String.self, forKey: .reason)
+    }
+}
+
+private extension String {
+    var nilIfEmptyString: String? { isEmpty ? nil : self }
 }
 
 private struct EditorSaveValidationIssue: Decodable {
@@ -1354,14 +1491,16 @@ private enum ServerDateCoding {
     }
 }
 private struct SubmitTurnRequest: Encodable {
-    let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil; var clipSelection: ClipSelectionSubmission? = nil
-    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection" }
+    let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil; var clipSelection: ClipSelectionSubmission? = nil; var songOrder: SongOrderSubmission? = nil; var choiceSelection: ChoiceSelectionSubmission? = nil
+    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order"; case choiceSelection = "choice_selection" }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(message, forKey: .message); try c.encode(clientEventID, forKey: .clientEventID)
         try c.encode(expectedThreadRevision, forKey: .expectedThreadRevision)
         try c.encodeIfPresent(editorState, forKey: .editorState)
         try c.encodeIfPresent(clipSelection, forKey: .clipSelection)
+        try c.encodeIfPresent(songOrder, forKey: .songOrder)
+        try c.encodeIfPresent(choiceSelection, forKey: .choiceSelection)
     }
 }
 
@@ -1385,6 +1524,8 @@ private struct ApprovalDecisionRequest: Encodable {
     let speechCleanupAware: Bool
     let speechCleanupAnalysisID: String?
     let speechCleanupChoice: String?
+    let outputOrientation: String?
+    let landscapeFit: String?
     enum CodingKeys: String, CodingKey {
         case expectedThreadRevision = "expected_thread_revision"
         case expectedDraftRevision = "expected_draft_revision"
@@ -1392,25 +1533,35 @@ private struct ApprovalDecisionRequest: Encodable {
         case speechCleanupAware = "speech_cleanup_aware"
         case speechCleanupAnalysisID = "speech_cleanup_analysis_id"
         case speechCleanupChoice = "speech_cleanup_choice"
+        case outputOrientation = "output_orientation"
+        case landscapeFit = "landscape_fit"
     }
 }
 private struct UploadCancellation: Decodable { let reservationID: String; let status: String; enum CodingKeys: String, CodingKey { case status; case reservationID = "reservation_id" } }
 private struct UploadReservationRequest: Encodable { let filename: String; let contentType: String; let fileSizeBytes: Int64; let purpose: UploadPurpose?; enum CodingKeys: String, CodingKey { case filename, purpose; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes" } }
 private struct AddClipRequestBody: Encodable { let gcsPath: String; enum CodingKeys: String, CodingKey { case gcsPath = "gcs_path" } }
-private struct ProjectUploadReservationRequest: Encodable { let files: [ProjectUploadFileRequest] }
-private struct ProjectUploadFileRequest: Encodable { let filename: String; let contentType: String; let fileSizeBytes: Int64; let clientUploadID: String; var uploadContract: ProjectMediaUploadContract? = nil; enum CodingKeys: String, CodingKey { case uploadContract = "upload_contract"; case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id" } }
+struct ProjectUploadReservationRequest: Encodable { let files: [ProjectUploadFileRequest] }
+struct ProjectUploadFileRequest: Encodable {
+    let filename: String; let contentType: String; let fileSizeBytes: Int64; let clientUploadID: String
+    var uploadContract: ProjectMediaUploadContract? = nil
+    /// KRI-374: `"song"` for a creator-uploaded song; nil (omitted from the JSON) for footage and voiceover.
+    var role: String? = nil
+    enum CodingKeys: String, CodingKey { case uploadContract = "upload_contract"; case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id"; case role }
+}
 struct ProjectMediaAttachmentRequest: Encodable { let media: [ProjectMediaInput]; let clientEventID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case media; case clientEventID = "client_event_id"; case expectedRevision = "expected_revision" } }
 /// One attached media item. The three optional filming-context fields (KRI-189) are omitted from the JSON
 /// entirely when absent, so a clip without them encodes exactly as before.
 struct ProjectMediaInput: Encodable {
     let mediaID: String; let gcsPath: String; let kind: String; let filename: String; let contentType: String
     var captureTime: String?; var coarseLocation: CoarseLocationWire?; var place: ClipPlaceWire?
+    /// KRI-374: `"song"` for a creator-uploaded song; nil (omitted) for footage and voiceover.
+    var role: String?
     init(mediaID: String, gcsPath: String, kind: String, filename: String, contentType: String, capture: ClipCaptureWire? = nil) {
         self.mediaID = mediaID; self.gcsPath = gcsPath; self.kind = kind; self.filename = filename; self.contentType = contentType
         captureTime = capture?.captureTime; coarseLocation = capture?.coarseLocation; place = capture?.place
     }
     enum CodingKeys: String, CodingKey {
-        case kind, filename, place
+        case kind, filename, place, role
         case mediaID = "media_id"; case gcsPath = "gcs_path"; case contentType = "content_type"
         case captureTime = "capture_time"; case coarseLocation = "coarse_location"
     }
@@ -1704,7 +1855,7 @@ extension DraftSnapshot {
                 "text_elements", "caption_cues", "caption_meta", "captions_enabled", "caption_size_px",
                 "caption_highlight_color", "caption_stroke_width", "caption_shadow_enabled", "caption_editor_style",
                 "caption_margin_v", "caption_y_frac",
-                "music_track_id", "music_window", "background_music", "lyrics", "orientation",
+                "music_track_id", "music_window", "background_music", "lyrics", "orientation", "landscape_fit",
                 "sound_effects", "media_overlays", "visual_blocks", "motion_scenes",
                 "motion_runtime_hash", "camera_effects", "carousel_moment",
             ]

@@ -193,6 +193,10 @@ struct CreationConfirmationStage: View {
     let isBusy: Bool
     var responseStartedAt: Date? = nil
     var conflict: CreationConfirmationConflict? = nil
+    /// KRI-306: the video shapes on offer and the creator's pick. Rides on the
+    /// `generate` action only (the v1 retry / create_without_cleanup actions reject
+    /// the keys), so the picker is shown only where a `generate` button is.
+    var renderShape: (offer: RenderShapeOffer, choice: Binding<RenderShapeChoice>)? = nil
     var refreshDirection: () -> Void = {}
     let action: (String, [String: JSONValue]) -> Void
 
@@ -209,6 +213,22 @@ struct CreationConfirmationStage: View {
     /// removed, re-enrolling) fails the exact same way.
     private var isNonRetryablePhoneGateFailure: Bool {
         isFailure && isNonRetryableFailureCode(thread.lastAssistantErrorCode)
+    }
+
+    /// The speech-cleanup state resolves to a `generate` button (not a retry, a
+    /// failed analysis, or a create-without-cleanup fallback).
+    private var offersGenerate: Bool {
+        guard !isFailure, !isNonRetryablePhoneGateFailure else { return false }
+        guard hasCleanup else { return true }
+        guard analysis["id"]?.stringValue != nil,
+              ["ready", "no_findings"].contains(analysis["status"]?.stringValue ?? "") else { return false }
+        return cleanup["outcome"]?.objectValue?["status"]?.stringValue != "failed"
+    }
+
+    /// `generate` with the creator's video-shape keys merged in; everything else unchanged.
+    private func perform(_ name: String, _ payload: [String: JSONValue]) {
+        guard name == "generate", offersGenerate, let renderShape else { return action(name, payload) }
+        action(name, payload.merging(renderShape.offer.payload(for: renderShape.choice.wrappedValue)) { _, new in new })
     }
 
     private var storyShapeLabel: String? { storyShapeSubtitle(creatorAgent: thread.creatorAgent) }
@@ -244,6 +264,9 @@ struct CreationConfirmationStage: View {
                 Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
             }
             if let conflict { conflictNotice(conflict) }
+            if let renderShape, offersGenerate {
+                VideoShapeCard(offer: renderShape.offer, choice: renderShape.choice, isEnabled: !isBusy)
+            }
             if hasCleanup {
                 if let identifier = analysis["id"]?.stringValue { cleanupActions(identifier: identifier) }
                 else {
@@ -288,7 +311,7 @@ struct CreationConfirmationStage: View {
                 .accessibilityIdentifier("creation-confirmation-phone-gate")
         } else {
             Button(isFailure ? "Retry generation" : "Create this video") {
-                action(isFailure ? "retry" : "generate", payload)
+                perform(isFailure ? "retry" : "generate", payload)
             }.buttonStyle(CanonicalPrimaryButtonStyle()).disabled(isBusy || !hasVideo)
         }
     }
@@ -334,8 +357,8 @@ struct CreationConfirmationStage: View {
                 SpeechCleanupChoiceButtons(
                     stats: SpeechCleanupStats(analysis: analysis),
                     isDisabled: isBusy || !hasVideo,
-                    clean: { action("generate", payload.merging(["speech_cleanup_choice": .string("clean")]) { _, new in new }) },
-                    keepOriginal: { action("generate", payload.merging(["speech_cleanup_choice": .string("keep_original")]) { _, new in new }) }
+                    clean: { perform("generate", payload.merging(["speech_cleanup_choice": .string("clean")]) { _, new in new }) },
+                    keepOriginal: { perform("generate", payload.merging(["speech_cleanup_choice": .string("keep_original")]) { _, new in new }) }
                 )
             } else {
                 retryOrCreateButton(payload: payload)

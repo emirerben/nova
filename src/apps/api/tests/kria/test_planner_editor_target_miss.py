@@ -467,3 +467,54 @@ async def test_validation_error_on_first_path_falls_back_to_copilot(
         user_message="make the title bigger",
     )
     assert result.plan is fallback
+
+
+# KRI-282: a clip-picker answer ("Dodgeball: clip 21" + structured clip_selection) used to
+# be read by the editor copilot as a text edit ("put 'dodgeball' on bar 18"), so the label
+# landed on the wrong clip and the selection was never folded into the clip intents.
+@pytest.mark.parametrize("brief_on", [True, False])
+async def test_clip_selection_answer_never_reaches_the_copilot(
+    monkeypatch: pytest.MonkeyPatch, brief_on: bool
+) -> None:
+    ops = [{"op": "edit_text", "text": "dodgeball", "bar_index": 18}]
+    copilot = AsyncMock(
+        return_value=SimpleNamespace(
+            ops=ops, outcome="proposed", reply="Done.", intent="edit", rejection_reasons=[]
+        )
+    )
+    db, item, creator_id, runs, copilot = _wire_real(
+        monkeypatch, render_status="ready", copilot=copilot
+    )
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", brief_on)
+    result = await planner.plan_live_turn(
+        db,
+        thread_id=uuid.uuid4(),
+        item_id=item._fields["id"],
+        creator_id=creator_id,
+        user_message="Dodgeball: clip 21",
+        answers_clip_question=True,
+    )
+    copilot.assert_not_called()
+    assert len(runs) == 1  # the Main Creator re-planned instead
+    assert not any(
+        getattr(i, "tool_name", "") == "draft.apply_editor_ops" for i in result.plan.intents
+    )
+
+
+async def test_same_short_message_without_selection_still_takes_the_copilot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    copilot = AsyncMock(
+        return_value=SimpleNamespace(
+            ops=[{"op": "edit_text", "text": "dodgeball", "bar_index": 3}],
+            outcome="proposed",
+            reply="Done.",
+            intent="edit",
+            rejection_reasons=[],
+        )
+    )
+    db, item, creator_id, _runs, copilot = _wire_real(
+        monkeypatch, render_status="ready", copilot=copilot
+    )
+    await _ask(db, item, creator_id, "Dodgeball: clip 21")
+    copilot.assert_awaited()

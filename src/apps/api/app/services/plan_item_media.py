@@ -34,6 +34,11 @@ PROTECTED_PLAN_ITEM_MEDIA_FIELDS = frozenset(
         "voiceover_gcs_path",
         "voiceover_generation",
         "voiceover_duration_s",
+        # KRI-374: the creator-uploaded song identity has the same single owner.
+        "song_gcs_path",
+        "song_generation",
+        "song_duration_s",
+        "song_filename",
         "edit_format",
         "audio_mode",
     }
@@ -221,6 +226,10 @@ def mutate_plan_item_media(
     voiceover_gcs_path: str | None | object = _UNSET,
     voiceover_generation: str | None | object = _UNSET,
     voiceover_duration_s: float | None | object = _UNSET,
+    song_gcs_path: str | None | object = _UNSET,
+    song_generation: int | None | object = _UNSET,
+    song_duration_s: float | None | object = _UNSET,
+    song_filename: str | None | object = _UNSET,
     edit_format: str | object = _UNSET,
     audio_mode: str | object = _UNSET,
     current_analysis: Any | None = None,
@@ -264,6 +273,23 @@ def mutate_plan_item_media(
         item.voiceover_generation = voiceover_generation
     if voiceover_duration_s is not _UNSET:
         item.voiceover_duration_s = voiceover_duration_s
+    # The song never feeds the narration resolver (it is not narration), so
+    # these writes cannot change the source fingerprint -- but replacing or
+    # removing one must still invalidate every cached analysis/alignment row.
+    song_changed = False
+    if song_gcs_path is not _UNSET:
+        song_changed = song_changed or item.song_gcs_path != song_gcs_path
+        item.song_gcs_path = song_gcs_path
+    if song_generation is not _UNSET:
+        song_changed = song_changed or item.song_generation != song_generation
+        item.song_generation = song_generation
+    if song_duration_s is not _UNSET:
+        item.song_duration_s = song_duration_s
+    if song_filename is not _UNSET:
+        item.song_filename = song_filename
+    if song_changed:
+        item.song_analysis = None
+        item.song_alignment = None
     if edit_format is not _UNSET:
         item.edit_format = str(edit_format)
     if audio_mode is not _UNSET:

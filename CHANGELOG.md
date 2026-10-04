@@ -2,6 +2,51 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.74.0] - 2026-10-04
+
+### Changed
+- fix(kria): keep every dictated per-shot text in the Creative Brief (#1380) <!-- release-pr: 1380 -->
+
+## [0.78.73.0] - 2026-10-04
+
+### Changed
+- feat(song): volume, start point and remove for the creator's song in the editor (KRI-428) (#1387) <!-- release-pr: 1387 -->
+
+## [0.78.72.0] - 2026-10-04
+
+### Changed
+- fix(song): editor plays the creator's song and the Sounds tab shows it (KRI-374) (#1386) <!-- release-pr: 1386 -->
+
+## [0.78.71.0] - 2026-10-04
+
+### Changed
+- KRI-282 label on chosen clip (#1385) <!-- release-pr: 1385 -->
+
+## [0.78.70.0] - 2026-10-04
+
+### Changed
+- fix(song): creator song never gets a matched library track beside it (KRI-374) (#1384) <!-- release-pr: 1384 -->
+
+## [0.78.69.0] - 2026-10-04
+
+### Changed
+- KRI-282 clip picker UI (#1383) <!-- release-pr: 1383 -->
+
+## [0.78.68.0] - 2026-10-04
+
+### Changed
+- KRI-374: creator-uploaded song montages (background + lip-sync), phone-rendered (#1382) <!-- release-pr: 1382 -->
+
+## [0.78.67.0] - 2026-10-04
+
+### Added
+- feat(ios): choose video shape (vertical/landscape + black bars/crop) before generating and in the editor (KRI-306) (#1373) <!-- release-pr: 1373 -->
+
+## [0.78.66.0] - 2026-10-04
+
+### Changed
+- KRI-282 conflict choice question (#1379) <!-- release-pr: 1379 -->
+
 ## [0.78.65.0] - 2026-10-04
 
 ### Changed

@@ -21,7 +21,6 @@ Both tasks follow the "never raises" invariant:
 
 import math
 import os
-import re
 import subprocess
 import tempfile
 import uuid
@@ -35,6 +34,7 @@ from app.agents._runtime import RefusalError
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
 from app.pipeline.lyric_injector import inject_lyric_overlays
+from app.pipeline.music_beats import detect_music_beats
 from app.pipeline.music_recipe import (
     DEFAULT_WINDOW_S,
     auto_best_section,
@@ -172,78 +172,13 @@ def _coerce_best_start_s(track_config: dict | None) -> float:
 
 
 # ── Music-specific beat detection ────────────────────────────────────────────
+# Lifted to app/pipeline/music_beats.py (KRI-374) so the creator-uploaded-song
+# task can share it. The private alias keeps the existing call site and the
+# tests that patch `app.tasks.music_orchestrate._detect_music_beats` working.
 
 
 def _detect_music_beats(audio_path: str, min_gap_s: float = 0.15) -> list[float]:
-    """Detect beats in a music track via FFmpeg RMS energy peak detection.
-
-    Unlike silencedetect (which looks for silence→loud transitions and fails on
-    continuous music), this uses per-frame RMS energy from astats and finds local
-    peaks above the median energy level. Works for any music with rhythmic content.
-
-    Returns sorted list of beat timestamps in seconds.
-    """
-    cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-v",
-        "error",
-        "-i",
-        audio_path,
-        "-af",
-        "astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
-        "-f",
-        "null",
-        "-",
-    ]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
-        if result.returncode != 0:
-            log.warning("music_beat_detect_ffmpeg_failed", stderr=result.stderr[-500:])
-            return []
-
-        # Parse timestamps and RMS levels from stdout (ametadata file=- writes there)
-        lines = result.stdout.strip().split("\n")
-        frames: list[tuple[float, float]] = []
-        ts = None
-        for line in lines:
-            line = line.strip()
-            if line.startswith("frame:"):
-                m = re.search(r"pts_time:([\d.]+)", line)
-                if m:
-                    ts = float(m.group(1))
-            elif "RMS_level" in line and ts is not None:
-                m = re.search(r"=(-?\d+\.?\d*)", line)
-                if m:
-                    try:
-                        frames.append((ts, float(m.group(1))))
-                    except ValueError:
-                        pass  # skip unparseable values like bare "-"
-
-        if len(frames) < 10:
-            log.warning("music_beat_detect_too_few_frames", count=len(frames))
-            return []
-
-        # Find energy peaks: above median + 3dB, higher than both neighbors
-        energies = [e for _, e in frames]
-        median_e = sorted(energies)[len(energies) // 2]
-        threshold = median_e + 3.0  # 3dB above median
-
-        beats: list[float] = []
-        for i in range(1, len(frames) - 1):
-            t, e = frames[i]
-            _, e_prev = frames[i - 1]
-            _, e_next = frames[i + 1]
-            if e > e_prev and e > e_next and e > threshold:
-                if not beats or (t - beats[-1]) > min_gap_s:
-                    beats.append(t)
-
-        log.info("music_beat_detect_done", count=len(beats), threshold=round(threshold, 1))
-        return beats
-
-    except Exception as exc:
-        log.warning("music_beat_detect_failed", error=str(exc))
-        return []
+    return detect_music_beats(audio_path, min_gap_s)
 
 
 # ── analyze_music_track_task ──────────────────────────────────────────────────

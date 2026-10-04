@@ -127,6 +127,8 @@ struct NativeEditorView: View {
             .navigationBarBackButtonHidden(true)
             .sheet(item: $inspector) { inspector in
                 NativeEditorInspectorView(inspector: inspector, session: session)
+                    // The sheet is its own presentation; hand it the editor's text size explicitly.
+                    .environment(\.dynamicTypeSize, dynamicTypeSize)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
@@ -258,7 +260,8 @@ struct NativeEditorView: View {
                 onBack: requestBack, onChat: conversation == nil ? requestBack : onBack,
                 onSaveToPhotos: { Task { await exporter.saveToPhotos(from: session, api: model.api, deviceLocalFile: deviceLocalFile) } },
                 onShare: { Task { await exporter.share(from: session, api: model.api, deviceLocalFile: deviceLocalFile) } },
-                beforeSave: { if captionEditing { panelLifecycle.prepareToClose(); resignKeyboard() } }
+                beforeSave: { if captionEditing { panelLifecycle.prepareToClose(); resignKeyboard() } },
+                onVideoShape: { changePanel(to: nil); inspector = .videoShape }
             )
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
             VStack(spacing: 0) {
@@ -862,12 +865,15 @@ private enum NativeEditorInspector: Identifiable {
     case tool(NativeEditorTool)
     case selection(EditorSelection)
     case adjust
+    /// KRI-306: Vertical / Landscape and Black bars / Crop for the finished video.
+    case videoShape
 
     var id: String {
         switch self {
         case .tool(let tool): return "tool-\(tool.rawValue)"
         case .selection(let selection): return "selection-\(selection.kind.rawValue)-\(selection.id)"
         case .adjust: return "adjust"
+        case .videoShape: return "video-shape"
         }
     }
 
@@ -886,6 +892,7 @@ private enum NativeEditorInspector: Identifiable {
             case .carousel: return "Carousel"
             }
         case .adjust: return "Adjust"
+        case .videoShape: return "Video shape"
         }
     }
 
@@ -911,6 +918,7 @@ private struct NativeEditorInspectorView: View {
                 case .tool: NativeEditorUnavailableView(title: "Editor", reason: "This tool is not available for the current render.", systemImage: "lock")
                 case .selection(let selection): NativeSelectionInspector(selection: selection, session: session)
                 case .adjust: NativeAdjustInspector(session: session)
+                case .videoShape: NativeVideoShapeInspector(session: session)
                 }
             }
             .navigationTitle(inspector.title)
@@ -1126,7 +1134,17 @@ private struct NativeSoundsControls: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if session.document.music == nil {
+            if let song = session.yourSong {
+                // KRI-374: the creator's own song is the soundtrack; no catalog entry, mix or alignment applies.
+                NativeEditorYourSongRow(song: song, session: session)
+            } else if session.userSongRemoved {
+                // KRI-428: removed but unsaved. No catalog controls: the variant is reference-only, and
+                // Undo (or leaving without saving) brings the song back.
+                Label(NativeEditorYourSong.removedHelperCopy, systemImage: "speaker.wave.2")
+                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("native-editor-your-song-removed")
+            } else if session.document.music == nil {
                 Text("Add music").font(KriaFont.body(15).weight(.semibold))
                 TextField("Music track ID", text: $panelDrafts.musicTrackID)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -1160,7 +1178,7 @@ private struct NativeSoundsControls: View {
                 .accessibilityIdentifier("native-editor-music-volume")
                 .disabled(!session.canEditMix)
             }
-            if !session.canEditMix {
+            if session.yourSong == nil, !session.userSongRemoved, !session.canEditMix {
                 Label("Music level is unavailable for this edit. Existing audio stays unchanged.", systemImage: "lock")
                     .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
                     .fixedSize(horizontal: false, vertical: true)

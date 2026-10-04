@@ -2138,6 +2138,172 @@ guided-story media imports). Saved media keeps rendering either way.
 Tests: `tests/routes/test_phone_voiceover_editor_media.py`; iOS
 `NativeEditorSessionTests.testPhoneVoiceoverEdit*`.
 
+## Your song montages (KRI-374)
+
+A creator attaches their own song to a phone montage ("Add your song" in the
+attachment sheet). The prompt picks the mode; there is no toggle. Phone only:
+the cloud renderer never plays a creator song, and dispatch refuses it.
+
+Flow:
+
+1. **Attach.** `POST /creation-threads/.../media` with `role: "song"` stores
+   `PlanItem.song_gcs_path/generation/duration_s/filename` (separate from the
+   voiceover columns, so narration routing never fires) and sets
+   `audio_mode = "song"`. A second song is `409 song_exists`; removing it moves
+   `audio_mode` back to `kria`. The song always uploads full bytes (the server
+   needs them for beats, words and the grant), never through the proxy contract.
+2. **Analyse.** `tasks.analyze_user_song` writes `PlanItem.song_analysis`
+   (beats, whisper word timings grouped into lyric lines; no lyrics is fine).
+   `tasks.align_user_song_takes` writes `PlanItem.song_alignment`: where each
+   raw take sits in the song, `song_time = take_time + delta_s`. Both are
+   background, idempotent, never fatal; a failure is recorded on the row.
+3. **Intent.** Main Creator sets `audio_strategy = "user_song"` and
+   `song_sync = "lipsync" | "background"` (lip-sync cues such as "lip sync",
+   "singing along", "mouthing the words" mean lip-sync; anything else is
+   background). A missing `song_sync` is repaired to `background` with a notice.
+4. **Gate (lip-sync only).** `kria/planner._song_order_gate` waits up to
+   `SONG_ALIGNMENT_TURN_DEADLINE_S` (45 s) for the alignment, then replies "still
+   checking your clips". Any take that is not `confident` produces a
+   `song_order_question` (video widgets in a proposed order); the creator's answer
+   is written onto the strategy as server-owned `resolved_song_takes`. All takes
+   confident means no question.
+5. **Render.** `_run_phone_unified_montage_job` branches on
+   `all_candidates["user_song"]` (`gcs_path, generation, duration_s, sync`):
+   - `background`: `plan_unified_montage(song_*)`. The total is capped at the song
+     length, the window is `auto_best_section`, and cuts are pre-snapped to the
+     window's beats.
+   - `lipsync`: `plan_lipsync_montage`. Takes are tiled in song order (a take
+     covers `delta + 0.3 s ... delta + duration - 0.3 s`; switches only inside an
+     overlap, on a lyric line or beat; segments of at least 1.0 s), and the window
+     is the covered span, capped at 120 s. Gaps are bridged (up to 0.6 s), filled
+     with muted B-roll (unmatched takes, then Visuals), or split. The receipt on
+     `unified_montage.user_song` lists what was left out and why.
+   Stale or missing analysis/alignment is computed inline
+   (`user_song.ensure_song_alignment`), and a take whose proxy generation changed
+   since it was aligned is dropped to unmatched. `apply_resolved_song_takes` folds
+   the creator's answer back onto the alignment so an uncertain take is only ever
+   placed at a position the creator confirmed; otherwise it is B-roll.
+6. **Compile.** `_run_phone_guided_job` rechecks `phone_user_song_supported()`,
+   re-reads the item (`_resolve_phone_song_bed`: audio mode, exact generation and
+   duration), pins and hashes the generation (`inspect_song_asset`), and
+   `compile_phone_guided_plan(song=...)` emits a `SongRenderAsset` plus a
+   `TimelineTrack(id="song")` starting at `window_start_s`, with
+   `AudioMixRecipe(original_volume=0.0, music_asset_id=song)`. Camera audio is
+   always muted. Fades: background 0.5 s in/out; lip-sync 0.05 s in, 0.3 s out.
+7. **Device fetch.** `POST /jobs/{id}/device-render/assets` for a `song` asset
+   (`_song_download_url`): the job's own item only (otherwise 404), still in
+   `song` mode with the exact pinned generation (otherwise `409 Song changed`).
+
+Lip-sync invariant: for every take cut,
+`source_start - timeline_start == window_start - delta` within 1 ms. The compiler
+re-derives it (`resync_lipsync_moments`) after frame rounding and on every editor
+Save; the device refit may only shorten a take's END, never move its start
+(`compile_phone_guided_plan` fails closed otherwise).
+
+Editor: a Save keeps the song and re-windows it to the committed duration from the
+same start. Lip-sync takes are refused at a non-1.0 speed, and a Save that would
+move a take to a song position before it was filmed is a `422
+unsupported_phone_edit` with a plain-language reason (squeezing or stretching a
+whole lip-sync montage is refused for the same reason). Background clips edit
+normally.
+
+Editor song controls (KRI-428): the Sounds tab edits the creator's own song through
+one Save section, `user_song: {volume?, window_start_s?, removed}` (all optional,
+`extra="forbid"`). Capabilities appear only while the variant's CURRENT plan has a
+song: `user_song: {volume, window, remove}`, each an `operation()` entry. The
+choices live on the guided revision (`GuidedEditorRevision.user_song`, omitted when
+unset so older revisions keep their state hash) and are replayed by
+`compile_guided_runtime_plan` onto the immutable approved plan on every Save.
+`UserSongPlan.volume` (0-1, omitted at 1.0) carries the volume to
+`_pinned_song_bed`, so no Save resets it.
+
+- **Volume.** 0-1 in both modes (the song track's clip volume).
+- **Start point.** Background only. The window keeps the video's length and slides
+  over the song; a start that puts the end past the song (including a
+  later duration change that pushes an already-set start past it) is `422
+  user_song_window_out_of_range` ("That edit runs past the end of your song."). Cuts are
+  KEPT: they are not re-snapped to the new window's beats, so a moved start can
+  land cuts off the beat (quality loss only, no re-plan). Lip-sync is locked (each
+  take's source offset depends on the start): a moved start is `422
+  user_song_lipsync_locked`; echoing the unchanged start is fine, and volume still
+  works. `removed: true` wins over every other field in the section (a moved start on a
+  lip-sync song is then a plain removal).
+- **Remove.** Both modes. The song and its track go away and the camera's own sound
+  returns at its normal level (a lip-sync take then plays the creator singing). This
+  is per-edit: `PlanItem.song_*` stays, so a chat re-plan can bring the song back.
+  Library music removal writes `audio.level = 0`, which would MUTE the phone's
+  camera; song removal deliberately leaves `editor_audio_level` at 1.0 and forces
+  `preserve_source_audio`.
+- A `user_song` section on a variant with no song (including after removal) is `422
+  user_song_unavailable`; authored/legacy guided paths reject it. Catalog-music
+  sections (`music_track_id`, `remove_music`, `music_window`, `background_music`,
+  `mix`) are still refused on reference-only guided plans.
+
+Deploy skew: `GuidedEditorRevision` is `extra="forbid"`, so deploy the API first, and do
+not roll the API back once any song edit has been saved (older code cannot load a
+revision carrying `user_song`).
+
+Guards: `tests/routes/test_phone_song_editor_commit.py` (KRI-428 block; drives the
+real `prepare_editor_commit` -> `prepare_phone_editor_commit` ->
+`compile_phone_guided_plan` path, never a stubbed commit),
+`tests/routes/test_song_reference.py`, `tests/schemas/test_guided_edit_revision.py`.
+
+Flags and rollout:
+
+- `USER_SONG_MONTAGE_ENABLED` (default `true`; no users depended on it before
+  launch). Off: capabilities hide `media.song` and `song_order_questions`, the
+  policy refuses `user_song`, dispatch refuses with `user_song_unavailable`.
+  Apply: `fly secrets set USER_SONG_MONTAGE_ENABLED=false --app nova-video` +
+  restart (api + worker).
+- `phone_user_song_supported()` additionally needs `musicBed` and `audioMix` in
+  `PHONE_RENDER_VERIFIED_FEATURES` (both already in prod).
+- The affordance is offered only to clients at or above
+  `KRIA_MINIMUM_CLIENT_PROTOCOL`, because older builds cannot decode the `"song"`
+  asset.
+- Thresholds (settings, `song_align_*`): confident = `peak_z >= 8` and
+  `peak_ratio >= 1.5` and the drift check (`song_align_drift_tolerance_s` 0.04
+  s) passes and (text anchors agree within 0.15 s, or `peak_z >= 12` and
+  `peak_ratio >= 2`). Text alone never makes a take confident.
+  `SONG_ALIGNMENT_PROXY_OFFSET_S` (default 0) is added to every delta to absorb a
+  measured analysis-proxy vs original audio offset (AAC priming, `.mov` edit
+  lists); measure it with the device fixture before relying on frame-exact sync.
+  `USER_SONG_MAX_DURATION_S` (600) caps the upload; a montage is capped at 120 s.
+
+Troubleshooting:
+
+- **`user_song_unavailable` (`phone_user_song_unavailable`) at generate.** The item
+  is not rendering on the phone (cloud destination, no analysis-proxy footage), or
+  `phone_user_song_supported()` is false: check the flag and
+  `PHONE_RENDER_VERIFIED_FEATURES` contains `musicBed` and `audioMix`.
+- **`phone_plan_unsupported` with "couldn't find where any of your clips...".**
+  `LipsyncPlanError.no_synced_takes`: nothing aligned. Check the job's
+  `unified_montage.user_song` receipt and `PlanItem.song_alignment` (statuses,
+  `peak_z`, `peak_ratio`). A take filmed without the song audible, or a silent
+  take, is `unmatched`. The planner never places a guess.
+- **"Your song was replaced after this edit was approved".** The item's
+  `song_generation` or duration no longer matches the approved plan; the creator
+  must ask for the edit again.
+- **Grant returns 409 `Song changed`.** The song was removed or replaced after the
+  recipe was pinned; regenerate.
+- **The turn keeps saying it is still checking clips.** The alignment did not land
+  inside the deadline: check the `asset_analysis` queue worker and
+  `tasks.align_user_song_takes` logs. The render path computes it inline if it is
+  still missing.
+
+Known limits: the aligner was validated on synthetic material only, with no
+pre-registered accuracy gate on real creator takes (follow-up ticket); the
+authored-timeline editor (`editor_timeline_mode == "authored"`) does not carry the
+song track forward; a dedicated song-anchored review screen (waveform, nudge) and
+cloud rendering of creator songs are out of scope; song rights are the creator's
+responsibility and stated in the UI copy.
+
+Tests: `tests/pipeline/test_song_alignment.py`,
+`tests/pipeline/test_lipsync_montage.py`, `tests/pipeline/test_phone_song_lane.py`,
+`tests/pipeline/test_user_song_integration.py` (aligner -> planner -> compiler),
+`tests/tasks/test_user_song_montage_job.py` (worker, both modes),
+`tests/routes/test_device_render.py` (`test_song_download_*`),
+`tests/routes/test_phone_song_editor_commit.py`.
+
 ## Planning-time phone repair + failure split (KRI-286)
 
 Phone-inexpressible plans used to fail only after approval. Now:

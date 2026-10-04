@@ -1650,6 +1650,36 @@ def test_live_planner_failure_is_projected_as_a_retryable_turn_failure(
     publish.assert_not_called()
 
 
+@pytest.mark.parametrize("answers", [True, False])
+def test_clip_selection_turn_tells_the_planner_to_replan(
+    monkeypatch: pytest.MonkeyPatch, answers: bool
+) -> None:
+    """KRI-282: a clip-picker answer is flagged so the planner skips the copilot."""
+    events: list[str] = []
+    _record_planning_engines(monkeypatch, events)
+    seen: dict = {}
+
+    async def _plan(_db, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        seen.update(kwargs)
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "kria_clip_selection_questions_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime.plan_live_turn", _plan)
+    with (
+        patch(
+            "app.tasks.kria_runtime._claim",
+            return_value=(_live_turn_snapshot(), "Dodgeball: clip 21", 3, 8, None, answers),
+        ),
+        patch("app.tasks.kria_runtime._fail_turn"),
+        patch.object(run_kria_turn, "apply_async"),
+        pytest.raises(RuntimeError, match="stop here"),
+    ):
+        run_kria_turn.run(str(uuid.uuid4()))
+
+    assert seen.get("answers_clip_question", False) is answers
+
+
 @pytest.mark.parametrize("successor", [None, "5c3f7d1e-3b1a-4f7e-9d2c-8a6b4e2f1c0d"])
 def test_turn_out_of_claims_is_not_planned_and_publishes_its_successor(
     successor: str | None,

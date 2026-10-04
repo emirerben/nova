@@ -311,3 +311,32 @@ class PhoneNarrationBed(BaseModel):
     # .voiceover_duration_s`, probed once at registration -- the generation
     # is immutable so that probe cannot drift from these exact bytes).
     duration_s: float = Field(gt=0, le=1800)
+
+
+class PhoneSongBed(BaseModel):
+    """A resolved, immutable creator-song receipt ready to compile into a phone
+    recipe's song audio track (KRI-374).
+
+    Catalog-free: the song is private creator media addressed by plan item (see
+    `app.kria.render_assets.SongRenderAsset`). Built by the worker's
+    `_resolve_phone_song_bed`, which re-reads the owning `PlanItem`'s CURRENT
+    `song_gcs_path`/`song_generation` and pins the exact generation +
+    fingerprint; the compiler then only reads this already-verified value and
+    re-checks it against the plan's own pinned `UserSongPlan`.
+
+    ``window_start_s`` / the fades are optional overrides: omitted, the compiler
+    uses the approved plan's window and the mode's default fades (background
+    0.5 s in/out; lip-sync 0.05 s in, 0.3 s out).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    plan_item_id: str = Field(min_length=1, max_length=160)
+    generation: str = Field(min_length=1, max_length=160)
+    fingerprint: RenderFingerprint
+    # The server-verified duration of the whole uploaded song.
+    duration_s: float = Field(gt=0, le=1800)
+    window_start_s: float | None = Field(default=None, ge=0)
+    volume: float = Field(default=1.0, ge=0, le=2)
+    fade_in_s: float | None = Field(default=None, ge=0, le=60)
+    fade_out_s: float | None = Field(default=None, ge=0, le=60)

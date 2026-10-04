@@ -529,8 +529,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             // An un-chosen clip is not a failure: surfacing "Swift.CancellationError error 1" would
             // tell the user something broke when they did exactly what they meant to.
             if error is CancellationError || Task.isCancelled { return false }
-            lastError = error.localizedDescription
-            recordFailure(id: recordID, projectID: projectID, role: role, filename: Self.displayFilename(fileURL.lastPathComponent), message: error.localizedDescription, selectionKey: failureKey)
+            let message = CreationUploadError.message(for: error, role: role)
+            lastError = message
+            recordFailure(id: recordID, projectID: projectID, role: role, filename: Self.displayFilename(fileURL.lastPathComponent), message: message, selectionKey: failureKey)
             return false
         }
     }
@@ -1436,16 +1437,26 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         for _ in 0..<2 {
             do {
                 let current = try await api.project(threadID: record.projectID)
-                let attachedThread = try await api.attachProjectMedia(
-                    threadID: record.projectID,
-                    mediaID: mediaID,
-                    gcsPath: gcsPath,
-                    filename: record.filename,
-                    contentType: contentType,
-                    expectedRevision: current.revision,
-                    clientEventID: "ios-attach-\(record.id.uuidString)",
-                    capture: capture
-                )
+                // KRI-374: only a song carries a server role; footage and voiceover attach exactly as before.
+                let attachedThread: CreationThread
+                if record.role == .song {
+                    attachedThread = try await api.attachProjectMedia(
+                        threadID: record.projectID, mediaID: mediaID, gcsPath: gcsPath, filename: record.filename,
+                        contentType: contentType, expectedRevision: current.revision,
+                        clientEventID: "ios-attach-\(record.id.uuidString)", role: .song
+                    )
+                } else {
+                    attachedThread = try await api.attachProjectMedia(
+                        threadID: record.projectID,
+                        mediaID: mediaID,
+                        gcsPath: gcsPath,
+                        filename: record.filename,
+                        contentType: contentType,
+                        expectedRevision: current.revision,
+                        clientEventID: "ios-attach-\(record.id.uuidString)",
+                        capture: capture
+                    )
+                }
                 // Publish the authoritative media_count before removing the
                 // pending record so clip capacity never briefly reopens.
                 if record.role == .clip {
@@ -1465,7 +1476,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 lastAttachmentError = error
             }
         }
-        let message = lastAttachmentError?.localizedDescription ?? "The uploaded footage could not be attached to this project."
+        let message = lastAttachmentError.map { CreationUploadError.message(for: $0, role: record.role) } ?? "The uploaded footage could not be attached to this project."
         lastError = message
         // KRI-194: this was `lastError`-only, so an attach failure for one clip could sit
         // hidden behind another clip's still-showing failure line.
@@ -1533,6 +1544,10 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             guard let itemID else { throw APIError.invalidResponse }
             let target = try await api.reserveVisualUpload(itemID: itemID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size)
             return (ProjectUploadReservation(mediaID: target.reservationID, uploadURL: target.uploadURL, gcsPath: target.gcsPath, contentType: contentType, uploadHeaders: target.uploadHeaders), target.reservationID)
+        }
+        // KRI-374: a song declares its role so the server can refuse a disabled or second song before the upload.
+        if role == .song {
+            return (try await api.reserveProjectUpload(threadID: projectID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size, role: .song), nil)
         }
         return (try await api.reserveProjectUpload(threadID: projectID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size), nil)
     }
@@ -1702,6 +1717,26 @@ struct PreparingUpload: Codable, Sendable, Equatable {
 }
 
 enum CreationUploadError: LocalizedError {
+    /// KRI-374: what the creator reads when the server refuses their song, at reservation OR attach. The server
+    /// answers 404 ("Your own song is unavailable") when the feature is off for the account and 409 `song_exists`
+    /// when the video already has one. Nil for any other failure, which keeps its generic copy.
+    static func songRefusalMessage(for error: Error) -> String? {
+        guard let api = error as? APIError else { return nil }
+        switch api {
+        case .requestFailed(404, let detail) where detail.message?.localizedCaseInsensitiveContains("song") == true:
+            return "Adding your own song isn’t available right now."
+        case .conflict(let detail) where detail.message == "song_exists" || detail.code == "song_exists":
+            return "This video already has a song. Remove it first to use a different one."
+        default:
+            return nil
+        }
+    }
+
+    /// The failure line for an upload: the song-specific copy for a song, the error's own text otherwise.
+    static func message(for error: Error, role: CreationMediaRole) -> String {
+        (role == .song ? songRefusalMessage(for: error) : nil) ?? error.localizedDescription
+    }
+
     case unsupportedType, tooLarge, proxyContractUnavailable
     var errorDescription: String? {
         switch self {
@@ -1755,6 +1790,22 @@ enum CreationUploadError: LocalizedError {
 
     static func discard(recordID: UUID) {
         try? FileManager.default.removeItem(at: url(recordID: recordID))
+    }
+
+    /// The device-owned original for a media id, when this iPhone still has it (phone-rendering projects keep
+    /// originals in the project directory, so a chat reopened after a cache purge can still show the clip).
+    static func localOriginal(mediaID: String, projectID: UUID) -> URL? {
+        SourceAssetStore(project: BackgroundUploadCoordinator.projectDirectory(projectID)).localFileIfPresent(mediaID: mediaID)
+    }
+
+    /// A cached thumbnail, or -- when the Caches copy is gone (OS purge, reinstall, another device) -- one
+    /// regenerated from the local original and cached again. nil only when nothing local exists to draw from.
+    static func image(mediaID: String, projectID: UUID?) async -> UIImage? {
+        let cached = url(mediaID: mediaID)
+        if let image = UIImage(contentsOfFile: cached.path) { return image }
+        guard let projectID, let original = localOriginal(mediaID: mediaID, projectID: projectID) else { return nil }
+        await save(localURL: original, mediaID: mediaID)
+        return UIImage(contentsOfFile: cached.path)
     }
 
     @discardableResult

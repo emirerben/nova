@@ -39,14 +39,16 @@ from pydantic import (
 )
 from sqlalchemy import func, select
 
-from app.kria.brief_route import wants_filming_time_text
+from app.kria.brief_route import loose_text, wants_filming_time_text
 from app.models import CreativeBriefVersion
 
 RequirementKind = Literal["text", "order", "select", "timing", "audio", "style"]
 RequirementStatus = Literal["open", "met", "partial", "not_possible", "superseded"]
 Route = Literal["replan", "editor_ops"]
 
-MAX_UPDATES_PER_TURN = 8
+# Two titles plus six dictated shot texts used all of the old 8, so a duration
+# or "no stock images" ask in the same message was cut (KRI-422).
+MAX_UPDATES_PER_TURN = 16
 MAX_LIVE_REQUIREMENTS = 40
 MAX_BRIEF_REQUEST_CHARS = 9_000
 _SCOPE_RE = re.compile(r"^(title|per_clip|global|clip:[A-Za-z0-9._:-]{1,100})$")
@@ -56,6 +58,19 @@ _MAX_FACTS_BYTES = 2_000
 def _nfc(value: str) -> str:
     """Turkish (and every other) text stays NFC; never folded to ASCII."""
     return unicodedata.normalize("NFC", value).strip()
+
+
+_LIST_MARKER = re.compile(r"^\s*\d{1,3}\s*[.):-]\s*")
+_EDGE_PUNCT = re.compile(r"^[\W_]+|[\W_]+$")
+
+
+def _shot_key(description: str) -> str:
+    """Match key for a described shot: "1. The Bookshop photo:" == "the bookshop photo".
+
+    Only used to compare requirements; the stored description keeps the
+    creator's own spelling.
+    """
+    return _EDGE_PUNCT.sub("", loose_text(_LIST_MARKER.sub("", description)))
 
 
 class _BriefModel(BaseModel):
@@ -120,7 +135,26 @@ class BriefRequirement(_BriefModel):
         return self.status != "superseded"
 
     @property
-    def key(self) -> tuple[str, str]:
+    def is_shot_text(self) -> bool:
+        """Exact words the creator dictated for one described shot.
+
+        "1. The bookshop photo: "..." 2. The bowling video: "..."" arrives as one
+        per-clip text per shot, each with the words (`literal`) and the shot
+        (`description`). A rule that fills every clip has no such pair.
+        """
+        return bool(
+            self.kind == "text" and self.scope == "per_clip" and self.literal and self.description
+        )
+
+    @property
+    def key(self) -> tuple[str, ...]:
+        """A later requirement with the same key supersedes this one.
+
+        Dictated shot texts are keyed by their shot too, so six shots in one
+        message all stay live and restating a shot replaces only that shot.
+        """
+        if self.is_shot_text:
+            return (self.kind, self.scope, _shot_key(self.description or ""))
         return (self.kind, self.scope)
 
     def text(self) -> str:
@@ -170,22 +204,28 @@ def merge_requirements(
     old: Iterable[BriefRequirement],
     new: Iterable[BriefRequirement],
 ) -> list[BriefRequirement]:
-    """Return the next ledger: a later requirement with the same (kind, scope)
-    supersedes the earlier one.
+    """Return the next ledger: a later requirement with the same key supersedes
+    the earlier one.
+
+    The key is (kind, scope), plus the shot for a dictated shot text (see
+    ``BriefRequirement.key``). A new (kind, scope)-keyed requirement also
+    supersedes every older shot text under that (kind, scope): "label each clip
+    with the place" replaces the whole per-clip lane, as it always did.
 
     ``old`` items already superseded in a prior version are dropped (they live
     in the older version rows); items superseded *by this merge* are kept,
     flagged, so the transition is visible in the new version. Two entries in
     ``new`` with the same key collapse to the last one.
     """
-    fresh: dict[tuple[str, str], BriefRequirement] = {}
+    fresh: dict[tuple[str, ...], BriefRequirement] = {}
     for req in new:
         fresh[req.key] = req.model_copy(update={"status": "open"})
+    whole_lanes = {key for key in fresh if len(key) == 2}
     merged: list[BriefRequirement] = []
     for req in old:
         if not req.live:
             continue
-        if req.key in fresh:
+        if req.key in fresh or req.key[:2] in whole_lanes:
             merged.append(req.model_copy(update={"status": "superseded"}))
         else:
             merged.append(req)

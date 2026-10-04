@@ -41,6 +41,7 @@ from app.schemas.edit_proposal import (
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
 )
+from app.schemas.user_song import UserSongPlan
 
 log = structlog.get_logger()
 
@@ -85,6 +86,12 @@ _DIRECTION_POLICY = {
 
 def _story_canvas(orientation: str | None) -> Canvas:
     return LANDSCAPE if orientation == "landscape" else PORTRAIT
+
+
+# KRI-428: creator-song edit refusals that the phone Save passes through to the editor
+# unchanged (a dedicated code, not the generic `unsupported_phone_edit`).
+USER_SONG_WINDOW_OUT_OF_RANGE = "user_song_window_out_of_range"
+USER_SONG_LIPSYNC_LOCKED = "user_song_lipsync_locked"
 
 
 class GuidedStoryError(RuntimeError):
@@ -238,6 +245,9 @@ class GuidedStoryExecutionPlan(BaseModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    # KRI-374: the creator's own song (background bed or lip-sync master clock).
+    # Omitted when None so every earlier plan replays byte-identically.
+    user_song: UserSongPlan | None = Field(default=None, exclude_if=lambda value: value is None)
     # Optional post-approval runtime projection. Caption presentation can also
     # be seeded by approved narration; v2 revisions override it without changing
     # the canonical per-word cue identities.
@@ -267,6 +277,18 @@ class GuidedStoryExecutionPlan(BaseModel):
             self.song_reference is not None or self.song_reference_track_duration_s is not None
         ):
             raise ValueError("legacy song plans cannot carry an external reference")
+        if self.user_song is not None:
+            if (
+                self.music is not None
+                or self.song_reference is not None
+                or self.narration is not None
+            ):
+                raise ValueError(
+                    "a creator song cannot be combined with catalog music, a song "
+                    "reference, or a recorded voiceover"
+                )
+            if abs(self.user_song.window_duration_s - float(self.resolved_duration_s)) > 0.001:
+                raise ValueError("the song window must cover the resolved video duration")
         if (self.song_reference is None) != (self.song_reference_track_duration_s is None):
             raise ValueError("song reference requires its pinned catalog duration")
         if self.song_reference is not None:
@@ -709,10 +731,16 @@ def plan_preserves_source_audio(plan: Mapping[str, Any] | GuidedStoryExecutionPl
         montage_audio = plan.get("montage_audio")
         narration = plan.get("narration")
         version = plan.get("compiler_version", 0)
+        user_song = plan.get("user_song")
     else:
         montage_audio = plan.montage_audio
         narration = plan.narration
         version = plan.compiler_version
+        user_song = plan.user_song
+    if user_song is not None:
+        # The creator's song is the whole soundtrack (KRI-374): camera audio is
+        # muted whatever `montage_audio` says, so the receipt must not claim it.
+        return False
     if montage_audio is not None:
         return bool(montage_audio.get("preserve_source_audio"))
     return version >= 6 and narration is None
@@ -2069,6 +2097,26 @@ def _compile_execution_plan_version(
                 "guided_story_duration_impossible",
                 "Fast montage cut durations do not match the approved duration.",
             )
+        if snapshot.user_song is not None:
+            # Lip-sync: each take's source start belongs to the take's pinned song
+            # offset, not to the (independently ms-rounded) cut it was planned in.
+            from app.pipeline.lipsync_montage import (  # noqa: PLC0415
+                LipsyncSyncError,
+                resync_moment_rows,
+            )
+
+            try:
+                moments = resync_moment_rows(
+                    moments,
+                    snapshot.user_song,
+                    source_durations={
+                        ref.media_id: float(ref.duration_s)
+                        for ref in snapshot.media
+                        if ref.duration_s is not None
+                    },
+                )
+            except LipsyncSyncError as exc:
+                raise GuidedStoryError("guided_story_snapshot_invalid", str(exc)) from exc
         if quick_mixed_timing:
             cursor = _quantize_quick_mixed_timeline(
                 moments,
@@ -2132,6 +2180,7 @@ def _compile_execution_plan_version(
                     else None
                 ),
                 narration=snapshot.narration,
+                user_song=snapshot.user_song,
                 editor_caption_meta=_narration_caption_meta(snapshot),
             )
         except Exception as exc:  # noqa: BLE001
@@ -2305,6 +2354,7 @@ def _compile_execution_plan_version(
                 else None
             ),
             narration=snapshot.narration,
+            user_song=snapshot.user_song,
             editor_caption_meta=_narration_caption_meta(snapshot),
         )
     except Exception as exc:  # noqa: BLE001
@@ -2322,6 +2372,10 @@ def compile_execution_plan(
     """Compile a deterministic task-owned plan with the current compiler."""
 
     _proposal_version, _media_digest, snapshot = validate_guided_snapshot(guided_snapshot)
+    if snapshot.user_song is not None:
+        # The creator's own song is the audio (KRI-374): a matched catalog track must
+        # never become a music lane or a song reference beside it.
+        track = None
     return _compile_execution_plan_version(
         guided_snapshot,
         track=track,
@@ -2958,6 +3012,49 @@ def compile_guided_runtime_plan(
                 "editor_approved_text_ids": approved_text_ids,
             }
         )
+        song_row = runtime_payload.get("user_song")
+        song_edit = normalized_revision.get("user_song") or {}
+        if isinstance(song_row, dict) and song_edit.get("removed"):
+            # KRI-428: the creator removed their song. Drop it and fall back to the
+            # camera's own sound at its normal level. Unlike library music removal
+            # (`audio.level = 0`, which mutes the camera), `editor_audio_level`
+            # stays at the plan's default so the phone recipe keeps camera audio.
+            runtime_payload.pop("user_song", None)
+            runtime_payload["editor_audio_level"] = 1.0
+            if not plan_preserves_source_audio(runtime_payload):
+                # An explicit "no source audio" choice must not outlive the song.
+                runtime_payload["montage_audio"] = {
+                    **(runtime_payload.get("montage_audio") or {}),
+                    "preserve_source_audio": True,
+                }
+            song_row = None
+        if isinstance(song_row, dict):
+            if song_edit.get("window_start_s") is not None:
+                new_start = float(song_edit["window_start_s"])
+                if abs(new_start - float(song_row["window_start_s"])) > 1e-3:
+                    if song_row.get("mode") == "lipsync":
+                        # Each take's source offset is pinned to the start, so a
+                        # moved start would take the footage off the song.
+                        raise GuidedStoryError(
+                            USER_SONG_LIPSYNC_LOCKED,
+                            "Lip-sync keeps the song where you filmed it.",
+                        )
+                    song_row["window_start_s"] = round(new_start, 3)
+            if "volume" in song_edit:
+                song_row["volume"] = float(song_edit["volume"])
+            # KRI-374: the song window always equals the video's length, so a
+            # trim or extension re-windows the song from the SAME start (the
+            # per-take deltas are untouched; the song stays the master clock).
+            window_end = round(
+                float(song_row["window_start_s"]) + float(runtime_payload["resolved_duration_s"]),
+                3,
+            )
+            if window_end > float(song_row["duration_s"]) + 1e-3:
+                raise GuidedStoryError(
+                    USER_SONG_WINDOW_OUT_OF_RANGE,
+                    "That edit runs past the end of your song.",
+                )
+            song_row["window_end_s"] = window_end
         # A timeline revision can split, reorder, or reuse sources. Rebuild
         # grounded clip labels against its output windows so a label never leaks
         # into a neighboring segment.

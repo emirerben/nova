@@ -129,6 +129,126 @@ def test_receipt_statuses_overlay_live_requirements_only() -> None:
     assert shown.requirements[0].status == "partial"
 
 
+# KRI-422 (prod thread C800E2C7, 2026-10-04): one message dictating the text for
+# six described shots kept only the last one, because all six shared
+# (text, per_clip) and collapsed in the merge.
+_SHOTS = [
+    ("1. The bookshop photo", "Every story starts on a shelf"),
+    ("2. The video of the girl bowling", "Strike one, nervous laugh"),
+    ("3. The coffee cup photo", "Fuel for round two"),
+    ("4. The arcade video", "Ten tokens, zero regrets"),
+    ("5. The street at night", "Walking it off"),
+    ("6. The scoreboard photo", "Final score: 142"),
+]
+
+
+def _shot_updates(shots=_SHOTS) -> list[dict]:  # noqa: ANN001
+    return [
+        {"kind": "text", "scope": "per_clip", "literal": words, "description": shot}
+        for shot, words in shots
+    ]
+
+
+def _place_rule() -> BriefUpdate:
+    return _upd("text", "per_clip", literal=None, description="the place each clip was filmed")
+
+
+def test_six_dictated_shot_texts_in_one_message_all_stay_live() -> None:
+    updates = parse_brief_updates(
+        [
+            {"kind": "text", "scope": "title", "literal": "Bowling night"},
+            {"kind": "text", "scope": "global", "literal": "See you next week"},
+            *_shot_updates(),
+            {
+                "kind": "timing",
+                "scope": "global",
+                "facts": {"duration_s": 20},
+                "description": "20s",
+            },
+        ]
+    )
+    # Nine requirements: the old cap of 8 cut the trailing duration.
+    assert len(updates) == 9
+    brief = apply_updates(None, updates, source_turn_id="t1")
+    live = brief.live()
+    assert len(live) == 9 and all(req.status == "open" for req in live)
+    assert [req.literal for req in live if req.is_shot_text] == [w for _s, w in _SHOTS]
+    rendered = render_brief_request(brief)
+    for shot, words in _SHOTS:
+        assert f'{shot} ("{words}")' in rendered
+
+
+def test_restating_one_shot_replaces_only_that_shots_text() -> None:
+    first = apply_updates(None, parse_brief_updates(_shot_updates()), source_turn_id="t1")
+    # Case, list number and trailing punctuation differ; it is the same shot.
+    restated = _upd(
+        "text", "per_clip", literal="Gutter ball", description="the video of the girl bowling:"
+    )
+    second = apply_updates(first, [restated], source_turn_id="t2")
+    by_id = {req.id: req for req in second.requirements}
+    assert by_id["r2"].status == "superseded"
+    assert by_id["r7"].literal == "Gutter ball" and by_id["r7"].live
+    assert [req.id for req in second.live()] == ["r1", "r3", "r4", "r5", "r6", "r7"]
+
+
+def test_label_every_clip_rule_still_supersedes_the_previous_rule() -> None:
+    place = apply_updates(None, [_place_rule()], source_turn_id="t1")
+    time = apply_updates(
+        place,
+        [_upd("text", "per_clip", literal=None, description="the time each clip was filmed")],
+        source_turn_id="t2",
+    )
+    assert [(req.id, req.status) for req in time.requirements] == [
+        ("r1", "superseded"),
+        ("r2", "open"),
+    ]
+    # The same words on every clip (a literal, no shot) are a whole-lane rule too.
+    day1 = apply_updates(
+        None, [_upd("text", "per_clip", literal="Day 1", description=None)], source_turn_id="t1"
+    )
+    day2 = apply_updates(
+        day1, [_upd("text", "per_clip", literal="Day 2", description=None)], source_turn_id="t2"
+    )
+    assert [req.literal for req in day2.live()] == ["Day 2"]
+
+
+def test_label_every_clip_rule_replaces_dictated_shot_texts() -> None:
+    shots = apply_updates(None, parse_brief_updates(_shot_updates()), source_turn_id="t1")
+    rule = apply_updates(shots, [_place_rule()], source_turn_id="t2")
+    assert [req.id for req in rule.live()] == ["r7"]
+    assert all(req.status == "superseded" for req in rule.requirements if req.id != "r7")
+
+
+def test_a_dictated_shot_text_leaves_the_label_every_clip_rule_live() -> None:
+    rule = apply_updates(None, [_place_rule()], source_turn_id="t1")
+    shot = apply_updates(
+        rule,
+        [_upd("text", "per_clip", literal="Best shop", description="the bookshop photo")],
+        source_turn_id="t2",
+    )
+    assert [req.id for req in shot.live()] == ["r1", "r2"]
+
+
+def test_each_dictated_shot_text_gets_its_own_receipt() -> None:
+    brief = apply_updates(None, parse_brief_updates(_shot_updates()), source_turn_id="t1")
+    # Five of the six descriptions matched a clip and printed; the bowling one didn't.
+    printed = {f"m{i}": words for i, (_shot, words) in enumerate(_SHOTS) if i != 1}
+    facts = PlanFacts(
+        clip_ids=tuple(f"m{i}" for i in range(8)),
+        per_clip_text=printed,
+        label_scope_clip_ids=tuple(printed),
+    )
+    receipts = {r.requirement_id: r.status for r in build_receipts(brief.live(), facts)}
+    assert receipts == {
+        "r1": "met",
+        "r2": "partial",
+        "r3": "met",
+        "r4": "met",
+        "r5": "met",
+        "r6": "met",
+    }
+
+
 # -------------------------------------------------------------------- router
 
 HAS_RENDER = CurrentPlanShape(has_render=True, has_per_clip_text_lane=False)

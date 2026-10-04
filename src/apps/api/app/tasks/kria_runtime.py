@@ -205,6 +205,13 @@ def _complete_response_turn(
                 "next_actions": [],
                 "schema_version": plan.schema_version,
                 **({"clip_question": plan.clip_question} if plan.clip_question else {}),
+                # KRI-374: persisted so the answer can be validated + folded later.
+                **(
+                    {"song_order_question": plan.song_order_question.model_dump(mode="json")}
+                    if plan.song_order_question is not None
+                    else {}
+                ),
+                **({"choice_question": plan.choice_question} if plan.choice_question else {}),
             },
         )
         turn.plan_json = plan.model_dump(mode="json")
@@ -817,6 +824,7 @@ async def _plan_with_live_agent(
     lease_owner: str,
     lease_epoch: int,
     editor_state: dict[str, Any] | None = None,
+    answers_clip_question: bool = False,
 ) -> PlannedKriaTurn:
     stop = asyncio.Event()
 
@@ -865,6 +873,8 @@ async def _plan_with_live_agent(
                 user_message=user_message,
                 # Only passed when present so the no-state call is byte-identical.
                 **({"editor_state": parsed_state} if parsed_state is not None else {}),
+                # KRI-282: a clip-picker answer must re-plan, never take the copilot path.
+                **({"answers_clip_question": True} if answers_clip_question else {}),
             )
     finally:
         turn_deadline.reset(deadline)
@@ -925,6 +935,11 @@ def _owns_turn_lease(
     )
 
 
+def _answers_clip_question(source: Any) -> bool:
+    payload = getattr(source, "payload", None)
+    return isinstance(payload, dict) and isinstance(payload.get("clip_selection"), dict)
+
+
 def _stored_editor_state(turn: Any) -> dict[str, Any] | None:
     state = getattr(turn, "editor_state", None)
     return state if isinstance(state, dict) else None
@@ -976,6 +991,8 @@ def _claim(
             int(turn.lease_epoch),
             int(thread.revision),
             _stored_editor_state(turn),
+            # Appended only when true so every other claim keeps its exact shape.
+            *((True,) if _answers_clip_question(source) else ()),
         )
 
 
@@ -1288,6 +1305,11 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
         return {"turn_id": turn_id, "status": "failed"}
     snapshot, user_message, lease_epoch, claimed_thread_revision, *claimed_rest = claimed
     editor_state = claimed_rest[0] if claimed_rest else None
+    answers_clip_question = bool(
+        settings.kria_clip_selection_questions_enabled
+        and len(claimed_rest) > 1
+        and claimed_rest[1] is True
+    )
     try:
         if settings.main_creator_agent_enabled and snapshot.get("item_id"):
             planned = asyncio.run(
@@ -1298,6 +1320,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     lease_owner=lease_owner,
                     lease_epoch=lease_epoch,
                     **({"editor_state": editor_state} if editor_state else {}),
+                    **({"answers_clip_question": True} if answers_clip_question else {}),
                 )
             )
             planned = _useful_plan(planned, user_message=user_message)
