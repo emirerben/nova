@@ -513,3 +513,55 @@ def test_the_creators_output_shape_reaches_the_song_snapshot(harness, sync):
     assert plan["user_song"]["mode"] == sync
     assert plan["output_orientation"] == "landscape"
     assert plan["output_orientation_reason"] == "The creator selected this output format."
+
+
+def test_the_worker_never_matches_a_library_track_for_a_creator_song(monkeypatch):
+    """Production incident (first real attempt): `_guided_execution_plan` matched a
+    library track for the montage, the compiler turned it into a reference-only
+    `song_reference`, and the creator-song plan validator refused it, so the job
+    failed with "The fast montage could not be compiled safely"."""
+    from tests.pipeline.test_unified_montage_song import song_plan
+
+    plan = song_plan()
+    raw = plan.guided_edit()
+    job = SimpleNamespace(
+        id=uuid.uuid4(), status="queued", assembly_plan={"guided_edit": raw}, all_candidates={}
+    )
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, _model, _pk, **_kwargs):
+            return job
+
+        def commit(self):
+            return None
+
+    matched: list[int] = []
+
+    def _match(*_args, **_kwargs):
+        matched.append(1)
+        return SimpleNamespace(
+            id="library-track-1",
+            title="Library Song",
+            artist="Somebody",
+            duration_s=200.0,
+            track_config={"best_start_s": 0.0},
+            beat_timestamps_s=[0.5 * i for i in range(1, 80)],
+            audio_gcs_path="music/library-track-1/track.mp3",
+        )
+
+    monkeypatch.setattr(gb, "_sync_session", lambda: _Session())
+    monkeypatch.setattr(gb, "_match_best_track", _match)
+
+    compiled, track = gb._guided_execution_plan(str(job.id), raw)
+
+    assert matched == [], "a creator's own song must never trigger library-track matching"
+    assert track is None
+    assert compiled["user_song"]["mode"] == "background"
+    assert compiled.get("song_reference") is None
+    assert compiled.get("music") is None

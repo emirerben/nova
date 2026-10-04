@@ -432,3 +432,14 @@ def test_no_creator_shape_keeps_the_lipsync_orientation_inferred():
     )
     assert result.snapshot.output_orientation == "portrait"
     assert result.snapshot.output_orientation_reason.startswith("Auto-selected")
+
+
+def test_a_matched_catalog_track_never_lands_beside_a_lipsync_song():
+    from app.pipeline.guided_story import compile_execution_plan
+    from tests.pipeline.test_unified_montage_song import CATALOG_TRACK
+
+    result = plan([take("A"), take("B")], [confident("A", 10), confident("B", 25)])
+    compiled = compile_execution_plan(result.guided_edit(), track=dict(CATALOG_TRACK))
+    assert compiled["user_song"]["mode"] == "lipsync"
+    assert compiled.get("song_reference") is None
+    assert compiled.get("music") is None

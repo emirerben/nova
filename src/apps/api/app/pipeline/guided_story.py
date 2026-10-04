@@ -2366,6 +2366,10 @@ def compile_execution_plan(
     """Compile a deterministic task-owned plan with the current compiler."""
 
     _proposal_version, _media_digest, snapshot = validate_guided_snapshot(guided_snapshot)
+    if snapshot.user_song is not None:
+        # The creator's own song is the audio (KRI-374): a matched catalog track must
+        # never become a music lane or a song reference beside it.
+        track = None
     return _compile_execution_plan_version(
         guided_snapshot,
         track=track,
