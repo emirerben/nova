@@ -6,6 +6,65 @@ source_kind: put_page
 ingested_via: put_page
 ---
 
+> **Backlog moved to Linear (partially) on 2026-10-04.** New work and ideas go to Linear (see `docs/runbooks/linear-workflow.md`); do not add entries here.
+> 51 open entries below were copied to Linear and are listed in the table. 43 more open entries were NOT copied because the Linear workspace hit its free issue limit; they still live only in this file until that is resolved. Shipped and obsolete entries were not migrated.
+> All migrated issues carry the `From TODOS.md` label and were not re-verified.
+
+| TODOS.md entry | Linear |
+| --- | --- |
+| Fit `run_kria_turn`'s time limits to its agent deadlines | KRI-308 |
+| Verify the floating chat chrome on device (keyboard up, iOS 26) | KRI-309 |
+| `testIncomingResponseDoesNotPullReaderFromScrolledHistory` fails on `main` locally | KRI-310 |
+| `testTextReturnAndDeleteKeepCanvasLinesAligned` fails on `main` locally | KRI-311 |
+| Editor Chat/Editor switch-transition: no UI-test fixture opens it from chat | KRI-312 |
+| `testPreviewResizeIsAvailableAcrossEditorPanels` fails locally — simulator artifact, not a | KRI-313 |
+| Wire the dead clip-inspector transition picker into a more discoverable spot, or remove th | KRI-314 |
+| `wipe_left` / `wipe_right` transitions aren't offered anywhere | KRI-315 |
+| "Retry generation" is misleading for a deterministic compile rejection | KRI-316 |
+| Runtime-v1 / v2 failure-card inconsistency | KRI-317 |
+| Seed creation threads for the reviewer account | KRI-318 |
+| Hide "Sign in with email" from real users | KRI-319 |
+| Per-account lockout on reviewer login | KRI-320 |
+| Move seed storage copies off the event loop | KRI-321 |
+| Complete looks and adjustments | KRI-322 |
+| Compile carousel and supporting cards | KRI-323 |
+| Complete advanced audio parity | KRI-324 |
+| Complete specialized text parity | KRI-325 |
+| Finish native/cloud comparison matrix | KRI-326 |
+| Finish design and live creation qualification | KRI-327 |
+| Qualify target devices and accessibility | KRI-328 |
+| Bound native preview cache retention | KRI-329 |
+| Consolidate the paid-call lifecycle adapters | KRI-330 |
+| Share one retention protected-reference specification | KRI-331 |
+| Bound long-term reservation-ledger growth and lock contention | KRI-332 |
+| Broker inspect runs inside the row lock | KRI-333 |
+| Unrepairable rows starve the LIMIT 50 head | KRI-334 |
+| Two Kria runtime Postgres tests fail locally on a reused test DB | KRI-335 |
+| Learn from accepted edits across projects | KRI-336 |
+| Envelope mode gives up merged-carrier flanks | KRI-337 |
+| Generate a complete video from narration audio alone | KRI-338 |
+| Eval/golden-fixture refresh for the `edit_guide`/`edit_proposal` prompt bumps | KRI-339 |
+| `alembic upgrade head` cannot express a staged two-release migration | KRI-340 |
+| A dead re-render shows a confidently climbing clock, and never surfaces the recovery copy | KRI-341 |
+| Backend tests fail under load, not under logic (CI flakiness) | KRI-342 |
+| Legacy dispatchers enqueue before the route commits | KRI-343 |
+| Surface behind-subject fallbacks to users (editor/copilot) | KRI-344 |
+| Relax match_overlay_format prompt for landmark shots | KRI-345 |
+| Depth perf/quality levers: reduced input, adaptive stride, ROI refinement | KRI-346 |
+| Depth review deferrals (red team, 2026-08-19) | KRI-347 |
+| Matte cache staleness vs visual-blocks / motion / camera bases | KRI-348 |
+| Caption-variant /edit rejection is a silent no-op | KRI-349 |
+| In-montage visual effects for generative renders (transitions / zoom / speed ramps) | KRI-350 |
+| SFX/speech review deferrals (from the word-level sound design review, 2026-07-21) | KRI-351 |
+| Speech map for montage variants without persisted words | KRI-352 |
+| clip_metadata mood/humor tag on best_moments | KRI-353 |
+| Comedic/meme SFX library content | KRI-354 |
+| Speech-mark snapping / server rejection of invented copilot times | KRI-355 |
+| T-CAP011-3 — Prod-image parity render before the face-placement flag flip | KRI-357 |
+| T-CAP011-1 — Emphasis styling lane for standalone cues | KRI-358 |
+| T-CAP012-1 — Extract the merge-back pass out of build_semantic_caption_cues | KRI-359 |
+
+
 # Nova — Deferred Work
 
 ## Kria runtime-v2 turn failures — deferred follow-ups (2026-09-24)
