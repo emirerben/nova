@@ -8,11 +8,12 @@ and can require an approved audit in the creator preset.
 
 from __future__ import annotations
 
-import array
 import hashlib
 import math
 import re
 import subprocess
+
+from app.pipeline.audio_pcm import decode_pcm_f32
 
 ANALYSIS_VERSION = "sfx-dsp-2026-07-18.1"
 _SAMPLE_RATE = 16_000
@@ -20,31 +21,7 @@ _WINDOW_SAMPLES = 160
 
 
 def _pcm_samples(path: str) -> list[float]:
-    result = subprocess.run(
-        [
-            "ffmpeg",
-            "-v",
-            "error",
-            "-i",
-            path,
-            "-vn",
-            "-ac",
-            "1",
-            "-ar",
-            str(_SAMPLE_RATE),
-            "-f",
-            "f32le",
-            "pipe:1",
-        ],
-        capture_output=True,
-        timeout=60,
-        check=False,
-    )
-    if result.returncode != 0 or not result.stdout:
-        return []
-    samples = array.array("f")
-    samples.frombytes(result.stdout)
-    return list(samples)
+    return decode_pcm_f32(path, _SAMPLE_RATE).tolist()
 
 
 def _loudness(path: str) -> tuple[float | None, float | None]:
