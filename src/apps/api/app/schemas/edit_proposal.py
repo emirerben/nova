@@ -30,6 +30,7 @@ from pydantic import (
 from app.agents._schemas.sfx_intent import LicensedSfxIntent
 from app.schemas.clip_intents import MAX_CLIP_INTENTS, ResolvedClipIntent
 from app.schemas.edit_frame_schedule import EditFrameSchedule
+from app.schemas.user_song import UserSongPlan
 
 # Keep existing integer JSON stable for approval hashes while accepting fractions.
 MAX_PROPOSAL_DURATION_S = 120
@@ -1009,6 +1010,10 @@ class EditProposalSnapshot(BaseModel):
     )
     output_orientation: OutputOrientation | None = None
     output_orientation_reason: str = Field(default="", max_length=240)
+    # KRI-374: the creator's own uploaded song (background bed or lip-sync master
+    # clock). None is omitted from serialization so every snapshot that predates
+    # the field keeps its stored shape, approval hash and compiler replay.
+    user_song: UserSongPlan | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def validate_beat_media(self) -> EditProposalSnapshot:
@@ -1193,6 +1198,18 @@ class EditProposalSnapshot(BaseModel):
                 raise ValueError("montage audio references unknown media")
             if any(by_id[media_id].kind != "video" for media_id in audio_ids):
                 raise ValueError("montage audio beds require video sources")
+        if self.user_song is not None:
+            # The song is the soundtrack: it cannot share the audio lane with a
+            # recorded voiceover, and only a fast montage's hard cuts carry the
+            # song-time window the compiler pins.
+            if self.narration is not None:
+                raise ValueError("a creator song cannot be combined with a recorded voiceover")
+            if self.frame_schedule is not None:
+                raise ValueError("a creator song cannot be combined with a frame schedule")
+            if self.direction != "fast_montage" or not self.fast_cuts:
+                raise ValueError("a creator song requires fast montage cuts")
+            if abs(self.user_song.window_duration_s - float(self.duration_s)) > 0.001:
+                raise ValueError("the song window must equal the proposal duration")
         if self.output_orientation is None:
             orientation, reason = infer_story_output_orientation(self)
             self.output_orientation = orientation
