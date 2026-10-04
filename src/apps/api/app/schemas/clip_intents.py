@@ -343,6 +343,34 @@ def ground_label(
     return None
 
 
+_LEADING_ARTICLES = frozenset({"the", "a", "an"})
+
+
+def chapter_name_caption(
+    *, attribute: str, caption_attribute: str | None, creator_request: str
+) -> str | None:
+    """The creator's own name for a chapter, when "a text for the pub" means just that.
+
+    KRI-282: for ``a text for the pub and the pregame`` the planner emits a caption
+    whose ``attribute`` ("the pub") and ``caption_attribute`` ("The Pub") name the SAME
+    chapter. The text the creator asked for is the chapter's own name, in their own
+    words, not a sentence the resolver writes about the footage ("Gathering and
+    relaxing on a grassy field"). Returns that name only when both fields agree
+    (ignoring a leading article) and the creator literally wrote it; otherwise None
+    and the caller falls back to the grounded authored phrase.
+    """
+    topic = clean_caption_text(caption_attribute)
+    if topic is None or not _contains_phrase(creator_request or "", topic):
+        return None
+
+    def core(text: str) -> list[str]:
+        words = _word_list(text)
+        return words[1:] if words and words[0] in _LEADING_ARTICLES else words
+
+    chapter = core(attribute or "")
+    return topic if chapter and chapter == core(topic) else None
+
+
 class GroundedCaption(BaseModel):
     """The only shape the caption render lane accepts. Intent-level (one
     caption per chapter), unlike ``GroundedLabel`` which is per-clip."""

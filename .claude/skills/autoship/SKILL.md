@@ -225,7 +225,7 @@ Execute `review`'s loaded instructions against `git diff origin/$_BASE...HEAD`. 
 
 - **Correctness bugs** (SQL injection, broken migration, race condition, missing await, leak) → **Blocker**. Stop. Surface and wait.
 - **Style / readability** → auto-fix if < 5-line change and within blast radius (P2 + P5). Otherwise note in the audit trail and continue.
-- **Test gaps** → auto-add a test if the gap is in a directly-modified file (P1 + P5). Otherwise log as `TODOS.md` deferral.
+- **Test gaps** → auto-add a test if the gap is in a directly-modified file (P1 + P5). Otherwise file a Linear issue (`/roadmap idea`, same project as the PR's ticket, parent = that ticket).
 - **Performance concerns** without a measurement → log + continue (P6). Don't pre-optimize.
 
 ### Empathy check (conditional — Nova only)
@@ -300,8 +300,8 @@ Present:
 ### Taste decisions surfaced for your review
 [For each non-trivial taste decision across all phases, formatted per /autoplan's gate]
 
-### Deferred to TODOS.md
-[Items deferred during diff review]
+### Deferred to Linear
+[Items deferred during diff review, as KRI ids]
 
 ### Next: Land & Deploy
 - Wait for CI on [url]

@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.60.0] - 2026-10-04
+
+### Changed
+- KRI-282: sport/chapter text from the creator's words + truthful receipt (#1377) <!-- release-pr: 1377 -->
+
+## [0.78.59.0] - 2026-10-04
+
+### Changed
+- docs(linear): feature roadmap workflow, /roadmap skill, TODOS.md moved to Linear (KRI-421) (#1375) <!-- release-pr: 1375 -->
+
+## [0.78.58.0] - 2026-10-04
+
+### Changed
+- fix(kria): KRI-282 keep clip picker when only some unresolved intents are tappable (#1374) <!-- release-pr: 1374 -->
+
 ## [0.78.57.0] - 2026-10-04
 
 ### Changed

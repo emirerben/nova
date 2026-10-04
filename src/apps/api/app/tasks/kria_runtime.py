@@ -2540,7 +2540,13 @@ def _unified_montage_review(
     """
 
     record = (job.assembly_plan or {}).get("unified_montage")
-    if not isinstance(record, dict) or not record.get("requirement_receipts"):
+    if not isinstance(record, dict):
+        return default_text, []
+    # KRI-282: what each requested group / sport name / chapter text did in the plan.
+    # It is read from the finished plan, not the brief ledger, so it is listed even
+    # when the ledger judged none of those asks.
+    outcomes = [row for row in record.get("intent_outcomes") or [] if isinstance(row, dict)]
+    if not record.get("requirement_receipts") and not outcomes:
         return default_text, []
     if not settings.creative_brief_for(thread.creator_id):
         return default_text, []
@@ -2554,7 +2560,7 @@ def _unified_montage_review(
     from app.kria.contracts import RequirementReceipt  # noqa: PLC0415
 
     receipts = []
-    for raw in record["requirement_receipts"]:
+    for raw in record.get("requirement_receipts") or []:
         try:
             receipts.append(RequirementReceipt.model_validate(raw))
         except ValueError:
@@ -2562,14 +2568,14 @@ def _unified_montage_review(
     live = {req.id: req for req in brief.live()}
     # A record planned before unjudged receipts were dropped can still carry some.
     receipts = [r for r in receipts if is_judged(live.get(r.requirement_id), r)]
-    if not receipts:
+    if not receipts and not outcomes:
         return default_text, []
     checked = CreativeBrief(
         version=brief.version,
         requirements=[live[receipt.requirement_id] for receipt in receipts],
     )
     return (
-        reply_from_receipts(checked, receipts, summary=default_text),
+        reply_from_receipts(checked, receipts, summary=default_text, outcomes=outcomes),
         [receipt.model_dump(mode="json") for receipt in receipts],
     )
 

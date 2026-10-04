@@ -65,6 +65,7 @@ from app.schemas.clip_intents import (
     ClipIntent,
     GroundedLabel,
     ResolvedClipIntent,
+    chapter_name_caption,
     clean_caption_text,
     clean_label_text,
     ground_caption,
@@ -673,13 +674,18 @@ def picker_eligible(intent: ClipIntent) -> bool:
 def _build_clip_question(
     creator_work: list[_IntentWork], clips: list[IntentClip]
 ) -> dict[str, Any] | None:
-    """One picker category per unresolved intent, or None to keep the question text-only.
+    """One picker category per TAPPABLE unresolved intent, or None when none can be tapped.
+
+    Intents the creator cannot answer by tapping (per-clip authored labels/captions) are
+    skipped here and stay in the text part of the question (KRI-282: one such intent used
+    to drop the picker for every other intent).
 
     Candidates are every clip not already confirmed for the intent (the creator may know
     a clip the analysis never named, so we do not narrow to what the model considered);
     low-confidence matches the resolver could not settle are pre-ticked as suggestions.
     """
-    if any(not picker_eligible(w.intent) for w in creator_work):
+    creator_work = [w for w in creator_work if picker_eligible(w.intent)]
+    if not creator_work:
         return None
     order = {c.media_id: i for i, c in enumerate(clips)}
     categories: list[dict[str, Any]] = []
@@ -1463,6 +1469,26 @@ async def resolve_clip_intents_for_turn(
                 work.intent_question = _caption_question(intent)
             continue
 
+        # KRI-282: "a text for the pub" wants the chapter's own name, in the
+        # creator's words, not a sentence the resolver writes about the footage.
+        chapter_name = chapter_name_caption(
+            attribute=intent.attribute,
+            caption_attribute=intent.caption_attribute,
+            creator_request=creator_request,
+        )
+        if chapter_name is not None:
+            named = ground_caption(
+                value=chapter_name,
+                confidence=1.0,
+                creator_request=creator_request,
+                records=member_records,
+                intent_id=intent.intent_id,
+            )
+            if named is not None:
+                work.caption_text = named.text
+                work.caption_grounding = named.grounding
+                continue
+
         # Described caption: ground the resolver's authored phrase first —
         # confidence is fixed at the label bar (there is no per-intent
         # resolver confidence for an authored phrase; the word-membership
@@ -1651,6 +1677,12 @@ async def resolve_clip_intents_for_turn(
         clip_question = _build_clip_question(creator_work, clips)
         if clip_question is not None:
             turn_question = clip_question_text(clip_question["categories"])
+            leftover = [w for w in creator_work if not picker_eligible(w.intent)]
+            if leftover:
+                # Mixed case: picker for the tappable intents, text for the rest.
+                turn_question = (
+                    f"{turn_question} Also: {_build_question(leftover, position_by_media)}"
+                )
     final_intents = [
         (i if i.status == "resolved" else i.model_copy(update={"question": turn_question}))
         for i in resolved_intents
