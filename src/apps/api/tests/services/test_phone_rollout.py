@@ -915,3 +915,15 @@ def test_qualified_default_font_is_a_static_registered_face():
     assert registry_font_file("Outfit") == "Outfit-VF.ttf"
     # An unknown family resolves like the compiler: through the registry's style default.
     assert registry_font_file("Not A Font") == registry_font_file(None)
+
+
+def test_a_layer_with_both_a_non_native_effect_and_a_bad_font_reports_both_causes(monkeypatch):
+    from app.services.phone_rollout import unqualified_font_causes
+
+    monkeypatch.setattr(settings, "phone_font_qualification_strict", False)
+    recipe = _default_font_recipe("Fraunces")
+    recipe.text_layers[0].runs[0].font_variations.clear()
+    recipe.text_layers[0].effect = "lyric-line"
+    files, effects = unqualified_font_causes(recipe)
+    assert files == {"Fraunces-Bold.ttf"}
+    assert effects == {"lyric-line"}

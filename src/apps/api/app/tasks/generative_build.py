@@ -3945,7 +3945,9 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
     )
     recipe, repair_notes = compiled.recipe, compiled.notes
     validate_phone_pilot_recipe(recipe)
+    repaired_plan_payload = None
     if compiled.plan is not plan:
+        repaired_plan_payload = compiled.plan.model_dump(mode="json", exclude_none=False)
         # The editor recompiles from the persisted rows: keep them equal to what compiled.
         for field in ("text_elements", "context_label_text_elements"):
             raw_plan[field] = [
@@ -4008,6 +4010,14 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
             # Creator-visible (job projection -> render_notes): what Kria changed so
             # the plan could render on the phone (KRI-129: never a silent override).
             current["variants"][0]["phone_repair_notes"] = list(repair_notes)
+        if repaired_plan_payload is not None:
+            # The editor's first Save recompiles from this private per-variant plan, not
+            # the approved canonical plan (whose text lane is re-validated against the
+            # approval and so must stay untouched). Without it a Save would re-hit the
+            # reject the repair removed.
+            from app.services.phone_editor import PHONE_EDITOR_PLAN_FIELD  # noqa: PLC0415
+
+            current["variants"][0][PHONE_EDITOR_PLAN_FIELD] = repaired_plan_payload
         if visual_rows:
             # Private receipts the editor recompiles from; each row keeps
             # gcs_path so pool deletion still sees the photo as referenced.

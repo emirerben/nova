@@ -238,9 +238,15 @@ def unqualified_font_causes(recipe: EditRecipeV2) -> tuple[frozenset[str], froze
             asset = manifest.get(run.font_asset_id)
             if not checker(layer, run, asset):
                 continue
-            if not strict and layer.effect not in _NATIVE_TEXT_EFFECTS:
+            effect_bad = not strict and layer.effect not in _NATIVE_TEXT_EFFECTS
+            if effect_bad:
                 effects.add(layer.effect)
-            elif asset is not None and getattr(asset, "catalog_id", None):
+            # The font is judged on its own too: re-ask the gate with a native effect so
+            # a layer with BOTH a non-native effect and a bad font reports both causes.
+            font_bad = not effect_bad or checker(
+                layer.model_copy(update={"effect": "fade-in"}), run, asset
+            )
+            if font_bad and asset is not None and getattr(asset, "catalog_id", None):
                 files.add(asset.catalog_id)
     return frozenset(files), frozenset(effects)
 

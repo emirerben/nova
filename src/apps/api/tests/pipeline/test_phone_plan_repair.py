@@ -280,3 +280,106 @@ def test_dry_run_skips_when_receipts_cannot_be_bound(monkeypatch):
     monkeypatch.setattr("app.services.phone_sources.bind_phone_sources", unbindable)
     # The dispatch gate stays the authority for receipts; the dry run never blocks on them.
     assert validate_proposal_phone_compiles(_snapshot_for(plan, bindings), []) == []
+
+
+def test_a_second_font_cause_is_repaired_in_a_second_pass(monkeypatch):
+    """A layer can fail on its font AND its effect; each cause gets its own pass."""
+    plan, bindings = fixture()
+    plan.text_elements = [
+        TextElement(id="t", text="Hello", start_s=0, end_s=2, font_family="Outfit", effect="pop-in")
+    ]
+    rejects = [
+        PhoneFontUnqualified("font", font_files=frozenset({"Outfit-VF.ttf"})),
+        PhoneFontUnqualified("font", effects=frozenset({"pop-in"})),
+    ]
+    seen = []
+
+    def staged(plan_, bindings_, **kwargs):
+        seen.append(plan_)
+        if rejects:
+            raise rejects.pop(0)
+        return "recipe"
+
+    monkeypatch.setattr(phone_plan_repair, "compile_phone_guided_plan", staged)
+    monkeypatch.setattr(phone_plan_repair, "validate_phone_pilot_recipe", lambda *_a, **_k: None)
+    result = compile_phone_guided_repaired(plan, bindings)
+    element = result.plan.text_elements[0]
+    assert (element.font_family, element.effect) == ("Inter", "fade-in")
+    assert len(result.notes) == 2 and len(seen) == 3
+
+
+def test_dry_run_treats_a_capability_gap_as_advisory_not_a_plan_defect(monkeypatch):
+    plan, bindings = fixture()
+    plan.text_elements = _sequence("fade-in")
+    _stub_dry_run(monkeypatch, plan, bindings)
+    monkeypatch.setattr(settings, "phone_render_verified_features", ["basicComposition"])
+    # The dispatch gate and worker own capability gating: no fallback, no rejection.
+    assert validate_proposal_phone_compiles(_snapshot_for(plan, bindings), []) == []
+
+
+def test_dry_run_never_lets_an_unexpected_error_escape(monkeypatch):
+    def boom(_snapshot):
+        raise KeyError("planner shape changed")
+
+    monkeypatch.setattr("app.pipeline.guided_story.compile_proposal_execution_plan", boom)
+    assert validate_proposal_phone_compiles(SimpleNamespace(media=[]), []) == []
+
+
+def test_dry_run_forwards_compile_kwargs_verbatim(monkeypatch):
+    plan, bindings = fixture()
+    plan.text_elements = _sequence("fade-in")
+    _stub_dry_run(monkeypatch, plan, bindings)
+    seen = []
+    real = phone_plan_repair.compile_phone_guided_plan
+
+    def spy(plan_, bindings_, **kwargs):
+        seen.append(kwargs)
+        return real(plan_, bindings_, **{k: v for k, v in kwargs.items() if k != "extra_kw"})
+
+    monkeypatch.setattr(phone_plan_repair, "compile_phone_guided_plan", spy)
+    validate_proposal_phone_compiles(_snapshot_for(plan, bindings), [], extra_kw="x")
+    assert seen[0]["extra_kw"] == "x"
+
+
+def test_dry_run_synthesizes_a_narration_bed(monkeypatch):
+    from tests.pipeline.test_phone_guided_plan import narration_fixture
+
+    plan, bindings, visuals, _bed = narration_fixture()
+    _stub_dry_run(monkeypatch, plan, bindings)
+    snapshot = SimpleNamespace(
+        media=[
+            *_snapshot_for(plan, bindings).media,
+            *[
+                SimpleNamespace(
+                    lane="asset",
+                    gcs_path=v.gcs_path,
+                    media_id=v.media_id,
+                    analysis={},
+                    duration_s=None,
+                )
+                for v in visuals
+            ],
+        ]
+    )
+    # Voiceover + pool photos compile through the dry run (no I/O, dummy digests).
+    assert validate_proposal_phone_compiles(snapshot, []) == []
+    assert phone_plan_repair._dry_run_bindings(plan, snapshot, [])[2] is not None
+
+
+def test_dry_run_skips_a_pool_video_it_cannot_describe(monkeypatch):
+    plan, bindings = fixture()
+    plan.story_timeline[0] = plan.story_timeline[0].model_copy(
+        update={"lane": "asset", "kind": "video", "media_id": "pool"}
+    )
+    snapshot = SimpleNamespace(
+        media=[
+            SimpleNamespace(
+                lane="asset",
+                gcs_path="g",
+                media_id="pool",
+                analysis={},
+                duration_s=3.0,
+            )
+        ]
+    )
+    assert phone_plan_repair._dry_run_bindings(plan, snapshot, []) is None

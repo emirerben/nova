@@ -2450,11 +2450,29 @@ def _run_draft_attempt(
             snapshot.media, owner_id, visuals_only_device=visuals_only_device
         )
         phone_repair_notes: list[str] = []
+
+        def _advisory_phone_notes(candidate: EditProposalSnapshot) -> list[str]:
+            # The deterministic fallback is already the last resort: surface what the
+            # phone would still repair, but never block it on a phone-only reject.
+            try:
+                return validate_proposal_phone_compiles(
+                    candidate, analyzed_assignments or assignments
+                )
+            except PhoneProposalRejected as phone_exc:
+                log.warning(
+                    "edit_proposal.fallback_phone_dry_run_rejected",
+                    item_id=item_id,
+                    error=str(phone_exc)[:300],
+                )
+                return []
+
         try:
             if fallback_used:
                 # A deterministic recovery also has to satisfy the stricter
                 # revision rules before it may be auto-approved.
                 validate_proposal_timing(snapshot)
+                if phone_destination:
+                    phone_repair_notes = _advisory_phone_notes(snapshot)
             else:
                 validate_proposal_compiles(snapshot)
                 if phone_destination:
@@ -2491,16 +2509,7 @@ def _run_draft_attempt(
             )
             validate_proposal_timing(snapshot)
             if phone_destination:
-                # The fallback is already the last resort: surface what the phone
-                # would still repair, but never block it on a phone-only reject.
-                try:
-                    phone_repair_notes = validate_proposal_phone_compiles(snapshot, assignments)
-                except PhoneProposalRejected as phone_exc:
-                    log.warning(
-                        "edit_proposal.fallback_phone_dry_run_rejected",
-                        item_id=item_id,
-                        error=str(phone_exc)[:300],
-                    )
+                phone_repair_notes = _advisory_phone_notes(snapshot)
         if phone_repair_notes:
             snapshot = snapshot.model_copy(
                 update={

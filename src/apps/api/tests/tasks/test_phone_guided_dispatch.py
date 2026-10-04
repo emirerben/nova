@@ -112,6 +112,25 @@ def test_worker_repairs_a_sequence_pop_in_instead_of_failing_after_approval(monk
     assert [layer.effect for layer in recipe.text_layers] == ["fade-in"]
     cloud.assert_not_called()
 
+    # The editor's first Save recompiles from the variant's private plan, never the
+    # approved canonical plan (which still carries the pop-in): it must succeed too.
+    from app.pipeline.guided_story import GuidedStoryExecutionPlan
+    from app.pipeline.phone_guided_plan import compile_phone_guided_plan
+    from app.services.phone_editor import PHONE_EDITOR_PLAN_FIELD
+    from app.services.phone_rollout import validate_phone_pilot_recipe
+    from app.services.phone_sources import PhoneSourceBinding
+
+    editor_plan = variant[PHONE_EDITOR_PLAN_FIELD]
+    editor_plan["text_elements"] = variant["text_elements"]
+    bindings = tuple(
+        PhoneSourceBinding.model_validate(row) for row in snapshot[PHONE_SOURCES_FIELD]
+    )
+    resaved = compile_phone_guided_plan(
+        GuidedStoryExecutionPlan.model_validate(editor_plan), bindings
+    )
+    validate_phone_pilot_recipe(resaved)
+    assert [layer.effect for layer in resaved.text_layers] == ["fade-in"]
+
 
 def test_device_only_mode_compiles_guided_plan_when_phone_flag_is_off(monkeypatch):
     """Device-only admission is global compiler availability, not a cohort flag."""

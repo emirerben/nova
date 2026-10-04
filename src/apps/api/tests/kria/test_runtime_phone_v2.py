@@ -700,9 +700,9 @@ def test_a_phone_capability_reject_stays_retryable() -> None:
     assert execution.error["recovery"] == "retry"
     assert execution.error["retryable"] is True
     assert events[-1]["payload"]["recovery"] == "retry"
-    assert humanize_job_failure_reason(
-        "phone_capability_unavailable"
-    ) != humanize_job_failure_reason("phone_plan_unsupported")
+    # The chat copy says WHY (code-specific), not the generic "didn't finish".
+    assert events[-1]["content"] == humanize_job_failure_reason("phone_capability_unavailable")
+    assert events[-1]["content"] != humanize_job_failure_reason("phone_plan_unsupported")
 
 
 def test_claim_reports_a_baseline_conflict_as_a_stale_video_not_an_unsupported_edit() -> None:

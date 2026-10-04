@@ -152,7 +152,16 @@ def compile_phone_guided_repaired(plan, bindings, **kwargs: Any) -> RepairedComp
             validate_phone_pilot_recipe(recipe, allow_editor_media=allow_editor_media)
             return RepairedCompile(recipe, notes, current)
         except (UnsupportedPhonePlan, ValueError) as exc:
-            kind = type(exc).__name__ + ":" + str(getattr(exc, "reason", "") or "")
+            # Keyed on the reject's payload, not just its type: a second pass may
+            # legitimately hit the same exception class for a different cause.
+            kind = repr(
+                (
+                    type(exc).__name__,
+                    getattr(exc, "reason", None),
+                    sorted(getattr(exc, "font_files", ())),
+                    sorted(getattr(exc, "effects", ())),
+                )
+            )
             if kind in attempted:
                 raise
             attempted.add(kind)
@@ -243,7 +252,7 @@ def _dry_run_bindings(plan, snapshot, assignments):  # noqa: ANN001
     return bindings, tuple(visuals), narration
 
 
-def validate_proposal_phone_compiles(snapshot, assignments) -> list[str]:  # noqa: ANN001
+def validate_proposal_phone_compiles(snapshot, assignments, **compile_kwargs: Any) -> list[str]:  # noqa: ANN001
     """Dry-run the phone compiler over a freshly planned proposal (KRI-286).
 
     compile_execution_plan -> bind_phone_sources -> compile_phone_guided_plan ->
@@ -251,12 +260,31 @@ def validate_proposal_phone_compiles(snapshot, assignments) -> list[str]:  # noq
     the repair notes (``[]`` when the plan is already expressible, or when it
     cannot be dry-run: the dispatch gate stays the authority there). Raises
     ``PhoneProposalRejected`` for a plan the phone cannot render and no repair
-    fixes; the caller falls back to the deterministic plan.
+    fixes; the caller falls back to the deterministic plan. This is an advisory
+    planning-time check: ONLY ``PhoneProposalRejected`` ever escapes; an
+    unverified device capability (a rollout decision the dispatch gate and the
+    worker own) and any unexpected error are logged and return ``[]``.
+
+    ``compile_kwargs`` (e.g. ``landscape_fit``) go to ``compile_phone_guided_plan``
+    verbatim so the dry run matches the worker's call.
 
     The repairs are NOT persisted on the proposal: approval recompiles from the
     snapshot and the worker re-applies the same deterministic repairs
     (``compile_phone_guided_with_repairs``). The notes just tell the creator.
     """
+    try:
+        return _validate_proposal_phone_compiles(snapshot, assignments, compile_kwargs)
+    except PhoneProposalRejected:
+        raise
+    except PhoneCapabilityUnavailable as exc:
+        log.info("phone_plan_dry_run_capability_unavailable", capability=exc.capability)
+        return []
+    except Exception as exc:  # noqa: BLE001 - an advisory check must never fail a proposal
+        log.warning("phone_plan_dry_run_errored", error=str(exc)[:300], exc_info=True)
+        return []
+
+
+def _validate_proposal_phone_compiles(snapshot, assignments, compile_kwargs) -> list[str]:  # noqa: ANN001
     from app.pipeline.guided_story import (  # noqa: PLC0415
         GuidedStoryExecutionPlan,
         compile_proposal_execution_plan,
@@ -270,11 +298,10 @@ def validate_proposal_phone_compiles(snapshot, assignments) -> list[str]:  # noq
     bindings, visuals, narration = prepared
     try:
         _recipe, notes = compile_phone_guided_with_repairs(
-            plan,
-            bindings,
-            visuals=visuals,
-            narration=narration,
+            plan, bindings, visuals=visuals, narration=narration, **compile_kwargs
         )
+    except PhoneCapabilityUnavailable:
+        raise
     except (UnsupportedPhonePlan, ValueError) as exc:
         raise PhoneProposalRejected(str(exc)) from exc
     return notes
