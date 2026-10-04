@@ -2368,7 +2368,7 @@ async def test_editor_ops_turn_receipts_cover_only_this_turns_requirements(
 async def _await_montage_approval(
     monkeypatch: pytest.MonkeyPatch, *, suffix: str
 ) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, str, int, int]:
-    """A pending montage strategy approval: ``(user, thread, item, approval, token, rev, draft)``."""
+    """A pending montage approval: (user, thread, item, approval, token, rev, draft)."""
     user_id, thread_id, _session_id, item_id = _seed_narration_ready_project()
     strategy_plan = adapt_creator_action(
         ProposeStrategy(
