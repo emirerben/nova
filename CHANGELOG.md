@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.48.0] - 2026-10-04
+
+### Changed
+- fix(ios): show progress and next steps for Visuals stuck "Queued" (KRI-294) (#1361) <!-- release-pr: 1361 -->
+
 ## [0.78.47.0] - 2026-10-04
 
 ### Changed
