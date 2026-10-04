@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.51.0] - 2026-10-04
+
+### Changed
+- feat(slide-post): rich per-slide text model + renderer (KRI-299, KRI-298) (#1356) <!-- release-pr: 1356 -->
+
 ## [0.78.50.0] - 2026-10-04
 
 ### Fixed
