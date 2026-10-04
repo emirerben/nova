@@ -505,6 +505,11 @@ private struct CreationWorkspaceView: View {
 
     /// Presents the editor with no slide-up animation; `WorkspaceCrossfade` fades it in.
     private func openEditor() {
+        // A slide post has no video timeline: every "open editor" entry lands in the slide workspace.
+        if SlidePostRouting.editorDestination(isSlidePost: isSlidePostProject) == .slideWorkspace {
+            isChoosingFormat = false
+            return
+        }
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) { showsResult = true }
@@ -586,7 +591,14 @@ private struct CreationWorkspaceView: View {
     /// polling the existing chat rather than presenting an upload surface with
     /// no item to reserve against.
     private var hasDedicatedSlideWorkspace: Bool {
-        !isChoosingFormat && selectedFormat == .slides && fullThread?.activePlanItemID != nil
+        !isChoosingFormat && isSlidePostProject
+    }
+
+    /// The one slide-post decision (format, library/project row, or thread projection). The
+    /// plan-item id is NOT part of it: `SlidePostWorkspaceView` resolves it itself and shows
+    /// "Setting up your post…" while it is unavailable, instead of falling to the video editor.
+    private var isSlidePostProject: Bool {
+        SlidePostRouting.isSlidePost(selectedFormat: selectedFormat, project: currentProject, thread: fullThread)
     }
 
     var body: some View {
@@ -689,6 +701,10 @@ private struct CreationWorkspaceView: View {
             // Chat <-> Editor is a switch, not a page rising from the bottom: the
             // editor cross-dissolves over the chat (see `WorkspaceCrossfade`).
             WorkspaceCrossfade(dismiss: { dismissEditor() }) { close in
+                if isSlidePostProject {
+                    // Defensive: never present the video editor for a slide post.
+                    Color.clear.onAppear { close() }
+                } else {
                 NativeEditorView(
                     project: currentProject,
                     sharedSession: editorSession,
@@ -697,6 +713,7 @@ private struct CreationWorkspaceView: View {
                     onBack: close
                 )
                 .environmentObject(model)
+                }
             }
         }
     }
