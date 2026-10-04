@@ -129,13 +129,17 @@ def _run_aligner(
     """
     from app.pipeline.song_alignment import align_takes  # noqa: PLC0415
 
-    raw = align_takes(song_pcm=song_pcm, song=song, takes=takes)
-    return {
-        str(media_id): value
-        if isinstance(value, TakeAlignment)
-        else TakeAlignment.model_validate(value)
-        for media_id, value in dict(raw).items()
-    }
+    # The task applies ``song_alignment_proxy_offset_s`` itself (``_shift``), so
+    # the aligner runs with the offset zeroed to avoid adding it twice.
+    cfg = settings.model_copy(update={"song_alignment_proxy_offset_s": 0.0})
+    result = align_takes(
+        song_pcm,
+        {take["media_id"]: (take["pcm"], take.get("words") or [], None) for take in takes},
+        list(song.words),
+        song.generation,
+        settings_obj=cfg,
+    )
+    return {str(media_id): alignment for media_id, alignment in result.takes.items()}
 
 
 def _shift(alignment: TakeAlignment, offset_s: float) -> TakeAlignment:
