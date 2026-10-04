@@ -14,6 +14,8 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostRichText: Bool? = nil
     /// Server edits slide posts from a chat message (KRI-298 Lane C); nil/false keeps the propose flow.
     var slidePostChatEdit: Bool? = nil
+    /// Server sends `clip_question` payloads and accepts `clip_selection` on a turn (KRI-282). Nil/false = text question only.
+    var clipSelectionQuestions: Bool? = nil
     /// Additive server admission metadata. Nil preserves compatibility with a
     /// server predating iOS-only creation rollout.
     var creationMode: CreationMode? = nil
@@ -21,6 +23,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var editorStateTurnsEnabled: Bool { editorStateTurns == true }
     var slidePostRichTextEnabled: Bool { slidePostRichText == true }
     var slidePostChatEditEnabled: Bool { slidePostChatEdit == true }
+    var clipSelectionQuestionsEnabled: Bool { clipSelectionQuestions == true }
     /// The chat composer needs BOTH flags: the server only reports chat-edit as on with rich text, and
     /// a stale cached capability must not enable it when rich text is off.
     var slidePostChatComposerEnabled: Bool { slidePostRichTextEnabled && slidePostChatEditEnabled }
@@ -32,6 +35,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case editorStateTurns = "editor_state_turns", editorStateMaxBytes = "editor_state_max_bytes"
         case slidePostRichText = "slide_post_rich_text"
         case slidePostChatEdit = "slide_post_chat_edit"
+        case clipSelectionQuestions = "clip_selection_questions"
         case creationMode = "creation_mode", minimumClientProtocol = "minimum_client_protocol"
     }
 }

@@ -16,11 +16,7 @@ Without named roles, use explicit `model` + `reasoning_effort="medium"`, `fork_t
 
 Hard budget: **38,000 chars**, enforced by CI (`scripts/check_claude_md_size.sh`).
 
-**Pattern:** keep inline → invariants, guard-test names, run commands, file pointers.
-Move out → incident narratives (prod job IDs, multi-paragraph "why") →
-`agents/DECISIONS.md`; feature internals → `docs/pipelines/` or `docs/runbooks/`.
-
-When the CI guard fails your PR: move narrative out, don't fight the check.
+Keep inline: invariants, guard-test names, run commands, file pointers. Move out: incident narratives → `agents/DECISIONS.md`; feature internals → `docs/pipelines/` or `docs/runbooks/`. If the guard fails, move narrative out.
 
 ## Session workflow: isolate in a worktree
 
@@ -35,7 +31,7 @@ Rules:
 - One worktree per logical change. Don't reuse a worktree for an unrelated feature.
 - When done, `git worktree remove ../nova-<topic>` after the PR merges. List active worktrees with `git worktree list`.
 - `.claude/worktrees/agent-*` are auto-managed by the Agent tool (`isolation: "worktree"`) — leave those alone.
-- Skip the worktree only for read-only investigation or single-line config tweaks confined to one file. The session-check warning still applies.
+- Skip the worktree only for read-only investigation or one-file config tweaks.
 
 ## Stack
 - Frontend: Next.js (src/apps/web/) — TypeScript, React
@@ -366,3 +362,4 @@ Key routing rules:
 - Save progress → invoke /context-save
 - Resume context → invoke /context-restore
 - Author a backlog-ready spec/issue → invoke /spec
+- Feature idea, backlog triage, weekly review → /roadmap (Linear; TODOS.md closed to new entries; docs/runbooks/linear-workflow.md)

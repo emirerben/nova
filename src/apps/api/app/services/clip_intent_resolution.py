@@ -72,6 +72,13 @@ from app.schemas.clip_intents import (
     ground_placeholder_label,
 )
 from app.schemas.clip_understanding import ClipUnderstanding
+from app.services.clip_selection import (
+    MAX_QUESTION_CLIPS,
+    build_clip_question,
+    category_label,
+    clip_question_text,
+    intent_key,
+)
 from app.services.clip_understanding import clip_record
 
 log = structlog.get_logger()
@@ -177,6 +184,9 @@ class IntentResolution:
     # text or model output. The Kria planner persists it on a degraded turn so
     # the next incident needs no guessing.
     diagnostics: dict[str, Any] | None = None
+    # KRI-282: the thumbnail clip-picker payload for a `needs_creator` question (see
+    # ``services.clip_selection``); None keeps the question text-only.
+    clip_question: dict[str, Any] | None = None
 
     @property
     def needs_creator(self) -> bool:
@@ -642,6 +652,61 @@ def _build_question(work_items: list[_IntentWork], position_by_media: dict[str, 
     if len(joined) + len(suffix) > 300:
         return "I couldn't resolve all requested clip matches. Could you clarify?"
     return f"{joined}{suffix}"
+
+
+def picker_eligible(intent: ClipIntent) -> bool:
+    """True when the creator tapping clips fully answers this intent.
+
+    Membership ops, and labels/captions whose TEXT is already fixed (creator's words or
+    the placeholder). A per-clip authored label or an authored caption still needs a
+    model, so those stay text questions.
+    """
+    if intent.op in {"group", "include", "order"}:
+        return True
+    if intent.op == "label":
+        return bool(intent.creator_text) or intent.placeholder
+    if intent.op == "caption":
+        return bool(intent.creator_text)
+    return False
+
+
+def _build_clip_question(
+    creator_work: list[_IntentWork], clips: list[IntentClip]
+) -> dict[str, Any] | None:
+    """One picker category per TAPPABLE unresolved intent, or None when none can be tapped.
+
+    Intents the creator cannot answer by tapping (per-clip authored labels/captions) are
+    skipped here and stay in the text part of the question (KRI-282: one such intent used
+    to drop the picker for every other intent).
+
+    Candidates are every clip not already confirmed for the intent (the creator may know
+    a clip the analysis never named, so we do not narrow to what the model considered);
+    low-confidence matches the resolver could not settle are pre-ticked as suggestions.
+    """
+    creator_work = [w for w in creator_work if picker_eligible(w.intent)]
+    if not creator_work:
+        return None
+    order = {c.media_id: i for i, c in enumerate(clips)}
+    categories: list[dict[str, Any]] = []
+    for work in creator_work:
+        confirmed = {a.media_id for a in work.kept}
+        candidates = [c.media_id for c in clips if c.media_id not in confirmed]
+        categories.append(
+            {
+                "key": intent_key(work.intent),
+                "label": category_label(work.intent),
+                "op": work.intent.op,
+                "candidate_media_ids": candidates[:MAX_QUESTION_CLIPS],
+                "suggested_media_ids": sorted(
+                    (m for m in work.failed_media_ids if m in order and m not in confirmed),
+                    key=order.__getitem__,
+                ),
+            }
+        )
+    question = build_clip_question(categories)
+    if question is None or len(question["categories"]) != len(creator_work):
+        return None
+    return question
 
 
 def _build_resolver_input(
@@ -1582,6 +1647,21 @@ async def resolve_clip_intents_for_turn(
         if status == "needs_creator" and creator_work
         else None
     )
+    clip_question: dict[str, Any] | None = None
+    if (
+        status == "needs_creator"
+        and creator_work
+        and settings.kria_clip_selection_questions_enabled
+    ):
+        clip_question = _build_clip_question(creator_work, clips)
+        if clip_question is not None:
+            turn_question = clip_question_text(clip_question["categories"])
+            leftover = [w for w in creator_work if not picker_eligible(w.intent)]
+            if leftover:
+                # Mixed case: picker for the tappable intents, text for the rest.
+                turn_question = (
+                    f"{turn_question} Also: {_build_question(leftover, position_by_media)}"
+                )
     final_intents = [
         (i if i.status == "resolved" else i.model_copy(update={"question": turn_question}))
         for i in resolved_intents
@@ -1605,6 +1685,7 @@ async def resolve_clip_intents_for_turn(
             status=status,
         )
     return IntentResolution(
+        clip_question=clip_question,
         intents=final_intents,
         question=turn_question,
         vision_answers=vision_answers,

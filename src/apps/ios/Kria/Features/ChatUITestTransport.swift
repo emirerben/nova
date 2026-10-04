@@ -81,6 +81,9 @@ private final class CreationChatFixture: @unchecked Sendable {
             var capabilities: [String: Any] = ["formats": [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", 1), ("slides", "slides", 20)].map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_RICH_TEXT"] == "1" { capabilities["slide_post_rich_text"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CHAT_EDIT"] == "1" { capabilities["slide_post_chat_edit"] = true }
+            // KRIA_CHAT_CLIP_QUESTION: "1" = server advertises clip_selection_questions; "legacy" = it still
+            // sends the clip_question payload but does not advertise the capability (old-server fallback).
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] == "1" { capabilities["clip_selection_questions"] = true }
             if DeviceRenderUITestFixture.scenario != nil {
                 capabilities["phone_rendering"] = ["enabled": true, "recipe_versions": [1, 2], "verified_features": MediaCapability.allCases.map(\.rawValue)]
             }
@@ -147,6 +150,9 @@ private final class CreationChatFixture: @unchecked Sendable {
                         clip["duration_s"] = seconds
                     }
                     var media = [clip]
+                    if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] != nil {
+                        media += (2...4).map { ["media_id": "fixture-clip-\($0)", "kind": "video", "filename": "sample-\($0).mov"] }
+                    }
                     if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_VOICEOVER"] == "1" {
                         media.append(["media_id": "fixture-voiceover", "kind": "audio", "filename": "existing-voiceover.m4a", "duration_s": 6])
                     }
@@ -197,7 +203,28 @@ private final class CreationChatFixture: @unchecked Sendable {
         } else if parts.last == "messages" || parts.last == "turns" {
             let turnID = body["client_event_id"] as? String ?? id
             append("user_message", role: "user", text: body["message"] as? String, clientEventID: turnID)
-            if runtime == 2 {
+            if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] != nil {
+                if let selection = body["clip_selection"] as? [String: Any] {
+                    // Echo what the server received so the UI test can pin the structured payload.
+                    let answers = (selection["answers"] as? [[String: Any]] ?? []).map { "\($0["key"] ?? "")=" + ((($0["media_ids"] as? [String]) ?? []).joined(separator: "+")) }
+                    let none = (selection["none_keys"] as? [String] ?? []).joined(separator: "+")
+                    append("assistant_response", text: "Got it. answers[\(answers.joined(separator: ";"))] none[\(none)] skipped[\(selection["skipped"] as? Bool ?? false)]")
+                } else {
+                    append("assistant_response", text: "I couldn't verify any clips for dodgeball. Could you clarify?", payload: [
+                        "turn_id": turnID, "turn_value": "question",
+                        "clip_question": [
+                            "version": 1, "question_id": "q-\(events.count)", "allow_none": true,
+                            "categories": [
+                                ["key": "dodgeball", "label": "Dodgeball", "op": "group",
+                                 "candidate_media_ids": ["fixture-clip", "fixture-clip-2", "fixture-clip-3"],
+                                 "suggested_media_ids": ["fixture-clip-2"]],
+                                ["key": "football", "label": "Football", "op": "group",
+                                 "candidate_media_ids": ["fixture-clip-3", "fixture-clip-4"], "suggested_media_ids": []],
+                            ],
+                        ] as [String: Any],
+                    ])
+                }
+            } else if runtime == 2 {
                 append("assistant_response", text: "Your draft is ready for review.")
                 append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
                 append("approval_requested", payload: ["approval_id": approvalID, "turn_id": turnID])

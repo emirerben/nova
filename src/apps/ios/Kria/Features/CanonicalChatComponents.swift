@@ -166,6 +166,9 @@ struct ChatMessageRow: View {
     var briefSettled = false
     /// Starts a correction for a guessed name; nil hides the "Guessed names" row.
     var onCorrectGuess: ((InferredLabel) -> Void)? = nil
+    /// KRI-282: how to present `message.clipQuestion`. nil (old server, flag off, not a question) = text question only.
+    var clipSelectionMode: ClipSelectionCardMode? = nil
+    var clipSelectionMedia: [CreationAttachedMedia] = []
 
     private static let userBubbleShape = UnevenRoundedRectangle(
         topLeadingRadius: 18,
@@ -215,6 +218,10 @@ struct ChatMessageRow: View {
                         recommendedOption: message.recommendedOption,
                         select: onSelectOption
                     )
+                }
+                if let question = message.clipQuestion, let clipSelectionMode {
+                    ClipSelectionCard(question: question, media: clipSelectionMedia, mode: clipSelectionMode)
+                        .id(question.questionID)
                 }
                 if !message.receipts.isEmpty {
                     RequirementChipsView(receipts: message.receipts, requirements: requirements, titlesReady: briefSettled, correct: onCorrectGuess)

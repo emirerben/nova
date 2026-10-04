@@ -300,7 +300,11 @@ def test_create_turn_returns_202_and_publishes_committed_turn(
     assert submit.await_args.kwargs["thread_id"] == thread_id
     assert submit.await_args.kwargs["creator_id"] == user.id
     # `editor_state` is the new optional field (None unless the client sends it).
-    assert submit.await_args.kwargs["body"].model_dump() == {**_body(), "editor_state": None}
+    assert submit.await_args.kwargs["body"].model_dump() == {
+        **_body(),
+        "editor_state": None,
+        "clip_selection": None,
+    }
     publish.assert_called_once_with(str(turn_id))
     db.rollback.assert_not_awaited()
 

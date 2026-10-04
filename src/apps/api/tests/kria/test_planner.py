@@ -32,6 +32,12 @@ from app.services.clip_intent_planning import PlannedIntentResolution
 from app.services.clip_intent_resolution import IntentResolution
 
 
+@pytest.fixture(autouse=True)
+def _no_standing_clip_selections(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These fake DBs have no `execute`; thread-event selection loading is covered elsewhere."""
+    monkeypatch.setattr(planner, "_load_clip_selections", AsyncMock(return_value=None))
+
+
 def test_question_action_stays_a_direct_value_adding_response() -> None:
     plan = adapt_creator_action(
         AskUser(

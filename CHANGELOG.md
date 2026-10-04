@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.59.0] - 2026-10-04
+
+### Changed
+- docs(linear): feature roadmap workflow, /roadmap skill, TODOS.md moved to Linear (KRI-421) (#1375) <!-- release-pr: 1375 -->
+
+## [0.78.58.0] - 2026-10-04
+
+### Changed
+- fix(kria): KRI-282 keep clip picker when only some unresolved intents are tappable (#1374) <!-- release-pr: 1374 -->
+
+## [0.78.57.0] - 2026-10-04
+
+### Changed
+- KRI-282 clip selection ios: clip picker in chat (#1367) <!-- release-pr: 1367 -->
+
+## [0.78.56.0] - 2026-10-04
+
+### Changed
+- KRI-282 clip selection backend: thumbnail clip-picker question + authoritative selections (#1366) <!-- release-pr: 1366 -->
+
 ## [0.78.55.0] - 2026-10-04
 
 ### Changed
