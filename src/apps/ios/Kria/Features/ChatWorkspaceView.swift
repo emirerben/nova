@@ -430,6 +430,11 @@ private struct CreationWorkspaceView: View {
         events.last { $0.payload?["requirement_receipts"] != nil }?.id
     }
 
+    /// The newest assistant event that carries a clip picker, if any.
+    private var latestClipQuestionID: String? {
+        events.last { ChatTranscriptMessage.from(event: $0)?.clipQuestion != nil }?.id
+    }
+
     private var timelineUpdateToken: String {
         timeline.map(\.id).joined(separator: "|") + "|\(isThinking)|\(isSending)|\(failure?.message ?? "")"
     }
@@ -491,7 +496,8 @@ private struct CreationWorkspaceView: View {
     /// Picker only when the server advertises `clip_selection_questions`. Interactive on the newest question
     /// that no later user message has answered; read-only (with the counts, if known) afterwards.
     private func clipSelectionMode(for message: ChatTranscriptMessage) -> ClipSelectionCardMode? {
-        guard capabilities?.clipSelectionQuestionsEnabled == true,
+        // The payload only exists when the server supports it, so an unloaded capability snapshot never hides it.
+        guard ClipSelectionAvailability.isAvailable(capabilities: capabilities),
               let question = message.clipQuestion else { return nil }
         let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
             if case .message(let message) = entry.content { message } else { nil }
@@ -712,6 +718,16 @@ private struct CreationWorkspaceView: View {
         .onReceive(model.uploads.$inFlight) { uploadInFlight = $0; rememberUploadAnchors() }
         .onReceive(model.uploads.$photoSelections) { photoSelections = $0; rememberUploadAnchors() }
         .onReceive(model.uploads.$failures) { uploadFailures = $0 }
+        .task(id: capabilities == nil && latestClipQuestionID != nil) {
+            // A question is waiting but the capability read failed or was cancelled: read it again (a few
+            // times, backing off) instead of leaving this screen without a snapshot until the next send.
+            guard capabilities == nil, latestClipQuestionID != nil else { return }
+            for delay in [0, 2, 5, 12] {
+                if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+                guard !Task.isCancelled, capabilities == nil else { return }
+                await refreshCapabilities()
+            }
+        }
         .task(id: latestReceiptEventID) {
             guard latestReceiptEventID != nil else { return }
             // One retry, then settle either way: a failed fetch leaves neutral titles, not bare chips

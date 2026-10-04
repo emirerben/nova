@@ -43,6 +43,8 @@
       "KriaUITests/CreationUITests/testConfirmScreenSendsTheSeededDefaultAndACropPick",
       "KriaUITests/CreationUITests/testConfirmScreenHidesThePickerAndSendsNothingWhenTheServerOffersNoShape",
       "KriaUITests/CreationUITests/testClipPickerSelectsClipsAndSendsStructuredAnswerWithMissingThumbnailFallback",
+      "KriaUITests/CreationUITests/testRealShapeHistoryShowsClipQuestionCardAndOpensTheGridSheet",
+      "KriaUITests/CreationUITests/testMissingCachedThumbnailsShowLabelledPlaceholdersNotBlankTiles",
       "KriaUITests/CreationUITests/testClipPickerNoneOfTheseSendsNoneKeys",
       "KriaUITests/CreationUITests/testClipPickerSkipSendsSkipped",
       "KriaUITests/CreationUITests/testClipQuestionFallsBackToTextWhenServerLacksCapability",

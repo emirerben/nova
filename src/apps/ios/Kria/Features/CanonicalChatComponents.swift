@@ -226,7 +226,7 @@ struct ChatMessageRow: View {
                     )
                 }
                 if let question = message.clipQuestion, let clipSelectionMode {
-                    ClipSelectionCard(question: question, media: clipSelectionMedia, mode: clipSelectionMode)
+                    ClipSelectionCard(question: question, media: clipSelectionMedia, projectID: projectID, mode: clipSelectionMode)
                         .id(question.questionID)
                 }
                 if let question = message.songOrderQuestion, let songOrderMode, let projectID {

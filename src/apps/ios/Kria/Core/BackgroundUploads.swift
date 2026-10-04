@@ -1792,6 +1792,22 @@ enum CreationUploadError: LocalizedError {
         try? FileManager.default.removeItem(at: url(recordID: recordID))
     }
 
+    /// The device-owned original for a media id, when this iPhone still has it (phone-rendering projects keep
+    /// originals in the project directory, so a chat reopened after a cache purge can still show the clip).
+    static func localOriginal(mediaID: String, projectID: UUID) -> URL? {
+        SourceAssetStore(project: BackgroundUploadCoordinator.projectDirectory(projectID)).localFileIfPresent(mediaID: mediaID)
+    }
+
+    /// A cached thumbnail, or -- when the Caches copy is gone (OS purge, reinstall, another device) -- one
+    /// regenerated from the local original and cached again. nil only when nothing local exists to draw from.
+    static func image(mediaID: String, projectID: UUID?) async -> UIImage? {
+        let cached = url(mediaID: mediaID)
+        if let image = UIImage(contentsOfFile: cached.path) { return image }
+        guard let projectID, let original = localOriginal(mediaID: mediaID, projectID: projectID) else { return nil }
+        await save(localURL: original, mediaID: mediaID)
+        return UIImage(contentsOfFile: cached.path)
+    }
+
     @discardableResult
     private static func write(_ data: Data, to destination: URL) -> Bool {
         do {
