@@ -72,6 +72,167 @@ import XCTest
         let screenshot = XCTAttachment(screenshot: app.screenshot()); screenshot.name = "Slide format at large text"; screenshot.lifetime = .keepAlways; add(screenshot)
     }
 
+    // MARK: Redesigned workspace (KRIA_SLIDE_POST_RICH_TEXT=1)
+
+    /// Walks the fixture creation flow to the redesigned workspace: format, direction, Apply.
+    private func openRichWorkspace(dynamicType: String? = nil) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launchEnvironment["KRIA_SLIDE_POST_FIXTURE"] = "1"
+        app.launchEnvironment["KRIA_SLIDE_POST_RICH_TEXT"] = "1"
+        if let dynamicType { app.launchEnvironment["UI_TEST_DYNAMIC_TYPE_SIZE"] = dynamicType }
+        app.launch()
+        XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 12)); app.buttons["Open projects"].tap()
+        XCTAssertTrue(app.buttons["drawer-new-chat"].waitForExistence(timeout: 5)); app.buttons["drawer-new-chat"].tap()
+        let carousel = app.scrollViews["format-carousel"]
+        XCTAssertTrue(carousel.waitForExistence(timeout: 12)); carousel.swipeLeft()
+        XCTAssertTrue(app.buttons["format-slides"].waitForExistence(timeout: 5)); app.buttons["format-slides"].tap()
+        XCTAssertTrue(app.staticTexts["Start your post"].waitForExistence(timeout: 8))
+        let ask = app.buttons["Ask Kria"].firstMatch
+        scrollTo(ask, app: app); ask.tap()
+        let apply = app.buttons["Apply proposal"].firstMatch
+        XCTAssertTrue(apply.waitForExistence(timeout: 8)); scrollTo(apply, app: app); apply.tap()
+        XCTAssertTrue(app.buttons["slidepost-tool-text"].waitForExistence(timeout: 8), "the redesigned tool bar replaces the old buttons")
+        return app
+    }
+    private func attach(_ app: XCUIApplication, _ name: String) {
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = name; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    func testSlideStripSwipeDoesNotOpenDrawer() {
+        let app = openRichWorkspace()
+        let tile = app.buttons["slidepost-tile-1"]
+        XCTAssertTrue(tile.waitForExistence(timeout: 5))
+        // The drawer opens with a rightward swipe; over the strip it must belong to the strip.
+        tile.swipeRight()
+        tile.swipeRight()
+        XCTAssertFalse(app.buttons["drawer-new-chat"].isHittable, "swiping the strip must not open the projects drawer")
+        XCTAssertTrue(app.buttons["slidepost-tool-text"].isHittable)
+        attach(app, "Strip swipe leaves the drawer closed")
+    }
+
+    func testSlidePreviewLeavesToolbarAndStripVisible() {
+        let app = openRichWorkspace()
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        let window = app.windows.firstMatch.frame
+        XCTAssertLessThanOrEqual(preview.frame.height, window.height * 0.56, "the preview is capped near 53.5% of the screen")
+        XCTAssertEqual(preview.frame.width / preview.frame.height, 4.0 / 5.0, accuracy: 0.05, "aspect is preserved")
+        for id in ["slidepost-tile-1", "slidepost-tool-text", "slidepost-tool-arrange", "slidepost-tool-cover", "slidepost-tool-look", "slidepost-tool-more", "slidepost-composer"] {
+            let element = app.descendants(matching: .any)[id].firstMatch
+            XCTAssertTrue(element.exists && element.isHittable, "\(id) must stay reachable without scrolling")
+        }
+        XCTAssertLessThanOrEqual(preview.frame.maxY, app.buttons["slidepost-tile-1"].frame.minY + 1, "the preview never overlaps the strip")
+        attach(app, "Workspace 4:5")
+    }
+
+    func testAddStyleAndApplyTextToAllSlides() {
+        let app = openRichWorkspace()
+        // Slide 1: add text.
+        app.buttons["slidepost-tool-text"].tap()
+        let field = app.textFields["slidepost-text-field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap(); field.press(forDuration: 1.0)
+        if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
+        field.typeText("Athens")
+        attach(app, "Text mode: edit tab")
+        app.buttons["slidepost-tab-style"].tap()
+        app.buttons["slidepost-color-FFF0A6"].tap()
+        app.buttons["slidepost-toggle-outline"].tap()
+        app.buttons["slidepost-position-top"].tap()
+        XCTAssertTrue(app.buttons["slidepost-color-FFF0A6"].isSelected)
+        attach(app, "Text mode: style tab")
+        app.buttons["slidepost-done"].tap()
+        // Slide 2: add text with the default look.
+        app.buttons["slidepost-tile-2"].tap()
+        app.buttons["slidepost-tool-text"].tap()
+        XCTAssertTrue(app.textFields["slidepost-text-field"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["slidepost-color-FFF0A6"].exists, "the edit tab does not show style controls")
+        app.buttons["slidepost-done"].tap()
+        // Back on slide 1: apply its whole look to every slide.
+        app.buttons["slidepost-tile-1"].tap()
+        app.buttons["slidepost-tool-text"].tap()
+        app.buttons["slidepost-tab-style"].tap()
+        let applyAll = app.buttons["slidepost-apply-all"]
+        XCTAssertTrue(applyAll.waitForExistence(timeout: 5)); applyAll.tap()
+        XCTAssertTrue(app.staticTexts["slidepost-apply-all-result"].waitForExistence(timeout: 3))
+        app.buttons["slidepost-done"].tap()
+        // Slide 2 now carries slide 1's colour, outline and position, but its own words.
+        app.buttons["slidepost-tile-2"].tap()
+        app.buttons["slidepost-tool-text"].tap()
+        app.buttons["slidepost-tab-style"].tap()
+        XCTAssertTrue(app.buttons["slidepost-color-FFF0A6"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["slidepost-color-FFF0A6"].isSelected)
+        XCTAssertTrue(app.buttons["slidepost-toggle-outline"].isSelected)
+        XCTAssertTrue(app.buttons["slidepost-position-top"].isSelected)
+        app.buttons["slidepost-tab-edit"].tap()
+        XCTAssertEqual(app.textFields["slidepost-text-field"].firstMatch.value as? String, "Your text", "words are never copied")
+        attach(app, "Style applied to all slides")
+    }
+
+    func testMoreMenuRemoveAndCover() {
+        let app = openRichWorkspace()
+        XCTAssertTrue(app.buttons["slidepost-tile-3"].exists)
+        app.buttons["slidepost-tile-2"].tap()
+        app.buttons["slidepost-tool-cover"].tap()
+        XCTAssertEqual(app.buttons["slidepost-tile-2"].value as? String, "Cover")
+        XCTAssertNotEqual(app.buttons["slidepost-tile-1"].value as? String, "Cover")
+        app.buttons["slidepost-tool-more"].tap()
+        let remove = app.buttons["Remove slide"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 3)); remove.tap()
+        XCTAssertFalse(app.buttons["slidepost-tile-3"].exists, "the selected slide is gone")
+        XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes")
+        XCTAssertTrue(app.buttons["slidepost-undo"].isEnabled)
+        app.buttons["slidepost-undo"].tap()
+        XCTAssertTrue(app.buttons["slidepost-tile-3"].waitForExistence(timeout: 3), "undo restores the removed slide")
+        attach(app, "More menu then undo")
+    }
+
+    func testArrangeDragReordersAndKeepsTheCover() {
+        let app = openRichWorkspace()
+        app.buttons["slidepost-tool-arrange"].tap()
+        XCTAssertTrue(app.staticTexts["slidepost-arrange-hint"].waitForExistence(timeout: 3))
+        let first = app.buttons["slidepost-tile-1"], second = app.buttons["slidepost-tile-2"]
+        first.press(forDuration: 0.5, thenDragTo: second, withVelocity: .slow, thenHoldForDuration: 0.2)
+        XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes")
+        XCTAssertEqual(app.buttons["slidepost-tile-2"].value as? String, "Cover", "the cover moved with its slide")
+        attach(app, "Arrange: after drag")
+    }
+
+    func testWorkspaceKeepsToolbarReachableAtLargeText() {
+        let app = openRichWorkspace(dynamicType: "accessibility3")
+        XCTAssertTrue(app.buttons["slidepost-tile-1"].isHittable)
+        let tools = ["slidepost-tool-text", "slidepost-tool-arrange", "slidepost-tool-cover", "slidepost-tool-look", "slidepost-tool-more"]
+        let bar = app.buttons[tools[0]]
+        for id in tools {
+            let tool = app.buttons[id]
+            XCTAssertTrue(tool.waitForExistence(timeout: 5), id)
+            var tries = 0
+            while !tool.isHittable && tries < 4 { (tries < 2 ? bar : app.buttons[tools[4]]).swipeLeft(); tries += 1 }
+            XCTAssertTrue(tool.isHittable, "\(id) must be reachable at accessibility3 (scrolling the bar if needed)")
+        }
+        attach(app, "Workspace at large text")
+    }
+
+    func testTextPanelKeepsEditFieldVisibleWithKeyboardUp() {
+        let app = openRichWorkspace()
+        app.buttons["slidepost-tool-text"].tap()
+        let field = app.textFields["slidepost-text-field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(field.isHittable, "the Edit field stays visible above the keyboard")
+        let keyboardTop = app.keyboards.firstMatch.frame.minY
+        XCTAssertLessThan(field.frame.maxY, keyboardTop)
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        XCTAssertTrue(preview.exists, "the preview stays on screen too")
+        XCTAssertLessThan(preview.frame.maxY, field.frame.minY + 1, "the stage shrinks above the field")
+        attach(app, "Text panel with keyboard up")
+        app.buttons["slidepost-tab-style"].tap()
+        attach(app, "Text panel style chips")
+    }
+
     private func scrollTo(_ element: XCUIElement, app: XCUIApplication) {
         for _ in 0..<7 {
             if element.exists && element.isHittable { return }

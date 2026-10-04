@@ -108,7 +108,7 @@ struct RootView: View {
         .kriaPage()
         .background(KriaColor.paper.ignoresSafeArea())
         #if DEBUG
-        .environment(\.dynamicTypeSize, (ProcessInfo.processInfo.arguments.contains("-ui-testing-account") || ProcessInfo.processInfo.arguments.contains("-ui-testing-native-update")) && ProcessInfo.processInfo.environment["UI_TEST_DYNAMIC_TYPE_SIZE"] == "accessibility5" ? .accessibility5 : dynamicTypeSize)
+        .environment(\.dynamicTypeSize, (ProcessInfo.processInfo.arguments.contains("-ui-testing-account") || ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") || ProcessInfo.processInfo.arguments.contains("-ui-testing-native-update")) && ProcessInfo.processInfo.environment["UI_TEST_DYNAMIC_TYPE_SIZE"] == "accessibility5" ? .accessibility5 : dynamicTypeSize)
         .task {
             guard ProcessInfo.processInfo.arguments.contains("-ui-testing-native-update") else { return }
             await NativeUpdateUITestTransport.triggerTypedUpdateRequirement()
