@@ -1,0 +1,224 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-04.1",
+  "input": {
+    "creator_request": "Make it 20 seconds. Title: \"This kid is climbing a tower made of people.\" Story edit in 6 chapters at a quick pace with high energy, day shots first and night shots last. Use every uploaded file, in this chapter order, and show each chapter line on screen word for word. Chapter 1 · a helmeted child at the very top of a tall human tower · 3 seconds · Watch the very top. Chapter 2 · two full human towers in front of a stone building, crowd below · 4 seconds · It's a castell. The tallest ever built had 10 levels. Chapter 3 · the packed base of shoulders, arms and hands, seen from above · 3 seconds · UNESCO heritage since 2010. Chapter 4 · two night shots of hooded devils and sparks over the crowd · 4 seconds · At night, \"devils\" run through the crowd with fireworks. Chapter 5 · fireworks in the night sky beside a lit tower · 4 seconds · It's La Mercè, Barcelona's biggest festival. Every September. Chapter 6 · white sparks shooting up, close · 2 seconds · Would you run through the fire?",
+    "latest_user_message": "Make it 20 seconds. Title: \"This kid is climbing a tower made of people.\" Story edit in 6 chapters at a quick pace with high energy, day shots first and night shots last. Use every uploaded file, in this chapter order, and show each chapter line on screen word for word. Chapter 1 · a helmeted child at the very top of a tall human tower · 3 seconds · Watch the very top. Chapter 2 · two full human towers in front of a stone building, crowd below · 4 seconds · It's a castell. The tallest ever built had 10 levels. Chapter 3 · the packed base of shoulders, arms and hands, seen from above · 3 seconds · UNESCO heritage since 2010. Chapter 4 · two night shots of hooded devils and sparks over the crowd · 4 seconds · At night, \"devils\" run through the crowd with fireworks. Chapter 5 · fireworks in the night sky beside a lit tower · 4 seconds · It's La Mercè, Barcelona's biggest festival. Every September. Chapter 6 · white sparks shooting up, close · 2 seconds · Would you run through the fire?",
+    "generated_brief": null,
+    "candidate_intents": null
+  },
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"order_day_shots_first\",\n      \"op\": \"order\",\n      \"attribute\": \"day shots\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": \"first\",\n      \"placeholder\": false,\n      \"source_quote\": \"day shots first\"\n    },\n    {\n      \"intent_id\": \"order_night_shots_last\",\n      \"op\": \"order\",\n      \"attribute\": \"night shots\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": \"last\",\n      \"placeholder\": false,\n      \"source_quote\": \"night shots last\"\n    },\n    {\n      \"intent_id\": \"include_all_files\",\n      \"op\": \"include\",\n      \"attribute\": \"every uploaded file\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"Use every uploaded file\"\n    },\n    {\n      \"intent_id\": \"order_chapters_sequence\",\n      \"op\": \"order\",\n      \"attribute\": \"chapter\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"in this chapter order\"\n    },\n    {\n      \"intent_id\": \"group_chapter_1\",\n      \"op\": \"group\",\n      \"attribute\": \"Chapter 1\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"Chapter 1 · a helmeted child at the very top of a tall human tower · 3 seconds\"\n    },\n    {\n      \"intent_id\": \"caption_chapter_1\",\n      \"op\": \"caption\",\n      \"attribute\": \"Chapter 1\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": \"Watch the very top.\",\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"Watch the very top.\"\n    },\n    {\n      \"intent_id\": \"group_chapter_2\",\n      \"op\": \"group\",\n      \"attribute\": \"Chapter 2\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"Chapter 2 · two full human towers in front of a stone building, crowd below · 4 seconds\"\n    },\n    {\n      \"intent_id\": \"caption_chapter_2\",\n      \"op\": \"caption\",\n      \"attribute\": \"Chapter 2\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": \"It's a castell. The tallest ever built had 10 levels.\",\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"It's a castell. The tallest ever built had 10 levels.\"\n    },\n    {\n      \"intent_id\": \"group_chapter_3\",\n      \"op\": \"group\",\n      \"attribute\": \"Chapter 3\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"Chapter 3 · the packed base of shoulders, arms and hands, seen from above · 3 seconds\"\n    },\n    {\n      \"intent_id\": \"caption_chapter_3\",\n      \"op\": \"caption\",\n      \"attribute\": \"Chapter 3\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": \"UNESCO heritage since 2010.\",\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"UNESCO heritage since 2010.\"\n    },\n    {\n      \"intent_id\": \"group_chapter_4\",\n      \"op\": \"group\",\n      \"attribute\": \"Chapter 4\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"Chapter 4 · two night shots of hooded devils and sparks over the crowd · 4 seconds\"\n    },\n    {\n      \"intent_id\": \"caption_chapter_4\",\n      \"op\": \"caption\",\n      \"attribute\": \"Chapter 4\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": \"At night, \\\"devils\\\" run through the crowd with fireworks.\",\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"At night, \\\"devils\\\" run through the crowd with fireworks.\"\n    },\n    {\n      \"intent_id\": \"group_chapter_5\",\n      \"op\": \"group\",\n      \"attribute\": \"Chapter 5\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"Chapter 5 · fireworks in the night sky beside a lit tower · 4 seconds\"\n    },\n    {\n      \"intent_id\": \"caption_chapter_5\",\n      \"op\": \"caption\",\n      \"attribute\": \"Chapter 5\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": \"It's La Mercè, Barcelona's biggest festival. Every September.\",\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"It's La Mercè, Barcelona's biggest festival. Every September.\"\n    },\n    {\n      \"intent_id\": \"group_chapter_6\",\n      \"op\": \"group\",\n      \"attribute\": \"Chapter 6\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"Chapter 6 · white sparks shooting up, close · 2 seconds\"\n    },\n    {\n      \"intent_id\": \"caption_chapter_6\",\n      \"op\": \"caption\",\n      \"attribute\": \"Chapter 6\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": \"Would you run through the fire?\",\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"Would you run through the fire?\"\n    }\n  ],\n  \"question\": null\n}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "order_day_shots_first",
+        "op": "order",
+        "attribute": "day shots",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": "first",
+        "source_quote": "day shots first"
+      },
+      {
+        "intent_id": "order_night_shots_last",
+        "op": "order",
+        "attribute": "night shots",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": "last",
+        "source_quote": "night shots last"
+      },
+      {
+        "intent_id": "include_all_files",
+        "op": "include",
+        "attribute": "every uploaded file",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Use every uploaded file"
+      },
+      {
+        "intent_id": "order_chapters_sequence",
+        "op": "order",
+        "attribute": "chapter",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "in this chapter order"
+      },
+      {
+        "intent_id": "group_chapter_1",
+        "op": "group",
+        "attribute": "Chapter 1",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Chapter 1 · a helmeted child at the very top of a tall human tower · 3 seconds"
+      },
+      {
+        "intent_id": "caption_chapter_1",
+        "op": "caption",
+        "attribute": "Chapter 1",
+        "creator_text": "Watch the very top.",
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Watch the very top."
+      },
+      {
+        "intent_id": "group_chapter_2",
+        "op": "group",
+        "attribute": "Chapter 2",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Chapter 2 · two full human towers in front of a stone building, crowd below · 4 seconds"
+      },
+      {
+        "intent_id": "caption_chapter_2",
+        "op": "caption",
+        "attribute": "Chapter 2",
+        "creator_text": "It's a castell. The tallest ever built had 10 levels.",
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "It's a castell. The tallest ever built had 10 levels."
+      },
+      {
+        "intent_id": "group_chapter_3",
+        "op": "group",
+        "attribute": "Chapter 3",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Chapter 3 · the packed base of shoulders, arms and hands, seen from above · 3 seconds"
+      },
+      {
+        "intent_id": "caption_chapter_3",
+        "op": "caption",
+        "attribute": "Chapter 3",
+        "creator_text": "UNESCO heritage since 2010.",
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "UNESCO heritage since 2010."
+      },
+      {
+        "intent_id": "group_chapter_4",
+        "op": "group",
+        "attribute": "Chapter 4",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Chapter 4 · two night shots of hooded devils and sparks over the crowd · 4 seconds"
+      },
+      {
+        "intent_id": "caption_chapter_4",
+        "op": "caption",
+        "attribute": "Chapter 4",
+        "creator_text": "At night, \"devils\" run through the crowd with fireworks.",
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "At night, \"devils\" run through the crowd with fireworks."
+      },
+      {
+        "intent_id": "group_chapter_5",
+        "op": "group",
+        "attribute": "Chapter 5",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Chapter 5 · fireworks in the night sky beside a lit tower · 4 seconds"
+      },
+      {
+        "intent_id": "caption_chapter_5",
+        "op": "caption",
+        "attribute": "Chapter 5",
+        "creator_text": "It's La Mercè, Barcelona's biggest festival. Every September.",
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "It's La Mercè, Barcelona's biggest festival. Every September."
+      },
+      {
+        "intent_id": "group_chapter_6",
+        "op": "group",
+        "attribute": "Chapter 6",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Chapter 6 · white sparks shooting up, close · 2 seconds"
+      },
+      {
+        "intent_id": "caption_chapter_6",
+        "op": "caption",
+        "attribute": "Chapter 6",
+        "creator_text": "Would you run through the fire?",
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Would you run through the fire?"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "live_recorded",
+    "case": "2026-10-04 La Mercè story edit, byte-identical to the creator's prod message: six word-for-word chapter lines (chapter 5 is 61 characters), day first / night last, every file in chapter order. Prod asked the creator to restate their own 61-character line (creator_text_too_long); replays also hit the 8-intent cap, prose in `position`, and a quote stitched from two creator spans. Recorded live on gemini-2.5-flash under prompt 2026-10-04.1.",
+    "expect_intents": [
+      {
+        "op": "caption",
+        "creator_text": "Watch the very top.",
+        "source_quote_keywords": [
+          "very top"
+        ]
+      },
+      {
+        "op": "caption",
+        "creator_text": "It's a castell. The tallest ever built had 10 levels.",
+        "source_quote_keywords": [
+          "castell"
+        ]
+      },
+      {
+        "op": "caption",
+        "creator_text": "UNESCO heritage since 2010.",
+        "source_quote_keywords": [
+          "UNESCO"
+        ]
+      },
+      {
+        "op": "caption",
+        "creator_text": "At night, \"devils\" run through the crowd with fireworks.",
+        "source_quote_keywords": [
+          "devils"
+        ]
+      },
+      {
+        "op": "caption",
+        "creator_text": "It's La Mercè, Barcelona's biggest festival. Every September.",
+        "source_quote_keywords": [
+          "La Mercè"
+        ]
+      },
+      {
+        "op": "caption",
+        "creator_text": "Would you run through the fire?",
+        "source_quote_keywords": [
+          "the fire"
+        ]
+      },
+      {
+        "op": "order",
+        "position": "first",
+        "source_quote_keywords": [
+          "day shots first"
+        ]
+      },
+      {
+        "op": "order",
+        "position": "last",
+        "source_quote_keywords": [
+          "night shots last"
+        ]
+      }
+    ],
+    "expect_any": true,
+    "expect_question": false
+  }
+}

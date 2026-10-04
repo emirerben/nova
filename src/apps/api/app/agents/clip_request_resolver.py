@@ -58,6 +58,7 @@ from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.clip_intents import (
     CAPTION_MAX_WORDS,
+    CREATOR_CAPTION_MAX_CHARS,
     LABEL_MAX_WORDS,
     clean_caption_text,
     clean_label_text,
@@ -94,7 +95,7 @@ class ResolverIntentIn(BaseModel):
     intent_id: str = Field(min_length=1, max_length=40)
     op: ClipRequestIntentOp
     attribute: str = Field(min_length=1, max_length=160)
-    creator_text: str | None = Field(default=None, max_length=60)
+    creator_text: str | None = Field(default=None, max_length=CREATOR_CAPTION_MAX_CHARS)
     # Only for op="caption" with no creator_text: what the caption should be
     # ABOUT, as distinct from `attribute` (which clips it's for).
     caption_attribute: str | None = Field(default=None, max_length=160)

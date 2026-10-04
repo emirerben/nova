@@ -1912,3 +1912,37 @@ async def test_text_for_a_chapter_prints_its_name_not_a_sentence_about_the_foota
     resolved = result.intents[0]
     assert resolved.caption_text == "The Pub"
     assert resolved.caption_grounding == "creator_text"
+
+
+async def test_long_creator_chapter_line_resolves_verbatim(monkeypatch) -> None:
+    """2026-10-04 La Mercè chat: a 61-character word-for-word chapter line must
+    reach `caption_text` intact, not be refused by the short-phrase bound."""
+    line = "It's La Mercè, Barcelona's biggest festival. Every September."
+    intent = ClipIntent(intent_id="c5", op="caption", attribute="Chapter 5", creator_text=line)
+    clips = [_video_clip("m1", subject="fireworks over a lit tower at night")]
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id="c5", assignments=[ResolverAssignment(media="m001", confidence=0.9)]
+                )
+            ]
+        ),
+    )
+    _patch_vision_forbidden(monkeypatch)
+
+    result = await resolve_clip_intents_for_turn(
+        intents=[intent],
+        creator_request=(
+            "Chapter 5 · fireworks in the night sky beside a lit tower · 4 seconds · " + line
+        ),
+        clips=clips,
+        run_context=RunContext(),
+    )
+
+    assert result.question is None
+    resolved = result.intents[0]
+    assert resolved.status == "resolved"
+    assert resolved.caption_text == line
+    assert resolved.caption_grounding == "creator_text"

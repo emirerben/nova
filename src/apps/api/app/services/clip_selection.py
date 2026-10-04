@@ -26,7 +26,7 @@ from app.schemas.clip_intents import ClipIntent
 
 CLIP_QUESTION_VERSION = 1
 MAX_QUESTION_CLIPS = 50  # == MAX_CREATOR_MEDIA_REFS
-MAX_QUESTION_CATEGORIES = 8  # == MAX_CLIP_INTENTS
+MAX_QUESTION_CATEGORIES = 8  # a tap-to-answer screen; <= MAX_CLIP_INTENTS
 _KEY_MAX = 120
 # Token-set similarity needed for the fallback intent<->selection-key match.
 _FALLBACK_MIN_SIMILARITY = 0.5

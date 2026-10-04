@@ -13,7 +13,12 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
 from app.pipeline.prompt_loader import load_prompt
-from app.schemas.clip_intents import INTENT_ID_MAX_CHARS, MAX_CLIP_INTENTS, ClipIntent
+from app.schemas.clip_intents import (
+    CREATOR_CAPTION_MAX_CHARS,
+    INTENT_ID_MAX_CHARS,
+    MAX_CLIP_INTENTS,
+    ClipIntent,
+)
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _ROLE_MARKERS = re.compile(r"(?i)(^|[\s.;!?])(system|assistant|user|tool|developer)\s*[:>]")
@@ -58,6 +63,8 @@ _QUOTE_TABLE = str.maketrans(
         "−": "-",
     }
 )
+# Label copy is a corner tag; caption copy is the creator's own chapter line,
+# printed as written (CREATOR_CAPTION_MAX_CHARS).
 _CREATOR_TEXT_MAX = 60
 _LABEL_PREVIEW_CHARS = 40
 _QUESTION_MAX_CHARS = 400
@@ -72,6 +79,10 @@ _STOPWORDS = frozenset(
     "videos video content footage".split()
 )
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?\n])\s+")
+# Flash sometimes writes prose into the first/last `position` enum ("at the
+# start", "in this chapter order"). Word-bounded so "lasting" never reads as last.
+_POSITION_FIRST = re.compile(r"\b(first|start|beginning|opening|open)\b", re.IGNORECASE)
+_POSITION_LAST = re.compile(r"\b(last|end|ending|close|closing|finish)\b", re.IGNORECASE)
 
 
 def _norm(value: str) -> str:
@@ -205,6 +216,71 @@ def _sentence_naming(attribute: str, sources: tuple[str, ...]) -> str | None:
     return None
 
 
+def _unstitched_quote(quote: str, creator_text: str | None, sources: tuple[str, ...]) -> str | None:
+    """The creator span inside a quote the model stitched from TWO exact creator spans.
+
+    Flash sometimes prefixes each chapter row with the request's governing sentence
+    ("show each chapter line ... word for word. Chapter 2 · ... · It's a castell.").
+    Every word is still the creator's; only the join is not contiguous. Returns the
+    half that holds ``creator_text`` (or the longer half when there is none), only
+    when both halves are exact creator spans, so nothing invented ever passes.
+    ``quote`` and ``creator_text`` are ``_norm``-ed.
+    """
+    best: str | None = None
+    for i, char in enumerate(quote):
+        if char != " ":
+            continue
+        left, right = quote[:i], quote[i + 1 :]
+        if not (any(left in s for s in sources) and any(right in s for s in sources)):
+            continue
+        halves = [h for h in (left, right) if creator_text is None or creator_text in h]
+        for half in halves:
+            if best is None or len(half) > len(best):
+                best = half
+    return best
+
+
+def _repair_position(data: dict[str, Any]) -> None:
+    """Map prose an order intent wrote into ``position`` onto the enum, in place.
+
+    "at the start" is ``first`` and "at the very end" is ``last``. A request to
+    keep the listed order ("in this chapter order", "sequential", a list of the
+    chapters) places nothing first or last: ``None``, the shape the model already
+    returns for it, which the story structure carries. Two placements packed into
+    one intent ("day first and night last") stay invalid: guessing one side would
+    silently drop the other, so the creator is asked.
+    """
+    position = data.get("position")
+    if data.get("op") != "order" or position in (None, "first", "last"):
+        return
+    text = position if isinstance(position, str) else ""
+    first = bool(_POSITION_FIRST.search(text))
+    last = bool(_POSITION_LAST.search(text))
+    if first and last:
+        return
+    data["position"] = "first" if first else "last" if last else None
+
+
+def _collapse_captioned_groups(
+    kept: list[tuple[PlannedClipIntent, object]],
+) -> list[tuple[PlannedClipIntent, object]]:
+    """Drop each group a same-named caption already holds together.
+
+    Only called when the inventory is over the cap. A caption keeps its clips in
+    ONE beat exactly like a group, so the group adds nothing to the edit. Never
+    applied alongside a label: label rows read the creator's group names.
+    """
+    intents = [intent for intent, _ in kept]
+    if any(intent.op == "label" for intent in intents):
+        return kept
+    captioned = {intent.attribute.casefold() for intent in intents if intent.op == "caption"}
+    return [
+        (intent, raw)
+        for intent, raw in kept
+        if not (intent.op == "group" and intent.attribute.casefold() in captioned)
+    ]
+
+
 class PlannedClipIntent(ClipIntent):
     """A clip operation with its exact creator-written provenance."""
 
@@ -254,7 +330,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.clip_intent_planner",
         prompt_id="clip_intent_planner",
-        prompt_version="2026-10-03.2",
+        prompt_version="2026-10-04.1",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -390,6 +466,8 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
                 dropped=dropped,
                 drop_classes=reasons,
             )
+        if len(kept) > MAX_CLIP_INTENTS:
+            kept = _collapse_captioned_groups(kept)
         # Over the cap: keep the first valid ones in the creator's order and ask about
         # the rest instead of failing the whole inventory.
         overflow = [_preview(raw) for _, raw in kept[MAX_CLIP_INTENTS:]]
@@ -441,11 +519,13 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             data["caption_attribute"] = None  # exact copy wins over an authored topic
         if data.get("op") != "order":
             data["position"] = None
+        _repair_position(data)
         creator_text = data.get("creator_text")
-        if isinstance(creator_text, str) and len(creator_text) > _CREATOR_TEXT_MAX:
+        text_max = CREATOR_CAPTION_MAX_CHARS if data.get("op") == "caption" else _CREATOR_TEXT_MAX
+        if isinstance(creator_text, str) and len(creator_text) > text_max:
             raise _IntentRejected(
                 "creator_text_too_long",
-                f"creator_text is over {_CREATOR_TEXT_MAX} characters; copy only the exact"
+                f"creator_text is over {text_max} characters; copy only the exact"
                 " on-screen words, not the whole sentence",
             )
         try:
@@ -475,6 +555,12 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             if repaired is not None:
                 intent = intent.model_copy(update={"source_quote": repaired})
                 quote = _norm(repaired)
+        if quote and not any(quote in source for source in sources):
+            text = _norm(intent.creator_text) if intent.creator_text is not None else None
+            repaired = _unstitched_quote(quote, text, sources)
+            if repaired is not None:
+                intent = intent.model_copy(update={"source_quote": repaired})
+                quote = repaired
         if not quote or not any(quote in source for source in sources):
             raise _IntentRejected(
                 "source_quote_not_creator_text",

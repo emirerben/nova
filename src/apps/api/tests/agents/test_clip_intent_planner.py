@@ -707,3 +707,278 @@ def test_prompt_teaches_compact_inventory_and_named_values() -> None:
     assert "ask them to name the sports again" in prompt
     assert '"placeholder": true' in prompt
     assert "never ask the creator to restate it" in prompt
+
+
+# ── La Mercè story edit (2026-10-04 prod): word-for-word chapter lines ───────
+# Byte-identical to the creator's prod message (verified against the turn's
+# request_digest). Chapter 5's line is 61 characters: the parser refused it with
+# the 60-character cap meant for short phrases and asked the creator to restate
+# their own words.
+
+T04_REQUEST = (
+    'Make it 20 seconds. Title: "This kid is climbing a tower made of people." Story edit in '
+    "6 chapters at a quick pace with high energy, day shots first and night shots last. Use "
+    "every uploaded file, in this chapter order, and show each chapter line on screen word "
+    "for word. Chapter 1 · a helmeted child at the very top of a tall human tower · 3 seconds "
+    "· Watch the very top. Chapter 2 · two full human towers in front of a stone building, "
+    "crowd below · 4 seconds · It's a castell. The tallest ever built had 10 levels. Chapter "
+    "3 · the packed base of shoulders, arms and hands, seen from above · 3 seconds · UNESCO "
+    "heritage since 2010. Chapter 4 · two night shots of hooded devils and sparks over the "
+    'crowd · 4 seconds · At night, "devils" run through the crowd with fireworks. Chapter 5 '
+    "· fireworks in the night sky beside a lit tower · 4 seconds · It's La Mercè, "
+    "Barcelona's biggest festival. Every September. Chapter 6 · white sparks shooting up, "
+    "close · 2 seconds · Would you run through the fire?"
+)
+T04_LINES = [
+    "Watch the very top.",
+    "It's a castell. The tallest ever built had 10 levels.",
+    "UNESCO heritage since 2010.",
+    'At night, "devils" run through the crowd with fireworks.',
+    "It's La Mercè, Barcelona's biggest festival. Every September.",
+    "Would you run through the fire?",
+]
+
+
+def _t04_input() -> ClipIntentPlannerInput:
+    return ClipIntentPlannerInput(creator_request=T04_REQUEST, latest_user_message=T04_REQUEST)
+
+
+def _t04_caption(n: int) -> dict:
+    line = T04_LINES[n - 1]
+    return _games_intent(f"caption_chapter_{n}", "caption", f"Chapter {n}", line, creator_text=line)
+
+
+def _t04_group(n: int) -> dict:
+    return _games_intent(f"group_chapter_{n}", "group", f"Chapter {n}", f"Chapter {n}")
+
+
+_T04_DAY_FIRST = _games_intent(
+    "order_day", "order", "day shots", "day shots first", position="first"
+)
+_T04_NIGHT_LAST = _games_intent(
+    "order_night", "order", "night shots", "night shots last", position="last"
+)
+_T04_INCLUDE = _games_intent(
+    "include_all", "include", "every uploaded file", "Use every uploaded file"
+)
+
+
+def test_t04_chapter_line_over_60_chars_is_kept_verbatim() -> None:
+    """The prod turn: six word-for-word chapter lines, one of them 61 characters."""
+    assert len(T04_LINES[4]) == 61
+    raw = json.dumps(
+        {
+            "intents": [*(_t04_caption(n) for n in range(1, 7)), _T04_DAY_FIRST, _T04_INCLUDE],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _t04_input())
+    assert out.salvage_question is None
+    assert out.salvage_reasons == []
+    captions = [i.creator_text for i in out.intents if i.op == "caption"]
+    assert captions == T04_LINES
+
+
+def test_t04_full_inventory_with_a_group_per_chapter_fits_the_cap() -> None:
+    """Replayed shape: group + caption per chapter, both orders, include, and the
+    "in this chapter order" request -- 16 operations, none of them a question."""
+    raw = json.dumps(
+        {
+            "intents": [
+                *(intent for n in range(1, 7) for intent in (_t04_group(n), _t04_caption(n))),
+                _T04_DAY_FIRST,
+                _T04_NIGHT_LAST,
+                _T04_INCLUDE,
+                _games_intent(
+                    "order_chapters",
+                    "order",
+                    "chapters",
+                    "in this chapter order",
+                    position="in this chapter order",
+                ),
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _t04_input())
+    assert out.salvage_question is None
+    assert len(out.intents) == 16
+    chapter_order = next(i for i in out.intents if i.intent_id == "order_chapters")
+    assert chapter_order.position is None
+    assert [i.creator_text for i in out.intents if i.op == "caption"] == T04_LINES
+
+
+def test_groups_duplicating_a_caption_collapse_before_the_cap_asks() -> None:
+    """A caption already holds its chapter together (exactly like a group), so a
+    same-named group is dropped before Kria asks the creator to restate anything."""
+    lines = [f"Line number {n} of the story" for n in range(1, 10)]  # 18 intents > 16
+    request = " ".join(f'Chapter {n} · "{line}"' for n, line in enumerate(lines, 1))
+    intents = []
+    for n, line in enumerate(lines, 1):
+        intents.append(_games_intent(f"g{n}", "group", f"Chapter {n}", f"Chapter {n}"))
+        intents.append(_games_intent(f"c{n}", "caption", f"Chapter {n}", line, creator_text=line))
+    out = _agent().parse(
+        json.dumps({"intents": intents, "question": None}),
+        ClipIntentPlannerInput(creator_request=request),
+    )
+    assert out.salvage_question is None
+    assert [i.op for i in out.intents] == ["caption"] * 9
+    assert [i.creator_text for i in out.intents] == lines
+
+
+def test_groups_are_not_collapsed_while_the_inventory_fits() -> None:
+    raw = json.dumps({"intents": [_t04_group(1), _t04_caption(1)], "question": None})
+    out = _agent().parse(raw, _t04_input())
+    assert [i.op for i in out.intents] == ["group", "caption"]
+
+
+@pytest.mark.parametrize(
+    ("position", "expected"),
+    [
+        ("in this chapter order", None),
+        ("sequential", None),
+        ("in order", None),
+        (["Chapter 1 · a helmeted child", "Chapter 2 · two full human towers"], None),
+        ("at the start", "first"),
+        ("first", "first"),
+        ("at the very end", "last"),
+    ],
+)
+def test_order_position_prose_is_normalised_not_dropped(position, expected) -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent(
+                    "order_x", "order", "chapters", "in this chapter order", position=position
+                ),
+                _t04_caption(1),
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _t04_input())
+    assert out.salvage_question is None
+    assert out.intents[0].position == expected
+
+
+def test_two_placements_packed_into_one_order_still_ask() -> None:
+    """ "day first and night last" in ONE intent cannot be represented; guessing one
+    side would silently drop the other, so the creator is still asked."""
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent(
+                    "order_shots",
+                    "order",
+                    "shots",
+                    "day shots first and night shots last",
+                    position="day shots first and night shots last",
+                ),
+                _t04_caption(1),
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _t04_input())
+    assert out.salvage_reasons == ["intent_invalid:position"]
+    assert len(out.intents) == 1
+
+
+def test_label_copy_keeps_its_short_bound() -> None:
+    """Only caption copy gets the creator-caption bound; a label is a corner tag."""
+    long_label = T04_LINES[4]
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent("l1", "label", "festival", long_label, creator_text=long_label),
+                _t04_caption(1),
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _t04_input())
+    assert out.salvage_reasons == ["creator_text_too_long"]
+
+
+def test_caption_copy_over_the_creator_bound_is_still_rejected() -> None:
+    from app.schemas.clip_intents import CREATOR_CAPTION_MAX_CHARS
+
+    line = ("word " * 60).strip()
+    assert len(line) > CREATOR_CAPTION_MAX_CHARS
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent("c1", "caption", "Chapter 1", line, creator_text=line),
+                _t04_caption(2),
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, ClipIntentPlannerInput(creator_request=f"{line}. {T04_REQUEST}"))
+    assert out.salvage_reasons == ["creator_text_too_long"]
+
+
+def test_cap_fits_a_six_chapter_story_and_the_prompt_says_so() -> None:
+    from app.schemas.clip_intents import MAX_CLIP_INTENTS
+
+    assert MAX_CLIP_INTENTS == 16
+    prompt = _agent().render_prompt(_t04_input())
+    assert "fits in 16 operations" in prompt
+    assert '`position` is exactly "first", "last", or null' in prompt
+
+
+def test_quote_stitched_from_two_creator_spans_is_repaired_not_dropped() -> None:
+    """Live replay (2/10 runs): Flash prefixed every chapter row with the request's
+    "show each chapter line ... word for word." sentence. Both halves are the
+    creator's exact words; only the join is not contiguous."""
+    lead = "show each chapter line on screen word for word."
+    intents = [
+        _games_intent(
+            f"caption_chapter_{n}",
+            "caption",
+            f"Chapter {n}",
+            f"{lead} {row}",
+            creator_text=T04_LINES[n - 1],
+        )
+        for n, row in enumerate(
+            [
+                "Chapter 1 · a helmeted child at the very top of a tall human tower · 3 seconds"
+                " · Watch the very top.",
+                "Chapter 2 · two full human towers in front of a stone building, crowd below"
+                " · 4 seconds · It's a castell. The tallest ever built had 10 levels.",
+                "Chapter 3 · the packed base of shoulders, arms and hands, seen from above"
+                " · 3 seconds · UNESCO heritage since 2010.",
+                "Chapter 4 · two night shots of hooded devils and sparks over the crowd"
+                ' · 4 seconds · At night, "devils" run through the crowd with fireworks.',
+                "Chapter 5 · fireworks in the night sky beside a lit tower · 4 seconds"
+                " · It's La Mercè, Barcelona's biggest festival. Every September.",
+                "Chapter 6 · white sparks shooting up, close · 2 seconds"
+                " · Would you run through the fire?",
+            ],
+            1,
+        )
+    ]
+    out = _agent().parse(json.dumps({"intents": intents, "question": None}), _t04_input())
+    assert out.salvage_question is None
+    assert [i.creator_text for i in out.intents] == T04_LINES
+    assert out.intents[4].source_quote.startswith("Chapter 5 · fireworks")
+
+
+def test_stitched_quote_with_an_invented_half_is_still_rejected() -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent(
+                    "c5",
+                    "caption",
+                    "Chapter 5",
+                    "please print this line. It's La Mercè, Barcelona's biggest festival.",
+                    creator_text="It's La Mercè, Barcelona's biggest festival.",
+                ),
+                _t04_caption(1),
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _t04_input())
+    assert out.salvage_reasons == ["source_quote_not_creator_text"]

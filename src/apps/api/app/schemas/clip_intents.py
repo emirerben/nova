@@ -60,7 +60,10 @@ ClipOrderBy = Literal["capture_time", "route"]
 GroundingSource = Literal["creator_text", "record_span", "vision_verified", "placeholder"]
 ResolutionStatus = Literal["resolved", "needs_creator"]
 
-MAX_CLIP_INTENTS = 8
+# A word-for-word story edit is one caption per chapter plus its orders and
+# include: a 6-chapter request is 8+ operations on its own, 16 with a group per
+# chapter. Same bound as the Creative Brief's per-clip text lane.
+MAX_CLIP_INTENTS = 16
 INTENT_ID_MAX_CHARS = 40
 # KRI-282: the generic stand-in printed on every clip a "placeholder" label
 # targets. System-chosen on purpose: the fence's invariant is that model or
@@ -76,9 +79,15 @@ LABEL_MAX_WORDS = 3
 MEMBERSHIP_MIN_CONFIDENCE = 0.6
 
 # A caption is a phrase, not a tag: longer than a label, but still short
-# on-screen text for one chapter (never a full sentence).
+# on-screen text for one chapter (never a full sentence). These shape bounds
+# limit what a MODEL may author or ground from footage.
 CAPTION_MAX_CHARS = 60
 CAPTION_MAX_WORDS = 10
+# The creator's own word-for-word caption copy ("show each chapter line word for
+# word") is printed as written, so only its length is bounded: the same bound as
+# a Creative Brief literal (`app/kria/brief.py`) for the same words; a story beat
+# line holds 280.
+CREATOR_CAPTION_MAX_CHARS = 200
 
 _LABEL_ALLOWED = re.compile(r"[^\w\s&'\-]", re.UNICODE)
 # Captions are ordinary short phrases: allow common sentence punctuation on
@@ -147,8 +156,9 @@ class ClipIntent(BaseModel):
             raise ValueError("placeholder requires a clip label with no creator_text")
         return self
 
-    # Exact creator-written copy for this intent ("post match pub"), if any.
-    creator_text: str | None = Field(default=None, max_length=60)
+    # Exact creator-written copy for this intent ("post match pub"), if any. A
+    # label's copy is still fenced to LABEL_MAX_* when it is grounded.
+    creator_text: str | None = Field(default=None, max_length=CREATOR_CAPTION_MAX_CHARS)
     # Only for op="caption" with no `creator_text`: what the caption should be
     # ABOUT ("the weather"), as distinct from `attribute` (WHICH clips it's
     # for, "the park clips"). Never set for any other op.
@@ -177,7 +187,7 @@ class ClipIntent(BaseModel):
     @field_validator("creator_text", mode="before")
     @classmethod
     def _creator_text(cls, v: object) -> str | None:
-        return _clean(v, 60) or None
+        return _clean(v, CREATOR_CAPTION_MAX_CHARS) or None
 
     @field_validator("caption_attribute", mode="before")
     @classmethod
@@ -213,7 +223,7 @@ class ResolvedClipIntent(ClipIntent):
     # (the member clips in `assignments`) -- `creator_text` verbatim, or the
     # resolver's grounded phrase. `assignments[i].value` stays None for
     # caption, same as group/order/include -- membership only.
-    caption_text: str | None = Field(default=None, max_length=CAPTION_MAX_CHARS)
+    caption_text: str | None = Field(default=None, max_length=CREATOR_CAPTION_MAX_CHARS)
     caption_grounding: GroundingSource | None = None
 
     def media_ids(self) -> list[str]:
@@ -375,10 +385,26 @@ class GroundedCaption(BaseModel):
     """The only shape the caption render lane accepts. Intent-level (one
     caption per chapter), unlike ``GroundedLabel`` which is per-clip."""
 
-    text: str = Field(min_length=1, max_length=CAPTION_MAX_CHARS)
+    text: str = Field(min_length=1, max_length=CREATOR_CAPTION_MAX_CHARS)
     grounding: GroundingSource
     confidence: float = Field(ge=0.0, le=1.0)
     intent_id: str = ""
+
+
+def clean_creator_caption_text(value: object) -> str | None:
+    """Normalise the creator's own caption copy; None when it cannot be printed.
+
+    Unlike ``clean_caption_text`` there is no word or punctuation bound: the
+    creator wrote these words to be shown as written ("#1 Antoni Gaudí…").
+    """
+    text = _clean(value, CREATOR_CAPTION_MAX_CHARS + 1)
+    if not text or len(text) > CREATOR_CAPTION_MAX_CHARS:
+        return None
+    if any(unicodedata.category(c) == "Cc" for c in text):
+        return None
+    if not any(c.isalnum() for c in text):
+        return None
+    return text
 
 
 def clean_caption_text(value: object) -> str | None:
@@ -402,6 +428,7 @@ def ground_caption(
     vision_answer: str | None = None,
     vision_confidence: float | None = None,
     intent_id: str = "",
+    creator_copy: bool = False,
 ) -> GroundedCaption | None:
     """Apply the on-screen text fence to an intent-level caption phrase.
 
@@ -409,7 +436,18 @@ def ground_caption(
     the caption's words against the UNION of every member clip's vision
     evidence (a caption spans a whole chapter, not one clip) instead of a
     single clip's record.
+
+    ``creator_copy`` marks the planner-verified ``creator_text`` of the intent:
+    the creator's own words print as written (``clean_creator_caption_text``)
+    when the request still contains them. Anything else, including a resolver
+    phrase, keeps the short-phrase shape bounds.
     """
+    if creator_copy:
+        copy = clean_creator_caption_text(value)
+        if copy is not None and _contains_phrase(creator_request or "", copy):
+            return GroundedCaption(
+                text=copy, grounding="creator_text", confidence=1.0, intent_id=intent_id
+            )
     text = clean_caption_text(value)
     if text is None:
         return None
