@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.74.0] - 2026-10-04
+
+### Changed
+- fix(kria): keep every dictated per-shot text in the Creative Brief (#1380) <!-- release-pr: 1380 -->
+
 ## [0.78.73.0] - 2026-10-04
 
 ### Changed
