@@ -312,7 +312,7 @@ struct SlidePostStrip: View {
         .offset(x: lifted ? dragDelta : shift).zIndex(lifted ? 1 : 0)
         .animation(.snappy(duration: 0.18), value: lifted)
         .animation(.snappy(duration: 0.18), value: shift)
-        .highPriorityGesture(reorderGesture(for: slide))
+        .simultaneousGesture(reorderGesture(for: slide))
         .accessibilityAction(named: "Move earlier") { if index > 0 { onMove(slide.id, index - 1) } }
         .accessibilityAction(named: "Move later") { if index < slides.count - 1 { onMove(slide.id, index + 1) } }
     }

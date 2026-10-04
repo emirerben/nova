@@ -785,17 +785,19 @@ struct SlidePostAssetThumbnail: View {
     var size = CGSize(width: 64, height: 76)
     var radius: CGFloat = 8
     var body: some View {
-        Group {
-            if let url = asset?.previewURL ?? asset?.displayURL {
-                // Fill the tile, then clip to it: a bare `scaledToFill` reports its overflowing size to layout
-                // and accessibility (a 16:9 photo made a 56pt tile read as 128pt wide).
-                if url.isFileURL, let image = UIImage(contentsOfFile: url.path) { Image(uiImage: image).resizable().scaledToFill().frame(width: size.width, height: size.height).clipped() }
-                else { AsyncImage(url: url) { $0.resizable().scaledToFill().frame(width: size.width, height: size.height).clipped() } placeholder: { ProgressView() } }
-            }
-            else { Image(systemName: asset?.kind == "video" ? "video" : "photo").foregroundStyle(KriaColor.zinc) }
+        // The photo is an overlay on a tile-sized base and hidden from accessibility, so an overflowing
+        // aspect-fill image can never widen the tile's accessibility / hit frame (a 16:9 photo made a
+        // 56pt tile read as 128pt wide).
+        Color.clear.frame(width: size.width, height: size.height)
+            .background(KriaColor.softZinc)
+            .overlay { content.compositingGroup().accessibilityHidden(true) }
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+    }
+    @ViewBuilder private var content: some View {
+        if let url = asset?.previewURL ?? asset?.displayURL {
+            if url.isFileURL, let image = UIImage(contentsOfFile: url.path) { Image(uiImage: image).resizable().scaledToFill().frame(width: size.width, height: size.height).clipped() }
+            else { AsyncImage(url: url) { $0.resizable().scaledToFill().frame(width: size.width, height: size.height).clipped() } placeholder: { ProgressView() } }
         }
-        .frame(width: size.width, height: size.height).background(KriaColor.softZinc).clipped().clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-        // One tile-sized element: the overflowing photo must not widen the tile's accessibility / hit frame.
-        .accessibilityElement(children: .ignore)
+        else { Image(systemName: asset?.kind == "video" ? "video" : "photo").foregroundStyle(KriaColor.zinc) }
     }
 }

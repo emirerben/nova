@@ -458,11 +458,13 @@ import XCTest
         let app = openRichWorkspace()
         let tile = app.buttons["slidepost-tile-3"], add = app.buttons["slidepost-add-tile"]
         XCTAssertTrue(add.waitForExistence(timeout: 5))
-        print("DBGTREE", app.debugDescription)
-        XCTAssertEqual(add.frame.width, tile.frame.width, accuracy: 1)
+        // XCUI reports an aspect-filled photo's overflow as the tile's width, so compare height, baseline and
+        // CENTRES: the + block is exactly one 66pt pitch (60pt block + 6pt gap) after the last slide.
         XCTAssertEqual(add.frame.height, tile.frame.height, accuracy: 1)
+        XCTAssertEqual(add.frame.height, 72, accuracy: 1)
+        XCTAssertEqual(add.frame.width, 56, accuracy: 1)
         XCTAssertEqual(add.frame.minY, tile.frame.minY, accuracy: 1, "same baseline as the tiles")
-        XCTAssertEqual(add.frame.minX - tile.frame.maxX, 6, accuracy: 1, "the next block in the row, one gap after the last slide")
+        XCTAssertEqual(add.frame.midX - tile.frame.midX, 66, accuracy: 1, "the next block in the row, one pitch after the last slide")
         for index in 1...3 { XCTAssertLessThan(app.buttons["slidepost-tile-\(index)"].frame.minX, add.frame.minX) }
         attach(app, "Strip: add block last")
     }
@@ -474,7 +476,8 @@ import XCTest
         XCTAssertFalse(app.buttons["slidepost-tile-4"].exists)
         let pending = app.descendants(matching: .any)["slidepost-pending-1"]
         XCTAssertTrue(pending.waitForExistence(timeout: 10), "an uploading/processing block shows in the strip")
-        XCTAssertEqual(pending.frame.width, app.buttons["slidepost-tile-1"].frame.width, accuracy: 1, "same footprint as a tile")
+        XCTAssertEqual(pending.frame.height, 72, accuracy: 1, "same footprint as a tile")
+        XCTAssertEqual(pending.frame.minY, app.buttons["slidepost-tile-2"].frame.minY, accuracy: 1, "same baseline")
         attach(app, "Strip: processing placeholder")
         let added = app.buttons["slidepost-tile-4"]
         XCTAssertTrue(added.waitForExistence(timeout: 20), "the ready photo was added as slide 4")
@@ -526,6 +529,11 @@ import XCTest
         XCTAssertTrue(texts.element(boundBy: 1).waitForExistence(timeout: 5))
         let athens = texts.matching(NSPredicate(format: "label == 'Athens'")).firstMatch
         XCTAssertTrue(athens.exists)
+        // Both texts start at the centre; move the new one up so each can be tapped on its own.
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        texts.matching(NSPredicate(format: "label == 'Your text'")).firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: preview.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)))
+        Thread.sleep(forTimeInterval: 0.8)   // a tap right after a drag is (deliberately) ignored
         athens.tap()
         let field = app.textViews["slidepost-text-field"].firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5))
