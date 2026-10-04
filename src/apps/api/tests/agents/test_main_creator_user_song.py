@@ -28,11 +28,13 @@ from app.config import settings
 from tests.agents.test_main_creator_agent import _input, _manifest
 
 # (clip_intents_enabled, brief_enabled) -> sha256 of the pre-change render.
+# The brief-on hashes were re-captured for KRI-422's brief section (prompt v43) on
+# its own commit before KRI-374 merged in: still byte-identical without a song.
 PRE_CHANGE_PROMPT_SHA = {
     (True, False): "f7c328b0154ed8e4b92fdfbdab3ea8d6db855858f1499e2fbdfe5af11380fddf",
-    (True, True): "009cd414bf081859b669f6a118f1d1595a17d5960e946b6834592c55bd41090a",
+    (True, True): "0e63cc9aa6ecf55bd2a7c2c940403fcdc4c842093c7c1fbd79be481ba1f06573",
     (False, False): "cb7e2f936a3adde2756d9cdce8a09eed5b14767161bebbfceb2a0c743fbf2235",
-    (False, True): "dc9527deb54ae16f3e25f374dfbf678c5684f2e2141384898a9e00c25c1acbc5",
+    (False, True): "12114da59541ce446f59c73220aa233aaa0efb073637f59de540da6672d85faa",
 }
 
 
@@ -102,7 +104,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-04-v42"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-04-v43"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

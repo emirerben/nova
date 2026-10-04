@@ -1,0 +1,269 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-10-04-v43",
+  "input": {
+    "user_message": "Title it Bowling Night and keep it about 20 seconds. Show this text on each shot, word for word:\n1. The bookshop photo: \"Every story starts on a shelf\"\n2. The video of the girl bowling: \"Strike one, nervous laugh\"\n3. The coffee cup photo: \"Fuel for round two\"\n4. The arcade video: \"Ten tokens, zero regrets\"\n5. The street at night video: \"Walking it off\"\n6. The scoreboard photo: \"Final score: 142\"\nEnd with \"See you next week\".",
+    "creator_request": "Title it Bowling Night and keep it about 20 seconds. Show this text on each shot, word for word:\n1. The bookshop photo: \"Every story starts on a shelf\"\n2. The video of the girl bowling: \"Strike one, nervous laugh\"\n3. The coffee cup photo: \"Fuel for round two\"\n4. The arcade video: \"Ten tokens, zero regrets\"\n5. The street at night video: \"Walking it off\"\n6. The scoreboard photo: \"Final score: 142\"\nEnd with \"See you next week\".",
+    "creator_context": "Creator who posts weekend night-out recaps in English.",
+    "item_context": "A bowling night with friends: a bookshop stop, bowling, coffee, the arcade and the walk home.",
+    "media_context": [
+      {
+        "media_id": "photo-1",
+        "kind": "image",
+        "creator_note": null
+      },
+      {
+        "media_id": "clip-1",
+        "kind": "video",
+        "creator_note": null
+      },
+      {
+        "media_id": "photo-2",
+        "kind": "image",
+        "creator_note": null
+      },
+      {
+        "media_id": "clip-2",
+        "kind": "video",
+        "creator_note": null
+      },
+      {
+        "media_id": "clip-3",
+        "kind": "video",
+        "creator_note": null
+      },
+      {
+        "media_id": "photo-3",
+        "kind": "image",
+        "creator_note": null
+      },
+      {
+        "media_id": "clip-4",
+        "kind": "video",
+        "creator_note": null
+      },
+      {
+        "media_id": "clip-5",
+        "kind": "video",
+        "creator_note": null
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-bowling-night",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "has_voiceover": false,
+      "media": [
+        {
+          "media_id": "photo-1",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "clip-1",
+          "kind": "video",
+          "label": null
+        },
+        {
+          "media_id": "photo-2",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "clip-2",
+          "kind": "video",
+          "label": null
+        },
+        {
+          "media_id": "clip-3",
+          "kind": "video",
+          "label": null
+        },
+        {
+          "media_id": "photo-3",
+          "kind": "image",
+          "label": null
+        },
+        {
+          "media_id": "clip-4",
+          "kind": "video",
+          "label": null
+        },
+        {
+          "media_id": "clip-5",
+          "kind": "video",
+          "label": null
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Licensed warm acoustic"
+        }
+      ],
+      "capabilities": {
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "edit_format:montage": {
+          "available": true
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "manifest_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "brief_enabled": true
+  },
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"kind\": \"text\",\n      \"scope\": \"title\",\n      \"literal\": \"Bowling Night\",\n      \"description\": null,\n      \"facts\": {}\n    },\n    {\n      \"kind\": \"timing\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"about 20 seconds\",\n      \"facts\": {\n        \"duration_s\": 20\n      }\n    },\n    {\n      \"kind\": \"text\",\n      \"scope\": \"per_clip\",\n      \"literal\": \"Every story starts on a shelf\",\n      \"description\": \"The bookshop photo\",\n      \"facts\": {}\n    },\n    {\n      \"kind\": \"text\",\n      \"scope\": \"per_clip\",\n      \"literal\": \"Strike one, nervous laugh\",\n      \"description\": \"The video of the girl bowling\",\n      \"facts\": {}\n    },\n    {\n      \"kind\": \"text\",\n      \"scope\": \"per_clip\",\n      \"literal\": \"Fuel for round two\",\n      \"description\": \"The coffee cup photo\",\n      \"facts\": {}\n    },\n    {\n      \"kind\": \"text\",\n      \"scope\": \"per_clip\",\n      \"literal\": \"Ten tokens, zero regrets\",\n      \"description\": \"The arcade video\",\n      \"facts\": {}\n    },\n    {\n      \"kind\": \"text\",\n      \"scope\": \"per_clip\",\n      \"literal\": \"Walking it off\",\n      \"description\": \"The street at night video\",\n      \"facts\": {}\n    },\n    {\n      \"kind\": \"text\",\n      \"scope\": \"per_clip\",\n      \"literal\": \"Final score: 142\",\n      \"description\": \"The scoreboard photo\",\n      \"facts\": {}\n    },\n    {\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"See you next week\",\n      \"description\": \"Ending text\",\n      \"facts\": {}\n    }\n  ],\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"guided_story\",\n      \"edit_format\": \"montage\",\n      \"archetype\": \"day_vlog\",\n      \"hero_media_id\": null,\n      \"audio_strategy\": \"licensed_music\",\n      \"execution_contract\": null,\n      \"media_scope\": \"selected\",\n      \"clip_intents\": [],\n      \"story_structure\": [\n        \"Opening at the bookshop\",\n        \"Bowling action and coffee break\",\n        \"Arcade fun and the walk home\",\n        \"Final score reveal and outro\"\n      ],\n      \"caption_style\": \"none\",\n      \"intro_hook\": \"Bowling Night\",\n      \"opening_title\": \"Bowling Night\",\n      \"opening_title_duration_s\": null,\n      \"shot_labels\": [\n        \"Every story starts on a shelf\",\n        \"Strike one, nervous laugh\",\n        \"Fuel for round two\",\n        \"Ten tokens, zero regrets\",\n        \"Walking it off\",\n        \"Final score: 142\"\n      ],\n      \"closing_title\": \"See you next week\",\n      \"font_family\": null,\n      \"text_color\": null,\n      \"pacing\": \"balanced\",\n      \"target_duration_s\": 20,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"optional_treatments\": [],\n      \"overlay_display\": null,\n      \"rationale\": \"Cutting a chronological night-out montage targeting 20 seconds, allowing about 3 seconds per shot to neatly fit your specific on-screen captions.\",\n      \"montage_audio\": null\n    },\n    \"summary\": \"I'll create a 20-second chronological montage of your bowling night, mapping your exact captions to each specific shot in order, set to an upbeat acoustic track.\",\n    \"render_intent_evidence\": {\n      \"opening_title\": \"Title it Bowling Night\",\n      \"font_family\": null,\n      \"text_color\": null,\n      \"opening_title_duration_s\": null,\n      \"shot_labels\": \"1. The bookshop photo: \\\"Every story starts on a shelf\\\"\\n2. The video of the girl bowling: \\\"Strike one, nervous laugh\\\"\\n3. The coffee cup photo: \\\"Fuel for round two\\\"\\n4. The arcade video: \\\"Ten tokens, zero regrets\\\"\\n5. The street at night video: \\\"Walking it off\\\"\\n6. The scoreboard photo: \\\"Final score: 142\\\"\",\n      \"closing_title\": \"End with \\\"See you next week\\\"\",\n      \"licensed_sfx\": null\n    }\n  }\n}",
+  "output": {
+    "action": {
+      "kind": "propose_strategy",
+      "strategy": {
+        "direction": "guided_story",
+        "edit_format": "montage",
+        "archetype": "day_vlog",
+        "hero_media_id": null,
+        "audio_strategy": "licensed_music",
+        "execution_contract": null,
+        "media_scope": "selected",
+        "story_structure": [
+          "Opening at the bookshop",
+          "Bowling action and coffee break",
+          "Arcade fun and the walk home",
+          "Final score reveal and outro"
+        ],
+        "caption_style": "none",
+        "intro_hook": "Bowling Night",
+        "opening_title": "Bowling Night",
+        "shot_labels": [
+          "Every story starts on a shelf",
+          "Strike one, nervous laugh",
+          "Fuel for round two",
+          "Ten tokens, zero regrets",
+          "Walking it off",
+          "Final score: 142"
+        ],
+        "closing_title": "See you next week",
+        "font_family": null,
+        "text_color": null,
+        "clip_intents": [],
+        "image_layout": null,
+        "pacing": "balanced",
+        "target_duration_s": 20,
+        "render_program": "guided",
+        "selected_media_ids": [],
+        "optional_treatments": [],
+        "licensed_sfx": null,
+        "mixed_media_timing": null,
+        "montage_audio": null,
+        "video_reuse_policy": "once",
+        "rationale": "Cutting a chronological night-out montage targeting 20 seconds, allowing about 3 seconds per shot to neatly fit your specific on-screen captions."
+      },
+      "summary": "I'll create a 20-second chronological montage of your bowling night, mapping your exact captions to each specific shot in order, set to an upbeat acoustic track.",
+      "render_intent_evidence": {
+        "opening_title": "Title it Bowling Night",
+        "font_family": null,
+        "text_color": null,
+        "shot_labels": "1. The bookshop photo: \"Every story starts on a shelf\"\n2. The video of the girl bowling: \"Strike one, nervous laugh\"\n3. The coffee cup photo: \"Fuel for round two\"\n4. The arcade video: \"Ten tokens, zero regrets\"\n5. The street at night video: \"Walking it off\"\n6. The scoreboard photo: \"Final score: 142\"",
+        "closing_title": "End with \"See you next week\""
+      }
+    },
+    "brief_updates": [
+      {
+        "kind": "text",
+        "scope": "title",
+        "literal": "Bowling Night",
+        "description": null,
+        "facts": {}
+      },
+      {
+        "kind": "timing",
+        "scope": "global",
+        "literal": null,
+        "description": "about 20 seconds",
+        "facts": {
+          "duration_s": 20
+        }
+      },
+      {
+        "kind": "text",
+        "scope": "per_clip",
+        "literal": "Every story starts on a shelf",
+        "description": "The bookshop photo",
+        "facts": {}
+      },
+      {
+        "kind": "text",
+        "scope": "per_clip",
+        "literal": "Strike one, nervous laugh",
+        "description": "The video of the girl bowling",
+        "facts": {}
+      },
+      {
+        "kind": "text",
+        "scope": "per_clip",
+        "literal": "Fuel for round two",
+        "description": "The coffee cup photo",
+        "facts": {}
+      },
+      {
+        "kind": "text",
+        "scope": "per_clip",
+        "literal": "Ten tokens, zero regrets",
+        "description": "The arcade video",
+        "facts": {}
+      },
+      {
+        "kind": "text",
+        "scope": "per_clip",
+        "literal": "Walking it off",
+        "description": "The street at night video",
+        "facts": {}
+      },
+      {
+        "kind": "text",
+        "scope": "per_clip",
+        "literal": "Final score: 142",
+        "description": "The scoreboard photo",
+        "facts": {}
+      },
+      {
+        "kind": "text",
+        "scope": "global",
+        "literal": "See you next week",
+        "description": "Ending text",
+        "facts": {}
+      }
+    ]
+  },
+  "meta": {
+    "source": "live_recorded",
+    "recorded_at": "2026-10-04",
+    "test_run_id": "main-creator-kri422-v42-2026-10-04",
+    "model": "gemini-3.1-pro-preview",
+    "per_shot_texts": {
+      "literals": [
+        "Every story starts on a shelf",
+        "Strike one, nervous laugh",
+        "Fuel for round two",
+        "Ten tokens, zero regrets",
+        "Walking it off",
+        "Final score: 142"
+      ],
+      "contract": "text dictated for six described shots is one per_clip brief entry per shot (literal = the words, description = the shot); all six stay live in the ledger, and none of the message's nine requirements is cut by the update cap"
+    },
+    "note": "Recorded as the branch's v42 before KRI-374 also claimed v42 on main; renumbered v43 on merge. The prompt for this input is byte-identical (no uploaded song, so the KRI-374 section adds no bytes)."
+  }
+}
