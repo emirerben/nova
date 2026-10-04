@@ -359,6 +359,9 @@ class UnifiedMontagePlan:
     endpoint_places: dict[str, Any] = field(default_factory=dict)
     # The Visuals-pool ids among ``clip_ids`` (KRI-217), in plan order.
     visual_ids: list[str] = field(default_factory=list)
+    # KRI-296: the clips the creator described and gave exact text for, in plan
+    # order. Empty when the text was not matched to described shots.
+    label_scope_clip_ids: list[str] = field(default_factory=list)
     # Zone the filming hours were printed in, "" when the labels are not hours.
     label_timezone: str = ""
     label_timezone_basis: str = ""
@@ -367,6 +370,14 @@ class UnifiedMontagePlan:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
         # Only a montage with Visuals names them: every earlier record stays as is.
         visuals = {"visual_ids": list(self.visual_ids)} if self.visual_ids else {}
+        # Likewise the closing title and the described-shot scope (KRI-296).
+        closing = self.snapshot.closing_title
+        closing_title = {"closing_title": closing} if closing else {}
+        scope = (
+            {"label_scope_clip_ids": list(self.label_scope_clip_ids)}
+            if self.label_scope_clip_ids
+            else {}
+        )
         zone = (
             {
                 "label_timezone": self.label_timezone,
@@ -401,6 +412,8 @@ class UnifiedMontagePlan:
             "route": dict(self.route),
             "endpoint_places": dict(self.endpoint_places),
             **visuals,
+            **closing_title,
+            **scope,
             **zone,
         }
 
@@ -639,6 +652,11 @@ def plan_unified_montage(
     )
     positional = [_nfc(x) for x in (strategy.get("shot_labels") or []) if _nfc(x)]
     intent_labels = _intent_labels(strategy, clip_intents_enabled)
+    # KRI-296: the creator described each shot and gave its text, and the server
+    # matched each description to a clip. That match decides where the text goes,
+    # never the text's place in the creator's list (shots are rarely listed in
+    # upload order). The clips they did not describe then get no text at all.
+    described = _described_shot_labels(strategy, clip_intents_enabled)
     start_fact = _first(view.facts, _START_KEYS)
     end_fact = _first(view.facts, _END_KEYS)
 
@@ -655,11 +673,15 @@ def plan_unified_montage(
         chosen: tuple[str, str, str | None, bool] | None = None  # text, provenance, kind, inferred
         if clip.ref_id in view.clip_literals:
             chosen = (view.clip_literals[clip.ref_id], "creator", None, False)
-        elif index < len(positional):
+        elif clip.ref_id in described:
+            chosen = (described[clip.ref_id], "creator", None, False)
+        elif not described and index < len(positional):
             chosen = (positional[index], "creator", None, False)
         elif clip.ref_id in intent_labels:
             text, creator_text = intent_labels[clip.ref_id]
             chosen = (text, "creator" if creator_text else "fact", None, not creator_text)
+        elif described:
+            pass
         elif view.wants_per_clip_text and view.per_clip_text_is_time:
             moment = clip.capture_time or capture_time_from_facts(clip.facts)
             if moment is not None:
@@ -678,7 +700,7 @@ def plan_unified_montage(
             elif index == len(ordered) - 1 and end_fact and len(ordered) > 1:
                 chosen = (end_fact[:MAX_LABEL_CHARS], "brief", "end", False)
         if chosen is None:
-            if labels_requested:
+            if labels_requested and not described:
                 dropped.append(clip.media_id)
                 dropped_reasons[clip.media_id] = (
                     "no_capture_time" if view.per_clip_text_is_time else "no_fact"
@@ -857,6 +879,7 @@ def plan_unified_montage(
         title=title,
         title_source=title_source,
         label_clip_ids=[clip.media_id for clip in ordered if clip.media_id in labels],
+        label_scope_clip_ids=[clip.media_id for clip in ordered if clip.ref_id in described],
         dropped_label_clip_ids=dropped,
         short_label_clip_ids=short,
         ordering_basis=basis,
@@ -935,6 +958,35 @@ def _fit_typography(
         labels = fixed
     keep = requested is not None or chosen != _DEFAULT_FONT
     return (chosen if keep else None), title, closing, labels
+
+
+def _described_shot_labels(strategy: Mapping[str, Any], enabled: bool) -> dict[str, str]:
+    """media_id -> the creator's exact words for the shot they described (KRI-296).
+
+    Read from the server-verified ``op="caption"`` intents: the assignments say
+    which clips the description matched, ``caption_text`` holds the words. Only
+    the creator's own text counts; a phrase the resolver wrote is never printed.
+    """
+    if not enabled:
+        return {}
+    rows: dict[str, str] = {}
+    for intent in strategy.get("resolved_clip_intents") or []:
+        if not isinstance(intent, Mapping) or intent.get("op") != "caption":
+            continue
+        if intent.get("status", "resolved") != "resolved":
+            continue
+        if intent.get("caption_grounding") != "creator_text":
+            continue
+        text = _nfc(intent.get("caption_text"))
+        if not text:
+            continue
+        for assignment in intent.get("assignments") or []:
+            if not isinstance(assignment, Mapping):
+                continue
+            media_id = str(assignment.get("media_id") or "")
+            if media_id:
+                rows.setdefault(media_id, text)
+    return rows
 
 
 def _intent_labels(strategy: Mapping[str, Any], enabled: bool) -> dict[str, tuple[str, bool]]:
