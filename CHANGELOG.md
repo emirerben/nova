@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.54.0] - 2026-10-04
+
+### Changed
+- feat(slide-post): capture date/place for slide photos & videos (KRI-300, KRI-298) (#1357) <!-- release-pr: 1357 -->
+
 ## [0.78.53.0] - 2026-10-04
 
 ### Changed
