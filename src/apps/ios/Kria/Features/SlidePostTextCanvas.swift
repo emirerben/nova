@@ -164,7 +164,12 @@ struct SlidePostTextCanvas: View {
                 pinchChanged(scale: value.first.map(Double.init) ?? 1, degrees: value.second?.degrees ?? 0,
                              twisting: value.second != nil)
             }
-            .onEnded { _ in settle() }
+            .onEnded { _ in
+                settle()
+                // A pinch cancels the one-finger resolver; the cancelled drag may never deliver its own end, which
+                // left the resolver stuck and swallowed every later tap (and its onChanged never re-armed it).
+                touch.reset()
+            }
     }
 
     private func tap(at point: CGPoint) {

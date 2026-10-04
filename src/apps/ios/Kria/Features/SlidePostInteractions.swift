@@ -84,8 +84,10 @@ enum SlidePostReorderMath {
 ///   manipulation (no panel, no keyboard); moving past `slop` afterwards continues as a drag in the same gesture;
 ///   lifting after a hold is NOT a tap.
 struct SlidePostTouchResolver {
-    static let holdDuration: TimeInterval = 0.28
-    static let slop: CGFloat = 6
+    /// A real finger lingers and drifts: a press released within `slop` and before `holdDuration` is a tap.
+    /// 0.5s is the iOS long-press default; 10pt covers normal finger roll (synthetic XCUITest taps never drift).
+    static let holdDuration: TimeInterval = 0.5
+    static let slop: CGFloat = 10
 
     enum Action: Equatable {
         case none
@@ -149,4 +151,23 @@ struct SlidePostTouchResolver {
     /// A second finger / pinch took over: end without a tap.
     mutating func cancel() { phase = .ignored }
     mutating func reset() { phase = .idle }
+}
+
+
+/// What the rich (redesigned) slide editor shows in its preview. The canvas reproduces the server layout, so
+/// the editor always shows the SOURCE media with the LIVE texts on top, in every state (draft, saved, rendered).
+/// The server render is only for export/share: showing it would burn the text into pixels (nothing to tap)
+/// and, with live texts too, double it.
+enum SlidePostPreviewPolicy {
+    /// The media behind the canvas. The rendered URL is used only by the legacy (non-rich) layout.
+    static func mediaURL(rich: Bool, canExport: Bool, renderedURL: URL?, asset: SlidePostAsset?) -> URL? {
+        if !rich, canExport, let renderedURL { return renderedURL }
+        return asset?.sourceURL ?? asset?.displayURL ?? asset?.previewURL
+    }
+
+    /// The editable texts drawn by the canvas (`texts`, or the legacy single `text` lifted into one element).
+    static func editableTexts(rich: Bool, edits: SlidePostEdits?) -> [SlidePostTextElement] {
+        guard rich else { return [] }
+        return edits?.effectiveTexts ?? []
+    }
 }

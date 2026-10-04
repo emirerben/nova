@@ -446,7 +446,7 @@ import XCTest
         let app = openRichWorkspace()
         let first = app.buttons["slidepost-tile-1"], second = app.buttons["slidepost-tile-2"]
         XCTAssertEqual(first.value as? String, "Cover")
-        first.press(forDuration: 0.6, thenDragTo: second, withVelocity: .slow, thenHoldForDuration: 0.2)
+        first.press(forDuration: 0.9, thenDragTo: second, withVelocity: .slow, thenHoldForDuration: 0.2)
         XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes")
         XCTAssertEqual(app.buttons["slidepost-tile-2"].value as? String, "Cover", "the cover moved with its slide")
         XCTAssertTrue(app.buttons["slidepost-undo"].isEnabled)
@@ -471,7 +471,7 @@ import XCTest
         let window = app.windows.firstMatch.frame
         let edge = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: window.maxX - 8, dy: first.frame.midY))
         first.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            .press(forDuration: 0.6, thenDragTo: edge, withVelocity: .slow, thenHoldForDuration: 2.5)
+            .press(forDuration: 0.9, thenDragTo: edge, withVelocity: .slow, thenHoldForDuration: 2.5)
         let cover = coverIndex(app, count: 12)
         XCTAssertNotNil(cover)
         XCTAssertGreaterThan(cover ?? 0, 7, "auto-scroll carried the slide past the slides that were visible")
@@ -543,6 +543,47 @@ import XCTest
         attach(app, "Tap text: Edit tab with keyboard")
     }
 
+    // MARK: A created (rendered, exportable) post keeps editable text
+
+    /// Real-device bug: opening an already created post showed the burned render with no live text, so tapping
+    /// the text did nothing. The editor must always show source media + live editable text.
+    private func openReadyPostWithText(_ app: XCUIApplication, _ words: String) {
+        addText(app, words)
+        let save = app.buttons["slidepost-save"]
+        XCTAssertTrue(save.waitForExistence(timeout: 5)); if save.isEnabled { save.tap() }
+        let create = app.buttons["slidepost-create"]
+        XCTAssertTrue(create.waitForExistence(timeout: 10)); create.tap()
+        XCTAssertTrue(app.buttons["slidepost-share"].waitForExistence(timeout: 12), "the post is created and exportable")
+    }
+
+    func testTappingTextOnACreatedPostOpensEditTextWithKeyboard() {
+        let app = openRichWorkspace()
+        openReadyPostWithText(app, "Athens")
+        let text = canvasText(app)
+        XCTAssertTrue(text.waitForExistence(timeout: 5), "a created post still shows its live, editable text")
+        XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'slidepost-canvas-text-'")).count, 1, "one live text, not burned + live")
+        attach(app, "Ready post: live text on the preview")
+        text.tap()
+        let field = app.textViews["slidepost-text-field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "tap on a created post's text opens Edit text")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        attach(app, "Ready post: tap text opens Edit text with keyboard")
+    }
+
+    func testHoldAndDragTextOnACreatedPostMovesItDirectly() {
+        let app = openRichWorkspace()
+        openReadyPostWithText(app, "Athens")
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        let text = canvasText(app)
+        XCTAssertTrue(text.waitForExistence(timeout: 5))
+        let before = text.value as? String ?? ""
+        text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.9, thenDragTo: preview.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.25)))
+        XCTAssertTrue(app.descendants(matching: .any)["slidepost-text-handle"].firstMatch.waitForExistence(timeout: 3))
+        XCTAssertNotEqual(before, text.value as? String ?? "", "hold + drag moved the text of a created post")
+        panelAndKeyboardAbsent(app, "after hold-drag on a created post")
+        XCTAssertTrue(app.buttons["slidepost-save"].waitForExistence(timeout: 5), "the edit made the post a draft again (Save re-renders)")
+    }
+
     // MARK: Hold to transform (tap edits, hold + drag moves/resizes directly, no panel)
 
     private func panelAndKeyboardAbsent(_ app: XCUIApplication, _ note: String) {
@@ -558,7 +599,7 @@ import XCTest
         let text = canvasText(app)
         XCTAssertTrue(text.waitForExistence(timeout: 5))
         let before = text.value as? String ?? ""
-        text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.6, thenDragTo: preview.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.25)))
+        text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.9, thenDragTo: preview.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.25)))
         let handle = app.descendants(matching: .any)["slidepost-text-handle"].firstMatch
         XCTAssertTrue(handle.waitForExistence(timeout: 3), "text stays selected with its handle")
         XCTAssertNotEqual(before, text.value as? String ?? "", "hold + drag moved the text")
@@ -570,7 +611,7 @@ import XCTest
         XCTAssertNotEqual(mid, text.value as? String ?? "")
         panelAndKeyboardAbsent(app, "after second drag")
         // Tapping empty canvas deselects.
-        Thread.sleep(forTimeInterval: 0.6)
+        Thread.sleep(forTimeInterval: 0.9)
         preview.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.06)).tap()
         XCTAssertFalse(handle.waitForExistence(timeout: 2), "tap on empty canvas deselects")
         panelAndKeyboardAbsent(app, "after deselect")
@@ -582,13 +623,13 @@ import XCTest
         let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
         let text = canvasText(app)
         XCTAssertTrue(text.waitForExistence(timeout: 5))
-        text.press(forDuration: 0.6)
+        text.press(forDuration: 0.9)
         let handle = app.descendants(matching: .any)["slidepost-text-handle"].firstMatch
         XCTAssertTrue(handle.waitForExistence(timeout: 3), "hold selects and shows the handle")
         panelAndKeyboardAbsent(app, "after hold")
         attach(app, "Hold-select: frame and handle, no panel")
         let sizeBefore = number(text.value as? String ?? "", after: "size")
-        handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.6, thenDragTo: preview.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.62)))
+        handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.9, thenDragTo: preview.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.62)))
         XCTAssertNotEqual(sizeBefore, number(text.value as? String ?? "", after: "size"), "corner drag changes the size")
         panelAndKeyboardAbsent(app, "after corner drag")
         attach(app, "Hold-select: after corner resize")
@@ -599,10 +640,10 @@ import XCTest
         addText(app, "Athens")
         let text = canvasText(app)
         XCTAssertTrue(text.waitForExistence(timeout: 5))
-        text.press(forDuration: 0.6)
+        text.press(forDuration: 0.9)
         XCTAssertTrue(app.descendants(matching: .any)["slidepost-text-handle"].firstMatch.waitForExistence(timeout: 3))
         panelAndKeyboardAbsent(app, "after hold")
-        Thread.sleep(forTimeInterval: 0.6)
+        Thread.sleep(forTimeInterval: 0.9)
         text.tap()
         XCTAssertTrue(app.textViews["slidepost-text-field"].firstMatch.waitForExistence(timeout: 5), "tap opens Edit text")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "keyboard is up")
@@ -616,7 +657,7 @@ import XCTest
         let text = canvasText(app)
         XCTAssertTrue(text.waitForExistence(timeout: 5))
         let before = text.value as? String ?? ""
-        text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.6, thenDragTo: preview.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.25)))
+        text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.9, thenDragTo: preview.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.25)))
         XCTAssertNotEqual(before, text.value as? String ?? "")
         app.buttons["slidepost-undo"].tap()
         XCTAssertEqual(before.replacingOccurrences(of: ", selected", with: ""), (text.value as? String ?? "").replacingOccurrences(of: ", selected", with: ""), "one undo returns the text to where it started")
