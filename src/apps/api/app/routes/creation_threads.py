@@ -321,7 +321,12 @@ class CreationMediaCapabilitiesOut(BaseModel):
     # KRI-374: present only when a creator-uploaded song can render for this
     # account on this client (flag + phone cohort + verified device features +
     # a client protocol new enough to decode the "song" asset).
-    song: CreationVoiceoverCapabilitiesOut | None = None
+    # Omitted (not `null`) when absent: the iOS decoder reads `media` as a
+    # non-optional-valued dict, so a literal `"song": null` would fail the whole
+    # capabilities decode for every account without the feature.
+    song: CreationVoiceoverCapabilitiesOut | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class CreationCapabilitiesOut(BaseModel):

@@ -419,3 +419,19 @@ async def test_song_capability_absent_otherwise(monkeypatch, off) -> None:
     assert manifest["song_order_questions"] is False
     # Everything else on the manifest is untouched.
     assert manifest["media"]["voiceover"]["max"] == 1
+
+
+@pytest.mark.asyncio
+async def test_absent_song_capability_is_omitted_from_the_serialized_response(monkeypatch) -> None:
+    """The iOS app decodes `media` as a dict of non-optional limits, so a literal
+    `"song": null` would fail the whole capabilities decode (KRI-374 review)."""
+    from app.routes.creation_threads import CreationCapabilitiesOut  # noqa: PLC0415
+
+    monkeypatch.setattr(settings, "user_song_montage_enabled", False)
+    manifest = await _caps()
+    wire = CreationCapabilitiesOut.model_validate(manifest).model_dump(mode="json")
+    assert "song" not in wire["media"]
+
+    monkeypatch.setattr(settings, "user_song_montage_enabled", True)
+    wire = CreationCapabilitiesOut.model_validate(await _caps()).model_dump(mode="json")
+    assert wire["media"]["song"]["max"] == 1
