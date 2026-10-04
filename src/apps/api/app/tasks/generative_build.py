@@ -2358,11 +2358,19 @@ def _run_generative_job_impl(
                 # fall back to) must persist a failure_reason — without this, the
                 # generic `except Exception` fallback below only set error_detail,
                 # leaving the client with no reason code to render.
-                failure_reason = (
-                    "phone_plan_unsupported"
-                    if isinstance(exc, (UnsupportedPhonePlan, ValueError))
-                    else "phone_plan_failed"
+                from app.services.phone_rollout import (  # noqa: PLC0415
+                    PhoneCapabilityUnavailable,
                 )
+
+                # KRI-286: a capability the device has not verified yet is a rollout
+                # decision, not a plan defect -- it must stay retryable, so it gets its
+                # own code BEFORE the deterministic `phone_plan_unsupported` branch.
+                if isinstance(exc, PhoneCapabilityUnavailable):
+                    failure_reason = "phone_capability_unavailable"
+                elif isinstance(exc, (UnsupportedPhonePlan, ValueError)):
+                    failure_reason = "phone_plan_unsupported"
+                else:
+                    failure_reason = "phone_plan_failed"
                 log.error(
                     "phone_guided_job_failed",
                     job_id=job_id,
@@ -3852,8 +3860,8 @@ def _run_phone_guided_job(
     )
     from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
         UnsupportedPhonePlan,
-        compile_phone_guided_plan,
     )
+    from app.pipeline.phone_plan_repair import compile_phone_guided_repaired  # noqa: PLC0415
     from app.services.device_narration_binding import make_device_narration_binding  # noqa: PLC0415
     from app.services.device_render import (  # noqa: PLC0415
         DEVICE_RENDER_FIELD,
@@ -3952,14 +3960,26 @@ def _run_phone_guided_job(
                 "the approved voiceover was replaced since approval",
                 capability="narrationAudio",
             )
-    recipe = compile_phone_guided_plan(
+    # KRI-286: deterministic repairs (sequence effect, unqualified font) are applied
+    # and noted instead of failing the job after approval. Kwargs are forwarded as-is.
+    compiled = compile_phone_guided_repaired(
         plan,
         bindings,
         visuals=visuals,
         narration=narration_bed,
         landscape_fit="fit" if landscape_fit == "fit" else "fill",
     )
+    recipe, repair_notes = compiled.recipe, compiled.notes
     validate_phone_pilot_recipe(recipe)
+    repaired_plan_payload = None
+    if compiled.plan is not plan:
+        repaired_plan_payload = compiled.plan.model_dump(mode="json", exclude_none=False)
+        # The editor recompiles from the persisted rows: keep them equal to what compiled.
+        for field in ("text_elements", "context_label_text_elements"):
+            raw_plan[field] = [
+                element.model_dump(mode="json", exclude_none=False)
+                for element in getattr(compiled.plan, field)
+            ]
     visual_rows = [visual.model_dump(mode="json") for visual in visuals]
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id="guided_story", revision=1, recipe=recipe
@@ -4013,6 +4033,18 @@ def _run_phone_guided_job(
                 "ok": False,
             }
         ]
+        if repair_notes:
+            # Creator-visible (job projection -> render_notes): what Kria changed so
+            # the plan could render on the phone (KRI-129: never a silent override).
+            current["variants"][0]["phone_repair_notes"] = list(repair_notes)
+        if repaired_plan_payload is not None:
+            # The editor's first Save recompiles from this private per-variant plan, not
+            # the approved canonical plan (whose text lane is re-validated against the
+            # approval and so must stay untouched). Without it a Save would re-hit the
+            # reject the repair removed.
+            from app.services.phone_editor import PHONE_EDITOR_PLAN_FIELD  # noqa: PLC0415
+
+            current["variants"][0][PHONE_EDITOR_PLAN_FIELD] = repaired_plan_payload
         if visual_rows:
             # Private receipts the editor recompiles from; each row keeps
             # gcs_path so pool deletion still sees the photo as referenced.

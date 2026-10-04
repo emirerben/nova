@@ -53,11 +53,17 @@ class UnsupportedPhonePlan(ValueError):
     docs/reviews/kri-29/capability-matrix.md); it is informational only —
     fixing this by adding the capability to ``phone_render_verified_features``
     does nothing, since the underlying plan content never reaches a recipe.
+
+    ``reason`` is a stable machine tag for rejects `app.pipeline.phone_plan_repair`
+    classifies (``"sequence_effect"``, ``"transition_window"``); None otherwise.
     """
 
-    def __init__(self, message: str, *, capability: str | None = None) -> None:
+    def __init__(
+        self, message: str, *, capability: str | None = None, reason: str | None = None
+    ) -> None:
         super().__init__(message)
         self.capability = capability
+        self.reason = reason
 
 
 # Plan lane -> the MediaCapability it would require once the recipe schema
@@ -476,7 +482,9 @@ def compile_phone_guided_plan(
         if clip.transition is not None:
             available = round((previous_end or 0.0) - clip.timeline_start, 6)
             if previous_end is None or available <= 1e-6:
-                raise UnsupportedPhonePlan("phone transition needs the full source window")
+                raise UnsupportedPhonePlan(
+                    "phone transition needs the full source window", reason="transition_window"
+                )
             if available + 1e-6 < clip.transition.duration:
                 fitted = math.floor((available + 1e-9) / _FRAME_S) * _FRAME_S
                 clip.transition = (
@@ -551,7 +559,9 @@ def compile_phone_guided_plan(
             "handwriting",
             "ink-reveal",
         }:
-            raise UnsupportedPhonePlan("sequence effect needs composite-stream parity")
+            raise UnsupportedPhonePlan(
+                "sequence effect needs composite-stream parity", reason="sequence_effect"
+            )
         layer, font = compile_text_overlay(
             overlay, layer_id=layer_id, canvas=canvas, dissolve_seed=101 + index * 37
         )

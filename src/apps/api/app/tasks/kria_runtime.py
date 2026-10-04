@@ -2812,7 +2812,8 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 "Your iPhone couldn't finish the render. Your approved edit is still saved: "
                 "open the project on your iPhone and tap Retry."
             )
-        elif deterministic:
+        elif deterministic or failure_code == "phone_capability_unavailable":
+            # Retryable, but the generic "didn't finish" copy would hide WHY (KRI-286).
             failure_content = humanize_job_failure_reason(failure_code)
         else:
             failure_content = (

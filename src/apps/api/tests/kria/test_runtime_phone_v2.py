@@ -685,6 +685,26 @@ def test_a_deterministic_phone_plan_reject_asks_the_user_instead_of_retrying() -
     assert events[-1]["content"] == humanize_job_failure_reason("phone_plan_unsupported")
 
 
+def test_a_phone_capability_reject_stays_retryable() -> None:
+    """KRI-286: a capability the device has not verified yet is a rollout decision,
+    not a plan defect -- the same edit works after the flag flips, so retry stays open."""
+    from app.tasks.content_plan_build import humanize_job_failure_reason
+    from app.tasks.kria_runtime import _DETERMINISTIC_JOB_FAILURE_CODES
+
+    assert "phone_capability_unavailable" not in _DETERMINISTIC_JOB_FAILURE_CODES
+    job = _device_job(status="processing_failed")
+    job.assembly_plan = {"variants": [{"variant_id": VARIANT}]}
+    job.failure_reason = "phone_capability_unavailable"
+    _, execution, events = _observe(job, {})
+    assert execution.error["code"] == "phone_capability_unavailable"
+    assert execution.error["recovery"] == "retry"
+    assert execution.error["retryable"] is True
+    assert events[-1]["payload"]["recovery"] == "retry"
+    # The chat copy says WHY (code-specific), not the generic "didn't finish".
+    assert events[-1]["content"] == humanize_job_failure_reason("phone_capability_unavailable")
+    assert events[-1]["content"] != humanize_job_failure_reason("phone_plan_unsupported")
+
+
 def test_claim_reports_a_baseline_conflict_as_a_stale_video_not_an_unsupported_edit() -> None:
     job = _device_job(status="variants_ready")
     _publish(job)
