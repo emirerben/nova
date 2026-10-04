@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.71.0] - 2026-10-04
+
+### Changed
+- KRI-282 label on chosen clip (#1385) <!-- release-pr: 1385 -->
+
 ## [0.78.70.0] - 2026-10-04
 
 ### Changed
