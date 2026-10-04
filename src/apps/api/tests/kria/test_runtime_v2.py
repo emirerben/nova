@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -18,6 +19,7 @@ from app.kria.api_schemas import ApprovalDecisionBody, SubmitTurnBody
 from app.kria.contracts import KriaTurnPlan
 from app.kria.language import is_help_question, is_status_question
 from app.kria.planner import PlannedKriaTurn
+from app.kria.planner import turn_deadline as planner_turn_deadline
 from app.kria.runtime import (
     RuntimeFailure,
     approval_fingerprint,
@@ -1231,6 +1233,32 @@ async def test_live_planner_heartbeats_while_inference_is_running(
     assert result == planned
     assert len(renewals) >= 2
     assert set(renewals) == {turn_id}
+
+
+@pytest.mark.asyncio
+async def test_live_planner_knows_the_turn_soft_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bounded waits in planning (clip understanding) budget against the task's soft limit."""
+    _record_lease_renewals(monkeypatch)
+    seen: list[float | None] = []
+
+    async def _plan(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        seen.append(planner_turn_deadline.get())
+        return _question_turn()
+
+    monkeypatch.setattr("app.tasks.kria_runtime.plan_live_turn", _plan)
+    started = time.monotonic()
+    await _plan_with_live_agent(
+        {"thread_id": uuid.uuid4(), "item_id": uuid.uuid4(), "creator_id": uuid.uuid4()},
+        "Label each bowler",
+        turn_id=uuid.uuid4(),
+        lease_owner="worker-1",
+        lease_epoch=1,
+    )
+
+    assert run_kria_turn.soft_time_limit == 150
+    assert run_kria_turn.time_limit > run_kria_turn.soft_time_limit
+    assert seen[0] == pytest.approx(started + run_kria_turn.soft_time_limit, abs=1.0)
+    assert planner_turn_deadline.get() is None, "the deadline never leaks out of the turn"
 
 
 class _PlanningEngine:

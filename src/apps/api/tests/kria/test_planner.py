@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -864,6 +865,28 @@ async def test_kria_turn_gets_the_larger_foreground_vision_budget(
 
 
 @pytest.mark.asyncio
+async def test_kria_turn_rereads_clip_understanding_within_its_own_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prod b2a41da6: the gate must re-read analysis, not trust the turn-start snapshot."""
+    monkeypatch.setattr(planner.settings, "kria_clip_understanding_wait_s", 45.0)
+    reread = AsyncMock(return_value=[])
+    monkeypatch.setattr(planner, "_reload_intent_clips", reread)
+    resolver = AsyncMock(return_value=PlannedIntentResolution([], IntentResolution()))
+    token = planner.turn_deadline.set(time.monotonic() + 150)
+    try:
+        await _degraded_clip_intent_turn(monkeypatch, resolver)
+    finally:
+        planner.turn_deadline.reset(token)
+    kwargs = resolver.await_args.kwargs
+    assert kwargs["require_clip_understanding"] is planner.settings.kria_clip_understanding_enabled
+    assert kwargs["understanding_wait_until"] - time.monotonic() == pytest.approx(45.0, abs=0.5)
+    await kwargs["refresh_clips"]()
+    reread.assert_awaited_once()
+    assert set(reread.await_args.kwargs) == {"item_id", "creator_id"}
+
+
+@pytest.mark.asyncio
 async def test_pending_vision_is_not_reported_as_a_match_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1013,3 +1036,57 @@ async def test_overlay_display_ask_defers_to_replan_instead_of_copilot_refusal(
         db, thread_id=uuid.uuid4(), item=SimpleNamespace(), user_message="make the text bigger"
     )
     assert refused is not None and refused.turn_value == "recovery"
+
+
+def test_clip_understanding_wait_without_a_turn_deadline_is_the_setting(monkeypatch):
+    monkeypatch.setattr(planner.settings, "kria_clip_understanding_wait_s", 45.0)
+    until = planner._clip_understanding_wait_until()
+    assert until - time.monotonic() == pytest.approx(45.0, abs=0.5)
+
+
+@pytest.mark.parametrize(
+    ("seconds_left", "expected"),
+    [
+        (300.0, 45.0),  # plenty of turn left: the setting caps the wait
+        (100.0, 100.0 - 40.0 - 20.0),  # keeps the vision deadline + commit reserve
+        (30.0, 30.0 - 40.0 - 20.0),  # already past: re-read once, never wait
+    ],
+)
+def test_clip_understanding_wait_leaves_the_turn_time_to_finish(
+    monkeypatch, seconds_left, expected
+):
+    monkeypatch.setattr(planner.settings, "kria_clip_understanding_wait_s", 45.0)
+    monkeypatch.setattr(planner.settings, "kria_clip_intents_vision_deadline_s", 40.0)
+    token = planner.turn_deadline.set(time.monotonic() + seconds_left)
+    try:
+        until = planner._clip_understanding_wait_until()
+        assert until - time.monotonic() == pytest.approx(expected, abs=0.5)
+    finally:
+        planner.turn_deadline.reset(token)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("analysis", "kicked"),
+    [
+        (None, True),  # never analysed: a killed run must not leave it blank forever
+        ({"understanding": {"summary": "a strike"}}, False),
+        ({"understanding_attempts": 3}, False),  # settled empty: nothing left to try
+    ],
+)
+async def test_turn_rekicks_clip_understanding_only_for_unanalysed_clips(
+    monkeypatch: pytest.MonkeyPatch, analysis, kicked
+) -> None:
+    from app.services.clip_intent_resolution import IntentClip
+    from app.tasks import kria_clip_understanding
+
+    enqueued: list[uuid.UUID] = []
+    monkeypatch.setattr(planner.settings, "kria_clip_understanding_enabled", True)
+    monkeypatch.setattr(kria_clip_understanding, "enqueue_clip_understanding", enqueued.append)
+    item_id = uuid.uuid4()
+
+    await planner._kick_clip_understanding(
+        item_id, [IntentClip(media_id="analysis-proxy-ios-A.mp4", kind="video", analysis=analysis)]
+    )
+
+    assert enqueued == ([item_id] if kicked else [])

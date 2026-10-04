@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import re
+import time
 import uuid
 from dataclasses import dataclass, replace
 from typing import Any
@@ -63,7 +64,9 @@ from app.routes.generative_jobs import variant_render_baseline
 from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
 from app.services.clip_intent_answers import persist_clip_intent_vision_answers
 from app.services.clip_intent_planning import plan_and_resolve_clip_intents
+from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_selection import ClipSelections, fold_clip_selections
+from app.services.clip_understanding import understanding_incomplete
 from app.services.creator_sessions import (
     creator_context,
     load_intent_clips_for_item,
@@ -420,6 +423,15 @@ _editor_target_miss: contextvars.ContextVar[str | None] = contextvars.ContextVar
     "kria_editor_target_miss", default=None
 )
 
+# `time.monotonic()` by which the running turn must have planned (set by the turn task
+# from its soft time limit). None = no deadline known: only the settings cap applies.
+turn_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "kria_turn_deadline", default=None
+)
+# What a turn keeps after the clip-understanding wait, on top of the resolver's vision
+# deadline: membership calls, the answer-cache write, and the draft commit.
+_POST_UNDERSTANDING_RESERVE_S = 20.0
+
 
 async def _load_editor_target(
     db: AsyncSession,
@@ -766,6 +778,62 @@ async def _call_main_creator(
         raise RuntimeError("Kria could not produce a reliable editorial plan") from exc
 
 
+def _clip_understanding_wait_until() -> float:
+    """``time.monotonic()`` by which the clip-analysis wait ends so the turn still finishes.
+
+    Absolute, so time the clip-intent planner call spends before the wait shortens the
+    wait instead of the resolver's share of the turn.
+    """
+    until = time.monotonic() + settings.kria_clip_understanding_wait_s
+    deadline = turn_deadline.get()
+    if deadline is not None:
+        reserve = settings.kria_clip_intents_vision_deadline_s + _POST_UNDERSTANDING_RESERVE_S
+        until = min(until, deadline - reserve)
+    return until
+
+
+async def _reload_intent_clips(
+    db: AsyncSession, *, item_id: uuid.UUID, creator_id: uuid.UUID
+) -> list[IntentClip]:
+    """Fresh clip analysis for the understanding wait; never holds a connection across a poll."""
+    try:
+        item = await db.get(PlanItem, item_id, populate_existing=True)
+        plan = (
+            await db.get(ContentPlan, item.content_plan_id, populate_existing=True)
+            if item is not None
+            else None
+        )
+        persona = (
+            await db.get(Persona, plan.persona_id, populate_existing=True)
+            if plan is not None
+            else None
+        )
+        if item is None or persona is None or persona.user_id != creator_id:
+            return []
+        return await load_intent_clips_for_item(db, item, persona)
+    finally:
+        await db.rollback()
+
+
+async def _kick_clip_understanding(item_id: uuid.UUID, clips: list[IntentClip]) -> None:
+    """Re-enqueue background analysis for clips that still have none. Never raises.
+
+    Attach enqueues it once per burst; a run killed mid-analysis (deploy, OOM) left its
+    clips blank with nothing to restart it, so every turn would answer "still checking".
+    The task is single-flight per item, so a live run makes this a no-op.
+    """
+    try:
+        if not settings.kria_clip_understanding_enabled or not any(
+            understanding_incomplete(clip.analysis, kind=clip.kind) for clip in clips
+        ):
+            return
+        from app.tasks.kria_clip_understanding import enqueue_clip_understanding  # noqa: PLC0415
+
+        await asyncio.to_thread(enqueue_clip_understanding, item_id)
+    except Exception:  # noqa: BLE001 - a best-effort kick must never fail the turn
+        log.warning("kria_clip_understanding_kick_failed", item_id=str(item_id), exc_info=True)
+
+
 async def _plan_from_creator_output(
     db: AsyncSession,
     *,
@@ -809,6 +877,7 @@ async def _plan_from_creator_output(
         clip_selections = None
         if settings.kria_clip_selection_questions_enabled:
             clip_selections = await _load_clip_selections(db, thread_id)
+        await _kick_clip_understanding(item_id, intent_clips)
         try:
             planned = await plan_and_resolve_clip_intents(
                 creator_request=creator_request or user_message,
@@ -824,8 +893,13 @@ async def _plan_from_creator_output(
                 # turn itself a larger (cached, converging) foreground budget.
                 max_vision_requeries=settings.kria_clip_intents_max_vision_requeries,
                 vision_deadline_s=settings.kria_clip_intents_vision_deadline_s,
-                # KRI-282 L2: hold the turn while background clip analysis is incomplete.
+                # KRI-282 L2: hold the turn while background clip analysis is incomplete,
+                # re-reading it (bounded) instead of trusting the pre-Main-Creator snapshot.
                 require_clip_understanding=settings.kria_clip_understanding_enabled,
+                refresh_clips=lambda: _reload_intent_clips(
+                    db, item_id=item_id, creator_id=creator_id
+                ),
+                understanding_wait_until=_clip_understanding_wait_until(),
                 **({"clip_selections": clip_selections} if clip_selections else {}),
             )
         except Exception as exc:  # noqa: BLE001 - no provider failure may mint a draft

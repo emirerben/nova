@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -36,11 +38,66 @@ from app.services.clip_understanding import clip_record, understanding_incomplet
 
 log = structlog.get_logger()
 
+ClipRefresh = Callable[[], Awaitable[list[IntentClip]]]
+
 
 @dataclass(frozen=True)
 class PlannedIntentResolution:
     requested_intents: list[ClipIntent]
     resolution: IntentResolution
+
+
+# How often a turn re-reads clip analysis while background understanding lands.
+UNDERSTANDING_POLL_S = 2.0
+
+
+def _unanalysed(clips: list[IntentClip]) -> list[IntentClip]:
+    return [c for c in clips if understanding_incomplete(c.analysis, kind=c.kind)]
+
+
+def _with_fresh_analysis(clips: list[IntentClip], fresh: list[IntentClip]) -> list[IntentClip]:
+    """Take newly landed analysis for the SAME clips; never add, drop, or re-identify one.
+
+    The turn's manifest was pinned before the wait, so a clip attached, removed, or
+    replaced meanwhile keeps its original record and the confirm fence handles it.
+    """
+    by_id = {clip.media_id: clip for clip in fresh}
+    out: list[IntentClip] = []
+    for clip in clips:
+        update = by_id.get(clip.media_id)
+        same_object = (
+            update is not None
+            and update.gcs_path == clip.gcs_path
+            and update.generation == clip.generation
+        )
+        out.append(replace(clip, analysis=update.analysis) if same_object else clip)
+    return out
+
+
+async def wait_for_clip_understanding(
+    clips: list[IntentClip], *, refresh: ClipRefresh, until: float
+) -> tuple[list[IntentClip], float]:
+    """Re-read clip analysis until every clip is understood or ``time.monotonic()`` passes
+    ``until``. Returns the clips and the seconds spent.
+
+    The turn's clip snapshot is taken before the Main Creator call, so analysis that
+    landed during it was invisible and the creator was told to resend a request the
+    server could already answer (prod thread b2a41da6: "still checking" at 10:56:02Z,
+    all 7 clips analysed at 10:56:03Z). The first re-read happens even past ``until``.
+    A failed re-read keeps the clips as they were (the caller replies pending).
+    """
+    started = time.monotonic()
+    while True:
+        try:
+            clips = _with_fresh_analysis(clips, await refresh())
+        except Exception:  # noqa: BLE001 - a missed re-read is the old "still checking" reply
+            log.warning("clip_intent_understanding_refresh_failed", exc_info=True)
+            break
+        remaining = until - time.monotonic()
+        if not _unanalysed(clips) or remaining <= 0:
+            break
+        await asyncio.sleep(min(UNDERSTANDING_POLL_S, remaining))
+    return clips, round(time.monotonic() - started, 1)
 
 
 def resolve_order_by_intent(intent: ClipIntent, clips: list[IntentClip]) -> ResolvedClipIntent:
@@ -178,6 +235,8 @@ async def plan_and_resolve_clip_intents(
     max_vision_requeries: int | None = None,
     vision_deadline_s: float | None = None,
     require_clip_understanding: bool = False,
+    refresh_clips: ClipRefresh | None = None,
+    understanding_wait_until: float | None = None,
     clip_selections: ClipSelections | None = None,
 ) -> PlannedIntentResolution:
     if len(creator_request) > CREATOR_REQUEST_MAX_CHARS:
@@ -314,8 +373,28 @@ async def plan_and_resolve_clip_intents(
     if require_clip_understanding:
         # KRI-282 L2: a clip whose background analysis has not landed has an empty
         # record, so the resolver would ask the creator about it. That is OUR gap, not
-        # theirs: answer with the converging "still checking" reply instead.
-        unanalysed = [c for c in clips if understanding_incomplete(c.analysis, kind=c.kind)]
+        # theirs: wait (bounded) for the analysis already in flight, and only then
+        # answer with the converging "still checking" reply.
+        unanalysed = _unanalysed(clips)
+        waited_s = 0.0
+        if unanalysed and refresh_clips is not None:
+            clips, waited_s = await wait_for_clip_understanding(
+                clips,
+                refresh=refresh_clips,
+                until=(
+                    time.monotonic()
+                    if understanding_wait_until is None
+                    else understanding_wait_until
+                ),
+            )
+            log.info(
+                "clip_intent_understanding_waited",
+                waited_s=waited_s,
+                unanalysed_before=len(unanalysed),
+                unanalysed_after=len(_unanalysed(clips)),
+                total_clips=len(clips),
+            )
+            unanalysed = _unanalysed(clips)
         if unanalysed:
             return PlannedIntentResolution(
                 intents,
@@ -326,6 +405,7 @@ async def plan_and_resolve_clip_intents(
                         "reason": "clip_understanding_incomplete",
                         "unanalysed_clips": len(unanalysed),
                         "total_clips": len(clips),
+                        "understanding_wait_s": waited_s,
                     },
                 ),
             )
