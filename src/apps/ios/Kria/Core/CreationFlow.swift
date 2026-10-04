@@ -48,6 +48,28 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     }
 }
 
+// Decoding lives in an extension so the synthesized memberwise initializer stays available to callers and tests.
+extension CreationCapabilities {
+    /// Tolerant decode: a `null` entry under `media` (e.g. `"song": null`) means "not offered" and is dropped,
+    /// so one absent capability can never fail the whole capabilities load. Every other field is unchanged.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        formats = try container.decode([CreationFormatCapability].self, forKey: .formats)
+        media = try container.decodeIfPresent([String: CreationMediaLimit?].self, forKey: .media)?.compactMapValues { $0 }
+        runtimeVersions = try container.decodeIfPresent([Int].self, forKey: .runtimeVersions)
+        visualsEnabled = try container.decodeIfPresent(Bool.self, forKey: .visualsEnabled)
+        phoneRendering = try container.decodeIfPresent(PhoneRenderingCapabilities.self, forKey: .phoneRendering)
+        editorStateTurns = try container.decodeIfPresent(Bool.self, forKey: .editorStateTurns)
+        editorStateMaxBytes = try container.decodeIfPresent(Int.self, forKey: .editorStateMaxBytes)
+        slidePostRichText = try container.decodeIfPresent(Bool.self, forKey: .slidePostRichText)
+        slidePostChatEdit = try container.decodeIfPresent(Bool.self, forKey: .slidePostChatEdit)
+        clipSelectionQuestions = try container.decodeIfPresent(Bool.self, forKey: .clipSelectionQuestions)
+        songOrderQuestions = try container.decodeIfPresent(Bool.self, forKey: .songOrderQuestions)
+        creationMode = try container.decodeIfPresent(CreationMode.self, forKey: .creationMode)
+        minimumClientProtocol = try container.decodeIfPresent(Int.self, forKey: .minimumClientProtocol)
+    }
+}
+
 enum CreationMode: String, Codable, Equatable, Sendable {
     case hybrid
     case deviceOnly = "device_only"

@@ -87,6 +87,74 @@ import KriaMediaEngine
         XCTAssertFalse(off.songOrderQuestionsEnabled)
     }
 
+    func testNullMediaEntryDegradesInsteadOfFailingTheWholeCapabilitiesLoad() throws {
+        let json = Data(#"""
+        {"formats":[],"media":{"clips":{"max":10,"max_file_bytes":1000,"content_types":["video/mp4"]},"song":null},
+         "song_order_questions":true,"clip_selection_questions":true}
+        """#.utf8)
+        let capabilities = try JSONDecoder().decode(CreationCapabilities.self, from: json)
+        XCTAssertNil(capabilities.songLimit)
+        XCTAssertFalse(capabilities.songUploadEnabled)
+        XCTAssertEqual(capabilities.media?["clips"]?.max, 10, "the other media keys survive")
+        XCTAssertNil(capabilities.media?["song"])
+        XCTAssertEqual(capabilities.media?.count, 1)
+        XCTAssertTrue(capabilities.songOrderQuestionsEnabled)
+        XCTAssertTrue(capabilities.clipSelectionQuestionsEnabled, "every other field still decodes")
+        // A null under ANY media key (not just song) degrades the same way.
+        let other = try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[],"media":{"voiceover":null,"visuals":null}}"#.utf8))
+        XCTAssertEqual(other.media, [:])
+    }
+
+    func testCapabilitiesStillRoundTripAfterTheTolerantDecode() throws {
+        let original = try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[],"media":{"song":{"max":1,"max_file_bytes":10,"content_types":["audio/mpeg"]}},"runtime_versions":[1,2],"creation_mode":"device_only"}"#.utf8))
+        let again = try JSONDecoder().decode(CreationCapabilities.self, from: JSONEncoder().encode(original))
+        XCTAssertEqual(again, original)
+        XCTAssertEqual(again.creationMode, .deviceOnly)
+    }
+
+    // MARK: reserve request
+
+    private func reserveBody(role: CreationMediaRole?) async throws -> [String: Any] {
+        var seen: [String: Any]?
+        NativeEditorURLProtocol.handler = { request in
+            let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request)) as? [String: Any])
+            seen = (body["files"] as? [[String: Any]])?.first
+            return (200, Data(#"[{"media_id":"m1","upload_url":"https://storage.example/u","gcs_path":"users/u/m1","content_type":"audio/mpeg","upload_headers":{}}]"#.utf8))
+        }
+        let api = NativeEditorTestSupport.api()
+        if let role {
+            _ = try await api.reserveProjectUpload(threadID: PreviewFixtures.projectID, clientUploadID: "ios-1", filename: "a.mp3", contentType: "audio/mpeg", size: 100, role: role)
+        } else {
+            _ = try await api.reserveProjectUpload(threadID: PreviewFixtures.projectID, clientUploadID: "ios-1", filename: "a.mp3", contentType: "audio/mpeg", size: 100)
+        }
+        return try XCTUnwrap(seen)
+    }
+
+    func testSongReservationDeclaresRoleSong() async throws {
+        let file = try await reserveBody(role: .song)
+        XCTAssertEqual(file["role"] as? String, "song")
+        XCTAssertEqual(file["content_type"] as? String, "audio/mpeg")
+    }
+
+    func testFootageAndVoiceoverReservationBytesAreUnchanged() async throws {
+        for role in [nil, CreationMediaRole.clip, .voiceover] {
+            let file = try await reserveBody(role: role)
+            XCTAssertFalse(file.keys.contains("role"), "only a song carries a role on a reservation (\(String(describing: role)))")
+            XCTAssertEqual(Set(file.keys), ["filename", "content_type", "file_size_bytes", "client_upload_id"])
+        }
+    }
+
+    func testEarlySongRefusalsReadTheSameWayAtReservationAndAttach() {
+        let unavailable = APIError.requestFailed(status: 404, detail: RequestFailureDetail("Your own song is unavailable"))
+        let exists = APIError.conflict(detail: ConflictDetail("song_exists"))
+        XCTAssertEqual(CreationUploadError.message(for: unavailable, role: .song), "Adding your own song isn’t available right now.")
+        XCTAssertEqual(CreationUploadError.message(for: exists, role: .song), "This video already has a song. Remove it first to use a different one.")
+        // Other roles and unrelated failures keep their generic copy.
+        XCTAssertEqual(CreationUploadError.message(for: exists, role: .voiceover), exists.localizedDescription)
+        let unrelated = APIError.requestFailed(status: 404, detail: RequestFailureDetail("Creation thread not found"))
+        XCTAssertEqual(CreationUploadError.message(for: unrelated, role: .song), unrelated.localizedDescription)
+    }
+
     // MARK: attach request
 
     func testSongAttachSendsRoleSongAndAudioKind() async throws {

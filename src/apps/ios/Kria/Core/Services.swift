@@ -187,6 +187,10 @@ protocol KriaAPIClient: Sendable {
     func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose?) async throws -> UploadReservation
     func cancelUpload(reservationID: UUID) async throws
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> ProjectUploadReservation
+    /// KRI-374: the same reservation, declaring the audio's purpose. Only `.song` is sent (as `role: "song"`) so
+    /// the server can refuse a disabled or second song before the upload; every other role encodes exactly as the
+    /// role-less call, so footage and voiceover reservations are byte-identical.
+    func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, role: CreationMediaRole) async throws -> ProjectUploadReservation
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
     /// KRI-189: the same attach, plus when/where the clip was filmed. `capture` is nil when the user turned
@@ -223,6 +227,9 @@ extension KriaAPIClient {
     func currentUser() async throws -> MobileUser { throw APIError.unsupported }
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws { throw APIError.unsupported }
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation { throw APIError.invalidResponse }
+    func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, role: CreationMediaRole) async throws -> ProjectUploadReservation {
+        try await reserveProjectUpload(threadID: threadID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size)
+    }
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread {
         try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID)
     }
@@ -1042,7 +1049,10 @@ struct KriaAPI: KriaAPIClient {
     }
     func cancelUpload(reservationID: UUID) async throws { _ = try await request(path: "generative-jobs/uploads/\(reservationID.uuidString)", method: "DELETE", bodyData: nil, decode: UploadCancellation.self) }
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> ProjectUploadReservation {
-        let body = ProjectUploadReservationRequest(files: [.init(filename: filename, contentType: contentType, fileSizeBytes: size, clientUploadID: clientUploadID)])
+        try await reserveProjectUpload(threadID: threadID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size, role: .clip)
+    }
+    func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, role: CreationMediaRole) async throws -> ProjectUploadReservation {
+        let body = ProjectUploadReservationRequest(files: [.init(filename: filename, contentType: contentType, fileSizeBytes: size, clientUploadID: clientUploadID, role: role == .song ? "song" : nil)])
         let reservations = try await request(path: "creation-threads/\(threadID.uuidString)/upload-urls", method: "POST", bodyData: try JSONEncoder().encode(body), decode: [ProjectUploadReservation].self)
         guard let reservation = reservations.first, reservations.count == 1 else { throw APIError.invalidResponse }
         return reservation
@@ -1442,8 +1452,14 @@ private struct ApprovalDecisionRequest: Encodable {
 private struct UploadCancellation: Decodable { let reservationID: String; let status: String; enum CodingKeys: String, CodingKey { case status; case reservationID = "reservation_id" } }
 private struct UploadReservationRequest: Encodable { let filename: String; let contentType: String; let fileSizeBytes: Int64; let purpose: UploadPurpose?; enum CodingKeys: String, CodingKey { case filename, purpose; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes" } }
 private struct AddClipRequestBody: Encodable { let gcsPath: String; enum CodingKeys: String, CodingKey { case gcsPath = "gcs_path" } }
-private struct ProjectUploadReservationRequest: Encodable { let files: [ProjectUploadFileRequest] }
-private struct ProjectUploadFileRequest: Encodable { let filename: String; let contentType: String; let fileSizeBytes: Int64; let clientUploadID: String; var uploadContract: ProjectMediaUploadContract? = nil; enum CodingKeys: String, CodingKey { case uploadContract = "upload_contract"; case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id" } }
+struct ProjectUploadReservationRequest: Encodable { let files: [ProjectUploadFileRequest] }
+struct ProjectUploadFileRequest: Encodable {
+    let filename: String; let contentType: String; let fileSizeBytes: Int64; let clientUploadID: String
+    var uploadContract: ProjectMediaUploadContract? = nil
+    /// KRI-374: `"song"` for a creator-uploaded song; nil (omitted from the JSON) for footage and voiceover.
+    var role: String? = nil
+    enum CodingKeys: String, CodingKey { case uploadContract = "upload_contract"; case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id"; case role }
+}
 struct ProjectMediaAttachmentRequest: Encodable { let media: [ProjectMediaInput]; let clientEventID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case media; case clientEventID = "client_event_id"; case expectedRevision = "expected_revision" } }
 /// One attached media item. The three optional filming-context fields (KRI-189) are omitted from the JSON
 /// entirely when absent, so a clip without them encodes exactly as before.
