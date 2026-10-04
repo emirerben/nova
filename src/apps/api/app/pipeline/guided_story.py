@@ -2996,6 +2996,21 @@ def compile_guided_runtime_plan(
                 "editor_approved_text_ids": approved_text_ids,
             }
         )
+        song_row = runtime_payload.get("user_song")
+        if isinstance(song_row, dict):
+            # KRI-374: the song window always equals the video's length, so a
+            # trim or extension re-windows the song from the SAME start (the
+            # per-take deltas are untouched; the song stays the master clock).
+            window_end = round(
+                float(song_row["window_start_s"]) + float(runtime_payload["resolved_duration_s"]),
+                3,
+            )
+            if window_end > float(song_row["duration_s"]) + 1e-3:
+                raise GuidedStoryError(
+                    "guided_story_revision_invalid",
+                    "That edit runs past the end of your song.",
+                )
+            song_row["window_end_s"] = window_end
         # A timeline revision can split, reorder, or reuse sources. Rebuild
         # grounded clip labels against its output windows so a label never leaks
         # into a neighboring segment.

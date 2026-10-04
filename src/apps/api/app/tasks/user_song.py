@@ -275,6 +275,44 @@ def _store_analysis(item_id: uuid.UUID, generation: int, analysis: SongAnalysis)
     return _write(item_id, generation=generation, mutate=mutate)
 
 
+def _run_analysis(identifier: uuid.UUID, generation: int, *, item_id: str) -> dict[str, Any]:
+    """The body of ``analyze_user_song_task`` (also the worker's inline fallback).
+
+    Records a failure on the row instead of raising; only ``SoftTimeLimitExceeded``
+    and a crash outside the analysis itself propagate to the caller.
+    """
+    song = _read_song(identifier)
+    if song is None or song["generation"] != generation:
+        return {"item_id": item_id, "status": "stale"}
+    existing = _analysis_current(song["analysis"], generation)
+    if existing is not None and existing.status == "ready":
+        # Idempotent re-delivery: nothing to recompute, but alignment may
+        # still be owed (a clip could have attached meanwhile).
+        enqueue_user_song_alignment(identifier)
+        return {"item_id": item_id, "status": "cached"}
+    try:
+        analysis = _analyze(song, generation)
+    except SoftTimeLimitExceeded:
+        raise
+    except Exception as exc:  # noqa: BLE001 - recorded on the row, never raised
+        log.warning("user_song_analysis_failed", item_id=item_id, exc_info=True)
+        analysis = SongAnalysis(
+            generation=generation,
+            status="failed",
+            duration_s=song["duration_s"],
+            error=str(exc)[:300] or exc.__class__.__name__,
+        )
+    stored = _store_analysis(identifier, generation, analysis)
+    if stored and analysis.status == "ready":
+        enqueue_user_song_alignment(identifier)
+    return {
+        "item_id": item_id,
+        "status": analysis.status if stored else "stale",
+        "beats": len(analysis.beats_s),
+        "words": len(analysis.words),
+    }
+
+
 @celery_app.task(
     bind=True,
     name="tasks.analyze_user_song",
@@ -291,36 +329,7 @@ def analyze_user_song_task(self, item_id: str, generation: int) -> dict[str, Any
     except (TypeError, ValueError):
         return {"item_id": str(item_id), "status": "invalid"}
     try:
-        song = _read_song(identifier)
-        if song is None or song["generation"] != generation:
-            return {"item_id": str(item_id), "status": "stale"}
-        existing = _analysis_current(song["analysis"], generation)
-        if existing is not None and existing.status == "ready":
-            # Idempotent re-delivery: nothing to recompute, but alignment may
-            # still be owed (a clip could have attached meanwhile).
-            enqueue_user_song_alignment(identifier)
-            return {"item_id": str(item_id), "status": "cached"}
-        try:
-            analysis = _analyze(song, generation)
-        except SoftTimeLimitExceeded:
-            raise
-        except Exception as exc:  # noqa: BLE001 - recorded on the row, never raised
-            log.warning("user_song_analysis_failed", item_id=str(item_id), exc_info=True)
-            analysis = SongAnalysis(
-                generation=generation,
-                status="failed",
-                duration_s=song["duration_s"],
-                error=str(exc)[:300] or exc.__class__.__name__,
-            )
-        stored = _store_analysis(identifier, generation, analysis)
-        if stored and analysis.status == "ready":
-            enqueue_user_song_alignment(identifier)
-        return {
-            "item_id": str(item_id),
-            "status": analysis.status if stored else "stale",
-            "beats": len(analysis.beats_s),
-            "words": len(analysis.words),
-        }
+        return _run_analysis(identifier, generation, item_id=str(item_id))
     except SoftTimeLimitExceeded:
         try:
             _store_analysis(
@@ -450,6 +459,36 @@ def _store_alignment(
     return _write(item_id, generation=generation, mutate=mutate)
 
 
+def _run_alignment(identifier: uuid.UUID, *, item_id: str) -> dict[str, Any]:
+    """The body of ``align_user_song_takes_task`` (also the worker's inline fallback)."""
+    song = _read_song(identifier)
+    if song is None:
+        return {"item_id": item_id, "status": "no_song"}
+    generation = song["generation"]
+    analysis = _analysis_current(song["analysis"], generation)
+    if analysis is None or analysis.status == "pending":
+        # analyze_user_song_task enqueues alignment when it finishes.
+        return {"item_id": item_id, "status": "waiting_analysis"}
+    if analysis.status == "failed":
+        return {"item_id": item_id, "status": "analysis_failed"}
+    current = _alignment_current(song["alignment"], generation)
+    done = current.takes if current else {}
+    todo = [
+        clip
+        for clip in song["clips"]
+        if (
+            (existing := done.get(str(clip["media_id"]))) is None
+            or existing.proxy_generation != _take_proxy_generation(clip)
+        )
+    ]
+    live_ids = {str(clip["media_id"]) for clip in song["clips"]}
+    if not todo and set(done) <= live_ids:
+        return {"item_id": item_id, "status": "unchanged", "aligned": 0}
+    results = _compute_alignments(song, analysis, todo) if todo else {}
+    stored = _store_alignment(identifier, generation, results)
+    return {"item_id": item_id, "status": "ok" if stored else "stale", "aligned": len(results)}
+
+
 @celery_app.task(
     bind=True,
     name="tasks.align_user_song_takes",
@@ -465,42 +504,60 @@ def align_user_song_takes_task(self, item_id: str) -> dict[str, Any]:  # noqa: A
     except (TypeError, ValueError):
         return {"item_id": str(item_id), "status": "invalid"}
     try:
-        song = _read_song(identifier)
-        if song is None:
-            return {"item_id": str(item_id), "status": "no_song"}
-        generation = song["generation"]
-        analysis = _analysis_current(song["analysis"], generation)
-        if analysis is None or analysis.status == "pending":
-            # analyze_user_song_task enqueues alignment when it finishes.
-            return {"item_id": str(item_id), "status": "waiting_analysis"}
-        if analysis.status == "failed":
-            return {"item_id": str(item_id), "status": "analysis_failed"}
-        current = _alignment_current(song["alignment"], generation)
-        done = current.takes if current else {}
-        todo = [
-            clip
-            for clip in song["clips"]
-            if (
-                (existing := done.get(str(clip["media_id"]))) is None
-                or existing.proxy_generation != _take_proxy_generation(clip)
-            )
-        ]
-        live_ids = {str(clip["media_id"]) for clip in song["clips"]}
-        if not todo and set(done) <= live_ids:
-            return {"item_id": str(item_id), "status": "unchanged", "aligned": 0}
-        results = _compute_alignments(song, analysis, todo) if todo else {}
-        stored = _store_alignment(identifier, generation, results)
-        return {
-            "item_id": str(item_id),
-            "status": "ok" if stored else "stale",
-            "aligned": len(results),
-        }
+        return _run_alignment(identifier, item_id=str(item_id))
     except SoftTimeLimitExceeded:
         log.warning("user_song_alignment_timed_out", item_id=str(item_id))
         return {"item_id": str(item_id), "status": "timed_out"}
     except Exception:  # noqa: BLE001 - background task: never fatal
         log.warning("user_song_alignment_crashed", item_id=str(item_id), exc_info=True)
         return {"item_id": str(item_id), "status": "failed"}
+
+
+# ── inline fallback for the render worker (KRI-374 D2) ────────────────────────
+
+
+def ensure_song_alignment(
+    item_id: uuid.UUID | str,
+) -> tuple[SongAnalysis | None, SongAlignment | None]:
+    """Current ``(analysis, alignment)`` for a plan item, computed inline if missing/stale.
+
+    Used by the montage worker so a render never depends on the background tasks
+    having won a race: it runs the SAME bodies as the tasks (so the result is the
+    row the planner gate would have seen), then re-reads the row. Returns
+    ``(analysis, None)`` when the alignment could not be produced and
+    ``(None, None)`` when there is no usable analysis; it does not raise for a
+    recorded failure.
+    """
+    identifier = uuid.UUID(str(item_id))
+    song = _read_song(identifier)
+    if song is None:
+        return None, None
+    generation = song["generation"]
+    if _analysis_current(song["analysis"], generation) is None:
+        _run_analysis(identifier, generation, item_id=str(identifier))
+    _run_alignment(identifier, item_id=str(identifier))
+    song = _read_song(identifier)
+    if song is None:
+        return None, None
+    return (
+        _analysis_current(song["analysis"], song["generation"]),
+        _alignment_current(song["alignment"], song["generation"]),
+    )
+
+
+def ensure_song_analysis(item_id: uuid.UUID | str) -> SongAnalysis | None:
+    """Current ``SongAnalysis`` for a plan item, computed inline when missing."""
+    identifier = uuid.UUID(str(item_id))
+    song = _read_song(identifier)
+    if song is None:
+        return None
+    generation = song["generation"]
+    if _analysis_current(song["analysis"], generation) is None:
+        _run_analysis(identifier, generation, item_id=str(identifier))
+        song = _read_song(identifier)
+        if song is None:
+            return None
+    return _analysis_current(song["analysis"], song["generation"])
 
 
 # ── enqueue (call only AFTER the attach commit) ───────────────────────────────

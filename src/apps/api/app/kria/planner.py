@@ -125,7 +125,11 @@ def adapt_creator_action(
     *,
     server_clip_intents: list[ClipIntent] | None = None,
     server_resolved_clip_intents: list[ResolvedClipIntent] | None = None,
+    server_resolved_song_takes: list[dict[str, Any]] | None = None,
 ) -> KriaTurnPlan:
+    """``server_resolved_song_takes`` (KRI-374) is the ONLY way ``resolved_song_takes``
+    survives into the draft: it is server-owned (the song-order gate writes it after the
+    creator answered), so whatever a model-authored strategy carried is discarded here."""
     if isinstance(action, AskUser):
         return KriaTurnPlan(
             mode="respond",
@@ -156,6 +160,7 @@ def adapt_creator_action(
     strategy_update = {
         "clip_intents": requested_intents or None,
         "resolved_clip_intents": server_resolved_clip_intents or None,
+        "resolved_song_takes": server_resolved_song_takes or None,
     }
     return KriaTurnPlan(
         mode="act",
@@ -919,6 +924,7 @@ async def _plan_from_creator_output(
     """Turn a Main Creator answer into an inert plan (clip-intent resolution incl.)."""
     action = output.action
     policy_notices: tuple[str, ...] = ()
+    server_song_takes: list[dict[str, Any]] | None = None
     if isinstance(action, ProposeStrategy):
         # KRI-142: the same server compile v1 runs, so a phone render never
         # silently drops what it can't draw while the reply claims it.
@@ -948,6 +954,7 @@ async def _plan_from_creator_output(
                 context_hash=manifest.context_hash,
             )
         if gate.resolved_takes is not None:
+            server_song_takes = gate.resolved_takes
             action = action.model_copy(
                 update={"strategy": _with_resolved_song_takes(action.strategy, gate.resolved_takes)}
             )
@@ -1089,6 +1096,7 @@ async def _plan_from_creator_output(
                 action,
                 server_clip_intents=planned.requested_intents,
                 server_resolved_clip_intents=planned.resolution.intents,
+                server_resolved_song_takes=server_song_takes,
             ),
             manifest_hash=manifest.manifest_hash,
             context_hash=manifest.context_hash,
@@ -1113,7 +1121,7 @@ async def _plan_from_creator_output(
             context_hash=manifest.context_hash,
         )
     return PlannedKriaTurn(
-        plan=adapt_creator_action(action),
+        plan=adapt_creator_action(action, server_resolved_song_takes=server_song_takes),
         manifest_hash=manifest.manifest_hash,
         context_hash=manifest.context_hash,
         policy_notices=policy_notices,

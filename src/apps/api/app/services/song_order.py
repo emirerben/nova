@@ -353,6 +353,47 @@ def resolve_uncertain_takes(
     return resolved
 
 
+def apply_resolved_song_takes(
+    alignment: SongAlignment, resolved_takes: Sequence[Mapping[str, Any]] | None
+) -> tuple[SongAlignment, list[str]]:
+    """Fold the strategy's ``resolved_song_takes`` back onto an alignment for the planner.
+
+    ``resolved_song_takes`` (written by the planner's song-order gate after the
+    creator answered) says, per take in the creator's confirmed order, where it sits
+    (``delta_s``) or that it is B-roll (``delta_s is None``). The lip-sync planner
+    places an uncertain take only when it is in ``confirmed_order``, and only at one
+    of the take's own candidate positions, so:
+
+    * a creator-confirmed take with a position keeps ONLY that position (status
+      ``ambiguous`` so the planner treats it as the confirmed uncertain take it is);
+    * a creator-confirmed take with no position becomes ``unmatched`` (B-roll);
+    * every other row is left exactly as aligned (a confident take stays confident,
+      a take the creator was never asked about stays unplaceable).
+
+    Returns ``(alignment, confirmed_order)``. Nothing here invents a position.
+    """
+    order: list[str] = []
+    takes = dict(alignment.takes)
+    for row in resolved_takes or ():
+        media_id = str(row.get("media_id") or "")
+        if not media_id or media_id in order or media_id not in takes:
+            continue
+        order.append(media_id)
+        if not row.get("confirmed_by_creator"):
+            continue
+        current = takes[media_id]
+        delta = row.get("delta_s")
+        if isinstance(delta, (int, float)) and not isinstance(delta, bool) and math.isfinite(delta):
+            takes[media_id] = current.model_copy(
+                update={"status": "ambiguous", "delta_s": float(delta), "alternates": []}
+            )
+        else:
+            takes[media_id] = current.model_copy(
+                update={"status": "unmatched", "delta_s": None, "alternates": []}
+            )
+    return alignment.model_copy(update={"takes": takes}), order
+
+
 def resolved_song_takes_payload(resolved: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
     """The server-owned ``resolved_song_takes`` list written onto the strategy:
 

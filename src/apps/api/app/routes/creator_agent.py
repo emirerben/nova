@@ -2658,7 +2658,12 @@ async def _run_planning_turn(
                 # is server-owned and must never be trusted from the model. When the
                 # flag is off, visual requests are discarded. Transcript intents
                 # keep their existing pinned-narration materialization path.
-                strategy_hygiene: dict[str, Any] = {"resolved_clip_intents": None}
+                # KRI-374: `resolved_song_takes` is server-owned too (only the song-order gate
+                # writes it, after the creator answered); never trust the model's.
+                strategy_hygiene: dict[str, Any] = {
+                    "resolved_clip_intents": None,
+                    "resolved_song_takes": None,
+                }
                 if not settings.clip_intents_enabled:
                     strategy_hygiene["clip_intents"] = [
                         intent

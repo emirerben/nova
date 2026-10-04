@@ -18,6 +18,11 @@ from app.pipeline.guided_story import (
     compile_guided_runtime_plan,
     song_reference_variant_fields,
 )
+from app.pipeline.lipsync_montage import (
+    LipsyncSyncError,
+    refuse_lipsync_rate_change,
+    resync_lipsync_moments,
+)
 from app.pipeline.phone_captions import caption_look_from_variant
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
 from app.pipeline.phone_narrated_plan import (
@@ -27,7 +32,7 @@ from app.pipeline.phone_narrated_plan import (
     replace_editor_media,
     replace_narrated_captions,
 )
-from app.pipeline.phone_recipe_shared import PhoneNarrationBed, timeline_end_s
+from app.pipeline.phone_recipe_shared import PhoneNarrationBed, PhoneSongBed, timeline_end_s
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, lane_names
 from app.pipeline.phone_subtitled_plan import (
     SFX_DUCK_RECEIPT_FIELD,
@@ -264,6 +269,16 @@ def prepare_phone_editor_commit(
                     fingerprint=voice.fingerprint,
                     duration_s=media.duration,
                 )
+            # KRI-374: a creator song is pinned in the previous immutable recipe too
+            # (never re-hashed on Save). The song window was already re-fitted to the
+            # committed duration (`compile_guided_runtime_plan`); a lip-sync take is
+            # re-synced to its pinned delta, and a retimed one is refused, because the
+            # song is the master clock and a take at another speed drifts off it.
+            song = None
+            if plan.get("user_song") is not None:
+                refuse_lipsync_rate_change(plan)
+                plan = resync_lipsync_moments(plan)
+                song = _pinned_song_bed(previous.recipe)
             allow_editor_media = bool(plan.get("editor_visual_blocks"))
             recipe = compile_phone_guided_plan(
                 GuidedStoryExecutionPlan.model_validate(plan),
@@ -271,6 +286,7 @@ def prepare_phone_editor_commit(
                 visuals=visuals,
                 narration=narration,
                 allow_editor_media=allow_editor_media,
+                song=song,
             )
             validate_phone_pilot_recipe(recipe, allow_editor_media=allow_editor_media)
             request = make_device_request(
@@ -288,6 +304,17 @@ def prepare_phone_editor_commit(
                     variant[PHONE_EDITOR_PLAN_FIELD] = plan
                     variant.update(song_reference_variant_fields(plan))
         staged.status = "awaiting_device"
+    except LipsyncSyncError as exc:
+        # The message is written for the creator (it says what to undo).
+        log.warning(
+            "phone_editor_commit_lipsync_refused",
+            job_id=str(job.id),
+            variant_id=variant_id,
+            reason=str(exc),
+        )
+        raise HTTPException(
+            422, detail={"code": "unsupported_phone_edit", "reason": str(exc)[:300]}
+        ) from exc
     except (
         KeyError,
         StopIteration,
@@ -315,6 +342,20 @@ def prepare_phone_editor_commit(
     if "started_at" in vars(staged):
         job.started_at = staged.started_at
     return {**prep, "render_destination": "device", "render_task_id": None}
+
+
+def _pinned_song_bed(recipe: EditRecipeV2) -> PhoneSongBed:
+    """The song receipt already pinned in ``recipe`` (KRI-374); Save never re-hashes it."""
+    asset = next((a for a in recipe.asset_manifest.assets if a.kind == "song"), None)
+    if asset is None:
+        raise ValueError("the previous phone recipe carries no song to keep")
+    media = next(a for a in recipe.assets if a.id == asset.id)
+    return PhoneSongBed(
+        plan_item_id=asset.plan_item_id,
+        generation=asset.generation,
+        fingerprint=asset.fingerprint,
+        duration_s=media.duration,
+    )
 
 
 def _assembly_visuals(assembly: dict) -> tuple[PhoneVisualBinding, ...]:
