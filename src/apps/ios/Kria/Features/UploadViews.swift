@@ -34,7 +34,7 @@ struct FootagePickerView: View {
     /// Called after a picker has closed with newly selected footage. This is
     /// distinct from `onPickerFilled`, which is only the live-picker cap flow.
     let onSelectionCompleted: (() -> Void)?
-    /// Voiceover preview flow: ownership of the copied local audio file passes
+    /// Voiceover and song preview flow: ownership of the copied local audio file passes
     /// to this callback. It deliberately does not enqueue an upload.
     let onAudioFileSelected: ((URL) -> Void)?
     let showsHeading: Bool
@@ -89,11 +89,13 @@ struct FootagePickerView: View {
     /// `.phone` for this role once `narrationAudio` is verified, but that only unlocks the recorder/
     /// picker UI -- the bytes themselves never become a phone analysis proxy.
     private var uploadPurpose: UploadPurpose {
-        role == .voiceover ? .cloudRenderSource : (destination == .phone ? .analysisProxy : .cloudRenderSource)
+        // A song (KRI-374) is full bytes too: it never goes through the analysis-proxy contract.
+        role.isAudio ? .cloudRenderSource : (destination == .phone ? .analysisProxy : .cloudRenderSource)
     }
 
     /// Non-blocking disclosure of what is uploaded, shown where the per-upload consent screen used to be.
     private var uploadDisclosure: String? {
+        if role == .song { return "Only use songs you have the rights to. Kria uploads the full file to analyze and render it with your video." }
         guard role != .voiceover else { return nil }
         switch destination {
         case .phone: return "Kria uploads a smaller copy of each video to plan your edit. Full-quality originals stay on this iPhone."
@@ -160,7 +162,7 @@ struct FootagePickerView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if showsHeading { KriaSectionLabel(title: "Add \(role.title.lowercased())") }
-            if role != .voiceover {
+            if !role.isAudio {
             Button { beginImport(source: .photos) } label: {
                 Label("Choose from Photos", systemImage: "photo.on.rectangle").frame(maxWidth: .infinity, minHeight: 48)
             }
@@ -180,14 +182,14 @@ struct FootagePickerView: View {
             .onChange(of: photoItems) { _, items in reconcile(items) }
             }
             Button { beginImport(source: .files) } label: {
-                Label(role == .voiceover && onAudioFileSelected != nil ? "Upload an audio file" : "Choose from Files or iCloud", systemImage: "folder").frame(maxWidth: .infinity, minHeight: 48)
+                Label(role == .song ? "Choose a song from Files" : role == .voiceover && onAudioFileSelected != nil ? "Upload an audio file" : "Choose from Files or iCloud", systemImage: "folder").frame(maxWidth: .infinity, minHeight: 48)
             }
-            .buttonStyle(AttachmentFileButtonStyle(isVoiceover: role == .voiceover && onAudioFileSelected != nil))
+            .buttonStyle(AttachmentFileButtonStyle(isVoiceover: role.isAudio && onAudioFileSelected != nil))
             .disabled(selectionCapacity.remaining == 0 || !destination.canUpload)
             .fileImporter(
                 isPresented: $showingFileImporter,
-                allowedContentTypes: role == .voiceover ? [.audio] : role == .visual ? visualContentTypes : [.movie],
-                allowsMultipleSelection: role == .voiceover && onAudioFileSelected != nil ? false : selectionCapacity.remaining > 1,
+                allowedContentTypes: role.isAudio ? [.audio] : role == .visual ? visualContentTypes : [.movie],
+                allowsMultipleSelection: role.isAudio && onAudioFileSelected != nil ? false : selectionCapacity.remaining > 1,
                 onCompletion: importFiles
             )
             if let message = destination.message {
@@ -414,7 +416,7 @@ struct FootagePickerView: View {
     /// would only thrash the disk.
     private func importFiles(_ result: Result<[URL], any Error>) {
         guard case .success(let urls) = result else { return }
-        if role == .voiceover, let onAudioFileSelected {
+        if role.isAudio, let onAudioFileSelected {
             importVoiceoverPreview(urls, onAudioFileSelected: onAudioFileSelected)
             return
         }
@@ -448,7 +450,7 @@ struct FootagePickerView: View {
         }
         let acceptedCount = selectionCapacity.acceptedCount(requested: urls.count)
         guard acceptedCount > 0, let source = urls.first else {
-            selectionMessage = "You’ve reached the limit for voiceover."
+            selectionMessage = "You’ve reached the limit for \(role.title.lowercased())."
             return
         }
         let accessed = source.startAccessingSecurityScopedResource()

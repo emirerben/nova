@@ -169,6 +169,10 @@ struct ChatMessageRow: View {
     /// KRI-282: how to present `message.clipQuestion`. nil (old server, flag off, not a question) = text question only.
     var clipSelectionMode: ClipSelectionCardMode? = nil
     var clipSelectionMedia: [CreationAttachedMedia] = []
+    /// KRI-374: how to present `message.songOrderQuestion`. nil (old server, flag off, not a question) = text only.
+    var songOrderMode: SongOrderCardMode? = nil
+    var songOrderMedia: [CreationAttachedMedia] = []
+    var projectID: UUID? = nil
 
     private static let userBubbleShape = UnevenRoundedRectangle(
         topLeadingRadius: 18,
@@ -221,6 +225,10 @@ struct ChatMessageRow: View {
                 }
                 if let question = message.clipQuestion, let clipSelectionMode {
                     ClipSelectionCard(question: question, media: clipSelectionMedia, mode: clipSelectionMode)
+                        .id(question.questionID)
+                }
+                if let question = message.songOrderQuestion, let songOrderMode, let projectID {
+                    SongOrderCard(question: question, media: songOrderMedia, projectID: projectID, mode: songOrderMode)
                         .id(question.questionID)
                 }
                 if !message.receipts.isEmpty {

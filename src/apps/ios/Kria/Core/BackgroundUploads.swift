@@ -1436,16 +1436,26 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         for _ in 0..<2 {
             do {
                 let current = try await api.project(threadID: record.projectID)
-                let attachedThread = try await api.attachProjectMedia(
-                    threadID: record.projectID,
-                    mediaID: mediaID,
-                    gcsPath: gcsPath,
-                    filename: record.filename,
-                    contentType: contentType,
-                    expectedRevision: current.revision,
-                    clientEventID: "ios-attach-\(record.id.uuidString)",
-                    capture: capture
-                )
+                // KRI-374: only a song carries a server role; footage and voiceover attach exactly as before.
+                let attachedThread: CreationThread
+                if record.role == .song {
+                    attachedThread = try await api.attachProjectMedia(
+                        threadID: record.projectID, mediaID: mediaID, gcsPath: gcsPath, filename: record.filename,
+                        contentType: contentType, expectedRevision: current.revision,
+                        clientEventID: "ios-attach-\(record.id.uuidString)", role: .song
+                    )
+                } else {
+                    attachedThread = try await api.attachProjectMedia(
+                        threadID: record.projectID,
+                        mediaID: mediaID,
+                        gcsPath: gcsPath,
+                        filename: record.filename,
+                        contentType: contentType,
+                        expectedRevision: current.revision,
+                        clientEventID: "ios-attach-\(record.id.uuidString)",
+                        capture: capture
+                    )
+                }
                 // Publish the authoritative media_count before removing the
                 // pending record so clip capacity never briefly reopens.
                 if record.role == .clip {
