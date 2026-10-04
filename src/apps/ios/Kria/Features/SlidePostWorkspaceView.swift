@@ -465,32 +465,39 @@ struct SlidePostWorkspaceView: View {
     private func aspect(_ draft: SlidePostDraft) -> CGFloat { draft.platformProfile == "instagram_carousel" ? 4.0 / 5 : 9.0 / 16 }
     private func platformName(_ draft: SlidePostDraft) -> String { draft.platformProfile == "instagram_carousel" ? "Instagram" : "TikTok" }
 
+    private var headerAction: SlidePostHeader.Action {
+        if session.isBusy { .saving }
+        else if session.hasUnsavedChanges { .save }
+        else if isRendering { .rendering }
+        else if session.canExport { .share }
+        else if canCreateRender { .create }
+        else { .save }
+    }
+
     private func richHeader(_ draft: SlidePostDraft) -> some View {
+        let action = headerAction
+        return SlidePostHeader(
+            action: action, actionEnabled: action == .create || (action == .save && session.hasUnsavedChanges),
+            onBack: { if let onBack { onBack() } else { dismiss() } },
+            onAction: { Task { if action == .create { await create() } else { await save() } } },
+            onSaveToPhotos: { Task { await saveToPhotos() } },
+            onShare: { Task { await prepareShare() } }
+        )
+    }
+
+    /// Status line + undo/redo, in the slot of the editor's transport row.
+    private func transportRow(_ draft: SlidePostDraft) -> some View {
         let slideNumber = (draft.slides.firstIndex { $0.id == session.selectedSlide?.id } ?? 0) + 1
         let subtitle: String
         if mode == .text { subtitle = "Slide \(slideNumber) · Text" }
         else if mode == .look { subtitle = "Slide \(slideNumber) · Look" }
         else if session.hasUnsavedChanges { subtitle = "Unsaved changes" }
         else { subtitle = "\(platformName(draft)) · \(draft.platformProfile == "instagram_carousel" ? "4:5" : "9:16") · \(draft.slides.count) slide\(draft.slides.count == 1 ? "" : "s")" }
-        let action: SlidePostHeader.Action
-        if session.isBusy { action = .saving }
-        else if session.hasUnsavedChanges { action = .save }
-        else if isRendering { action = .rendering }
-        else if session.canExport { action = .share }
-        else if canCreateRender { action = .create }
-        else { action = .save }
-        return SlidePostHeader(
+        return SlidePostTransportRow(
             subtitle: subtitle, unsaved: session.hasUnsavedChanges && mode != .text && mode != .look,
-            inTextMode: mode == .text || mode == .look,
             canUndo: session.canUndoEdit || session.canUndo, canRedo: session.canRedoEdit,
-            action: action, actionEnabled: action == .create || (action == .save && session.hasUnsavedChanges),
-            onBack: { if let onBack { onBack() } else { dismiss() } },
             onUndo: { if session.canUndoEdit { session.undoEdit() } else { Task { await undo() } } },
-            onRedo: { session.redoEdit() },
-            onDone: finishEditing,
-            onAction: { Task { if action == .create { await create() } else { await save() } } },
-            onSaveToPhotos: { Task { await saveToPhotos() } },
-            onShare: { Task { await prepareShare() } }
+            onRedo: { session.redoEdit() }
         )
     }
 
@@ -509,23 +516,26 @@ struct SlidePostWorkspaceView: View {
                 let previewHeight = keyboardUp ? 96 : Self.chatPreviewHeight
                 stage(draft, compact: true, fixedHeight: previewHeight)
                     .frame(height: previewHeight + (keyboardUp ? 12 : 24))
-                if !keyboardUp { slideStrip(draft) }
+                if !keyboardUp { transportRow(draft); slideStrip(draft) }
                 Divider()
                 chatThread
                 composer
             } else {
                 stage(draft, compact: panelOpen)
-                    .frame(maxHeight: panelOpen ? max(150, 0.37 * height - (keyboardUp && mode == .text ? 96 : 0)) : .infinity)
+                    .frame(maxHeight: panelOpen ? max(150, 0.33 * height - (keyboardUp && mode == .text ? 96 : 0)) : .infinity)
                     .animation(.easeOut(duration: 0.2), value: keyboardUp)
+                if !(keyboardUp && mode == .text) { transportRow(draft) }
             }
             if showsChatThread {
                 EmptyView()
             } else if mode == .text, let slide {
-                SlidePostTextPanel(session: session, slideID: slide.id, tab: $textTab)
+                SlidePostTextPanel(session: session, slideID: slide.id, tab: $textTab, onDone: finishEditing)
                     .frame(maxHeight: .infinity)
+                    .padding(.horizontal, 12).padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
             } else if mode == .look, let slide {
-                SlidePostLookPanel(session: session, slideID: slide.id)
+                SlidePostLookPanel(session: session, slideID: slide.id, onDone: finishEditing)
                     .frame(maxHeight: .infinity)
+                    .padding(.horizontal, 12).padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
             } else {
                 browseControls(draft)
             }
@@ -566,8 +576,8 @@ struct SlidePostWorkspaceView: View {
                 richPreview(draft, size: CGSize(width: previewHeight * ratio, height: previewHeight))
                     .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
                 if mode == .arrange {
-                    Text("Drag a slide to reorder · hold for more").font(KriaFont.body(15).weight(.semibold)).foregroundStyle(.white)
-                        .padding(.horizontal, 16).padding(.vertical, 10).background(KriaColor.ink, in: Capsule())
+                    Text("Drag a slide to reorder · hold for more").font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                        .padding(.horizontal, 16).padding(.vertical, 10).kriaFloatingSurface(Capsule())
                         .position(x: geometry.size.width / 2, y: geometry.size.height - 22)
                         .accessibilityIdentifier("slidepost-arrange-hint")
                 }
@@ -596,7 +606,7 @@ struct SlidePostWorkspaceView: View {
             )
         }
         .frame(width: size.width, height: size.height)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(alignment: .topTrailing) {
             Text("\(index) / \(draft.slides.count)").font(KriaFont.body(13).weight(.bold)).foregroundStyle(.white)
                 .padding(.horizontal, 12).padding(.vertical, 6).background(KriaColor.mutedInk.opacity(0.85), in: Capsule()).padding(12)
@@ -608,8 +618,7 @@ struct SlidePostWorkspaceView: View {
                     .padding(.horizontal, 10).padding(.vertical, 5).background(.black.opacity(0.5), in: Capsule()).padding(12)
             }
         }
-        .overlay { if session.isBusy { SlidePostVeil(message: session.operationMessage ?? "Saving your post…").clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous)) } }
-        .shadow(color: .black.opacity(0.14), radius: 14, y: 8)
+        .overlay { if session.isBusy { SlidePostVeil(message: session.operationMessage ?? "Saving your post…").clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous)) } }
         .excludesDrawerGestureWhen(mode == .text)
     }
 

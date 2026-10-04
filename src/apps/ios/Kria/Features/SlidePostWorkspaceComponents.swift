@@ -10,7 +10,7 @@ enum SlidePostTone {
     static let warning = Color(red: 0x8A / 255, green: 0x4B / 255, blue: 0x14 / 255)
     /// Insertion bar while reordering.
     static let insertion = KriaColor.sky.mix(with: KriaColor.ink, by: 0.42)
-    static let stage = KriaColor.softZinc
+    static let stage = KriaColor.paper
 }
 
 extension View {
@@ -53,75 +53,88 @@ enum SlidePostMode: Equatable {
 
 // MARK: Header
 
+/// The native editor's floating header (`WorkspaceTopRow` + `kriaFloatingSurface`): a circle back
+/// button, a centred title and one floating action capsule. Undo/redo and the status line live in
+/// `SlidePostTransportRow`, where the editor keeps its own transport row.
 struct SlidePostHeader: View {
     enum Action { case save, create, rendering, share, saving }
-    let subtitle: String
-    let unsaved: Bool
-    let inTextMode: Bool
-    let canUndo: Bool
-    let canRedo: Bool
     let action: Action
     let actionEnabled: Bool
     let onBack: () -> Void
-    let onUndo: () -> Void
-    let onRedo: () -> Void
-    let onDone: () -> Void
     let onAction: () -> Void
     let onSaveToPhotos: () -> Void
     let onShare: () -> Void
 
     var body: some View {
-        HStack(spacing: 2) {
-            Button(action: onBack) { Image(systemName: "chevron.left").font(.system(size: 18, weight: .semibold)).frame(width: 44, height: 44) }
-                .accessibilityLabel("Back to creation")
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Photo post").font(KriaFont.headline(19)).foregroundStyle(KriaColor.ink).lineLimit(1).minimumScaleFactor(0.8)
-                Text(subtitle).font(KriaFont.body(12.5).weight(unsaved ? .semibold : .regular))
-                    .foregroundStyle(unsaved ? SlidePostTone.warning : KriaColor.zinc).lineLimit(1).minimumScaleFactor(0.8)
-                    .accessibilityIdentifier("slidepost-subtitle")
+        WorkspaceTopRow(title: "Photo post") {
+            Button(action: onBack) {
+                Image(systemName: "chevron.left").font(.system(size: 15, weight: .semibold)).foregroundStyle(KriaColor.ink)
+                    .frame(width: 44, height: 44).kriaFloatingSurface(Circle())
             }
-            Spacer(minLength: 4)
-            historyButton("arrow.uturn.backward", label: "Undo", id: "slidepost-undo", enabled: canUndo, action: onUndo)
-            historyButton("arrow.uturn.forward", label: "Redo", id: "slidepost-redo", enabled: canRedo, action: onRedo)
-            trailing
+            .accessibilityLabel("Back to creation")
+        } trailing: {
+            trailing.frame(minWidth: 44, alignment: .trailing)
         }
-        .padding(.leading, 6).padding(.trailing, 14).frame(minHeight: 60).background(KriaColor.paper)
-    }
-
-    private func historyButton(_ symbol: String, label: String, id: String, enabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 18, weight: .medium)).frame(width: 40, height: 44)
-                .foregroundStyle(enabled ? KriaColor.ink : KriaColor.line)
-        }
-        .disabled(!enabled).accessibilityLabel(label).accessibilityIdentifier(id)
+        .buttonStyle(.plain)
+        .foregroundStyle(KriaColor.ink)
     }
 
     @ViewBuilder private var trailing: some View {
-        if inTextMode {
-            pill("Done", id: "slidepost-done", enabled: true, action: onDone)
-        } else {
-            switch action {
-            case .save: pill("Save", id: "slidepost-save", enabled: actionEnabled, action: onAction)
-            case .saving: pill("Saving…", id: "slidepost-save", enabled: false, action: {})
-            case .create: pill("Create post", id: "slidepost-create", enabled: actionEnabled, action: onAction)
-            case .rendering: pill("Rendering…", id: "slidepost-rendering", enabled: false, action: {})
-            case .share:
-                Menu {
-                    Button("Save to Photos", action: onSaveToPhotos).accessibilityIdentifier("slidepost-save-photos")
-                    Button("Share files", action: onShare).accessibilityIdentifier("slidepost-share-files")
-                } label: { pillLabel("Share", enabled: true) }
-                .accessibilityIdentifier("slidepost-share")
-            }
+        switch action {
+        case .save: pill("Save", id: "slidepost-save", enabled: actionEnabled, action: onAction)
+        case .saving: pill("Saving…", id: "slidepost-save", enabled: false, action: {})
+        case .create: pill("Create post", id: "slidepost-create", enabled: actionEnabled, action: onAction)
+        case .rendering: pill("Rendering…", id: "slidepost-rendering", enabled: false, action: {})
+        case .share:
+            Menu {
+                Button("Save to Photos", action: onSaveToPhotos).accessibilityIdentifier("slidepost-save-photos")
+                Button("Share files", action: onShare).accessibilityIdentifier("slidepost-share-files")
+            } label: { pillLabel("Share", enabled: true) }
+            .accessibilityIdentifier("slidepost-share")
         }
     }
     private func pill(_ title: String, id: String, enabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) { pillLabel(title, enabled: enabled) }
             .disabled(!enabled).accessibilityIdentifier(id)
     }
+    // Same capsule as the editor's Save: 14pt semibold, 44pt tall, floating frosted surface.
     private func pillLabel(_ title: String, enabled: Bool) -> some View {
-        Text(title).font(KriaFont.body(16).weight(.bold)).foregroundStyle(KriaColor.ink)
-            .padding(.horizontal, 20).frame(minHeight: 44).background(KriaColor.butter, in: Capsule())
-            .opacity(enabled ? 1 : 0.55)
+        Text(title).font(KriaFont.body(14).weight(.semibold)).foregroundStyle(enabled ? KriaColor.ink : KriaColor.zinc)
+            .lineLimit(1).fixedSize().padding(.horizontal, 16).frame(minWidth: 44, minHeight: 44)
+            .kriaFloatingSurface(Capsule())
+    }
+}
+
+/// The row under the preview, in the slot (and metrics) of the editor's transport row: status line
+/// on the left, undo/redo on the right.
+struct SlidePostTransportRow: View {
+    let subtitle: String
+    let unsaved: Bool
+    let canUndo: Bool
+    let canRedo: Bool
+    let onUndo: () -> Void
+    let onRedo: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(subtitle)
+                .font(KriaFont.body(13).weight(.semibold))
+                .foregroundStyle(unsaved ? SlidePostTone.warning : KriaColor.zinc)
+                .lineLimit(1).minimumScaleFactor(0.7)
+                .accessibilityIdentifier("slidepost-subtitle")
+            Spacer(minLength: 4)
+            historyButton("arrow.uturn.backward", label: "Undo", id: "slidepost-undo", enabled: canUndo, action: onUndo)
+            historyButton("arrow.uturn.forward", label: "Redo", id: "slidepost-redo", enabled: canRedo, action: onRedo)
+        }
+        .padding(.horizontal, 14).frame(height: 54).background(KriaColor.paper)
+    }
+
+    private func historyButton(_ symbol: String, label: String, id: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
+                .foregroundStyle(enabled ? KriaColor.ink : KriaColor.line)
+        }
+        .buttonStyle(.plain).disabled(!enabled).accessibilityLabel(label).accessibilityIdentifier(id)
     }
 }
 
@@ -242,8 +255,10 @@ struct SlidePostStrip: View {
     }
 }
 
-// MARK: Glass tool bar
+// MARK: Tool dock
 
+/// The editor's tool island (`NativeEditorIslandGroup` + `nativeEditorIslandSurface`) with the
+/// editor's tool metrics: 62pt tall, 17pt medium icons, 11pt labels, ink-7% selection capsule.
 struct SlidePostToolBar: View {
     let mode: SlidePostMode
     let canCover: Bool
@@ -258,23 +273,21 @@ struct SlidePostToolBar: View {
     let onCaption: () -> Void
 
     var body: some View {
-        // Fits the width at normal type; at accessibility sizes the same row scrolls instead of truncating.
-        ViewThatFits(in: .horizontal) {
-            row
-            ScrollView(.horizontal, showsIndicators: false) { row.padding(.horizontal, 4) }
+        NativeEditorIslandGroup {
+            // Fits the width at normal type; at accessibility sizes the same row scrolls instead of truncating.
+            ViewThatFits(in: .horizontal) {
+                row
+                ScrollView(.horizontal, showsIndicators: false) { row }
+            }
+            .frame(height: NativeEditorIslandMetrics.islandHeight)
+            .nativeEditorIslandSurface()
         }
-        .frame(minHeight: 58)
-        .padding(.vertical, 2)
-        .background(KriaColor.paper.opacity(0.82), in: Capsule())
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(KriaColor.ink.opacity(0.14), lineWidth: 1))
-        .shadow(color: .black.opacity(0.10), radius: 14, y: 6)
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 12)
         .excludesDrawerGesture()
     }
 
     private var row: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: NativeEditorIslandMetrics.toolSpacing) {
             item("textformat", "Text", id: "slidepost-tool-text", active: mode == .text, action: onText)
             item("arrow.up.arrow.down", "Arrange", id: "slidepost-tool-arrange", active: mode == .arrange, action: onArrange)
             item("star.square", "Cover", id: "slidepost-tool-cover", active: false, enabled: canCover, action: onCover)
@@ -286,7 +299,8 @@ struct SlidePostToolBar: View {
             } label: { label("ellipsis", "More", active: false) }
             .accessibilityIdentifier("slidepost-tool-more")
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, NativeEditorIslandMetrics.islandHorizontalPadding)
+        .padding(.vertical, NativeEditorIslandMetrics.islandVerticalPadding)
     }
 
     private func item(_ symbol: String, _ title: String, id: String, active: Bool, enabled: Bool = true, action: @escaping () -> Void) -> some View {
@@ -297,13 +311,14 @@ struct SlidePostToolBar: View {
     }
 
     private func label(_ symbol: String, _ title: String, active: Bool) -> some View {
-        VStack(spacing: 2) {
-            Image(systemName: symbol).font(.system(size: 20, weight: .regular)).frame(height: 24)
-            Text(title).font(KriaFont.body(11).weight(.semibold)).lineLimit(1).fixedSize()
+        VStack(spacing: 4) {
+            Image(systemName: symbol).font(.system(size: 17, weight: .medium)).frame(height: 22)
+            Text(title).font(KriaFont.body(11).weight(active ? .semibold : .medium))
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge).lineLimit(1).minimumScaleFactor(0.7)
         }
-        .foregroundStyle(KriaColor.ink)
-        .padding(.horizontal, 12).padding(.vertical, 6).frame(minWidth: 64, minHeight: 50)
-        .background(active ? KriaColor.selectionSoft : .clear, in: Capsule())
+        .foregroundStyle(active ? KriaColor.ink : KriaColor.zinc)
+        .frame(minWidth: 62, maxWidth: .infinity).frame(height: NativeEditorIslandMetrics.toolHeight)
+        .background { if active { Capsule().fill(KriaColor.ink.opacity(0.07)) } }
         .contentShape(Capsule())
     }
 }
@@ -332,8 +347,7 @@ struct SlidePostComposer: View {
             .disabled(!canSend).accessibilityLabel("Send to Kria").accessibilityIdentifier("slidepost-composer-send")
         }
         .padding(.leading, 12).padding(.trailing, 6).frame(minHeight: 52)
-        .background(KriaColor.paper, in: Capsule())
-        .overlay(Capsule().strokeBorder(KriaColor.line, lineWidth: 1))
+        .kriaFloatingSurface(Capsule())
         .padding(.horizontal, 16)
     }
 }
