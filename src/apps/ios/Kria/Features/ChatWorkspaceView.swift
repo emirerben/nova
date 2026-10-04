@@ -314,6 +314,8 @@ private struct CreationWorkspaceView: View {
     @State private var threadRevision: Int
     @State private var projectionOrder = ThreadProjectionOrder()
     @State private var isSending = false
+    /// Clip-picker answers sent from this device, by question id, for the collapsed "answered" summary.
+    @State private var answeredClipSelections: [String: ClipSelectionSubmission] = [:]
     @State private var isActing = false
     @State private var isThinking = false
     /// Highest transcript sequence known when the thinking turn was accepted; only later events can settle it.
@@ -456,7 +458,9 @@ private struct CreationWorkspaceView: View {
                                // typed), the keyboard is up, and only the right name is left to type.
                                prompt = label.correctionDraft(appendingTo: prompt)
                                composerFocused = true
-                           })
+                           },
+                           clipSelectionMode: clipSelectionMode(for: message),
+                           clipSelectionMedia: CreationAttachedMedia.parse(threadState))
                 .id(entry.id)
         case .stage:
             stageContent.id(entry.id)
@@ -474,6 +478,28 @@ private struct CreationWorkspaceView: View {
         case .media:
             EmptyView() // Consecutive receipts are rendered together above.
         }
+    }
+
+    /// Picker only when the server advertises `clip_selection_questions`. Interactive on the newest question
+    /// that no later user message has answered; read-only (with the counts, if known) afterwards.
+    private func clipSelectionMode(for message: ChatTranscriptMessage) -> ClipSelectionCardMode? {
+        guard capabilities?.clipSelectionQuestionsEnabled == true,
+              let question = message.clipQuestion else { return nil }
+        let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
+            if case .message(let message) = entry.content { message } else { nil }
+        }
+        guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return nil }
+        let isLatestQuestion = !messages[(index + 1)...].contains { $0.clipQuestion != nil }
+        let isAnswered = messages[(index + 1)...].contains { $0.role == .user }
+        if isAnswered { return .answered(summary: answeredClipSelections[question.questionID]?.summary(question: question)) }
+        if isLatestQuestion {
+            return .active(isSending: isSending || isActing || isThinking) { submission, text in
+                answeredClipSelections[question.questionID] = submission
+                // A rejected send removes the pending message, which reopens the card for a retry.
+                Task { await send(message: text, clipSelection: submission) }
+            }
+        }
+        return nil
     }
 
     private func mediaReceipts(_ entries: [ChatTimelineEntry]) -> some View {
@@ -938,7 +964,7 @@ private struct CreationWorkspaceView: View {
         Task { await send(message: CreationConfirmationConflict.refreshDirectionMessage) }
     }
 
-    private func send(message submittedMessage: String? = nil) async {
+    private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil) async {
         // Slide direction is intentionally handled by SlidePostWorkspaceView.
         // Generic creator runtime has no slide proposal/create tools.
         guard selectedFormat != .slides else { return }
@@ -1021,7 +1047,7 @@ private struct CreationWorkspaceView: View {
             accepted = try await model.api.submitTurn(
                 threadID: project.id, message: message,
                 expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID,
-                editorState: editorState
+                editorState: editorState, clipSelection: clipSelection
             )
         } catch let error as APIError where error == .conflict {
             pendingMessages.removeAll { $0.id == optimistic.id }
@@ -1612,6 +1638,8 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
     var recommendedOption: String? = nil
     /// KRI-207: one outcome per requirement in the creator's brief, from the event that carried them.
     var receipts: [RequirementReceiptItem] = []
+    /// KRI-282: the clip picker the question carries, when the server sent one.
+    var clipQuestion: ClipQuestion? = nil
 
     static func syntheticUser(_ content: String) -> Self {
         Self(id: "synthetic-\(content)", role: .user, content: content)
@@ -1653,7 +1681,8 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
             recommendedOption = event.payload?["recommended_option"]?.stringValue
         }
         let receipts = role == .assistant ? RequirementReceiptItem.parse(payload: event.payload) : []
-        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts)
+        let clipQuestion = role == .assistant ? ClipQuestion.parse(payload: event.payload) : nil
+        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts, clipQuestion: clipQuestion)
     }
 }
 
