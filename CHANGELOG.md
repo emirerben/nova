@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.72.0] - 2026-10-04
+
+### Changed
+- fix(song): editor plays the creator's song and the Sounds tab shows it (KRI-374) (#1386) <!-- release-pr: 1386 -->
+
 ## [0.78.71.0] - 2026-10-04
 
 ### Changed
