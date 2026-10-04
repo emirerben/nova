@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.61.0] - 2026-10-04
+
+### Fixed
+- fix(phone): letterboxed landscape fit for voiceover montage + guided (KRI-285) (#1369) <!-- release-pr: 1369 -->
+
 ## [0.78.60.0] - 2026-10-04
 
 ### Changed
