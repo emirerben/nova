@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.73.0] - 2026-10-04
+
+### Changed
+- feat(song): volume, start point and remove for the creator's song in the editor (KRI-428) (#1387) <!-- release-pr: 1387 -->
+
 ## [0.78.72.0] - 2026-10-04
 
 ### Changed
