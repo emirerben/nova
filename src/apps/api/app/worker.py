@@ -68,6 +68,7 @@ celery_app = Celery(
         "app.tasks.creator_workspace",
         "app.tasks.kria_runtime",
         "app.tasks.kria_clip_understanding",
+        "app.tasks.user_song",
         "app.tasks.creator_memory",
         "app.tasks.speech_cleanup_analysis",
         "app.tasks.mobile_upload_cleanup",
@@ -219,6 +220,8 @@ celery_app.conf.update(
         "tasks.run_kria_turn": {"queue": "agent-control"},
         "tasks.extract_kria_brief": {"queue": "agent-control"},
         "tasks.analyze_kria_clips": {"queue": settings.pool_asset_analysis_queue},
+        "tasks.analyze_user_song": {"queue": settings.pool_asset_analysis_queue},
+        "tasks.align_user_song_takes": {"queue": settings.pool_asset_analysis_queue},
         "tasks.prepare_creator_clips": {"queue": settings.pool_asset_analysis_queue},
         # Make the queue a property of the TASK, not of each dispatcher. A
         # future bare `repair_job_poster.delay(...)` would otherwise land on

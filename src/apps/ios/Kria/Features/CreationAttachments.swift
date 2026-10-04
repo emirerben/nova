@@ -41,6 +41,10 @@ struct AttachmentSheet: View {
     /// `Task` would outlive the sheet and keep acting on its snapshot.
     @State private var foregroundPoll: Task<Void, Never>?
     @StateObject private var recorder = CreationVoiceRecorder()
+    /// KRI-374: local playback of a picked song before it is added. Never uploads by itself.
+    @StateObject private var songPreview = CreationVoiceRecorder()
+    @State private var uploadingSong = false
+    @State private var songUploadError: String?
 
     init(
         projectID: UUID,
@@ -70,11 +74,19 @@ struct AttachmentSheet: View {
     /// from offering primary footage or voiceover before the picker appears.
     private var usesVisualPoolOnly: Bool { format?.usesVisualPool == true }
     private var narrated: Bool { (format ?? thread.map { CreationFormat(thread: $0) }) == .narrated }
-    private var hasVoiceoverStep: Bool { narrated || media.contains(where: { $0.kind == "audio" }) }
+    private var hasVoiceoverStep: Bool { narrated || media.contains(where: \.isVoiceover) }
+    /// "Add your song" appears only when the server advertises `media.song` (feature on for this account and
+    /// protocol), and only for montage-style projects: a song replaces the soundtrack of cut footage.
+    private var hasSongStep: Bool {
+        guard capabilities?.songUploadEnabled == true, !usesVisualPoolOnly else { return false }
+        let resolved = format ?? thread.map { CreationFormat(thread: $0) }
+        return resolved == nil || resolved == .montage
+    }
     private var hasOverlaysStep: Bool { usesVisualPoolOnly || (capabilities?.visualsEnabled == true && itemID != nil) }
     private var steps: [AttachmentStep] {
         var result: [AttachmentStep] = usesVisualPoolOnly ? [.overlays] : [.footage]
         if hasVoiceoverStep { result.append(.voiceover) }
+        if hasSongStep { result.append(.song) }
         if hasOverlaysStep && !usesVisualPoolOnly { result.append(.overlays) }
         return result
     }
@@ -88,13 +100,15 @@ struct AttachmentSheet: View {
         switch mediaRole {
         case .clip: maximumClipCount
         case .voiceover: capabilities?.media?["voiceover"]?.max ?? 1
+        case .song: capabilities?.songLimit?.max ?? 1
         case .visual: pool?.maxAssets ?? 0
         }
     }
     private func existing(for mediaRole: CreationMediaRole) -> Int {
         switch mediaRole {
         case .clip: return attachedClipCount
-        case .voiceover: return media.filter { $0.kind == "audio" }.count
+        case .voiceover: return media.filter(\.isVoiceover).count
+        case .song: return CreationAttachedMedia.song(thread?.state ?? [:]) == nil ? 0 : 1
         case .visual:
             let ownReservations = Set(pendingRecords.filter { $0.projectID == projectID && $0.role == .visual }.compactMap(\.visualReservationID))
             let overlap = pool?.activeReservations?.filter { ownReservations.contains($0.reservationID) }.count ?? 0
@@ -106,7 +120,8 @@ struct AttachmentSheet: View {
     private func attachedMediaIDs(for mediaRole: CreationMediaRole) -> Set<String> {
         switch mediaRole {
         case .clip: Set(media.filter { $0.kind == "video" }.map(\.id))
-        case .voiceover: Set(media.filter { $0.kind == "audio" }.map(\.id))
+        case .voiceover: Set(media.filter(\.isVoiceover).map(\.id))
+        case .song: Set(CreationAttachedMedia.song(thread?.state ?? [:]).map { [$0.id] } ?? [])
         case .visual: Set((pool?.assets ?? []).map(\.id))
         }
     }
@@ -117,6 +132,18 @@ struct AttachmentSheet: View {
             $0.value.projectID == projectID && $0.value.role == .voiceover && !queuedIDs.contains($0.key)
         }.count
         return !recorder.isImporting && existing(for: .voiceover) + queued.count + preparing < maximum(for: .voiceover)
+    }
+    /// A song picked, uploading, or already attached counts against the limit of one.
+    private var canAddSong: Bool {
+        let queued = pendingRecords.filter { $0.projectID == projectID && $0.role == .song }
+        let queuedIDs = Set(queued.map(\.id))
+        let preparing = inFlight.filter { $0.value.projectID == projectID && $0.value.role == .song && !queuedIDs.contains($0.key) }.count
+        return !songPreview.isImporting && existing(for: .song) + queued.count + preparing < maximum(for: .song)
+    }
+    private var hasSongOrPendingSong: Bool {
+        existing(for: .song) > 0
+            || pendingRecords.contains { $0.projectID == projectID && $0.role == .song }
+            || inFlight.values.contains { $0.projectID == projectID && $0.role == .song }
     }
     private func uploadDestination(for mediaRole: CreationMediaRole) -> ProjectUploadDestination {
         ProjectUploadDestination.resolve(
@@ -167,6 +194,7 @@ struct AttachmentSheet: View {
                     }
                     role = newStep.role
                     if newStep != .voiceover { recorder.pausePlayback() }
+                    if newStep != .song { songPreview.pausePlayback() }
                 }
                 attachmentFooter
             }
@@ -229,11 +257,14 @@ struct AttachmentSheet: View {
             // than on the next poll, or the picker would keep showing it as chosen for a few seconds.
             .onReceive(model.uploads.$photoSelections) { _ in if role == .visual { Task { await loadVisuals() } } }
             .onChange(of: scenePhase) { _, phase in
-                if phase != .active { recorder.stopForInterruption() }
-                if phase == .background { recorder.cancelPendingWorkAndStop() }
+                if phase != .active { recorder.stopForInterruption(); songPreview.pausePlayback() }
+                if phase == .background { recorder.cancelPendingWorkAndStop(); songPreview.cancelPendingWorkAndStop() }
             }
             .onDisappear {
                 recorder.cancelPendingWorkAndStop()
+                // A picked song is only a local copy until "Use this song"; closing the sheet drops it (the
+                // creator can pick it again), so no temp file outlives the sheet.
+                songPreview.discard()
                 foregroundPoll?.cancel()
                 foregroundPoll = nil
             }
@@ -260,6 +291,7 @@ struct AttachmentSheet: View {
         switch aStep {
         case .footage: footageStep
         case .voiceover: voiceoverStep
+        case .song: songStep
         case .overlays: overlaysStep
         }
     }
@@ -312,6 +344,25 @@ struct AttachmentSheet: View {
         }
     }
 
+    private var songStep: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            AttachmentHeading(title: songPreview.hasRecording ? "Review your song" : "Add your song",
+                              subtitle: songPreview.hasRecording ? "Listen before adding this song to your video."
+                                  : "Cut your clips to a song, or lip-sync to it. Tell Kria which in your message.")
+            if songPreview.hasRecording {
+                SongReviewView(player: songPreview)
+                SongReviewActions(onUse: { Task { await useSong() } }, onChooseAnother: { songPreview.discard(); songUploadError = nil },
+                                  canUse: canAddSong, isUsing: uploadingSong)
+            }
+            Text("Only use songs you have the rights to.")
+                .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                .accessibilityIdentifier("song-rights-note")
+            if let songError = songPreview.error { Text(songError).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText) }
+            if let songUploadError { Text(songUploadError).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText).accessibilityIdentifier("song-upload-error") }
+            attachedList(role: .song)
+        }
+    }
+
     private var overlaysStep: some View {
         VStack(alignment: .leading, spacing: 20) {
             AttachmentHeading(title: "Add overlays", subtitle: usesVisualPoolOnly ? "Add the photos and videos for your slides." : "Optional photos and supporting clips can add context to your video.")
@@ -353,6 +404,21 @@ struct AttachmentSheet: View {
                 }.padding(.horizontal, 24).padding(.vertical, 12)
             }
         }
+        else if step == .song {
+            if !songPreview.hasRecording {
+                VStack(spacing: 8) {
+                    if songPreview.isImporting {
+                        ProgressView("Opening song…")
+                    } else {
+                        FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .song), attachedClipCount: existing(for: .song), attachedMediaIDs: attachedMediaIDs(for: .song), role: .song, itemID: itemID, limit: capabilities?.songLimit, destination: uploadDestination(for: .song), onAudioFileSelected: songPreview.importFile, showsHeading: false)
+                    }
+                    Button(hasSongOrPendingSong ? "Continue" : "Skip, no song") { advance() }
+                        .font(KriaFont.body(14).weight(.medium)).foregroundStyle(hasSongOrPendingSong ? KriaColor.ink : KriaColor.zinc)
+                        .frame(minHeight: 44).accessibilityIdentifier(hasSongOrPendingSong ? "song-continue" : "song-skip")
+                        .disabled(songPreview.isImporting)
+                }.padding(.horizontal, 24).padding(.vertical, 12)
+            }
+        }
         else {
             VStack(spacing: 8) {
                 Button(stepIndex == steps.count - 1 ? "Done" : "Next") { advance() }
@@ -362,9 +428,16 @@ struct AttachmentSheet: View {
         }
     }
 
+    private func attachedMedia(for role: CreationMediaRole) -> [CreationAttachedMedia] {
+        switch role {
+        case .voiceover: media.filter(\.isVoiceover)
+        case .song: CreationAttachedMedia.song(thread?.state ?? [:]).map { [$0] } ?? []
+        default: media.filter { $0.kind == "video" }
+        }
+    }
     private func attachedList(role: CreationMediaRole) -> some View {
         VStack(spacing: 10) {
-            ForEach(media.filter { role == .voiceover ? $0.kind == "audio" : $0.kind == "video" }) { attachment in
+            ForEach(attachedMedia(for: role)) { attachment in
                 HStack(spacing: 12) {
                     CreationAttachmentThumbnail(media: attachment)
                     Text(attachment.filename).font(KriaFont.body(14)).lineLimit(1)
@@ -436,6 +509,16 @@ struct AttachmentSheet: View {
         uploadingRecording = false
         if accepted { voiceoverUploadError = nil; recorder.discard(); advance() }
         else { voiceoverUploadError = "This voiceover couldn’t be added. Your recording is still here—try again." }
+    }
+    private func useSong() async {
+        guard !uploadingSong, let url = songPreview.recordingURL, canAddSong else { return }
+        uploadingSong = true
+        songUploadError = nil
+        // The song always uploads in full (never an analysis proxy): the server needs the bytes.
+        let accepted = await model.uploads.enqueue(fileURL: url, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource, role: .song, itemID: itemID, limit: capabilities?.songLimit)
+        uploadingSong = false
+        if accepted { songUploadError = nil; songPreview.discard(); advance() }
+        else { songUploadError = "This song couldn’t be added. It’s still here, so try again." }
     }
     private func removeAttached(_ attachment: CreationAttachedMedia) async {
         guard !removingMedia else { return }
@@ -539,7 +622,7 @@ struct CreationAttachmentThumbnail: View {
     let media: CreationAttachedMedia
     var body: some View {
         Group {
-            if media.kind == "audio" { Image(systemName: "waveform") }
+            if media.kind == "audio" { Image(systemName: media.isSong ? "music.note" : "waveform") }
             else if let image = UIImage(contentsOfFile: CreationMediaPreview.url(mediaID: media.id).path) { Image(uiImage: image).resizable().scaledToFill() }
             else { AsyncImage(url: media.previewURL) { image in image.resizable().scaledToFill() } placeholder: { Image(systemName: "video") } }
         }.frame(width: 52, height: 64).clipped().clipShape(RoundedRectangle(cornerRadius: 8))

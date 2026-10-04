@@ -3197,6 +3197,12 @@ def run_structural(
             )
         ):
             failures.append("audio-led strategy is not native")
+        if action.strategy.audio_strategy == "user_song" and not (
+            input.capability_manifest.has_user_song
+            and input.capability_manifest.capabilities.get("user_song") is not None
+            and input.capability_manifest.capabilities["user_song"].available
+        ):
+            failures.append("user_song strategy without a usable uploaded song on the manifest")
         normalized_request = " ".join(input.user_message.casefold().split())
         if "sport" in normalized_request and (
             "bottom right" in normalized_request or "bottom-right" in normalized_request

@@ -1231,9 +1231,10 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
 UNIFIED_SETTLED_KINDS = frozenset({"text", "order", "timing"})
 
 
-# Approval turns `audio_strategy` into the item's audio mode: only these two leave the
-# voiceover lane, and the worker takes the unified planner only outside it.
-_NON_VOICEOVER_AUDIO = frozenset({"original_audio", "licensed_music"})
+# Approval turns `audio_strategy` into the item's audio mode: only these leave the
+# voiceover lane, and the worker takes the unified planner only outside it. KRI-374:
+# `user_song` (audio_mode "song") also runs through the unified montage planner.
+_NON_VOICEOVER_AUDIO = frozenset({"original_audio", "licensed_music", "user_song"})
 
 
 def defers_to_unified_montage(

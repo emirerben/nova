@@ -781,6 +781,15 @@ PHONE_GATE_MESSAGES: dict[str, tuple[str, str]] = {
         "Narrating across several clips isn't on iPhone yet. Record a voiceover, "
         "or keep one clip for talking-to-camera.",
     ),
+    # KRI-374: a creator-uploaded song only plays on the iPhone renderer (the
+    # cloud renderer never mixes it) and only while `phone_user_song_supported()`
+    # holds (kill switch + `musicBed` + `audioMix` verified). Refuse before a Job
+    # exists rather than silently rendering without the creator's song.
+    "user_song_unavailable": (
+        "phone_user_song_unavailable",
+        "Your own song can only be used in videos made on your iPhone right now. "
+        "Ask for this edit without your song. No fallback edit was rendered.",
+    ),
 }
 
 
@@ -1482,8 +1491,11 @@ def _dispatch_item_render(
     from app.tasks.generative_build import orchestrate_generative_job  # noqa: PLC0415
 
     audio_mode = getattr(item, "audio_mode", "kria")
-    if audio_mode not in {"kria", "original", "voiceover"}:
+    if audio_mode not in {"kria", "original", "voiceover", "song"}:
         audio_mode = "kria"
+    # KRI-374: the creator's own song. `song_gcs_path` is set only through the
+    # attach route, so an "audio_mode == song" row without it is treated as no song.
+    has_user_song = audio_mode == "song" and bool(getattr(item, "song_gcs_path", None))
     guided_applicable = guided_edit_applicable(
         getattr(item, "edit_format", None),
         has_voiceover=(audio_mode == "voiceover" and bool(item.voiceover_gcs_path)),
@@ -1893,6 +1905,18 @@ def _dispatch_item_render(
 
         phone_sources = ()
         phone_gate: str | None = None
+        if has_user_song:
+            from app.services.phone_rollout import phone_user_song_supported  # noqa: PLC0415
+
+            # Phone-only: a cloud destination (no analysis-proxy footage) or a
+            # rollout that no longer covers the song lane refuses here, before a
+            # Job is minted. The voiceover is never consulted for a song.
+            if not (
+                any(is_analysis_proxy_path(path) for path in clip_paths)
+                and phone_user_song_supported()
+            ):
+                phone_gate = "user_song_unavailable"
+                raise ValueError("a creator-uploaded song renders on the iPhone only")
         # KRI-174 Phase 1.5: set True only on the exact fmt/self-narration
         # shape that `generative_build._run_phone_subtitled_job` will land
         # on (mirrors its own `declared_format == "subtitled" or (... and
@@ -2156,6 +2180,22 @@ def _dispatch_item_render(
             **({"render_on_device": True} if visuals_only_device else {}),
             **({"phone_subtitled_lanes": phone_subtitled_lanes} if phone_subtitled_lanes else {}),
         )
+        if has_user_song:
+            # The exact object generation attach verified: the worker re-reads
+            # the CURRENT row/generation at render time and fails closed on a
+            # mismatch (a replaced song must never play under an old plan).
+            requested_sync = (creator_strategy or {}).get("song_sync")
+            job.all_candidates = {
+                **(job.all_candidates or {}),
+                "user_song": {
+                    "gcs_path": str(item.song_gcs_path),
+                    "generation": int(item.song_generation or 0),
+                    "duration_s": float(item.song_duration_s or 0.0),
+                    "sync": requested_sync
+                    if requested_sync in {"background", "lipsync"}
+                    else "background",
+                },
+            }
         # Pin one immutable identity for this Creator-confirmed render before
         # the worker is queued.  Native variants historically received no
         # generation token until a later editor rerender, which made a ready

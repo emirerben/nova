@@ -1,10 +1,10 @@
 import SwiftUI
 
 enum AttachmentStep: String, CaseIterable, Identifiable {
-    case footage, voiceover, overlays
+    case footage, voiceover, song, overlays
     var id: String { rawValue }
-    var title: String { switch self { case .footage: "Footage"; case .voiceover: "Voiceover"; case .overlays: "Overlays" } }
-    var role: CreationMediaRole { switch self { case .footage: .clip; case .voiceover: .voiceover; case .overlays: .visual } }
+    var title: String { switch self { case .footage: "Footage"; case .voiceover: "Voiceover"; case .song: "Song"; case .overlays: "Overlays" } }
+    var role: CreationMediaRole { switch self { case .footage: .clip; case .voiceover: .voiceover; case .song: .song; case .overlays: .visual } }
     var accessibilityID: String { "attachment-step-\(rawValue)" }
 }
 
@@ -156,6 +156,46 @@ struct VoiceoverReviewActions: View {
             } else {
                 Button("Record again", action: onRecordAgain).buttonStyle(KriaSecondaryButtonStyle()).accessibilityIdentifier("voiceover-rerecord").disabled(isUsing)
             }
+        }
+    }
+}
+
+/// KRI-374: playback card for a song file the creator picked, before it is added to the project.
+/// Reuses the voiceover recorder purely as a local audio player: nothing uploads until "Use this song".
+struct SongReviewView: View {
+    @ObservedObject var player: CreationVoiceRecorder
+    var body: some View {
+        HStack(spacing: 14) {
+            Button(action: player.togglePlayback) {
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                    .frame(width: 44, height: 44).background(KriaColor.sky, in: Circle())
+            }
+            .accessibilityIdentifier("song-play").accessibilityLabel(player.isPlaying ? "Pause" : "Play")
+            VStack(alignment: .leading, spacing: 3) {
+                Text(player.displayName).font(KriaFont.body(15).weight(.semibold)).lineLimit(1)
+                Text("\(DurationFormatter.clock(player.playbackTime)) / \(DurationFormatter.clock(player.duration))")
+                    .font(KriaFont.body(14)).foregroundStyle(KriaColor.mutedInk).monospacedDigit()
+            }
+            Spacer()
+        }
+        .padding(16).background(KriaColor.selectionSoft, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("song-review")
+    }
+}
+
+struct SongReviewActions: View {
+    let onUse: () -> Void
+    let onChooseAnother: () -> Void
+    let canUse: Bool
+    let isUsing: Bool
+    var body: some View {
+        VStack(spacing: 14) {
+            Button("Use this song", action: onUse).buttonStyle(AttachmentPrimaryButtonStyle())
+                .accessibilityIdentifier("song-use").disabled(!canUse || isUsing)
+            Button("Choose another song", action: onChooseAnother)
+                .font(KriaFont.body(14).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
+                .frame(minHeight: 44).disabled(isUsing).accessibilityIdentifier("song-choose-another")
         }
     }
 }

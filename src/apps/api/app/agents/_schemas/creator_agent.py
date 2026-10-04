@@ -157,6 +157,17 @@ class CreatorNarrationIdentity(_CreatorModel):
         return _opaque_id(value, field_name="generation")
 
 
+class UserSongFacts(_CreatorModel):
+    """What the planner may know about a creator-uploaded song (KRI-374).
+
+    Descriptive only: no storage path, generation or filename, so nothing here
+    can be copied into on-screen text or an executable field.
+    """
+
+    duration_s: float = Field(ge=0.0, le=3600.0)
+    has_lyrics: bool = False
+
+
 class CreatorCatalogRef(_CreatorModel):
     """An opaque identity from a server-owned catalog."""
 
@@ -228,6 +239,12 @@ class ResolvedCreatorManifest(_CreatorModel):
     edit_format: EditFormat
     render_program: RenderProgram
     has_voiceover: bool = False
+    # KRI-374: a creator-uploaded song is attached AND usable on this manifest.
+    # Both fields are omitted from every serialization (and so from the
+    # context/manifest hashes and the model prompt) unless a song is usable, so
+    # a manifest with no song is byte-identical to before this field existed.
+    has_user_song: bool = Field(default=False, exclude_if=lambda value: not value)
+    user_song: UserSongFacts | None = Field(default=None, exclude_if=lambda value: value is None)
     narration: CreatorNarrationIdentity | None = None
     current_edit: CreatorEditSnapshot | None = None
     media: list[CreatorMediaRef] = Field(default_factory=list, max_length=MAX_CREATOR_MEDIA_REFS)
@@ -252,7 +269,13 @@ class ResolvedCreatorManifest(_CreatorModel):
 
 CreativeDirection = Literal["guided_story", "fast_montage", "text_explainer", "native"]
 CreativePace = Literal["relaxed", "balanced", "fast"]
-AudioStrategy = Literal["licensed_music", "original_audio", "voiceover"]
+# KRI-374: "user_song" = the creator's own uploaded song is the music (phone
+# montage family only; the policy refuses it anywhere else).
+AudioStrategy = Literal["licensed_music", "original_audio", "voiceover", "user_song"]
+# KRI-374: how an uploaded song is used. "background" = a normal beat-synced
+# music bed; "lipsync" = the song is the master clock and takes are placed by
+# song time.
+SongSyncMode = Literal["background", "lipsync"]
 ExecutionContract = Literal["guided_voiceover_v1"]
 MediaScope = Literal["all", "selected"]
 CaptionStyle = Literal["none", "clean", "kinetic", "karaoke", "editorial", "auto"]
@@ -386,6 +409,36 @@ class CreativeStrategy(_CreatorModel):
         ),
     )
     closing_media: SkipJsonSchema[ClosingMedia | None] = Field(default=None)
+    # KRI-374 (creator-uploaded song). Same pattern as reaction_beats above:
+    # SkipJsonSchema keeps both OUT of every derived JSON schema, default None
+    # and the omit-when-None serializer below keep stored strategies and every
+    # hash byte-identical when no song is involved. `song_sync` is
+    # MODEL-authored (the prompt teaches it only when the manifest carries a
+    # song); `resolved_song_takes` is SERVER-owned like `resolved_clip_intents`
+    # (per-take song placement) and is cleared wherever a model-authored
+    # strategy enters (`MainCreatorAgent.parse`).
+    song_sync: SkipJsonSchema[SongSyncMode | None] = Field(default=None)
+    resolved_song_takes: SkipJsonSchema[list[dict[str, Any]] | None] = Field(
+        default=None, max_length=MAX_CREATOR_MEDIA_REFS
+    )
+
+    @field_validator("song_sync", mode="before")
+    @classmethod
+    def _coerce_song_sync(cls, value: object) -> object:
+        """Read common spellings of lip-sync; treat anything unrecognised as unset.
+
+        An unset `song_sync` on a `user_song` strategy is repaired to
+        "background" with a notice by the policy -- never a schema failure over
+        a vestigial field (KRI-129: repair, never reject).
+        """
+        if value is None:
+            return None
+        text = str(value).strip().casefold().replace("-", "").replace("_", "").replace(" ", "")
+        if text == "lipsync":
+            return "lipsync"
+        if text == "background":
+            return "background"
+        return None
 
     @model_validator(mode="before")
     @classmethod
@@ -410,6 +463,8 @@ class CreativeStrategy(_CreatorModel):
             "ordering_choice",
             "reaction_beats",
             "closing_media",
+            "song_sync",
+            "resolved_song_takes",
         ):
             if data.get(key) is None:
                 data.pop(key, None)
@@ -1325,6 +1380,8 @@ def canonical_manifest_hash(manifest: ResolvedCreatorManifest | Mapping[str, Any
 
 
 __all__ = [
+    "SongSyncMode",
+    "UserSongFacts",
     "ApplySpeechCutCommand",
     "AskUser",
     "CapabilityAvailability",

@@ -221,11 +221,25 @@ struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
     /// the grant and the content-addressed cache retain the same trust boundary
     /// as a full device render.
     func resolveNarration() async throws -> URL {
-        guard let narrationID = request.recipe.audio.narrationAssetID,
+        try await resolvePinnedAudio(assetID: request.recipe.audio.narrationAssetID, missing: "narration") {
+            if case .voiceover = $0 { true } else { false }
+        }
+    }
+
+    /// The creator's song for a native-editor reconstruction (KRI-374), pinned the same way as the narration:
+    /// the recipe's music bed must name a `song` asset in the manifest, so a library music bed never resolves here.
+    func resolveSong() async throws -> URL {
+        try await resolvePinnedAudio(assetID: request.recipe.audio.musicAssetID, missing: "song") {
+            if case .song = $0 { true } else { false }
+        }
+    }
+
+    private func resolvePinnedAudio(assetID: String?, missing: String, isExpectedKind: (RenderAssetReference.Source) -> Bool) async throws -> URL {
+        guard let narrationID = assetID,
               let manifest = request.recipe.assetManifest,
               let asset = manifest.assets.first(where: { $0.id == narrationID }),
-              case .voiceover = asset.source else {
-            throw MediaEngineError.missingAsset("narration")
+              isExpectedKind(asset.source) else {
+            throw MediaEngineError.missingAsset(missing)
         }
         guard let media = request.recipe.assets.first(where: { $0.id == narrationID }),
               let fingerprint = media.fingerprint,
@@ -299,7 +313,7 @@ struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
                 }
             }.value
         }
-        // Library music/sound-effect beds and a recorded voiceover need the
+        // Library music/sound-effect beds, a recorded voiceover and a creator's song (KRI-374) need the
         // same playable-extension fixup: the verified cache stores every
         // download at an extensionless content address, and AVFoundation
         // refuses to open one (KRI-132).
@@ -308,7 +322,7 @@ struct AuthorizedDeviceSourceResolver: DeviceSourceResolving {
             let isAudioAsset: Bool
             switch asset.source {
             case .library(let catalog, _, _): isAudioAsset = catalog == .music || catalog == .soundEffect
-            case .voiceover: isAudioAsset = true
+            case .voiceover, .song: isAudioAsset = true
             default: isAudioAsset = false
             }
             guard isAudioAsset, let verified = urls[asset.id] else { continue }

@@ -155,8 +155,13 @@ protocol KriaAPIClient: Sendable {
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?) async throws -> TurnAccepted
     /// `clipSelection` answers a clip-picker question (KRI-282, server capability `clip_selection_questions`); nil = omitted.
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?) async throws -> TurnAccepted
+    /// `songOrder` answers a take-order question (KRI-374, server capability `song_order_questions`); nil = omitted.
+    /// A 409 with code `song_order_stale` means the question was replaced: refresh the thread.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?) async throws -> TurnAccepted
     /// `choiceSelection` answers a conflict-choice question (KRI-282, server capability `choice_questions`); nil = omitted.
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted
+    /// `songOrder` and `choiceSelection` are independent structured answers (a turn carries at most one); each is nil = omitted.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread
     func threadDelta(threadID: UUID, afterSequence: Int) async throws -> ThreadDelta
     func draft(threadID: UUID) async throws -> DraftSnapshot
@@ -190,11 +195,18 @@ protocol KriaAPIClient: Sendable {
     func reserveUpload(filename: String, contentType: String, size: Int64, purpose: UploadPurpose?) async throws -> UploadReservation
     func cancelUpload(reservationID: UUID) async throws
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> ProjectUploadReservation
+    /// KRI-374: the same reservation, declaring the audio's purpose. Only `.song` is sent (as `role: "song"`) so
+    /// the server can refuse a disabled or second song before the upload; every other role encodes exactly as the
+    /// role-less call, so footage and voiceover reservations are byte-identical.
+    func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, role: CreationMediaRole) async throws -> ProjectUploadReservation
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
     /// KRI-189: the same attach, plus when/where the clip was filmed. `capture` is nil when the user turned
     /// the setting off or nothing could be read; a client that does not implement this drops it.
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread
+    /// KRI-374: the same attach with an explicit server media role. Only `.song` is sent (as `role: "song"`);
+    /// every other role encodes exactly as before, so existing attaches are byte-identical.
+    func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, role: CreationMediaRole) async throws -> CreationThread
     /// Append a newly-uploaded clip/photo to a generative job's shared footage
     /// pool (`job.all_candidates["clip_paths"]`), minting the `clip_index` the
     /// editor then references in a new timeline slot. See `reserveUpload` for
@@ -230,8 +242,15 @@ extension KriaAPIClient {
     func currentUser() async throws -> MobileUser { throw APIError.unsupported }
     func reportPlaybackFailure(jobID: UUID, report: PlaybackFailureReport) async throws { throw APIError.unsupported }
     func reserveProjectProxyUpload(threadID: UUID, clientUploadID: String, filename: String, size: Int64, contract: ProjectMediaUploadContract) async throws -> ProjectUploadReservation { throw APIError.invalidResponse }
+    func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, role: CreationMediaRole) async throws -> ProjectUploadReservation {
+        try await reserveProjectUpload(threadID: threadID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size)
+    }
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread {
         try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID)
+    }
+
+    func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, role: CreationMediaRole) async throws -> CreationThread {
+        try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID, capture: nil)
     }
 
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse { throw APIError.unsupported }
@@ -256,6 +275,17 @@ extension KriaAPIClient {
     }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted {
         try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection)
+    }
+
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection)
+    }
+
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted {
+        if let choiceSelection, songOrder == nil {
+            return try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, choiceSelection: choiceSelection)
+        }
+        return try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder)
     }
 
     func creationCapabilities() async throws -> CreationCapabilities { throw APIError.unsupported }
@@ -287,7 +317,27 @@ extension KriaAPIClient {
     }
 }
 
-struct TurnAccepted: Codable, Sendable { let turnID: String; let threadRevision: Int; let status: String; enum CodingKeys: String, CodingKey { case turnID = "turn_id"; case threadRevision = "thread_revision"; case status } }
+struct TurnAccepted: Codable, Sendable {
+    let turnID: String; let threadRevision: Int; let status: String
+    /// KRI-374: a take-order question carried on the turn response, when the server sends it there. Decoded
+    /// leniently: a malformed or newer shape is dropped (nil), never a decode failure for the turn.
+    var songOrderQuestion: SongOrderQuestion? = nil
+    enum CodingKeys: String, CodingKey { case turnID = "turn_id"; case threadRevision = "thread_revision"; case status; case songOrderQuestion = "song_order_question" }
+    init(turnID: String, threadRevision: Int, status: String, songOrderQuestion: SongOrderQuestion? = nil) {
+        self.turnID = turnID; self.threadRevision = threadRevision; self.status = status; self.songOrderQuestion = songOrderQuestion
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        turnID = try c.decode(String.self, forKey: .turnID)
+        threadRevision = try c.decode(Int.self, forKey: .threadRevision)
+        status = try c.decode(String.self, forKey: .status)
+        songOrderQuestion = (try? c.decodeIfPresent(JSONValue.self, forKey: .songOrderQuestion)).flatMap { $0 }.flatMap(SongOrderQuestion.init(json:))
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(turnID, forKey: .turnID); try c.encode(threadRevision, forKey: .threadRevision); try c.encode(status, forKey: .status)
+    }
+}
 /// Mirrors the server's `MobileUserOut` (`GET /auth/mobile/me`) — the account screen's
 /// only source of a real name/email; nothing here is persisted to the Keychain.
 struct MobileUser: Codable, Sendable, Equatable {
@@ -945,10 +995,16 @@ struct KriaAPI: KriaAPIClient {
         try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: nil)
     }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?) async throws -> TurnAccepted {
-        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, choiceSelection: nil)
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: nil)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: nil)
     }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted {
-        try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState, clipSelection: clipSelection, choiceSelection: choiceSelection)), decode: TurnAccepted.self)
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: nil, choiceSelection: choiceSelection)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted {
+        try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection)), decode: TurnAccepted.self)
     }
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread {
         try await request(
@@ -1031,7 +1087,10 @@ struct KriaAPI: KriaAPIClient {
     }
     func cancelUpload(reservationID: UUID) async throws { _ = try await request(path: "generative-jobs/uploads/\(reservationID.uuidString)", method: "DELETE", bodyData: nil, decode: UploadCancellation.self) }
     func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> ProjectUploadReservation {
-        let body = ProjectUploadReservationRequest(files: [.init(filename: filename, contentType: contentType, fileSizeBytes: size, clientUploadID: clientUploadID)])
+        try await reserveProjectUpload(threadID: threadID, clientUploadID: clientUploadID, filename: filename, contentType: contentType, size: size, role: .clip)
+    }
+    func reserveProjectUpload(threadID: UUID, clientUploadID: String, filename: String, contentType: String, size: Int64, role: CreationMediaRole) async throws -> ProjectUploadReservation {
+        let body = ProjectUploadReservationRequest(files: [.init(filename: filename, contentType: contentType, fileSizeBytes: size, clientUploadID: clientUploadID, role: role == .song ? "song" : nil)])
         let reservations = try await request(path: "creation-threads/\(threadID.uuidString)/upload-urls", method: "POST", bodyData: try JSONEncoder().encode(body), decode: [ProjectUploadReservation].self)
         guard let reservation = reservations.first, reservations.count == 1 else { throw APIError.invalidResponse }
         return reservation
@@ -1047,10 +1106,17 @@ struct KriaAPI: KriaAPIClient {
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread {
         try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID, capture: nil)
     }
+    func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, role: CreationMediaRole) async throws -> CreationThread {
+        try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID, capture: nil, wireRole: role == .song ? "song" : nil)
+    }
     func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?) async throws -> CreationThread {
+        try await attachProjectMedia(threadID: threadID, mediaID: mediaID, gcsPath: gcsPath, filename: filename, contentType: contentType, expectedRevision: expectedRevision, clientEventID: clientEventID, capture: capture, wireRole: nil)
+    }
+    private func attachProjectMedia(threadID: UUID, mediaID: String, gcsPath: String, filename: String, contentType: String, expectedRevision: Int, clientEventID: String, capture: ClipCaptureWire?, wireRole: String?) async throws -> CreationThread {
         let kind = contentType.hasPrefix("audio/") ? "audio" : "video"
-        // Filming context belongs to footage; a voiceover never carries it.
-        let media = ProjectMediaInput(mediaID: mediaID, gcsPath: gcsPath, kind: kind, filename: filename, contentType: contentType, capture: kind == "video" ? capture : nil)
+        // Filming context belongs to footage; a voiceover or song never carries it.
+        var media = ProjectMediaInput(mediaID: mediaID, gcsPath: gcsPath, kind: kind, filename: filename, contentType: contentType, capture: kind == "video" ? capture : nil)
+        media.role = wireRole
         let body = ProjectMediaAttachmentRequest(media: [media], clientEventID: clientEventID, expectedRevision: expectedRevision)
         return try await request(path: "creation-threads/\(threadID.uuidString)/media", method: "POST", bodyData: try JSONEncoder().encode(body), decode: CreationThread.self)
     }
@@ -1380,14 +1446,15 @@ private enum ServerDateCoding {
     }
 }
 private struct SubmitTurnRequest: Encodable {
-    let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil; var clipSelection: ClipSelectionSubmission? = nil; var choiceSelection: ChoiceSelectionSubmission? = nil
-    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case choiceSelection = "choice_selection" }
+    let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil; var clipSelection: ClipSelectionSubmission? = nil; var songOrder: SongOrderSubmission? = nil; var choiceSelection: ChoiceSelectionSubmission? = nil
+    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order"; case choiceSelection = "choice_selection" }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(message, forKey: .message); try c.encode(clientEventID, forKey: .clientEventID)
         try c.encode(expectedThreadRevision, forKey: .expectedThreadRevision)
         try c.encodeIfPresent(editorState, forKey: .editorState)
         try c.encodeIfPresent(clipSelection, forKey: .clipSelection)
+        try c.encodeIfPresent(songOrder, forKey: .songOrder)
         try c.encodeIfPresent(choiceSelection, forKey: .choiceSelection)
     }
 }
@@ -1428,20 +1495,28 @@ private struct ApprovalDecisionRequest: Encodable {
 private struct UploadCancellation: Decodable { let reservationID: String; let status: String; enum CodingKeys: String, CodingKey { case status; case reservationID = "reservation_id" } }
 private struct UploadReservationRequest: Encodable { let filename: String; let contentType: String; let fileSizeBytes: Int64; let purpose: UploadPurpose?; enum CodingKeys: String, CodingKey { case filename, purpose; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes" } }
 private struct AddClipRequestBody: Encodable { let gcsPath: String; enum CodingKeys: String, CodingKey { case gcsPath = "gcs_path" } }
-private struct ProjectUploadReservationRequest: Encodable { let files: [ProjectUploadFileRequest] }
-private struct ProjectUploadFileRequest: Encodable { let filename: String; let contentType: String; let fileSizeBytes: Int64; let clientUploadID: String; var uploadContract: ProjectMediaUploadContract? = nil; enum CodingKeys: String, CodingKey { case uploadContract = "upload_contract"; case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id" } }
+struct ProjectUploadReservationRequest: Encodable { let files: [ProjectUploadFileRequest] }
+struct ProjectUploadFileRequest: Encodable {
+    let filename: String; let contentType: String; let fileSizeBytes: Int64; let clientUploadID: String
+    var uploadContract: ProjectMediaUploadContract? = nil
+    /// KRI-374: `"song"` for a creator-uploaded song; nil (omitted from the JSON) for footage and voiceover.
+    var role: String? = nil
+    enum CodingKeys: String, CodingKey { case uploadContract = "upload_contract"; case filename; case contentType = "content_type"; case fileSizeBytes = "file_size_bytes"; case clientUploadID = "client_upload_id"; case role }
+}
 struct ProjectMediaAttachmentRequest: Encodable { let media: [ProjectMediaInput]; let clientEventID: String; let expectedRevision: Int; enum CodingKeys: String, CodingKey { case media; case clientEventID = "client_event_id"; case expectedRevision = "expected_revision" } }
 /// One attached media item. The three optional filming-context fields (KRI-189) are omitted from the JSON
 /// entirely when absent, so a clip without them encodes exactly as before.
 struct ProjectMediaInput: Encodable {
     let mediaID: String; let gcsPath: String; let kind: String; let filename: String; let contentType: String
     var captureTime: String?; var coarseLocation: CoarseLocationWire?; var place: ClipPlaceWire?
+    /// KRI-374: `"song"` for a creator-uploaded song; nil (omitted) for footage and voiceover.
+    var role: String?
     init(mediaID: String, gcsPath: String, kind: String, filename: String, contentType: String, capture: ClipCaptureWire? = nil) {
         self.mediaID = mediaID; self.gcsPath = gcsPath; self.kind = kind; self.filename = filename; self.contentType = contentType
         captureTime = capture?.captureTime; coarseLocation = capture?.coarseLocation; place = capture?.place
     }
     enum CodingKeys: String, CodingKey {
-        case kind, filename, place
+        case kind, filename, place, role
         case mediaID = "media_id"; case gcsPath = "gcs_path"; case contentType = "content_type"
         case captureTime = "capture_time"; case coarseLocation = "coarse_location"
     }

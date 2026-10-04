@@ -86,8 +86,32 @@ class VoiceoverRenderAsset(_AssetModel):
     fingerprint: RenderFingerprint
 
 
+class SongRenderAsset(_AssetModel):
+    """A creator-uploaded song for one content-plan item, pinned to one storage
+    generation (KRI-374).
+
+    Private creator media addressed by its owning plan item, exactly like
+    ``VoiceoverRenderAsset`` but a distinct kind: the song grant is authorised
+    only for an item whose ``audio_mode`` is ``song``, and the device mixes it
+    as the music bed (``AudioMixRecipe.music_asset_id``) rather than as
+    narration. The grant re-checks that the job's own plan item still carries
+    this exact ``(path, generation)``; the device re-hashes the downloaded
+    bytes against ``fingerprint``.
+    """
+
+    kind: Literal["song"] = "song"
+    id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    plan_item_id: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    generation: str = Field(min_length=1, max_length=160, pattern=r"^\S+$")
+    fingerprint: RenderFingerprint
+
+
 RenderAsset = Annotated[
-    OriginalRenderAsset | LibraryRenderAsset | VisualRenderAsset | VoiceoverRenderAsset,
+    OriginalRenderAsset
+    | LibraryRenderAsset
+    | VisualRenderAsset
+    | VoiceoverRenderAsset
+    | SongRenderAsset,
     Field(discriminator="kind"),
 ]
 
@@ -108,6 +132,8 @@ class RenderAssetManifest(_AssetModel):
                 key = ("visual", asset.visual_id, asset.generation)
             elif isinstance(asset, VoiceoverRenderAsset):
                 key = ("voiceover", asset.plan_item_id, asset.generation)
+            elif isinstance(asset, SongRenderAsset):
+                key = ("song", asset.plan_item_id, asset.generation)
             else:
                 key = ("library", asset.catalog, asset.catalog_id, asset.generation)
             if key in sources and sources[key] != asset.fingerprint:

@@ -64,6 +64,7 @@ from app.schemas.edit_proposal import (
     StoryBeat,
     canonical_media_digest,
 )
+from app.schemas.user_song import UserSongPlan
 from app.services.clip_facts import (
     capture_time_from_facts,
     display_timezone,
@@ -372,6 +373,12 @@ class UnifiedMontagePlan:
     # Zone the filming hours were printed in, "" when the labels are not hours.
     label_timezone: str = ""
     label_timezone_basis: str = ""
+    # KRI-374: the creator's own song for this montage. ``user_song`` is also on
+    # ``snapshot``; ``song_receipt`` is the ids-only account of what the song
+    # planner did (window, snapped beats, what was left out and why). Both stay
+    # empty without a song so every earlier record is unchanged.
+    user_song: UserSongPlan | None = None
+    song_receipt: dict[str, Any] = field(default_factory=dict)
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
@@ -395,6 +402,7 @@ class UnifiedMontagePlan:
             if self.label_timezone
             else {}
         )
+        song = {"user_song": dict(self.song_receipt)} if self.song_receipt else {}
         return {
             "version": 1,
             "brief_version": self.brief_version,
@@ -426,6 +434,7 @@ class UnifiedMontagePlan:
             **outcomes,
             **choice,
             **zone,
+            **song,
         }
 
     def guided_edit(self, *, generation_attempt_id: str | None = None) -> dict[str, Any]:
@@ -649,6 +658,86 @@ def selected_visual_ids(strategy: Mapping[str, Any] | None) -> frozenset[str] | 
     return frozenset(str(media_id) for media_id in ids)
 
 
+# ── background song (KRI-374) ────────────────────────────────────────────────
+# A beat prefers to be hit exactly; a boundary no beat can serve (sparse beats,
+# a reading-time floor in the way) keeps its nominal place at this cost, so a
+# beat within this distance always wins over leaving the cut where it was.
+_BEAT_MISS_COST_MS = 600
+# Beats farther than this from a boundary's nominal place are not considered:
+# a cut that moves more than a second and a half is a different edit.
+_BEAT_SEARCH_MS = 1500
+_MIN_UNLABELLED_MS = 800
+
+
+def _snap_boundaries_to_beats(
+    nominal_ms: Sequence[int],
+    lo_ms: Sequence[int],
+    hi_ms: Sequence[int],
+    beats_ms: Sequence[int],
+) -> tuple[list[int], int]:
+    """Cut durations (ms) whose internal boundaries sit on ``beats_ms`` where possible.
+
+    ``nominal_ms`` is the plan's own cut lengths; ``lo_ms``/``hi_ms`` bound each cut
+    (a label's reading time, a clip's length). The total never changes and every
+    cut stays inside its bounds; the all-nominal layout is always feasible, so
+    this cannot fail. Returns the durations and how many internal boundaries
+    landed on a beat.
+    """
+    count = len(nominal_ms)
+    total = sum(nominal_ms)
+    cumulative: list[int] = []
+    running = 0
+    for value in nominal_ms:
+        running += value
+        cumulative.append(running)
+    options: list[list[tuple[int, int]]] = []
+    for index in range(count - 1):
+        nominal = cumulative[index]
+        costs: dict[int, int] = {nominal: _BEAT_MISS_COST_MS}
+        for beat in beats_ms:
+            if abs(beat - nominal) <= _BEAT_SEARCH_MS and 0 < beat < total:
+                costs[beat] = min(costs.get(beat, _BEAT_MISS_COST_MS), abs(beat - nominal))
+        options.append(sorted(costs.items()))
+    options.append([(total, 0)])
+    # state: boundary position -> (cost, previous boundary) per boundary index
+    layers: list[dict[int, tuple[int, int | None]]] = [{0: (0, None)}]
+    for index in range(count):
+        layer: dict[int, tuple[int, int | None]] = {}
+        for boundary, boundary_cost in options[index]:
+            best: tuple[int, int | None] | None = None
+            for previous, (previous_cost, _back) in layers[-1].items():
+                if lo_ms[index] <= boundary - previous <= hi_ms[index]:
+                    cost = previous_cost + boundary_cost
+                    if best is None or cost < best[0]:
+                        best = (cost, previous)
+            if best is not None:
+                layer[boundary] = best
+        layers.append(layer)
+    boundary = total
+    path = [total]
+    for index in range(count, 0, -1):
+        previous = layers[index][boundary][1]
+        assert previous is not None
+        path.append(previous)
+        boundary = previous
+    path.reverse()
+    durations = [path[i + 1] - path[i] for i in range(count)]
+    on_beat = sum(1 for value in path[1:-1] if value in set(beats_ms))
+    return durations, on_beat
+
+
+def _song_line_dicts(lines: Sequence[Any] | None) -> list[dict[str, float]]:
+    rows: list[dict[str, float]] = []
+    for line in lines or ():
+        start = line.get("start_s") if isinstance(line, Mapping) else getattr(line, "start_s", None)
+        end = line.get("end_s") if isinstance(line, Mapping) else getattr(line, "end_s", None)
+        try:
+            rows.append({"start_s": float(start), "end_s": float(end)})
+        except (TypeError, ValueError):
+            continue
+    return rows
+
+
 def plan_unified_montage(
     clips: Sequence[UnifiedClip],
     view: BriefView | None = None,
@@ -658,9 +747,27 @@ def plan_unified_montage(
     font_covers: Callable[[str, str], bool] | None = None,
     creator_order: Sequence[int] = (),
     visuals: Sequence[UnifiedClip] = (),
+    song_beats: Sequence[float] | None = None,
+    song_lines: Sequence[Any] | None = None,
+    song_duration_s: float | None = None,
+    song_plan_item_id: str | None = None,
+    song_generation: int | None = None,
     output_orientation: str | None = None,
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan for ``clips`` (attachment order).
+
+    Background song (KRI-374): with ``song_duration_s`` set, the creator's own
+    song is the music bed. The total is capped at the song's length, the window
+    is the best section of the song for that length
+    (``music_recipe.auto_best_section``), and every cut boundary is pre-snapped
+    to that window's beats, never closer than a label's reading time. Cuts are
+    emitted with ``beat_align=False``: ``compile_execution_plan`` only nudges
+    cuts of 0.4-1.2 s (``_fast_montage_output_windows``), so the snap is done
+    here, once, and the compiler leaves the boundaries alone. ``song_beats`` /
+    ``song_lines`` are the song analysis' beat times and lyric lines
+    (``{start_s, end_s}``); the plan carries a ``UserSongPlan(mode="background")``
+    on ``plan.user_song`` and on the snapshot. Without ``song_duration_s`` the
+    output is byte-identical to before.
 
     ``strategy`` is the serialized Main Creator ``CreativeStrategy`` the job was
     approved with. Only its creator-confirmed copy is read: ``opening_title``,
@@ -679,6 +786,8 @@ def plan_unified_montage(
     """
     view = view or BriefView()
     strategy = strategy or {}
+    if song_duration_s is not None and (song_plan_item_id is None or song_generation is None):
+        raise ValueError("a song montage needs the song's plan item and generation")
     if not clips:
         raise ValueError("a montage needs at least one clip")
     if any(visual.lane != "asset" for visual in visuals):
@@ -833,13 +942,115 @@ def plan_unified_montage(
         # Longer than the creator asked for: only unlabelled cuts may shrink,
         # and never below the shortest cut a montage should have.
         total = _shrink(wanted, labelled, total, max(target_frames, floor_frames))
+    song_dropped: list[str] = []
+    if song_duration_s is not None:
+        song_cap = int(math.floor(float(song_duration_s) * FPS + 1e-6))
+        if song_cap < floor_frames:
+            raise ValueError("the song is too short to make a montage")
+        if total > song_cap:
+            total = _shrink(wanted, labelled, total, max(song_cap, floor_frames))
+        # Still longer than the song: trim the last cut, and drop trailing clips
+        # whose cut would fall under the shortest a cut can be. Dropped ids are
+        # named on the receipt; nothing is silently cut.
+        while total > song_cap and ordered:
+            excess = total - song_cap
+            if wanted[-1] - excess >= int(math.ceil(MIN_VIDEO_CUT_S * FPS)) or len(ordered) == 1:
+                wanted[-1] = max(1, wanted[-1] - excess)
+                total = sum(wanted)
+                break
+            gone = ordered.pop()
+            total -= wanted.pop()
+            capacity.pop()
+            labelled.pop()
+            growth_ceiling.pop()
+            labels.pop(gone.media_id, None)
+            song_dropped.append(gone.media_id)
+        if total < floor_frames:
+            total = _grow(wanted, capacity, floor_frames)
+        short = [media_id for media_id in short if media_id not in song_dropped]
     if total / FPS > MAX_PROPOSAL_DURATION_S:
         raise ValueError("these clips make a montage that is too long")
+
+    # ── background song: window + beat-snapped cut lengths (ms) ──────────────
+    cut_ms: list[int] | None = None
+    song_plan: UserSongPlan | None = None
+    song_receipt: dict[str, Any] = {}
+    if song_duration_s is not None:
+        from app.pipeline.music_recipe import auto_best_section  # noqa: PLC0415
+
+        nominal_ms: list[int] = []
+        lo_ms: list[int] = []
+        hi_ms: list[int] = []
+        for clip, frames, cap_frames, ceiling in zip(
+            ordered, wanted, capacity, growth_ceiling, strict=True
+        ):
+            tiny = clip.kind != "image" and clip.duration_s < MIN_VIDEO_CUT_S
+            nominal = (
+                int(math.floor(clip.duration_s * 1000)) if tiny else int(round(frames * 1000 / FPS))
+            )
+            label = labels.get(clip.media_id)
+            floor_ms = (
+                int(math.floor(label.min_display_s * 1000)) - 1 if label else _MIN_UNLABELLED_MS
+            )
+            nominal_ms.append(nominal)
+            lo_ms.append(nominal if tiny else min(floor_ms, nominal))
+            hi_ms.append(
+                nominal if tiny else max(nominal, int(round(max(ceiling, frames) * 1000 / FPS)))
+            )
+            hi_ms[-1] = min(hi_ms[-1], max(nominal, int(round(cap_frames * 1000 / FPS))))
+        # The shortest video is 3 s (``EditProposalSnapshot``): rounding every
+        # cut to a millisecond must not land under it.
+        deficit = int(MIN_TOTAL_S * 1000) - sum(nominal_ms)
+        for index in range(len(nominal_ms) - 1, -1, -1):
+            if deficit <= 0:
+                break
+            room = hi_ms[index] - nominal_ms[index]
+            if room > 0:
+                step = min(room, deficit)
+                nominal_ms[index] += step
+                deficit -= step
+        total_ms = sum(nominal_ms)
+        window_s = total_ms / 1000
+        beats = sorted({float(b) for b in (song_beats or ()) if math.isfinite(float(b))})
+        window_start, _window_end = auto_best_section(
+            beats,
+            window_s=window_s,
+            track_duration_s=float(song_duration_s),
+            lyric_lines=_song_line_dicts(song_lines) or None,
+        )
+        window_start = max(
+            0.0, min(float(window_start), math.floor((song_duration_s - window_s) * 1000) / 1000)
+        )
+        window_start = round(window_start, 3)
+        beats_ms = sorted(
+            {
+                int(round((beat - window_start) * 1000))
+                for beat in beats
+                if 0 < beat - window_start < window_s
+            }
+        )
+        cut_ms, on_beat = _snap_boundaries_to_beats(nominal_ms, lo_ms, hi_ms, beats_ms)
+        song_plan = UserSongPlan(
+            mode="background",
+            plan_item_id=str(song_plan_item_id),
+            generation=int(song_generation),  # type: ignore[arg-type]
+            duration_s=float(song_duration_s),
+            window_start_s=window_start,
+            window_end_s=round(window_start + total_ms / 1000, 3),
+        )
+        song_receipt = {
+            "mode": "background",
+            "window_start_s": song_plan.window_start_s,
+            "window_end_s": song_plan.window_end_s,
+            "beat_aligned_cuts": on_beat,
+            "internal_cuts": max(0, len(cut_ms) - 1),
+            "dropped_clip_ids": list(song_dropped),
+        }
 
     cuts: list[FastMontageCut] = []
     refs: list[MediaRef] = []
     for index, (clip, frames) in enumerate(zip(ordered, wanted, strict=True)):
-        duration = frames / FPS
+        duration = cut_ms[index] / 1000 if cut_ms is not None else frames / FPS
         if clip.kind == "image":
             start, end = 0.0, round(duration, 3)
         elif clip.duration_s < MIN_VIDEO_CUT_S:
@@ -898,6 +1109,8 @@ def plan_unified_montage(
     hold = strategy.get("opening_title_duration_s")
     if isinstance(hold, (int, float)) and not isinstance(hold, bool):
         snapshot_kwargs["opening_title_duration_s"] = hold
+    if song_plan is not None:
+        snapshot_kwargs["user_song"] = song_plan
     if output_orientation in ("portrait", "landscape"):
         snapshot_kwargs["output_orientation"] = output_orientation
         snapshot_kwargs["output_orientation_reason"] = CREATOR_SELECTED_ORIENTATION_REASON
@@ -957,6 +1170,8 @@ def plan_unified_montage(
         visual_ids=[clip.media_id for clip in ordered if clip.lane == "asset"],
         label_timezone=hour_zone if view.per_clip_text_is_time and labels else "",
         label_timezone_basis=hour_basis if view.per_clip_text_is_time and labels else "",
+        user_song=song_plan,
+        song_receipt=song_receipt,
     )
 
 

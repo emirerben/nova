@@ -199,6 +199,12 @@ def _complete_response_turn(
                 "next_actions": [],
                 "schema_version": plan.schema_version,
                 **({"clip_question": plan.clip_question} if plan.clip_question else {}),
+                # KRI-374: persisted so the answer can be validated + folded later.
+                **(
+                    {"song_order_question": plan.song_order_question.model_dump(mode="json")}
+                    if plan.song_order_question is not None
+                    else {}
+                ),
                 **({"choice_question": plan.choice_question} if plan.choice_question else {}),
             },
         )

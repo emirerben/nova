@@ -304,6 +304,7 @@ def test_create_turn_returns_202_and_publishes_committed_turn(
         **_body(),
         "editor_state": None,
         "clip_selection": None,
+        "song_order": None,
         "choice_selection": None,
     }
     publish.assert_called_once_with(str(turn_id))

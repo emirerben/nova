@@ -2513,6 +2513,30 @@
           "title": "SolidBackground",
           "type": "object"
         },
+        "SongOrderAnswerIn": {
+          "additionalProperties": false,
+          "description": "The creator's answer: the order they confirmed.",
+          "properties": {
+            "ordered_media_ids": {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "title": "Ordered Media Ids",
+              "type": "array"
+            },
+            "question_id": {
+              "title": "Question Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "question_id",
+            "ordered_media_ids"
+          ],
+          "title": "SongOrderAnswerIn",
+          "type": "object"
+        },
         "SourceCrop": {
           "additionalProperties": false,
           "properties": {
@@ -2949,6 +2973,17 @@
           "minLength": 1,
           "title": "Message",
           "type": "string"
+        },
+        "song_order": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SongOrderAnswerIn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -3311,7 +3346,8 @@
                 "enum": [
                   "licensed_music",
                   "original_audio",
-                  "voiceover"
+                  "voiceover",
+                  "user_song"
                 ],
                 "title": "Audio Strategy",
                 "type": "string"

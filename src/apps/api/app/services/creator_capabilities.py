@@ -23,6 +23,7 @@ from app.agents._schemas.creator_agent import (
     DraftGuidedProposalCommand,
     ResolvedCreatorManifest,
     SetItemIntentCommand,
+    UserSongFacts,
     canonical_context_hash,
     canonical_manifest_hash,
 )
@@ -32,12 +33,15 @@ from app.agents._schemas.creator_policy import (
     CAPABILITY_PHONE_SOURCE_AUDIO,
     CAPABILITY_PHONE_STILL_IMAGES,
     CAPABILITY_PHONE_VISUAL_VIDEOS,
+    CAPABILITY_USER_SONG,
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
     MixedMediaTimingUnavailableError,
     MontageCadenceUnavailableError,
+    UserSongUnavailableError,
     effective_render_program,
     normalize_creator_strategy_media,
     repair_creator_strategy_shape,
+    repair_creator_user_song,
 )
 from app.agents._schemas.edit_format import (
     CLIP_INTENT_FREE_EDIT_FORMATS,
@@ -58,6 +62,7 @@ from app.services.phone_rollout import (
     phone_subtitled_reaction_beats_supported,
     phone_subtitled_video_overlays_supported,
     phone_talking_head_supported,
+    phone_user_song_supported,
 )
 
 CAPABILITY_SET_ITEM_INTENT = "set_item_intent"
@@ -213,8 +218,14 @@ def resolve_creator_manifest(
     phone_source_media_ids: Sequence[str] | None = None,
     phone_rendering_allowed: bool = False,
     phone_visuals_only: bool = False,
+    user_song_item: object | None = None,
 ) -> ResolvedCreatorManifest:
     """Resolve a descriptive v1 manifest from server state and policy.
+
+    ``user_song_item`` (KRI-374) is the PlanItem (or any object with the same
+    ``song_*`` attributes) read through ``getattr`` only: ``song_gcs_path``,
+    ``song_duration_s`` and ``song_analysis``. ``None`` or no attached song adds
+    nothing to the manifest, so it stays byte-identical to before the feature.
 
     ``render_program_for_intent`` and ``guided_edit_applicable`` are the same
     policy used by the existing plan-item/generative routes.  In particular,
@@ -709,6 +720,17 @@ def resolve_creator_manifest(
             "reaction beats are only available on an iPhone talking-to-camera edit",
         )
 
+    # KRI-374: the creator's own song. Added to `capabilities` ONLY when a song is
+    # attached (available or with the reason it can't be used), so a manifest
+    # without a song keeps its pre-KRI-374 capabilities, hashes and prompt.
+    user_song_facts = _resolve_user_song(
+        user_song_item,
+        capabilities=capabilities,
+        phone_rendering=phone_source_media_ids is not None,
+        normalized_format=normalized_format,
+        has_voiceover=has_voiceover,
+    )
+
     if capabilities["main_creator_agent"].available and not getattr(
         settings, "main_creator_agent_rollout_percent", 0
     ):
@@ -739,12 +761,17 @@ def resolve_creator_manifest(
         "capabilities": capabilities,
         "limits": resolved_limits,
     }
+    if user_song_facts is not None:
+        context_payload["has_user_song"] = True
+        context_payload["user_song"] = user_song_facts.model_dump(mode="json")
     context_hash = canonical_context_hash(context_payload)
     manifest = ResolvedCreatorManifest(
         item_id=item_id,
         edit_format=normalized_format,
         render_program=render_program,
         has_voiceover=has_voiceover,
+        has_user_song=user_song_facts is not None,
+        user_song=user_song_facts,
         narration=resolved_narration,
         current_edit=resolved_edit,
         media=resolved_media,
@@ -755,6 +782,72 @@ def resolve_creator_manifest(
         manifest_hash="0" * 64,
     )
     return manifest.model_copy(update={"manifest_hash": canonical_manifest_hash(manifest)})
+
+
+def _song_has_lyrics(analysis: object) -> bool:
+    if analysis is None:
+        return False
+    if isinstance(analysis, Mapping):
+        return bool(analysis.get("words"))
+    return bool(getattr(analysis, "has_lyrics", False))
+
+
+def _resolve_user_song(
+    item: object | None,
+    *,
+    capabilities: dict[str, CapabilityAvailability],
+    phone_rendering: bool,
+    normalized_format: str,
+    has_voiceover: bool,
+) -> UserSongFacts | None:
+    """KRI-374: resolve the ``user_song`` capability; return the facts to show
+    the planner only when the song is usable.
+
+    Writes ``capabilities[CAPABILITY_USER_SONG]`` only when a song is attached.
+    Available only on a phone-rendered montage-family manifest with no recorded
+    voiceover, while ``phone_user_song_supported()`` (kill switch + the two device
+    capabilities) holds. Everything is read via ``getattr`` so this works against
+    a PlanItem, a thread object or a test stub.
+    """
+
+    if item is None or not getattr(item, "song_gcs_path", None):
+        return None
+    phone = capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    if not phone_rendering or phone is None or not phone.available:
+        capabilities[CAPABILITY_USER_SONG] = _unavailable(
+            "phone_only", "your own song only works on edits that render on your iPhone"
+        )
+        return None
+    if not phone_user_song_supported():
+        capabilities[CAPABILITY_USER_SONG] = _unavailable(
+            "disabled_by_setting", "your own song is unavailable on this server right now"
+        )
+        return None
+    if normalized_format not in GUIDED_EDIT_FORMATS:
+        capabilities[CAPABILITY_USER_SONG] = _unavailable(
+            "unsupported_format", "your own song only works on montage edits"
+        )
+        return None
+    if has_voiceover:
+        capabilities[CAPABILITY_USER_SONG] = _unavailable(
+            "voiceover_present", "your own song can't be combined with a recorded voiceover"
+        )
+        return None
+    guided = capabilities.get(CAPABILITY_DRAFT_GUIDED_PROPOSAL)
+    if guided is None or not guided.available:
+        capabilities[CAPABILITY_USER_SONG] = _unavailable(
+            "no_media", "attach source media before using your own song"
+        )
+        return None
+    capabilities[CAPABILITY_USER_SONG] = _available()
+    try:
+        duration_s = float(getattr(item, "song_duration_s", None) or 0.0)
+    except (TypeError, ValueError):
+        duration_s = 0.0
+    return UserSongFacts(
+        duration_s=max(0.0, min(duration_s, 3600.0)),
+        has_lyrics=_song_has_lyrics(getattr(item, "song_analysis", None)),
+    )
 
 
 def _repair_creator_reaction_beats(
@@ -890,8 +983,21 @@ def compile_strategy_to_plan(
     # the same pass.
     strategy, beat_notices = _repair_creator_reaction_beats(manifest, strategy)
     shape_notices = [*shape_notices, *beat_notices]
+    # KRI-374: validate/repair the uploaded-song fields. A no-op for every
+    # strategy that is not `audio_strategy="user_song"`.
+    try:
+        strategy, song_notices = repair_creator_user_song(manifest, strategy)
+    except UserSongUnavailableError as exc:
+        raise CreatorCapabilityError(
+            str(exc), code=exc.code, edit_format=strategy.edit_format
+        ) from exc
+    shape_notices = [*shape_notices, *song_notices]
     try:
         strategy = normalize_creator_strategy_media(manifest, strategy)
+    except UserSongUnavailableError as exc:
+        raise CreatorCapabilityError(
+            str(exc), code=exc.code, edit_format=strategy.edit_format
+        ) from exc
     except (MixedMediaTimingUnavailableError, MontageCadenceUnavailableError):
         # These established, actionable policy errors have dedicated Creator
         # recovery flows. Preserve their types instead of flattening them into
@@ -1160,6 +1266,7 @@ repair_creator_reaction_beats = _repair_creator_reaction_beats
 
 
 __all__ = [
+    "CAPABILITY_USER_SONG",
     "CAPABILITY_DISPATCH_RENDER",
     "CAPABILITY_CAPTION_STYLE",
     "CAPABILITY_DRAFT_GUIDED_PROPOSAL",

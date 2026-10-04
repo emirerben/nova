@@ -257,6 +257,11 @@ def resolve_next_audio_mode(strategy: Any, item: PlanItem) -> str | None:
         return "original"
     if strategy.audio_strategy == "licensed_music":
         return "kria"
+    if strategy.audio_strategy == "user_song":
+        # KRI-374: the creator's own song. No attached song => None, handled by
+        # the caller exactly like the `voiceover_required` case (the policy has
+        # already refused a song-less `user_song` strategy before approval).
+        return "song" if getattr(item, "song_gcs_path", None) else None
     if item.voiceover_gcs_path:
         return "voiceover"
     return None

@@ -22,7 +22,7 @@ from app.kria.recipes import (
     Transition,
 )
 from app.kria.recipes_v2 import EditRecipeV2
-from app.kria.render_assets import RenderAssetManifest, VoiceoverRenderAsset
+from app.kria.render_assets import RenderAssetManifest, SongRenderAsset, VoiceoverRenderAsset
 from app.pipeline.guided_story import (
     _FRAME_S,
     GuidedStoryExecutionPlan,
@@ -31,12 +31,14 @@ from app.pipeline.guided_story import (
 )
 from app.pipeline.phone_recipe_shared import (
     PhoneNarrationBed,
+    PhoneSongBed,
     display_dims,
     fit_transform,
     snap_text_overshoot,
     timeline_end_s,
 )
 from app.schemas.guided_edit_revision import GUIDED_EDITOR_FPS
+from app.schemas.user_song import USER_SONG_REQUIRED_CAPABILITIES, USER_SONG_TRACK_ID
 from app.services.phone_sources import (
     PhoneSourceBinding,
     PhoneVisualBinding,
@@ -103,6 +105,11 @@ _TIMING_ROUNDING_TOLERANCE_S = 0.005
 # mid-frame and the on-device export fails outright).
 _EXPORT_SAFETY_MARGIN_S = 0.05
 
+# A lip-sync take's source start is `output_start + window_start - delta`. Plans
+# round every position to a millisecond, so the recipe may differ from the exact
+# value by rounding noise but never by more than this.
+_LIPSYNC_SYNC_TOLERANCE_S = 0.0015
+
 # Guided-editor v2 revisions quantize every position to the editor frame clock
 # (`app.schemas.guided_edit_revision.GUIDED_EDITOR_FPS`, the same 1/30 s as
 # guided_story's `_FRAME_S`); approval plans use a millisecond clock. A phone
@@ -138,6 +145,7 @@ def compile_phone_guided_plan(
     *,
     narration: PhoneNarrationBed | None = None,
     allow_editor_media: bool = False,
+    song: PhoneSongBed | None = None,
     landscape_fit: Literal["fill", "fit"] = "fill",
 ) -> EditRecipeV2:
     """``visuals`` pins approved Visuals-pool photos and videos (KRI-121). Callers
@@ -156,6 +164,15 @@ def compile_phone_guided_plan(
     REPLACES the footage's own audio (`original_volume=0.0`, no ducking, no
     gain, no matched bed) -- see that function in `app.pipeline.guided_story`
     for why (`-map 1:a:0`, never `-filter_complex amix`).
+
+    ``song`` (KRI-374): required exactly when ``plan.user_song`` is set; the
+    creator's own uploaded song. Compiles to a `SongRenderAsset` + a
+    `TimelineTrack(id="song", kind="audio")` whose clip starts at the plan's
+    ``window_start_s`` of the song, and camera audio is muted
+    (`original_volume=0.0`, `music_asset_id` = the song). Background fades
+    0.5 s in/out; lip-sync 0.05 s in, 0.3 s out. A lip-sync take is never
+    start-shifted by the on-device refit: only its END may be truncated, and a
+    take whose start no longer fits fails closed.
 
     ``landscape_fit`` (KRI-285, ``"fill"`` default = unchanged output): ``"fit"``
     letterboxes a landscape (display-wide) video moment inside a PORTRAIT canvas
@@ -204,6 +221,30 @@ def compile_phone_guided_plan(
             "phone narration binding was provided for a plan with no narration",
             capability="narrationAudio",
         )
+    user_song = plan.user_song
+    if user_song is not None:
+        if song is None:
+            raise UnsupportedPhonePlan(
+                "a creator song requires a phone song binding", capability="musicBed"
+            )
+        if (
+            song.plan_item_id != user_song.plan_item_id
+            or song.generation != str(user_song.generation)
+            or user_song.window_end_s > song.duration_s + 0.05
+            or (
+                song.window_start_s is not None
+                and abs(song.window_start_s - user_song.window_start_s) > 0.001
+            )
+        ):
+            raise UnsupportedPhonePlan(
+                "the approved song was replaced since approval", capability="musicBed"
+            )
+    elif song is not None:
+        raise UnsupportedPhonePlan(
+            "phone song binding was provided for a plan with no creator song",
+            capability="musicBed",
+        )
+    lipsync_takes = user_song.takes if user_song is not None and user_song.mode == "lipsync" else {}
     transition_names = {
         "crossfade": "crossfade",
         "dip_to_black": "fade_black",
@@ -382,7 +423,37 @@ def compile_phone_guided_plan(
             # below still shifts the window if the original runs out.
             source_duration = round(moment.duration_s, 6)
         source_start = moment.source_start_s
-        if moment.source_end_s > source.duration_s or source_start >= source.duration_s:
+        lipsync_take = lipsync_takes.get(moment.media_id)
+        if lipsync_take is not None:
+            # Lip-sync: the song sets where in the take this cut starts. The
+            # recipe must keep `source_start - timeline_start == window - delta`
+            # whatever the plan's rounding did.
+            expected_offset = user_song.window_start_s - lipsync_take.delta_s
+            if (
+                abs((source_start - moment.output_start_s) - expected_offset)
+                > _LIPSYNC_SYNC_TOLERANCE_S
+            ):
+                raise UnsupportedPhonePlan("a lip-sync clip has drifted off its song position")
+            if moment.source_end_s > source.duration_s or source_start >= source.duration_s:
+                # END-only refit. Shifting the start (what `refit_source_window`
+                # does) would slide the singer's mouth off the audio.
+                available = max(0.0, source.duration_s - _EXPORT_SAFETY_MARGIN_S)
+                if available - source_start < 0.1:
+                    raise UnsupportedPhonePlan(
+                        "a lip-sync clip is shorter on this phone than when it was matched "
+                        "to the song, so it can no longer stay in sync"
+                    )
+                refit_duration = round(min(source_duration, available - source_start), 6)
+                # The export safety margin is an intended trim; anything beyond
+                # one frame past it is footage the singer never filmed, and
+                # trimming it would leave a hole while the song keeps playing.
+                if source_duration - refit_duration - _EXPORT_SAFETY_MARGIN_S > _FRAME_S:
+                    raise UnsupportedPhonePlan(
+                        "a lip-sync clip runs past the end of its footage, so it can no "
+                        "longer stay in sync with the song"
+                    )
+                source_duration = refit_duration
+        elif moment.source_end_s > source.duration_s or source_start >= source.duration_s:
             # `moment.source_start_s`/`source_end_s` are planned against the
             # analysis proxy's server-measured (ffprobe) duration;
             # `binding.original.duration_s` is the client's on-device
@@ -688,6 +759,60 @@ def compile_phone_guided_plan(
         # the no-narration case only.
         audio = AudioMixRecipe(original_volume=0.0, narration_asset_id=narration_asset.id)
         required_capabilities |= {"narrationAudio", "audioMix"}
+    if user_song is not None:
+        # `song is not None` always holds here (checked at the top).
+        song_asset = SongRenderAsset(
+            id=f"song-{song.plan_item_id}",
+            plan_item_id=song.plan_item_id,
+            generation=song.generation,
+            fingerprint=song.fingerprint,
+        )
+        manifest[song_asset.id] = song_asset
+        assets[song_asset.id] = MediaAsset(
+            id=song_asset.id,
+            relative_path=song_asset.id,
+            fingerprint=AssetFingerprint(
+                hex=song.fingerprint.sha256, byte_count=song.fingerprint.byte_count
+            ),
+            duration=song.duration_s,
+        )
+        # The song never outlasts the video it plays under (a refit can shrink
+        # the compiled timeline below the plan's nominal duration).
+        song_start_s = user_song.window_start_s
+        song_duration_s = round(
+            max(
+                0.1,
+                min(user_song.window_duration_s, compiled_duration, song.duration_s - song_start_s),
+            ),
+            6,
+        )
+        lipsync = user_song.mode == "lipsync"
+        fade_in = song.fade_in_s if song.fade_in_s is not None else (0.05 if lipsync else 0.5)
+        fade_out = song.fade_out_s if song.fade_out_s is not None else (0.3 if lipsync else 0.5)
+        tracks.append(
+            TimelineTrack(
+                id=USER_SONG_TRACK_ID,
+                kind="audio",
+                clips=[
+                    TimelineClip(
+                        id="song-bed",
+                        source_asset_id=song_asset.id,
+                        source_start=song_start_s,
+                        source_duration=song_duration_s,
+                        timeline_start=0.0,
+                        rate=1.0,
+                        volume=song.volume,
+                        audio_fade_in=min(fade_in, song_duration_s / 2),
+                        audio_fade_out=min(fade_out, song_duration_s / 2),
+                    )
+                ],
+            )
+        )
+        # The song REPLACES the footage's own audio (like pinned narration): a
+        # lip-sync take's own sound would double the singer, and a montage with
+        # a chosen song is that song.
+        audio = AudioMixRecipe(original_volume=0.0, music_asset_id=song_asset.id)
+        required_capabilities |= set(USER_SONG_REQUIRED_CAPABILITIES)
     return EditRecipeV2(
         canvas=Canvas(width=canvas.width, height=canvas.height),
         assets=list(assets.values()),

@@ -46,6 +46,9 @@
       "KriaUITests/CreationUITests/testClipPickerNoneOfTheseSendsNoneKeys",
       "KriaUITests/CreationUITests/testClipPickerSkipSendsSkipped",
       "KriaUITests/CreationUITests/testClipQuestionFallsBackToTextWhenServerLacksCapability",
+      "KriaUITests/SongOrderUITests/testOrderCardShowsBadgesReordersAndSendsTheConfirmedOrder",
+      "KriaUITests/SongOrderUITests/testOrderQuestionFallsBackToTextWhenServerDoesNotAdvertiseIt",
+      "KriaUITests/SongOrderUITests/testAddYourSongStepAppearsOnlyWhenTheServerAdvertisesIt",
       "KriaUITests/CreationUITests/testChoiceQuestionShowsRecommendedOptionAndSendsStructuredAnswerOnce",
       "KriaUITests/CreationUITests/testChoiceQuestionFallsBackToTextWhenServerLacksCapability"
     ],
@@ -213,6 +216,9 @@
     "src/apps/ios/Kria/Features/CreationAttachmentPresentation.swift": "creation",
     "src/apps/ios/Kria/Features/CreationVoiceRecorder.swift": "creation",
     "src/apps/ios/Kria/Core/ClipSelection.swift": "creation",
-    "src/apps/ios/Kria/Features/ClipSelectionCard.swift": "creation"
+    "src/apps/ios/Kria/Features/ClipSelectionCard.swift": "creation",
+    "src/apps/ios/Kria/Core/SongOrder.swift": "creation",
+    "src/apps/ios/Kria/Features/SongOrderCard.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/SongOrderUITests.swift": "creation"
   }
 }

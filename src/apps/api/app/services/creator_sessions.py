@@ -579,6 +579,8 @@ async def resolve_item_creator_context(
         phone_source_media_ids=phone_source_media_ids,
         phone_rendering_allowed=settings.phone_rendering_for(persona.user_id),
         phone_visuals_only=phone_visuals_only,
+        # KRI-374: a creator-uploaded song (None-safe; adds nothing without one).
+        user_song_item=item,
         current_edit=current_edit,
         has_ready_variant=has_ready_variant,
         # Chat creation owns a trusted internal guided-proposal path, while
