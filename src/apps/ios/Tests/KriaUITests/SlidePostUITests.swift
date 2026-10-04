@@ -543,6 +543,86 @@ import XCTest
         attach(app, "Tap text: Edit tab with keyboard")
     }
 
+    // MARK: Hold to transform (tap edits, hold + drag moves/resizes directly, no panel)
+
+    private func panelAndKeyboardAbsent(_ app: XCUIApplication, _ note: String) {
+        XCTAssertFalse(app.textViews["slidepost-text-field"].firstMatch.exists, "no Text panel: \(note)")
+        XCTAssertFalse(app.keyboards.firstMatch.exists, "no keyboard: \(note)")
+        XCTAssertFalse(app.buttons["slidepost-done"].exists, "no panel Done: \(note)")
+    }
+
+    func testHoldThenDragMovesTextWithoutOpeningThePanel() {
+        let app = openRichWorkspace()
+        addText(app, "Athens")
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        let text = canvasText(app)
+        XCTAssertTrue(text.waitForExistence(timeout: 5))
+        let before = text.value as? String ?? ""
+        text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.6, thenDragTo: preview.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.25)))
+        let handle = app.descendants(matching: .any)["slidepost-text-handle"].firstMatch
+        XCTAssertTrue(handle.waitForExistence(timeout: 3), "text stays selected with its handle")
+        XCTAssertNotEqual(before, text.value as? String ?? "", "hold + drag moved the text")
+        panelAndKeyboardAbsent(app, "after hold-drag")
+        attach(app, "Hold-drag: moved, handles, no panel")
+        // Further body drags keep moving it directly.
+        let mid = text.value as? String ?? ""
+        text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.1, thenDragTo: preview.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.6)))
+        XCTAssertNotEqual(mid, text.value as? String ?? "")
+        panelAndKeyboardAbsent(app, "after second drag")
+        // Tapping empty canvas deselects.
+        Thread.sleep(forTimeInterval: 0.6)
+        preview.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.06)).tap()
+        XCTAssertFalse(handle.waitForExistence(timeout: 2), "tap on empty canvas deselects")
+        panelAndKeyboardAbsent(app, "after deselect")
+    }
+
+    func testHoldSelectThenCornerHandleResizesWithoutPanel() {
+        let app = openRichWorkspace()
+        addText(app, "Athens")
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        let text = canvasText(app)
+        XCTAssertTrue(text.waitForExistence(timeout: 5))
+        text.press(forDuration: 0.6)
+        let handle = app.descendants(matching: .any)["slidepost-text-handle"].firstMatch
+        XCTAssertTrue(handle.waitForExistence(timeout: 3), "hold selects and shows the handle")
+        panelAndKeyboardAbsent(app, "after hold")
+        attach(app, "Hold-select: frame and handle, no panel")
+        let sizeBefore = number(text.value as? String ?? "", after: "size")
+        handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.6, thenDragTo: preview.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.62)))
+        XCTAssertNotEqual(sizeBefore, number(text.value as? String ?? "", after: "size"), "corner drag changes the size")
+        panelAndKeyboardAbsent(app, "after corner drag")
+        attach(app, "Hold-select: after corner resize")
+    }
+
+    func testTapOnHoldSelectedTextOpensEditTextWithKeyboard() {
+        let app = openRichWorkspace()
+        addText(app, "Athens")
+        let text = canvasText(app)
+        XCTAssertTrue(text.waitForExistence(timeout: 5))
+        text.press(forDuration: 0.6)
+        XCTAssertTrue(app.descendants(matching: .any)["slidepost-text-handle"].firstMatch.waitForExistence(timeout: 3))
+        panelAndKeyboardAbsent(app, "after hold")
+        Thread.sleep(forTimeInterval: 0.6)
+        text.tap()
+        XCTAssertTrue(app.textViews["slidepost-text-field"].firstMatch.waitForExistence(timeout: 5), "tap opens Edit text")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "keyboard is up")
+        attach(app, "Tap after hold-select: Edit text with keyboard")
+    }
+
+    func testHoldDragIsExactlyOneUndoStep() {
+        let app = openRichWorkspace()
+        addText(app, "Athens")
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        let text = canvasText(app)
+        XCTAssertTrue(text.waitForExistence(timeout: 5))
+        let before = text.value as? String ?? ""
+        text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.6, thenDragTo: preview.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.25)))
+        XCTAssertNotEqual(before, text.value as? String ?? "")
+        app.buttons["slidepost-undo"].tap()
+        XCTAssertEqual(before.replacingOccurrences(of: ", selected", with: ""), (text.value as? String ?? "").replacingOccurrences(of: ", selected", with: ""), "one undo returns the text to where it started")
+        XCTAssertEqual(text.label, "Athens", "undo did not remove the text")
+    }
+
     func testTappingAnotherTextWhilePanelIsOpenSwitchesToItsEditField() {
         let app = openRichWorkspace()
         addText(app, "Athens")

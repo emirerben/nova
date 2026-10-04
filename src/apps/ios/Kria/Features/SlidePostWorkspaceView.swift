@@ -609,8 +609,11 @@ struct SlidePostWorkspaceView: View {
                 .accessibilityIdentifier("slidepost-preview")
             previewMediaView.frame(width: size.width, height: size.height).clipped()
             SlidePostTextCanvas(
-                texts: texts, size: size, selectedID: session.selectedTextID, interactive: mode == .text, tapsToEdit: mode != .text,
+                texts: texts, size: size, selectedID: session.selectedTextID, interactive: mode == .text,
+                directSelected: mode == .browse && session.selectedTextID != nil, tapsToEdit: mode != .text,
                 onSelect: { id in session.selectedTextID = id; if id != nil { textTab = .style } },
+                // Hold / plain drag on a text while browsing: select for transform only (no panel, tab or keyboard).
+                onDirectSelect: { id in session.selectedTextID = id },
                 onTapText: handleCanvasTap,
                 onTransform: { id, key, mutate in
                     guard let slideID = session.selectedSlide?.id else { return }
@@ -632,7 +635,7 @@ struct SlidePostWorkspaceView: View {
             }
         }
         .overlay { if session.isBusy { SlidePostVeil(message: session.operationMessage ?? "Saving your post…").clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous)) } }
-        .excludesDrawerGestureWhen(mode == .text)
+        .excludesDrawerGestureWhen(mode == .text || (mode == .browse && session.selectedTextID != nil))
     }
 
     private func slideStrip(_ draft: SlidePostDraft) -> some View {
@@ -674,7 +677,8 @@ struct SlidePostWorkspaceView: View {
     /// A tap on a text in the preview selects it and opens the Edit text tab with the keyboard up.
     private func handleCanvasTap(_ hit: String?) {
         guard let outcome = SlidePostTextTap.resolve(
-            hit: hit, panelOpen: mode == .text, selectedID: session.selectedTextID, onEditTab: textTab == .edit, keyboardUp: keyboardUp
+            hit: hit, panelOpen: mode == .text, selectedID: session.selectedTextID, onEditTab: textTab == .edit, keyboardUp: keyboardUp,
+            directSelected: mode == .browse && session.selectedTextID != nil
         ) else { return }
         session.selectedTextID = outcome.selectID
         guard outcome.selectID != nil else { return }

@@ -13,12 +13,17 @@ struct SlidePostTextCanvas: View {
     let texts: [SlidePostTextElement]
     let size: CGSize
     let selectedID: String?
+    /// The Text panel is open (editing): drag/pinch/twist work as before and a drag selects (onSelect).
     let interactive: Bool
+    /// A text is selected for direct manipulation with NO panel (hold-select): frame + handle shown, gestures live.
+    var directSelected = false
     /// Browse/look mode: the canvas does not take gestures, but a tap on a text still reaches `onTapText`
     /// (only over the text itself, so a video's own controls keep working everywhere else).
     var tapsToEdit = false
     /// A drag that starts on a text selects it (nil deselects).
     let onSelect: (String?) -> Void
+    /// Select for transform only: must not open the panel, change its tab or raise the keyboard, and is not an undo step.
+    var onDirectSelect: (String?) -> Void = { _ in }
     /// A tap: the text under the finger, or nil for empty canvas.
     var onTapText: (String?) -> Void = { _ in }
     /// (text id, gesture key, mutation). The key is unique per gesture.
@@ -41,6 +46,8 @@ struct SlidePostTextCanvas: View {
     @State private var feedback = NativeTextAlignmentFeedback()
     @State private var haptic = UISelectionFeedbackGenerator()
     @State private var clock = SlidePostGestureClock()
+    @State private var touch = SlidePostTouchResolver()
+    @State private var holdTimer = SlidePostHoldTimer()
     /// A pinch's fingers never move perfectly symmetrically; rotation only engages once the twist is deliberate.
     @State private var twistLatched = false
     private static let twistThreshold = 8.0
@@ -58,11 +65,10 @@ struct SlidePostTextCanvas: View {
             }
             .frame(width: size.width, height: size.height, alignment: .topLeading)
             .allowsHitTesting(false)
-            if tapsToEdit && !interactive {
-                ForEach(texts) { element in tapTarget(element) }
-            }
-            if interactive {
+            if interactive || tapsToEdit {
                 gestureSurface
+            }
+            if showsSelection {
                 if let selected = texts.first(where: { $0.id == selectedID }), let rect = selectionRect(for: selected) {
                     selectionOverlay(for: selected, rect: rect)
                 }
@@ -71,8 +77,10 @@ struct SlidePostTextCanvas: View {
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .coordinateSpace(name: "slidepost-canvas")
         .onPreferenceChange(SlidePostBlockSizeKey.self) { blockSizes = $0 }
-        .onDisappear(perform: settle)
+        .onDisappear { holdTimer.cancel(); touch.reset(); settle() }
     }
+
+    private var showsSelection: Bool { interactive || directSelected }
 
     // MARK: Geometry
 
@@ -101,25 +109,58 @@ struct SlidePostTextCanvas: View {
     private var gestureSurface: some View {
         Color.clear
             .frame(width: size.width, height: size.height)
-            .contentShape(Rectangle())
-            .highPriorityGesture(dragGesture)
+            // Over text only while browsing (so the media's own controls keep working); the whole
+            // stage while editing or direct-manipulating (empty-canvas tap deselects).
+            .contentShape(SlidePostTextHitShape(rects: showsSelection ? nil : texts.compactMap { element in
+                selectionRect(for: element).map { ($0, element.rotationDeg) }
+            }))
+            .highPriorityGesture(touchGesture)
             .simultaneousGesture(pinchGesture)
-            .simultaneousGesture(SpatialTapGesture().onEnded { value in tap(at: value.location) })
     }
 
-    private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 4, coordinateSpace: .named("slidepost-canvas"))
+    private var touchGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("slidepost-canvas"))
             .onChanged { value in
-                clock.lastChange = Date()
-                dragChanged(value)
+                if touch.isIdle { touchBegan(at: value.startLocation) }
+                switch touch.moved(to: value.location) {
+                case .beginDrag:
+                    holdTimer.cancel()
+                    clock.lastChange = Date()
+                    dragChanged(value)
+                default:
+                    if !mode.isIdle, !mode.isPinch { clock.lastChange = Date(); dragChanged(value) }
+                }
             }
-            .onEnded { _ in if !mode.isPinch { settle() } }
+            .onEnded { value in
+                holdTimer.cancel()
+                let action = touch.touchUp(at: value.location)
+                if !mode.isPinch { settle() }
+                if action == .tap { tap(at: value.location) }
+            }
+    }
+
+    private func touchBegan(at start: CGPoint) {
+        let onTarget = isOnTarget(start)
+        touch.touchDown(at: start, time: ProcessInfo.processInfo.systemUptime, onTarget: onTarget, holdAllowed: !interactive && tapsToEdit)
+        guard !interactive, tapsToEdit, onTarget else { return }
+        holdTimer.schedule(after: SlidePostTouchResolver.holdDuration) {
+            guard touch.holdTimerFired(at: ProcessInfo.processInfo.systemUptime) == .beginHold else { return }
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            if let target = hit(at: start), target.id != selectedID { onDirectSelect(target.id) }
+        }
+    }
+
+    private func isOnTarget(_ point: CGPoint) -> Bool {
+        if showsSelection, let selected = texts.first(where: { $0.id == selectedID }), let rect = selectionRect(for: selected),
+           NativeTextTransformMath.grabsCorner(at: point, corner: handleCenter(for: selected, rect: rect), bounds: rect) { return true }
+        return hit(at: point) != nil
     }
 
     private var pinchGesture: some Gesture {
         MagnificationGesture().simultaneously(with: RotationGesture())
             .onChanged { value in
                 clock.lastChange = Date()
+                holdTimer.cancel(); touch.cancel()
                 pinchChanged(scale: value.first.map(Double.init) ?? 1, degrees: value.second?.degrees ?? 0,
                              twisting: value.second != nil)
             }
@@ -129,24 +170,11 @@ struct SlidePostTextCanvas: View {
     private func tap(at point: CGPoint) {
         // A drag that also resolves as a tap must never deselect.
         guard Date().timeIntervalSince(clock.lastChange) > 0.4 else { return }
-        if let selected = texts.first(where: { $0.id == selectedID }), let rect = selectionRect(for: selected),
+        if showsSelection, let selected = texts.first(where: { $0.id == selectedID }), let rect = selectionRect(for: selected),
            hypot(point.x - handleCenter(for: selected, rect: rect).x, point.y - handleCenter(for: selected, rect: rect).y) <= NativeTextTransformMath.cornerGrabRadius {
             return
         }
         onTapText(hit(at: point)?.id)
-    }
-
-    /// An invisible, rotated hit area exactly over one text (browse/look mode).
-    @ViewBuilder private func tapTarget(_ element: SlidePostTextElement) -> some View {
-        if let rect = selectionRect(for: element) {
-            Color.clear
-                .frame(width: rect.width, height: rect.height)
-                .contentShape(Rectangle())
-                .onTapGesture { onTapText(element.id) }
-                .rotationEffect(.degrees(element.rotationDeg))
-                .position(x: rect.midX, y: rect.midY)
-                .accessibilityHidden(true)
-        }
     }
 
     private func dragChanged(_ value: DragGesture.Value) {
@@ -174,7 +202,7 @@ struct SlidePostTextCanvas: View {
 
     private func beginDrag(at start: CGPoint) {
         feedback.reset(); haptic.prepare()
-        if let selected = texts.first(where: { $0.id == selectedID }), let rect = selectionRect(for: selected),
+        if showsSelection, let selected = texts.first(where: { $0.id == selectedID }), let rect = selectionRect(for: selected),
            NativeTextTransformMath.grabsCorner(at: start, corner: handleCenter(for: selected, rect: rect), bounds: rect) {
             let baseline = selected.transformBaseline
             let anchorPoint = CGPoint(x: baseline.anchor.x * size.width, y: baseline.anchor.y * size.height)
@@ -183,7 +211,7 @@ struct SlidePostTextCanvas: View {
             return
         }
         guard let target = hit(at: start) else { return }
-        if target.id != selectedID { onSelect(target.id) }
+        if target.id != selectedID { interactive ? onSelect(target.id) : onDirectSelect(target.id) }
         let baseline = target.transformBaseline
         begin(baseline, for: target)
         mode = .move(baseline)
@@ -265,7 +293,7 @@ struct SlidePostTextCanvas: View {
         let scale = size.width / 1080
         let points = max(8, CGFloat(element.sizePx) * scale)
         let font = NativeFontCatalog.shared.ctFont(element.fontFamily, size: points).map(Font.init) ?? KriaFont.body(points).weight(.bold)
-        let selected = interactive && element.id == selectedID
+        let selected = showsSelection && element.id == selectedID
         let alignment: TextAlignment = element.alignment == "left" ? .leading : (element.alignment == "right" ? .trailing : .center)
         let stroke = element.strokeWidth > 0 ? max(0.6, CGFloat(element.strokeWidth) * scale) : 0
         let anchor = SlidePostTextLayout.anchor(for: element)
@@ -345,5 +373,34 @@ private struct SlidePostHuggingWidth: ViewModifier {
         func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
             subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
         }
+    }
+}
+
+
+/// Reference-type one-shot timer for the hold recognizer (writing it never re-renders).
+final class SlidePostHoldTimer {
+    private var item: DispatchWorkItem?
+    func schedule(after delay: TimeInterval, _ fire: @escaping () -> Void) {
+        cancel()
+        let work = DispatchWorkItem(block: fire)
+        item = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+    func cancel() { item?.cancel(); item = nil }
+}
+
+/// Hit area for the canvas gestures: nil = the whole stage, otherwise the union of the (rotated) text boxes.
+struct SlidePostTextHitShape: Shape {
+    var rects: [(CGRect, Double)]?
+    func path(in bounds: CGRect) -> Path {
+        guard let rects else { return Path(bounds) }
+        var path = Path()
+        for (rect, degrees) in rects {
+            let transform = CGAffineTransform(translationX: -rect.midX, y: -rect.midY)
+                .concatenating(CGAffineTransform(rotationAngle: degrees * .pi / 180))
+                .concatenating(CGAffineTransform(translationX: rect.midX, y: rect.midY))
+            path.addPath(Path(rect).applying(transform))
+        }
+        return path
     }
 }

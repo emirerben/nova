@@ -23,10 +23,12 @@ enum SlidePostTextTap {
     ///   - selectedID: the text currently selected.
     ///   - onEditTab: the panel is on Edit text.
     ///   - keyboardUp: the software keyboard is already up.
-    static func resolve(hit: String?, panelOpen: Bool, selectedID: String?, onEditTab: Bool, keyboardUp: Bool) -> Outcome? {
+    ///   - directSelected: a text is selected for direct manipulation (hold-select) with no panel open.
+    static func resolve(hit: String?, panelOpen: Bool, selectedID: String?, onEditTab: Bool, keyboardUp: Bool,
+                        directSelected: Bool = false) -> Outcome? {
         guard let hit else {
-            // Empty canvas deselects while editing; in browse mode there is nothing to deselect.
-            return panelOpen ? Outcome(selectID: nil, opensPanel: false, showsEditTab: false, focusesField: false) : nil
+            // Empty canvas deselects while editing or direct-manipulating; in plain browse there is nothing to deselect.
+            return (panelOpen || directSelected) ? Outcome(selectID: nil, opensPanel: false, showsEditTab: false, focusesField: false) : nil
         }
         // Already editing this very text with the keyboard up: leave the field alone (no flicker).
         let alreadyTyping = panelOpen && selectedID == hit && onEditTab && keyboardUp
@@ -70,4 +72,81 @@ enum SlidePostReorderMath {
         if from > target, index >= target, index < from { return pitch }
         return 0
     }
+}
+
+
+/// Pure state machine for one finger on a slide-preview text: tap vs press-and-hold vs drag vs
+/// hold-then-drag. The view feeds touch samples and timer fires in and applies the returned action.
+///
+/// - tap: lifted within `slop` before `holdDuration` -> open Edit text.
+/// - drag: moved past `slop` first (on a text) -> move immediately, no hold needed (matches the native preview).
+/// - hold: still within `slop` after `holdDuration` (only when `holdAllowed`) -> select for direct
+///   manipulation (no panel, no keyboard); moving past `slop` afterwards continues as a drag in the same gesture;
+///   lifting after a hold is NOT a tap.
+struct SlidePostTouchResolver {
+    static let holdDuration: TimeInterval = 0.28
+    static let slop: CGFloat = 6
+
+    enum Action: Equatable {
+        case none
+        case beginHold
+        /// `fromHold` is true when the drag continues a completed hold.
+        case beginDrag(fromHold: Bool)
+        case tap
+        case endHold
+        case endDrag
+    }
+
+    private enum Phase { case idle, pressing, held, dragging, ignored }
+    private var phase = Phase.idle
+    private var start = CGPoint.zero
+    private var startTime = TimeInterval(0)
+    private var onTarget = false
+    private var holdAllowed = false
+
+    var isIdle: Bool { phase == .idle }
+    var isHeld: Bool { phase == .held }
+
+    mutating func touchDown(at point: CGPoint, time: TimeInterval, onTarget: Bool, holdAllowed: Bool) {
+        phase = .pressing
+        start = point; startTime = time
+        self.onTarget = onTarget; self.holdAllowed = holdAllowed
+    }
+
+    mutating func moved(to point: CGPoint) -> Action {
+        let travelled = hypot(point.x - start.x, point.y - start.y)
+        switch phase {
+        case .pressing where travelled > Self.slop && !onTarget:
+            phase = .ignored   // a swipe over empty canvas is neither a tap nor a drag
+            return .none
+        case .pressing where travelled > Self.slop:
+            phase = .dragging
+            return .beginDrag(fromHold: false)
+        case .held where travelled > Self.slop:
+            phase = .dragging
+            return .beginDrag(fromHold: true)
+        default:
+            return .none
+        }
+    }
+
+    mutating func holdTimerFired(at time: TimeInterval) -> Action {
+        guard phase == .pressing, holdAllowed, onTarget, time - startTime >= Self.holdDuration - 0.001 else { return .none }
+        phase = .held
+        return .beginHold
+    }
+
+    mutating func touchUp(at point: CGPoint) -> Action {
+        defer { phase = .idle }
+        switch phase {
+        case .pressing: return hypot(point.x - start.x, point.y - start.y) <= Self.slop ? .tap : .none
+        case .held: return .endHold
+        case .dragging: return .endDrag
+        case .idle, .ignored: return .none
+        }
+    }
+
+    /// A second finger / pinch took over: end without a tap.
+    mutating func cancel() { phase = .ignored }
+    mutating func reset() { phase = .idle }
 }
