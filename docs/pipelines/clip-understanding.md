@@ -365,6 +365,37 @@ evals to run before enabling (`--eval-mode=live`, no judge):
 `test_landmark_guess_evals.py`, `test_clip_intent_planner_evals.py`,
 `test_main_creator_evals.py`, `test_edit_proposal_evals.py`.
 
+## Kria thread clips: one loop per item, and Visuals queue fairness
+
+`attach_media` enqueues `tasks.analyze_kria_clips` (`app/tasks/kria_clip_understanding.py`)
+on `POOL_ASSET_ANALYSIS_QUEUE` after each attach that includes video. A phone attaches
+clips one at a time. On 2026-10-03, before #1354, both autoplace slots analysed the same
+item's clips together and paid Gemini vision + Whisper twice.
+
+- **Single flight per item (#1354).** A run takes the Redis lock
+  `kria-clip-und:{item}` (`SET NX`, `LOCK_TTL_S`). Runs that find it held return
+  `busy` at once. The running loop re-reads the item every chunk, and re-enqueues
+  itself if a clip arrived after its last read. Without Redis the lock fails open.
+- **Visuals queue.** Footage runs can hold a slot for up to `RUN_DEADLINE_S`, so photos
+  queued FIFO behind them showed "Queued" in the app. Creator-facing
+  `analyze_pool_asset` dispatches (upload/register, reanalyze, the stale-asset
+  reaper, creator-preparation recovery) use `settings.pool_asset_visuals_queue`:
+  `VISUALS_ANALYSIS_QUEUE` when set, otherwise `POOL_ASSET_ANALYSIS_QUEUE`.
+  - Every fly.toml process that consumes `autoplace-jobs` (`autoplace`, and the
+    unified `worker`) also consumes `visuals-analysis`.
+  - Kombu's Redis transport rotates between a worker's queues after each pick, so a
+    photo waits for the next free slot, not behind the footage backlog.
+  - The stale-analysis refresh backfill stays on `POOL_ASSET_ANALYSIS_QUEUE`, so a
+    backfill never delays a new upload.
+  - Rollout: deploy first, then
+    `fly secrets set VISUALS_ANALYSIS_QUEUE=visuals-analysis --app nova-video`.
+    Rollback: `fly secrets unset VISUALS_ANALYSIS_QUEUE --app nova-video`.
+
+Guards: `tests/test_pool_asset_fly_contract.py` and `tests/test_worker_prewarm_gate.py`
+(the Visuals queue has exactly the consumers of `autoplace-jobs`, and the switch is not
+in `[env]`); the queue assertions in `tests/routes/test_plan_item_assets.py` and
+`tests/tasks/test_pool_asset_reconcile.py`.
+
 ## Known gaps
 
 - Vision re-query remains video-only. Images need an inline media input path.

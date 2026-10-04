@@ -1426,6 +1426,9 @@ class _DraftState:
     # A handler may set this to replace the generic "Op name" change summary
     # (e.g. "Rewrite 5 texts"); compile_editor_ops consumes and clears it.
     summary: str | None = None
+    # Slide-post surface only (KRI-301): non-timeline outputs of the slides lane
+    # (`cover_slide_id`, `caption`). Empty for every video compile.
+    post: dict[str, Any] = field(default_factory=dict)
 
     def text_bar(self, index: object) -> dict[str, Any]:
         row = self.text_bars[_require_index(self.text_bars, index, "Text")]
@@ -1983,8 +1986,60 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
     )
 
 
+def apply_text_lane_ops(
+    text_rows: list[dict[str, Any]],
+    slots: list[dict[str, Any]],
+    ops: list[dict],
+    *,
+    hook: Callable[[dict[str, Any], _DraftState, str], None] | None = None,
+) -> _DraftState:
+    """Run parsed ops over a job-less text + slot working set (slide posts, KRI-301).
+
+    Additive sibling of :func:`compile_editor_ops`: same handlers, same
+    all-or-nothing contract, but no Job/variant. ``text_rows`` stand in for the
+    variant's ``text_elements`` and ``slots`` for its timeline rows. ``slots`` is
+    mutated in place (reorder/remove); text rows are deep-copied. ``hook(op,
+    state, "before"|"after")`` lets the caller observe each op. Returns the final
+    state; the caller projects it back onto its own document.
+    """
+
+    _load_lane_handlers()
+    if not ops:
+        raise KriaEditorOpError("No safe draft change was produced")
+    ops = coalesce_text_style_ops(ops)
+    if len(ops) > MAX_EDITOR_OPS:
+        raise KriaEditorOpError(f"A draft may contain at most {MAX_EDITOR_OPS} editor operations")
+    text = copy.deepcopy([row for row in text_rows if isinstance(row, dict)])
+    state = _DraftState(
+        job=None,
+        variant={"text_elements": text_rows},
+        text=text,
+        text_bars=list(text),
+        captions=[],
+        camera_effects=[],
+        sound_effects=[],
+        slots=slots,
+        base_generation=None,
+    )
+    state.initial_slots = copy.deepcopy(state.slots)
+    for op in ops:
+        name = str(op.get("op") or "")
+        handler = _OP_HANDLERS.get(name)
+        if handler is None:
+            raise KriaEditorOpError(f"{name or 'Unknown operation'} is not portable to Kria yet")
+        if hook is not None:
+            hook(op, state, "before")
+        handler(state, op)
+        if hook is not None:
+            hook(op, state, "after")
+        state.changes.append(state.summary or _summary(op))
+        state.summary = None
+    return state
+
+
 __all__ = [
     "MAX_EDITOR_OPS",
+    "apply_text_lane_ops",
     "OpHandler",
     "CompiledEditorDraft",
     "KriaEditorOpError",

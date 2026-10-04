@@ -40,3 +40,16 @@ def test_dedicated_autoplace_worker_is_always_on_and_bounded() -> None:
 
 def test_initial_deploy_does_not_switch_analysis_queue() -> None:
     assert "POOL_ASSET_ANALYSIS_QUEUE" not in _fly().get("env", {})
+
+
+def test_visuals_queue_is_consumed_before_any_dispatch_can_switch_to_it() -> None:
+    """Deploy order: the autoplace process consumes `visuals-analysis` in the same
+    release that adds the setting, and the switch is a later Fly secret, so a
+    rolling deploy can never publish Visuals analysis to a queue nobody drains."""
+    from app.config import Settings
+
+    fly = _fly()
+    queues = fly["processes"]["autoplace"].split("-Q ", 1)[1].split()[0].split(",")
+    assert "visuals-analysis" in queues
+    assert "VISUALS_ANALYSIS_QUEUE" not in fly.get("env", {})
+    assert Settings.model_fields["visuals_analysis_queue"].default == ""

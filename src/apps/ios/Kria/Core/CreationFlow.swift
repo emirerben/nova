@@ -10,17 +10,21 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     /// Server accepts the editor's unsaved state with a chat turn (nil/false = legacy flush-then-send).
     var editorStateTurns: Bool? = nil
     var editorStateMaxBytes: Int? = nil
+    /// Server renders per-slide styled text (KRI-298); nil/false keeps the legacy single-text inspector.
+    var slidePostRichText: Bool? = nil
     /// Additive server admission metadata. Nil preserves compatibility with a
     /// server predating iOS-only creation rollout.
     var creationMode: CreationMode? = nil
     var minimumClientProtocol: Int? = nil
     var editorStateTurnsEnabled: Bool { editorStateTurns == true }
+    var slidePostRichTextEnabled: Bool { slidePostRichText == true }
     var preferredRuntimeVersion: Int { runtimeVersions?.contains(2) == true ? 2 : 1 }
     enum CodingKeys: String, CodingKey {
         case formats, media
         case runtimeVersions = "runtime_versions", visualsEnabled = "visuals_enabled"
         case phoneRendering = "phone_rendering"
         case editorStateTurns = "editor_state_turns", editorStateMaxBytes = "editor_state_max_bytes"
+        case slidePostRichText = "slide_post_rich_text"
         case creationMode = "creation_mode", minimumClientProtocol = "minimum_client_protocol"
     }
 }

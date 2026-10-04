@@ -97,6 +97,39 @@ download/upload. Per slide:
 6. Build `post.json` + `caption.txt` + `bundle.zip` (`build_post_manifest` /
    `build_bundle_zip`, stdlib `zipfile`, index-ordered filenames).
 
+## Rich per-slide text (KRI-298 / KRI-299)
+
+Flag `slide_post_rich_text_enabled` (default `false`; capability
+`slide_post_rich_text` in `CreationCapabilitiesOut`). `SlideEdits.texts` is a
+list (max 4) of `SlideTextElement`: `id`, `text` (1-120), `role`
+(`text|label`), `label_source` (`place|capture_time`), `edited`,
+`font_family` (must be in `text_element._ALLOWED_FONTS`, default
+`Inter-Bold`), `color` (#RRGGBB), `size_px` (24-200, in 1920-canvas px),
+`alignment`, `position` (`top|center|bottom|custom`), `x_frac`/`y_frac`
+(fractions of the SLIDE canvas, read when `custom`), `max_width_frac`,
+`stroke_width`, `shadow_enabled`, `background` (`none|box`).
+
+- **Legacy mirror.** Whenever `texts` is not None, `SlideEdits.text` is forced
+  to a mirror of `texts[0]` (None when empty), so old clients and the flag-off
+  renderer keep working. `effective_texts()` lifts a legacy-only `text` into
+  one boxed element.
+- **PUT merge** (`merge_legacy_text_edits`, `put_slide_post_draft`): a client
+  that omits `texts` (checked via `model_fields_set`) keeps the stored texts;
+  a changed legacy `text` is folded into `texts[0]` (cleared text drops it).
+  Explicit `texts` from a new client is taken as sent.
+- **Renderer.** Flag on and `texts` set: each element goes through
+  `text_overlay._draw_text_png` into a transparent PNG, composited with
+  `-filter_complex overlay` after scale/crop and the look preset. 4:5 canvases
+  remap `y' = (285 + y*1350)/1920` on the 1080x1920 raster then crop the band.
+  Legacy-only drafts (`texts is None`) always take the byte-identical drawtext
+  path, flag on or off.
+- **Cache key.** `edits_cache_digest` hashes the full edits; legacy-only edits
+  hash as before the field existed, and a `texts` slide gets a path-specific
+  suffix so flipping the flag never reuses the other path's derivative.
+- Tests: `tests/pipeline/test_slide_post_build.py` (real ffmpeg; drawtext
+  cases need an ffmpeg with the `drawtext` filter, e.g. `ffmpeg-full`),
+  `tests/test_slide_post_schema.py`, `tests/routes/test_slide_post_native_routes.py`.
+
 ## The variant contract — "give it a preview MP4 so nothing branches"
 
 The rendered variant (`variant_id` literally `"slides"` — never
@@ -205,9 +238,48 @@ pool order / first slide as cover / no caption rather than blocking assembly.
 - **No dedicated type-poster loop** for the "Photo & video post" SetupPicker
   card yet — it reuses the "Photo wall" style tile as a visual stand-in.
 
+## Chat editing (KRI-301, flag `slide_post_chat_edit_enabled`, default off)
+
+**Requires `slide_post_rich_text_enabled` too:** chat edits round-trip styled
+`SlideEdits.texts`, so with rich text off the route 404s and the
+`slide_post_chat_edit` capability is false (both flags needed). Limits: 20/min per IP
+plus 30/hour per user (`x-user-id` key, like the edit-guide route); `turns` entries are
+`{role: user|assistant, content<=2000, applied/rejected<=20}`.
+
+`POST /plan-items/{id}/slide-post/chat-edit` runs the video **edit copilot** over a
+slide post instead of a second composer. Read-only: it never writes the DB; the
+client stages the returned draft and saves with the normal versioned PUT.
+
+- **Request:** `{message, expected_version?, draft?, turns<=12, client_request_id?}`.
+  The editor's local `draft` is the newest truth: when sent, the edit is built from
+  IT (asset ownership still validated, else 422) and `expected_version` is
+  informational, so there is **no 409 / conflict step**. Without `draft` the stored
+  draft is used (409 `slide_post_no_draft` if none).
+- **Response:** `{outcome: edited|clarification|unsupported|no_effect|failed, reply,
+  draft|null, base_version, changes[], suggestions[]}`. `base_version` is the
+  SERVER's current version: quote it as `expected_version` on the next PUT.
+- **Pipeline** (`services/slide_post_chat_edit.py`): `build_slide_post_snapshot`
+  presents slide i as a 1-second slot (window `[i, i+1)`, `media_id` = slide id,
+  `surface: "slide_post"`, `editor_ops_version: 2`) with text bars (a place/time label
+  is `clip-label-media-{slide.id}`; free texts get `kria-` ids). Parsed ops run
+  through `kria_editor_ops.apply_text_lane_ops` (shared handlers, no Job) and
+  `compile_slide_post_ops` projects them back onto a `SlidePostDraft`: spanning texts
+  are copied per slide with fresh ids, the cover follows its slide id, per-slide
+  limits (4 texts, 120 chars) raise `KriaEditorOpError` => honest `failed`.
+- **Surface gating** (`edit_copilot._family_allowed`): only `SLIDE_POST_OPS` are
+  accepted on `surface == "slide_post"`; `set_slide_cover` / `set_post_caption`
+  (`editor_ops_v2/slides.py`) are refused on video. The slides prompt fragment
+  (`prompts/edit_copilot_ops/slides.txt`) is appended ONLY for that surface, so video
+  prompts stay byte-identical (guard: `tests/services/test_slide_post_chat_edit.py`).
+- **Facts:** `_slide_facts(asset)` reads capture/analysis facts (empty when none);
+  KRI-300 swaps in `clip_facts.slide_asset_facts(asset)` here. Facts only reach the
+  copilot for accounts where `settings.clip_facts_for(user_id)` is true.
+- **Evals:** goldens `tests/fixtures/agent_evals/edit_copilot/golden/slide_*.json`.
+
 ## Verification
 
 ```bash
 cd src/apps/api && pytest tests/pipeline/test_slide_post_profiles.py tests/pipeline/test_slide_post_build.py tests/tasks/test_slide_post_render.py tests/tasks/test_slide_post_dispatch.py tests/agents/test_slide_post_composer.py -q
 cd src/apps/web && npx jest src/__tests__/plan/items/SlidePostPanel.test.tsx src/__tests__/plan/edit-format.test.ts -q
+cd src/apps/api && pytest tests/services/test_slide_post_chat_edit.py tests/routes/test_slide_post_chat_edit_route.py -q
 ```

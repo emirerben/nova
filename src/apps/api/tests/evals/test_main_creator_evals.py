@@ -247,3 +247,28 @@ def test_main_creator_eval(
         if strategy.get("media_scope") == "selected":
             manifest_media = fixture.input["capability_manifest"]["media"]
             assert strategy["selected_media_ids"] == [manifest_media[0]["media_id"]]
+
+    fullscreen_meta = fixture.meta.get("fullscreen_overlays")
+    if fullscreen_meta:
+        # KRI-297: the planner emits `overlay_display="fullscreen"` (with the
+        # overlays treatment, subtitled format kept) only when the manifest
+        # advertises `media_overlays:fullscreen`; otherwise it stays null. It
+        # never describes full-screen Visuals as "transitions".
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        strategy = action["strategy"]
+        advertised = (
+            fixture.input["capability_manifest"]["capabilities"]
+            .get("media_overlays:fullscreen", {})
+            .get("available", False)
+        )
+        assert strategy["edit_format"] == "subtitled"
+        assert "transitions" not in strategy.get("optional_treatments", [])
+        assert strategy.get("overlay_display") == fullscreen_meta["expect_overlay_display"]
+        assert advertised == (fullscreen_meta["expect_overlay_display"] == "fullscreen")
+        if strategy.get("overlay_display") == "fullscreen":
+            assert "overlays" in strategy["optional_treatments"]
+        else:
+            copy = f"{strategy.get('rationale', '')} {action.get('summary', '')}".casefold()
+            assert "full-screen transition" not in copy

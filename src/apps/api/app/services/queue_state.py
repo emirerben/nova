@@ -87,7 +87,7 @@ _QUEUE_SCAN_CAP = 100
 
 # The queues the `worker` Fly process consumes (fly.toml:
 # `celery ... -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs,creator-render-v2,
-# creator-fidelity-v1,autoplace-jobs,speech-analysis`).
+# creator-fidelity-v1,autoplace-jobs,speech-analysis,visuals-analysis`).
 # "celery" is Celery's
 # built-in default queue name — anything dispatched without an explicit
 # `queue=` kwarg lands here. Shared by:
@@ -112,6 +112,7 @@ RENDER_WORKER_QUEUES: frozenset[str] = frozenset(
         "creator-fidelity-v1",
         "autoplace-jobs",
         "speech-analysis",
+        "visuals-analysis",
     }
 )
 

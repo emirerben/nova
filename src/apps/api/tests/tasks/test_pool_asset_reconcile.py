@@ -92,6 +92,7 @@ def test_reconcile_requeues_with_new_fenced_attempt(monkeypatch) -> None:
     monkeypatch.setattr(maintenance, "sync_session", _session)
     monkeypatch.setattr("app.tasks.autoplace.analyze_pool_asset.apply_async", publish)
     monkeypatch.setattr("app.config.settings.pool_asset_analysis_queue", "autoplace-jobs")
+    monkeypatch.setattr("app.config.settings.visuals_analysis_queue", "visuals-analysis")
 
     assert maintenance.reconcile_stale_pool_assets(now=datetime.now(UTC)) == 1
     assert asset.status == "queued"
@@ -99,7 +100,7 @@ def test_reconcile_requeues_with_new_fenced_attempt(monkeypatch) -> None:
     assert asset.analysis_attempt_token != "old"
     publish.assert_called_once_with(
         args=[str(asset.id), False],
-        queue="autoplace-jobs",
+        queue="visuals-analysis",
         headers={
             "pool_asset_attempt_token": asset.analysis_attempt_token,
             "x-correlation-id": "batch-correlation",

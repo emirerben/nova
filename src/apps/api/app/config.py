@@ -223,6 +223,15 @@ class Settings(BaseSettings):
     # set PHONE_SUBTITLED_VIDEO_OVERLAYS_ENABLED=false --app nova-video` +
     # `fly machine restart <id>` (api + worker).
     phone_subtitled_video_overlays_enabled: bool = False
+    # KRI-297 kill switch: lets a phone `subtitled` (Talking) edit show ALL its
+    # Visuals as a full-screen cutaway sequence when the creator asks for it
+    # ("use all overlays as full screen"). Gates the `media_overlays:fullscreen`
+    # capability; a strategy that asks for it while this is off is refused
+    # honestly, and a stale job's `all_candidates["overlay_display"]` is the
+    # worker's concern. Rollback: `fly secrets set
+    # PHONE_SUBTITLED_FULLSCREEN_OVERLAYS_ENABLED=false --app nova-video` +
+    # `fly machine restart <id>` (api + worker).
+    phone_subtitled_fullscreen_overlays_enabled: bool = True
     # KRI-136: a self-narrated (`narrated*`, no recorded voiceover) item with
     # 2+ clips that resolves to the `talking_head` archetype renders on the
     # device: the speech clip stays the main track (its audio runs the whole
@@ -1028,6 +1037,13 @@ class Settings(BaseSettings):
     # replacement is cheap). 0 disables. Measured in KB (Celery convention).
     worker_max_memory_per_child_kb: int = 3_145_728  # 3GB
 
+    # Deploy dead time (KRI-294): end Celery's 240s soft-shutdown wait as soon
+    # as the tasks in flight at SIGTERM finish, and skip it when idle
+    # (app/services/celery_soft_shutdown.py). False restores the stock
+    # full-window wait on every shutdown. Read on the OLD machine at stop time,
+    # so a flip takes effect from the deploy after it.
+    celery_soft_shutdown_early_exit_enabled: bool = True
+
     # Render heartbeat (same incident, user-visible half): the orchestrator
     # ticks jobs.worker_heartbeat_at every `interval` seconds; the status route
     # reports `retrying: true` while a non-terminal job's heartbeat is older
@@ -1462,6 +1478,17 @@ class Settings(BaseSettings):
     # NEXT_PUBLIC_SLIDE_POSTS_ENABLED twin. Rollback:
     #   fly secrets set SLIDE_POSTS_ENABLED=false --app nova-video (api + worker)
     slide_posts_enabled: bool = True
+    # KRI-298/299: rich per-slide text (styled `SlideEdits.texts`, rendered as Pillow PNG
+    # overlays). Off: the renderer keeps the legacy drawtext path using the mirrored
+    # `text` (texts[0]); saved `texts` are preserved. Dual-flag with the iOS capability
+    # `slide_post_rich_text`. Apply: `fly secrets set SLIDE_POST_RICH_TEXT_ENABLED=true
+    # --app nova-video` + restart (api + worker).
+    slide_post_rich_text_enabled: bool = False
+    # KRI-298/301: chat editing of slide posts through the edit copilot
+    # (`POST /plan-items/{id}/slide-post/chat-edit`, read-only staging). Off: the route
+    # 404s. Capability `slide_post_chat_edit`. Apply: `fly secrets set
+    # SLIDE_POST_CHAT_EDIT_ENABLED=true --app nova-video` + restart (api).
+    slide_post_chat_edit_enabled: bool = False
     main_creator_agent_freeform_uploads_enabled: bool = False
     main_creator_agent_workspace_enabled: bool = False
     main_creator_agent_rollout_percent: int = Field(default=0, ge=0, le=100)
@@ -1731,6 +1758,18 @@ class Settings(BaseSettings):
     # Upload-time image/video metadata analysis is isolated from renders in Fly.
     # Roll back by setting POOL_ASSET_ANALYSIS_QUEUE=celery.
     pool_asset_analysis_queue: str = "celery"
+    # Creator-facing analyze_pool_asset dispatches (Visuals photos/videos) go here
+    # instead of pool_asset_analysis_queue, so they never wait FIFO behind footage
+    # analysis. Empty = pool_asset_analysis_queue (pre-change routing). Set
+    # VISUALS_ANALYSIS_QUEUE=visuals-analysis only after the deployed autoplace
+    # process consumes that queue (fly.toml); unset it to roll back.
+    visuals_analysis_queue: str = ""
+
+    @property
+    def pool_asset_visuals_queue(self) -> str:
+        """Queue for creator-facing analyze_pool_asset runs (see visuals_analysis_queue)."""
+        return self.visuals_analysis_queue or self.pool_asset_analysis_queue
+
     # Keep response compatibility during the backend-first rollout. Set true
     # only after both queued-aware upload surfaces are deployed.
     pool_asset_queued_status_enabled: bool = False

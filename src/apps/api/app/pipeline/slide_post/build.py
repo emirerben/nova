@@ -19,6 +19,7 @@ and does not need to know about this module.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -31,6 +32,7 @@ from typing import TYPE_CHECKING, Literal
 
 import structlog
 
+from app.config import settings
 from app.pipeline.look_presets import look_preset_filter
 
 if TYPE_CHECKING:
@@ -139,7 +141,7 @@ def _escape_drawtext_path(path: str) -> str:
 
 @contextmanager
 def _edits_filter_fragment(
-    edits: SlideEdits | None, *, canvas: Canvas, out_path: str
+    edits: SlideEdits | None, *, canvas: Canvas, out_path: str, include_text: bool = True
 ) -> Iterator[str | None]:
     """Build the FFmpeg `-vf` fragment for one slide's edits, or None.
 
@@ -162,9 +164,10 @@ def _edits_filter_fragment(
     look_fragment = look_preset_filter(edits.look_preset, width=cw, height=ch)
     if look_fragment:
         fragments.append(look_fragment)
-    text_file = Path(f"{out_path}.drawtext.txt") if edits.text is not None else None
+    draw_legacy = include_text and edits.text is not None
+    text_file = Path(f"{out_path}.drawtext.txt") if draw_legacy else None
     try:
-        if edits.text is not None and text_file is not None:
+        if draw_legacy and edits.text is not None and text_file is not None:
             text_file.write_text(edits.text.content, encoding="utf-8")
             fontsize = max(24, round(ch * 0.045))
             box_border = max(12, round(fontsize * 0.3))
@@ -192,32 +195,138 @@ def _edits_filter_fragment(
             text_file.unlink()
 
 
+# ---- Rich per-slide text (KRI-298): Pillow PNG overlays -------------------------------
+
+_RICH_Y_FRAC = {"top": 0.12, "center": 0.5, "bottom": 0.82}
+_RICH_X_FRAC = {"left": 0.08, "center": 0.5, "right": 0.92}
+_RICH_BOX_RGBA = (0, 0, 0, 115)  # black @ 0.45, same as the legacy drawtext box
+_FULL_CANVAS = (1080, 1920)  # text_overlay._draw_text_png's fixed raster
+
+
+def rich_text_active(edits: SlideEdits | None) -> bool:
+    """True when this slide renders through the PNG-overlay path."""
+    return edits is not None and edits.texts is not None and settings.slide_post_rich_text_enabled
+
+
+def edits_cache_digest(edits: SlideEdits | None) -> str:
+    """Content-address component for a slide's normalized derivative.
+
+    Legacy-only edits hash exactly as before `texts` existed (the field is
+    excluded when None), so existing cached derivatives stay valid. A slide
+    with `texts` gets a path-specific digest so flipping
+    `slide_post_rich_text_enabled` never reuses the other path's pixels.
+    """
+    if edits is None:
+        return "noedits"
+    if edits.texts is None:
+        payload = edits.model_dump_json(exclude={"texts"})
+    else:
+        payload = edits.model_dump_json() + ("|rich" if rich_text_active(edits) else "|legacy")
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _hex_rgba(color: str) -> tuple[int, int, int, int]:
+    return (int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16), 255)
+
+
+def render_text_element_png(element, png_path: str, *, canvas: Canvas) -> None:
+    """Render one `SlideTextElement` to a canvas-sized transparent PNG.
+
+    `_draw_text_png` always rasters 1080x1920. For a shorter canvas (4:5) the
+    element's canvas-relative y is remapped into the centered band of that
+    raster, `y' = (band_top + y * canvas_h) / 1920`, then the band is cropped
+    out, so placement matches the client preview on both profiles.
+    """
+    from PIL import Image  # noqa: PLC0415
+
+    from app.pipeline import text_overlay  # noqa: PLC0415
+
+    cw, ch = canvas
+    full_w, full_h = _FULL_CANVAS
+    if element.position == "custom":
+        y = 0.5 if element.y_frac is None else element.y_frac
+    else:
+        y = _RICH_Y_FRAC[element.position]
+    x = _RICH_X_FRAC[element.alignment] if element.x_frac is None else element.x_frac
+    band_top = max(0, (full_h - ch) // 2) if ch <= full_h else 0
+    band_h = min(ch, full_h)
+    y_full = (band_top + y * band_h) / full_h
+    text_overlay._draw_text_png(
+        element.text,
+        "center",
+        png_path,
+        font_family=element.font_family,
+        text_size_px=element.size_px,
+        text_color=_hex_rgba(element.color),
+        position_x_frac=x,
+        position_y_frac=y_full,
+        text_anchor=element.alignment,
+        vertical_anchor="center",
+        stroke_width=element.stroke_width,
+        shadow_enabled=element.shadow_enabled,
+        background_color=_RICH_BOX_RGBA if element.background == "box" else None,
+        max_width_frac=element.max_width_frac,
+    )
+    if (cw, ch) != _FULL_CANVAS:
+        with Image.open(png_path) as raster:
+            img = raster.convert("RGBA")
+        if ch <= full_h:
+            img = img.crop((0, band_top, full_w, band_top + band_h))
+        if img.size != (cw, ch):
+            img = img.resize((cw, ch), Image.LANCZOS)
+        img.save(png_path)
+
+
+@contextmanager
+def _text_pngs(edits: SlideEdits | None, *, canvas: Canvas, out_path: str) -> Iterator[list[str]]:
+    """Yield the PNG overlay paths for a rich slide ([] when not applicable);
+    always cleans up."""
+    paths: list[str] = []
+    try:
+        if rich_text_active(edits) and edits is not None and edits.texts:
+            for i, element in enumerate(edits.texts):
+                png = f"{out_path}.text{i}.png"
+                paths.append(png)
+                render_text_element_png(element, png, canvas=canvas)
+        yield paths
+    finally:
+        for png in paths:
+            Path(png).unlink(missing_ok=True)
+
+
+def _overlay_filter_complex(base_vf: str, n_overlays: int) -> str:
+    """`[0:v]<base>[b0]; [b0][1:v]overlay[b1]; ...` ending on `[vout]`."""
+    parts = [f"[0:v]{base_vf}[b0]"]
+    for i in range(n_overlays):
+        label = "vout" if i == n_overlays - 1 else f"b{i + 1}"
+        parts.append(f"[b{i}][{i + 1}:v]overlay=0:0:format=auto[{label}]")
+    return ";".join(parts)
+
+
 def normalize_image_slide(
     src_path: str, out_path: str, *, canvas: Canvas, edits: SlideEdits | None = None
 ) -> None:
     """Normalize any image format (incl. HEIC/WebP) to a cover-fit JPEG."""
     if not Path(src_path).exists():
         raise SlideBuildError(f"image slide not found: {src_path}")
-    with _edits_filter_fragment(edits, canvas=canvas, out_path=out_path) as edit_fragment:
+    rich = rich_text_active(edits)
+    with (
+        _edits_filter_fragment(
+            edits, canvas=canvas, out_path=out_path, include_text=not rich
+        ) as edit_fragment,
+        _text_pngs(edits, canvas=canvas, out_path=out_path) as pngs,
+    ):
         vf = _scale_crop_filter(canvas)
         if edit_fragment:
             vf = f"{vf},{edit_fragment}"
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-loglevel",
-            "warning",
-            "-nostats",
-            "-i",
-            src_path,
-            "-vf",
-            vf,
-            "-frames:v",
-            "1",
-            "-q:v",
-            "2",
-            out_path,
-        ]
+        cmd = ["ffmpeg", "-y", "-loglevel", "warning", "-nostats", "-i", src_path]
+        for png in pngs:
+            cmd += ["-i", png]
+        if pngs:
+            cmd += ["-filter_complex", _overlay_filter_complex(vf, len(pngs)), "-map", "[vout]"]
+        else:
+            cmd += ["-vf", vf]
+        cmd += ["-frames:v", "1", "-q:v", "2", out_path]
         _run_ffmpeg(cmd, context="normalize_image_slide")
 
 
@@ -231,20 +340,31 @@ def normalize_video_slide(
     """
     if not Path(src_path).exists():
         raise SlideBuildError(f"video slide not found: {src_path}")
-    with _edits_filter_fragment(edits, canvas=canvas, out_path=out_path) as edit_fragment:
+    rich = rich_text_active(edits)
+    with (
+        _edits_filter_fragment(
+            edits, canvas=canvas, out_path=out_path, include_text=not rich
+        ) as edit_fragment,
+        _text_pngs(edits, canvas=canvas, out_path=out_path) as pngs,
+    ):
         vf = f"{_scale_crop_filter(canvas)},fps=30"
         if edit_fragment:
             vf = f"{vf},{edit_fragment}"
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-loglevel",
-            "warning",
-            "-nostats",
-            "-i",
-            src_path,
-            "-vf",
-            vf,
+        cmd = ["ffmpeg", "-y", "-loglevel", "warning", "-nostats", "-i", src_path]
+        for png in pngs:
+            cmd += ["-i", png]
+        if pngs:
+            cmd += [
+                "-filter_complex",
+                _overlay_filter_complex(vf, len(pngs)),
+                "-map",
+                "[vout]",
+                "-map",
+                "0:a?",
+            ]
+        else:
+            cmd += ["-vf", vf]
+        cmd += [
             "-c:v",
             "libx264",
             "-preset",

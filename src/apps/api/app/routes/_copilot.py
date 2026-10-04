@@ -100,11 +100,31 @@ def _claims_success(reply: str) -> bool:
     return bool(_SUCCESS_WORDS.search(reply) and not _NEGATED_SUCCESS.search(reply))
 
 
+# KRI-297: "use all overlays as full screen" is a display-mode change the editor
+# ops cannot express; it needs a fresh edit (the planner re-plans it).
+_FULLSCREEN_WORD = re.compile(r"\b(full[\s-]?(screen|frame)|cutaways?)\b", re.IGNORECASE)
+_OVERLAY_WORD = re.compile(
+    r"\b(overlays?|visuals?|photos?|images?|pictures?|cards?|cutaways?|videos?|clips?)\b",
+    re.IGNORECASE,
+)
+OVERLAY_DISPLAY_LIMIT_REPLY = (
+    "Full-screen overlays on an already-rendered iPhone edit need a fresh edit "
+    "\u2014 they can't be switched on in place."
+)
+
+
+def is_overlay_display_ask(message: str) -> bool:
+    """True when the creator asks to show their overlays/Visuals full screen."""
+    text = message or ""
+    return bool(_FULLSCREEN_WORD.search(text) and _OVERLAY_WORD.search(text))
+
+
 def _honest_outcome(
     output: EditCopilotOutput,
     ops: list[dict],
     *,
     supports_proposed: bool = True,
+    message: str = "",
 ) -> tuple[CopilotOutcome, str]:
     """Derive a stable outcome and prevent success prose for empty edits."""
     reasons = output.rejection_reasons
@@ -150,6 +170,8 @@ def _honest_outcome(
         # must not excuse a separate claim that something was changed.
         if reply and not _SUCCESS_WORDS.search(reply):
             return outcome, reply
+        if is_overlay_display_ask(message):
+            return outcome, OVERLAY_DISPLAY_LIMIT_REPLY
         return outcome, "That kind of edit isn't available for this draft yet."
     if outcome == "failed":
         if output.reply_notes:
@@ -247,6 +269,7 @@ async def run_copilot_turn(
         output,
         ops,
         supports_proposed=body.client_contract_version >= 2,
+        message=body.message,
     )
     return CopilotTurnResponse(
         intent=output.intent,

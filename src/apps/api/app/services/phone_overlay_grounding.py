@@ -48,7 +48,11 @@ from app.pipeline.render_geometry import (
     arbitrate_media_overlays,
     sample_face_regions,
 )
-from app.services.overlay_autoplace import build_suggestions, heuristic_match
+from app.services.overlay_autoplace import (
+    _snap_to_word_start,
+    build_suggestions,
+    heuristic_match,
+)
 
 log = structlog.get_logger()
 
@@ -83,6 +87,15 @@ _MAX_FACE_ANCHORS_PER_CARD = 4
 _MAX_FACE_ANCHORS_TOTAL = 12
 _FACE_SAMPLE_TIMEOUT_BASE_S = 2.0
 _FACE_SAMPLE_TIMEOUT_PER_ANCHOR_S = 0.3
+
+# KRI-297 full-screen sequence: first ~2.5s is the hook (speaker stays on
+# screen), last ~1s stays free, each cutaway is 1.5-4s, never two at once.
+_FS_HOOK_FREE_S = 2.5
+_FS_TAIL_FREE_S = 1.0
+_FS_MIN_WINDOW_S = 1.5
+_FS_MAX_WINDOW_S = 4.0
+_FS_PHOTO_WINDOW_S = 3.0
+_FS_MIN_VIDEO_WINDOW_S = 0.3
 
 _MAX_LABEL_LEN = 60
 _MAX_REASON_LEN = 160
@@ -327,6 +340,107 @@ def _match_placements(
     return heuristic_match(words, candidate_assets, duration_s=duration_s), [], "heuristic"
 
 
+def _ground_fullscreen_sequence(
+    candidate_assets: list[dict],
+    *,
+    unplaced: list[dict],
+    words: list[dict],
+    duration_s: float,
+) -> GroundedOverlayCards:
+    """KRI-297: "use all my Visuals full screen" -- deterministic, no LLM.
+
+    Every candidate Visual (pool order) gets one full-canvas cutaway in an
+    even slot across ``[hook, duration - tail]``. A cutaway's start is snapped
+    to the nearest spoken-word start (within the autoplace snap tolerance)
+    when one is near, else it sits at the plain slot time. When the talk is
+    too short to give every Visual the 1.5s minimum, the tail is dropped and
+    reported ``no_room_in_timeline`` (never two cutaways at once). Each
+    window lives wholly inside its own slot, so windows cannot overlap.
+    Pre-placed PiP/beat cards render on a track above the full-screen one, so
+    ``occupied`` is intentionally not consulted here.
+    """
+    lo = min(_FS_HOOK_FREE_S, max(duration_s, 0.0))
+    hi = max(duration_s - _FS_TAIL_FREE_S, lo)
+    span = hi - lo
+    max_fit = int(span // _FS_MIN_WINDOW_S + 1e-9)
+    fitted = candidate_assets[:max_fit] if max_fit > 0 else []
+    for asset in candidate_assets[len(fitted) :]:
+        unplaced.append(
+            {
+                "media_id": str(asset["id"]),
+                "label": _label_for_asset(asset),
+                "reason": "no_room_in_timeline",
+                "kind": _kind_for_asset(asset),
+            }
+        )
+
+    cards: list[SubtitledOverlayCard] = []
+    placed: list[dict] = []
+    word_starts = [float(w.get("start_s", 0.0)) for w in words]
+    slot_len = span / len(fitted) if fitted else 0.0
+    for index, asset in enumerate(fitted):
+        kind = _kind_for_asset(asset)
+        slot_start = lo + index * slot_len
+        slot_end = slot_start + slot_len
+        if kind == "video":
+            vid = asset.get("duration_s")
+            natural = float(vid) if isinstance(vid, (int, float)) and vid > 0 else _FS_MAX_WINDOW_S
+            window = min(_FS_MAX_WINDOW_S, natural, slot_len)
+            if window < _FS_MIN_VIDEO_WINDOW_S:
+                unplaced.append(
+                    {
+                        "media_id": str(asset["id"]),
+                        "label": _label_for_asset(asset),
+                        "reason": "video_too_short",
+                        "kind": kind,
+                    }
+                )
+                continue
+        else:
+            window = min(_FS_PHOTO_WINDOW_S, slot_len)
+        nominal = slot_start + (slot_len - window) / 2
+        start = _snap_to_word_start(nominal, words) if words else nominal
+        start = min(max(start, slot_start), slot_end - window)
+        snapped = any(abs(start - ws) < 1e-3 for ws in word_starts)
+        card = SubtitledOverlayCard(
+            id=f"fs-{len(cards)}",
+            media_id=str(asset["id"]),
+            gcs_path=asset["gcs_path"],
+            generation=str(asset.get("gcs_generation")),
+            start_s=round(start, 3),
+            end_s=round(start + window, 3),
+            fade=False,
+            kind=kind,
+            source_start_s=0.0,
+            display_mode="fullscreen",
+        )
+        cards.append(card)
+        placed.append(
+            {
+                "media_id": card.media_id,
+                "label": _label_for_asset(asset),
+                "start_s": card.start_s,
+                "end_s": card.end_s,
+                "reason": (
+                    "full-screen, timed to a spoken word"
+                    if snapped
+                    else "full-screen, evenly spaced across the talk"
+                ),
+                "kind": kind,
+            }
+        )
+    receipt = {
+        "version": 1,
+        "matcher": "sequence",
+        "layout": "fullscreen",
+        "face_sampling": "skipped",
+        "placed": placed,
+        "unplaced": unplaced,
+        "wishlist": [],
+    }
+    return GroundedOverlayCards(cards=cards, receipt=receipt)
+
+
 def ground_phone_subtitled_overlays(
     open_session: Callable[[], AbstractContextManager[Session]],
     *,
@@ -337,6 +451,7 @@ def ground_phone_subtitled_overlays(
     occupied: Iterable[tuple[float, float]] = (),
     used_media_ids: frozenset[str] = frozenset(),
     video_supported: bool = False,
+    layout: str = "pip",
 ) -> GroundedOverlayCards:
     """Match the speaker's transcript against the item's ready Visuals pool
     and resolve face-aware, caption-safe PiP card geometry (KRI-176).
@@ -409,6 +524,11 @@ def ground_phone_subtitled_overlays(
             )
             continue
         candidate_assets.append(asset)
+
+    if layout == "fullscreen":
+        return _ground_fullscreen_sequence(
+            candidate_assets, unplaced=unplaced, words=words, duration_s=duration_s
+        )
 
     if not candidate_assets or not words:
         if not words:

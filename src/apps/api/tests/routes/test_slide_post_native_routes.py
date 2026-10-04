@@ -167,3 +167,125 @@ async def test_slide_generate_rejects_stale_or_non_slide_draft(
             str(item.id), plan_items.SlidePostGenerateBody(expected_version=2), _user(), db
         )
     assert wrong_format.value.status_code == 409
+
+
+# ---- Rich per-slide text (KRI-299) ---------------------------------------------------
+
+
+def _rich_item(asset_id: uuid.UUID) -> SimpleNamespace:
+    from app.schemas.slide_post import SlideEdits, SlideTextElement
+
+    edits = SlideEdits(
+        look_preset="none",
+        texts=[SlideTextElement(id="t1", text="Lisbon", color="#FF0000", role="label")],
+    )
+    draft = SlidePostDraft(
+        platform_profile="tiktok_photo",
+        slides=[SlideRef(id="slide", asset_id=asset_id, kind="image", edits=edits)],
+        version=2,
+    )
+    return SimpleNamespace(
+        id=uuid.uuid4(), edit_format="slides", slide_post=draft.model_dump(mode="json")
+    )
+
+
+def _wire_put(monkeypatch: pytest.MonkeyPatch, item: SimpleNamespace) -> None:
+    monkeypatch.setattr(plan_items, "_load_owned_item", AsyncMock(return_value=item))
+    monkeypatch.setattr(plan_items, "_owned_ready_slide_assets", AsyncMock(return_value=[]))
+    monkeypatch.setattr(plan_items, "_validate_slide_ref_ownership", lambda *_a: None)
+    monkeypatch.setattr(plan_items, "_maybe_rebuild_slide_post", AsyncMock())
+    monkeypatch.setattr(plan_items, "flag_modified", lambda *_a: None)
+    monkeypatch.setattr(plan_items, "plan_item_response", lambda it: it)
+
+
+@pytest.mark.asyncio
+async def test_legacy_put_without_texts_preserves_stored_rich_texts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset_id = uuid.uuid4()
+    item = _rich_item(asset_id)
+    _wire_put(monkeypatch, item)
+    # Old client: no `texts` key, mirror text round-tripped.
+    body = plan_items.SlidePostDraftBody.model_validate(
+        {
+            "platform_profile": "tiktok_photo",
+            "slides": [
+                {
+                    "id": "slide",
+                    "asset_id": str(asset_id),
+                    "kind": "image",
+                    "edits": {"text": {"content": "Porto", "position": "bottom"}},
+                }
+            ],
+            "expected_version": 2,
+        }
+    )
+    await plan_items.put_slide_post_draft(str(item.id), body, _user(), AsyncMock())
+    saved = item.slide_post["slides"][0]["edits"]
+    assert saved["texts"][0]["text"] == "Porto"
+    assert saved["texts"][0]["color"] == "#FF0000"
+    assert saved["texts"][0]["role"] == "label"
+    assert saved["text"]["content"] == "Porto"
+    assert item.slide_post["version"] == 3
+
+
+@pytest.mark.asyncio
+async def test_new_client_put_with_texts_is_saved_and_mirrored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset_id = uuid.uuid4()
+    item = _rich_item(asset_id)
+    _wire_put(monkeypatch, item)
+    body = plan_items.SlidePostDraftBody.model_validate(
+        {
+            "platform_profile": "tiktok_photo",
+            "slides": [
+                {
+                    "id": "slide",
+                    "asset_id": str(asset_id),
+                    "kind": "image",
+                    "edits": {
+                        "texts": [
+                            {"id": "a", "text": "One", "position": "top"},
+                            {"id": "b", "text": "Two", "font_family": "Playfair Display"},
+                        ]
+                    },
+                }
+            ],
+            "expected_version": 2,
+        }
+    )
+    await plan_items.put_slide_post_draft(str(item.id), body, _user(), AsyncMock())
+    saved = item.slide_post["slides"][0]["edits"]
+    assert [t["id"] for t in saved["texts"]] == ["a", "b"]
+    assert saved["text"] == {"content": "One", "position": "top"}
+
+
+@pytest.mark.parametrize(
+    "edits",
+    [
+        {"texts": [{"id": "a", "text": "x", "font_family": "Comic Sans"}]},
+        {"texts": [{"id": str(i), "text": "x"} for i in range(5)]},
+        {"texts": [{"id": "a", "text": "x", "color": "red"}]},
+    ],
+)
+def test_put_body_rejects_invalid_rich_texts(edits: dict) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        plan_items.SlidePostDraftBody.model_validate(
+            {
+                "platform_profile": "tiktok_photo",
+                "slides": [
+                    {"id": "s", "asset_id": str(uuid.uuid4()), "kind": "image", "edits": edits}
+                ],
+            }
+        )
+
+
+def test_capability_flag_is_exposed_and_defaults_off() -> None:
+    from app.config import settings
+    from app.routes.creation_threads import CreationCapabilitiesOut
+
+    assert settings.slide_post_rich_text_enabled is False
+    assert CreationCapabilitiesOut.model_fields["slide_post_rich_text"].default is False

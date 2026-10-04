@@ -31,6 +31,10 @@ struct AttachmentSheet: View {
     @State private var inFlight: [UUID: BackgroundUploadCoordinator.InFlightUpload] = [:]
     /// Per-sheet budget for retrying transient analysis failures on the creator's behalf.
     @State private var autoRetry = VisualAutoRetryScheduler()
+    /// How long each Visual has been preparing, so a slow wait says so (KRI-294).
+    @State private var preparation = VisualPreparationClock()
+    /// Lets the batch summary say when uploads wait for a connection.
+    @ObservedObject private var network = NetworkReachability.shared
     @State private var visualPollRunning = false
     /// The extra poll started when the app returns to the foreground. Kept so
     /// only one runs at a time and it is cancelled with the sheet; a bare
@@ -122,6 +126,11 @@ struct AttachmentSheet: View {
             role: mediaRole
         )
     }
+    /// Chosen Visuals not in the pool yet, for the batch progress (KRI-294). Uses the values the
+    /// sheet copied from the coordinator's publishers, like the other counts here.
+    private var uploadingVisualCount: Int {
+        BackgroundUploadCoordinator.activeUploadCount(projectID: projectID, role: .visual, inFlight: inFlight, records: pendingRecords, selections: model.uploads.photoSelections)
+    }
     /// Names only the kinds the Visuals pickers offer on this destination.
     private var visualsCaption: String {
         let kinds = uploadDestination(for: .visual).visualKinds
@@ -206,7 +215,15 @@ struct AttachmentSheet: View {
                 recorder.importFile(url)
             }
             #endif
-            .onReceive(model.uploads.$records) { pendingRecords = $0 }
+            .onReceive(model.uploads.$records) { records in
+                // A Visual that just attached leaves `records` before the next poll lists it in the
+                // pool; load now so it doesn't drop out of the batch progress for a few seconds.
+                let visualLeft = pendingRecords.contains { old in
+                    old.projectID == projectID && old.role == .visual && !records.contains { $0.id == old.id }
+                }
+                pendingRecords = records
+                if visualLeft, pollsVisuals { Task { await loadVisuals() } }
+            }
             .onReceive(model.uploads.$inFlight) { inFlight = $0 }
             // Un-choosing a visual in the picker removes it server-side; refresh the pool now rather
             // than on the next poll, or the picker would keep showing it as chosen for a few seconds.
@@ -303,6 +320,9 @@ struct AttachmentSheet: View {
             if pool != nil {
                 FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .visual), attachedClipCount: existing(for: .visual), attachedMediaIDs: attachedMediaIDs(for: .visual), role: .visual, itemID: itemID, limit: capabilities?.media?["visuals"], destination: uploadDestination(for: .visual), onPickerFilled: nil, onSelectionCompleted: nil, showsHeading: false)
                     .id(AttachmentStep.overlays)
+                if let summary = VisualPreparationSummary(assets: pool?.assets ?? [], uploading: uploadingVisualCount, online: network.isOnline, slowIDs: preparation.slowIDs, surface: .addMediaSheet) {
+                    VisualPreparationSummaryView(summary: summary)
+                }
                 visualList
             }
             if let error {
@@ -369,7 +389,8 @@ struct AttachmentSheet: View {
                         .frame(width: 52, height: 64).clipped().clipShape(RoundedRectangle(cornerRadius: 8))
                     VStack(alignment: .leading) {
                         Text(asset.sourceFilename ?? "Visual").font(KriaFont.body(14)).lineLimit(1)
-                        Text(asset.statusCaption(retryingAutomatically: autoRetry.isRetryPending(asset.id))).font(KriaFont.body(11)).foregroundStyle(asset.status == "failed" ? KriaColor.failureText : KriaColor.zinc)
+                        VisualStatusLine(text: asset.statusCaption(retryingAutomatically: autoRetry.isRetryPending(asset.id)), preparing: asset.preparationStage != nil, color: asset.status == "failed" ? KriaColor.failureText : KriaColor.zinc)
+                            .font(KriaFont.body(11))
                     }
                     Spacer()
                     if asset.status == "failed", asset.retryable != false { Button("Retry") { Task { await retry(asset) } }.disabled(mutatingVisual || !autoRetry.canRetryManually(asset.id)) }
@@ -437,8 +458,13 @@ struct AttachmentSheet: View {
     @discardableResult
     private func loadVisuals() async -> Bool {
         guard let itemID else { return false }
-        do { pool = try await model.api.visuals(itemID: itemID); error = nil; return true }
-        catch { self.error = "Kria couldn’t load your visuals. \(error.localizedDescription)"; return false }
+        do {
+            let loaded = try await model.api.visuals(itemID: itemID)
+            pool = loaded
+            preparation.observe(loaded.assets, now: Date())
+            error = nil
+            return true
+        } catch { self.error = "Kria couldn’t load your visuals. \(error.localizedDescription)"; return false }
     }
     /// One poll of the pool followed by any automatic reanalyze that is due.
     /// Serialized so a foreground pass never acts on a snapshot older than a

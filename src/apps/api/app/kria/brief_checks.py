@@ -93,6 +93,9 @@ class PlanFacts:
     per_clip_text: dict[str, str] = field(default_factory=dict)
     inferred_text: dict[str, str] = field(default_factory=dict)
     positional_labels: tuple[str, ...] = ()
+    # KRI-296: the clips the creator described and gave text for. When set, "text
+    # on each shot" is judged against these clips, not every clip in the plan.
+    label_scope_clip_ids: tuple[str, ...] = ()
     duration_s: float | None = None
     ordering_basis: str | None = None
     ordering_fallback_clip_ids: tuple[str, ...] = ()
@@ -366,7 +369,10 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         ordering_fallback_clip_ids=tuple(
             str(c) for c in record.get("ordering_fallback_clip_ids") or []
         ),
-        texts=tuple(text for text in (title, *per_clip.values()) if text),
+        texts=tuple(
+            str(text) for text in (title, record.get("closing_title"), *per_clip.values()) if text
+        ),
+        label_scope_clip_ids=tuple(str(c) for c in record.get("label_scope_clip_ids") or []),
         unreadable_label_clip_ids=tuple(str(c) for c in record.get("short_label_clip_ids") or []),
         per_clip_label_kinds={
             str(row["media_id"]): str(row["fact_kind"])
@@ -601,9 +607,11 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
         guessed = _guess_labels(facts, only=clip)
         return _receipt(req, "met", None, [g.text for g in guessed], guessed)
 
-    total = len(ids)
+    scope = set(facts.label_scope_clip_ids)
+    judged_ids = [(i, clip) for i, clip in enumerate(ids) if not scope or clip in scope]
+    total = len(judged_ids)
     if ids:
-        count = sum(1 for i, clip in enumerate(ids) if text_for(i, clip) is not None)
+        count = sum(1 for i, clip in judged_ids if text_for(i, clip) is not None)
     else:
         count = max(len(facts.per_clip_text), len(facts.positional_labels))
     guessed = _guess_labels(facts)

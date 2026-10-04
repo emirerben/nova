@@ -133,7 +133,7 @@ def test_pending_task_publishes_original_token_after_commit_and_recovers_broker_
     assert published == [
         {
             "args": [str(asset.id), False],
-            "queue": task.settings.pool_asset_analysis_queue,
+            "queue": task.settings.pool_asset_visuals_queue,
             "headers": {
                 "pool_asset_attempt_token": "original-attempt",
                 "x-correlation-id": "upload-correlation",

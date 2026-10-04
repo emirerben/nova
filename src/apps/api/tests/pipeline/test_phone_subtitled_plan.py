@@ -1473,3 +1473,131 @@ def test_talking_head_passes_phone_pilot_validation(monkeypatch):
         settings, "phone_render_verified_features", list(recipe.required_capabilities)
     )
     validate_phone_pilot_recipe(recipe, allow_editor_media=True)
+
+
+# --- KRI-297: full-screen overlay cards -------------------------------------
+
+
+def _fs_card(**changes) -> SubtitledOverlayCard:
+    return _overlay_card(display_mode="fullscreen", **changes)
+
+
+def test_pip_card_dump_omits_display_mode_byte_identically():
+    card = _overlay_card()
+    assert "display_mode" not in card.model_dump()
+    assert "display_mode" not in card.model_dump(mode="json")
+    assert _fs_card().model_dump()["display_mode"] == "fullscreen"
+    # Round trip keeps the mode; an old persisted shape (no key) reads as pip.
+    assert SubtitledOverlayCard.model_validate(_fs_card().model_dump()).display_mode == "fullscreen"
+    assert SubtitledOverlayCard.model_validate(card.model_dump()).display_mode == "pip"
+
+
+def test_pip_only_recipe_is_unchanged_by_the_fullscreen_split():
+    bindings = (_binding(duration_s=10.0),)
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        visuals=(_photo_visual(),),
+        lanes=PhoneSubtitledLanes(overlays=[_overlay_card()]),
+    )
+    assert [t.id for t in recipe.tracks] == ["subtitled", "subtitled-overlays"]
+
+
+def test_fullscreen_card_cover_fills_above_speaker_and_below_pip():
+    bindings = (_binding(duration_s=10.0),)
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=_CUES,
+        visuals=(_photo_visual(), _photo_visual(media_id="photo-2", gcs_path="x/p2.jpg")),
+        lanes=PhoneSubtitledLanes(
+            overlays=[
+                _fs_card(),
+                _overlay_card(
+                    id="pip", media_id="photo-2", gcs_path="x/p2.jpg", start_s=4.0, end_s=6.0
+                ),
+            ]
+        ),
+    )
+    assert [t.id for t in recipe.tracks] == [
+        "subtitled",
+        "subtitled-fullscreen",
+        "subtitled-overlays",
+    ]
+    track = recipe.tracks[1]
+    assert track.kind == "overlay"
+    clip = track.clips[0]
+    assert clip.volume == 0
+    placement = clip.visual_placement
+    assert placement.width_fraction is None  # cover-fills the canvas
+    assert placement.window_start == pytest.approx(1.0)
+    assert placement.window_end == pytest.approx(3.0)
+    assert recipe.tracks[0].clips[0].volume == 1.0  # speaker audio untouched
+    assert recipe.text_layers  # captions are text layers, composited on top
+    assert {"visualBlocks", "alphaOverlay", "audioMix"} <= recipe.required_capabilities
+    assert "visualVideos" not in recipe.required_capabilities
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+
+
+def test_fullscreen_video_card_is_muted_trimmed_and_needs_visual_videos(monkeypatch):
+    bindings = (_binding(duration_s=10.0),)
+    recipe = compile_phone_subtitled_plan(
+        bindings,
+        caption_cues=[],
+        visuals=(_pool_video_visual(duration_s=2.0),),
+        lanes=PhoneSubtitledLanes(
+            overlays=[
+                _fs_card(
+                    media_id=VIDEO_ID,
+                    gcs_path=VIDEO_PATH,
+                    generation="88",
+                    kind="video",
+                    start_s=1.0,
+                    end_s=6.0,
+                )
+            ]
+        ),
+    )
+    clip = recipe.tracks[1].clips[0]
+    assert clip.volume == 0
+    assert clip.source_duration == pytest.approx(2.0)  # shortened to the footage
+    assert clip.visual_placement.window_end == pytest.approx(3.0)
+    assert "visualVideos" in recipe.required_capabilities
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    monkeypatch.setattr(settings, "phone_editor_media_enabled", True, raising=False)
+    validate_phone_pilot_recipe(recipe)
+
+
+def test_overlapping_fullscreen_cards_are_a_named_lane_error():
+    bindings = (_binding(duration_s=10.0),)
+    with pytest.raises(SubtitledLaneError) as excinfo:
+        compile_phone_subtitled_plan(
+            bindings,
+            caption_cues=[],
+            visuals=(_photo_visual(), _photo_visual(media_id="photo-2", gcs_path="x/p2.jpg")),
+            lanes=PhoneSubtitledLanes(
+                overlays=[
+                    _fs_card(),
+                    _fs_card(
+                        id="card-2",
+                        media_id="photo-2",
+                        gcs_path="x/p2.jpg",
+                        start_s=2.0,
+                        end_s=4.0,
+                    ),
+                ]
+            ),
+        )
+    assert excinfo.value.lane == "overlays"
+
+
+def test_fullscreen_cards_remap_for_a_cut_like_pip_cards():
+    plan = _cut_plan([(2.0, 3.0)], 10.0)
+    lanes = PhoneSubtitledLanes(
+        overlays=[_fs_card(start_s=4.0, end_s=6.0), _fs_card(id="gone", start_s=2.2, end_s=2.8)]
+    )
+    remapped, dropped = remap_lanes_for_cut(lanes, plan)
+    assert dropped == {"gone"}
+    assert remapped.overlays[0].display_mode == "fullscreen"
+    assert remapped.overlays[0].start_s == pytest.approx(3.0)

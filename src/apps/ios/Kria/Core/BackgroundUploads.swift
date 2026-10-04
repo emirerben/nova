@@ -810,6 +810,24 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         return flying.count + choosing.count
     }
 
+    /// KRI-294: chosen files of one role still on their way into the project, counted once each
+    /// whether they are being chosen, prepared or uploaded. Failed uploads are left out: they wait on
+    /// the creator's Retry, not on the upload. Feeds the Visuals batch progress.
+    func activeUploadCount(projectID: UUID, role: CreationMediaRole) -> Int {
+        Self.activeUploadCount(projectID: projectID, role: role, inFlight: inFlight, records: records, selections: photoSelections)
+    }
+
+    nonisolated static func activeUploadCount(projectID: UUID, role: CreationMediaRole, inFlight: [UUID: InFlightUpload], records: [UploadRecoveryRecord], selections: [String: ProjectPhotoSelection]) -> Int {
+        let recorded = records.filter { $0.projectID == projectID && $0.role == role }
+        let recordedIDs = Set(recorded.map(\.id))
+        let uploading = recorded.filter { $0.uploadFailed != true }.count
+        let flying = Set(inFlight.filter { $0.value.projectID == projectID && $0.value.role == role }.keys)
+        // `reservedCount` covers in-flight plus choosing entries; drop the in-flight ones that
+        // already have a record so a hand-over moment isn't counted twice.
+        let reserved = reservedCount(projectID: projectID, role: role, inFlight: inFlight, records: records, selections: selections)
+        return uploading + reserved - flying.intersection(recordedIDs).count
+    }
+
     /// Reserves a slot for a clip whose file is still being fetched, so the limit is honored
     /// while it loads. Undone by `enqueue` (which owns `inFlight` from then on) or `clearInFlight`.
     func markInFlight(_ recordID: UUID, projectID: UUID, role: CreationMediaRole, filename: String? = nil) {

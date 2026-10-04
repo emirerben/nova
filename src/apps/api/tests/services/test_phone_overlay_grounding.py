@@ -676,3 +676,88 @@ def test_load_ready_pool_assets_missing_job_returns_empty(monkeypatch):
         return _cm()
 
     assert pg._load_ready_pool_assets(_sessions, job_id=str(uuid.uuid4())) == []
+
+
+# --- KRI-297: full-screen sequence ------------------------------------------
+
+
+def _fs_ground(monkeypatch, assets, *, words, duration_s, video_supported=True):
+    _patch_assets(monkeypatch, assets)
+    # The sequence path must never consult the placement agent/heuristic.
+    monkeypatch.setattr(
+        pg, "_match_placements", Mock(side_effect=AssertionError("matcher must not run"))
+    )
+    return pg.ground_phone_subtitled_overlays(
+        _open_session,
+        job_id=str(uuid.uuid4()),
+        words=words,
+        duration_s=duration_s,
+        clip_path=None,
+        video_supported=video_supported,
+        layout="fullscreen",
+    )
+
+
+def _talk_words(duration_s: float) -> list[dict]:
+    # A word every 0.7s across the talk.
+    out, t = [], 0.0
+    while t < duration_s - 0.5:
+        out.append(_word(f"w{len(out)}", round(t, 3), round(t + 0.4, 3)))
+        t += 0.7
+    return out
+
+
+def test_fullscreen_places_all_22_visuals_non_overlapping_with_hook_free(monkeypatch):
+    assets = [_asset(f"a{i}") for i in range(22)]
+    grounded = _fs_ground(monkeypatch, assets, words=_talk_words(147.0), duration_s=147.0)
+    assert len(grounded.cards) == 22
+    assert grounded.receipt["layout"] == "fullscreen"
+    assert len(grounded.receipt["placed"]) == 22 and grounded.receipt["unplaced"] == []
+    assert all(card.display_mode == "fullscreen" for card in grounded.cards)
+    assert [c.media_id for c in grounded.cards] == [f"a{i}" for i in range(22)]
+    cards = sorted(grounded.cards, key=lambda c: c.start_s)
+    assert cards[0].start_s >= 2.5 - 1e-6  # hook window stays the speaker
+    assert cards[-1].end_s <= 146.0 + 1e-6  # last second free
+    for earlier, later in zip(cards, cards[1:]):
+        assert earlier.end_s <= later.start_s + 1e-6
+    for card in cards:
+        assert 1.5 - 1e-6 <= card.end_s - card.start_s <= 4.0 + 1e-6
+
+
+def test_fullscreen_snaps_to_word_starts_else_uses_slot_time(monkeypatch):
+    assets = [_asset(f"a{i}") for i in range(3)]
+    words = _talk_words(30.0)
+    snapped = _fs_ground(monkeypatch, assets, words=words, duration_s=30.0)
+    starts = {w["start_s"] for w in words}
+    assert all(any(abs(c.start_s - s) < 1e-3 for s in starts) for c in snapped.cards)
+    plain = _fs_ground(monkeypatch, assets, words=[], duration_s=30.0)
+    assert len(plain.cards) == 3  # no transcript: plain time placement
+    assert all("evenly spaced" in p["reason"] for p in plain.receipt["placed"])
+
+
+def test_fullscreen_too_many_visuals_drops_the_tail_with_an_honest_reason(monkeypatch):
+    assets = [_asset(f"a{i}") for i in range(10)]
+    # span = 8 - 2.5 - 1.0 = 4.5s -> 3 windows of 1.5s fit.
+    grounded = _fs_ground(monkeypatch, assets, words=[], duration_s=8.0)
+    assert [c.media_id for c in grounded.cards] == ["a0", "a1", "a2"]
+    reasons = {u["media_id"]: u["reason"] for u in grounded.receipt["unplaced"]}
+    assert set(reasons) == {f"a{i}" for i in range(3, 10)}
+    assert set(reasons.values()) == {"no_room_in_timeline"}
+
+
+def test_fullscreen_video_window_is_capped_to_its_footage_and_gated(monkeypatch):
+    assets = [_asset("v1", kind="video", duration_s=2.0), _asset("p1")]
+    grounded = _fs_ground(monkeypatch, assets, words=[], duration_s=60.0)
+    video = next(c for c in grounded.cards if c.media_id == "v1")
+    assert video.kind == "video" and video.end_s - video.start_s == 2.0
+    off = _fs_ground(monkeypatch, assets, words=[], duration_s=60.0, video_supported=False)
+    assert [c.media_id for c in off.cards] == ["p1"]
+    assert off.receipt["unplaced"][0]["reason"] == "video_not_supported"
+
+
+def test_pip_receipt_has_no_layout_key(monkeypatch):
+    _patch_assets(monkeypatch, [_asset("a1")])
+    grounded = pg.ground_phone_subtitled_overlays(
+        _open_session, job_id=str(uuid.uuid4()), words=[], duration_s=10.0, clip_path=None
+    )
+    assert "layout" not in grounded.receipt

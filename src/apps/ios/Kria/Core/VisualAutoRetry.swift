@@ -142,12 +142,13 @@ extension CreationVisual {
         var nextStep: String?
     }
 
-    /// A failed Visual gets the server's explanation instead of a bare
-    /// "Failed"; a failure the server won't retry asks the creator to choose
+    /// A Visual still preparing says what it is waiting for (KRI-294) instead
+    /// of a bare "Queued". A failed Visual gets the server's explanation instead
+    /// of a bare "Failed"; a failure the server won't retry asks the creator to choose
     /// the file again, and a pending automatic retry says so in place of the
     /// server's "Try again."
     func statusCaptionParts(retryingAutomatically: Bool = false) -> StatusCaptionParts {
-        guard status == "failed" else { return .init(explanation: status.capitalized) }
+        guard status == "failed" else { return .init(explanation: preparationCaption() ?? status.capitalized) }
         var detail = errorDetail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if retryable == false {
             return .init(explanation: detail.isEmpty ? "Failed" : detail, nextStep: "Choose it again.")
