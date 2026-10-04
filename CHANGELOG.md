@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.63.0] - 2026-10-04
+
+### Fixed
+- fix(phone): repair phone-inexpressible plans at planning time + split capability errors (KRI-286) (#1370) <!-- release-pr: 1370 -->
+
 ## [0.78.62.0] - 2026-10-04
 
 ### Changed
