@@ -187,6 +187,94 @@ def test_verified_clip_intents_label_clips_only_when_enabled():
     assert labels["c1"].provenance == "fact" and labels["c1"].inferred is True
 
 
+def _described_shots_strategy() -> dict:
+    # KRI-296 (job 7565bcbb): six shots described in the creator's own order, each
+    # with its exact text, over seven clips uploaded in a different order.
+    shots = [
+        ("Borahan came to win tonight's tournament", "c5"),
+        ("The only girl in the tournament: Elfin", "c6"),
+        ("Mahmoud from Tunisia: reads books, bowls too", "c4"),
+        ("Ervahan means business", "c0"),
+        ("It all came down to Eren vs Borahan", "c3"),
+        ("Borahan 131, Eren 124. So close, Eren", "c2"),
+    ]
+    return {
+        "opening_title": "An evening in Istanbul with Eren",
+        "closing_title": "See you at the rematch, Eren",
+        "shot_labels": [text for text, _ in shots],
+        "resolved_clip_intents": [
+            {
+                "op": "caption",
+                "status": "resolved",
+                "intent_id": f"caption_shot{n}",
+                "creator_text": text,
+                "caption_text": text,
+                "caption_grounding": "creator_text",
+                "assignments": [{"media_id": media_id, "confidence": 1.0}],
+            }
+            for n, (text, media_id) in enumerate(shots, start=1)
+        ],
+    }
+
+
+def test_described_shot_text_goes_on_the_matched_clip_not_its_list_position():
+    strategy = _described_shots_strategy()
+    clips = [clip(i, landmark="Funloft Akmerkez" if i == 6 else None) for i in range(7)]
+    plan = plan_unified_montage(clips, labels_view(), strategy=strategy, clip_intents_enabled=True)
+    labels = {label.media_id: label for label in plan.snapshot.clip_labels or []}
+    assert {media_id: label.text for media_id, label in labels.items()} == {
+        "c5": "Borahan came to win tonight's tournament",
+        "c6": "The only girl in the tournament: Elfin",
+        "c4": "Mahmoud from Tunisia: reads books, bowls too",
+        "c0": "Ervahan means business",
+        "c3": "It all came down to Eren vs Borahan",
+        "c2": "Borahan 131, Eren 124. So close, Eren",
+    }
+    assert all(label.provenance == "creator" and not label.inferred for label in labels.values())
+    # The clip nobody described gets no text: no guessed venue, and no "left off" note.
+    assert "c1" not in labels
+    assert plan.dropped_label_clip_ids == []
+    assert plan.record()["label_scope_clip_ids"] == ["c0", "c2", "c3", "c4", "c5", "c6"]
+
+
+def test_described_shot_receipts_judge_the_described_clips_and_see_the_closing_title():
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(
+                id="r2", kind="text", scope="per_clip", description="exact text on 6 shots"
+            ),
+            BriefRequirement(
+                id="r3",
+                kind="text",
+                scope="global",
+                literal="See you at the rematch, Eren",
+                description="closing title",
+            ),
+        ],
+    )
+    plan = plan_unified_montage(
+        [clip(i, landmark="Funloft Akmerkez" if i == 6 else None) for i in range(7)],
+        brief_view(brief),
+        strategy=_described_shots_strategy(),
+        clip_intents_enabled=True,
+    )
+    facts = plan_facts_from_unified_montage(plan.record())
+    receipts = {r.requirement_id: r for r in build_receipts(brief.live(), facts)}
+    assert receipts["r2"].status == "met" and receipts["r2"].inferred == []
+    assert receipts["r3"].status == "met"
+
+
+def test_without_matched_shots_shot_labels_stay_positional():
+    strategy = {**_described_shots_strategy(), "resolved_clip_intents": []}
+    plan = plan_unified_montage(
+        [clip(i) for i in range(7)], labels_view(), strategy=strategy, clip_intents_enabled=True
+    )
+    labels = {label.media_id: label.text for label in plan.snapshot.clip_labels or []}
+    assert labels["c0"] == "Borahan came to win tonight's tournament"
+    assert "label_scope_clip_ids" not in plan.record()
+
+
 def test_a_label_lasts_at_least_its_reading_time_and_is_capped_by_the_clip():
     clips = [
         clip(0, landmark="Rumeli Hisarı"),  # 13 chars -> 1.58s

@@ -1,0 +1,662 @@
+{
+ "agent": "nova.creator.main",
+ "prompt_version": "2026-10-03-v41",
+ "input": {
+  "user_message": "Use all overlays as full screen.",
+  "creator_request": "Use full-screen transitions between overlays as the talk-to-camera plays; the context should switch between the uploaded overlays as full screen.",
+  "creator_context": "{'summary': '', 'tone': 'casual', 'audience': '', 'content_pillars': [], 'style': {}}",
+  "creator_direction": "",
+  "item_context": "{'idea': '', 'theme': '', 'creator_notes': '', 'filming_guide': [], 'current_edit_format': 'subtitled', 'current_audio_mode': 'original', 'has_recorded_voiceover': False}",
+  "media_context": [
+   {
+    "media_id": "phone-a",
+    "kind": "video",
+    "duration_s": 42.0,
+    "creator_note": "talking-to-camera clip"
+   },
+   {
+    "media_id": "asset-00000001-visual",
+    "kind": "image",
+    "duration_s": null,
+    "creator_context": null,
+    "filename": "visual_01.jpg",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000002-visual",
+    "kind": "image",
+    "duration_s": null,
+    "creator_context": null,
+    "filename": "visual_02.jpg",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000003-visual",
+    "kind": "image",
+    "duration_s": null,
+    "creator_context": null,
+    "filename": "visual_03.jpg",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000004-visual",
+    "kind": "image",
+    "duration_s": null,
+    "creator_context": null,
+    "filename": "visual_04.jpg",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000005-visual",
+    "kind": "video",
+    "duration_s": 4.0,
+    "creator_context": null,
+    "filename": "visual_05.mp4",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000006-visual",
+    "kind": "image",
+    "duration_s": null,
+    "creator_context": null,
+    "filename": "visual_06.jpg",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000007-visual",
+    "kind": "image",
+    "duration_s": null,
+    "creator_context": null,
+    "filename": "visual_07.jpg",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000008-visual",
+    "kind": "image",
+    "duration_s": null,
+    "creator_context": null,
+    "filename": "visual_08.jpg",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000009-visual",
+    "kind": "image",
+    "duration_s": null,
+    "creator_context": null,
+    "filename": "visual_09.jpg",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000010-visual",
+    "kind": "video",
+    "duration_s": 4.0,
+    "creator_context": null,
+    "filename": "visual_10.mp4",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000011-visual",
+    "kind": "image",
+    "duration_s": null,
+    "creator_context": null,
+    "filename": "visual_11.jpg",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000012-visual",
+    "kind": "image",
+    "duration_s": null,
+    "creator_context": null,
+    "filename": "visual_12.jpg",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000013-visual",
+    "kind": "image",
+    "duration_s": null,
+    "creator_context": null,
+    "filename": "visual_13.jpg",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000014-visual",
+    "kind": "image",
+    "duration_s": null,
+    "creator_context": null,
+    "filename": "visual_14.jpg",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000015-visual",
+    "kind": "video",
+    "duration_s": 4.0,
+    "creator_context": null,
+    "filename": "visual_15.mp4",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000016-visual",
+    "kind": "image",
+    "duration_s": null,
+    "creator_context": null,
+    "filename": "visual_16.jpg",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000017-visual",
+    "kind": "image",
+    "duration_s": null,
+    "creator_context": null,
+    "filename": "visual_17.jpg",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000018-visual",
+    "kind": "image",
+    "duration_s": null,
+    "creator_context": null,
+    "filename": "visual_18.jpg",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000019-visual",
+    "kind": "image",
+    "duration_s": null,
+    "creator_context": null,
+    "filename": "visual_19.jpg",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000020-visual",
+    "kind": "video",
+    "duration_s": 4.0,
+    "creator_context": null,
+    "filename": "visual_20.mp4",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000021-visual",
+    "kind": "image",
+    "duration_s": null,
+    "creator_context": null,
+    "filename": "visual_21.jpg",
+    "analysis_only_not_copy": {}
+   },
+   {
+    "media_id": "asset-00000022-visual",
+    "kind": "image",
+    "duration_s": null,
+    "creator_context": null,
+    "filename": "visual_22.jpg",
+    "analysis_only_not_copy": {}
+   }
+  ],
+  "conversation": [
+   {
+    "role": "assistant",
+    "content": "What are we making? Pick a format and we’ll shape it together."
+   },
+   {
+    "role": "user",
+    "content": "Use full-screen transitions between overlays as the talk-to-camera plays; the context should switch between the uploaded overlays as full screen."
+   },
+   {
+    "role": "assistant",
+    "content": "I can add your uploaded Visuals as small cards over the talk-to-camera clip. Want me to do that?"
+   },
+   {
+    "role": "user",
+    "content": "Use all overlays as full screen."
+   }
+  ],
+  "capability_manifest": {
+   "schema_version": 1,
+   "item_id": "item-kri297",
+   "edit_format": "subtitled",
+   "render_program": "native",
+   "has_voiceover": false,
+   "narration": null,
+   "current_edit": null,
+   "media": [
+    {
+     "media_id": "phone-a",
+     "kind": "video",
+     "duration_s": 42.0,
+     "label": null
+    },
+    {
+     "media_id": "asset-00000001-visual",
+     "kind": "image",
+     "label": null
+    },
+    {
+     "media_id": "asset-00000002-visual",
+     "kind": "image",
+     "label": null
+    },
+    {
+     "media_id": "asset-00000003-visual",
+     "kind": "image",
+     "label": null
+    },
+    {
+     "media_id": "asset-00000004-visual",
+     "kind": "image",
+     "label": null
+    },
+    {
+     "media_id": "asset-00000005-visual",
+     "kind": "video",
+     "label": null,
+     "duration_s": 4.0
+    },
+    {
+     "media_id": "asset-00000006-visual",
+     "kind": "image",
+     "label": null
+    },
+    {
+     "media_id": "asset-00000007-visual",
+     "kind": "image",
+     "label": null
+    },
+    {
+     "media_id": "asset-00000008-visual",
+     "kind": "image",
+     "label": null
+    },
+    {
+     "media_id": "asset-00000009-visual",
+     "kind": "image",
+     "label": null
+    },
+    {
+     "media_id": "asset-00000010-visual",
+     "kind": "video",
+     "label": null,
+     "duration_s": 4.0
+    },
+    {
+     "media_id": "asset-00000011-visual",
+     "kind": "image",
+     "label": null
+    },
+    {
+     "media_id": "asset-00000012-visual",
+     "kind": "image",
+     "label": null
+    },
+    {
+     "media_id": "asset-00000013-visual",
+     "kind": "image",
+     "label": null
+    },
+    {
+     "media_id": "asset-00000014-visual",
+     "kind": "image",
+     "label": null
+    },
+    {
+     "media_id": "asset-00000015-visual",
+     "kind": "video",
+     "label": null,
+     "duration_s": 4.0
+    },
+    {
+     "media_id": "asset-00000016-visual",
+     "kind": "image",
+     "label": null
+    },
+    {
+     "media_id": "asset-00000017-visual",
+     "kind": "image",
+     "label": null
+    },
+    {
+     "media_id": "asset-00000018-visual",
+     "kind": "image",
+     "label": null
+    },
+    {
+     "media_id": "asset-00000019-visual",
+     "kind": "image",
+     "label": null
+    },
+    {
+     "media_id": "asset-00000020-visual",
+     "kind": "video",
+     "label": null,
+     "duration_s": 4.0
+    },
+    {
+     "media_id": "asset-00000021-visual",
+     "kind": "image",
+     "label": null
+    },
+    {
+     "media_id": "asset-00000022-visual",
+     "kind": "image",
+     "label": null
+    }
+   ],
+   "catalog": [
+    {
+     "catalog_id": "f79b69faaab14beaa035db18ec32ac39",
+     "kind": "sound_effect",
+     "label": "Wrong buzzer"
+    },
+    {
+     "catalog_id": "4fcc09a5901f4f2eaba6571f1c183d3b",
+     "kind": "sound_effect",
+     "label": "Correct ding"
+    }
+   ],
+   "capabilities": {
+    "set_item_intent": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "guided_story": {
+     "available": false,
+     "reason_code": "native_render_required",
+     "reason": "this edit format or audio contract requires the native renderer"
+    },
+    "native_render": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "draft_guided_proposal": {
+     "available": false,
+     "reason_code": "native_render_required",
+     "reason": "this edit format or audio contract requires the native renderer"
+    },
+    "dispatch_render": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "select_ready_variant": {
+     "available": false,
+     "reason_code": "no_ready_variant",
+     "reason": "a ready variant is required before selection"
+    },
+    "caption_style": {
+     "available": false,
+     "reason_code": "disabled_by_setting",
+     "reason": "caption styling is disabled by the server"
+    },
+    "automatic_cut": {
+     "available": false,
+     "reason_code": "disabled_by_setting",
+     "reason": "automatic speech cuts are disabled by the server"
+    },
+    "guided_voiceover": {
+     "available": false,
+     "reason_code": "disabled_by_setting",
+     "reason": "guided voiceover is disabled by the server"
+    },
+    "main_creator_agent": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "execution": {
+     "available": false,
+     "reason_code": "disabled_by_setting",
+     "reason": "execution is disabled by the server"
+    },
+    "review": {
+     "available": false,
+     "reason_code": "disabled_by_setting",
+     "reason": "review is disabled by the server"
+    },
+    "auto_iteration": {
+     "available": false,
+     "reason_code": "disabled_by_setting",
+     "reason": "auto_iteration is disabled by the server"
+    },
+    "guided_conversation": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "guided_direction_confirmation": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "guided_auto_design": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "transitions": {
+     "available": false,
+     "reason_code": "disabled_by_setting",
+     "reason": "transitions is disabled by the server"
+    },
+    "wide_looks": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "wide_looks cannot render on the iPhone yet"
+    },
+    "media_overlays": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "visual_blocks": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "motion_scenes": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "motion_scenes cannot render on the iPhone yet"
+    },
+    "sound_effects": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "sound_effects cannot render on the iPhone yet"
+    },
+    "phone_source_audio": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_still_images": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_visual_videos": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "media_overlays:video_cards": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format_pending_voiceover:narrated_ready": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format_pending_voiceover:narrated_planned": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format_pending_voiceover:narrated": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format:montage": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format:talking_head": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "talking_head does not render on this iPhone yet"
+    },
+    "phone_format:day_vlog": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format:single_hero": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format:subtitled": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format:narrated": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "narrated does not render on this iPhone yet"
+    },
+    "phone_format:narrated_planned": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "narrated_planned does not render on this iPhone yet"
+    },
+    "phone_format:narrated_ready": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "narrated_ready does not render on this iPhone yet"
+    },
+    "phone_format:slides": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "slides does not render on this iPhone yet"
+    },
+    "reaction_beats": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "edit_format:montage": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "edit_format:talking_head": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "edit_format:day_vlog": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "edit_format:single_hero": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "edit_format:subtitled": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "edit_format:narrated": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "narrated is disabled or has no production renderer for this media snapshot"
+    },
+    "edit_format:narrated_planned": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "narrated_planned is disabled or has no production renderer for this media snapshot"
+    },
+    "edit_format:narrated_ready": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "narrated_ready is disabled or has no production renderer for this media snapshot"
+    },
+    "edit_format:slides": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "slides is disabled or has no production renderer for this media snapshot"
+    },
+    "media_overlays:fullscreen": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    }
+   },
+   "limits": {
+    "max_media_refs": 50,
+    "max_catalog_refs": 50,
+    "max_commands": 4,
+    "max_output_duration_s": 120.0
+   },
+   "context_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+   "manifest_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  },
+  "brief_enabled": true
+ },
+ "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"kind\": \"style\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"Use all overlays as full screen.\",\n      \"facts\": {}\n    }\n  ],\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"native\",\n      \"edit_format\": \"subtitled\",\n      \"audio_strategy\": \"original_audio\",\n      \"media_scope\": \"selected\",\n      \"story_structure\": [\n        \"Keep the talk-to-camera clip as the spine\",\n        \"Cut between the uploaded Visuals as the topic changes\"\n      ],\n      \"pacing\": \"balanced\",\n      \"target_duration_s\": 42,\n      \"render_program\": \"native\",\n      \"selected_media_ids\": [\n        \"phone-a\"\n      ],\n      \"optional_treatments\": [\n        \"overlays\"\n      ],\n      \"caption_style\": \"auto\",\n      \"overlay_display\": \"fullscreen\",\n      \"rationale\": \"Your uploaded Visuals will each take over the full frame as the talk-to-camera plays, then cut back to you, keeping the full 42-second runtime of your clip.\"\n    },\n    \"summary\": \"I'll show your uploaded Visuals as full-screen cutaways over the talk-to-camera clip.\",\n    \"render_intent_evidence\": {\n      \"opening_title\": null,\n      \"font_family\": null,\n      \"text_color\": null\n    }\n  }\n}",
+ "output": {
+  "brief_updates": [
+   {
+    "kind": "style",
+    "scope": "global",
+    "literal": null,
+    "description": "Use all overlays as full screen.",
+    "facts": {}
+   }
+  ],
+  "action": {
+   "kind": "propose_strategy",
+   "strategy": {
+    "direction": "native",
+    "edit_format": "subtitled",
+    "audio_strategy": "original_audio",
+    "media_scope": "selected",
+    "story_structure": [
+     "Keep the talk-to-camera clip as the spine",
+     "Cut between the uploaded Visuals as the topic changes"
+    ],
+    "pacing": "balanced",
+    "target_duration_s": 42,
+    "render_program": "native",
+    "selected_media_ids": [
+     "phone-a"
+    ],
+    "optional_treatments": [
+     "overlays"
+    ],
+    "caption_style": "auto",
+    "overlay_display": "fullscreen",
+    "rationale": "Your uploaded Visuals will each take over the full frame as the talk-to-camera plays, then cut back to you, keeping the full 42-second runtime of your clip."
+   },
+   "summary": "I'll show your uploaded Visuals as full-screen cutaways over the talk-to-camera clip.",
+   "render_intent_evidence": {
+    "opening_title": null,
+    "font_family": null,
+    "text_color": null
+   }
+  }
+ },
+ "meta": {
+  "source": "hand_authored_not_live_recorded",
+  "fullscreen_overlays": {
+   "expect_overlay_display": "fullscreen"
+  },
+  "notes": "KRI-297: HAND-AUTHORED cassette, NOT live-recorded (no model/API call was made). Models the creator's phone Talking-to-camera draft (1 speaker clip + 22 uploaded Visuals) asking 'Use all overlays as full screen.' after an earlier turn asking for 'full-screen transitions'. Live re-record pending: run the command in the PR description."
+ }
+}

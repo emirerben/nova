@@ -3388,6 +3388,22 @@
                 "title": "Optional Treatments",
                 "type": "array"
               },
+              "overlay_display": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "pip",
+                      "fullscreen"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Overlay Display"
+              },
               "pacing": {
                 "default": "balanced",
                 "enum": [

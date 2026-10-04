@@ -175,10 +175,10 @@ def lanes_from_editor_sections(
     Raises ``ValueError`` (never silently drops content) when: a committed
     sound effect doesn't reference the catalog, its audio format/path is
     unplayable/invalid, or its trim window is empty; a committed overlay
-    card's ``display_mode`` isn't the pip default (fullscreen isn't a phone
-    Talking lane); a committed overlay card's ``src_gcs_path`` doesn't
-    match any photo Kria pinned for this Talking edit (adding NEW photos from
-    the phone editor isn't supported yet); or it binds a pinned VIDEO visual
+    card is a NEW full-screen overlay (KRI-297: only a card that was already
+    full-screen in ``previous`` may keep that mode); a committed overlay card's
+    ``src_gcs_path`` doesn't match any photo Kria pinned for this Talking edit
+    (adding NEW photos from the phone editor isn't supported yet); or it binds a pinned VIDEO visual
     that isn't already a video card while the KRI-183 video-PiP gate is off.
     """
     return PhoneSubtitledLanes(
@@ -254,7 +254,7 @@ def sections_from_lanes(
                 "kind": card.kind,
                 **({"clip_trim_start_s": card.source_start_s} if card.kind == "video" else {}),
                 "src_gcs_path": card.gcs_path,
-                "display_mode": "pip",
+                "display_mode": card.display_mode,
                 "position": "custom",
                 "x_frac": card.x_frac,
                 "y_frac": card.y_frac,
@@ -329,13 +329,32 @@ def lanes_from_recipe(
                     trim_start_s=clip.source_start,
                     max_duration_s=clip.source_duration,
                 )
-        elif track.id == "subtitled-overlays":
+        elif track.id in ("subtitled-overlays", "subtitled-fullscreen"):
+            fullscreen_track = track.id == "subtitled-fullscreen"
             for clip in track.clips:
                 placement = clip.visual_placement
                 if placement is None:
                     continue
                 visual = visual_for(clip.source_asset_id)
                 if visual is None:
+                    continue
+                if fullscreen_track:
+                    # KRI-297: a full-canvas cutaway has no card geometry;
+                    # the card defaults stand in for it (ignored on compile).
+                    overlays.append(
+                        SubtitledOverlayCard(
+                            id=clip.id.removeprefix("subtitled-overlay-"),
+                            media_id=visual.media_id,
+                            gcs_path=visual.gcs_path,
+                            generation=visual.generation,
+                            start_s=placement.window_start,
+                            end_s=placement.window_end,
+                            fade=bool(placement.fade_in or placement.fade_out),
+                            kind="video" if visual.kind == "video" else "image",
+                            source_start_s=clip.source_start if visual.kind == "video" else 0.0,
+                            display_mode="fullscreen",
+                        )
+                    )
                     continue
                 overlays.append(
                     SubtitledOverlayCard(
@@ -453,10 +472,19 @@ def _overlays_from_sections(
         if not isinstance(item, dict):
             raise ValueError("media overlay card must be an object")
         display_mode = item.get("display_mode", "pip")
-        if display_mode != "pip":
+        card_id = item.get("id")
+        previous_card = previous_by_id.get(card_id) if isinstance(card_id, str) else None
+        if display_mode not in ("pip", "fullscreen"):
+            raise ValueError(f"unsupported overlay display mode: {display_mode!r}")
+        if display_mode == "fullscreen" and (
+            previous_card is None or previous_card.display_mode != "fullscreen"
+        ):
+            # KRI-297: a full-screen card can only round-trip -- the editor
+            # may move/retime/delete the cards Kria authored as full-screen,
+            # but cannot promote a NEW or picture-in-picture card yet.
             raise ValueError(
-                "phone Talking edits only support picture-in-picture overlay cards -- "
-                "fullscreen overlays aren't supported yet"
+                "phone Talking edits can't turn a card into a full-screen overlay yet -- "
+                "only Kria's own full-screen overlays can be kept"
             )
         path = item.get("src_gcs_path")
         binding = next((visual for visual in visuals if visual.gcs_path == path), None)
@@ -465,13 +493,11 @@ def _overlays_from_sections(
                 "that photo isn't a photo Kria pinned for this Talking edit -- adding new "
                 "photos to a phone Talking edit isn't supported yet"
             )
-        card_id = item.get("id")
         if not isinstance(card_id, str) or not card_id:
             raise ValueError("media overlay card is missing its id")
         # `MediaOverlay` has no fade token (see `sections_from_lanes`), so a
         # card keeps the fade the worker/previous Save gave it; a card the
         # creator added in the editor is static.
-        previous_card = previous_by_id.get(card_id)
         fade = previous_card.fade if previous_card is not None else False
         # KRI-183: the pinned visual's kind is the truth, not the payload's.
         # A video card is allowed when the video-PiP gate holds, or when this
@@ -517,6 +543,7 @@ def _overlays_from_sections(
                 z=max(int(item.get("z") or 0), 0),
                 kind="video" if binding.kind == "video" else "image",
                 source_start_s=source_start_s,
+                **({"display_mode": "fullscreen"} if display_mode == "fullscreen" else {}),
             )
         )
     return cards

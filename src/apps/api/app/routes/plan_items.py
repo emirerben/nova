@@ -8750,13 +8750,13 @@ async def _queue_pool_asset_analysis(
             task_headers["x-correlation-id"] = asset.correlation_id
         analyze_pool_asset.apply_async(
             args=[str(asset.id), False],
-            queue=_settings.pool_asset_analysis_queue,
+            queue=_settings.pool_asset_visuals_queue,
             headers=task_headers,
         )
         log.info(
             "pool_asset_analysis_queued",
             asset_id=str(asset.id),
-            queue=_settings.pool_asset_analysis_queue,
+            queue=_settings.pool_asset_visuals_queue,
             attempt=asset.analysis_attempt_count,
         )
     except Exception as exc:  # noqa: BLE001

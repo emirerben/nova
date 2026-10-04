@@ -122,10 +122,11 @@ from app.pipeline.generative_decision import (
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_narrated_plan import NarratedPhoneStep, compile_phone_narrated_plan
 from app.pipeline.phone_recipe_shared import PhoneMusicBed, PhoneNarrationBed
+from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, SubtitledOverlayCard
 from app.pipeline.phone_subtitled_plan import PhoneCutaway, compile_phone_subtitled_plan
 from app.pipeline.phone_voiceover_montage_plan import compile_phone_voiceover_montage_plan
 from app.services.phone_rollout import validate_phone_pilot_recipe
-from app.services.phone_sources import PhoneSourceBinding
+from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
 
 CLIP_DURATION_S = 3.0
 CANVAS = {"width": 1080, "height": 1920}
@@ -286,6 +287,46 @@ def _landscape_binding(path: Path, media_id: str, *, duration_s: float) -> Phone
             orientation_degrees=90,
             has_audio=True,
         ),
+    )
+
+
+def _grey_speaker_clip(path: Path, freq: int, duration: float) -> None:
+    """KRI-297: a portrait 1080x1920 speaker, solid mid-grey (0x808080) with a small BLACK square
+    marker moving left to right near the top, plus a `freq`-Hz tone. The marker proves the speaker
+    is live between full-screen windows; grey never reads as caption-white."""
+    _ffmpeg(
+        *("-f", "lavfi", "-i", f"color=c=0x808080:s=1080x1920:r=30:d={duration}"),
+        *("-f", "lavfi", "-i", f"sine=frequency={freq}:duration={duration}"),
+        *("-f", "lavfi", "-i", f"color=c=black:s=80x80:r=30:d={duration}"),
+        *("-filter_complex", "[0][2]overlay=x='t*90':y=120[v]"),
+        *("-map", "[v]", "-map", "1:a"),
+        *("-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(path)),
+    )
+
+
+def _solid_png(path: Path, color: str, size: str) -> None:
+    _ffmpeg(*("-f", "lavfi", "-i", f"color=c={color}:s={size}"), *("-frames:v", "1", str(path)))
+
+
+def _silent_color_video(path: Path, color: str, size: str, duration: float) -> None:
+    _ffmpeg(
+        *("-f", "lavfi", "-i", f"color=c={color}:s={size}:r=30:d={duration}"),
+        *("-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", str(path)),
+    )
+
+
+def _visual_binding(
+    path: Path, media_id: str, *, kind: str = "image", **probe: object
+) -> PhoneVisualBinding:
+    sha, size = _fingerprint(path)
+    return PhoneVisualBinding(
+        media_id=media_id,
+        gcs_path=f"users/owner/plan/item/pool/{media_id}{path.suffix}",
+        generation="202",
+        sha256=sha,
+        byte_count=size,
+        kind=kind,
+        **probe,
     )
 
 
@@ -522,6 +563,56 @@ def main() -> None:
     except (UnsupportedPhonePlan, ValueError) as exc:
         compile_errors["subtitled_landscape_fit"] = f"{type(exc).__name__}: {exc}"
 
+    # --- case (f3): full-screen Visuals over the speaker (KRI-297) -----------
+    # Portrait grey speaker (340 Hz tone, 10s). Three full-screen cards in non-overlapping
+    # windows: red still 2.5-4s, blue 1920x1080 LANDSCAPE still 5-7s (cover-crop), lime 1920x1080
+    # silent video 7.5-9s. Captions run across every window and must stay on top.
+    fs_cues = [
+        {"text": "Red card caption", "start_s": 2.3, "end_s": 4.3},
+        {"text": "Blue card caption", "start_s": 4.8, "end_s": 7.2},
+        {"text": "Green card caption", "start_s": 7.4, "end_s": 9.5},
+    ]
+    _grey_speaker_clip(out / "fullscreen-speaker.mp4", 340, duration=10.0)
+    fs_speaker = _binding(out / "fullscreen-speaker.mp4", "fullscreen-speaker", duration_s=10.0)
+    _solid_png(out / "fs-red.png", "red", "1080x1920")
+    _solid_png(out / "fs-blue.png", "blue", "1920x1080")
+    _silent_color_video(out / "fs-green.mp4", "lime", "1920x1080", duration=2.0)
+    fs_visuals = (
+        _visual_binding(out / "fs-red.png", "fs-red"),
+        _visual_binding(out / "fs-blue.png", "fs-blue"),
+        _visual_binding(
+            out / "fs-green.mp4", "fs-green", kind="video", duration_s=2.0, width=1920, height=1080
+        ),
+    )
+
+    def _fs_card(visual: PhoneVisualBinding, start: float, end: float, **kw) -> SubtitledOverlayCard:
+        return SubtitledOverlayCard(
+            id=f"card-{visual.media_id}",
+            media_id=visual.media_id,
+            gcs_path=visual.gcs_path,
+            generation=visual.generation,
+            start_s=start,
+            end_s=end,
+            display_mode="fullscreen",
+            **kw,
+        )
+
+    try:
+        recipes["subtitled_fullscreen_visuals"] = compile_phone_subtitled_plan(
+            (fs_speaker,),
+            caption_cues=fs_cues,
+            visuals=fs_visuals,
+            lanes=PhoneSubtitledLanes(
+                overlays=[
+                    _fs_card(fs_visuals[0], 2.5, 4.0),
+                    _fs_card(fs_visuals[1], 5.0, 7.0),
+                    _fs_card(fs_visuals[2], 7.5, 9.0, kind="video"),
+                ]
+            ),
+        )
+    except (UnsupportedPhonePlan, ValueError) as exc:
+        compile_errors["subtitled_fullscreen_visuals"] = f"{type(exc).__name__}: {exc}"
+
     # --- case (g): multi-clip Talking head with a muted cutaway ------------
     # The speaker remains the only main-track clip and therefore supplies the
     # same 340-Hz source audio before, during, and after the lime cutaway. The
@@ -610,7 +701,12 @@ def main() -> None:
             # The KRI-257 fixture exercises the production-admitted cutaway
             # overlay shape through the same worker allowance used for that
             # path. Its capability negotiation remains mandatory.
-            validate_phone_pilot_recipe(recipe, allow_editor_media=case_id == "talking_head")
+            # Production (`_run_phone_subtitled_job`) passes allow_editor_media=True for
+            # cutaways AND for any recipe carrying overlay-lane cards (KRI-297 included).
+            validate_phone_pilot_recipe(
+                recipe,
+                allow_editor_media=case_id in {"talking_head", "subtitled_fullscreen_visuals"},
+            )
         except ValueError as exc:
             rejections[case_id] = str(exc)
 
@@ -646,6 +742,14 @@ def main() -> None:
         canvas_width=CANVAS["width"],
         canvas_height=CANVAS["height"],
     )
+    fs_regions = [
+        _caption_region(
+            recipes["subtitled_fullscreen_visuals"].text_layers[i],
+            canvas_width=CANVAS["width"],
+            canvas_height=CANVAS["height"],
+        )
+        for i in range(3)
+    ]
     talking_region0 = _caption_region(
         recipes["talking_head"].text_layers[0],
         canvas_width=CANVAS["width"],
@@ -671,6 +775,23 @@ def main() -> None:
         canvas_width=CANVAS["width"],
         canvas_height=CANVAS["height"],
     )
+
+    def _fs_samples() -> list[dict]:
+        """Centre + all four corners (8px inset) inside each window; speaker grey between."""
+        pts = {"c": (540, 960), "tl": (8, 8), "tr": (1071, 8), "bl": (8, 1911), "br": (1071, 1911)}
+        out_samples: list[dict] = []
+        for card, t, rgb in (
+            ("red", 3.2, [255, 0, 0]),
+            ("blue", 6.0, [0, 0, 255]),
+            ("green", 8.3, [0, 255, 0]),
+        ):
+            for key, (x, y) in pts.items():
+                out_samples.append({"name": f"{card}_{key}", "t": t, "x": x, "y": y, "rgb": rgb})
+        # Between windows the grey speaker (0x808080) is back; sample away from the marker.
+        for name, t in (("grey_before", 1.5), ("grey_gap1", 4.55), ("grey_gap2", 7.25), ("grey_after", 9.5)):
+            out_samples.append({"name": name, "t": t, "x": 540, "y": 960, "rgb": [128, 128, 128]})
+            out_samples.append({"name": f"{name}_corner", "t": t, "x": 8, "y": 1911, "rgb": [128, 128, 128]})
+        return out_samples
 
     e2e = {
         "verified_features": sorted(all_capabilities),
@@ -857,6 +978,43 @@ def main() -> None:
                         "region": subtitled_landscape_region0,
                         "expect_text": False,
                     },
+                ],
+            },
+            "subtitled_fullscreen_visuals": {
+                "status_file": "status-subtitled-fullscreen-visuals.json",
+                "duration_s": recipes["subtitled_fullscreen_visuals"].duration,
+                "required_capabilities": sorted(
+                    recipes["subtitled_fullscreen_visuals"].required_capabilities
+                ),
+                "drop_capability": "visualVideos",
+                "clips": [
+                    {"media_id": "fullscreen-speaker", "file": "fullscreen-speaker.mp4"},
+                ],
+                # Visuals-pool assets are granted per asset id ("visual-<media_id>").
+                "visual_files": {
+                    "visual-fs-red": "fs-red.png",
+                    "visual-fs-blue": "fs-blue.png",
+                    "visual-fs-green": "fs-green.mp4",
+                },
+                "music_asset_id": None,
+                "music_file": None,
+                "expects_source_audio": True,
+                "expects_music_audio": False,
+                "expects_narration_audio": False,
+                "samples": _fs_samples(),
+                "caption_samples": [
+                    {"name": "red_cap_on", "t": 3.2, "region": fs_regions[0], "expect_text": True},
+                    {"name": "blue_cap_on", "t": 6.0, "region": fs_regions[1], "expect_text": True},
+                    {"name": "green_cap_on", "t": 8.3, "region": fs_regions[2], "expect_text": True},
+                    {"name": "grey_cap_gap", "t": 4.55, "region": fs_regions[0], "expect_text": False},
+                ],
+                # Speaker audio continues under every full-screen card; the visuals carry no
+                # 659 Hz (their own audio is nil), so it must stay absent.
+                "audio_samples": [
+                    {"name": "before", "t": 1.0, "speaker_hz": 340, "muted_hz": 659},
+                    {"name": "red", "t": 3.2, "speaker_hz": 340, "muted_hz": 659},
+                    {"name": "blue", "t": 6.0, "speaker_hz": 340, "muted_hz": 659},
+                    {"name": "green", "t": 8.3, "speaker_hz": 340, "muted_hz": 659},
                 ],
             },
             "talking_head": {

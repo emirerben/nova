@@ -109,6 +109,13 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         try await assertCase("subtitled_landscape_fit")
     }
 
+    /// KRI-297: three FULL-SCREEN Visuals (red still, landscape blue still, green video) over a
+    /// grey portrait speaker: each covers the whole frame (centre + four corners) in its window,
+    /// the speaker is back between windows, speaker audio continues, captions stay on top.
+    func testSubtitledFullscreenVisualsRenderOnTheIPhone() async throws {
+        try await assertCase("subtitled_fullscreen_visuals")
+    }
+
     /// KRI-257 / Plan 025 A3: multi-clip self-narrated Talking keeps the
     /// speaker's audio spine continuous, mutes the visual cutaway, draws that
     /// cutaway only in its scheduled window, and continues captions across it.
@@ -202,6 +209,10 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         // per-asset grant endpoint as `.library`/`.visual` -- same mock, new asset id.
         if let voiceoverAssetID = caseMeta["voiceover_asset_id"] as? String, let voiceoverFile = caseMeta["voiceover_file"] as? String {
             bytes[voiceoverAssetID] = try Data(contentsOf: input.appendingPathComponent(voiceoverFile))
+        }
+        // KRI-297: Visuals-pool assets (`.visual`) ride the same per-asset grant, keyed by asset id.
+        if let visualFiles = caseMeta["visual_files"] as? [String: String] {
+            for (assetID, file) in visualFiles { bytes[assetID] = try Data(contentsOf: input.appendingPathComponent(file)) }
         }
         let log = RequestLog()
         NativeEditorURLProtocol.handler = { request in
