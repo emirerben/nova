@@ -611,6 +611,10 @@ struct DirectionStage: View {
     /// Nil for a thread that predates the field or hasn't loaded it yet, which
     /// resolves to the same plain "Create this video" flow as `applicable: false`.
     var speechCleanup: [String: JSONValue]? = nil
+    /// KRI-306: the video shapes on offer and the creator's current pick. Nil
+    /// (older server, nothing choosable) hides the picker; the parent reads the pick
+    /// when it sends the approval, so `decide` needs no extra argument.
+    var renderShape: (offer: RenderShapeOffer, choice: Binding<RenderShapeChoice>)? = nil
     let isBusy: Bool
     var responseStartedAt: Date? = nil
     /// `decision` is "approve" or "deny". `cleanupChoice` is only meaningful on
@@ -662,6 +666,10 @@ struct DirectionStage: View {
                     .stroke(KriaColor.border, lineWidth: 1)
             }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            if let renderShape {
+                VideoShapeCard(offer: renderShape.offer, choice: renderShape.choice, isEnabled: !isBusy)
+            }
 
             Text("Nothing renders until you approve this direction.")
                 .font(KriaFont.body(12))

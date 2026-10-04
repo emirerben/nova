@@ -39,6 +39,9 @@
       "KriaUITests/AttachmentFlowUITests/testImportedVoiceoverReviewsTimingAndPlaybackBeforeUpload",
       "KriaUITests/AttachmentFlowUITests/testUnknownFootageDurationDoesNotInventComparison",
       "KriaUITests/AttachmentFlowUITests/testExistingVoiceoverKeepsItsCapacityAndContinueChoice",
+      "KriaUITests/CreationUITests/testConfirmScreenLandscapeChoiceIsSentWithoutAFit",
+      "KriaUITests/CreationUITests/testConfirmScreenSendsTheSeededDefaultAndACropPick",
+      "KriaUITests/CreationUITests/testConfirmScreenHidesThePickerAndSendsNothingWhenTheServerOffersNoShape",
       "KriaUITests/CreationUITests/testClipPickerSelectsClipsAndSendsStructuredAnswerWithMissingThumbnailFallback",
       "KriaUITests/CreationUITests/testClipPickerNoneOfTheseSendsNoneKeys",
       "KriaUITests/CreationUITests/testClipPickerSkipSendsSkipped",
@@ -147,7 +150,11 @@
       "KriaUITests/NativeCaptionVisualUITests/testTransitionControlHiddenWhenCapabilityClosed",
       "KriaUITests/NativeCaptionVisualUITests/testVisualsTransitionsCategoryVisibleOnDevice",
       "KriaUITests/NativeCaptionVisualUITests/testVisualsTransitionsCategoryHiddenWhenCapabilityClosed",
-      "KriaUITests/NativeEditorInspectorUITests/testMissingOriginalsOffersFindingFilesInsteadOfRetry"
+      "KriaUITests/NativeEditorInspectorUITests/testMissingOriginalsOffersFindingFilesInsteadOfRetry",
+      "KriaUITests/NativeEditorInspectorUITests/testVideoShapePickerIsEnabledFromTheCapabilityAndReshapesThePreview",
+      "KriaUITests/NativeEditorInspectorUITests/testVideoShapeButtonIsHiddenWhenBothCapabilitiesAreClosed",
+      "KriaUITests/NativeEditorInspectorUITests/testVideoShapeShowsTheServerReasonWhenOnlyOrientationIsClosed",
+      "KriaUITests/NativeEditorInspectorUITests/testVideoShapePickerStacksAtAccessibilityTextSize"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",

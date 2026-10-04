@@ -237,6 +237,79 @@ final class CreationUITests: XCTestCase {
         }
     }
 
+    /// KRI-306: launches a creation flow whose fixture server answers a 422 unless the app sent exactly
+    /// `expect` ("<orientation>/<fit>", "none" for a key that must be absent), taps `choose` on the picker
+    /// (identifiers only), creates, and passes only if the render started.
+    private func createWithVideoShape(runtime: String, offered: Bool, expect: String, choose: [String] = [],
+                                      file: StaticString = #filePath, line: UInt = #line) {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = runtime
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        if offered { app.launchEnvironment["KRIA_CHAT_RENDER_SHAPE"] = "1" }
+        app.launchEnvironment["KRIA_CHAT_RENDER_SHAPE_EXPECT"] = expect
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+        let next = app.buttons["Send clips"]
+        XCTAssertTrue(next.waitForExistence(timeout: 5), file: file, line: line)
+        next.tap()
+        let confirm = app.buttons["Create this video"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10), "\(runtime) confirm", file: file, line: line)
+        let vertical = app.buttons["video-shape-orientation-portrait"]
+        if offered {
+            XCTAssertTrue(vertical.waitForExistence(timeout: 5), "\(runtime): the picker shows when the server offers a shape", file: file, line: line)
+        } else {
+            XCTAssertFalse(vertical.exists, "\(runtime): no picker without an offered shape", file: file, line: line)
+        }
+        if offered {
+            let blackBars = app.buttons["video-shape-fit-fit"]
+            XCTAssertTrue(vertical.isSelected && blackBars.isSelected, "\(runtime): seeded from the server default (Vertical + Black bars)", file: file, line: line)
+            XCTAssertGreaterThanOrEqual(vertical.frame.height, 44, "44pt touch target", file: file, line: line)
+            XCTAssertGreaterThanOrEqual(app.buttons["video-shape-orientation-landscape"].frame.height, 44, file: file, line: line)
+            XCTAssertEqual(vertical.label, "Video shape: Vertical 9:16", file: file, line: line)
+            let capture = XCTAttachment(screenshot: app.screenshot())
+            capture.name = "video-shape-confirm-\(runtime)"
+            capture.lifetime = .keepAlways
+            add(capture)
+        }
+        for identifier in choose {
+            let button = app.buttons[identifier]
+            XCTAssertTrue(button.waitForExistence(timeout: 3), identifier, file: file, line: line)
+            button.tap()
+            XCTAssertTrue(button.isSelected, "\(identifier) selected after tap", file: file, line: line)
+        }
+        if choose.contains("video-shape-orientation-landscape") {
+            XCTAssertFalse(app.buttons["video-shape-fit-fill"].exists, "Landscape always crops, so the fit row disappears", file: file, line: line)
+        }
+        confirm.tap()
+        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30), "\(runtime): the app sent \(expect)", file: file, line: line)
+        app.terminate()
+    }
+
+    /// KRI-306: Landscape on the confirm screen travels with the approval (v2) and the generate action (v1),
+    /// and carries no fit because landscape output always crops.
+    func testConfirmScreenLandscapeChoiceIsSentWithoutAFit() {
+        for runtime in ["v1", "v2"] {
+            createWithVideoShape(runtime: runtime, offered: true, expect: "landscape/none", choose: ["video-shape-orientation-landscape"])
+        }
+    }
+
+    /// KRI-306: the seeded default and a Crop pick both reach the server as the creator left them.
+    func testConfirmScreenSendsTheSeededDefaultAndACropPick() {
+        createWithVideoShape(runtime: "v2", offered: true, expect: "portrait/fit")
+        createWithVideoShape(runtime: "v1", offered: true, expect: "portrait/fill", choose: ["video-shape-fit-fill"])
+        createWithVideoShape(runtime: "v2", offered: true, expect: "portrait/fill", choose: ["video-shape-fit-fill"])
+    }
+
+    /// KRI-306: an older server (or a thread with nothing to choose) shows no picker and sends no shape keys.
+    func testConfirmScreenHidesThePickerAndSendsNothingWhenTheServerOffersNoShape() {
+        for runtime in ["v1", "v2"] {
+            createWithVideoShape(runtime: runtime, offered: false, expect: "none/none")
+        }
+    }
+
     /// KRI-207: after a render the creator sees one chip per requirement, sees which names were
     /// guessed, and can start correcting one with a single tap.
     func testReceiptChipsAndGuessedNamesStartACorrection() {

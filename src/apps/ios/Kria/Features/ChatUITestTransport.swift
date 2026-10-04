@@ -149,6 +149,9 @@ private final class CreationChatFixture: @unchecked Sendable {
             if action == "generate", let detail = generateConflict(threadID: id) {
                 return response(["detail": detail], status: 409)
             }
+            if action == "generate", let mismatch = renderShapeMismatch(payload) {
+                return response(["detail": mismatch], status: 422)
+            }
             if action == "select_format" {
                 state["format"] = payload["format"]
                 // A phone-render account's clip is an analysis proxy; the original stays on the iPhone.
@@ -291,6 +294,7 @@ private final class CreationChatFixture: @unchecked Sendable {
             }
         } else if parts.contains("approvals") {
             if parts.last == "approve" {
+                if let mismatch = renderShapeMismatch(body) { return response(["detail": mismatch], status: 422) }
                 append("approval_approved")
                 thread["active_job_id"] = id
                 thread["job"] = ["id": id, "status": "processing", "variants": []]
@@ -328,7 +332,24 @@ private final class CreationChatFixture: @unchecked Sendable {
         }
         if parts.last == "turns" { return response(["turn_id": id, "thread_revision": revision, "status": "queued"], status: 202) }
         if parts.last == "approve" { return response(["approval_id": approvalID, "thread_id": id, "status": "approved", "thread_revision": revision]) }
-        return response(thread)
+        return response(withRenderShape(thread))
+    }
+    /// KRI-306 fixture (`KRIA_CHAT_RENDER_SHAPE=1`): the server offers Vertical / Landscape and
+    /// Black bars / Crop on a pending approval or plan, and nothing once a job exists.
+    private func withRenderShape(_ thread: [String: Any]) -> [String: Any] {
+        guard ProcessInfo.processInfo.environment["KRIA_CHAT_RENDER_SHAPE"] == "1", thread["active_job_id"] == nil else { return thread }
+        var result = thread
+        result["render_shape"] = ["orientations": ["portrait", "landscape"], "fit_choices": ["fit", "fill"],
+                                  "default": ["output_orientation": "portrait", "landscape_fit": "fit"]] as [String: Any]
+        return result
+    }
+    /// `KRIA_CHAT_RENDER_SHAPE_EXPECT` is "<orientation>/<fit>" with "none" for a key the client must NOT
+    /// send. A mismatch is answered with a 422 so the flow never reaches "Open editor": the UI test
+    /// asserts what the app sent by whether the render starts.
+    private func renderShapeMismatch(_ body: [String: Any]) -> String? {
+        guard let expected = ProcessInfo.processInfo.environment["KRIA_CHAT_RENDER_SHAPE_EXPECT"] else { return nil }
+        let actual = "\(body["output_orientation"] as? String ?? "none")/\(body["landscape_fit"] as? String ?? "none")"
+        return actual == expected ? nil : "Unexpected render shape \(actual), expected \(expected)"
     }
     /// KRI-207 fixture (`KRIA_CHAT_FIXTURE_BRIEF=1`): invented names, one receipt of every kind. The
     /// first guess carries its clip; the second only the plain `inferred` string an older server sends.
