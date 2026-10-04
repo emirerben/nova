@@ -875,7 +875,8 @@ def test_unverified_authored_text_raises_the_typed_capability_error(monkeypatch)
     from app.services.phone_rollout import PhoneCapabilityUnavailable
 
     monkeypatch.setattr(settings, "phone_font_qualification_strict", False)
-    recipe = _default_font_recipe("Inter")
+    # DM Sans: the helper asserts opsz on Linux, which only a variable face resolves.
+    recipe = _default_font_recipe("DM Sans")
     recipe.text_layers[0].animation_phases = TextAnimationPhases(loop="float")
     monkeypatch.setattr(
         settings,
