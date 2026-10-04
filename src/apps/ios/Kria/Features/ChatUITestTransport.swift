@@ -68,6 +68,9 @@ private final class CreationChatFixture: @unchecked Sendable {
     private var failedGenerates: Set<String> = []
     private var slideDrafts: [String: [String: Any]] = [:]
     private var slideRendered: Set<String> = []
+    /// `KRIA_SLIDE_POST_LATE_ASSET=1`: a fourth photo that is still processing for the first two reads
+    /// after a draft exists and then turns ready, like an upload that finishes while the editor is open.
+    private var lateAssetPolls: [String: Int] = [:]
     private var deviceRevisions: [String: Int] = [:]
     private let approvalID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     private var runtime: Int { ProcessInfo.processInfo.environment["KRIA_CHAT_CREATION_FLOW"] == "v2" ? 2 : 1 }
@@ -278,12 +281,18 @@ private final class CreationChatFixture: @unchecked Sendable {
     /// proposal, versioned save, and version-approved dispatch endpoints.
     private func slideResponse(_ request: URLRequest, itemID: String, parts: [String], body: [String: Any]) -> (Int, Data) {
         func response(_ object: Any, status: Int = 200) -> (Int, Data) { (status, (try? JSONSerialization.data(withJSONObject: object)) ?? Data()) }
-        let media = [("trulli-street", "jpg", "image"), ("istanbul", "mp4", "video"), ("lisbon", "jpg", "image")]
-        let assets: [[String: Any]] = media.enumerated().map { index, media in
+        // `KRIA_SLIDE_POST_MANY=1`: twelve slides, so the strip overflows and auto-scroll can be exercised.
+        let base = [("trulli-street", "jpg", "image"), ("istanbul", "mp4", "video"), ("lisbon", "jpg", "image")]
+        let media = ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_MANY"] == "1" ? Array(repeating: base, count: 4).flatMap { $0 } : base
+        var assets: [[String: Any]] = media.enumerated().map { index, media in
             let url = Bundle.main.url(forResource: media.0, withExtension: media.1)?.absoluteString ?? ""
             return ["id": "asset-\(index)", "kind": media.2, "status": "ready", "media_status": "available", "source_filename": "\(media.0).\(media.1)", "source_url": url, "display_url": url, "preview_url": media.2 == "video" ? Bundle.main.url(forResource: "trulli-street", withExtension: "jpg")!.absoluteString : url, "duration_s": 8]
         }
         let slides: [[String: Any]] = assets.enumerated().map { index, asset in ["id": "slide-\(index)", "asset_id": asset["id"]!, "kind": asset["kind"]!] }
+        func lateAsset(status: String) -> [String: Any] {
+            let url = Bundle.main.url(forResource: "trulli-street", withExtension: "jpg")?.absoluteString ?? ""
+            return ["id": "asset-3", "kind": "image", "status": status, "media_status": "available", "source_filename": "late.jpg", "source_url": url, "display_url": url, "preview_url": url, "duration_s": 0]
+        }
         if parts.last == "assets" { return response(["assets": assets, "max_assets": 20]) }
         if parts.last == "propose" {
             var draft = slideDrafts[itemID] ?? ["schema_version": 1, "version": 1, "platform_profile": "instagram_carousel", "slides": slides, "cover_index": 0, "caption": "Three moments, one story.", "user_edited": false]
@@ -321,6 +330,11 @@ private final class CreationChatFixture: @unchecked Sendable {
             let version = slideDrafts[itemID]?["version"]
             slideDrafts[itemID]?["rendered_version"] = version
             return response(["slide_post": slideDrafts[itemID] ?? [:]])
+        }
+        if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_LATE_ASSET"] == "1", slideDrafts[itemID] != nil {
+            let polls = lateAssetPolls[itemID, default: 0] + 1
+            lateAssetPolls[itemID] = polls
+            assets.append(lateAsset(status: polls <= 2 ? "processing" : "ready"))
         }
         var state: [String: Any] = ["schema_version": 1, "item_id": itemID, "title": "Three connected moments", "assets": assets, "render_status": "not_rendered", "slides": [], "validation_errors": []]
         if let draft = slideDrafts[itemID] { state["draft"] = draft }

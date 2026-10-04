@@ -14,8 +14,13 @@ struct SlidePostTextCanvas: View {
     let size: CGSize
     let selectedID: String?
     let interactive: Bool
-    /// A text id selects it; nil deselects (a tap on empty canvas).
+    /// Browse/look mode: the canvas does not take gestures, but a tap on a text still reaches `onTapText`
+    /// (only over the text itself, so a video's own controls keep working everywhere else).
+    var tapsToEdit = false
+    /// A drag that starts on a text selects it (nil deselects).
     let onSelect: (String?) -> Void
+    /// A tap: the text under the finger, or nil for empty canvas.
+    var onTapText: (String?) -> Void = { _ in }
     /// (text id, gesture key, mutation). The key is unique per gesture.
     let onTransform: (String, String, (inout SlidePostTextElement) -> Void) -> Void
 
@@ -53,6 +58,9 @@ struct SlidePostTextCanvas: View {
             }
             .frame(width: size.width, height: size.height, alignment: .topLeading)
             .allowsHitTesting(false)
+            if tapsToEdit && !interactive {
+                ForEach(texts) { element in tapTarget(element) }
+            }
             if interactive {
                 gestureSurface
                 if let selected = texts.first(where: { $0.id == selectedID }), let rect = selectionRect(for: selected) {
@@ -125,7 +133,20 @@ struct SlidePostTextCanvas: View {
            hypot(point.x - handleCenter(for: selected, rect: rect).x, point.y - handleCenter(for: selected, rect: rect).y) <= NativeTextTransformMath.cornerGrabRadius {
             return
         }
-        onSelect(hit(at: point)?.id)
+        onTapText(hit(at: point)?.id)
+    }
+
+    /// An invisible, rotated hit area exactly over one text (browse/look mode).
+    @ViewBuilder private func tapTarget(_ element: SlidePostTextElement) -> some View {
+        if let rect = selectionRect(for: element) {
+            Color.clear
+                .frame(width: rect.width, height: rect.height)
+                .contentShape(Rectangle())
+                .onTapGesture { onTapText(element.id) }
+                .rotationEffect(.degrees(element.rotationDeg))
+                .position(x: rect.midX, y: rect.midY)
+                .accessibilityHidden(true)
+        }
     }
 
     private func dragChanged(_ value: DragGesture.Value) {
@@ -270,6 +291,7 @@ struct SlidePostTextCanvas: View {
             .accessibilityHint(selected ? "Drag to move, pinch to resize, twist to rotate" : "Double tap to select")
             .accessibilityAddTraits(selected ? .isSelected : [])
             .accessibilityAction(named: "Select") { onSelect(element.id) }
+            .accessibilityAction(named: "Edit text") { onTapText(element.id) }
             .accessibilityIdentifier("slidepost-canvas-text-\(element.id)")
     }
 

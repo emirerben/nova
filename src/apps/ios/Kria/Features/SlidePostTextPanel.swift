@@ -11,6 +11,8 @@ struct SlidePostTextPanel: View {
     @Binding var tab: Tab
     /// Keyboard up on a short phone: the pinned Add text / Apply row steps aside so the text box stays visible.
     var compact = false
+    /// Changes whenever the canvas asks for the keyboard (a tap on the text already being edited).
+    var focusToken = 0
     let onDone: () -> Void
     @StateObject private var editor: SlidePostTextEditor
     @State private var appliedMessage: String?
@@ -19,8 +21,8 @@ struct SlidePostTextPanel: View {
     @State private var reportedTab: Tab
     @State private var reloadToken = 0
 
-    init(session: SlidePostSession, slideID: String, tab: Binding<Tab>, compact: Bool = false, onDone: @escaping () -> Void) {
-        self.session = session; self.slideID = slideID; self._tab = tab; self.compact = compact; self.onDone = onDone
+    init(session: SlidePostSession, slideID: String, tab: Binding<Tab>, compact: Bool = false, focusToken: Int = 0, onDone: @escaping () -> Void) {
+        self.session = session; self.slideID = slideID; self._tab = tab; self.compact = compact; self.focusToken = focusToken; self.onDone = onDone
         _editor = StateObject(wrappedValue: SlidePostTextEditor(session: session, slideID: slideID))
         _reportedTab = State(initialValue: tab.wrappedValue)
     }
@@ -82,6 +84,8 @@ struct SlidePostTextPanel: View {
             if next != reportedTab { reportedTab = next; reloadToken += 1 }
         }
         .onChange(of: session.selectedTextID) { _, _ in appliedMessage = nil }
+        // Re-creating the panel re-runs its focus-on-appear, putting the keyboard on the text field.
+        .onChange(of: focusToken) { _, _ in reloadToken += 1 }
     }
 
     private var emptyState: some View {

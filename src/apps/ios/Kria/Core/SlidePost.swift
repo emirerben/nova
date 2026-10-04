@@ -439,6 +439,11 @@ private struct SlidePostItemResponse: Decodable {
     @Published private(set) var operationMessage: String?
     /// Text being edited on the canvas (not persisted; the text panel owns it).
     @Published var selectedTextID: String?
+    /// Why some freshly imported media did not become a slide (limit / photos-only). Cleared by the user.
+    @Published var autoAppendNotice: String?
+    /// Pool assets the session has already decided about (in the draft, removed, or skipped). Only an
+    /// asset outside this set is appended automatically; nil until the pool was first looked at.
+    private(set) var seenAssetIDs: Set<String>?
     /// The local draft always wins (KRI-298): a newer server version is rebased onto silently,
     /// so there is no conflict state. Kept as a constant for older call sites.
     var hasConflict: Bool { false }
@@ -551,6 +556,8 @@ private struct SlidePostItemResponse: Decodable {
         do {
             let profile = platformProfile ?? draft?.platformProfile ?? proposal?.draft.platformProfile ?? (readyAssets.contains(where: { $0.kind == "video" }) ? "instagram_carousel" : "tiktok_photo")
             let ids = draft?.slides.map(\.assetID) ?? proposal?.draft.slides.map(\.assetID) ?? readyAssets.map(\.id)
+            // Media that arrives while Kria arranges is not in this request, so it must stay unseen.
+            seenAssetIDs = (seenAssetIDs ?? []).union(ids)
             let result = try await api.proposeSlidePost(itemID: itemID, request: .init(expectedVersion: baseVersion, platformProfile: profile, assetIDs: ids, instruction: prompt))
             guard result.baseVersion == baseVersion else { throw APIError.conflict }
             proposal = result
@@ -790,6 +797,24 @@ private struct SlidePostItemResponse: Decodable {
         stageDraft(value)
         if selectedID == id { selectedID = value.slides.first?.id }
     }
+    /// Appends every ready pool asset the session has not decided about yet, as ONE undoable step.
+    /// Safe to call on any poll or refresh: it defers (touching nothing) while a save/propose or an AI
+    /// edit is in flight, so newer local edits and a staged AI result are never clobbered, and it never
+    /// re-adds an asset the user removed. Returns the number of slides added.
+    @discardableResult
+    func appendNewlyReadyAssets() -> Int {
+        guard !isBusy, !isChatting, proposal == nil, state != nil, let current = draft else { return 0 }
+        let plan = SlidePostAutoAppend.plan(draft: current, ready: readyAssets, seen: seenAssetIDs)
+        guard plan.seen != seenAssetIDs || !plan.toAppend.isEmpty else { return 0 }
+        seenAssetIDs = plan.seen
+        persist()
+        if let notice = plan.notice { autoAppendNotice = notice }
+        guard !plan.toAppend.isEmpty else { return 0 }
+        var value = current
+        value.slides.append(contentsOf: plan.toAppend.map { SlidePostSlide(id: UUID().uuidString, assetID: $0.id, kind: $0.kind) })
+        stageDraft(value)
+        return plan.toAppend.count
+    }
     func addAsset(id: String) {
         guard var value = draft,
               let asset = readyAssets.first(where: { $0.id == id }), !value.slides.contains(where: { $0.assetID == id }) else { return }
@@ -902,19 +927,21 @@ private struct SlidePostItemResponse: Decodable {
         let baseVersion: Int
         let baselineDraft: SlidePostDraft?
         var chat: [SlidePostChatMessage]? = nil
+        var seenAssets: [String]? = nil
     }
     private func persist() {
         guard !restoring, let itemID else { return }
-        let local = LocalState(draft: draft, proposal: proposal, selectedID: selectedID, instruction: instruction, baseVersion: baseVersion, baselineDraft: baselineDraft, chat: Array(chat.suffix(Self.maxPersistedChat)))
+        let local = LocalState(draft: draft, proposal: proposal, selectedID: selectedID, instruction: instruction, baseVersion: baseVersion, baselineDraft: baselineDraft, chat: Array(chat.suffix(Self.maxPersistedChat)), seenAssets: seenAssetIDs.map { Array($0).sorted() })
         guard let data = try? JSONEncoder().encode(local) else { return }
         defaults.set(data, forKey: "kria.slide-post.\(itemID)")
     }
     private func restore() {
         guard let itemID, let data = defaults.data(forKey: "kria.slide-post.\(itemID)"), let local = try? JSONDecoder().decode(LocalState.self, from: data) else {
-            draft = nil; proposal = nil; selectedID = nil; instruction = ""; baseVersion = 0; baselineDraft = nil; chat = []; return
+            draft = nil; proposal = nil; selectedID = nil; instruction = ""; baseVersion = 0; baselineDraft = nil; chat = []; seenAssetIDs = nil; return
         }
         draft = local.draft; proposal = local.proposal; selectedID = local.selectedID; instruction = local.instruction; baseVersion = local.baseVersion; baselineDraft = local.baselineDraft
         chat = Array((local.chat ?? []).suffix(Self.maxPersistedChat))
+        seenAssetIDs = local.seenAssets.map(Set.init)
     }
 }
 

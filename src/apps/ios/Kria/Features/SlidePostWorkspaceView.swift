@@ -40,9 +40,9 @@ struct SlidePostWorkspaceView: View {
     @State private var mode: SlidePostMode = .browse
     @State private var textTab: SlidePostTextPanel.Tab = .edit
     @State private var showsCaption = false
-    @State private var showsAddChoice = false
-    /// The Kria thread replaces the tool bar while it is open (Paper art. 04).
-    @State private var chatOpen = false
+    /// Bumped to put the keyboard back on the Edit field when the same text is tapped again.
+    @State private var focusToken = 0
+    @State private var uploadProgress: [UUID: Double] = [:]
     @State private var rootSize = CGSize.zero
 
     /// `session` is injectable so a parent (the chat workspace) can own the draft and stage edits
@@ -106,14 +106,10 @@ struct SlidePostWorkspaceView: View {
         .onGeometryChange(for: CGSize.self, of: { $0.size }) { rootSize = $0 }
         .background(KriaColor.paper)
         .sheet(isPresented: $showsCaption) { captionSheet }
-        .confirmationDialog("Add to your post", isPresented: $showsAddChoice, titleVisibility: .visible) {
-            let unused = unusedAssets
-            Button("Add \(unused.count) ready photo\(unused.count == 1 ? "" : "s") & video\(unused.count == 1 ? "" : "s")") { unused.forEach { session.addAsset(id: $0.id) } }
-            Button("Choose from library", action: addMedia)
-        }
         .sheet(isPresented: $showsConversation) {
-            SlidePostAssistantSheet(
+            SlidePostAISheet(
                 session: session, api: model.api, itemID: itemID,
+                chatEnabled: chatEditOn && showsRichWorkspace,
                 canRequestProposal: canRequestProposal,
                 uploadGuidance: hasFailedAssets ? "Resolve or remove failed photos and videos before asking Kria." : hasPendingAssets ? "Wait for every photo and video to finish importing before asking Kria." : nil
             )
@@ -139,6 +135,7 @@ struct SlidePostWorkspaceView: View {
             if previous != current { Task { await refresh() } }
         }
         .onReceive(model.uploads.$inFlight) { uploadInFlight = $0 }
+        .onReceive(model.uploads.$progress) { uploadProgress = $0 }
         .onReceive(model.uploads.$photoSelections) { photoSelections = $0 }
         .onReceive(model.uploads.$failures) { uploadFailures = $0 }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardUp = true }
@@ -147,6 +144,9 @@ struct SlidePostWorkspaceView: View {
         .onChange(of: session.selectedID) { _, _ in loadInspectorValues() }
         .onChange(of: session.selectedID) { _, _ in previewPlayer?.pause() }
         .onChange(of: instruction) { _, value in session.instruction = value }
+        // Media that finishes importing joins the post by itself; it waits out saves and AI edits.
+        .onChange(of: autoAppendKey) { _, _ in session.appendNewlyReadyAssets() }
+        .onAppear { session.appendNewlyReadyAssets() }
         .task(id: itemID) { await refreshOwner(); await refresh() }
         .task(id: pollingKey) {
             guard (isRendering || hasPendingAssets) && itemID != nil else { return }
@@ -450,11 +450,20 @@ struct SlidePostWorkspaceView: View {
 
     private var richEnabled: Bool { effectiveCapabilities?.slidePostRichTextEnabled == true }
     private var chatEditOn: Bool { effectiveCapabilities?.slidePostChatComposerEnabled == true }
-    private var showsChatThread: Bool { SlidePostMode.showsChatThread(chatEnabled: chatEditOn, chatOpen: chatOpen, mode: mode) }
     private var showsRichWorkspace: Bool { richEnabled && session.proposal == nil && session.draft != nil }
-    private var unusedAssets: [SlidePostAsset] {
-        guard let draft = session.draft else { return [] }
-        return session.readyAssets.filter { asset in !draft.slides.contains { $0.assetID == asset.id } }
+    private var autoAppendKey: String {
+        "\(session.readyAssets.map(\.id).joined(separator: ","))|\(session.isBusy)|\(session.isChatting)|\(session.draft != nil)|\(session.proposal != nil)"
+    }
+    private func pendingTiles(_ draft: SlidePostDraft) -> [SlidePostPendingTile] {
+        SlidePostPendingMedia.tiles(
+            assets: session.state?.assets ?? [], draftAssetIDs: Set(draft.slides.map(\.assetID)), records: pendingUploads,
+            progress: uploadProgress, inFlight: uploadInFlight, failures: uploadFailures, projectID: uploadProjectID
+        )
+    }
+    private func tapPending(_ tile: SlidePostPendingTile) {
+        guard case .failed(_, let recordID) = tile.phase else { return }
+        // A failed upload resumes from its record; a file that never uploaded has to be chosen again.
+        if let recordID { Task { await model.uploads.retryUpload(recordID: recordID); await refresh() } } else { addMedia() }
     }
     /// The preview never grows past ~53.5% of the screen, so the strip and tool bar always stay visible.
     private var legacyPreviewCap: CGFloat { max(260, 0.535 * (rootSize.height > 0 ? rootSize.height : 800)) }
@@ -512,24 +521,12 @@ struct SlidePostWorkspaceView: View {
                                 detail: "Kria can't sort by time or add locations. You can still reorder by hand, or ask for text you write yourself.")
                     .padding(.bottom, 8)
             }
-            if showsChatThread {
-                let previewHeight = keyboardUp ? 96 : Self.chatPreviewHeight
-                stage(draft, compact: true, fixedHeight: previewHeight)
-                    .frame(height: previewHeight + (keyboardUp ? 12 : 24))
-                if !keyboardUp { transportRow(draft); slideStrip(draft) }
-                Divider()
-                chatThread
-                composer
-            } else {
-                stage(draft, compact: panelOpen)
-                    .frame(maxHeight: panelOpen ? max(keyboardUp && mode == .text ? 144 : 150, 0.33 * height - (keyboardUp && mode == .text ? 96 : 0)) : .infinity)
-                    .animation(.easeOut(duration: 0.2), value: keyboardUp)
-                if !(keyboardUp && mode == .text) { transportRow(draft) }
-            }
-            if showsChatThread {
-                EmptyView()
-            } else if mode == .text, let slide {
-                SlidePostTextPanel(session: session, slideID: slide.id, tab: $textTab, compact: keyboardUp, onDone: finishEditing)
+            stage(draft, compact: panelOpen)
+                .frame(maxHeight: panelOpen ? max(keyboardUp && mode == .text ? 144 : 150, 0.33 * height - (keyboardUp && mode == .text ? 96 : 0)) : .infinity)
+                .animation(.easeOut(duration: 0.2), value: keyboardUp)
+            if !(keyboardUp && mode == .text) { transportRow(draft) }
+            if mode == .text, let slide {
+                SlidePostTextPanel(session: session, slideID: slide.id, tab: $textTab, compact: keyboardUp, focusToken: focusToken, onDone: finishEditing)
                     .id(slide.id)
                     .frame(maxHeight: .infinity)
                     .padding(.horizontal, 12).padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
@@ -555,16 +552,21 @@ struct SlidePostWorkspaceView: View {
         } else if let issue = session.state?.validationErrors.first {
             Text(issue.message).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText)
                 .padding(.horizontal, 16).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading).background(KriaColor.failureSoft)
-        } else if hasPendingAssets || hasFailedUploads {
+        } else if let notice = session.autoAppendNotice {
+            HStack(spacing: 10) {
+                Text(notice).font(KriaFont.body(13)).foregroundStyle(KriaColor.ink).frame(maxWidth: .infinity, alignment: .leading)
+                Button("Dismiss") { session.autoAppendNotice = nil }.font(KriaFont.body(13).weight(.semibold)).frame(minHeight: 44)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 4).background(KriaColor.sage.opacity(0.45))
+            .accessibilityIdentifier("slidepost-notice")
+        } else if hasFailedUploads {
             Button(action: addMedia) {
-                Text(hasFailedUploads ? "Review files that need retrying" : "Preparing your media… View files")
+                Text("Review files that need retrying")
                     .font(KriaFont.body(13).weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
             }
             .background(KriaColor.sage.opacity(0.45))
         }
     }
-
-    private static let chatPreviewHeight: CGFloat = 236
 
     private func stage(_ draft: SlidePostDraft, compact: Bool, fixedHeight: CGFloat? = nil) -> some View {
         GeometryReader { geometry in
@@ -576,15 +578,24 @@ struct SlidePostWorkspaceView: View {
                 SlidePostTone.stage
                 richPreview(draft, size: CGSize(width: previewHeight * ratio, height: previewHeight))
                     .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
-                if mode == .arrange {
-                    Text("Drag a slide to reorder · hold for more").font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.ink)
-                        .padding(.horizontal, 16).padding(.vertical, 10).kriaFloatingSurface(Capsule())
-                        .position(x: geometry.size.width / 2, y: geometry.size.height - 22)
-                        .accessibilityIdentifier("slidepost-arrange-hint")
-                }
             }
         }
         .clipped()
+        .overlay(alignment: .bottomTrailing) { if mode == .browse { aiButton } }
+    }
+
+    /// The editor's AI entry (same sparkles button as the video editor's preview), the page's only way into Kria chat.
+    private var aiButton: some View {
+        Button { showsConversation = true } label: {
+            Image(systemName: "sparkles")
+                .font(.system(size: 23))
+                .foregroundStyle(.white)
+                .frame(width: 52, height: 52)
+                .background(KriaColor.ink, in: Circle())
+        }
+        .accessibilityLabel("Open Kria conversation")
+        .accessibilityIdentifier("slidepost-openkria")
+        .padding(.trailing, 16).padding(.bottom, 14)
     }
 
     private func richPreview(_ draft: SlidePostDraft, size: CGSize) -> some View {
@@ -598,8 +609,9 @@ struct SlidePostWorkspaceView: View {
                 .accessibilityIdentifier("slidepost-preview")
             previewMediaView.frame(width: size.width, height: size.height).clipped()
             SlidePostTextCanvas(
-                texts: texts, size: size, selectedID: session.selectedTextID, interactive: mode == .text,
+                texts: texts, size: size, selectedID: session.selectedTextID, interactive: mode == .text, tapsToEdit: mode != .text,
                 onSelect: { id in session.selectedTextID = id; if id != nil { textTab = .style } },
+                onTapText: handleCanvasTap,
                 onTransform: { id, key, mutate in
                     guard let slideID = session.selectedSlide?.id else { return }
                     session.updateText(slideID: slideID, textID: id, coalescing: key, mutate)
@@ -625,32 +637,15 @@ struct SlidePostWorkspaceView: View {
 
     private func slideStrip(_ draft: SlidePostDraft) -> some View {
         SlidePostStrip(
-            slides: draft.slides, coverIndex: draft.coverIndex, selectedID: session.selectedID, arranging: mode == .arrange,
+            slides: draft.slides, coverIndex: draft.coverIndex, selectedID: session.selectedID,
             asset: { slide in session.state?.assets.first { $0.id == slide.assetID } },
+            pending: pendingTiles(draft),
             onSelect: { session.selectedID = $0; session.selectedTextID = nil },
             onMove: { id, to in session.moveSlide(id: id, toIndex: to) },
-            onSetCover: { session.setCover(id: $0) },
-            onRemove: { session.removeSlide(id: $0) },
-            onAdd: { if unusedAssets.isEmpty { addMedia() } else { showsAddChoice = true } }
+            onTapPending: tapPending,
+            onAdd: addMedia
         )
         .disabled(session.isChatting)
-    }
-
-    private var chatThread: some View {
-        SlidePostChatThread(
-            messages: session.chat, isWorking: session.isChatting,
-            unsaved: session.hasUnsavedChanges, canUndo: session.canUndoEdit, canSave: session.hasUnsavedChanges && !session.isBusy && !session.isChatting,
-            onUndo: { session.undoEdit() },
-            onSave: { Task { await save() } },
-            onRetry: { bubble in if let itemID { Task { await session.retryChat(api: model.api, itemID: itemID, bubble: bubble) } } },
-            onClose: { chatOpen = false }
-        )
-    }
-
-    private var composer: some View {
-        SlidePostComposer(text: $instruction, canSend: canSendFromComposer, isLocked: session.isChatting,
-                          onSend: { Task { await sendFromComposer() } })
-            .padding(.bottom, 6)
     }
 
     private func browseControls(_ draft: SlidePostDraft) -> some View {
@@ -662,7 +657,6 @@ struct SlidePostWorkspaceView: View {
                 mode: mode, canCover: slide != nil, canRemove: draft.slides.count > 1 && slide != nil,
                 canDuplicateText: hasTexts && (slide?.edits?.effectiveTexts.count ?? 0) < SlidePostEdits.maxTexts,
                 onText: beginTextEditing,
-                onArrange: { mode = mode == .arrange ? .browse : .arrange },
                 onCover: { if let id = slide?.id { session.setCover(id: id); UINotificationFeedbackGenerator().notificationOccurred(.success) } },
                 onLook: { mode = .look },
                 onRemove: { if let id = slide?.id { session.removeSlide(id: id) } },
@@ -671,41 +665,22 @@ struct SlidePostWorkspaceView: View {
                 },
                 onCaption: { showsCaption = true }
             )
-            if chatEditOn, !session.chat.isEmpty {
-                Button { chatOpen = true } label: {
-                    Text("Kria chat · \(session.chat.count)").font(KriaFont.body(14).weight(.semibold)).foregroundStyle(KriaColor.ink)
-                        .padding(.horizontal, 14).frame(minHeight: 44)
-                }
-                .accessibilityIdentifier("slidepost-chat-open")
-            }
-            SlidePostComposer(text: $instruction, canSend: canSendFromComposer, isLocked: session.isChatting,
-                              onSend: { Task { await sendFromComposer() } })
         }
         .padding(.bottom, 6)
         .disabled(session.isBusy)
         .opacity(session.isBusy ? 0.5 : 1)
     }
 
-    private var canSendFromComposer: Bool {
-        let hasText = !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        if chatEditOn { return hasText && !session.isBusy && !session.isChatting && session.draft != nil && itemID != nil }
-        return hasText && canRequestProposal && itemID != nil
-    }
-    /// With `slide_post_chat_edit` on the composer edits the draft through Kria's chat endpoint; with it
-    /// off the legacy propose flow (and its assistant sheet) is unchanged.
-    private func sendFromComposer() async {
-        guard canSendFromComposer else { return }
-        guard chatEditOn else { await propose(); return }
-        guard let itemID else { return }
-        let text = instruction
-        // Validate first: a rejected message (too long) keeps its text and shows the error.
-        guard session.canChat(message: text) else { return }
-        instruction = ""; session.instruction = ""
-        // The thread only shows in browse mode; sending from Arrange would otherwise edit silently.
-        mode = SlidePostMode.afterChatSend
-        chatOpen = true
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        await session.chatEdit(api: model.api, itemID: itemID, message: text)
+    /// A tap on a text in the preview selects it and opens the Edit text tab with the keyboard up.
+    private func handleCanvasTap(_ hit: String?) {
+        guard let outcome = SlidePostTextTap.resolve(
+            hit: hit, panelOpen: mode == .text, selectedID: session.selectedTextID, onEditTab: textTab == .edit, keyboardUp: keyboardUp
+        ) else { return }
+        session.selectedTextID = outcome.selectID
+        guard outcome.selectID != nil else { return }
+        if outcome.showsEditTab { textTab = .edit }
+        if outcome.opensPanel { mode = .text }
+        if outcome.focusesField { focusToken += 1 }
     }
 
     private func beginTextEditing() {
@@ -812,82 +787,15 @@ struct SlidePostAssetThumbnail: View {
     var body: some View {
         Group {
             if let url = asset?.previewURL ?? asset?.displayURL {
-                if url.isFileURL, let image = UIImage(contentsOfFile: url.path) { Image(uiImage: image).resizable().scaledToFill() }
-                else { AsyncImage(url: url) { $0.resizable().scaledToFill() } placeholder: { ProgressView() } }
+                // Fill the tile, then clip to it: a bare `scaledToFill` reports its overflowing size to layout
+                // and accessibility (a 16:9 photo made a 56pt tile read as 128pt wide).
+                if url.isFileURL, let image = UIImage(contentsOfFile: url.path) { Image(uiImage: image).resizable().scaledToFill().frame(width: size.width, height: size.height).clipped() }
+                else { AsyncImage(url: url) { $0.resizable().scaledToFill().frame(width: size.width, height: size.height).clipped() } placeholder: { ProgressView() } }
             }
             else { Image(systemName: asset?.kind == "video" ? "video" : "photo").foregroundStyle(KriaColor.zinc) }
         }
         .frame(width: size.width, height: size.height).background(KriaColor.softZinc).clipped().clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        // One tile-sized element: the overflowing photo must not widen the tile's accessibility / hit frame.
+        .accessibilityElement(children: .ignore)
     }
-}
-
-/// Contextual slide-post AI is deliberately separate from the generic creator
-/// chat: it invokes only the slide proposal API, then requires Apply or Undo.
-private struct SlidePostAssistantSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @ObservedObject var session: SlidePostSession
-    let api: any KriaAPIClient
-    let itemID: String?
-    let canRequestProposal: Bool
-    let uploadGuidance: String?
-    @State private var prompt = ""
-
-    var body: some View {
-        NavigationStack {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        TextField("Describe the post", text: $prompt, axis: .vertical)
-                            .accessibilityLabel("Describe the post")
-                            .accessibilityIdentifier("slidepost-prompt")
-                            .lineLimit(2...5).padding(12).overlay(RoundedRectangle(cornerRadius: 12).stroke(KriaColor.border))
-                        Button(session.isBusy ? "Thinking…" : "Propose changes") { Task { await propose() } }
-                            .buttonStyle(KriaPrimaryButtonStyle()).frame(maxWidth: .infinity)
-                            .disabled(!canRequestProposal)
-                            .accessibilityIdentifier("slidepost-ask")
-                        if let uploadGuidance {
-                            Text(uploadGuidance).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
-                        }
-                        if let proposal = session.proposal {
-                            Text(proposal.summary).font(KriaFont.body(14))
-                            Text(proposal.draft.caption)
-                                .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
-                            Button("Apply proposal") { Task { await apply() } }
-                                .buttonStyle(KriaPrimaryButtonStyle()).frame(maxWidth: .infinity).disabled(session.isBusy)
-                                .accessibilityIdentifier("slidepost-apply")
-                                .id("slidepost-apply")
-                        }
-                        if session.canUndo {
-                            Button("Undo applied change") { Task { await undo() } }
-                                .buttonStyle(KriaSecondaryButtonStyle()).frame(maxWidth: .infinity).disabled(session.isBusy)
-                        }
-                        if let error = session.error { Text(error).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText) }
-                    }
-                    .padding(20)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .scrollDismissesKeyboard(.interactively)
-                // The medium detent can't show a proposal below the prompt field;
-                // bring Apply into view when one arrives.
-                .onChange(of: session.proposal != nil) { _, hasProposal in
-                    if hasProposal { withAnimation { proxy.scrollTo("slidepost-apply", anchor: .bottom) } }
-                }
-                .background(KriaColor.paper)
-                // The visible "Kria" heading is gone; keep the sheet's VoiceOver context.
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel("Kria")
-            }
-            .onAppear { prompt = session.instruction }
-            .onChange(of: prompt) { _, value in session.instruction = value }
-        }
-    }
-
-    private func propose() async {
-        guard canRequestProposal, let itemID else { return }
-        let brief = prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Arrange these photos and videos into a cohesive post." : prompt
-        session.instruction = brief
-        await session.propose(api: api, itemID: itemID, instruction: brief)
-    }
-    private func apply() async { guard let itemID else { return }; await session.applyProposal(api: api, itemID: itemID); if session.error == nil && session.proposal == nil { dismiss() } }
-    private func undo() async { guard let itemID else { return }; await session.undo(api: api, itemID: itemID) }
 }

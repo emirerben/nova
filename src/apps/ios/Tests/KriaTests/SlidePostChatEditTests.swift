@@ -223,12 +223,6 @@ import XCTest
 
     // MARK: Review fixes
 
-    func testSendingFromArrangeReturnsToBrowseSoTheThreadShows() {
-        XCTAssertEqual(SlidePostMode.afterChatSend, .browse)
-        XCTAssertFalse(SlidePostMode.showsChatThread(chatEnabled: true, chatOpen: true, mode: .arrange))
-        XCTAssertTrue(SlidePostMode.showsChatThread(chatEnabled: true, chatOpen: true, mode: SlidePostMode.afterChatSend))
-    }
-
     func testChatComposerNeedsBothCapabilities() throws {
         func caps(_ json: String) throws -> CreationCapabilities { try JSONDecoder().decode(CreationCapabilities.self, from: Data(json.utf8)) }
         XCTAssertTrue(try caps(#"{"formats":[],"slide_post_rich_text":true,"slide_post_chat_edit":true}"#).slidePostChatComposerEnabled)
