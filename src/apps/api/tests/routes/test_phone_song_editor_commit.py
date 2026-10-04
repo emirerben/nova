@@ -16,7 +16,11 @@ from fastapi import HTTPException
 
 from app.config import settings
 from app.kria.device_render import make_device_request
-from app.pipeline.guided_story import GuidedStoryExecutionPlan, compile_execution_plan
+from app.pipeline.guided_story import (
+    GuidedStoryExecutionPlan,
+    compile_execution_plan,
+    song_reference_variant_fields,
+)
 from app.pipeline.lipsync_montage import lipsync_sync_error_s, plan_lipsync_montage
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
 from app.pipeline.unified_montage import plan_unified_montage
@@ -29,6 +33,7 @@ from app.services.phone_editor import (
     prepare_phone_editor_commit,
 )
 from app.services.phone_sources import PHONE_SOURCES_FIELD
+from app.services.user_song_projection import user_song_for_variant
 from tests._prod_profile import PROD_VERIFIED_FEATURES
 from tests.pipeline.user_song_helpers import (
     SONG_DURATION_S,
@@ -78,6 +83,9 @@ def _job(result):
                     "intro_mode": "linear",
                     "intro_layout": "linear",
                     "text_elements": copy.deepcopy(plan["text_elements"]),
+                    # Every guided v6+ plan is reference-only in prod, and that is the
+                    # gate KRI-428 had to open for the creator's own song.
+                    **song_reference_variant_fields(plan),
                 }
             ],
         },
@@ -308,3 +316,232 @@ def test_the_phone_compiler_refuses_to_truncate_a_lipsync_take_by_more_than_a_fr
     assert moment_a.source_end_s > 10.1
     with pytest.raises(UnsupportedPhonePlan, match="runs past the end"):
         compile_phone_guided_plan(plan, bindings, song=song_bed())
+
+
+# ── KRI-428: volume, start point and remove, through the real Save path ──────────────
+#
+# Every test drives `gj.prepare_editor_commit` -> `prepare_phone_editor_commit` ->
+# `compile_phone_guided_plan`. The first prod attempt at KRI-374 passed because each test
+# stubbed this step, so nothing here may.
+
+
+def _song_save(job, **section):
+    variant = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, variant)
+    payload = gj.EditorCommitRequest(
+        base_generation=gj.variant_render_baseline(variant),
+        guided_revision_number=revision["revision_number"],
+        user_song=gj.EditorCommitUserSong(**section),
+    )
+    gj.require_guided_story_editor_commit(job, "guided_story", payload)
+    return gj.prepare_editor_commit(job, "guided_story", payload)
+
+
+def _text_save(job):
+    """A Save that touches only text, through the same real path."""
+    variant = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, variant)
+    element = copy.deepcopy(variant["text_elements"][0]) if variant["text_elements"] else None
+    payload = gj.EditorCommitRequest(
+        base_generation=gj.variant_render_baseline(variant),
+        guided_revision_number=revision["revision_number"],
+        text_elements=[element] if element else None,
+        caption_meta=None if element else gj.EditorCommitCaptionMeta(),
+    )
+    return gj.prepare_editor_commit(job, "guided_story", payload)
+
+
+def _video_length(job):
+    return job.assembly_plan["variants"][0]["duration_s"]
+
+
+def _projection(job):
+    return user_song_for_variant(job, job.assembly_plan["variants"][0], song_filename="a.mp3")
+
+
+def test_the_gate_lets_the_creators_song_through_but_not_catalog_music():
+    job, _result = background_job()
+    variant = job.assembly_plan["variants"][0]
+    assert variant["music_playback_mode"] == "reference_only"
+    base = gj.variant_render_baseline(variant)
+    ok = gj.EditorCommitRequest(base_generation=base, user_song=gj.EditorCommitUserSong(volume=0.5))
+    gj.require_guided_story_editor_commit(job, "guided_story", ok)
+    catalog = gj.EditorCommitRequest(base_generation=base, music_track_id="another-song")
+    with pytest.raises(HTTPException) as caught:
+        gj.require_guided_story_editor_commit(job, "guided_story", catalog)
+    assert caught.value.detail == "song_added_when_posting"
+
+
+def test_volume_is_kept_across_two_saves():
+    job, _result = background_job()
+    _song_save(job, volume=0.3)
+    assert _song_clip(_recipe(job)).volume == pytest.approx(0.3)
+    assert _projection(job)["volume"] == pytest.approx(0.3)
+    # A second Save of something else must not reset it to 1.0.
+    _song_save(
+        job,
+        window_start_s=job.assembly_plan["variants"][0][PHONE_EDITOR_SAVED_PLAN_FIELD]["user_song"][
+            "window_start_s"
+        ],
+    )
+    assert _song_clip(_recipe(job)).volume == pytest.approx(0.3)
+    assert device_status(job, "guided_story").request.identity.recipe_revision == 3
+
+
+def test_a_text_only_save_after_a_volume_change_keeps_the_volume():
+    job, _result = background_job()
+    _song_save(job, volume=0.4)
+    _text_save(job)
+    recipe = _recipe(job)
+    assert device_status(job, "guided_story").request.identity.recipe_revision == 3
+    assert _song_clip(recipe).volume == pytest.approx(0.4)
+    assert recipe.audio.original_volume == 0.0
+
+
+def test_a_background_start_move_follows_into_the_recipe():
+    job, result = background_job()
+    old = result.user_song.window_start_s
+    new = old + 5.0
+    before = _recipe(job)
+    _song_save(job, window_start_s=new)
+    clip = _song_clip(_recipe(job))
+    assert clip.source_start == pytest.approx(new)
+    saved = job.assembly_plan["variants"][0][PHONE_EDITOR_SAVED_PLAN_FIELD]["user_song"]
+    assert saved["window_start_s"] == pytest.approx(new)
+    assert saved["window_end_s"] == pytest.approx(new + _video_length(job), abs=0.01)
+    projection = _projection(job)
+    assert projection["window_start_s"] == pytest.approx(new)
+    # The song moved; the cuts did not (no beat re-snap), and the video is the same length.
+    after = _recipe(job)
+    assert after.duration == pytest.approx(before.duration)
+
+    def cuts(recipe):
+        return [
+            (c.timeline_start, c.source_duration)
+            for c in next(t for t in recipe.tracks if t.kind == "video").clips
+        ]
+
+    assert cuts(after) == cuts(before)
+
+
+def test_a_start_that_runs_past_the_end_of_the_song_is_refused():
+    job, _result = background_job()
+    before = device_status(job, "guided_story").request
+    with pytest.raises(HTTPException) as caught:
+        _song_save(job, window_start_s=SONG_DURATION_S - 1.0)
+    assert caught.value.status_code == 422
+    assert caught.value.detail == {
+        "code": "user_song_window_out_of_range",
+        "reason": "That edit runs past the end of your song.",
+    }
+    assert device_status(job, "guided_story").request == before
+
+
+def test_extending_the_cut_past_an_already_set_start_is_the_same_song_error():
+    job, _result = background_job()
+    length = _video_length(job)
+    _song_save(job, window_start_s=SONG_DURATION_S - length)  # exactly fits
+    before = device_status(job, "guided_story").request
+    variant = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, variant)
+    compiled = compile_editor_ops(
+        job,
+        variant,
+        [{"op": "set_total_duration", "target_s": length + 5, "strategy": "proportional"}],
+    )
+    compiled.payload.guided_revision_number = revision["revision_number"]
+    with pytest.raises(HTTPException) as caught:
+        gj.prepare_editor_commit(job, "guided_story", compiled.payload)
+    assert caught.value.status_code == 422
+    assert caught.value.detail["code"] == "user_song_window_out_of_range"
+    assert device_status(job, "guided_story").request == before
+
+
+def test_removing_a_lipsync_song_ignores_a_moved_start_and_volume():
+    job, result = lipsync_job()
+    _song_save(
+        job,
+        removed=True,
+        window_start_s=result.user_song.window_start_s + 9.0,
+        volume=0.2,
+    )
+    recipe = _recipe(job)
+    assert not any(t.id == "song" for t in recipe.tracks)
+    assert recipe.audio.original_volume > 0
+    assert _projection(job) is None
+
+
+def test_a_user_song_section_on_a_non_guided_variant_is_unavailable_up_front():
+    from tests.routes.test_generative_jobs import _resign_job
+
+    job = _resign_job()
+    payload = gj.EditorCommitRequest(
+        base_generation="first", user_song=gj.EditorCommitUserSong(volume=0.5)
+    )
+    with pytest.raises(HTTPException) as caught:
+        gj.require_guided_story_editor_commit(job, "song_lyrics", payload)
+    assert caught.value.status_code == 422
+    assert caught.value.detail == {"code": "user_song_unavailable"}
+
+
+def test_a_lipsync_start_is_locked_but_its_volume_is_not():
+    job, result = lipsync_job()
+    before = device_status(job, "guided_story").request
+    with pytest.raises(HTTPException) as caught:
+        _song_save(job, window_start_s=result.user_song.window_start_s + 3.0)
+    assert caught.value.status_code == 422
+    assert caught.value.detail["code"] == "user_song_lipsync_locked"
+    assert device_status(job, "guided_story").request == before
+    # Echoing the unchanged start is not a move.
+    _song_save(job, window_start_s=result.user_song.window_start_s, volume=0.6)
+    clip = _song_clip(_recipe(job))
+    assert clip.volume == pytest.approx(0.6)
+    assert clip.source_start == pytest.approx(result.user_song.window_start_s)
+    assert _take_offsets_ok(job, result) == 2
+
+
+@pytest.mark.parametrize("make_job", [background_job, lipsync_job])
+def test_removing_the_song_brings_back_camera_audio(make_job):
+    job, _result = make_job()
+    assert any(t.id == "song" for t in _recipe(job).tracks)
+    _song_save(job, removed=True)
+    recipe = _recipe(job)
+    assert not any(t.id == "song" for t in recipe.tracks)
+    assert recipe.audio.music_asset_id is None
+    assert recipe.audio.original_volume > 0
+    assert "musicBed" not in recipe.required_capabilities
+    assert "audioMix" in recipe.required_capabilities
+    variant = job.assembly_plan["variants"][0]
+    assert "user_song" not in variant[PHONE_EDITOR_SAVED_PLAN_FIELD]
+    assert _projection(job) is None
+    assert variant["source_audio_preserved"] is True
+    # Later Saves stay song-free, and the song controls are gone.
+    _text_save(job)
+    assert not any(t.id == "song" for t in _recipe(job).tracks)
+    assert _recipe(job).audio.original_volume > 0
+    assert "user_song" not in gj._editor_capabilities(job, variant)
+    with pytest.raises(HTTPException) as caught:
+        _song_save(job, volume=0.5)
+    assert caught.value.detail["code"] == "user_song_unavailable"
+
+
+def test_the_song_capabilities_lock_the_start_for_lipsync_only():
+    job, _result = background_job()
+    caps = gj._editor_capabilities(job, job.assembly_plan["variants"][0])["user_song"]
+    assert caps == {
+        "volume": {"editable": True, "reason": None},
+        "window": {"editable": True, "reason": None},
+        "remove": {"editable": True, "reason": None},
+    }
+    job, _result = lipsync_job()
+    caps = gj._editor_capabilities(job, job.assembly_plan["variants"][0])["user_song"]
+    assert caps["volume"]["editable"] is True
+    assert caps["remove"]["editable"] is True
+    assert caps["window"] == {"editable": False, "reason": "user_song_lipsync_locked"}
+
+
+def test_a_projection_carries_the_volume_and_defaults_to_full():
+    job, _result = background_job()
+    assert _projection(job)["volume"] == 1.0
+    _song_save(job, volume=0.25)
+    assert _projection(job)["volume"] == 0.25

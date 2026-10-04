@@ -28,6 +28,32 @@ final class EditorSaveErrorTests: XCTestCase {
         }
     }
 
+    /// KRI-428: the song codes carry their own recovery copy; only "unavailable" shows the server's reason.
+    func testSongCodesMapToRecoveryCopy() async throws {
+        let cases: [(String, EditorSaveError, String)] = [
+            (#"{"detail":{"code":"user_song_lipsync_locked","reason":"secret internals"}}"#, .userSongLipsyncLocked,
+             "Lip-sync keeps the song where you filmed it."),
+            (#"{"detail":{"code":"user_song_window_out_of_range","reason":"That edit runs past the end of your song."}}"#, .userSongWindowOutOfRange,
+             "That start point runs past the end of your song. Slide it earlier."),
+            (#"{"detail":{"code":"user_song_unavailable"}}"#, .userSongUnavailable(reason: nil),
+             "This edit no longer has a song. Reopen the editor to continue."),
+            (#"{"detail":{"code":"user_song_unavailable","reason":"The song was removed."}}"#, .userSongUnavailable(reason: "The song was removed."),
+             "The song was removed."),
+            (#"{"detail":"user_song_unavailable"}"#, .userSongUnavailable(reason: nil),
+             "This edit no longer has a song. Reopen the editor to continue."),
+        ]
+        for (body, expected, copy) in cases {
+            NativeEditorURLProtocol.handler = { _ in (422, Data(body.utf8)) }
+            do {
+                _ = try await save()
+                XCTFail("Expected editor save rejection")
+            } catch let error as EditorSaveError {
+                XCTAssertEqual(error, expected, body)
+                XCTAssertEqual(error.localizedDescription, copy)
+            }
+        }
+    }
+
     func testValidationDetailWithTextElementsMapsToTextSettings() async throws {
         NativeEditorURLProtocol.handler = { _ in
             (422, Data(#"{"detail":[{"type":"string_type","loc":["body","text_elements",0,"text"],"msg":"internal user text"}]}"#.utf8))

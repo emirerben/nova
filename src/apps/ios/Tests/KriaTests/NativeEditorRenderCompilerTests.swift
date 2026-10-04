@@ -577,6 +577,30 @@ import KriaMediaEngine
         let clamped = try compiler.compile(document: document, clips: [clip], items: [], sources: [0: source],
                                            audioSources: [NativeEditorRenderCompiler.songSourceKey: song], songBed: past)
         XCTAssertTrue(clamped.recipe.tracks.filter { $0.kind == .audio }.isEmpty)
+        // ...and with no song actually playing, the camera is not muted for nothing (KRI-428).
+        XCTAssertEqual(try XCTUnwrap(clamped.recipe.tracks.first { $0.kind == .video }?.clips.first).volume, 1)
+    }
+
+    /// KRI-428: an edited bed (volume, start) is what the preview plays, and a removed song (no song source) leaves
+    /// the camera's own audio, even when the slot never carried an explicit un-mute.
+    func testEditedSongBedIsPlayedAndRemovedSongRestoresCameraAudio() throws {
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "original", relativePath: "original.mp4", fingerprint: fingerprint, duration: 6), url: URL(fileURLWithPath: "/original.mp4"))
+        let song = ResolvedEditorSource(clipIndex: -1, mediaID: "song-item", asset: MediaAsset(id: "song-item", relativePath: "song.wav", fingerprint: fingerprint, duration: 200), url: URL(fileURLWithPath: "/song.wav"))
+        let document = EditorDocument(clips: [.init(id: "shot", clipIndex: 0, inS: 0, durationS: 4)])
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 4, trimIn: 0, trimOut: 4, sourceDuration: 6, slotID: "shot")
+        let edited = NativeEditorSongBed(assetID: "song-item", sourceStart: 42.5, sourceDuration: 4, volume: 0.35)
+        let playing = try compiler.compile(document: document, clips: [clip], items: [], sources: [0: source],
+                                           audioSources: [NativeEditorRenderCompiler.songSourceKey: song], sourceAudioPreserved: false, songBed: edited)
+        let bed = try XCTUnwrap(playing.recipe.tracks.first { $0.id == "song" }?.clips.first)
+        XCTAssertEqual(bed.sourceStart, 42.5, accuracy: 0.0001)
+        XCTAssertEqual(bed.volume, 0.35, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(playing.recipe.tracks.first { $0.kind == .video }?.clips.first).volume, 0)
+
+        let removed = try compiler.compile(document: document, clips: [clip], items: [], sources: [0: source], sourceAudioPreserved: true)
+        XCTAssertNil(removed.recipe.tracks.first { $0.id == "song" })
+        XCTAssertEqual(try XCTUnwrap(removed.recipe.tracks.first { $0.kind == .video }?.clips.first).volume, 1)
     }
 
     func testWithoutSongSourceCameraAudioFollowsTheUsualRules() throws {

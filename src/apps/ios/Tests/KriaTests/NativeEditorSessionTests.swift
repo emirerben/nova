@@ -169,6 +169,270 @@ final class NativeEditorSessionTests: XCTestCase {
                                                               mode: "Lip-sync · master audio"))
     }
 
+    /// KRI-428: volume, start and remove edit the song in the document (undoable, dirty, committed as `user_song`),
+    /// and the live preview plays exactly what the server will render: the edited volume and start, or the
+    /// camera's own audio once the song is removed.
+    func testUserSongEditsDriveDirtyStateCommitUndoAndPreview() async throws {
+        let (session, fake, sourceURL) = try await userSongSession(mode: "background", caps: [
+            "volume": true, "window": true, "remove": true])
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        func song(_ session: NativeEditorSession) throws -> TimelineClip? {
+            try XCTUnwrap(session.displayedSourcePreviewRecipe).tracks.first { $0.id == "song" && $0.kind == .audio }?.clips.first
+        }
+        func cameraLevels(_ session: NativeEditorSession) throws -> [Double] {
+            try XCTUnwrap(session.displayedSourcePreviewRecipe).tracks.first { $0.kind == .video }?.clips.map(\.volume) ?? []
+        }
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertEqual(session.yourSongControls?.volume, 1, "no `volume` on the wire reads as full volume")
+        XCTAssertEqual(session.yourSongControls?.canEditStart, true)
+        XCTAssertEqual(try cameraLevels(session), [0])
+
+        session.setUserSongVolume(0.4)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(volume: 0.4))
+        session.setUserSongStart(1.5)
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(volume: 0.4, windowStartS: 1.5))
+        XCTAssertEqual(session.yourSong?.window, "Plays 0:02 – 0:04", "the row shows the edited window")
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        let edited = try XCTUnwrap(song(session))
+        XCTAssertEqual(edited.volume, 0.4, accuracy: 0.001, "preview plays the volume the server will write")
+        XCTAssertEqual(edited.sourceStart, 1.5, accuracy: 0.001, "preview plays from the new start")
+        XCTAssertEqual(try cameraLevels(session), [0], "camera stays muted while the song plays")
+
+        // The start never runs the song short of the video: it is clamped to song length - video length.
+        session.setUserSongStart(10_000)
+        XCTAssertEqual(session.document.userSong?.windowStartS ?? 0, 200 - session.duration - NativeEditorSession.userSongStartMargin, accuracy: 0.001)
+        session.setUserSongStart(1.5)
+        // Dragging back to the saved values is no change.
+        session.setUserSongVolume(1)
+        session.setUserSongStart(1)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertNil(session.document.userSong)
+        session.setUserSongVolume(0.4)
+
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
+            sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: false, mix: false),
+            revisionNumber: 2, revisionHash: "h2", expectedDuration: nil)
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.userSong, EditorCommitUserSong(volume: 0.4, windowStartS: nil, removed: false))
+        let wire = String(decoding: try JSONEncoder().encode(try XCTUnwrap(fake.lastRequest?.userSong)), as: UTF8.self)
+        // Snake-case keys, and untouched fields are omitted rather than sent as null.
+        XCTAssertTrue(wire.contains("\"volume\":0.4") && wire.contains("\"removed\":false") && !wire.contains("window_start_s"))
+        XCTAssertFalse(session.hasUnsavedChanges, "a saved song edit is clean, even when the server does not echo the section")
+        XCTAssertNil(fake.lastRequest?.timelineSlots, "untouched sections are not sent")
+
+        // Remove: undoable until Save, un-mutes the camera in the preview, and sends only `removed`.
+        session.removeUserSong()
+        XCTAssertTrue(session.userSongRemoved)
+        XCTAssertNil(session.yourSong)
+        XCTAssertNil(session.yourSongControls)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertNil(try song(session), "no song track once removed")
+        XCTAssertTrue(try cameraLevels(session).allSatisfy { $0 > 0 }, "camera audio plays again, like the server's recipe")
+        session.undo()
+        XCTAssertFalse(session.userSongRemoved)
+        XCTAssertNotNil(session.yourSong)
+        session.redo()
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.userSong, EditorCommitUserSong(removed: true))
+    }
+
+    /// A lip-sync song keeps its start (each take's offset depends on it): the start setter is a no-op that
+    /// never dirties the edit, while volume and remove still work.
+    func testLipSyncSongLocksStartButKeepsVolumeAndRemove() async throws {
+        let (session, _, _) = try await userSongSession(mode: "lipsync", caps: ["volume": true, "window": false, "remove": true])
+        XCTAssertEqual(session.yourSongControls?.canEditStart, false)
+        XCTAssertEqual(session.operationCapabilityReason("user_song.window"), "user_song_lipsync_locked")
+        session.setUserSongStart(2)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertNil(session.document.userSong)
+        session.setUserSongVolume(0.5)
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(volume: 0.5))
+        session.removeUserSong()
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(removed: true), "a removal drops the volume edit")
+    }
+
+    /// Without the `user_song.*` capabilities (an older server, or a closed edit) nothing about the song is editable.
+    func testSongControlsStayClosedWithoutCapabilities() async throws {
+        let (session, _, _) = try await userSongSession(mode: "background", caps: [:])
+        XCTAssertEqual(session.yourSongControls?.canEditVolume, false)
+        XCTAssertEqual(session.yourSongControls?.canEditStart, false)
+        XCTAssertEqual(session.yourSongControls?.canRemove, false)
+        session.setUserSongVolume(0.2); session.setUserSongStart(3); session.removeUserSong()
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertNil(session.document.userSong)
+    }
+
+    private static let allSongCaps = ["volume": true, "window": true, "remove": true]
+    private func okResponse(_ generation: String) -> EditorCommitResponse {
+        EditorCommitResponse(ok: true, generation: generation,
+            sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: false, mix: false),
+            revisionNumber: 2, revisionHash: "h", expectedDuration: nil)
+    }
+
+    /// The server bounds the start by the video length it re-times onto a 1/30s clock, so a start dragged to the far
+    /// right of a song with non-round lengths must still leave at least that margin.
+    func testStartDraggedToTheFarRightStaysInsideTheServersBound() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps,
+                                                            songDuration: 214, videoDuration: 14.347)
+        XCTAssertEqual(session.duration, 14.347, accuracy: 0.001)
+        for far in [10_000.0, 214 - 14.347, 214 - 14.347 - 0.0451, 199.6549999] {
+            session.setUserSongStart(far)
+            let start = try XCTUnwrap(session.document.userSong?.windowStartS)
+            XCTAssertLessThanOrEqual(start, 214 - 14.347 - 0.033, "\(far)")
+            XCTAssertGreaterThanOrEqual(start, 0)
+        }
+        fake.commitResponse = okResponse("generation-2")
+        await session.save()
+        let sent = try XCTUnwrap(fake.lastRequest?.userSong?.windowStartS)
+        XCTAssertLessThanOrEqual(sent, 214 - 14.347)
+        let retimed = (14.347 * 30).rounded(.up) / 30   // the server's 1/30s frame clock
+        XCTAssertLessThanOrEqual(sent + retimed, 214 + 0.001, "even after the server re-times the video up to the next frame")
+    }
+
+    /// A start set earlier is re-clamped when the video later grows, so Save never sends one the server rejects.
+    func testPendingStartIsReclampedWhenTheVideoGrows() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        session.setUserSongStart(10_000)
+        XCTAssertEqual(session.document.userSong?.windowStartS ?? 0, 200 - 2 - NativeEditorSession.userSongStartMargin, accuracy: 0.001)
+        session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 3.5)
+        XCTAssertEqual(session.duration, 3.5, accuracy: 0.001)
+        XCTAssertEqual(session.yourSongControls?.startS ?? 0, 200 - 3.5 - NativeEditorSession.userSongStartMargin, accuracy: 0.001,
+                       "the controls show the clamped start")
+        fake.commitResponse = okResponse("generation-2")
+        await session.save()
+        XCTAssertLessThanOrEqual(try XCTUnwrap(fake.lastRequest?.userSong?.windowStartS), 200 - 3.5 - NativeEditorSession.userSongStartMargin + 0.001)
+    }
+
+    /// An acknowledged removal is never sent again: not by a render retry, and not after a conflict rebase.
+    func testSavedRemovalIsNotResentByRetryOrConflictRebase() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        session.removeUserSong()
+        fake.commitResponse = okResponse("generation-2")
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.userSong, EditorCommitUserSong(removed: true))
+        XCTAssertNil(session.document.userSong, "a saved edit is folded out of the unsaved state")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertTrue(session.userSongRemoved, "and the song stays removed")
+        XCTAssertNil(session.yourSong)
+
+        let count = fake.commitCount
+        await session.retryRender()
+        XCTAssertEqual(fake.commitCount, count + 1)
+        XCTAssertNil(fake.lastRequest?.userSong, "a retry does not resend the removal")
+
+        session.saveState = .conflict
+        await session.rebaseAfterConflict()
+        XCTAssertNil(session.document.userSong)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        await session.retryRender()
+        XCTAssertNil(fake.lastRequest?.userSong, "nor does a retry after a conflict rebase")
+    }
+
+    /// A render retry after a volume save re-sends the acknowledged volume (idempotent) so the render restarts.
+    func testRenderRetryResendsAnAcknowledgedVolume() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        session.setUserSongVolume(0.4)
+        fake.commitResponse = okResponse("generation-2")
+        await session.save()
+        await session.retryRender()
+        XCTAssertEqual(fake.lastRequest?.userSong, EditorCommitUserSong(volume: 0.4))
+        await session.save()
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
+    /// After a Save the saved song is the new baseline: dragging the volume back to the ORIGINAL value is a change.
+    func testVolumeSetBackToTheOriginalAfterSaveIsSent() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        session.setUserSongVolume(0.4)
+        fake.commitResponse = okResponse("generation-2")
+        await session.save()
+        XCTAssertEqual(session.yourSongControls?.volume, 0.4, "the row shows the saved volume")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        session.setUserSongVolume(1)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        fake.commitResponse = okResponse("generation-3")
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.userSong, EditorCommitUserSong(volume: 1))
+        XCTAssertEqual(session.yourSongControls?.volume, 1)
+    }
+
+    /// A removal the server already has (422 user_song_unavailable) is what the creator asked for: it is folded in, not a dead end.
+    func testUnavailableSongOnARemovalCountsAsAlreadyRemoved() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        session.removeUserSong()
+        fake.commitThrow = EditorSaveError.userSongUnavailable(reason: nil)
+        await session.save()
+        XCTAssertEqual(session.saveState, .saved)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertTrue(session.userSongRemoved)
+        XCTAssertNil(session.document.userSong)
+        XCTAssertEqual(fake.commitCount, 1)
+    }
+
+    /// Any other 422 keeps the creator's song edit pending and retryable.
+    func testRejectedSongEditStaysPending() async throws {
+        let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        session.setUserSongStart(50)
+        fake.commitThrow = EditorSaveError.userSongWindowOutOfRange
+        await session.save()
+        XCTAssertEqual(session.saveState, .failed("That start point runs past the end of your song. Slide it earlier."))
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertEqual(session.document.userSong, EditorUserSongState(windowStartS: 50))
+        // Unavailable on a start edit (not a removal) is not treated as applied either.
+        fake.commitThrow = EditorSaveError.userSongUnavailable(reason: nil)
+        await session.save()
+        XCTAssertTrue(session.hasUnsavedChanges)
+    }
+
+    /// A background or lip-sync creator-song edit on a device recipe whose song file is 4s long and whose
+    /// bed plays 1s...3s of it; `caps` are the nested `user_song.{volume,window,remove}` editable flags.
+    private func userSongSession(mode: String, caps: [String: Bool], songDuration: Double = 200, videoDuration: Double = 2) async throws -> (NativeEditorSession, EditorCommitSpy, URL) {
+        let threadID = UUID(), jobID = UUID()
+        let wav = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).wav")
+        addTeardownBlock { try? FileManager.default.removeItem(at: wav) }
+        try Self.silentWAV(seconds: 4).write(to: wav)
+        let fingerprint = try SHA256Fingerprinter().fingerprint(file: wav)
+        let song = RenderAssetReference(id: "song-item", fingerprint: try RenderFingerprint(fingerprint),
+                                        source: .song(planItemID: "item", generation: "3"))
+        var recipe = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a").recipe
+        recipe.assets.append(MediaAsset(id: song.id, relativePath: song.id, fingerprint: fingerprint, duration: 4))
+        recipe.tracks.append(TimelineTrack(id: "song", kind: .audio, clips: [
+            TimelineClip(id: "song-bed", sourceAssetID: song.id, sourceStart: 1, sourceDuration: 2, volume: 1)]))
+        recipe.audio = AudioMixRecipe(musicAssetID: song.id, originalVolume: 0)
+        recipe.assetManifest = RenderAssetManifest(assets: [song])
+        let request = DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: jobID, variantID: "variant", recipeRevision: 1,
+            recipeDigest: String(repeating: "a", count: 64)), recipe: recipe)
+        let project = BackgroundUploadCoordinator.projectDirectory(threadID)
+        _ = try await RenderLibraryCache(root: project.root.appending(path: "library", directoryHint: .isDirectory))
+            .install(downloadedFile: wav, for: song)
+
+        var authoritative = Self.variant(duration: videoDuration, generation: "generation-1")
+        authoritative["render_destination"] = .string("device")
+        authoritative["music_playback_mode"] = .string("reference_only")
+        authoritative["source_audio_preserved"] = .bool(false)
+        authoritative["user_song"] = .object(["title": .string("Midnight Drive"), "mode": .string(mode),
+            "duration_s": .number(songDuration), "window_start_s": .number(1), "window_end_s": .number(3)])
+        authoritative["editor_capabilities"] = .object([
+            "timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false),
+            "user_song": .object(Dictionary(uniqueKeysWithValues: caps.map { key, editable in
+                (key, JSONValue.object(["editable": .bool(editable)]
+                    .merging(key == "window" && !editable ? ["reason": .string("user_song_lipsync_locked")] : [:]) { $1 }))
+            })),
+        ])
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+                snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
+                snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: authoritative
+        )
+        fake.sourcePoolResult = NativeEditorSourcePool(clips: [], baseGeneration: "generation-1")
+        fake.deviceRenderResponse = DeviceRenderStatusResponse(phase: "published", request: request, publishedGeneration: "generation-1")
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: threadID)
+        return (session, fake, try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4")))
+    }
+
     /// A recipe whose song cannot be resolved degrades to the finished-render fallback instead of a silent live preview.
     func testUnresolvableDeviceSongFailsLivePreviewSoItFallsBackToTheFinishedRender() async throws {
         let threadID = UUID(), jobID = UUID()
@@ -4210,6 +4474,8 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
     var editorVariantError: APIError?
     var commitResponse: EditorCommitResponse?
     let commitError: APIError?
+    /// Any other error `editorCommit` should throw (e.g. a typed 422 `EditorSaveError`).
+    var commitThrow: Error?
     var refreshedThread: CreationThread?
     private(set) var commitIsSuspended = false
     private var commitContinuation: CheckedContinuation<Void, Never>?
@@ -4374,6 +4640,7 @@ final class EditorCommitSpy: KriaAPIClient, @unchecked Sendable {
             commitIsSuspended = false
         }
         if let commitError { throw commitError }
+        if let commitThrow { throw commitThrow }
         return commitResponse ?? EditorCommitResponse(ok: true, generation: "next", sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: true, mix: false), revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
     }
     func resumeCommit() {

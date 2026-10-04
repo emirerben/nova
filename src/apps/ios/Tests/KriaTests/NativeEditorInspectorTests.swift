@@ -50,6 +50,23 @@ final class NativeEditorInspectorTests: XCTestCase {
         XCTAssertEqual(song?.windowStartS, 108)
         XCTAssertEqual(song?.windowEndS, 123)
         XCTAssertEqual(song?.durationS, 214)
+        XCTAssertEqual(song?.volume, 1, "no volume on the wire (an older server) reads as full volume")
+        XCTAssertEqual(song?.windowLengthS, 15)
+
+        // KRI-428: `volume` is additive and lenient; anything out of 0...1 or not a number reads as full volume.
+        XCTAssertEqual(NativeUserSong(variant: variant(valid.merging(["volume": .number(0.35)]) { _, new in new }))?.volume, 0.35)
+        XCTAssertEqual(NativeUserSong(variant: variant(valid.merging(["volume": .number(0)]) { _, new in new }))?.volume, 0)
+        for volume: JSONValue in [.number(1.5), .number(-0.1), .string("loud"), .null] {
+            XCTAssertEqual(NativeUserSong(variant: variant(valid.merging(["volume": volume]) { _, new in new }))?.volume, 1, "\(volume)")
+        }
+
+        // Unsaved edits overlay the saved song; a removal drops it; the window keeps its length.
+        let edited = song?.applying(EditorUserSongState(volume: 0.5, windowStartS: 20))
+        XCTAssertEqual(edited?.volume, 0.5)
+        XCTAssertEqual(edited?.windowStartS, 20)
+        XCTAssertEqual(edited?.windowEndS, 35)
+        XCTAssertEqual(song?.applying(nil), song)
+        XCTAssertNil(song?.applying(EditorUserSongState(removed: true)))
 
         var untitled = valid; untitled["title"] = .null; untitled["duration_s"] = .string("long")
         XCTAssertNil(NativeUserSong(variant: variant(untitled))?.title)

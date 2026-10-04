@@ -1329,6 +1329,46 @@
           "title": "EditorCommitMusicWindow",
           "type": "object"
         },
+        "EditorCommitUserSong": {
+          "additionalProperties": false,
+          "description": "Editor Save section for the creator's own song (KRI-428), phone guided variants.\n\nEvery field is optional so a Save can change only what the creator touched:\n``volume`` (0-1), ``window_start_s`` (background songs only; a lip-sync song's\nstart is locked to where the takes were filmed) and ``removed`` (falls back to the\ncamera's own sound).",
+          "properties": {
+            "removed": {
+              "default": false,
+              "title": "Removed",
+              "type": "boolean"
+            },
+            "volume": {
+              "anyOf": [
+                {
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Volume"
+            },
+            "window_start_s": {
+              "anyOf": [
+                {
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Window Start S"
+            }
+          },
+          "title": "EditorCommitUserSong",
+          "type": "object"
+        },
         "EditorDeletionRequest": {
           "additionalProperties": false,
           "properties": {
@@ -1732,6 +1772,17 @@
               ],
               "default": null,
               "title": "Title"
+            },
+            "user_song": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EditorCommitUserSong"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
             },
             "visual_blocks": {
               "anyOf": [

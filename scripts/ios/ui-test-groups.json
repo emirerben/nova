@@ -93,6 +93,8 @@
       "KriaUITests/NativeEditorInspectorUITests/testEditorChromeFitsViewportAndCurrentToolsRemainReachable",
       "KriaUITests/NativeEditorInspectorUITests/testToolIslandFloatsOverTimelineAndLastLaneStaysReachable",
       "KriaUITests/NativeEditorInspectorUITests/testSoundsTabShowsCreatorsOwnSongWithoutCatalogControls",
+      "KriaUITests/NativeEditorInspectorUITests/testSoundsTabShowsSongVolumeStartAndRemove",
+      "KriaUITests/NativeEditorInspectorUITests/testLipSyncSongLocksStartButKeepsVolumeAndRemove",
       "KriaUITests/NativeEditorInspectorUITests/testSongReferenceBarKeepsTimelineAndToolsOnScreen",
       "KriaUITests/NativeEditorInspectorUITests/testSoundEffectsHomeLibraryEditTrimFlow",
       "KriaUITests/NativeEditorInspectorUITests/testFinishedRenderFallbackRemainsPlayableAndDisablesCanvasManipulation",

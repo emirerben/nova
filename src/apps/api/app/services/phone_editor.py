@@ -13,6 +13,8 @@ from app.config import settings
 from app.kria.device_render import make_device_request
 from app.kria.recipes_v2 import EditRecipeV2
 from app.pipeline.guided_story import (
+    USER_SONG_LIPSYNC_LOCKED,
+    USER_SONG_WINDOW_OUT_OF_RANGE,
     GuidedStoryError,
     GuidedStoryExecutionPlan,
     compile_guided_runtime_plan,
@@ -320,7 +322,7 @@ def prepare_phone_editor_commit(
                         binding.media_id: float(binding.original.duration_s) for binding in bindings
                     },
                 )
-                song = _pinned_song_bed(previous.recipe)
+                song = _pinned_song_bed(previous.recipe, plan["user_song"])
             allow_editor_media = bool(plan.get("editor_visual_blocks"))
             recipe = compile_phone_guided_plan(
                 GuidedStoryExecutionPlan.model_validate(plan),
@@ -362,28 +364,20 @@ def prepare_phone_editor_commit(
         raise HTTPException(
             422, detail={"code": "unsupported_phone_edit", "reason": str(exc)[:300]}
         ) from exc
+    except GuidedStoryError as exc:
+        if exc.code not in {USER_SONG_WINDOW_OUT_OF_RANGE, USER_SONG_LIPSYNC_LOCKED}:
+            raise _unsupported_phone_edit(job, variant_id, exc) from exc
+        # KRI-428: a song-bound refusal keeps its own code so the editor words it as a
+        # song problem, not a text-style one.
+        raise HTTPException(422, detail={"code": exc.code, "reason": str(exc)[:300]}) from exc
     except (
         KeyError,
         StopIteration,
         TypeError,
         ValueError,
-        GuidedStoryError,
         UnsupportedPhonePlan,
     ) as exc:
-        # The cause was invisible: a bare code reached the creator and nothing
-        # reached the logs (2026-09-19 phone chat-edit incident). Keep the
-        # wire code stable; name the failing step for operators.
-        reason = f"{type(exc).__name__}: {exc}"[:300]
-        log.warning(
-            "phone_editor_commit_unsupported",
-            job_id=str(job.id),
-            variant_id=variant_id,
-            reason=reason,
-            exc_info=True,
-        )
-        raise HTTPException(
-            422, detail={"code": "unsupported_phone_edit", "reason": reason}
-        ) from exc
+        raise _unsupported_phone_edit(job, variant_id, exc) from exc
     job.assembly_plan = staged.assembly_plan
     job.status = staged.status
     if "started_at" in vars(staged):
@@ -391,8 +385,28 @@ def prepare_phone_editor_commit(
     return {**prep, "render_destination": "device", "render_task_id": None}
 
 
-def _pinned_song_bed(recipe: EditRecipeV2) -> PhoneSongBed:
-    """The song receipt already pinned in ``recipe`` (KRI-374); Save never re-hashes it."""
+def _unsupported_phone_edit(job: Any, variant_id: str, exc: Exception) -> HTTPException:
+    # The cause was invisible: a bare code reached the creator and nothing
+    # reached the logs (2026-09-19 phone chat-edit incident). Keep the
+    # wire code stable; name the failing step for operators.
+    reason = f"{type(exc).__name__}: {exc}"[:300]
+    log.warning(
+        "phone_editor_commit_unsupported",
+        job_id=str(job.id),
+        variant_id=variant_id,
+        reason=reason,
+        exc_info=True,
+    )
+    return HTTPException(422, detail={"code": "unsupported_phone_edit", "reason": reason})
+
+
+def _pinned_song_bed(recipe: EditRecipeV2, user_song: dict[str, Any]) -> PhoneSongBed:
+    """The song receipt already pinned in ``recipe`` (KRI-374); Save never re-hashes it.
+
+    The creator's editor volume (KRI-428) lives on the plan, so it is carried over here
+    rather than reset to 1.0 on every Save. The start point is left unset: the compiler
+    reads it from the plan.
+    """
     asset = next((a for a in recipe.asset_manifest.assets if a.kind == "song"), None)
     if asset is None:
         raise ValueError("the previous phone recipe carries no song to keep")
@@ -402,6 +416,7 @@ def _pinned_song_bed(recipe: EditRecipeV2) -> PhoneSongBed:
         generation=asset.generation,
         fingerprint=asset.fingerprint,
         duration_s=media.duration,
+        volume=float(user_song.get("volume", 1.0)),
     )
 
 

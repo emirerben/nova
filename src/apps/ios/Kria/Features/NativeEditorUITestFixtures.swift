@@ -78,9 +78,31 @@ enum NativeEditorUITestFixtures {
         "source_audio_preserved": .bool(false),
         "user_song": .object([
             "title": .string("Midnight Drive"), "mode": .string("background"),
-            "duration_s": .number(214), "window_start_s": .number(108), "window_end_s": .number(123)
+            "duration_s": .number(214), "window_start_s": .number(108), "window_end_s": .number(123),
+            "volume": .number(0.8)
         ])
     ]
+
+    /// The same montage with a lip-sync song (`-ui-testing-editor-user-song-lipsync`): the start is locked,
+    /// volume and remove stay editable.
+    static let userSongLipSyncVariant: [String: JSONValue] = {
+        var variant = userSongVariant
+        var song = variant["user_song"]?.objectValue ?? [:]
+        song["mode"] = .string("lipsync")
+        variant["user_song"] = .object(song)
+        return variant
+    }()
+
+    /// The `user_song.*` capabilities the server advertises for a creator-song variant.
+    static func userSongCapabilities(lipSync: Bool) -> [String: EditorCapability] {
+        [
+            "user_song.volume": EditorCapability(editable: true),
+            "user_song.window": lipSync
+                ? EditorCapability(editable: false, reason: "user_song_lipsync_locked")
+                : EditorCapability(editable: true),
+            "user_song.remove": EditorCapability(editable: true),
+        ]
+    }
 
     static let legacyVisuals: EditorDraft = {
         var value = captionVisuals

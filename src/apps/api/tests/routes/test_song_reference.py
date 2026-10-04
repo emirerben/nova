@@ -7,7 +7,8 @@ from fastapi import HTTPException
 
 from app.pipeline.guided_story import song_reference_variant_fields
 from app.routes import generative_jobs as gj
-from app.services.phone_editor import prepare_phone_editor_commit
+from app.schemas.user_song import UserSongPlan
+from app.services.phone_editor import PHONE_EDITOR_SAVED_PLAN_FIELD, prepare_phone_editor_commit
 from tests.routes.test_generative_jobs import _resign_job
 from tests.routes.test_phone_editor_commit import phone_job
 
@@ -94,6 +95,97 @@ def test_reference_only_song_mutations_fail_before_catalog_or_state_changes(sect
     assert error.value.status_code == 422
     assert error.value.detail == "song_added_when_posting"
     assert job.assembly_plan == before
+
+
+def _creator_song_job(monkeypatch):
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True)
+    job = _resign_job()
+    song = UserSongPlan(
+        mode="background",
+        plan_item_id="item-1",
+        generation=3,
+        duration_s=100,
+        window_start_s=10,
+        window_end_s=40,
+    )
+    job.assembly_plan["variants"][0].update(
+        resolved_archetype="guided_story",
+        music_playback_mode="reference_only",
+        **{PHONE_EDITOR_SAVED_PLAN_FIELD: {"user_song": song.model_dump(mode="json")}},
+    )
+    return job
+
+
+@pytest.mark.parametrize(
+    "section",
+    [
+        {"volume": 0.5},
+        {"window_start_s": 12.0},
+        {"removed": True},
+    ],
+)
+def test_the_creators_own_song_is_not_a_reference_only_mutation(monkeypatch, section):
+    job = _creator_song_job(monkeypatch)
+    request = gj.EditorCommitRequest(
+        base_generation="first", user_song=gj.EditorCommitUserSong(**section)
+    )
+    gj.require_guided_story_editor_commit(job, "song_lyrics", request)
+
+
+def test_library_sections_stay_refused_beside_the_creators_song(monkeypatch):
+    job = _creator_song_job(monkeypatch)
+    request = gj.EditorCommitRequest(
+        base_generation="first",
+        music_track_id="another-song",
+        user_song=gj.EditorCommitUserSong(volume=0.5),
+    )
+    with pytest.raises(HTTPException) as error:
+        gj.require_guided_story_editor_commit(job, "song_lyrics", request)
+    assert error.value.detail == "song_added_when_posting"
+
+
+def test_a_user_song_section_needs_a_creator_song(monkeypatch):
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True)
+    job = _resign_job()
+    job.assembly_plan["variants"][0].update(
+        resolved_archetype="guided_story", music_playback_mode="reference_only"
+    )
+    before = copy.deepcopy(job.assembly_plan)
+    request = gj.EditorCommitRequest(
+        base_generation="first", user_song=gj.EditorCommitUserSong(volume=0.5)
+    )
+    with pytest.raises(HTTPException) as error:
+        gj.require_guided_story_editor_commit(job, "song_lyrics", request)
+    assert error.value.status_code == 422
+    assert error.value.detail == {"code": "user_song_unavailable"}
+    assert job.assembly_plan == before
+
+
+def test_a_user_song_section_is_refused_on_authored_and_legacy_paths(monkeypatch):
+    request = gj.EditorCommitRequest(
+        base_generation="first", user_song=gj.EditorCommitUserSong(volume=0.5)
+    )
+    job = _creator_song_job(monkeypatch)
+    job.assembly_plan["variants"][0]["editor_timeline_mode"] = "authored"
+    with pytest.raises(HTTPException) as error:
+        gj.require_guided_story_editor_commit(job, "song_lyrics", request)
+    assert error.value.detail == gj._GUIDED_STORY_EDIT_ERROR
+    job = _creator_song_job(monkeypatch)
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", False)
+    with pytest.raises(HTTPException) as error:
+        gj.require_guided_story_editor_commit(job, "song_lyrics", request)
+    assert error.value.detail == gj._GUIDED_STORY_EDIT_ERROR
+
+
+def test_the_song_edit_wire_shape_is_strict():
+    with pytest.raises(ValueError):
+        gj.EditorCommitUserSong(volume=1.5)
+    with pytest.raises(ValueError):
+        gj.EditorCommitUserSong(window_start_s=-1)
+    with pytest.raises(ValueError):
+        gj.EditorCommitUserSong(window_start_s=float("inf"))
+    with pytest.raises(ValueError):
+        gj.EditorCommitUserSong.model_validate({"volume": 0.5, "level": 1})
 
 
 def test_phone_revision_replaces_reference_timing_with_new_recipe(monkeypatch):

@@ -142,3 +142,31 @@ def test_song_render_asset_wire_shape_and_manifest_identity():
 
 def test_user_song_plan_contract_is_reused_unchanged():
     assert UserSongPlan.model_fields["mode"].annotation is not None
+
+
+def _plan_dict(**changes) -> dict:
+    return {
+        "mode": "background",
+        "plan_item_id": "item-1",
+        "generation": 3,
+        "duration_s": 100.0,
+        "window_start_s": 10.0,
+        "window_end_s": 40.0,
+        **changes,
+    }
+
+
+def test_a_stored_plan_without_volume_loads_at_full_volume_and_stays_unchanged():
+    plan = UserSongPlan.model_validate(_plan_dict())
+    assert plan.volume == 1.0
+    # Omitted at the default, so approval hashes and stored plans keep their shape.
+    assert plan.model_dump(mode="json") == _plan_dict() | {"takes": {}}
+
+
+def test_an_edited_volume_round_trips_and_is_bounded():
+    plan = UserSongPlan.model_validate(_plan_dict(volume=0.4))
+    assert plan.model_dump(mode="json")["volume"] == 0.4
+    assert UserSongPlan.model_validate(plan.model_dump(mode="json")).volume == 0.4
+    for bad in (-0.1, 1.1):
+        with pytest.raises(ValidationError):
+            UserSongPlan.model_validate(_plan_dict(volume=bad))

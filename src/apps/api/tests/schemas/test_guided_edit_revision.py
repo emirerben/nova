@@ -456,3 +456,33 @@ def test_initial_revision_exposes_narration_labels_in_one_deduplicated_text_unio
     )
 
     assert [row["id"] for row in revision["text_elements"]] == ["label-player-1"]
+
+
+def test_a_revision_without_a_song_edit_keeps_its_exact_hash() -> None:
+    normalized = normalize_guided_editor_revision(_revision())
+    assert "user_song" not in normalized
+    assert GuidedEditorRevision.model_validate(normalized).user_song is None
+    # The hash is over a body with no `user_song` key at all, as before KRI-428.
+    assert normalized["state_hash"] == guided_editor_state_hash(normalized)
+    assert "user_song" not in GuidedEditorRevision.model_validate(normalized).model_dump(
+        mode="json", exclude_none=False
+    )
+
+
+def test_a_creator_song_edit_is_hashed_validated_and_round_trips() -> None:
+    plain = normalize_guided_editor_revision(_revision())
+    edited = normalize_guided_editor_revision(
+        _revision(user_song={"volume": 0.4, "window_start_s": 12.5})
+    )
+    assert edited["user_song"] == {"volume": 0.4, "window_start_s": 12.5, "removed": False}
+    assert edited["state_hash"] != plain["state_hash"]
+    again = normalize_guided_editor_revision(edited)
+    assert again == edited
+    for bad in (
+        {"volume": 1.5},
+        {"window_start_s": -1},
+        {"window_start_s": float("inf")},
+        {"level": 1},
+    ):
+        with pytest.raises(ValueError):
+            normalize_guided_editor_revision(_revision(user_song=bad))

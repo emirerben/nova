@@ -143,6 +143,9 @@ class UserSongPlan(BaseModel):
     window_start_s: float = Field(ge=0)
     window_end_s: float = Field(gt=0)
     takes: dict[str, UserSongTake] = Field(default_factory=dict)
+    # The creator's editor volume (KRI-428). Omitted when 1.0 so every plan and
+    # approval hash written before this field existed keeps its exact shape.
+    volume: float = Field(default=1.0, ge=0, le=1, exclude_if=lambda value: value == 1.0)
 
     @model_validator(mode="after")
     def _window_inside_song(self) -> UserSongPlan:

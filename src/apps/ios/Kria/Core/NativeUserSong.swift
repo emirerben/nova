@@ -22,6 +22,14 @@ struct NativeUserSong: Equatable, Sendable {
     let durationS: Double?
     let windowStartS: Double
     let windowEndS: Double
+    /// Song level 0...1 the recipe plays at. Additive on the wire (KRI-428): a
+    /// missing or malformed value reads as full volume, like an older server.
+    let volume: Double
+
+    init(title: String?, mode: Mode, durationS: Double?, windowStartS: Double, windowEndS: Double, volume: Double = 1) {
+        self.title = title; self.mode = mode; self.durationS = durationS
+        self.windowStartS = windowStartS; self.windowEndS = windowEndS; self.volume = volume
+    }
 
     init?(variant: [String: JSONValue]) {
         guard let raw = variant["user_song"]?.objectValue,
@@ -35,6 +43,21 @@ struct NativeUserSong: Equatable, Sendable {
         self.durationS = raw["duration_s"]?.numberValue.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
         self.windowStartS = start
         self.windowEndS = end
+        self.volume = raw["volume"]?.numberValue.flatMap { $0.isFinite && $0 >= 0 && $0 <= 1 ? $0 : nil } ?? 1
+    }
+
+    /// Length of the played window; it equals the video length the server last rendered.
+    var windowLengthS: Double { windowEndS - windowStartS }
+
+    /// The song as the editor currently shows it: the server's values with the
+    /// user's unsaved volume / start applied. Nil once the user removed it.
+    func applying(_ edit: EditorUserSongState?) -> NativeUserSong? {
+        guard let edit else { return self }
+        if edit.removed { return nil }
+        let start = edit.windowStartS ?? windowStartS
+        return NativeUserSong(title: title, mode: mode, durationS: durationS,
+                              windowStartS: start, windowEndS: start + windowLengthS,
+                              volume: edit.volume ?? volume)
     }
 }
 
@@ -72,8 +95,9 @@ struct NativeEditorSongBed: Equatable, Sendable {
     }
 }
 
-/// What the Sounds tab shows for a project with the creator's own song.
-/// Read-only: the server rejects audio edits on song variants.
+/// What the Sounds tab shows for a project with the creator's own song. The
+/// row is display-only; volume, start and remove edits live on the editor
+/// document (`EditorUserSongState`) and are gated by `user_song.*` capabilities (KRI-428).
 struct NativeEditorYourSong: Equatable, Sendable {
     let title: String
     let window: String
@@ -81,6 +105,8 @@ struct NativeEditorYourSong: Equatable, Sendable {
 
     static let fallbackTitle = "Your song"
     static let helperCopy = "This is the song you added. Camera audio is muted so it plays alone."
+    static let lipSyncLockCopy = "Lip-sync keeps the song where you filmed it."
+    static let removedHelperCopy = "Song removed. Your camera audio plays instead."
 
     var accessibilitySummary: String {
         [title, window, mode].compactMap { $0 }.joined(separator: ", ")
@@ -111,4 +137,23 @@ struct NativeEditorYourSong: Equatable, Sendable {
         let whole = max(0, Int(seconds.rounded()))
         return String(format: "%d:%02d", whole / 60, whole % 60)
     }
+}
+
+/// What the Sounds tab's song controls show and allow (KRI-428). Values include unsaved edits.
+struct NativeEditorYourSongControls: Equatable, Sendable {
+    let mode: NativeUserSong.Mode
+    /// 0...1.
+    let volume: Double
+    /// Seconds into the song file where playback starts.
+    let startS: Double
+    /// How much of the song plays: the current video length.
+    let windowLengthS: Double
+    let songDurationS: Double?
+    /// The latest start that still lets the song cover the video; nil when the song length is unknown.
+    let maxStartS: Double?
+    let canEditVolume: Bool
+    let canEditStart: Bool
+    let canRemove: Bool
+
+    var startLabel: String { "Starts at \(NativeEditorYourSong.timecode(startS))" }
 }

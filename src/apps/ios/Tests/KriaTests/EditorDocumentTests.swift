@@ -245,6 +245,26 @@ final class EditorDocumentTests: XCTestCase {
         XCTAssertEqual(document.capabilities["sfx"]?.reason, "sound effects disabled")
     }
 
+    /// KRI-428: the creator-song operations arrive nested under `user_song` and flatten to `user_song.*`; a user_song
+    /// edit is never part of the lane snapshot, so it cannot leak into the persisted draft.
+    func testUserSongCapabilitiesFlattenAndEditsStayOutOfTheSnapshot() throws {
+        var document = EditorDocument.decode(snapshot: [
+            "editor_capabilities": .object(["user_song": .object([
+                "volume": .object(["editable": .bool(true), "reason": .null]),
+                "window": .object(["editable": .bool(false), "reason": .string("user_song_lipsync_locked")]),
+                "remove": .object(["editable": .bool(true), "reason": .null]),
+            ])]),
+        ])
+        XCTAssertEqual(document.capabilities["user_song.volume"]?.editable, true)
+        XCTAssertEqual(document.capabilities["user_song.window"]?.editable, false)
+        XCTAssertEqual(document.capabilities["user_song.window"]?.reason, "user_song_lipsync_locked")
+        XCTAssertEqual(document.capabilities["user_song.remove"]?.editable, true)
+        let before = document.encodeSnapshot()
+        document.userSong = EditorUserSongState(volume: 0.5, removed: false)
+        XCTAssertEqual(document.encodeSnapshot(), before)
+        XCTAssertNil(document.snapshot(for: .userSong))
+    }
+
     func testAuthoritativeCapabilitiesAndMusicUseCommitWireShape() throws {
         let snapshot: [String: JSONValue] = [
             "editor_payload": .object(["sections": .object([
