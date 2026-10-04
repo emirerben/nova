@@ -59,6 +59,8 @@ class KriaTurnPlan(_KriaModel):
     song_order_question: SongOrderQuestion | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    # KRI-282: conflict-choice payload (options to tap). Same omit-when-unset rule.
+    choice_question: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: not value)
 
     @field_validator("intents")
     @classmethod

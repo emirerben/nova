@@ -367,6 +367,9 @@ class UnifiedMontagePlan:
     # KRI-282: what each requested clip intent (group / sport label / chapter text)
     # actually did in this plan, for an honest receipt. Empty without clip intents.
     intent_outcomes: list[dict[str, Any]] = field(default_factory=list)
+    # KRI-282: the creator's answer to a chronological-vs-grouped conflict that this
+    # plan followed ("group_first" | "chronological"); None when none was asked.
+    ordering_choice: str | None = None
     # Zone the filming hours were printed in, "" when the labels are not hours.
     label_timezone: str = ""
     label_timezone_basis: str = ""
@@ -390,6 +393,7 @@ class UnifiedMontagePlan:
             else {}
         )
         outcomes = {"intent_outcomes": list(self.intent_outcomes)} if self.intent_outcomes else {}
+        choice = {"ordering_choice": self.ordering_choice} if self.ordering_choice else {}
         zone = (
             {
                 "label_timezone": self.label_timezone,
@@ -428,6 +432,7 @@ class UnifiedMontagePlan:
             **closing_title,
             **scope,
             **outcomes,
+            **choice,
             **zone,
             **song,
         }
@@ -585,6 +590,38 @@ def _order(
         result.basis,
         list(result.fallback_ids),
     )
+
+
+def _group_first(
+    ordered: Sequence[UnifiedClip], owners: Mapping[str, list[str]]
+) -> list[UnifiedClip]:
+    """Group the clips, chronological inside each group (KRI-282 ``group_first``).
+
+    ``ordered`` is the order the montage would otherwise use (capture time). Each clip
+    belongs to the ONE group that names it; a clip in several groups is ambiguous and
+    counts as ungrouped, like in the receipt. Groups play as one block each, blocks
+    ordered by the earliest position of any of their clips, clips inside a block in the
+    incoming order. Ungrouped clips keep the slot they had in ``ordered`` (an opening
+    shot of the pub stays the opening shot); only grouped clips are re-seated, into
+    the slots grouped clips already held.
+    """
+    group_of = {
+        ref: fold_text(names[0]) for ref, names in owners.items() if len(names) == 1 and names[0]
+    }
+    slots = [i for i, clip in enumerate(ordered) if clip.ref_id in group_of]
+    blocks: dict[str, list[UnifiedClip]] = {}
+    for i in slots:
+        blocks.setdefault(group_of[ordered[i].ref_id], []).append(ordered[i])
+    sequence = [clip for block in blocks.values() for clip in block]
+    result = list(ordered)
+    for slot, clip in zip(slots, sequence, strict=True):
+        result[slot] = clip
+    return result
+
+
+def _ordering_choice(strategy: Mapping[str, Any], enabled: bool) -> str | None:
+    choice = strategy.get("ordering_choice") if enabled else None
+    return choice if choice in ("group_first", "chronological") else None
 
 
 def _scatter(clips: Sequence[UnifiedClip], visuals: Sequence[UnifiedClip]) -> list[UnifiedClip]:
@@ -758,6 +795,11 @@ def plan_unified_montage(
     if len({clip.media_id for clip in (*clips, *visuals)}) != len(clips) + len(visuals):
         raise ValueError("montage clips must have unique media identities")
     ordered, basis, fallback_ids = _order(clips, view, creator_order)
+    choice = _ordering_choice(strategy, clip_intents_enabled)
+    if choice == "group_first":
+        # The creator chose grouping over strict filming order (KRI-282). Blocks are
+        # built from the chronological order above, so each block stays chronological.
+        ordered = _group_first(ordered, _group_owners(strategy))
     ordered = _scatter(ordered, visuals)
     if view.order_by_capture:
         # Visuals carry no capture time: they keep their spread slot, and the
@@ -1113,6 +1155,7 @@ def plan_unified_montage(
             clip.media_id for clip in ordered if clip.ref_id in (described or intent_labels)
         ],
         intent_outcomes=_intent_outcomes(strategy, clip_intents_enabled, ordered, labels),
+        ordering_choice=choice,
         dropped_label_clip_ids=dropped,
         short_label_clip_ids=short,
         ordering_basis=basis,
@@ -1310,7 +1353,9 @@ def _intent_labels(strategy: Mapping[str, Any], enabled: bool) -> dict[str, tupl
     return rows
 
 
-def _group_outcome(groups: list[tuple[str, list[int]]]) -> dict[str, Any]:
+def _group_outcome(
+    groups: list[tuple[str, list[int]]], choice: str | None = None
+) -> dict[str, Any]:
     """Are the clips of every group together in the final cut, one stretch each?"""
     # A clip in several groups is ambiguous and belongs to none of them for this check.
     tally: dict[int, int] = {}
@@ -1329,11 +1374,25 @@ def _group_outcome(groups: list[tuple[str, list[int]]]) -> dict[str, Any]:
         if stretches > 1:
             split.append(f"{name} is in {stretches} stretches")
     row: dict[str, Any] = {"op": "group", "name": "group by " + ", ".join(n for n, _s in groups)}
+    if split and choice == "chronological":
+        # The creator was asked and chose filming order over grouping (KRI-282): not
+        # a failure, but never reported as grouped either.
+        return {
+            **row,
+            "status": "chosen",
+            "reason": "you chose strictly chronological order, so " + "; ".join(split),
+        }
     if split:
         return {
             **row,
             "status": "partial",
             "reason": "clips stay in the order you filmed them, so " + "; ".join(split),
+        }
+    if choice == "group_first":
+        return {
+            **row,
+            "status": "met",
+            "reason": "you chose grouping first, each group in the order you filmed it",
         }
     return {**row, "status": "met", "reason": None}
 
@@ -1387,7 +1446,7 @@ def _intent_outcomes(
             else:
                 out.append({**row, "status": "met", "reason": None})
     if groups:
-        out.append(_group_outcome(groups))
+        out.append(_group_outcome(groups, _ordering_choice(strategy, enabled)))
         names = {fold_text(n) for n, _spots in groups}
         for intent in strategy.get("resolved_clip_intents") or []:
             if not _is_resolved(intent, "label") or intent.get("placeholder"):

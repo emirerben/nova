@@ -158,6 +158,10 @@ protocol KriaAPIClient: Sendable {
     /// `songOrder` answers a take-order question (KRI-374, server capability `song_order_questions`); nil = omitted.
     /// A 409 with code `song_order_stale` means the question was replaced: refresh the thread.
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?) async throws -> TurnAccepted
+    /// `choiceSelection` answers a conflict-choice question (KRI-282, server capability `choice_questions`); nil = omitted.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted
+    /// `songOrder` and `choiceSelection` are independent structured answers (a turn carries at most one); each is nil = omitted.
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread
     func threadDelta(threadID: UUID, afterSequence: Int) async throws -> ThreadDelta
     func draft(threadID: UUID) async throws -> DraftSnapshot
@@ -258,9 +262,19 @@ extension KriaAPIClient {
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?) async throws -> TurnAccepted {
         try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState)
     }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection)
+    }
 
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?) async throws -> TurnAccepted {
         try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection)
+    }
+
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted {
+        if let choiceSelection, songOrder == nil {
+            return try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, choiceSelection: choiceSelection)
+        }
+        return try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder)
     }
 
     func creationCapabilities() async throws -> CreationCapabilities { throw APIError.unsupported }
@@ -966,7 +980,13 @@ struct KriaAPI: KriaAPIClient {
         try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: nil)
     }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?) async throws -> TurnAccepted {
-        try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder)), decode: TurnAccepted.self)
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: nil)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision, clientEventID: clientEventID, editorState: editorState, clipSelection: clipSelection, songOrder: nil, choiceSelection: choiceSelection)
+    }
+    func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?) async throws -> TurnAccepted {
+        try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection)), decode: TurnAccepted.self)
     }
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread {
         try await request(
@@ -1408,8 +1428,8 @@ private enum ServerDateCoding {
     }
 }
 private struct SubmitTurnRequest: Encodable {
-    let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil; var clipSelection: ClipSelectionSubmission? = nil; var songOrder: SongOrderSubmission? = nil
-    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order" }
+    let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil; var clipSelection: ClipSelectionSubmission? = nil; var songOrder: SongOrderSubmission? = nil; var choiceSelection: ChoiceSelectionSubmission? = nil
+    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order"; case choiceSelection = "choice_selection" }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(message, forKey: .message); try c.encode(clientEventID, forKey: .clientEventID)
@@ -1417,6 +1437,7 @@ private struct SubmitTurnRequest: Encodable {
         try c.encodeIfPresent(editorState, forKey: .editorState)
         try c.encodeIfPresent(clipSelection, forKey: .clipSelection)
         try c.encodeIfPresent(songOrder, forKey: .songOrder)
+        try c.encodeIfPresent(choiceSelection, forKey: .choiceSelection)
     }
 }
 

@@ -571,6 +571,53 @@ final class CreationUITests: XCTestCase {
         XCTAssertFalse(app.buttons["clip-send"].exists)
     }
 
+    // MARK: conflict-choice question (KRI-282)
+
+    private func launchChoiceQuestionFixture(capability: String) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_CHAT_CHOICE_QUESTION"] = capability
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+        let next = app.buttons["Send clips"]
+        XCTAssertTrue(next.waitForExistence(timeout: 5))
+        next.tap()
+        return app
+    }
+
+    func testChoiceQuestionShowsRecommendedOptionAndSendsStructuredAnswerOnce() {
+        let app = launchChoiceQuestionFixture(capability: "1")
+        XCTAssertTrue(app.descendants(matching: .any)["choice-card"].waitForExistence(timeout: 15))
+        let grouped = app.buttons["choice-option-group_first"]
+        let chronological = app.buttons["choice-option-chronological"]
+        XCTAssertTrue(grouped.waitForExistence(timeout: 3))
+        XCTAssertTrue(chronological.exists)
+        XCTAssertEqual(grouped.label, "Group by sport, chronological inside each sport (recommended)")
+        XCTAssertEqual(chronological.label, "Keep it strictly chronological; sports may interleave")
+        XCTAssertGreaterThanOrEqual(grouped.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(chronological.frame.height, 44)
+        grouped.tap()
+        XCTAssertTrue(app.staticTexts["You: Group by sport, chronological inside each sport"].waitForExistence(timeout: 10))
+        let echo = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "choice[group_first]")).firstMatch
+        XCTAssertTrue(echo.waitForExistence(timeout: 10), "server received the structured choice_selection")
+        // Answered: the card collapses to a read-only summary and the options are gone.
+        XCTAssertTrue(app.descendants(matching: .any)["choice-card-answered"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["choice-option-group_first"].exists)
+        XCTAssertFalse(app.buttons["choice-option-chronological"].exists)
+    }
+
+    func testChoiceQuestionFallsBackToTextWhenServerLacksCapability() {
+        let app = launchChoiceQuestionFixture(capability: "legacy")
+        // The numbered text question still arrives; no tappable options are drawn.
+        let text = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: You asked for a chronological video")).firstMatch
+        XCTAssertTrue(text.waitForExistence(timeout: 15))
+        XCTAssertFalse(app.descendants(matching: .any)["choice-card"].exists)
+        XCTAssertFalse(app.buttons["choice-option-group_first"].exists)
+    }
+
     func testSlowDirectionAndPreJobFailureNeverReturnToUploading() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]

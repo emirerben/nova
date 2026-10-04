@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.66.0] - 2026-10-04
+
+### Changed
+- KRI-282 conflict choice question (#1379) <!-- release-pr: 1379 -->
+
 ## [0.78.65.0] - 2026-10-04
 
 ### Changed

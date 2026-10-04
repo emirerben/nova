@@ -42,6 +42,10 @@ MAX_ALTERNATES_PER_ITEM = 4
 # Two song positions closer than this are the same position.
 _POSITION_EPS_S = 1e-3
 
+# Event-payload keys of the OTHER structured chat answers (KRI-282 clip picker /
+# conflict choice). Tapped answers, never free text: see `thread_keeps_lipsync`.
+_STRUCTURED_ANSWER_KEYS = ("choice_selection", "clip_selection")
+
 STALE_CODE = "song_order_stale"
 INVALID_CODE = "song_order_invalid"
 
@@ -299,6 +303,11 @@ def thread_keeps_lipsync(events: Iterable[Event], song_generation: int | None) -
             continue
         answer = payload.get(SONG_ORDER_ANSWER_KEY) if isinstance(payload, dict) else None
         if not isinstance(answer, dict):
+            if isinstance(payload, dict) and any(k in payload for k in _STRUCTURED_ANSWER_KEYS):
+                # A tapped answer to ANOTHER server question (KRI-282 choice / clip
+                # picker) asked after the song order was confirmed: it isn't a free-text
+                # request to change the edit, so keep looking for the song answer.
+                continue
             return False  # the latest user turn is something else
         question = questions.get(str(answer.get("question_id")))
         return question is not None and _same_generation(question, song_generation)

@@ -45,7 +45,9 @@
       "KriaUITests/CreationUITests/testClipQuestionFallsBackToTextWhenServerLacksCapability",
       "KriaUITests/SongOrderUITests/testOrderCardShowsBadgesReordersAndSendsTheConfirmedOrder",
       "KriaUITests/SongOrderUITests/testOrderQuestionFallsBackToTextWhenServerDoesNotAdvertiseIt",
-      "KriaUITests/SongOrderUITests/testAddYourSongStepAppearsOnlyWhenTheServerAdvertisesIt"
+      "KriaUITests/SongOrderUITests/testAddYourSongStepAppearsOnlyWhenTheServerAdvertisesIt",
+      "KriaUITests/CreationUITests/testChoiceQuestionShowsRecommendedOptionAndSendsStructuredAnswerOnce",
+      "KriaUITests/CreationUITests/testChoiceQuestionFallsBackToTextWhenServerLacksCapability"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",

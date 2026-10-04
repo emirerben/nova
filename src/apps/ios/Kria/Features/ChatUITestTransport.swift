@@ -90,6 +90,9 @@ private final class CreationChatFixture: @unchecked Sendable {
                 capabilities["song_order_questions"] = true
                 capabilities["media"] = ["song": ["max": 1, "max_file_bytes": 52_428_800, "content_types": ["audio/mpeg", "audio/mp4"]]]
             }
+            // KRIA_CHAT_CHOICE_QUESTION: "1" = server advertises choice_questions; "legacy" = it still sends the
+            // choice_question payload but does not advertise the capability (old-server text fallback).
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] == "1" { capabilities["choice_questions"] = true }
             if DeviceRenderUITestFixture.scenario != nil {
                 capabilities["phone_rendering"] = ["enabled": true, "recipe_versions": [1, 2], "verified_features": MediaCapability.allCases.map(\.rawValue)]
             }
@@ -208,10 +211,12 @@ private final class CreationChatFixture: @unchecked Sendable {
             } else if action == "remove_media" { state["media"] = []; append("action_remove_media") }
         } else if parts.last == "messages" || parts.last == "turns" {
             let turnID = body["client_event_id"] as? String ?? id
-            // Like the server (`runtime.py`), a stored user message echoes the `song_order` it carried; that echo
-            // is what closes the order card.
-            append("user_message", role: "user", text: body["message"] as? String,
-                   payload: (body["song_order"] as? [String: Any]).map { ["song_order": $0] } ?? [:], clientEventID: turnID)
+            // Like the server (`runtime.py`), a stored user message echoes the structured answer it carried
+            // (`song_order` / `choice_selection`); that echo is what closes the order card.
+            var userPayload: [String: Any] = [:]
+            if let order = body["song_order"] as? [String: Any] { userPayload["song_order"] = order }
+            if let selection = body["choice_selection"] as? [String: Any] { userPayload["choice_selection"] = selection }
+            append("user_message", role: "user", text: body["message"] as? String, payload: userPayload, clientEventID: turnID)
             if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] != nil {
                 if let order = body["song_order"] as? [String: Any] {
                     // Echo what the server received so the UI test can pin the structured payload.
@@ -228,6 +233,23 @@ private final class CreationChatFixture: @unchecked Sendable {
                                 ["media_id": "fixture-clip-2", "status": "ambiguous", "song_start_s": 21.5, "alternates": [["delta_s": -8.0, "score": 0.4]]],
                                 ["media_id": "fixture-clip-3", "status": "unmatched", "alternates": []],
                                 ["media_id": "fixture-clip-4", "status": "confident", "song_start_s": 52.0, "alternates": []],
+                            ],
+                        ] as [String: Any],
+                    ])
+                }
+            } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] != nil {
+                if let selection = body["choice_selection"] as? [String: Any] {
+                    // Echo what the server received so the UI test can pin the structured payload.
+                    append("assistant_response", text: "Got it. choice[\(selection["option_key"] ?? "")] question[\(selection["question_id"] ?? "")]")
+                } else {
+                    append("assistant_response", text: "You asked for a chronological video and for the clips grouped by sport. Unfortunately your football and dodgeball clips were filmed mixed together, so I can't do both. Which do you prefer?\n1. Group by sport, chronological inside each sport (recommended)\n2. Keep it strictly chronological; sports may interleave\nTap an option, or tell me in your own words.", payload: [
+                        "turn_id": turnID, "turn_value": "question",
+                        "choice_question": [
+                            "version": 1, "question_id": "choice-q-\(events.count)", "conflict": "order_vs_group", "allow_free_text": true,
+                            "options": [
+                                ["key": "group_first", "label": "Group by sport, chronological inside each sport", "recommended": true,
+                                 "description": "Each sport plays as one block."],
+                                ["key": "chronological", "label": "Keep it strictly chronological; sports may interleave", "recommended": false],
                             ],
                         ] as [String: Any],
                     ])

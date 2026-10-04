@@ -205,6 +205,7 @@ def _complete_response_turn(
                     if plan.song_order_question is not None
                     else {}
                 ),
+                **({"choice_question": plan.choice_question} if plan.choice_question else {}),
             },
         )
         turn.plan_json = plan.model_dump(mode="json")

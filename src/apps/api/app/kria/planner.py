@@ -62,9 +62,17 @@ from app.models import (
 from app.routes._copilot import CopilotTurnBody, is_overlay_display_ask, run_copilot_turn
 from app.routes.generative_jobs import variant_render_baseline
 from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
+from app.services.choice_questions import (
+    CONFLICT_ORDER_VS_GROUP,
+    ORDER_VS_GROUP_OPTIONS,
+    build_choice_question,
+    choice_question_text,
+    detect_order_vs_group,
+    fold_choice_answers,
+)
 from app.services.clip_intent_answers import persist_clip_intent_vision_answers
 from app.services.clip_intent_planning import plan_and_resolve_clip_intents
-from app.services.clip_selection import ClipSelections, fold_clip_selections
+from app.services.clip_selection import fold_clip_selections
 from app.services.creator_sessions import (
     creator_context,
     load_intent_clips_for_item,
@@ -127,6 +135,7 @@ def adapt_creator_action(
     server_clip_intents: list[ClipIntent] | None = None,
     server_resolved_clip_intents: list[ResolvedClipIntent] | None = None,
     server_resolved_song_takes: list[dict[str, Any]] | None = None,
+    ordering_choice: str | None = None,
 ) -> KriaTurnPlan:
     """``server_resolved_song_takes`` (KRI-374) is the ONLY way ``resolved_song_takes``
     survives into the draft: it is server-owned (the song-order gate writes it after the
@@ -162,6 +171,8 @@ def adapt_creator_action(
         "clip_intents": requested_intents or None,
         "resolved_clip_intents": server_resolved_clip_intents or None,
         "resolved_song_takes": server_resolved_song_takes or None,
+        # KRI-282: server-owned, always overwritten (a model-authored value is dropped).
+        "ordering_choice": ordering_choice,
     }
     return KriaTurnPlan(
         mode="act",
@@ -969,6 +980,7 @@ async def _plan_from_creator_output(
     inputs: _CreatorInputs,
     output: MainCreatorOutput,
     brief_request: str | None = None,
+    wants_capture_order: bool = False,
 ) -> PlannedKriaTurn:
     """Turn a Main Creator answer into an inert plan (clip-intent resolution incl.)."""
     action = output.action
@@ -1039,8 +1051,11 @@ async def _plan_from_creator_output(
         and action.strategy.edit_format not in CLIP_INTENT_FREE_EDIT_FORMATS
     ):
         clip_selections = None
+        thread_events: list[tuple[str, dict[str, Any] | None]] = []
+        if settings.kria_clip_selection_questions_enabled or settings.kria_choice_questions_enabled:
+            thread_events = await _load_thread_events(db, thread_id)
         if settings.kria_clip_selection_questions_enabled:
-            clip_selections = await _load_clip_selections(db, thread_id)
+            clip_selections = fold_clip_selections(thread_events)
         try:
             planned = await plan_and_resolve_clip_intents(
                 creator_request=creator_request or user_message,
@@ -1160,12 +1175,31 @@ async def _plan_from_creator_output(
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
             )
+        ordering_choice: str | None = None
+        if settings.kria_choice_questions_enabled:
+            ordering_choice = fold_choice_answers(thread_events).get(CONFLICT_ORDER_VS_GROUP)
+            if ordering_choice not in ORDER_VS_GROUP_OPTIONS:
+                ordering_choice = None
+            if ordering_choice is None:
+                asked = _ordering_conflict_question(
+                    planned.resolution.intents,
+                    intent_clips,
+                    wants_capture_order=wants_capture_order,
+                    creator_request=creator_request or user_message,
+                )
+                if asked is not None:
+                    return PlannedKriaTurn(
+                        plan=asked,
+                        manifest_hash=manifest.manifest_hash,
+                        context_hash=manifest.context_hash,
+                    )
         return PlannedKriaTurn(
             plan=adapt_creator_action(
                 action,
                 server_clip_intents=planned.requested_intents,
                 server_resolved_clip_intents=planned.resolution.intents,
                 server_resolved_song_takes=server_song_takes,
+                ordering_choice=ordering_choice,
             ),
             manifest_hash=manifest.manifest_hash,
             context_hash=manifest.context_hash,
@@ -1197,9 +1231,43 @@ async def _plan_from_creator_output(
     )
 
 
-async def _load_clip_selections(db: AsyncSession, thread_id: uuid.UUID) -> ClipSelections:
-    """Standing clip-picker answers, replayed from the thread's own events (KRI-282)."""
-    return fold_clip_selections(await _load_thread_events(db, thread_id))
+def _ordering_conflict_question(
+    resolved: list[ResolvedClipIntent],
+    clips: list,
+    *,
+    wants_capture_order: bool,
+    creator_request: str,
+) -> KriaTurnPlan | None:
+    """The one focused question for "chronological" + "group by X" over interleaved clips
+    (KRI-282), or None when there is no real conflict."""
+    groups = [
+        (intent.attribute, [a.media_id for a in intent.assignments])
+        for intent in resolved
+        if intent.op == "group" and intent.status == "resolved" and not intent.placeholder
+    ]
+    candidate = detect_order_vs_group(
+        wants_capture_order=wants_capture_order,
+        groups=groups,
+        clips=[(clip.media_id, getattr(clip, "capture_time", None)) for clip in clips],
+        noun="sport" if "spor" in creator_request.casefold() else "group",
+    )
+    if candidate is None:
+        return None
+    return KriaTurnPlan(
+        mode="respond",
+        turn_value="question",
+        response=choice_question_text(candidate),
+        choice_question=build_choice_question(candidate),
+    )
+
+
+def _brief_wants_capture_order(brief: CreativeBrief | None) -> bool:
+    """Does the live brief ask for filming (capture-time) order?"""
+    if brief is None or not brief.live():
+        return False
+    from app.pipeline.unified_montage import brief_view  # noqa: PLC0415
+
+    return brief_view(brief).order_by_capture
 
 
 async def _refetch_item(db: AsyncSession, item_id: uuid.UUID) -> PlanItem:
@@ -1560,6 +1628,7 @@ async def plan_live_turn(
             if effective.live()
             else None
         ),
+        wants_capture_order=_brief_wants_capture_order(effective),
     )
     return replace(
         planned,
