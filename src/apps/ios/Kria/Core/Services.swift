@@ -130,7 +130,7 @@ protocol KriaAPIClient: Sendable {
     func sendCreationMessage(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> CreationThread
     func creationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int, clientActionID: String) async throws -> CreationThread
     func reserveVisualUpload(itemID: String, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> VisualUploadTarget
-    func registerVisual(itemID: String, reservationID: String, gcsPath: String, contentType: String, filename: String) async throws -> CreationVisual
+    func registerVisual(itemID: String, reservationID: String, gcsPath: String, contentType: String, filename: String, capture: ClipCaptureWire?) async throws -> CreationVisual
     func visuals(itemID: String) async throws -> CreationVisuals
     func removeVisual(itemID: String, assetID: String) async throws
     func retryVisual(itemID: String, assetID: String) async throws -> CreationVisual

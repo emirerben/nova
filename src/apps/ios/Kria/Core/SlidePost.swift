@@ -223,11 +223,29 @@ struct SlidePostAsset: Codable, Equatable, Identifiable, Sendable {
     var sourceURL: URL? = nil
     var durationS: Double? = nil
     var mediaStatus: String? = nil
+    /// When/where the photo or video was taken (KRI-300); nil when the phone sent none.
+    var capture: SlidePostAssetCapture? = nil
     enum CodingKeys: String, CodingKey {
-        case id, kind, status
+        case id, kind, status, capture
         case sourceFilename = "source_filename", displayURL = "display_url", previewURL = "preview_url", sourceURL = "source_url"
         case durationS = "duration_s", mediaStatus = "media_status"
     }
+}
+/// Mirrors the server's `ClipCapture`: every part may be absent. `captureTime` stays the ISO-8601 string
+/// the server sends; use `date` for ordering.
+struct SlidePostAssetCapture: Codable, Equatable, Sendable {
+    var captureTime: String? = nil
+    var coarseLocation: SlidePostAssetLocation? = nil
+    var place: SlidePostAssetPlace? = nil
+    enum CodingKeys: String, CodingKey { case place; case captureTime = "capture_time", coarseLocation = "coarse_location" }
+    var date: Date? { captureTime.flatMap { ISO8601DateFormatter().date(from: $0) } }
+}
+struct SlidePostAssetLocation: Codable, Equatable, Sendable { let lat: Double; let lon: Double }
+struct SlidePostAssetPlace: Codable, Equatable, Sendable {
+    var subLocality: String? = nil
+    var locality: String? = nil
+    var country: String? = nil
+    enum CodingKeys: String, CodingKey { case locality, country; case subLocality = "sub_locality" }
 }
 struct SlidePostRenderedSlide: Codable, Equatable, Identifiable, Sendable {
     let id: String

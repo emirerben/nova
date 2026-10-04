@@ -3095,6 +3095,10 @@ class PlanItemAsset(Base):
     # from Nova's generated analysis so matching can prefer user intent without
     # rewriting AI metadata.
     user_context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # KRI-300: filming context the phone read from Photos at upload time
+    # ({capture_time, coarse_location, place}, see ClipCapture). Own column, not
+    # `analysis`, because registration and re-analysis both reset `analysis`.
+    capture: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # preparing | promoting | cleanup_pending | uploaded (legacy) | queued |
     # analyzing | ready | failed
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="uploaded")

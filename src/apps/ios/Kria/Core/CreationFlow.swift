@@ -142,10 +142,16 @@ extension KriaAPIClient {
         try await applyCreationAction(threadID: threadID, action: action, payload: payload, expectedRevision: expectedRevision)
     }
     func reserveVisualUpload(itemID: String, clientUploadID: String, filename: String, contentType: String, size: Int64) async throws -> VisualUploadTarget { throw APIError.unsupported }
-    func registerVisual(itemID: String, reservationID: String, gcsPath: String, contentType: String, filename: String) async throws -> CreationVisual { throw APIError.unsupported }
+    func registerVisual(itemID: String, reservationID: String, gcsPath: String, contentType: String, filename: String, capture: ClipCaptureWire?) async throws -> CreationVisual { throw APIError.unsupported }
     func visuals(itemID: String) async throws -> CreationVisuals { throw APIError.unsupported }
     func removeVisual(itemID: String, assetID: String) async throws { throw APIError.unsupported }
     func retryVisual(itemID: String, assetID: String) async throws -> CreationVisual { throw APIError.unsupported }
+}
+
+extension KriaAPIClient {
+    func registerVisual(itemID: String, reservationID: String, gcsPath: String, contentType: String, filename: String) async throws -> CreationVisual {
+        try await registerVisual(itemID: itemID, reservationID: reservationID, gcsPath: gcsPath, contentType: contentType, filename: filename, capture: nil)
+    }
 }
 
 extension KriaAPI {
@@ -168,10 +174,13 @@ extension KriaAPI {
         guard let target = response.urls.first else { throw APIError.invalidResponse }
         return target
     }
-    func registerVisual(itemID: String, reservationID: String, gcsPath: String, contentType: String, filename: String) async throws -> CreationVisual {
-        try await request(path: "plan-items/\(itemID)/assets", method: "POST", bodyData: JSONEncoder().encode([
-            "reservation_id": reservationID, "gcs_path": gcsPath, "content_type": contentType, "source_filename": filename
-        ]), decode: CreationVisual.self)
+    func registerVisual(itemID: String, reservationID: String, gcsPath: String, contentType: String, filename: String, capture: ClipCaptureWire?) async throws -> CreationVisual {
+        // KRI-300: capture_time / coarse_location / place ride along, omitted when absent or the setting is off.
+        var body: [String: JSONValue] = [
+            "reservation_id": .string(reservationID), "gcs_path": .string(gcsPath), "content_type": .string(contentType), "source_filename": .string(filename)
+        ]
+        for (key, value) in capture?.jsonFields ?? [:] { body[key] = value }
+        return try await request(path: "plan-items/\(itemID)/assets", method: "POST", bodyData: JSONEncoder().encode(body), decode: CreationVisual.self)
     }
     func visuals(itemID: String) async throws -> CreationVisuals {
         try await request(path: "plan-items/\(itemID)/assets", method: "GET", bodyData: nil, decode: CreationVisuals.self)
