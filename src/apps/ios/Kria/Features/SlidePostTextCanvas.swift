@@ -1,0 +1,327 @@
+import SwiftUI
+import UIKit
+
+// MARK: Canvas text
+
+/// The text layer of a slide preview. It drives the same transform layer as the
+/// native video preview (`NativeTextLiveTransform` / `NativeTextTransformMath`):
+/// select a text, drag it (alignment-guide haptics), drag the corner handle to
+/// scale and rotate it (90-degree detents), pinch to resize, twist to rotate,
+/// and tap empty canvas to deselect. Every sample is written through
+/// `onTransform` with one key per gesture, so undo steps back a whole gesture.
+struct SlidePostTextCanvas: View {
+    let texts: [SlidePostTextElement]
+    let size: CGSize
+    let selectedID: String?
+    let interactive: Bool
+    /// A text id selects it; nil deselects (a tap on empty canvas).
+    let onSelect: (String?) -> Void
+    /// (text id, gesture key, mutation). The key is unique per gesture.
+    let onTransform: (String, String, (inout SlidePostTextElement) -> Void) -> Void
+
+    private enum Mode {
+        case idle
+        case move(TextTransformBaseline)
+        case corner(TextTransformBaseline, anchorPoint: CGPoint, start: CGVector)
+        case pinch(TextTransformBaseline)
+
+        var isPinch: Bool { if case .pinch = self { true } else { false } }
+        var isIdle: Bool { if case .idle = self { true } else { false } }
+    }
+
+    @State private var blockSizes: [String: CGSize] = [:]
+    @State private var mode = Mode.idle
+    @State private var live = NativeTextLiveTransform()
+    @State private var gestureKey = UUID().uuidString
+    @State private var feedback = NativeTextAlignmentFeedback()
+    @State private var haptic = UISelectionFeedbackGenerator()
+    @State private var clock = SlidePostGestureClock()
+    /// A pinch's fingers never move perfectly symmetrically; rotation only engages once the twist is deliberate.
+    @State private var twistLatched = false
+    private static let twistThreshold = 8.0
+
+    /// Radius of the corner handle's drawn circle, and how far the handle is
+    /// kept from the stage edge so it is always fully visible and grabbable.
+    private static let handleRadius: CGFloat = 11
+    private static let handleInset: CGFloat = 13
+    private static let selectionPadding: CGFloat = 4
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            ZStack(alignment: .topLeading) {
+                ForEach(texts) { element in textView(element) }
+            }
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .allowsHitTesting(false)
+            if interactive {
+                gestureSurface
+                if let selected = texts.first(where: { $0.id == selectedID }), let rect = selectionRect(for: selected) {
+                    selectionOverlay(for: selected, rect: rect)
+                }
+            }
+        }
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+        .coordinateSpace(name: "slidepost-canvas")
+        .onPreferenceChange(SlidePostBlockSizeKey.self) { blockSizes = $0 }
+        .onDisappear(perform: settle)
+    }
+
+    // MARK: Geometry
+
+    private func blockFrame(_ element: SlidePostTextElement) -> CGRect? {
+        blockSizes[element.id].map { SlidePostTextGeometry.frame(for: element, blockSize: $0, canvas: size) }
+    }
+
+    /// The padded selection box: what is drawn, hit-tested and grabbed.
+    private func selectionRect(for element: SlidePostTextElement) -> CGRect? {
+        blockFrame(element)?.insetBy(dx: -Self.selectionPadding, dy: -Self.selectionPadding)
+    }
+
+    private func handleCenter(for element: SlidePostTextElement, rect: CGRect) -> CGPoint {
+        NativeTextTransformMath.handleCenter(of: rect, rotationDegrees: element.rotationDeg, canvas: size, inset: Self.handleInset)
+    }
+
+    private func hit(at point: CGPoint) -> SlidePostTextElement? {
+        texts.reversed().first { element in
+            guard let rect = selectionRect(for: element) else { return false }
+            return NativeEditorInteraction.contains(point, in: rect, rotationDegrees: element.rotationDeg)
+        }
+    }
+
+    // MARK: Gestures
+
+    private var gestureSurface: some View {
+        Color.clear
+            .frame(width: size.width, height: size.height)
+            .contentShape(Rectangle())
+            .highPriorityGesture(dragGesture)
+            .simultaneousGesture(pinchGesture)
+            .simultaneousGesture(SpatialTapGesture().onEnded { value in tap(at: value.location) })
+    }
+
+    private var dragGesture: some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .named("slidepost-canvas"))
+            .onChanged { value in
+                clock.lastChange = Date()
+                dragChanged(value)
+            }
+            .onEnded { _ in if !mode.isPinch { settle() } }
+    }
+
+    private var pinchGesture: some Gesture {
+        MagnificationGesture().simultaneously(with: RotationGesture())
+            .onChanged { value in
+                clock.lastChange = Date()
+                pinchChanged(scale: value.first.map(Double.init) ?? 1, degrees: value.second?.degrees ?? 0,
+                             twisting: value.second != nil)
+            }
+            .onEnded { _ in settle() }
+    }
+
+    private func tap(at point: CGPoint) {
+        // A drag that also resolves as a tap must never deselect.
+        guard Date().timeIntervalSince(clock.lastChange) > 0.4 else { return }
+        if let selected = texts.first(where: { $0.id == selectedID }), let rect = selectionRect(for: selected),
+           hypot(point.x - handleCenter(for: selected, rect: rect).x, point.y - handleCenter(for: selected, rect: rect).y) <= NativeTextTransformMath.cornerGrabRadius {
+            return
+        }
+        onSelect(hit(at: point)?.id)
+    }
+
+    private func dragChanged(_ value: DragGesture.Value) {
+        guard !mode.isPinch, size.width > 0, size.height > 0 else { return }
+        if mode.isIdle { beginDrag(at: value.startLocation) }
+        switch mode {
+        case .idle, .pinch:
+            return
+        case let .corner(baseline, anchorPoint, start):
+            let next = CGVector(dx: value.location.x - anchorPoint.x, dy: value.location.y - anchorPoint.y)
+            guard let delta = NativeTextTransformMath.cornerDelta(start: start, next: next) else { return }
+            live.resize(current: baseline, scale: delta.scale, rotation: delta.rotationDegrees, snapRotation: true)
+            publishResize(baseline)
+        case let .move(baseline):
+            let position = NativeTextTransformMath.movedPosition(from: baseline.anchor, translation: value.translation, canvas: size)
+            live.resize(current: baseline, scale: 1, rotation: 0, snapRotation: false)
+            live.move(to: position)
+            tickAlignment()
+            let key = gestureKey, id = baseline.id
+            onTransform(id, key) { element in
+                element.position = "custom"; element.xFrac = Double(position.x); element.yFrac = Double(position.y)
+            }
+        }
+    }
+
+    private func beginDrag(at start: CGPoint) {
+        feedback.reset(); haptic.prepare()
+        if let selected = texts.first(where: { $0.id == selectedID }), let rect = selectionRect(for: selected),
+           NativeTextTransformMath.grabsCorner(at: start, corner: handleCenter(for: selected, rect: rect), bounds: rect) {
+            let baseline = selected.transformBaseline
+            let anchorPoint = CGPoint(x: baseline.anchor.x * size.width, y: baseline.anchor.y * size.height)
+            begin(baseline, for: selected)
+            mode = .corner(baseline, anchorPoint: anchorPoint, start: CGVector(dx: start.x - anchorPoint.x, dy: start.y - anchorPoint.y))
+            return
+        }
+        guard let target = hit(at: start) else { return }
+        if target.id != selectedID { onSelect(target.id) }
+        let baseline = target.transformBaseline
+        begin(baseline, for: target)
+        mode = .move(baseline)
+    }
+
+    private func begin(_ baseline: TextTransformBaseline, for element: SlidePostTextElement) {
+        gestureKey = UUID().uuidString
+        live.reset()
+        let bounds = blockSizes[element.id].map { SlidePostTextGeometry.bounds(for: element, blockSize: $0, canvas: size) }
+        live.begin(baseline: baseline, bounds: bounds)
+    }
+
+    private func pinchChanged(scale: Double, degrees: Double, twisting: Bool) {
+        guard size.width > 0, let selected = texts.first(where: { $0.id == selectedID }) else { return }
+        let baseline: TextTransformBaseline
+        if case let .pinch(existing) = mode {
+            baseline = existing
+        } else {
+            // A two-finger gesture owns the transform; drop any one-finger drag in flight.
+            feedback.reset(); haptic.prepare()
+            baseline = selected.transformBaseline
+            begin(baseline, for: selected)
+            mode = .pinch(baseline)
+        }
+        if twisting, abs(degrees) >= Self.twistThreshold { twistLatched = true }
+        live.resize(current: baseline, scale: scale, rotation: twistLatched ? degrees : 0, snapRotation: twistLatched)
+        publishResize(baseline)
+    }
+
+    /// Writes the live size / width / rotation sample and ticks the guides.
+    private func publishResize(_ baseline: TextTransformBaseline) {
+        tickAlignment()
+        let key = gestureKey, snapshot = live
+        onTransform(baseline.id, key) { $0.applyTransform(from: baseline, live: snapshot) }
+    }
+
+    private func tickAlignment() {
+        if live.updateAlignment(&feedback, in: size) { haptic.selectionChanged(); haptic.prepare() }
+    }
+
+    private func settle() {
+        guard !mode.isIdle || live.isActive else { return }
+        mode = .idle
+        twistLatched = false
+        live.reset()
+        feedback.reset()
+    }
+
+    // MARK: Selection chrome
+
+    @ViewBuilder private func selectionOverlay(for element: SlidePostTextElement, rect: CGRect) -> some View {
+        let handle = handleCenter(for: element, rect: rect)
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(KriaColor.sky, lineWidth: 2)
+                .frame(width: rect.width, height: rect.height)
+                .rotationEffect(.degrees(element.rotationDeg))
+                .position(x: rect.midX, y: rect.midY)
+                .accessibilityElement(children: .ignore)
+                .accessibilityIdentifier("slidepost-text-selection")
+                .accessibilityValue("selected")
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: Self.handleRadius * 2, height: Self.handleRadius * 2)
+                .background(KriaColor.sky, in: Circle())
+                .position(x: handle.x, y: handle.y)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Resize and rotate")
+                .accessibilityIdentifier("slidepost-text-handle")
+        }
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+        .allowsHitTesting(false)
+    }
+
+    // MARK: Text rendering
+
+    private func textView(_ element: SlidePostTextElement) -> some View {
+        let scale = size.width / 1080
+        let points = max(8, CGFloat(element.sizePx) * scale)
+        let font = NativeFontCatalog.shared.ctFont(element.fontFamily, size: points).map(Font.init) ?? KriaFont.body(points).weight(.bold)
+        let selected = interactive && element.id == selectedID
+        let alignment: TextAlignment = element.alignment == "left" ? .leading : (element.alignment == "right" ? .trailing : .center)
+        let stroke = element.strokeWidth > 0 ? max(0.6, CGFloat(element.strokeWidth) * scale) : 0
+        let anchor = SlidePostTextLayout.anchor(for: element)
+        // Server parity: x is the left edge / centre / right edge by alignment; y is the block centre.
+        let frameAlignment: Alignment = element.alignment == "left" ? .leading : (element.alignment == "right" ? .trailing : .center)
+        let offsetX = element.alignment == "left" ? anchor.x : (element.alignment == "right" ? anchor.x - 1 : anchor.x - 0.5)
+        // The block rotates about its anchor, which sits at the box's leading edge / centre / trailing edge.
+        let pivotX: CGFloat = element.alignment == "left" ? 0 : (element.alignment == "right" ? 1 : 0.5)
+        let makeText: (Color) -> Text = { Text(element.text).font(font).foregroundStyle($0) }
+        return styled(makeText, color: Color(slideHex: element.color), alignment: alignment, stroke: stroke, shadow: element.shadowEnabled, scale: scale)
+            .padding(.horizontal, element.background == "box" ? points * 0.45 : 0).padding(.vertical, element.background == "box" ? points * 0.22 : 0)
+            .background { if element.background == "box" { RoundedRectangle(cornerRadius: points * 0.25, style: .continuous).fill(.black.opacity(0.55)) } }
+            .modifier(SlidePostHuggingWidth(maxWidth: size.width * CGFloat(element.maxWidthFrac ?? SlidePostTextElement.defaultWidthFrac)))
+            .background(GeometryReader { geometry in
+                Color.clear.preference(key: SlidePostBlockSizeKey.self, value: [element.id: geometry.size])
+            })
+            .frame(width: size.width, height: size.height, alignment: frameAlignment)
+            .rotationEffect(.degrees(element.rotationDeg), anchor: UnitPoint(x: pivotX, y: 0.5))
+            .offset(x: CGFloat(offsetX) * size.width, y: CGFloat(anchor.y - 0.5) * size.height)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(element.text)
+            .accessibilityValue(accessibilityValue(element, selected: selected))
+            .accessibilityHint(selected ? "Drag to move, pinch to resize, twist to rotate" : "Double tap to select")
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .accessibilityAction(named: "Select") { onSelect(element.id) }
+            .accessibilityIdentifier("slidepost-canvas-text-\(element.id)")
+    }
+
+    private func accessibilityValue(_ element: SlidePostTextElement, selected: Bool) -> String {
+        let anchor = SlidePostTextLayout.anchor(for: element)
+        var parts = ["size \(element.sizePx)", "rotation \(Int(element.rotationDeg.rounded()))",
+                     "position \(Int((anchor.x * 100).rounded()))%, \(Int((anchor.y * 100).rounded()))%"]
+        if selected { parts.append("selected") }
+        return parts.joined(separator: ", ")
+    }
+
+    @ViewBuilder private func styled(_ makeText: @escaping (Color) -> Text, color: Color, alignment: TextAlignment, stroke: CGFloat, shadow: Bool, scale: CGFloat) -> some View {
+        let base = ZStack {
+            if stroke > 0 {
+                ForEach(Array(Self.outlineOffsets.enumerated()), id: \.offset) { _, offset in
+                    makeText(.black).offset(x: offset.width * stroke, y: offset.height * stroke)
+                }
+            }
+            makeText(color)
+        }
+        .multilineTextAlignment(alignment)
+        if shadow { base.shadow(color: .black.opacity(0.55), radius: max(1, 5 * scale), x: 0, y: max(1, 2 * scale)) } else { base }
+    }
+    private static let outlineOffsets: [CGSize] = [(-1, 0), (1, 0), (0, -1), (0, 1), (-0.7, -0.7), (0.7, -0.7), (-0.7, 0.7), (0.7, 0.7)].map { CGSize(width: $0.0, height: $0.1) }
+}
+
+/// Last time a drag or pinch changed. A reference type so writing it never re-renders.
+final class SlidePostGestureClock {
+    var lastChange = Date.distantPast
+}
+
+private struct SlidePostBlockSizeKey: PreferenceKey {
+    static var defaultValue: [String: CGSize] { [:] }
+    static func reduce(value: inout [String: CGSize], nextValue: () -> [String: CGSize]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+/// Wraps its child at `maxWidth` but reports the child's own (widest-line) width, so the measured
+/// block hugs the glyphs the way the native preview's selection does. `.frame(maxWidth:)` would
+/// instead grow to the full wrap width and draw a selection box far wider than the text.
+private struct SlidePostHuggingWidth: ViewModifier {
+    let maxWidth: CGFloat
+    func body(content: Content) -> some View { HuggingLayout(maxWidth: maxWidth) { content } }
+
+    private struct HuggingLayout: Layout {
+        let maxWidth: CGFloat
+        func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+            subviews.first?.sizeThatFits(ProposedViewSize(width: maxWidth, height: nil)) ?? .zero
+        }
+        func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+            subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+        }
+    }
+}
