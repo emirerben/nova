@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.47.0] - 2026-10-04
+
+### Changed
+- fix(kria): put described-shot text on the matched clip, not its list position (KRI-296) (#1352) <!-- release-pr: 1352 -->
+
 ## [0.78.46.0] - 2026-10-03
 
 ### Changed
