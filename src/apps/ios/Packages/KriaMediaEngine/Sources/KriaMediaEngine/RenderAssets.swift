@@ -52,6 +52,12 @@ public struct RenderAssetReference: Codable, Equatable, Sendable {
         /// plan item rather than a catalog id; downloaded through the same per-asset
         /// grant. See `app.kria.render_assets.VoiceoverRenderAsset` on the backend.
         case voiceover(planItemID: String, generation: String)
+        /// A creator-uploaded song for one content-plan item (KRI-374), pinned to one
+        /// storage generation. Same private, owner-scoped addressing and per-asset grant as
+        /// `voiceover`; it plays as the audio track through `AudioMixRecipe.musicAssetID`.
+        /// The server's song generation is an integer; it is carried here as its decimal
+        /// string so identity comparisons stay uniform with the other pinned kinds.
+        case song(planItemID: String, generation: String)
     }
     public let id: String
     public let fingerprint: RenderFingerprint
@@ -84,6 +90,13 @@ public struct RenderAssetReference: Codable, Equatable, Sendable {
             guard !c.contains(.mediaId), !c.contains(.catalog), !c.contains(.catalogId), !c.contains(.visualId), !c.contains(.mediaKind) else { throw RenderAssetError.invalidManifest }
             source = .voiceover(planItemID: try c.decode(String.self, forKey: .planItemId),
                                 generation: try c.decode(String.self, forKey: .generation))
+        case "song":
+            guard !c.contains(.mediaId), !c.contains(.catalog), !c.contains(.catalogId), !c.contains(.visualId), !c.contains(.mediaKind) else { throw RenderAssetError.invalidManifest }
+            // The wire carries the song generation as an integer; tolerate a string too.
+            let generation: String
+            if let text = try? c.decode(String.self, forKey: .generation) { generation = text }
+            else { generation = String(try c.decode(Int.self, forKey: .generation)) }
+            source = .song(planItemID: try c.decode(String.self, forKey: .planItemId), generation: generation)
         default: throw RenderAssetError.invalidManifest
         }
         try validate()
@@ -105,6 +118,11 @@ public struct RenderAssetReference: Codable, Equatable, Sendable {
         case .voiceover(let planItemID, let generation):
             try c.encode("voiceover", forKey: .kind); try c.encode(planItemID, forKey: .planItemId)
             try c.encode(generation, forKey: .generation)
+        case .song(let planItemID, let generation):
+            try c.encode("song", forKey: .kind); try c.encode(planItemID, forKey: .planItemId)
+            // Re-emit the server's integer shape so a decoded manifest encodes back unchanged.
+            if let number = Int(generation), String(number) == generation { try c.encode(number, forKey: .generation) }
+            else { try c.encode(generation, forKey: .generation) }
         }
     }
     public func validate() throws {
@@ -115,6 +133,7 @@ public struct RenderAssetReference: Codable, Equatable, Sendable {
         case .library(_, let catalogID, let generation): identifiers = [id, catalogID, generation]
         case .visual(let visualID, let generation, _): identifiers = [id, visualID, generation]
         case .voiceover(let planItemID, let generation): identifiers = [id, planItemID, generation]
+        case .song(let planItemID, let generation): identifiers = [id, planItemID, generation]
         }
         guard identifiers.allSatisfy({ !$0.isEmpty && $0.count <= 160 && $0.rangeOfCharacter(from: .whitespacesAndNewlines) == nil }) else {
             throw RenderAssetError.invalidManifest
@@ -238,7 +257,7 @@ public struct PortableAssetResolver: Sendable {
             try Task.checkCancellation()
             switch asset.source {
             case .original(let mediaID): result[asset.id] = originalURLs[mediaID]
-            case .library, .visual, .voiceover: result[asset.id] = try await library.resolve(asset)
+            case .library, .visual, .voiceover, .song: result[asset.id] = try await library.resolve(asset)
             }
         }
         return result

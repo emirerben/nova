@@ -316,6 +316,8 @@ private struct CreationWorkspaceView: View {
     @State private var isSending = false
     /// Clip-picker answers sent from this device, by question id, for the collapsed "answered" summary.
     @State private var answeredClipSelections: [String: ClipSelectionSubmission] = [:]
+    /// Song-order answers sent from this device, by question id, for the collapsed "answered" summary (KRI-374).
+    @State private var answeredSongOrders: [String: SongOrderSubmission] = [:]
     @State private var isActing = false
     @State private var isThinking = false
     /// Highest transcript sequence known when the thinking turn was accepted; only later events can settle it.
@@ -460,7 +462,10 @@ private struct CreationWorkspaceView: View {
                                composerFocused = true
                            },
                            clipSelectionMode: clipSelectionMode(for: message),
-                           clipSelectionMedia: CreationAttachedMedia.parse(threadState))
+                           clipSelectionMedia: CreationAttachedMedia.parse(threadState),
+                           songOrderMode: songOrderMode(for: message),
+                           songOrderMedia: CreationAttachedMedia.parse(threadState),
+                           projectID: project.id)
                 .id(entry.id)
         case .stage:
             stageContent.id(entry.id)
@@ -500,6 +505,30 @@ private struct CreationWorkspaceView: View {
             }
         }
         return nil
+    }
+
+    /// Order card only when the server advertises `song_order_questions`. Interactive on the newest question
+    /// that no later user message has answered; read-only afterwards; hidden once a newer question replaced it.
+    private func songOrderMode(for message: ChatTranscriptMessage) -> SongOrderCardMode? {
+        guard capabilities?.songOrderQuestionsEnabled == true,
+              let question = message.songOrderQuestion else { return nil }
+        let entries = timeline.compactMap { entry -> SongOrderFold.Entry? in
+            guard case .message(let message) = entry.content else { return nil }
+            return SongOrderFold.Entry(messageID: message.id, question: message.songOrderQuestion, isUser: message.role == .user)
+        }
+        switch SongOrderFold.phases(entries)[message.id] {
+        case .active:
+            return .active(isSending: isSending || isActing || isThinking) { submission, text in
+                answeredSongOrders[question.questionID] = submission
+                // A rejected send removes the pending message, which reopens the card for a retry.
+                Task { await send(message: text, songOrder: submission) }
+            }
+        case .answered:
+            let positions = SongOrderPositions.map(media: CreationAttachedMedia.parse(threadState), question: question)
+            return .answered(summary: answeredSongOrders[question.questionID]?.summary(positions: positions))
+        case .superseded, nil:
+            return nil
+        }
     }
 
     private func mediaReceipts(_ entries: [ChatTimelineEntry]) -> some View {
@@ -964,7 +993,7 @@ private struct CreationWorkspaceView: View {
         Task { await send(message: CreationConfirmationConflict.refreshDirectionMessage) }
     }
 
-    private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil) async {
+    private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil, songOrder: SongOrderSubmission? = nil) async {
         // Slide direction is intentionally handled by SlidePostWorkspaceView.
         // Generic creator runtime has no slide proposal/create tools.
         guard selectedFormat != .slides else { return }
@@ -1047,7 +1076,7 @@ private struct CreationWorkspaceView: View {
             accepted = try await model.api.submitTurn(
                 threadID: project.id, message: message,
                 expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID,
-                editorState: editorState, clipSelection: clipSelection
+                editorState: editorState, clipSelection: clipSelection, songOrder: songOrder
             )
         } catch let error as APIError where error == .conflict {
             pendingMessages.removeAll { $0.id == optimistic.id }
@@ -1055,6 +1084,13 @@ private struct CreationWorkspaceView: View {
             pendingTurnSubmission = nil
             submissionAnchor = nil
             if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
+            // KRI-374: the order was answered against a question Kria has since replaced. The thread refresh above
+            // brings the new question (or the settled plan); say so instead of a generic conflict.
+            if error.conflictCode == SongOrderSubmission.staleConflictCode {
+                answeredSongOrders = [:]
+                failure = ChatFailure("Kria checked your clips again, so that order is out of date. Review the latest order and confirm it.")
+                return
+            }
             // KRI-295: surface the server's real reason; stay quiet when the expired-approval notice already explains.
             failure = submitTurnConflictMessage(
                 detail: error.conflictDetail, approvalExpired: approvalNotice != nil
@@ -1640,6 +1676,8 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
     var receipts: [RequirementReceiptItem] = []
     /// KRI-282: the clip picker the question carries, when the server sent one.
     var clipQuestion: ClipQuestion? = nil
+    /// KRI-374: the take-order card the question carries, when the server sent one.
+    var songOrderQuestion: SongOrderQuestion? = nil
 
     static func syntheticUser(_ content: String) -> Self {
         Self(id: "synthetic-\(content)", role: .user, content: content)
@@ -1682,7 +1720,8 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
         }
         let receipts = role == .assistant ? RequirementReceiptItem.parse(payload: event.payload) : []
         let clipQuestion = role == .assistant ? ClipQuestion.parse(payload: event.payload) : nil
-        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts, clipQuestion: clipQuestion)
+        let songOrderQuestion = role == .assistant ? SongOrderQuestion.parse(payload: event.payload) : nil
+        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts, clipQuestion: clipQuestion, songOrderQuestion: songOrderQuestion)
     }
 }
 
