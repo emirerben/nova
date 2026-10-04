@@ -992,6 +992,28 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(preview.frame.height, previewHeightBeforeSelection, accuracy: 1, "selecting a clip must not resize the preview")
     }
 
+    /// KRI-374: a montage built on the creator's own song shows it, connected and read-only, in Sounds.
+    func testSoundsTabShowsCreatorsOwnSongWithoutCatalogControls() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes", "-ui-testing-editor-user-song"]
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
+
+        app.buttons["native-editor-tool-sounds"].tap()
+        let row = app.descendants(matching: .any)["native-editor-your-song"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 4))
+        XCTAssertEqual(row.label, "Midnight Drive, Plays 1:48 – 2:03, Background")
+        XCTAssertTrue(app.staticTexts["Midnight Drive"].exists)
+        XCTAssertTrue(app.staticTexts["Plays 1:48 – 2:03"].exists)
+        XCTAssertTrue(app.staticTexts["Background"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song-note"].firstMatch.exists)
+        XCTAssertGreaterThanOrEqual(row.frame.height, 44)
+
+        XCTAssertFalse(app.textFields["native-editor-music-track-input"].exists, "the song is a project asset, not a track ID")
+        XCTAssertFalse(app.buttons["native-editor-add-music"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-music-volume"].firstMatch.exists)
+    }
+
     func testSongReferenceBarKeepsTimelineAndToolsOnScreen() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes", "-ui-testing-editor-song-reference"]

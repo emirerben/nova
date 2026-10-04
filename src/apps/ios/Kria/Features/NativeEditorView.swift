@@ -1134,7 +1134,10 @@ private struct NativeSoundsControls: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if session.document.music == nil {
+            if let song = session.yourSong {
+                // KRI-374: the creator's own song is the soundtrack; no catalog entry, mix or alignment applies.
+                NativeEditorYourSongRow(song: song)
+            } else if session.document.music == nil {
                 Text("Add music").font(KriaFont.body(15).weight(.semibold))
                 TextField("Music track ID", text: $panelDrafts.musicTrackID)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -1168,7 +1171,7 @@ private struct NativeSoundsControls: View {
                 .accessibilityIdentifier("native-editor-music-volume")
                 .disabled(!session.canEditMix)
             }
-            if !session.canEditMix {
+            if session.yourSong == nil, !session.canEditMix {
                 Label("Music level is unavailable for this edit. Existing audio stays unchanged.", systemImage: "lock")
                     .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
                     .fixedSize(horizontal: false, vertical: true)

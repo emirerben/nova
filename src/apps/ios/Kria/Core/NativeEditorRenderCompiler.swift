@@ -24,6 +24,11 @@ enum NativeEditorRenderError: Error, Equatable {
     private let handwritingLayout: AuthoredHandwritingLayout
     private var fontAssets: [String: MediaAsset] = [:]
 
+    /// The `audioSources` key of the creator's own song. Catalog tracks are keyed by their id, so this
+    /// can never be a plain word like "song" that a track id could equal.
+    static let songSourceKey = "user_song"
+    private static let songTrackID = NativeEditorSongBed.trackID
+
     init(fontDirectory: URL) throws {
         handwritingLayout = try AuthoredHandwritingLayout(url: fontDirectory.appendingPathComponent("handwriting-strokes.json"))
         // Last-wins, like the backend: the registry repeats "Outfit" (see NativeFontRegistry).
@@ -45,6 +50,7 @@ enum NativeEditorRenderError: Error, Equatable {
     func compile(document: EditorDocument, clips: [EditorClip], items: [NativeEditorTimelineItem],
                  sources: [Int: ResolvedEditorSource], audioSources: [String: ResolvedEditorSource] = [:], mediaSources: [String: ResolvedEditorSource] = [:],
                  referenceOnlyMusic: Bool = false, sourceAudioPreserved: Bool = true,
+                 songBed: NativeEditorSongBed? = nil,
                  deviceCaptions: Bool = false) throws -> NativeEditorRenderProgram {
         for (name, populated) in [
             ("carousel", document.carouselMoment != nil),
@@ -137,7 +143,7 @@ enum NativeEditorRenderError: Error, Equatable {
             video.append(TimelineClip(id: clip.slotID ?? clip.id.uuidString, sourceAssetID: id,
                 sourceStart: clip.trimIn, sourceDuration: consumedSourceDuration, timelineStart: clip.start,
                 rate: requestedRate, transition: transition,
-                volume: clip.muted || authoredSlot?.raw["muted"] == .bool(true) || audioSources["narration"] != nil ? 0 : sourceGain, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
+                volume: clip.muted || authoredSlot?.raw["muted"] == .bool(true) || audioSources["narration"] != nil || audioSources[Self.songSourceKey] != nil ? 0 : sourceGain, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
                 holdDuration: holdDuration > 0 ? holdDuration : nil,
                 sourceCrop: try Self.sourceCrop(authoredSlot?.raw["source_crop"])))
             // KRI-306: letterbox a sideways clip when the creator chose black
@@ -189,8 +195,29 @@ enum NativeEditorRenderError: Error, Equatable {
                 TimelineClip(id: id, sourceAssetID: id, sourceStart: 0, sourceDuration: min(total, available), timelineStart: 0, volume: 1)
             ]))
         }
+        // The creator's own song (KRI-374) is the project's soundtrack, played from the pinned
+        // device recipe's `song` clip. Camera audio is already forced to 0 above, whatever a
+        // slot's `muted` / `mix.original_level` says, so it never leaks over the song.
+        if let song = audioSources[Self.songSourceKey] {
+            guard let fingerprint = song.asset.fingerprint, let available = song.asset.duration,
+                  available.isFinite, available > 0 else { throw MediaEngineError.missingAsset(Self.songTrackID) }
+            let bed = songBed ?? NativeEditorSongBed(assetID: song.mediaID)
+            let start = min(max(0, bed.sourceStart), available)
+            let length = min(total, bed.sourceDuration, available - start)
+            if length > 0 {
+                let id = Self.songTrackID
+                assets[id] = MediaAsset(id: id, relativePath: id, fingerprint: fingerprint, duration: available)
+                references[id] = RenderAssetReference(id: id, fingerprint: try RenderFingerprint(fingerprint), source: .original(mediaID: song.mediaID))
+                urls[id] = song.url
+                var clip = TimelineClip(id: id, sourceAssetID: id, sourceStart: start, sourceDuration: length,
+                                        timelineStart: 0, volume: bed.volume)
+                clip.audioFadeIn = bed.fadeIn.map { min($0, length / 2) }
+                clip.audioFadeOut = bed.fadeOut.map { min($0, length / 2) }
+                audioTracks.append(TimelineTrack(id: id, kind: .audio, clips: [clip]))
+            }
+        }
         // The rendered narration source already includes its approved music bed.
-        if !referenceOnlyMusic, let music = document.music, audioSources["narration"] == nil {
+        if !referenceOnlyMusic, let music = document.music, audioSources["narration"] == nil, audioSources[Self.songSourceKey] == nil {
             guard music.alignment == nil || music.alignment == "preserve_cuts" else {
                 throw NativeEditorRenderError.unsupportedLane("beat alignment")
             }
