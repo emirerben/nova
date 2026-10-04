@@ -314,12 +314,20 @@ struct NativeEditorTemporaryVideo {
     /// successful empty resolution for this generation so ordinary editor
     /// rebuilds do not repeatedly poll the device-render endpoint.
     private var deviceNarrationResolutionGeneration: String?
+    /// How the pinned device recipe plays the creator's song (KRI-374); nil when
+    /// the recipe has none. Resolved with the narration, from the same recipe.
+    @Published private(set) var deviceSongBed: NativeEditorSongBed?
     private var previewVariant: [String: JSONValue] = [:] {
         didSet { timelineClipsCache = nil }
     }
     /// Narrated footage slows to fill its voiceover step (`timelineClips`).
     private var usesNarratedSourceFit: Bool { previewVariant["resolved_archetype"] == .string("narrated") }
     var musicPlaybackMode: NativeMusicPlaybackMode { .init(variant: previewVariant) }
+    /// The creator's own song, for the Sounds tab. The server's `user_song` wins; an
+    /// older server falls back to the recipe's `song` clip.
+    var yourSong: NativeEditorYourSong? {
+        NativeEditorYourSong.make(userSong: NativeUserSong(variant: previewVariant), bed: deviceSongBed)
+    }
     var songReference: NativeSongReference? {
         guard musicPlaybackMode == .referenceOnly else { return nil }
         return NativeSongReference(variant: previewVariant)
@@ -829,6 +837,9 @@ struct NativeEditorTemporaryVideo {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source") { loadState = .loading }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-song-reference") {
             previewVariant = NativeEditorUITestFixtures.songReferenceVariant
+        }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-user-song") {
+            previewVariant = NativeEditorUITestFixtures.userSongVariant
         }
         // KRI-167: draft-based fixtures never go through `configureCapabilities(from:)`
         // (that only runs off a network-fetched `variant`), so `rendersOnDevice`
@@ -1959,21 +1970,31 @@ struct NativeEditorTemporaryVideo {
     }
 
     /// Device-rendered variants have no cloud receipt or base-video URL. Their
-    /// current recipe is the authority for narration, and its published
-    /// generation must still be the document we are reconstructing.
-    static func currentDeviceNarrationRequest(
+    /// current recipe is the authority for narration and the creator's song, and
+    /// its published generation must still be the document we are reconstructing.
+    static func currentDeviceRecipeRequest(
         _ status: DeviceRenderStatusResponse,
         jobID: UUID,
         variantID: String,
         generation: String
-    ) throws -> DeviceRenderRequest? {
+    ) throws -> DeviceRenderRequest {
         guard status.request.identity.jobID == jobID,
               status.request.identity.variantID == variantID,
               status.phase == "published",
               status.publishedGeneration == generation else {
             throw APIError.conflict
         }
-        return status.request.recipe.audio.narrationAssetID == nil ? nil : status.request
+        return status.request
+    }
+
+    static func currentDeviceNarrationRequest(
+        _ status: DeviceRenderStatusResponse,
+        jobID: UUID,
+        variantID: String,
+        generation: String
+    ) throws -> DeviceRenderRequest? {
+        let request = try currentDeviceRecipeRequest(status, jobID: jobID, variantID: variantID, generation: generation)
+        return request.recipe.audio.narrationAssetID == nil ? nil : request
     }
 
     /// Narration is a generation-owned preview input: it belongs to the
@@ -1987,20 +2008,26 @@ struct NativeEditorTemporaryVideo {
         previewGeneration ?? documentGeneration
     }
 
-    private func resolveDeviceNarration(document: EditorDocument, sequence: Int) async throws -> ResolvedEditorSource? {
+    /// The pinned recipe's audio the preview must reconstruct on a cold launch.
+    private struct DeviceRecipeAudio {
+        var narration: ResolvedEditorSource?
+        var song: (source: ResolvedEditorSource, bed: NativeEditorSongBed)?
+    }
+
+    private func resolveDeviceRecipeAudio(document: EditorDocument, sequence: Int) async throws -> DeviceRecipeAudio {
         guard let api, let jobID, let variantKey else { throw APIError.invalidResponse }
         let status = try await api.deviceRender(jobID: jobID, variantID: variantKey)
         guard sequence == sourcePreviewSequence, !Task.isCancelled,
               document.revision.baseGeneration == self.document.revision.baseGeneration else {
             throw CancellationError()
         }
-        guard let request = try Self.currentDeviceNarrationRequest(
+        let request = try Self.currentDeviceRecipeRequest(
             status, jobID: jobID, variantID: variantKey, generation: narrationOwnerGeneration(document)
-        ) else { return nil }
-        guard let narrationID = request.recipe.audio.narrationAssetID,
-              var asset = request.recipe.assets.first(where: { $0.id == narrationID }) else {
-            throw MediaEngineError.missingAsset("narration")
-        }
+        )
+        let narrationAssetID = request.recipe.audio.narrationAssetID
+        let songBed = NativeEditorSongBed(recipe: request.recipe)
+        var result = DeviceRecipeAudio()
+        guard narrationAssetID != nil || songBed != nil else { return result }
         let project = BackgroundUploadCoordinator.projectDirectory(threadID ?? projectID)
         let authorized = AuthorizedDeviceSourceResolver(
             api: api,
@@ -2008,15 +2035,32 @@ struct NativeEditorTemporaryVideo {
             originals: SourceAssetStore(project: project),
             library: RenderLibraryCache(root: project.root.appending(path: "library", directoryHint: .isDirectory))
         )
-        let url = try await authorized.resolveNarration()
-        let duration = try await AVURLAsset(url: url).load(.duration).seconds
-        guard duration.isFinite, duration > 0 else { throw APIError.invalidResponse }
-        asset.duration = duration
+        func measured(_ url: URL, _ asset: MediaAsset) async throws -> MediaAsset {
+            let duration = try await AVURLAsset(url: url).load(.duration).seconds
+            guard duration.isFinite, duration > 0 else { throw APIError.invalidResponse }
+            var asset = asset
+            asset.duration = duration
+            return asset
+        }
+        if let narrationID = narrationAssetID {
+            guard let asset = request.recipe.assets.first(where: { $0.id == narrationID }) else {
+                throw MediaEngineError.missingAsset("narration")
+            }
+            let url = try await authorized.resolveNarration()
+            result.narration = ResolvedEditorSource(clipIndex: -1, mediaID: narrationID, asset: try await measured(url, asset), url: url)
+        }
+        if let songBed {
+            guard let asset = request.recipe.assets.first(where: { $0.id == songBed.assetID }) else {
+                throw MediaEngineError.missingAsset(NativeEditorSongBed.trackID)
+            }
+            let url = try await authorized.resolveSong()
+            result.song = (ResolvedEditorSource(clipIndex: -1, mediaID: songBed.assetID, asset: try await measured(url, asset), url: url), songBed)
+        }
         guard sequence == sourcePreviewSequence, !Task.isCancelled,
               document.revision.baseGeneration == self.document.revision.baseGeneration else {
             throw CancellationError()
         }
-        return ResolvedEditorSource(clipIndex: -1, mediaID: narrationID, asset: asset, url: url)
+        return result
     }
 
     private func preparePreviewAudio(document: EditorDocument, sequence: Int) async throws -> [String: ResolvedEditorSource] {
@@ -2028,12 +2072,16 @@ struct NativeEditorTemporaryVideo {
             // visibly instead of silently exporting an AAC silence track.
             if resolvedAudio["narration"] == nil,
                deviceNarrationResolutionGeneration != narrationOwnerGeneration(document) {
-                let narration = try await resolveDeviceNarration(document: document, sequence: sequence)
+                let recipeAudio = try await resolveDeviceRecipeAudio(document: document, sequence: sequence)
                 guard sequence == sourcePreviewSequence, !Task.isCancelled,
                       document.revision.baseGeneration == self.document.revision.baseGeneration else {
                     throw CancellationError()
                 }
-                if let narration { resolvedAudio["narration"] = narration }
+                if let narration = recipeAudio.narration { resolvedAudio["narration"] = narration }
+                // The creator's own song plays from the recipe's `song` clip whatever
+                // `music_playback_mode` says; a recipe without one leaves the bed nil.
+                if let song = recipeAudio.song { resolvedAudio[NativeEditorRenderCompiler.songSourceKey] = song.source }
+                deviceSongBed = recipeAudio.song?.bed
                 deviceNarrationResolutionGeneration = narrationOwnerGeneration(document)
             }
         } else if Self.usesRenderedNarration(previewVariant), resolvedAudio["narration"] == nil {
@@ -2051,7 +2099,7 @@ struct NativeEditorTemporaryVideo {
             resolvedAudio["narration"] = resolved
         }
         let referenceOnlyMusic = musicPlaybackMode == .referenceOnly
-        let ids = Set([referenceOnlyMusic || resolvedAudio["narration"] != nil ? nil : document.music?.trackID,
+        let ids = Set([referenceOnlyMusic || resolvedAudio["narration"] != nil || resolvedAudio[NativeEditorRenderCompiler.songSourceKey] != nil ? nil : document.music?.trackID,
                        !referenceOnlyMusic && document.backgroundMusic?.enabled == true && document.backgroundMusic?.muted != true
                         ? document.backgroundMusic?.trackID : nil].compactMap { $0 })
         for id in ids where resolvedAudio[id] == nil {
@@ -2208,6 +2256,7 @@ struct NativeEditorTemporaryVideo {
                                                sources: sources, audioSources: audio, mediaSources: media,
                                                referenceOnlyMusic: musicPlaybackMode == .referenceOnly,
                                                sourceAudioPreserved: sourceAudioPreserved,
+                                               songBed: audio[NativeEditorRenderCompiler.songSourceKey] != nil ? deviceSongBed : nil,
                                                deviceCaptions: rendersOnDevice)
             // The in-place text update only applies while the canvas is still
             // on this composition. After a transient compile failure handed

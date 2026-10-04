@@ -131,6 +131,71 @@ final class DeviceRenderingContractTests: XCTestCase {
             "/me/jobs/\(request.identity.jobID.uuidString)/device-render/assets", "/voice",
         ])
     }
+    /// KRI-374: the creator's song is pinned through the recipe's music bed, granted per asset,
+    /// verified, and served from the cache the second time; a library bed never resolves as a song.
+    func testSongResolverUsesOnlyPinnedSongGrantAndCachesIt() async throws {
+        defer { NativeEditorURLProtocol.handler = nil }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let bytes = Data([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45])
+        let source = root.appendingPathComponent("song.wav")
+        try bytes.write(to: source)
+        let fingerprint = try SHA256Fingerprinter().fingerprint(file: source)
+        let song = RenderAssetReference(
+            id: "song-item", fingerprint: try RenderFingerprint(fingerprint),
+            source: .song(planItemID: "item", generation: "3")
+        )
+        func recipe(musicAssetID: String?) -> KriaMediaEngine.EditRecipe {
+            KriaMediaEngine.EditRecipe(
+                schemaVersion: 2, rendererVersion: "kria-ios-2",
+                assets: [MediaAsset(id: song.id, relativePath: song.id, fingerprint: fingerprint, duration: 200)],
+                tracks: [TimelineTrack(id: "song", kind: .audio, clips: [
+                    TimelineClip(id: "song-bed", sourceAssetID: song.id, sourceStart: 108, sourceDuration: 15),
+                ])],
+                audio: AudioMixRecipe(musicAssetID: musicAssetID, originalVolume: 0),
+                assetManifest: RenderAssetManifest(assets: [song])
+            )
+        }
+        let identity = DeviceRenderIdentity(jobID: UUID(), variantID: "guided_story", recipeRevision: 1,
+                                            recipeDigest: String(repeating: "a", count: 64))
+        let request = DeviceRenderRequest(identity: identity, recipe: recipe(musicAssetID: song.id))
+        let calls = EditorAdmissionRequestLog()
+        NativeEditorURLProtocol.handler = { request in
+            calls.paths.append(request.url?.path ?? "")
+            if request.url?.host == "storage.test" { return (200, bytes) }
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: NativeEditorTestSupport.bodyData(request)) as? [String: Any])
+            XCTAssertEqual(body["asset_id"] as? String, song.id)
+            return (200, Data(#"{"asset_id":"song-item","download_url":"https://storage.test/song","expires_at":"2099-01-01T00:00:00Z"}"#.utf8))
+        }
+        let project = ProjectDirectory(root: root.appendingPathComponent("project"))
+        let library = RenderLibraryCache(root: project.root.appending(path: "library", directoryHint: .isDirectory))
+        func resolver(_ request: DeviceRenderRequest) -> AuthorizedDeviceSourceResolver {
+            AuthorizedDeviceSourceResolver(api: NativeEditorTestSupport.api(), request: request,
+                originals: SourceAssetStore(project: project), library: library,
+                downloadSession: NativeEditorTestSupport.session())
+        }
+
+        let first = try await resolver(request).resolveSong()
+        XCTAssertEqual(first.pathExtension, "wav")
+        XCTAssertEqual(try SHA256Fingerprinter().fingerprint(file: first), fingerprint)
+        let second = try await resolver(request).resolveSong()
+        XCTAssertEqual(second, first)
+        XCTAssertEqual(calls.paths, ["/me/jobs/\(identity.jobID.uuidString)/device-render/assets", "/song"],
+                       "the second resolve is served from the verified cache with no new grant")
+
+        // No music bed, or a bed that is not the song, never resolves as the creator's song.
+        let noBed = DeviceRenderRequest(identity: identity, recipe: recipe(musicAssetID: nil))
+        do { _ = try await resolver(noBed).resolveSong(); XCTFail("expected missingAsset") }
+        catch MediaEngineError.missingAsset(let name) { XCTAssertEqual(name, "song") }
+
+        // The same recipe the editor reads yields the playback window.
+        let bed = try XCTUnwrap(NativeEditorSongBed(recipe: request.recipe))
+        XCTAssertEqual(bed.assetID, song.id)
+        XCTAssertEqual(bed.sourceStart, 108)
+        XCTAssertEqual(bed.sourceDuration, 15)
+    }
+
     func testUploadAndCompleteUseBackendIdentityKeys() throws {
         let identity = DeviceRenderIdentity(jobID: UUID(), variantID: "original_text", recipeRevision: 7, recipeDigest: String(repeating: "a", count: 64))
         let attempt = UUID()
