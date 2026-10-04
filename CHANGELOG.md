@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.70.0] - 2026-10-04
+
+### Changed
+- fix(song): creator song never gets a matched library track beside it (KRI-374) (#1384) <!-- release-pr: 1384 -->
+
 ## [0.78.69.0] - 2026-10-04
 
 ### Changed
