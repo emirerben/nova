@@ -25,10 +25,41 @@ struct EditorDeletion: Codable, Equatable, Hashable, Sendable {
 
 enum EditorSection: String, Codable, CaseIterable, Hashable, Sendable {
     case timeline, text, captions, captionMeta = "caption_meta", mix, music, backgroundMusic = "background_music"
-    case lyrics, orientation, soundEffects = "sound_effects"
+    case lyrics, orientation, landscapeFit = "landscape_fit", soundEffects = "sound_effects"
     case mediaOverlays = "media_overlays", visualBlocks = "visual_blocks"
     case motionScenes = "motion_scenes", cameraEffects = "camera_effects"
     case carouselMoment = "carousel_moment", title
+}
+
+extension EditorDocument {
+    /// "9:16" / nil / "portrait" -> "portrait"; "16:9" / "landscape" -> "landscape"; anything else
+    /// (e.g. "square") is kept as is.
+    static func canonicalOrientation(_ raw: String?) -> String? {
+        switch raw {
+        case nil, "portrait", "9:16": "portrait"
+        case "landscape", "16:9": "landscape"
+        default: raw
+        }
+    }
+
+    /// Capability reasons of formats that ignore the bars/crop choice (narrated, speech montage,
+    /// cloud renders): their `landscape_fit.value` is informational, never rendered.
+    static let fitIgnoredReasons: Set<String> = ["unsupported_archetype", "cloud_unsupported"]
+
+    /// The ONE bars/crop value shown by the picker and rendered by the preview: the document's own
+    /// value, else what the server reports (variants rendered before it was stored), else "fill".
+    var effectiveLandscapeFit: String {
+        let value = landscapeFit ?? capabilities["landscape_fit"]?.value
+        return value == "fit" ? "fit" : "fill"
+    }
+
+    /// The preview letterboxes only for a format that honours the choice: the server advertises
+    /// `landscape_fit` and it is not one of the formats that ignore it.
+    var previewLetterboxesSidewaysClips: Bool {
+        guard let capability = capabilities["landscape_fit"] else { return false }
+        if let reason = capability.reason, Self.fitIgnoredReasons.contains(reason) { return false }
+        return effectiveLandscapeFit == "fit"
+    }
 }
 
 enum NativeEditorWireContract {
@@ -42,25 +73,31 @@ enum NativeEditorWireContract {
 struct EditorCapability: Codable, Equatable, Sendable {
     var editable: Bool
     var reason: String?
+    /// The server's current value for a settings capability (`orientation`,
+    /// `landscape_fit`), e.g. `"portrait"` / `"fit"`. Nil for lane capabilities.
+    var value: String?
 
-    init(editable: Bool, reason: String? = nil) {
+    init(editable: Bool, reason: String? = nil, value: String? = nil) {
         self.editable = editable
         self.reason = reason
+        self.value = value
     }
 
     init(from decoder: Decoder) throws {
-        let value = try decoder.singleValueContainer()
-        if let bool = try? value.decode(Bool.self) {
-            editable = bool; reason = nil; return
+        let container = try decoder.singleValueContainer()
+        if let bool = try? container.decode(Bool.self) {
+            editable = bool; reason = nil; value = nil; return
         }
-        let object = try value.decode([String: JSONValue].self)
+        let object = try container.decode([String: JSONValue].self)
         editable = object["editable"]?.boolValue ?? false
         reason = object["reason"]?.stringValue
+        value = object["value"]?.stringValue
     }
 
     func encode(to encoder: Encoder) throws {
         var object: [String: JSONValue] = ["editable": .bool(editable)]
         if let reason { object["reason"] = .string(reason) }
+        if let value { object["value"] = .string(value) }
         try object.encode(to: encoder)
     }
 }
@@ -293,6 +330,8 @@ struct EditorDocument: Equatable, Sendable {
     var lyrics: [String: JSONValue]?
     var title: String?
     var orientation: String?
+    /// "fit" (black bars) or "fill" (crop) for sideways clips on a portrait canvas; nil = server default.
+    var landscapeFit: String?
     var capabilities: [String: EditorCapability]
     var revision: EditorRevision
     /// `empty` is an explicit creator decision, distinct from legacy snapshots
@@ -355,12 +394,12 @@ struct EditorDocument: Equatable, Sendable {
         let captionMeta: [String: JSONValue]; let captionCues: [EditorCaptionCue]; let music: EditorMusic?; let backgroundMusic: EditorBackgroundMusic?
         let mix: [String: JSONValue]; let soundEffects: [EditorTimedEffect]; let mediaOverlays: [EditorTimedEffect]; let visualBlocks: [EditorVisualBlock]
         let motionScenes: [EditorMotionScene]; let motionRuntimeHash: String?; let cameraEffects: [EditorCameraEffect]; let carouselMoment: [String: JSONValue]?; let lyrics: [String: JSONValue]?
-        let title: String?; let orientation: String?; let capabilities: [String: EditorCapability]; let revision: EditorRevision
+        let title: String?; let orientation: String?; let landscapeFit: String?; let capabilities: [String: EditorCapability]; let revision: EditorRevision
         let editorState: String; let deletions: [EditorDeletion]
     }
 
-    init(schemaVersion: Int = 2, kind: String = "editor", editFormat: String = "montage", clips: [EditorTimelineSlot] = [], tombstones: [EditorTimelineSlot] = [], textElements: [EditorTextElement] = [], captionMeta: [String: JSONValue] = [:], captionCues: [EditorCaptionCue] = [], music: EditorMusic? = nil, backgroundMusic: EditorBackgroundMusic? = nil, mix: [String: JSONValue] = [:], soundEffects: [EditorTimedEffect] = [], mediaOverlays: [EditorTimedEffect] = [], visualBlocks: [EditorVisualBlock] = [], motionScenes: [EditorMotionScene] = [], motionRuntimeHash: String? = nil, cameraEffects: [EditorCameraEffect] = [], carouselMoment: [String: JSONValue]? = nil, lyrics: [String: JSONValue]? = nil, title: String? = nil, orientation: String? = nil, capabilities: [String: EditorCapability] = [:], revision: EditorRevision = EditorRevision(), editorState: String = "renderable", deletions: [EditorDeletion] = [], opaqueRecords: [EditorSection: [EditorOpaqueRecord]] = [:]) {
-        self.schemaVersion = schemaVersion; self.kind = kind; self.editFormat = editFormat; self.clips = clips; self.tombstones = tombstones; self.textElements = textElements; self.captionMeta = captionMeta; self.captionCues = captionCues; self.music = music; self.backgroundMusic = backgroundMusic; self.mix = mix; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.motionRuntimeHash = motionRuntimeHash; self.cameraEffects = cameraEffects; self.carouselMoment = carouselMoment; self.lyrics = lyrics; self.title = title; self.orientation = orientation; self.capabilities = capabilities; self.revision = revision; self.editorState = editorState; self.deletions = deletions; self.opaqueRecords = opaqueRecords; self.rawRoot = [:]; self.rawSections = [:]; self.sectionPresence = [:]; self.loadedState = nil
+    init(schemaVersion: Int = 2, kind: String = "editor", editFormat: String = "montage", clips: [EditorTimelineSlot] = [], tombstones: [EditorTimelineSlot] = [], textElements: [EditorTextElement] = [], captionMeta: [String: JSONValue] = [:], captionCues: [EditorCaptionCue] = [], music: EditorMusic? = nil, backgroundMusic: EditorBackgroundMusic? = nil, mix: [String: JSONValue] = [:], soundEffects: [EditorTimedEffect] = [], mediaOverlays: [EditorTimedEffect] = [], visualBlocks: [EditorVisualBlock] = [], motionScenes: [EditorMotionScene] = [], motionRuntimeHash: String? = nil, cameraEffects: [EditorCameraEffect] = [], carouselMoment: [String: JSONValue]? = nil, lyrics: [String: JSONValue]? = nil, title: String? = nil, orientation: String? = nil, landscapeFit: String? = nil, capabilities: [String: EditorCapability] = [:], revision: EditorRevision = EditorRevision(), editorState: String = "renderable", deletions: [EditorDeletion] = [], opaqueRecords: [EditorSection: [EditorOpaqueRecord]] = [:]) {
+        self.schemaVersion = schemaVersion; self.kind = kind; self.editFormat = editFormat; self.clips = clips; self.tombstones = tombstones; self.textElements = textElements; self.captionMeta = captionMeta; self.captionCues = captionCues; self.music = music; self.backgroundMusic = backgroundMusic; self.mix = mix; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.motionRuntimeHash = motionRuntimeHash; self.cameraEffects = cameraEffects; self.carouselMoment = carouselMoment; self.lyrics = lyrics; self.title = title; self.orientation = orientation; self.landscapeFit = landscapeFit; self.capabilities = capabilities; self.revision = revision; self.editorState = editorState; self.deletions = deletions; self.opaqueRecords = opaqueRecords; self.rawRoot = [:]; self.rawSections = [:]; self.sectionPresence = [:]; self.loadedState = nil
     }
 
     init(snapshot: [String: JSONValue]) { self = Self.decode(snapshot: snapshot) }
@@ -374,6 +413,7 @@ struct EditorDocument: Equatable, Sendable {
         document.deletions = Self.decodeDeletions(array(rootPayload?["deletions"]) ?? [])
         document.revision = EditorRevision(baseGeneration: string(rootPayload?["base_generation"]) ?? string(snapshot["base_generation"]) ?? "", number: integer(sections["revision_number"]), hash: string(sections["revision_hash"]), snapshotHash: string(snapshot["snapshot_hash"]))
         document.title = string(sections["title"] ?? snapshot["title"]); document.orientation = string(sections["orientation"] ?? snapshot["orientation"])
+        document.landscapeFit = string(sections["landscape_fit"] ?? snapshot["landscape_fit"])
         // Caption archetypes historically exposed their appearance as variant-
         // level fields while newer snapshots may carry the editor-shaped
         // `caption_meta` object. Normalize both into the commit DTO's field
@@ -395,6 +435,11 @@ struct EditorDocument: Equatable, Sendable {
                 ?? object(snapshot["capabilities"])
                 ?? object(sections["capabilities"])
         )
+        // KRI-306: one canonical orientation ("portrait" | "landscape", legacy "9:16" / "16:9", nil
+        // => portrait) and the fit the server reports when the variant stored none, set BEFORE the
+        // loaded baseline is captured so toggling a shape and back is never a false edit.
+        document.orientation = canonicalOrientation(document.orientation)
+        if document.landscapeFit == nil { document.landscapeFit = document.capabilities["landscape_fit"]?.value.flatMap { ["fit", "fill"].contains($0) ? $0 : nil } }
         document.clips = decodeSlots(array(sections["timeline_slots"] ?? object(snapshot["user_timeline"])?["slots"]) ?? []) .filter { !$0.removed }
         document.tombstones = decodeSlots(array(sections["timeline_slots"] ?? object(snapshot["user_timeline"])?["slots"]) ?? []) .filter(\.removed)
         document.textElements = decodeText(array(sections["text_elements"] ?? snapshot["text_elements"]) ?? [])
@@ -462,6 +507,10 @@ struct EditorDocument: Equatable, Sendable {
             if let orientation { sections[EditorSection.orientation.wireKey] = .string(orientation) }
             else if sectionPresence[.orientation] != .absent { sections[EditorSection.orientation.wireKey] = .null }
         }
+        if sectionChanged(.landscapeFit) {
+            if let landscapeFit { sections[EditorSection.landscapeFit.wireKey] = .string(landscapeFit) }
+            else if sectionPresence[.landscapeFit] != .absent { sections[EditorSection.landscapeFit.wireKey] = .null }
+        }
         if let base = revision.baseGeneration.nilIfEmpty { payload["base_generation"] = .string(base) }
         if editorState == "empty" { payload["editor_state"] = .string("empty") }
         else { payload.removeValue(forKey: "editor_state") }
@@ -498,7 +547,7 @@ struct EditorDocument: Equatable, Sendable {
     }
 
     private func currentState() -> LoadedState {
-        LoadedState(schemaVersion: schemaVersion, kind: kind, editFormat: editFormat, clips: clips, tombstones: tombstones, textElements: textElements, captionMeta: captionMeta, captionCues: captionCues, music: music, backgroundMusic: backgroundMusic, mix: mix, soundEffects: soundEffects, mediaOverlays: mediaOverlays, visualBlocks: visualBlocks, motionScenes: motionScenes, motionRuntimeHash: motionRuntimeHash, cameraEffects: cameraEffects, carouselMoment: carouselMoment, lyrics: lyrics, title: title, orientation: orientation, capabilities: capabilities, revision: revision, editorState: editorState, deletions: deletions)
+        LoadedState(schemaVersion: schemaVersion, kind: kind, editFormat: editFormat, clips: clips, tombstones: tombstones, textElements: textElements, captionMeta: captionMeta, captionCues: captionCues, music: music, backgroundMusic: backgroundMusic, mix: mix, soundEffects: soundEffects, mediaOverlays: mediaOverlays, visualBlocks: visualBlocks, motionScenes: motionScenes, motionRuntimeHash: motionRuntimeHash, cameraEffects: cameraEffects, carouselMoment: carouselMoment, lyrics: lyrics, title: title, orientation: orientation, landscapeFit: landscapeFit, capabilities: capabilities, revision: revision, editorState: editorState, deletions: deletions)
     }
 
     private mutating func makeOpaqueRecords(_ sections: [String: JSONValue]) -> [EditorSection: [EditorOpaqueRecord]] {
@@ -521,7 +570,7 @@ private enum NativeEditorMotionCodec {
 
 private extension EditorSection {
     var wireKey: String {
-        switch self { case .timeline: "timeline_slots"; case .text: "text_elements"; case .captions: "caption_cues"; case .captionMeta: "caption_meta"; case .mix: "mix"; case .music: "music"; case .backgroundMusic: "background_music"; case .lyrics: "lyrics"; case .orientation: "orientation"; case .soundEffects: "sound_effects"; case .mediaOverlays: "media_overlays"; case .visualBlocks: "visual_blocks"; case .motionScenes: "motion_scenes"; case .cameraEffects: "camera_effects"; case .carouselMoment: "carousel_moment"; case .title: "title" }
+        switch self { case .timeline: "timeline_slots"; case .text: "text_elements"; case .captions: "caption_cues"; case .captionMeta: "caption_meta"; case .mix: "mix"; case .music: "music"; case .backgroundMusic: "background_music"; case .lyrics: "lyrics"; case .orientation: "orientation"; case .landscapeFit: "landscape_fit"; case .soundEffects: "sound_effects"; case .mediaOverlays: "media_overlays"; case .visualBlocks: "visual_blocks"; case .motionScenes: "motion_scenes"; case .cameraEffects: "camera_effects"; case .carouselMoment: "carousel_moment"; case .title: "title" }
     }
 }
 
@@ -554,6 +603,7 @@ private extension EditorDocument {
         case .lyrics: return loadedState.lyrics != lyrics
         case .title: return loadedState.title != title
         case .orientation: return loadedState.orientation != orientation
+        case .landscapeFit: return loadedState.landscapeFit != landscapeFit
         }
     }
 
@@ -805,7 +855,8 @@ private extension EditorDocument {
             if isLeaf {
                 result[prefix] = EditorCapability(
                     editable: objectValue["editable"]?.boolValue ?? false,
-                    reason: objectValue["reason"]?.stringValue
+                    reason: objectValue["reason"]?.stringValue,
+                    value: objectValue["value"]?.stringValue
                 )
                 return
             }
@@ -826,7 +877,7 @@ private extension EditorDocument {
             guard key.hasSuffix("_reason"), let reason = child.stringValue else { continue }
             let capabilityKey = String(key.dropLast("_reason".count))
             if let existing = result[capabilityKey] {
-                result[capabilityKey] = EditorCapability(editable: existing.editable, reason: reason)
+                result[capabilityKey] = EditorCapability(editable: existing.editable, reason: reason, value: existing.value)
             } else {
                 result[capabilityKey] = EditorCapability(editable: false, reason: reason)
             }

@@ -287,6 +287,8 @@ private struct CreationWorkspaceView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var pendingTurnSubmission: ChatTurnSubmissionIdentity?
     @State private var approval: ApprovalSnapshot?
+    /// KRI-306: the creator's pending video-shape pick for the approval / plan on screen.
+    @State private var renderShapePick = RenderShapePickerState()
     @State private var approvalNotice: String?
     @State private var selectedFormat: CreationFormat?
     @State private var availableFormats: [CreationFormat] = []
@@ -666,6 +668,7 @@ private struct CreationWorkspaceView: View {
         // !hasDedicatedSlideWorkspace via the if/else above.
         .onAppear { if prompt.isEmpty { prompt = model.chatDrafts.draft(for: project.id) } }
         .onChange(of: prompt) { _, text in model.chatDrafts.setDraft(text, for: project.id) }
+        .onChange(of: renderShapeScope) { _, scope in renderShapePick.reset(scope: scope) }
         .task {
             // History should not wait for the independent capability request.
             async let capabilities: Void = refreshCapabilities()
@@ -852,6 +855,7 @@ private struct CreationWorkspaceView: View {
                     approval: approval,
                     format: selectedFormat,
                     speechCleanup: fullThread?.speechCleanup,
+                    renderShape: renderShapePicker,
                     isBusy: isActing || pendingUploadCount > 0,
                     responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
                     decide: decide,
@@ -868,6 +872,7 @@ private struct CreationWorkspaceView: View {
                     isBusy: isActing || isSending || pendingUploadCount > 0,
                     responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
                     conflict: visibleConfirmationConflict(for: thread),
+                    renderShape: renderShapePicker,
                     refreshDirection: refreshDirection,
                     action: performAction
                 )
@@ -1444,6 +1449,21 @@ private struct CreationWorkspaceView: View {
     /// are nil for "deny" and for a thread with no cleanup offer. This build
     /// always sends `speech_cleanup_aware: true` so the server can safely gate
     /// the decision on the `speech_cleanup_*` conflict codes below.
+    /// Identifies what the pick belongs to: the pending approval (v2) or, for the v1
+    /// confirmation card, the thread. A different scope re-seeds from the server default.
+    private var renderShapeScope: String? { approval?.id ?? fullThread?.id }
+
+    /// The offer + the creator's current choice, or nil when the server offered nothing
+    /// choosable (older server, no pending approval) -- then nothing is shown or sent.
+    private var renderShapePicker: (offer: RenderShapeOffer, choice: Binding<RenderShapeChoice>)? {
+        guard let offer = fullThread?.renderShape, offer.isChoosable else { return nil }
+        let scope = renderShapeScope
+        return (offer, Binding(
+            get: { renderShapePick.choice(for: offer, scope: scope) },
+            set: { renderShapePick.select($0, scope: scope) }
+        ))
+    }
+
     private func decide(_ decision: String, cleanupChoice: String? = nil, analysisID: String? = nil) {
         guard !isActing, let approval else { return }
         // Silent no-op only for a double tap (`isActing`); every other refusal
@@ -1467,6 +1487,10 @@ private struct CreationWorkspaceView: View {
         }
         isActing = true
         let offerBefore = SpeechCleanupOffer.resolve(fullThread?.speechCleanup)
+        // Only an approval carries the video shape, and only when the server offered one.
+        let shape = decision == "approve"
+            ? renderShapePicker.map { $0.offer.wire(for: $0.choice.wrappedValue) }
+            : nil
         Task {
             failure = nil
             defer { isActing = false }
@@ -1480,7 +1504,9 @@ private struct CreationWorkspaceView: View {
                     fingerprint: approval.approvalFingerprint,
                     speechCleanupAware: true,
                     speechCleanupAnalysisID: analysisID,
-                    speechCleanupChoice: cleanupChoice
+                    speechCleanupChoice: cleanupChoice,
+                    outputOrientation: shape?.orientation,
+                    landscapeFit: shape?.landscapeFit
                 )
             } catch let error as APIError where error == .conflict && speechCleanupConflictCodes.contains(error.conflictCode ?? "") {
                 // The approval stays PENDING with the same id/fingerprint --
@@ -1498,7 +1524,15 @@ private struct CreationWorkspaceView: View {
                 return
             } catch {
                 await refreshNow()
-                failure = ChatFailure("Kria couldn’t record that decision.", error: error)
+                // A video shape the server no longer offers (render_shape_unsupported /
+                // render_shape_not_applicable, 422): say what it said. The refresh above
+                // already re-seeded the picker from the current offer.
+                if shape != nil, let api = error as? APIError, case .requestFailed(422, _) = api,
+                   let detail = api.requestFailureDetail, !detail.isEmpty {
+                    failure = ChatFailure(detail)
+                } else {
+                    failure = ChatFailure("Kria couldn’t record that decision.", error: error)
+                }
                 return
             }
             self.approval = nil
