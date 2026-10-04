@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
 from app.pipeline.prompt_loader import load_prompt
-from app.schemas.clip_intents import MAX_CLIP_INTENTS, ClipIntent
+from app.schemas.clip_intents import INTENT_ID_MAX_CHARS, MAX_CLIP_INTENTS, ClipIntent
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _ROLE_MARKERS = re.compile(r"(?i)(^|[\s.;!?])(system|assistant|user|tool|developer)\s*[:>]")
@@ -92,13 +92,22 @@ class ClipIntentSchemaError(SchemaError):
     ``error_class`` is a closed vocabulary (never model or creator text) so a
     sensitive agent can still record WHY a run failed. ``dropped`` carries short
     attribute previews of instructions that could not be verified, used only to
-    word a specific question back to the creator.
+    word a specific question back to the creator. ``drop_classes`` is every
+    distinct rejection class (same closed vocabulary), for diagnostics.
     """
 
-    def __init__(self, message: str, *, error_class: str, dropped: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_class: str,
+        dropped: list[str] | None = None,
+        drop_classes: list[str] | None = None,
+    ) -> None:
         super().__init__(message)
         self.error_class = error_class
         self.dropped = dropped or []
+        self.drop_classes = drop_classes or [error_class]
 
 
 class _IntentRejected(Exception):  # noqa: N818 - internal control flow
@@ -137,6 +146,17 @@ def salvage_question(kept: int, labels: list[str], overflow: int = 0) -> str:
     body = "; ".join(pieces)
     text = f"{lead}. {body}." if body else f"{lead}."
     return (text + " Please restate just those so I can add them.")[:_QUESTION_MAX_CHARS]
+
+
+def _unique_intent_id(intent_id: str, taken: set[str]) -> str:
+    """A fresh id for an intent whose model-minted id collides with a kept one."""
+    n = 2
+    while True:
+        suffix = f"-{n}"
+        candidate = intent_id[: INTENT_ID_MAX_CHARS - len(suffix)] + suffix
+        if candidate not in taken:
+            return candidate
+        n += 1
 
 
 def _repair_placeholder(data: dict[str, Any], sources: tuple[str, ...]) -> None:
@@ -222,6 +242,11 @@ class ClipIntentPlannerOutput(BaseModel):
     # caller must ask this instead of silently acting on a subset.
     salvage_question: str | None = Field(
         default=None, max_length=500, exclude_if=lambda value: value is None
+    )
+    # Parser-authored closed vocabulary (rejection classes, plus "over_cap"):
+    # WHY ``salvage_question`` was needed, never creator or model text.
+    salvage_reasons: list[str] = Field(
+        default_factory=list, max_length=16, exclude_if=lambda value: not value
     )
 
 
@@ -320,18 +345,13 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         seen_ids: set[str] = set()
         for index, raw_intent in enumerate(raw_intents):
             try:
-                intent = self._build_intent(raw_intent, sources, input)
+                intent = self._build_intent(raw_intent, sources, input, index=index)
             except _IntentRejected as rejected:
                 dropped.append(_preview(raw_intent))
                 drop_classes.append(rejected.error_class)
                 failures.append(f"intents[{index}]: {rejected.detail}")
                 continue
             if intent is None:
-                continue
-            if intent.intent_id in seen_ids:
-                dropped.append(_preview(raw_intent))
-                drop_classes.append("duplicate_intent_id")
-                failures.append(f"intents[{index}]: intent_id must be unique")
                 continue
             key = (
                 intent.op,
@@ -345,6 +365,12 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             )
             if key in seen:
                 continue  # a verbatim repeat adds nothing; not worth failing the output
+            if intent.intent_id in seen_ids:
+                # The id is a model-minted handle: two DIFFERENT operations sharing
+                # one is a naming slip, never a reason to drop a creator instruction.
+                intent = intent.model_copy(
+                    update={"intent_id": _unique_intent_id(intent.intent_id, seen_ids)}
+                )
             seen.add(key)
             seen_ids.add(intent.intent_id)
             kept.append((intent, raw_intent))
@@ -356,11 +382,13 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
                     error_class="question_with_intents",
                 )
             return ClipIntentPlannerOutput(intents=[], question=question.strip())
+        reasons = sorted(set(drop_classes))
         if not kept and dropped:
             raise ClipIntentSchemaError(
                 "clip_intent_planner: every intent was rejected — " + "; ".join(failures[:3]),
                 error_class=drop_classes[0],
                 dropped=dropped,
+                drop_classes=reasons,
             )
         # Over the cap: keep the first valid ones in the creator's order and ask about
         # the rest instead of failing the whole inventory.
@@ -369,9 +397,13 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         salvage = None
         if dropped or overflow:
             salvage = salvage_question(len(kept), dropped + overflow, len(overflow))
+            if overflow:
+                reasons.append("over_cap")
         try:
             return ClipIntentPlannerOutput(
-                intents=[intent for intent, _ in kept], salvage_question=salvage
+                intents=[intent for intent, _ in kept],
+                salvage_question=salvage,
+                salvage_reasons=reasons,
             )
         except ValidationError as exc:
             raise ClipIntentSchemaError(
@@ -384,6 +416,8 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         raw_intent: object,
         sources: tuple[str, ...],
         input: ClipIntentPlannerInput,  # noqa: A002
+        *,
+        index: int = 0,
     ) -> PlannedClipIntent | None:
         """One validated intent; None drops it silently; ``_IntentRejected`` drops it loudly."""
         if not isinstance(raw_intent, dict):
@@ -395,6 +429,10 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             for k, v in raw_intent.items()
             if not (k in {"label_source", "placeholder"} and v is None)
         }
+        # The id is a handle the model invents; a missing one is minted here and an
+        # over-long one is shortened by ClipIntent (KRI-422), never a rejection.
+        if not isinstance(data.get("intent_id"), str) or not data["intent_id"].strip():
+            data["intent_id"] = f"intent-{index + 1}"
         _repair_placeholder(data, sources)
         # Benign shape repairs: none of these change what the creator asked for.
         if isinstance(data.get("creator_text"), str):
