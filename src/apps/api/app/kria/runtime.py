@@ -52,10 +52,18 @@ from app.models import (
     CreatorEditDraft,
     PlanItem,
 )
+from app.schemas.user_song import SongOrderAnswerIn
+from app.services.choice_questions import ChoiceSelectionIn, latest_open_choice_question
 from app.services.clip_selection import ClipSelectionIn, latest_open_clip_question
 from app.services.creation_thread_titles import (
     matches_conversation_revision,
     prepare_message_title,
+)
+from app.services.song_order import STALE_CODE as SONG_ORDER_STALE_CODE
+from app.services.song_order import (
+    SongOrderError,
+    latest_open_song_order_question,
+    validate_song_order_answer,
 )
 from app.services.speech_cleanup_decision import (
     SPEECH_CLEANUP_CONFLICT_COPY,
@@ -86,7 +94,12 @@ def request_digest(body: SubmitTurnBody) -> str:
     # state wins -- it must never turn a replay into idempotency_key_reused.
     # `clip_selection` stays in the digest (a different tap set under one id is a
     # different request) but is excluded when absent so pre-existing digests hold.
-    excluded = {"editor_state"} | ({"clip_selection"} if body.clip_selection is None else set())
+    excluded = (
+        {"editor_state"}
+        | ({"clip_selection"} if body.clip_selection is None else set())
+        | ({"choice_selection"} if body.choice_selection is None else set())
+        | ({"song_order"} if body.song_order is None else set())  # KRI-374: additive digest
+    )
     encoded = json.dumps(
         body.model_dump(mode="json", exclude=excluded),
         sort_keys=True,
@@ -171,6 +184,72 @@ async def _validate_clip_selection(
                 recovery="refresh_replan",
                 current_revision=int(thread.revision),
             )
+
+
+async def _validate_song_order(
+    db: AsyncSession, thread: CreationThread, answer: SongOrderAnswerIn
+) -> None:
+    """The answer must target the thread's latest UNANSWERED song-order question and
+    order exactly its takes (KRI-374). Stale -> 409 `song_order_stale`."""
+
+    rows = (
+        await db.execute(
+            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == thread.id,
+                CreationThreadEvent.role.in_({"user", "assistant"}),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    question = latest_open_song_order_question((role, payload) for role, payload in rows)
+    try:
+        validate_song_order_answer(answer, question)
+    except SongOrderError as exc:
+        stale = exc.code == SONG_ORDER_STALE_CODE
+        raise RuntimeFailure(
+            409 if stale else 422,
+            exc.code,
+            str(exc),
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        ) from exc
+
+
+async def _validate_choice_selection(
+    db: AsyncSession, thread: CreationThread, selection: ChoiceSelectionIn
+) -> None:
+    """The answer must target the thread's latest UNANSWERED choice question and name
+    one of the options the server offered (KRI-282)."""
+
+    rows = (
+        await db.execute(
+            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == thread.id,
+                CreationThreadEvent.role.in_({"user", "assistant"}),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    question = latest_open_choice_question((role, payload) for role, payload in rows)
+    if question is None or question.get("question_id") != selection.question_id:
+        raise RuntimeFailure(
+            422,
+            "choice_selection_stale",
+            "That question is no longer open. Refresh and answer the latest one.",
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        )
+    offered = {str(o.get("key")) for o in question.get("options") or [] if isinstance(o, dict)}
+    if selection.option_key not in offered:
+        raise RuntimeFailure(
+            422,
+            "choice_selection_invalid",
+            "That answer is not one of the options the question offered.",
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        )
 
 
 async def _owned_thread(
@@ -314,6 +393,10 @@ async def submit_turn(
 
     if body.clip_selection is not None and settings.kria_clip_selection_questions_enabled:
         await _validate_clip_selection(db, thread, body.clip_selection)
+    if body.song_order is not None and settings.user_song_montage_enabled:
+        await _validate_song_order(db, thread, body.song_order)
+    if body.choice_selection is not None and settings.kria_choice_questions_enabled:
+        await _validate_choice_selection(db, thread, body.choice_selection)
 
     active = (
         (
@@ -497,6 +580,17 @@ async def submit_turn(
                 {"clip_selection": body.clip_selection.model_dump(mode="json")}
                 if body.clip_selection is not None
                 and settings.kria_clip_selection_questions_enabled
+                else {}
+            ),
+            # KRI-374: flag off -> dropped silently, nothing stored.
+            **(
+                {"song_order": body.song_order.model_dump(mode="json")}
+                if body.song_order is not None and settings.user_song_montage_enabled
+                else {}
+            ),
+            **(
+                {"choice_selection": body.choice_selection.model_dump(mode="json")}
+                if body.choice_selection is not None and settings.kria_choice_questions_enabled
                 else {}
             ),
         },
@@ -1321,6 +1415,55 @@ async def _expire_blocking_approval(
     )
 
 
+async def _validated_render_shape(
+    db: AsyncSession,
+    *,
+    body: ApprovalDecisionBody,
+    plan_item: PlanItem | None,
+    strategy_payload: dict[str, Any] | None,
+    creator_id: uuid.UUID,
+    creator_request: str = "",
+) -> dict[str, str]:
+    """The ``creator_render_shape`` payload for an approve request, or a 422.
+
+    Only a strategy approval has a shape to choose (an editor-kind approval is a
+    Save against an existing variant -- the device editor owns that choice).
+    """
+    from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+    from app.services import render_shape  # noqa: PLC0415
+
+    if plan_item is None or strategy_payload is None:
+        raise RuntimeFailure(
+            422,
+            "render_shape_not_applicable",
+            "There is no output shape to choose for this action.",
+            phase="approval",
+            recovery="ask_user",
+        )
+    offer = await render_shape.offer_for_item(
+        db,
+        plan_item,
+        CreativeStrategy.model_validate(strategy_payload),
+        creator_id,
+        creator_request=creator_request,
+    )
+    try:
+        chosen = render_shape.resolve_choice(offer, body.output_orientation, body.landscape_fit)
+    except render_shape.RenderShapeError as exc:
+        raise RuntimeFailure(
+            422, exc.code, exc.message, phase="approval", recovery="ask_user"
+        ) from exc
+    if chosen is None:  # unreachable: the caller only asks when a field was sent
+        raise RuntimeFailure(
+            422,
+            "render_shape_not_applicable",
+            "There is no output shape to choose for this action.",
+            phase="approval",
+            recovery="ask_user",
+        )
+    return chosen
+
+
 async def decide_approval(
     db: AsyncSession,
     *,
@@ -1598,8 +1741,47 @@ async def decide_approval(
             current_revision=int(thread.revision),
         )
 
+    # KRI-306: validate the creator's output-shape choice against what this
+    # strategy offers BEFORE any media mutation or commit, so a bad choice
+    # changes nothing. The validated choice is stashed on the render execution
+    # and applied at claim time (`_claim_approval_dispatch`), so a deny -- which
+    # never reaches the claim -- has nothing to undo.
+    render_shape_stash: dict[str, str] | None = None
+    if decision == "approve" and (
+        body.output_orientation is not None or body.landscape_fit is not None
+    ):
+        render_shape_stash = await _validated_render_shape(
+            db,
+            body=body,
+            plan_item=plan_item if is_strategy_approval else None,
+            strategy_payload=document_peek.strategy if is_strategy_approval else None,
+            creator_id=creator_id,
+            creator_request=document_peek.intent if is_strategy_approval else "",
+        )
+
     strategy_media: _StrategyApprovalMedia | None = None
     preflight_analysis_id_to_publish: uuid.UUID | None = None
+    if decision == "approve" and execution is not None:
+        # Set-or-clear on EVERY approve: a retry after a committed-then-refused
+        # first attempt (the speech-cleanup 409 commits) that carries no shape
+        # must not inherit the earlier attempt's choice at claim time.
+        stashed = {key: value for key, value in (execution.result or {}).items()}
+        if render_shape_stash is not None:
+            stashed["render_shape"] = render_shape_stash
+        else:
+            stashed.pop("render_shape", None)
+        if stashed != (execution.result or {}):
+            execution.result = stashed
+    elif render_shape_stash is not None:
+        # A validated choice with nowhere durable to put it would be dropped
+        # silently behind a 200.
+        raise RuntimeFailure(
+            409,
+            "approval_target_missing",
+            "The render for this approval is unavailable.",
+            phase="approval",
+            recovery="refresh_replan",
+        )
     if is_strategy_approval and decision == "approve" and plan_item is not None:
         strategy_media = await _apply_strategy_approval_media(
             db,

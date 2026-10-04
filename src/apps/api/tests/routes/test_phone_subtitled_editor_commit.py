@@ -693,3 +693,46 @@ def test_talking_head_caption_save_keeps_speaker_and_cutaways(monkeypatch):
     old_cutaways = next(t for t in old_recipe.tracks if t.id == CUTAWAY_TRACK_ID)
     assert tracks[CUTAWAY_TRACK_ID].model_dump() == old_cutaways.model_dump()
     assert new.recipe.duration == pytest.approx(20.0)
+
+
+# --- KRI-306: the creator's bars/crop choice in the editor -------------------------------
+
+
+def test_subtitled_fit_capability_follows_the_lane_rollout(monkeypatch):
+    job = _letterboxed_phone_job(monkeypatch, cut=False)
+    variant = job.assembly_plan["variants"][0]
+    assert gj._editor_capabilities(job, variant)["landscape_fit"] == {
+        "editable": True,
+        "value": "fill",
+        "reason": None,
+    }
+    monkeypatch.setattr(gj.settings, "phone_subtitled_editor_lanes_enabled", False)
+    assert gj._editor_capabilities(job, variant)["landscape_fit"]["editable"] is False
+
+
+def _resave(job, **sections):
+    variant = job.assembly_plan["variants"][0]
+    return gj.prepare_editor_commit(
+        job,
+        "subtitled",
+        gj.EditorCommitRequest(base_generation=gj.variant_render_baseline(variant), **sections),
+        user_id="owner",
+        plan_item_id="item",
+    )
+
+
+@pytest.mark.parametrize("cut", [False, True])
+def test_a_fit_save_switches_the_letterbox_either_way_and_persists(monkeypatch, cut):
+    job = _letterboxed_phone_job(monkeypatch, cut=cut)
+
+    _resave(job, landscape_fit="fill")
+    assert all(s == 1 for s in _main_track_scales(device_status(job, "subtitled").request))
+    assert job.assembly_plan["variants"][0]["landscape_fit"] == "fill"
+
+    # The explicit choice wins over the pinned recipe, and later saves keep it.
+    _resave(job, sound_effects=[])
+    assert all(s == 1 for s in _main_track_scales(device_status(job, "subtitled").request))
+
+    _resave(job, landscape_fit="fit")
+    assert all(s == 0.31640625 for s in _main_track_scales(device_status(job, "subtitled").request))
+    assert job.assembly_plan["variants"][0]["landscape_fit"] == "fit"

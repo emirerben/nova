@@ -84,6 +84,15 @@ private final class CreationChatFixture: @unchecked Sendable {
             // KRIA_CHAT_CLIP_QUESTION: "1" = server advertises clip_selection_questions; "legacy" = it still
             // sends the clip_question payload but does not advertise the capability (old-server fallback).
             if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] == "1" { capabilities["clip_selection_questions"] = true }
+            // KRIA_CHAT_SONG_ORDER: "1" = server advertises media.song and song_order_questions (KRI-374);
+            // "legacy" = it still sends the song_order_question payload but advertises nothing (old-app fallback).
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] == "1" {
+                capabilities["song_order_questions"] = true
+                capabilities["media"] = ["song": ["max": 1, "max_file_bytes": 52_428_800, "content_types": ["audio/mpeg", "audio/mp4"]]]
+            }
+            // KRIA_CHAT_CHOICE_QUESTION: "1" = server advertises choice_questions; "legacy" = it still sends the
+            // choice_question payload but does not advertise the capability (old-server text fallback).
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] == "1" { capabilities["choice_questions"] = true }
             if DeviceRenderUITestFixture.scenario != nil {
                 capabilities["phone_rendering"] = ["enabled": true, "recipe_versions": [1, 2], "verified_features": MediaCapability.allCases.map(\.rawValue)]
             }
@@ -140,6 +149,9 @@ private final class CreationChatFixture: @unchecked Sendable {
             if action == "generate", let detail = generateConflict(threadID: id) {
                 return response(["detail": detail], status: 409)
             }
+            if action == "generate", let mismatch = renderShapeMismatch(payload) {
+                return response(["detail": mismatch], status: 422)
+            }
             if action == "select_format" {
                 state["format"] = payload["format"]
                 // A phone-render account's clip is an analysis proxy; the original stays on the iPhone.
@@ -150,7 +162,7 @@ private final class CreationChatFixture: @unchecked Sendable {
                         clip["duration_s"] = seconds
                     }
                     var media = [clip]
-                    if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] != nil {
+                    if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] != nil || ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] != nil {
                         media += (2...4).map { ["media_id": "fixture-clip-\($0)", "kind": "video", "filename": "sample-\($0).mov"] }
                     }
                     if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_VOICEOVER"] == "1" {
@@ -202,8 +214,50 @@ private final class CreationChatFixture: @unchecked Sendable {
             } else if action == "remove_media" { state["media"] = []; append("action_remove_media") }
         } else if parts.last == "messages" || parts.last == "turns" {
             let turnID = body["client_event_id"] as? String ?? id
-            append("user_message", role: "user", text: body["message"] as? String, clientEventID: turnID)
-            if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] != nil {
+            // Like the server (`runtime.py`), a stored user message echoes the structured answer it carried
+            // (`song_order` / `choice_selection`); that echo is what closes the order card.
+            var userPayload: [String: Any] = [:]
+            if let order = body["song_order"] as? [String: Any] { userPayload["song_order"] = order }
+            if let selection = body["choice_selection"] as? [String: Any] { userPayload["choice_selection"] = selection }
+            append("user_message", role: "user", text: body["message"] as? String, payload: userPayload, clientEventID: turnID)
+            if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] != nil {
+                if let order = body["song_order"] as? [String: Any] {
+                    // Echo what the server received so the UI test can pin the structured payload.
+                    let ids = (order["ordered_media_ids"] as? [String] ?? []).joined(separator: "+")
+                    append("assistant_response", text: "Got it. order[\(ids)] question[\(order["question_id"] ?? "")]")
+                } else {
+                    append("assistant_question", text: "I couldn't place a few of your clips against the song. Check the order.", payload: [
+                        "turn_id": turnID, "turn_value": "question",
+                        "song_order_question": [
+                            "question_id": "song-q-\(events.count)",
+                            "proposed_order": ["fixture-clip", "fixture-clip-2", "fixture-clip-3", "fixture-clip-4"],
+                            "items": [
+                                ["media_id": "fixture-clip", "status": "confident", "song_start_s": 4.0, "alternates": []],
+                                ["media_id": "fixture-clip-2", "status": "ambiguous", "song_start_s": 21.5, "alternates": [["delta_s": -8.0, "score": 0.4]]],
+                                ["media_id": "fixture-clip-3", "status": "unmatched", "alternates": []],
+                                ["media_id": "fixture-clip-4", "status": "confident", "song_start_s": 52.0, "alternates": []],
+                            ],
+                        ] as [String: Any],
+                    ])
+                }
+            } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_CHOICE_QUESTION"] != nil {
+                if let selection = body["choice_selection"] as? [String: Any] {
+                    // Echo what the server received so the UI test can pin the structured payload.
+                    append("assistant_response", text: "Got it. choice[\(selection["option_key"] ?? "")] question[\(selection["question_id"] ?? "")]")
+                } else {
+                    append("assistant_response", text: "You asked for a chronological video and for the clips grouped by sport. Unfortunately your football and dodgeball clips were filmed mixed together, so I can't do both. Which do you prefer?\n1. Group by sport, chronological inside each sport (recommended)\n2. Keep it strictly chronological; sports may interleave\nTap an option, or tell me in your own words.", payload: [
+                        "turn_id": turnID, "turn_value": "question",
+                        "choice_question": [
+                            "version": 1, "question_id": "choice-q-\(events.count)", "conflict": "order_vs_group", "allow_free_text": true,
+                            "options": [
+                                ["key": "group_first", "label": "Group by sport, chronological inside each sport", "recommended": true,
+                                 "description": "Each sport plays as one block."],
+                                ["key": "chronological", "label": "Keep it strictly chronological; sports may interleave", "recommended": false],
+                            ],
+                        ] as [String: Any],
+                    ])
+                }
+            } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] != nil {
                 if let selection = body["clip_selection"] as? [String: Any] {
                     // Echo what the server received so the UI test can pin the structured payload.
                     let answers = (selection["answers"] as? [[String: Any]] ?? []).map { "\($0["key"] ?? "")=" + ((($0["media_ids"] as? [String]) ?? []).joined(separator: "+")) }
@@ -240,6 +294,7 @@ private final class CreationChatFixture: @unchecked Sendable {
             }
         } else if parts.contains("approvals") {
             if parts.last == "approve" {
+                if let mismatch = renderShapeMismatch(body) { return response(["detail": mismatch], status: 422) }
                 append("approval_approved")
                 thread["active_job_id"] = id
                 thread["job"] = ["id": id, "status": "processing", "variants": []]
@@ -277,7 +332,24 @@ private final class CreationChatFixture: @unchecked Sendable {
         }
         if parts.last == "turns" { return response(["turn_id": id, "thread_revision": revision, "status": "queued"], status: 202) }
         if parts.last == "approve" { return response(["approval_id": approvalID, "thread_id": id, "status": "approved", "thread_revision": revision]) }
-        return response(thread)
+        return response(withRenderShape(thread))
+    }
+    /// KRI-306 fixture (`KRIA_CHAT_RENDER_SHAPE=1`): the server offers Vertical / Landscape and
+    /// Black bars / Crop on a pending approval or plan, and nothing once a job exists.
+    private func withRenderShape(_ thread: [String: Any]) -> [String: Any] {
+        guard ProcessInfo.processInfo.environment["KRIA_CHAT_RENDER_SHAPE"] == "1", thread["active_job_id"] == nil else { return thread }
+        var result = thread
+        result["render_shape"] = ["orientations": ["portrait", "landscape"], "fit_choices": ["fit", "fill"],
+                                  "default": ["output_orientation": "portrait", "landscape_fit": "fit"]] as [String: Any]
+        return result
+    }
+    /// `KRIA_CHAT_RENDER_SHAPE_EXPECT` is "<orientation>/<fit>" with "none" for a key the client must NOT
+    /// send. A mismatch is answered with a 422 so the flow never reaches "Open editor": the UI test
+    /// asserts what the app sent by whether the render starts.
+    private func renderShapeMismatch(_ body: [String: Any]) -> String? {
+        guard let expected = ProcessInfo.processInfo.environment["KRIA_CHAT_RENDER_SHAPE_EXPECT"] else { return nil }
+        let actual = "\(body["output_orientation"] as? String ?? "none")/\(body["landscape_fit"] as? String ?? "none")"
+        return actual == expected ? nil : "Unexpected render shape \(actual), expected \(expected)"
     }
     /// KRI-207 fixture (`KRIA_CHAT_FIXTURE_BRIEF=1`): invented names, one receipt of every kind. The
     /// first guess carries its clip; the second only the plain `inferred` string an older server sends.

@@ -43,7 +43,12 @@ from app.kria.device_render import (
     finished_durations,
     require_current_request,
 )
-from app.kria.render_assets import LibraryRenderAsset, VisualRenderAsset, VoiceoverRenderAsset
+from app.kria.render_assets import (
+    LibraryRenderAsset,
+    SongRenderAsset,
+    VisualRenderAsset,
+    VoiceoverRenderAsset,
+)
 from app.limiter import limiter
 from app.models import ContentPlan, Job, PlanItem, PlanItemAsset, TemporaryMediaUpload
 from app.routes.generative_jobs import PLAYBACK_URL_TTL_MIN
@@ -220,6 +225,13 @@ async def download_device_asset(
         )
     if isinstance(asset, VoiceoverRenderAsset):
         url = await _voiceover_download_url(db, job, user_id, asset, record, body.identity)
+        return DeviceAssetDownloadOut(
+            asset_id=asset.id,
+            download_url=url,
+            expires_at=datetime.now(UTC) + timedelta(minutes=15),
+        )
+    if isinstance(asset, SongRenderAsset):
+        url = await _song_download_url(db, job, user_id, asset)
         return DeviceAssetDownloadOut(
             asset_id=asset.id,
             download_url=url,
@@ -492,6 +504,43 @@ async def _voiceover_download_url(
         )
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(409, "Voiceover changed; refresh the recipe") from exc
+
+
+async def _song_download_url(
+    db: AsyncSession,
+    job: Job,
+    user_id: uuid.UUID,
+    asset: SongRenderAsset,
+) -> str:
+    """Grant the job owner's own plan-item song (KRI-374), never another item's bytes.
+
+    Cloned from ``_voiceover_download_url`` minus the cleaned-narration branch: a
+    song is a bare ``PlanItem`` column, so ownership is already established by
+    ``_owned_job``'s lock chain and the item is looked up by the JOB's own
+    ``content_plan_item_id`` (the asset's ``plan_item_id`` is only cross-checked
+    against it: another item => 404). The item must still be in ``song`` audio mode
+    with the recipe's exact generation attached, so a removed or replaced song fails
+    closed (409) instead of granting different bytes. The device re-hashes the
+    download against the pinned SHA-256.
+    """
+    if job.content_plan_item_id is None or str(job.content_plan_item_id) != asset.plan_item_id:
+        raise HTTPException(404, "Song unavailable")
+    item = await db.get(PlanItem, job.content_plan_item_id, populate_existing=True)
+    if (
+        item is None
+        or getattr(item, "audio_mode", None) != "song"
+        or not getattr(item, "song_gcs_path", None)
+        or str(getattr(item, "song_generation", None) or "") != asset.generation
+    ):
+        raise HTTPException(409, "Song changed; refresh the recipe")
+    path = str(item.song_gcs_path)
+    await db.rollback()
+    try:
+        return await asyncio.to_thread(
+            storage.signed_get_url_for_generation, path, generation=asset.generation
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(409, "Song changed; refresh the recipe") from exc
 
 
 @router.post("/jobs/{job_id}/device-render/uploads", response_model=DeviceExportReservationOut)

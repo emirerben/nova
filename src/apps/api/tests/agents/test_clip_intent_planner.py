@@ -190,7 +190,7 @@ def test_parse_rejects_partial_inventory_question() -> None:
         _agent().parse(json.dumps(raw), _input())
 
 
-def test_parse_rejects_duplicate_intent_ids_even_for_distinct_operations() -> None:
+def test_parse_remints_duplicate_intent_ids_instead_of_dropping_an_operation() -> None:
     raw = {
         "intents": [
             {
@@ -209,9 +209,143 @@ def test_parse_rejects_duplicate_intent_ids_even_for_distinct_operations() -> No
         "question": None,
     }
     out = _agent().parse(json.dumps(raw), _input())
-    assert [intent.intent_id for intent in out.intents] == ["same-id"]
+    assert [intent.intent_id for intent in out.intents] == ["same-id", "same-id-2"]
+    assert [intent.op for intent in out.intents] == ["label", "group"]
+    assert out.salvage_question is None
+
+
+# KRI-422: synthetic stand-in shaped like the failing production message (titles,
+# six numbered shots, each with quoted word-for-word text). No real creator text.
+KRI422_REQUEST = (
+    'Opening title: "A morning in Lisbon with Ana" Closing title: "See you at the next race, '
+    'Ana" Show this text on each shot, word for word: 1. The bakery photo of two friends with '
+    'a cake: "Ana\'s gift to Sam: her first Portuguese cake" 2. The video of the girl skating: '
+    '"The only girl in the race: Lia" 3. The video of the guy in the green T-shirt skating: '
+    '"Sam from Ghana: bakes cakes, skates too" 4. The video of the guy in the red shirt '
+    'talking to the camera: "First place comes down to two: Rui..." 5. The video of the guy '
+    'with glasses in the grey T-shirt skating: "...and Ana" 6. The finish-line photo: '
+    '"Rui 42.1, Ana 42.6: a narrow win for Rui" Don\'t add stock images, AI images or any '
+    "other outside visuals. Make it 25 seconds."
+)
+
+# (model-minted id, attribute, exact on-screen copy, source quote) in the shape the
+# real parser returned when it failed: ids built from the shot description, the
+# longest past the 40-character bound.
+KRI422_SHOTS = [
+    (
+        "caption_bakery_photo",
+        "The bakery photo of two friends with a cake",
+        "Ana's gift to Sam: her first Portuguese cake",
+        "1. The bakery photo of two friends with a cake: \"Ana's gift to Sam: her first "
+        'Portuguese cake"',
+    ),
+    (
+        "caption_girl_skating_video",
+        "The video of the girl skating",
+        "The only girl in the race: Lia",
+        '2. The video of the girl skating: "The only girl in the race: Lia"',
+    ),
+    (
+        "caption_guy_green_tshirt_skating_video",
+        "The video of the guy in the green T-shirt skating",
+        "Sam from Ghana: bakes cakes, skates too",
+        '3. The video of the guy in the green T-shirt skating: "Sam from Ghana: bakes cakes, '
+        'skates too"',
+    ),
+    (
+        "caption_guy_red_shirt_talking_video",
+        "The video of the guy in the red shirt talking to the camera",
+        "First place comes down to two: Rui...",
+        '4. The video of the guy in the red shirt talking to the camera: "First place comes '
+        'down to two: Rui..."',
+    ),
+    (
+        "caption_guy_glasses_grey_tshirt_skating_video",
+        "The video of the guy with glasses in the grey T-shirt skating",
+        "...and Ana",
+        '5. The video of the guy with glasses in the grey T-shirt skating: "...and Ana"',
+    ),
+    (
+        "caption_finish_line_photo",
+        "The finish-line photo",
+        "Rui 42.1, Ana 42.6: a narrow win for Rui",
+        '6. The finish-line photo: "Rui 42.1, Ana 42.6: a narrow win for Rui"',
+    ),
+]
+
+
+def _kri422_raw(ids: list[str] | None = None) -> str:
+    intents = [
+        {
+            "intent_id": intent_id,
+            "op": "caption",
+            "attribute": attribute,
+            "label_source": "clip",
+            "transcript_kind": None,
+            "creator_text": copy,
+            "caption_attribute": None,
+            "position": None,
+            "placeholder": False,
+            "order_by": None,
+            "source_quote": quote,
+        }
+        for (intent_id, attribute, copy, quote) in KRI422_SHOTS
+    ]
+    for intent, intent_id in zip(intents, ids or [], strict=False):
+        intent["intent_id"] = intent_id
+    return json.dumps({"intents": intents, "question": None})
+
+
+def _kri422_input() -> ClipIntentPlannerInput:
+    return ClipIntentPlannerInput(
+        creator_request=KRI422_REQUEST, latest_user_message=KRI422_REQUEST, clip_facts=True
+    )
+
+
+def test_kri422_over_long_model_id_keeps_every_per_shot_caption() -> None:
+    """The real failure: a 45-character model-minted id dropped a clear caption and
+    Kria asked the creator to restate it. The id is a handle, not the instruction."""
+    out = _agent().parse(_kri422_raw(), _kri422_input())
+    assert out.salvage_question is None
+    assert out.salvage_reasons == []
+    assert [i.creator_text for i in out.intents] == [copy for _, _, copy, _ in KRI422_SHOTS]
+    ids = [i.intent_id for i in out.intents]
+    assert all(len(intent_id) <= 40 for intent_id in ids)
+    assert len(set(ids)) == len(ids)
+    # In-bound ids are untouched; the long one is shortened the same way every time.
+    assert ids[:4] == [shot[0] for shot in KRI422_SHOTS[:4]]
+    assert ids[4] != KRI422_SHOTS[4][0]
+    assert ids[4] == _agent().parse(_kri422_raw(), _kri422_input()).intents[4].intent_id
+
+
+def test_kri422_every_long_id_style_still_keeps_every_caption() -> None:
+    """A wordier naming style puts several ids past the bound at once (prod lost 5 of 6)."""
+    wordy = [f"caption_shot_{n}_{'x' * 40}" for n in range(1, 7)]
+    out = _agent().parse(_kri422_raw(wordy), _kri422_input())
+    assert out.salvage_question is None
+    ids = [i.intent_id for i in out.intents]
+    assert len(ids) == 6 and len(set(ids)) == 6
+    assert all(len(intent_id) <= 40 for intent_id in ids)
+
+
+@pytest.mark.parametrize("missing", [None, "", "   ", 7])
+def test_missing_or_non_string_intent_id_is_minted_not_dropped(missing: object) -> None:
+    raw = json.loads(_kri422_raw())
+    raw["intents"][1]["intent_id"] = missing
+    out = _agent().parse(json.dumps(raw), _kri422_input())
+    assert out.salvage_question is None
+    assert out.intents[1].intent_id == "intent-2"
+    assert len(out.intents) == 6
+
+
+def test_salvage_reports_closed_vocabulary_reasons_never_copy() -> None:
+    raw = json.loads(_kri422_raw())
+    raw["intents"][2]["source_quote"] = "Sam bakes cakes"  # not the creator's words
+    out = _agent().parse(json.dumps(raw), _kri422_input())
+    assert len(out.intents) == 5
+    assert out.salvage_reasons == ["source_quote_not_creator_text"]
+    assert "Ghana" not in " ".join(out.salvage_reasons)
     assert out.salvage_question is not None
-    assert "pub clips" in out.salvage_question
 
 
 def test_pure_duration_request_has_no_intents() -> None:

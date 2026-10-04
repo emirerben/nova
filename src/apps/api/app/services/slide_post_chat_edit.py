@@ -292,6 +292,11 @@ def _clamp(value: object, low: float, high: float, default: float) -> float:
     return max(low, min(high, float(value)))
 
 
+def _keep_number(value: float) -> int | float:
+    """Whole numbers stay ints; a stored fractional native size is not rounded."""
+    return int(value) if float(value).is_integer() else value
+
+
 def _row_matches_element(row: dict[str, Any], el: SlideTextElement) -> bool:
     """True when the ops left this bar exactly as `_bar_row` projected it."""
     projected = _bar_row("", 0, el, bar_id="")
@@ -342,7 +347,7 @@ def _element_from_row(
     if isinstance(color, str) and _HEX_COLOR_RE.match(color):
         data["color"] = color
     if "size_px" in row:
-        data["size_px"] = int(round(_clamp(row["size_px"], 24, 200, data.get("size_px", 86))))
+        data["size_px"] = _keep_number(_clamp(row["size_px"], 8, 200, data.get("size_px", 86)))
     if row.get("alignment") in {"left", "center", "right"}:
         data["alignment"] = row["alignment"]
     position = _POSITION_OUT.get(str(row.get("position")))
@@ -354,7 +359,7 @@ def _element_from_row(
     if row.get("max_width_frac") is not None:
         data["max_width_frac"] = _clamp(row["max_width_frac"], 0.2, 1.0, 0.82)
     if "stroke_width" in row:
-        data["stroke_width"] = int(round(_clamp(row["stroke_width"], 0, 12, 0)))
+        data["stroke_width"] = _keep_number(_clamp(row["stroke_width"], 0, 20, 0))
     if isinstance(row.get("shadow_enabled"), bool):
         data["shadow_enabled"] = row["shadow_enabled"]
     try:

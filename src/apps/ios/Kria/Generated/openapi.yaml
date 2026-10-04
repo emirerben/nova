@@ -128,6 +128,26 @@
             "title": "Expected Thread Revision",
             "type": "integer"
           },
+          "landscape_fit": {
+            "default": null,
+            "enum": [
+              "fit",
+              "fill"
+            ],
+            "nullable": true,
+            "title": "Landscape Fit",
+            "type": "string"
+          },
+          "output_orientation": {
+            "default": null,
+            "enum": [
+              "portrait",
+              "landscape"
+            ],
+            "nullable": true,
+            "title": "Output Orientation",
+            "type": "string"
+          },
           "speech_cleanup_analysis_id": {
             "default": null,
             "format": "uuid",
@@ -680,6 +700,30 @@
         "title": "CarouselMomentEditRequest",
         "type": "object"
       },
+      "ChoiceSelectionIn": {
+        "additionalProperties": false,
+        "description": "The app's answer to a ``choice_question`` (SubmitTurnBody.choice_selection).",
+        "properties": {
+          "option_key": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Option Key",
+            "type": "string"
+          },
+          "question_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Question Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question_id",
+          "option_key"
+        ],
+        "title": "ChoiceSelectionIn",
+        "type": "object"
+      },
       "ClipCapture": {
         "additionalProperties": false,
         "description": "Optional filming context for one original. Every part may be absent.",
@@ -851,6 +895,11 @@
       },
       "CreationCapabilitiesOut": {
         "properties": {
+          "choice_questions": {
+            "default": false,
+            "title": "Choice Questions",
+            "type": "boolean"
+          },
           "clip_selection_questions": {
             "default": false,
             "title": "Clip Selection Questions",
@@ -912,6 +961,11 @@
           "slide_post_rich_text": {
             "default": false,
             "title": "Slide Post Rich Text",
+            "type": "boolean"
+          },
+          "song_order_questions": {
+            "default": false,
+            "title": "Song Order Questions",
             "type": "boolean"
           },
           "visuals_enabled": {
@@ -984,6 +1038,11 @@
         "properties": {
           "clips": {
             "$ref": "#/components/schemas/CreationClipCapabilitiesOut"
+          },
+          "song": {
+            "$ref": "#/components/schemas/CreationVoiceoverCapabilitiesOut",
+            "default": null,
+            "nullable": true
           },
           "visuals": {
             "$ref": "#/components/schemas/CreationVisualCapabilitiesOut"
@@ -1074,6 +1133,11 @@
             "nullable": true,
             "title": "Media Capabilities",
             "type": "object"
+          },
+          "render_shape": {
+            "$ref": "#/components/schemas/RenderShapeOut",
+            "default": null,
+            "nullable": true
           },
           "revision": {
             "title": "Revision",
@@ -2490,6 +2554,16 @@
             "title": "Guided Revision Number",
             "type": "integer"
           },
+          "landscape_fit": {
+            "default": null,
+            "enum": [
+              "fit",
+              "fill"
+            ],
+            "nullable": true,
+            "title": "Landscape Fit",
+            "type": "string"
+          },
           "lyrics": {
             "$ref": "#/components/schemas/LyricsSectionRequest",
             "default": null,
@@ -2700,6 +2774,11 @@
           "carousel_moment": {
             "default": false,
             "title": "Carousel Moment",
+            "type": "boolean"
+          },
+          "landscape_fit": {
+            "default": false,
+            "title": "Landscape Fit",
             "type": "boolean"
           },
           "lyrics": {
@@ -3027,6 +3106,16 @@
             "nullable": true,
             "title": "Guided Revision Number",
             "type": "integer"
+          },
+          "landscape_fit": {
+            "default": null,
+            "enum": [
+              "fit",
+              "fill"
+            ],
+            "nullable": true,
+            "title": "Landscape Fit",
+            "type": "string"
           },
           "lyrics": {
             "$ref": "#/components/schemas/LyricsSectionRequest",
@@ -4657,6 +4746,16 @@
             "$ref": "#/components/schemas/ClipPlace",
             "default": null,
             "nullable": true
+          },
+          "role": {
+            "default": null,
+            "enum": [
+              "voiceover",
+              "song"
+            ],
+            "nullable": true,
+            "title": "Role",
+            "type": "string"
           }
         },
         "required": [
@@ -6148,6 +6247,7 @@
                 "mapping": {
                   "library": "#/components/schemas/LibraryRenderAsset",
                   "original": "#/components/schemas/OriginalRenderAsset",
+                  "song": "#/components/schemas/SongRenderAsset",
                   "visual": "#/components/schemas/VisualRenderAsset",
                   "voiceover": "#/components/schemas/VoiceoverRenderAsset"
                 },
@@ -6165,6 +6265,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/VoiceoverRenderAsset"
+                },
+                {
+                  "$ref": "#/components/schemas/SongRenderAsset"
                 }
               ]
             },
@@ -6208,6 +6311,69 @@
           "byte_count"
         ],
         "title": "RenderFingerprint",
+        "type": "object"
+      },
+      "RenderShapeDefaultOut": {
+        "properties": {
+          "landscape_fit": {
+            "enum": [
+              "fit",
+              "fill"
+            ],
+            "title": "Landscape Fit",
+            "type": "string"
+          },
+          "output_orientation": {
+            "enum": [
+              "portrait",
+              "landscape"
+            ],
+            "title": "Output Orientation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "output_orientation",
+          "landscape_fit"
+        ],
+        "title": "RenderShapeDefaultOut",
+        "type": "object"
+      },
+      "RenderShapeOut": {
+        "description": "KRI-306: the finished-video shapes the confirm screen may offer.",
+        "properties": {
+          "default": {
+            "$ref": "#/components/schemas/RenderShapeDefaultOut"
+          },
+          "fit_choices": {
+            "items": {
+              "enum": [
+                "fit",
+                "fill"
+              ],
+              "type": "string"
+            },
+            "title": "Fit Choices",
+            "type": "array"
+          },
+          "orientations": {
+            "items": {
+              "enum": [
+                "portrait",
+                "landscape"
+              ],
+              "type": "string"
+            },
+            "title": "Orientations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "orientations",
+          "fit_choices",
+          "default"
+        ],
+        "title": "RenderShapeOut",
         "type": "object"
       },
       "RequirementReceipt": {
@@ -6998,7 +7164,7 @@
         "type": "object"
       },
       "SlideTextElement": {
-        "description": "One styled text element on a single slide (rich text model, KRI-298).\n\nA style vocabulary aligned with `agents/_schemas/text_element.TextElement`.\nRendered by `pipeline/slide_post/build.py` through the Pillow\n`text_overlay._draw_text_png` path (PNG overlay) when\n`slide_post_rich_text_enabled` is on. All style fields default so a\npartial payload from a client stays valid.",
+        "description": "One styled text element on a single slide (rich text model, KRI-298).\n\nSlides are NOT a scaled-down video-editor document (no timing, animation,\ncaptions, sounds or overlays), but the text style vocabulary is now shared\nwith the video editor's Text tool.\n\nThe style vocabulary is shared with `agents/_schemas/text_element.TextElement`\n(the video editor's Text tool): validators and bounds for the parity fields\nare reused from it, not copied. Timing, animation, behind-subject and\nword-highlight are intentionally absent: they mean nothing on a still.\nRendered by `pipeline/slide_post/build.py` through the Pillow\n`text_overlay._draw_text_png` path (PNG overlay) when\n`slide_post_rich_text_enabled` is on. All style fields default so a\npartial payload from a client stays valid.",
         "properties": {
           "alignment": {
             "default": "center",
@@ -7019,6 +7185,13 @@
             "title": "Background",
             "type": "string"
           },
+          "background_color": {
+            "default": null,
+            "nullable": true,
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Background Color",
+            "type": "string"
+          },
           "color": {
             "default": "#FFFFFF",
             "title": "Color",
@@ -7028,6 +7201,17 @@
             "default": false,
             "title": "Edited",
             "type": "boolean"
+          },
+          "editor_preset": {
+            "default": null,
+            "enum": [
+              "Simple",
+              "Bold",
+              "Highlight"
+            ],
+            "nullable": true,
+            "title": "Editor Preset",
+            "type": "string"
           },
           "font_family": {
             "default": "Inter-Bold",
@@ -7049,6 +7233,18 @@
             "nullable": true,
             "title": "Label Source",
             "type": "string"
+          },
+          "letter_spacing": {
+            "default": null,
+            "nullable": true,
+            "title": "Letter Spacing",
+            "type": "number"
+          },
+          "line_spacing": {
+            "default": null,
+            "nullable": true,
+            "title": "Line Spacing",
+            "type": "number"
           },
           "max_width_frac": {
             "default": null,
@@ -7078,29 +7274,83 @@
             "title": "Role",
             "type": "string"
           },
+          "rotation_deg": {
+            "default": null,
+            "nullable": true,
+            "title": "Rotation Deg",
+            "type": "number"
+          },
+          "shadow_color": {
+            "default": null,
+            "nullable": true,
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Shadow Color",
+            "type": "string"
+          },
           "shadow_enabled": {
             "default": true,
             "title": "Shadow Enabled",
             "type": "boolean"
           },
+          "shadow_opacity": {
+            "default": null,
+            "maximum": 1,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Shadow Opacity",
+            "type": "number"
+          },
           "size_px": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ],
             "default": 86,
-            "maximum": 200,
-            "minimum": 24,
-            "title": "Size Px",
-            "type": "integer"
+            "ge": 8,
+            "le": 200,
+            "title": "Size Px"
+          },
+          "stroke_color": {
+            "default": null,
+            "nullable": true,
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Stroke Color",
+            "type": "string"
           },
           "stroke_width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ],
             "default": 0,
-            "maximum": 12,
-            "minimum": 0,
-            "title": "Stroke Width",
-            "type": "integer"
+            "ge": 0,
+            "le": 20,
+            "title": "Stroke Width"
           },
           "text": {
             "maxLength": 120,
             "minLength": 1,
             "title": "Text",
+            "type": "string"
+          },
+          "text_case": {
+            "default": null,
+            "enum": [
+              "none",
+              "upper",
+              "lower",
+              "title"
+            ],
+            "nullable": true,
+            "title": "Text Case",
             "type": "string"
           },
           "x_frac": {
@@ -7205,6 +7455,76 @@
           "type"
         ],
         "title": "SolidBackground",
+        "type": "object"
+      },
+      "SongOrderAnswerIn": {
+        "additionalProperties": false,
+        "description": "The creator's answer: the order they confirmed.",
+        "properties": {
+          "ordered_media_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Ordered Media Ids",
+            "type": "array"
+          },
+          "question_id": {
+            "title": "Question Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question_id",
+          "ordered_media_ids"
+        ],
+        "title": "SongOrderAnswerIn",
+        "type": "object"
+      },
+      "SongRenderAsset": {
+        "additionalProperties": false,
+        "description": "A creator-uploaded song for one content-plan item, pinned to one storage\ngeneration (KRI-374).\n\nPrivate creator media addressed by its owning plan item, exactly like\n``VoiceoverRenderAsset`` but a distinct kind: the song grant is authorised\nonly for an item whose ``audio_mode`` is ``song``, and the device mixes it\nas the music bed (``AudioMixRecipe.music_asset_id``) rather than as\nnarration. The grant re-checks that the job's own plan item still carries\nthis exact ``(path, generation)``; the device re-hashes the downloaded\nbytes against ``fingerprint``.",
+        "properties": {
+          "fingerprint": {
+            "$ref": "#/components/schemas/RenderFingerprint"
+          },
+          "generation": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Generation",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "song",
+            "enum": [
+              "song"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "plan_item_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Plan Item Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "plan_item_id",
+          "generation",
+          "fingerprint"
+        ],
+        "title": "SongRenderAsset",
         "type": "object"
       },
       "SourceCrop": {
@@ -7316,6 +7636,11 @@
       "SubmitTurnBody": {
         "additionalProperties": false,
         "properties": {
+          "choice_selection": {
+            "$ref": "#/components/schemas/ChoiceSelectionIn",
+            "default": null,
+            "nullable": true
+          },
           "client_event_id": {
             "maxLength": 160,
             "minLength": 1,
@@ -7342,6 +7667,11 @@
             "minLength": 1,
             "title": "Message",
             "type": "string"
+          },
+          "song_order": {
+            "$ref": "#/components/schemas/SongOrderAnswerIn",
+            "default": null,
+            "nullable": true
           }
         },
         "required": [
@@ -8544,6 +8874,16 @@
             "maxLength": 240,
             "minLength": 1,
             "title": "Filename",
+            "type": "string"
+          },
+          "role": {
+            "default": null,
+            "enum": [
+              "voiceover",
+              "song"
+            ],
+            "nullable": true,
+            "title": "Role",
             "type": "string"
           },
           "upload_contract": {

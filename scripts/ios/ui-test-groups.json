@@ -39,10 +39,18 @@
       "KriaUITests/AttachmentFlowUITests/testImportedVoiceoverReviewsTimingAndPlaybackBeforeUpload",
       "KriaUITests/AttachmentFlowUITests/testUnknownFootageDurationDoesNotInventComparison",
       "KriaUITests/AttachmentFlowUITests/testExistingVoiceoverKeepsItsCapacityAndContinueChoice",
+      "KriaUITests/CreationUITests/testConfirmScreenLandscapeChoiceIsSentWithoutAFit",
+      "KriaUITests/CreationUITests/testConfirmScreenSendsTheSeededDefaultAndACropPick",
+      "KriaUITests/CreationUITests/testConfirmScreenHidesThePickerAndSendsNothingWhenTheServerOffersNoShape",
       "KriaUITests/CreationUITests/testClipPickerSelectsClipsAndSendsStructuredAnswerWithMissingThumbnailFallback",
       "KriaUITests/CreationUITests/testClipPickerNoneOfTheseSendsNoneKeys",
       "KriaUITests/CreationUITests/testClipPickerSkipSendsSkipped",
-      "KriaUITests/CreationUITests/testClipQuestionFallsBackToTextWhenServerLacksCapability"
+      "KriaUITests/CreationUITests/testClipQuestionFallsBackToTextWhenServerLacksCapability",
+      "KriaUITests/SongOrderUITests/testOrderCardShowsBadgesReordersAndSendsTheConfirmedOrder",
+      "KriaUITests/SongOrderUITests/testOrderQuestionFallsBackToTextWhenServerDoesNotAdvertiseIt",
+      "KriaUITests/SongOrderUITests/testAddYourSongStepAppearsOnlyWhenTheServerAdvertisesIt",
+      "KriaUITests/CreationUITests/testChoiceQuestionShowsRecommendedOptionAndSendsStructuredAnswerOnce",
+      "KriaUITests/CreationUITests/testChoiceQuestionFallsBackToTextWhenServerLacksCapability"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -142,7 +150,11 @@
       "KriaUITests/NativeCaptionVisualUITests/testTransitionControlHiddenWhenCapabilityClosed",
       "KriaUITests/NativeCaptionVisualUITests/testVisualsTransitionsCategoryVisibleOnDevice",
       "KriaUITests/NativeCaptionVisualUITests/testVisualsTransitionsCategoryHiddenWhenCapabilityClosed",
-      "KriaUITests/NativeEditorInspectorUITests/testMissingOriginalsOffersFindingFilesInsteadOfRetry"
+      "KriaUITests/NativeEditorInspectorUITests/testMissingOriginalsOffersFindingFilesInsteadOfRetry",
+      "KriaUITests/NativeEditorInspectorUITests/testVideoShapePickerIsEnabledFromTheCapabilityAndReshapesThePreview",
+      "KriaUITests/NativeEditorInspectorUITests/testVideoShapeButtonIsHiddenWhenBothCapabilitiesAreClosed",
+      "KriaUITests/NativeEditorInspectorUITests/testVideoShapeShowsTheServerReasonWhenOnlyOrientationIsClosed",
+      "KriaUITests/NativeEditorInspectorUITests/testVideoShapePickerStacksAtAccessibilityTextSize"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -204,6 +216,9 @@
     "src/apps/ios/Kria/Features/CreationAttachmentPresentation.swift": "creation",
     "src/apps/ios/Kria/Features/CreationVoiceRecorder.swift": "creation",
     "src/apps/ios/Kria/Core/ClipSelection.swift": "creation",
-    "src/apps/ios/Kria/Features/ClipSelectionCard.swift": "creation"
+    "src/apps/ios/Kria/Features/ClipSelectionCard.swift": "creation",
+    "src/apps/ios/Kria/Core/SongOrder.swift": "creation",
+    "src/apps/ios/Kria/Features/SongOrderCard.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/SongOrderUITests.swift": "creation"
   }
 }

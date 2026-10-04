@@ -41,6 +41,7 @@ from app.schemas.edit_proposal import (
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
 )
+from app.schemas.user_song import UserSongPlan
 
 log = structlog.get_logger()
 
@@ -238,6 +239,9 @@ class GuidedStoryExecutionPlan(BaseModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    # KRI-374: the creator's own song (background bed or lip-sync master clock).
+    # Omitted when None so every earlier plan replays byte-identically.
+    user_song: UserSongPlan | None = Field(default=None, exclude_if=lambda value: value is None)
     # Optional post-approval runtime projection. Caption presentation can also
     # be seeded by approved narration; v2 revisions override it without changing
     # the canonical per-word cue identities.
@@ -267,6 +271,18 @@ class GuidedStoryExecutionPlan(BaseModel):
             self.song_reference is not None or self.song_reference_track_duration_s is not None
         ):
             raise ValueError("legacy song plans cannot carry an external reference")
+        if self.user_song is not None:
+            if (
+                self.music is not None
+                or self.song_reference is not None
+                or self.narration is not None
+            ):
+                raise ValueError(
+                    "a creator song cannot be combined with catalog music, a song "
+                    "reference, or a recorded voiceover"
+                )
+            if abs(self.user_song.window_duration_s - float(self.resolved_duration_s)) > 0.001:
+                raise ValueError("the song window must cover the resolved video duration")
         if (self.song_reference is None) != (self.song_reference_track_duration_s is None):
             raise ValueError("song reference requires its pinned catalog duration")
         if self.song_reference is not None:
@@ -709,10 +725,16 @@ def plan_preserves_source_audio(plan: Mapping[str, Any] | GuidedStoryExecutionPl
         montage_audio = plan.get("montage_audio")
         narration = plan.get("narration")
         version = plan.get("compiler_version", 0)
+        user_song = plan.get("user_song")
     else:
         montage_audio = plan.montage_audio
         narration = plan.narration
         version = plan.compiler_version
+        user_song = plan.user_song
+    if user_song is not None:
+        # The creator's song is the whole soundtrack (KRI-374): camera audio is
+        # muted whatever `montage_audio` says, so the receipt must not claim it.
+        return False
     if montage_audio is not None:
         return bool(montage_audio.get("preserve_source_audio"))
     return version >= 6 and narration is None
@@ -2069,6 +2091,26 @@ def _compile_execution_plan_version(
                 "guided_story_duration_impossible",
                 "Fast montage cut durations do not match the approved duration.",
             )
+        if snapshot.user_song is not None:
+            # Lip-sync: each take's source start belongs to the take's pinned song
+            # offset, not to the (independently ms-rounded) cut it was planned in.
+            from app.pipeline.lipsync_montage import (  # noqa: PLC0415
+                LipsyncSyncError,
+                resync_moment_rows,
+            )
+
+            try:
+                moments = resync_moment_rows(
+                    moments,
+                    snapshot.user_song,
+                    source_durations={
+                        ref.media_id: float(ref.duration_s)
+                        for ref in snapshot.media
+                        if ref.duration_s is not None
+                    },
+                )
+            except LipsyncSyncError as exc:
+                raise GuidedStoryError("guided_story_snapshot_invalid", str(exc)) from exc
         if quick_mixed_timing:
             cursor = _quantize_quick_mixed_timeline(
                 moments,
@@ -2132,6 +2174,7 @@ def _compile_execution_plan_version(
                     else None
                 ),
                 narration=snapshot.narration,
+                user_song=snapshot.user_song,
                 editor_caption_meta=_narration_caption_meta(snapshot),
             )
         except Exception as exc:  # noqa: BLE001
@@ -2305,6 +2348,7 @@ def _compile_execution_plan_version(
                 else None
             ),
             narration=snapshot.narration,
+            user_song=snapshot.user_song,
             editor_caption_meta=_narration_caption_meta(snapshot),
         )
     except Exception as exc:  # noqa: BLE001
@@ -2373,17 +2417,11 @@ def validate_proposal_timing(snapshot: EditProposalSnapshot) -> None:
     validate_proposal_compiles(snapshot)
 
 
-def validate_proposal_compiles(snapshot: EditProposalSnapshot) -> None:
-    """Dry-run the strict compiler: can the renderer allocate this proposal at all?
-
-    Narrower than `validate_proposal_timing`, which also applies editorial
-    fast-cut rules meant for creator revisions. Every freshly planned draft is
-    checked with this before it is saved, so a plan the renderer cannot
-    allocate fails at planning time instead of after approval (KRI-129).
-    """
+def compile_proposal_execution_plan(snapshot: EditProposalSnapshot) -> dict[str, Any]:
+    """The strict compiler's execution plan for a freshly planned proposal (no track)."""
 
     media_digest = canonical_media_digest(snapshot.media, snapshot.narration)
-    compile_execution_plan(
+    return compile_execution_plan(
         {
             "proposal_version": 1,
             "media_digest": media_digest,
@@ -2401,6 +2439,18 @@ def validate_proposal_compiles(snapshot: EditProposalSnapshot) -> None:
         },
         track=None,
     )
+
+
+def validate_proposal_compiles(snapshot: EditProposalSnapshot) -> None:
+    """Dry-run the strict compiler: can the renderer allocate this proposal at all?
+
+    Narrower than `validate_proposal_timing`, which also applies editorial
+    fast-cut rules meant for creator revisions. Every freshly planned draft is
+    checked with this before it is saved, so a plan the renderer cannot
+    allocate fails at planning time instead of after approval (KRI-129).
+    """
+
+    compile_proposal_execution_plan(snapshot)
 
 
 def validate_execution_plan(plan: object, guided_snapshot: object) -> dict[str, Any]:
@@ -2952,6 +3002,21 @@ def compile_guided_runtime_plan(
                 "editor_approved_text_ids": approved_text_ids,
             }
         )
+        song_row = runtime_payload.get("user_song")
+        if isinstance(song_row, dict):
+            # KRI-374: the song window always equals the video's length, so a
+            # trim or extension re-windows the song from the SAME start (the
+            # per-take deltas are untouched; the song stays the master clock).
+            window_end = round(
+                float(song_row["window_start_s"]) + float(runtime_payload["resolved_duration_s"]),
+                3,
+            )
+            if window_end > float(song_row["duration_s"]) + 1e-3:
+                raise GuidedStoryError(
+                    "guided_story_revision_invalid",
+                    "That edit runs past the end of your song.",
+                )
+            song_row["window_end_s"] = window_end
         # A timeline revision can split, reorder, or reuse sources. Rebuild
         # grounded clip labels against its output windows so a label never leaks
         # into a neighboring segment.

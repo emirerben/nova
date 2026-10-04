@@ -48,6 +48,15 @@ shown as checking or unavailable. A longer voiceover shows a warning but remains
 usable. Background PUT success is followed by the existing project-attachment
 request before the media is considered attached.
 
+When the server advertises `media.song` (KRI-374), montage projects gain an optional
+Song page after Footage ("Add your song", audio files only, with a rights reminder).
+A song always uploads in full as an audio attachment with `role: "song"`; it never uses
+the analysis-proxy contract. When the server advertises `song_order_questions`, takes it
+could not place against the song arrive as a `song_order_question` and render as
+`SongOrderCard` in chat (preview, drag or arrow-button reorder, "Use this order" sends
+`song_order` on the next turn). The device recipe's `song` render asset plays as the
+audio track through the existing music-bed path.
+
 The API adapter follows the existing contracts: `/auth/mobile/exchange` and
 `/auth/mobile/refresh` and `/auth/mobile/revoke` for native sessions, `/me/jobs` and its playback URL for
 the library, and `/creation-threads` for creation. Runtime v1 uses messages/actions;

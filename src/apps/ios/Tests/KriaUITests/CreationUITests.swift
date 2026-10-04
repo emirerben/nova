@@ -237,6 +237,79 @@ final class CreationUITests: XCTestCase {
         }
     }
 
+    /// KRI-306: launches a creation flow whose fixture server answers a 422 unless the app sent exactly
+    /// `expect` ("<orientation>/<fit>", "none" for a key that must be absent), taps `choose` on the picker
+    /// (identifiers only), creates, and passes only if the render started.
+    private func createWithVideoShape(runtime: String, offered: Bool, expect: String, choose: [String] = [],
+                                      file: StaticString = #filePath, line: UInt = #line) {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = runtime
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        if offered { app.launchEnvironment["KRIA_CHAT_RENDER_SHAPE"] = "1" }
+        app.launchEnvironment["KRIA_CHAT_RENDER_SHAPE_EXPECT"] = expect
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+        let next = app.buttons["Send clips"]
+        XCTAssertTrue(next.waitForExistence(timeout: 5), file: file, line: line)
+        next.tap()
+        let confirm = app.buttons["Create this video"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10), "\(runtime) confirm", file: file, line: line)
+        let vertical = app.buttons["video-shape-orientation-portrait"]
+        if offered {
+            XCTAssertTrue(vertical.waitForExistence(timeout: 5), "\(runtime): the picker shows when the server offers a shape", file: file, line: line)
+        } else {
+            XCTAssertFalse(vertical.exists, "\(runtime): no picker without an offered shape", file: file, line: line)
+        }
+        if offered {
+            let blackBars = app.buttons["video-shape-fit-fit"]
+            XCTAssertTrue(vertical.isSelected && blackBars.isSelected, "\(runtime): seeded from the server default (Vertical + Black bars)", file: file, line: line)
+            XCTAssertGreaterThanOrEqual(vertical.frame.height, 44, "44pt touch target", file: file, line: line)
+            XCTAssertGreaterThanOrEqual(app.buttons["video-shape-orientation-landscape"].frame.height, 44, file: file, line: line)
+            XCTAssertEqual(vertical.label, "Video shape: Vertical 9:16", file: file, line: line)
+            let capture = XCTAttachment(screenshot: app.screenshot())
+            capture.name = "video-shape-confirm-\(runtime)"
+            capture.lifetime = .keepAlways
+            add(capture)
+        }
+        for identifier in choose {
+            let button = app.buttons[identifier]
+            XCTAssertTrue(button.waitForExistence(timeout: 3), identifier, file: file, line: line)
+            button.tap()
+            XCTAssertTrue(button.isSelected, "\(identifier) selected after tap", file: file, line: line)
+        }
+        if choose.contains("video-shape-orientation-landscape") {
+            XCTAssertFalse(app.buttons["video-shape-fit-fill"].exists, "Landscape always crops, so the fit row disappears", file: file, line: line)
+        }
+        confirm.tap()
+        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30), "\(runtime): the app sent \(expect)", file: file, line: line)
+        app.terminate()
+    }
+
+    /// KRI-306: Landscape on the confirm screen travels with the approval (v2) and the generate action (v1),
+    /// and carries no fit because landscape output always crops.
+    func testConfirmScreenLandscapeChoiceIsSentWithoutAFit() {
+        for runtime in ["v1", "v2"] {
+            createWithVideoShape(runtime: runtime, offered: true, expect: "landscape/none", choose: ["video-shape-orientation-landscape"])
+        }
+    }
+
+    /// KRI-306: the seeded default and a Crop pick both reach the server as the creator left them.
+    func testConfirmScreenSendsTheSeededDefaultAndACropPick() {
+        createWithVideoShape(runtime: "v2", offered: true, expect: "portrait/fit")
+        createWithVideoShape(runtime: "v1", offered: true, expect: "portrait/fill", choose: ["video-shape-fit-fill"])
+        createWithVideoShape(runtime: "v2", offered: true, expect: "portrait/fill", choose: ["video-shape-fit-fill"])
+    }
+
+    /// KRI-306: an older server (or a thread with nothing to choose) shows no picker and sends no shape keys.
+    func testConfirmScreenHidesThePickerAndSendsNothingWhenTheServerOffersNoShape() {
+        for runtime in ["v1", "v2"] {
+            createWithVideoShape(runtime: runtime, offered: false, expect: "none/none")
+        }
+    }
+
     /// KRI-207: after a render the creator sees one chip per requirement, sees which names were
     /// guessed, and can start correcting one with a single tap.
     func testReceiptChipsAndGuessedNamesStartACorrection() {
@@ -569,6 +642,53 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Kria: I couldn't verify any clips for dodgeball. Could you clarify?"].waitForExistence(timeout: 15))
         XCTAssertFalse(app.descendants(matching: .any)["clip-card"].exists)
         XCTAssertFalse(app.buttons["clip-send"].exists)
+    }
+
+    // MARK: conflict-choice question (KRI-282)
+
+    private func launchChoiceQuestionFixture(capability: String) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_CHAT_CHOICE_QUESTION"] = capability
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+        let next = app.buttons["Send clips"]
+        XCTAssertTrue(next.waitForExistence(timeout: 5))
+        next.tap()
+        return app
+    }
+
+    func testChoiceQuestionShowsRecommendedOptionAndSendsStructuredAnswerOnce() {
+        let app = launchChoiceQuestionFixture(capability: "1")
+        XCTAssertTrue(app.descendants(matching: .any)["choice-card"].waitForExistence(timeout: 15))
+        let grouped = app.buttons["choice-option-group_first"]
+        let chronological = app.buttons["choice-option-chronological"]
+        XCTAssertTrue(grouped.waitForExistence(timeout: 3))
+        XCTAssertTrue(chronological.exists)
+        XCTAssertEqual(grouped.label, "Group by sport, chronological inside each sport (recommended)")
+        XCTAssertEqual(chronological.label, "Keep it strictly chronological; sports may interleave")
+        XCTAssertGreaterThanOrEqual(grouped.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(chronological.frame.height, 44)
+        grouped.tap()
+        XCTAssertTrue(app.staticTexts["You: Group by sport, chronological inside each sport"].waitForExistence(timeout: 10))
+        let echo = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "choice[group_first]")).firstMatch
+        XCTAssertTrue(echo.waitForExistence(timeout: 10), "server received the structured choice_selection")
+        // Answered: the card collapses to a read-only summary and the options are gone.
+        XCTAssertTrue(app.descendants(matching: .any)["choice-card-answered"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["choice-option-group_first"].exists)
+        XCTAssertFalse(app.buttons["choice-option-chronological"].exists)
+    }
+
+    func testChoiceQuestionFallsBackToTextWhenServerLacksCapability() {
+        let app = launchChoiceQuestionFixture(capability: "legacy")
+        // The numbered text question still arrives; no tappable options are drawn.
+        let text = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: You asked for a chronological video")).firstMatch
+        XCTAssertTrue(text.waitForExistence(timeout: 15))
+        XCTAssertFalse(app.descendants(matching: .any)["choice-card"].exists)
+        XCTAssertFalse(app.buttons["choice-option-group_first"].exists)
     }
 
     func testSlowDirectionAndPreJobFailureNeverReturnToUploading() {

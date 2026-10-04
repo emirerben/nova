@@ -19,6 +19,38 @@
           "title": "Expected Thread Revision",
           "type": "integer"
         },
+        "landscape_fit": {
+          "anyOf": [
+            {
+              "enum": [
+                "fit",
+                "fill"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Landscape Fit"
+        },
+        "output_orientation": {
+          "anyOf": [
+            {
+              "enum": [
+                "portrait",
+                "landscape"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Orientation"
+        },
         "speech_cleanup_analysis_id": {
           "anyOf": [
             {
@@ -842,6 +874,30 @@
           "title": "CarouselMomentEditRequest",
           "type": "object"
         },
+        "ChoiceSelectionIn": {
+          "additionalProperties": false,
+          "description": "The app's answer to a ``choice_question`` (SubmitTurnBody.choice_selection).",
+          "properties": {
+            "option_key": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Option Key",
+              "type": "string"
+            },
+            "question_id": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Question Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "question_id",
+            "option_key"
+          ],
+          "title": "ChoiceSelectionIn",
+          "type": "object"
+        },
         "ClipSelectionAnswerIn": {
           "additionalProperties": false,
           "properties": {
@@ -1485,6 +1541,22 @@
               ],
               "default": null,
               "title": "Guided Revision Number"
+            },
+            "landscape_fit": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "fit",
+                    "fill"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Landscape Fit"
             },
             "lyrics": {
               "anyOf": [
@@ -2441,6 +2513,30 @@
           "title": "SolidBackground",
           "type": "object"
         },
+        "SongOrderAnswerIn": {
+          "additionalProperties": false,
+          "description": "The creator's answer: the order they confirmed.",
+          "properties": {
+            "ordered_media_ids": {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "title": "Ordered Media Ids",
+              "type": "array"
+            },
+            "question_id": {
+              "title": "Question Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "question_id",
+            "ordered_media_ids"
+          ],
+          "title": "SongOrderAnswerIn",
+          "type": "object"
+        },
         "SourceCrop": {
           "additionalProperties": false,
           "properties": {
@@ -2828,6 +2924,17 @@
       },
       "additionalProperties": false,
       "properties": {
+        "choice_selection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChoiceSelectionIn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "client_event_id": {
           "maxLength": 160,
           "minLength": 1,
@@ -2866,6 +2973,17 @@
           "minLength": 1,
           "title": "Message",
           "type": "string"
+        },
+        "song_order": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SongOrderAnswerIn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -3228,7 +3346,8 @@
                 "enum": [
                   "licensed_music",
                   "original_audio",
-                  "voiceover"
+                  "voiceover",
+                  "user_song"
                 ],
                 "title": "Audio Strategy",
                 "type": "string"

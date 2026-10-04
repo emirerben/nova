@@ -1,6 +1,6 @@
 {
   "agent": "nova.creator.main",
-  "prompt_version": "2026-10-04-v42",
+  "prompt_version": "2026-10-04-v43",
   "input": {
     "user_message": "Title it Bowling Night and keep it about 20 seconds. Show this text on each shot, word for word:\n1. The bookshop photo: \"Every story starts on a shelf\"\n2. The video of the girl bowling: \"Strike one, nervous laugh\"\n3. The coffee cup photo: \"Fuel for round two\"\n4. The arcade video: \"Ten tokens, zero regrets\"\n5. The street at night video: \"Walking it off\"\n6. The scoreboard photo: \"Final score: 142\"\nEnd with \"See you next week\".",
     "creator_request": "Title it Bowling Night and keep it about 20 seconds. Show this text on each shot, word for word:\n1. The bookshop photo: \"Every story starts on a shelf\"\n2. The video of the girl bowling: \"Strike one, nervous laugh\"\n3. The coffee cup photo: \"Fuel for round two\"\n4. The arcade video: \"Ten tokens, zero regrets\"\n5. The street at night video: \"Walking it off\"\n6. The scoreboard photo: \"Final score: 142\"\nEnd with \"See you next week\".",
@@ -263,6 +263,7 @@
         "Final score: 142"
       ],
       "contract": "text dictated for six described shots is one per_clip brief entry per shot (literal = the words, description = the shot); all six stay live in the ledger, and none of the message's nine requirements is cut by the update cap"
-    }
+    },
+    "note": "Recorded as the branch's v42 before KRI-374 also claimed v42 on main; renumbered v43 on merge. The prompt for this input is byte-identical (no uploaded song, so the KRI-374 section adds no bytes)."
   }
 }

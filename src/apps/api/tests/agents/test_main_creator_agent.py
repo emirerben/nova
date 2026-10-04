@@ -530,6 +530,7 @@ def test_reaction_beats_prompt_section_omitted_when_capability_unavailable() -> 
         _get_raw("main_creator")
         .replace("$reaction_beats_section", "")
         .replace("$brief_section", "")
+        .replace("$user_song_section", "")
     )
     prompt_manifest = agent_input.capability_manifest.model_dump_json(
         exclude_none=True, exclude={"narration": True}

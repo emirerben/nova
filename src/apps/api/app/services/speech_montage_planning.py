@@ -74,6 +74,18 @@ def mentions_speech(request: str) -> bool:
     return bool(_SPEECH_HINT.search(request or ""))
 
 
+def speech_montage_possible(request: str, *, any_clip_has_speech: bool) -> bool:
+    """The first-stage gate: could this request become a spoken-excerpt montage?
+
+    Shared by `plan_speech_montage`, the worker (`run_phone_speech_montage_job`)
+    and the output-shape offer (`render_shape.creation_offer`), which must not
+    offer a shape the speech montage would silently ignore (it renders portrait).
+    The planner (open vocabulary) makes the final call when a clip has speech, so
+    this is deliberately the conservative superset.
+    """
+    return bool((request or "").strip()) and (any_clip_has_speech or mentions_speech(request))
+
+
 @dataclass
 class SpeechCandidate:
     """One clip as the speech-montage planner sees it."""
@@ -161,12 +173,9 @@ def plan_speech_montage(
 ) -> SpeechMontageResolution:
     """See the module docstring. Never raises for planner/transcription trouble."""
     request = (creator_request or "").strip()
-    if not request:
-        return SpeechMontageResolution("not_requested")
-
     videos = [c for c in candidates if c.kind == "video"]
     claimed = [c for c in videos if c.has_speech]
-    if not claimed and not mentions_speech(request):
+    if not speech_montage_possible(request, any_clip_has_speech=bool(claimed)):
         return SpeechMontageResolution("not_requested")
 
     # Word timings for each clip that claims speech. A clip whose transcript is

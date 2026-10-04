@@ -1696,3 +1696,37 @@ def test_compile_active_plan_skips_generic_notice_when_repair_d_notice_already_f
 def test_generic_sound_effect_request_regex(text, expected) -> None:
     matched = bool(creator_sessions._GENERIC_SOUND_EFFECT_REQUEST_RE.search(text))
     assert matched is expected
+
+
+@pytest.mark.asyncio
+async def test_context_hands_the_item_to_the_manifest_as_its_user_song_source(monkeypatch) -> None:
+    """KRI-374: the manifest reads `song_*` off the item, so the item must be passed through."""
+    seen: dict = {}
+    real = creator_sessions.resolve_creator_manifest
+
+    def spy(**kwargs):  # noqa: ANN003, ANN202
+        seen.update(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(creator_sessions, "resolve_creator_manifest", spy)
+    item = SimpleNamespace(
+        id=uuid.uuid4(),
+        edit_format="montage",
+        audio_mode="song",
+        voiceover_gcs_path=None,
+        song_gcs_path="users/u/creation-threads/t/song.m4a",
+        song_duration_s=180.0,
+        song_analysis=None,
+        current_job_id=None,
+        clip_gcs_paths=["users/u/clip.mp4"],
+        clip_assignments=[],
+    )
+    persona = SimpleNamespace(user_id=uuid.uuid4())
+    empty_result = MagicMock()
+    empty_result.scalars.return_value = []
+    db = AsyncMock()
+    db.execute.side_effect = [empty_result, empty_result, empty_result]
+
+    await creator_sessions.resolve_item_creator_context(db, item, persona=persona)
+
+    assert seen["user_song_item"] is item

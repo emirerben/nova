@@ -304,6 +304,8 @@ def test_create_turn_returns_202_and_publishes_committed_turn(
         **_body(),
         "editor_state": None,
         "clip_selection": None,
+        "song_order": None,
+        "choice_selection": None,
     }
     publish.assert_called_once_with(str(turn_id))
     db.rollback.assert_not_awaited()
@@ -699,6 +701,8 @@ def test_decide_approval_delegates_and_publishes_denied_turn_successor(
         "speech_cleanup_aware": False,
         "speech_cleanup_analysis_id": None,
         "speech_cleanup_choice": None,
+        "output_orientation": None,
+        "landscape_fit": None,
     }
     publish.assert_called_once_with(successor_id)
     db.rollback.assert_not_awaited()

@@ -118,7 +118,7 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   `description` is keyed by its shot too, so six shots dictated in one message
   all stay live and restating a shot replaces only that shot. A label-every-clip
   rule (no such pair) still replaces the whole per-clip lane, shot texts
-  included. The Main Creator (prompt v42) only proposes `brief_updates`, at most
+  included. The Main Creator (prompt v43) only proposes `brief_updates`, at most
   16 per turn; unparseable entries are dropped, never fatal. Versions are written by the turn-completion
   transaction under the thread lock, after the revision fence, so a requeued
   turn never persists one.

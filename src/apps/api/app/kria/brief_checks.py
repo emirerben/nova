@@ -112,6 +112,8 @@ class PlanFacts:
     duration_s: float | None = None
     ordering_basis: str | None = None
     ordering_fallback_clip_ids: tuple[str, ...] = ()
+    # KRI-282: the creator's answer to a chronological-vs-grouped conflict, if any.
+    ordering_choice: str | None = None
     texts: tuple[str, ...] = ()
     # Where the title came from: "creator" (their words), "brief" (written from the
     # brief's facts), "default" (nothing to title with), None = unknown.
@@ -382,6 +384,7 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         ordering_fallback_clip_ids=tuple(
             str(c) for c in record.get("ordering_fallback_clip_ids") or []
         ),
+        ordering_choice=str(record["ordering_choice"]) if record.get("ordering_choice") else None,
         texts=tuple(
             str(text) for text in (title, record.get("closing_title"), *per_clip.values()) if text
         ),
@@ -799,6 +802,12 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
             "partial",
             f"{n} clip{'s' if n != 1 else ''} had no capture time, so I kept "
             f"{'their' if n != 1 else 'its'} attachment order.",
+        )
+    if key in _CAPTURE_ORDER_KEYS and facts.ordering_choice == "group_first":
+        # Honest: the creator picked grouping over strict filming order, so the order
+        # holds inside each group only.
+        return _receipt(
+            req, "met", "you chose grouping first, so it's in filming order inside each group"
         )
     return _receipt(req, "met", None)
 
@@ -1222,9 +1231,10 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
 UNIFIED_SETTLED_KINDS = frozenset({"text", "order", "timing"})
 
 
-# Approval turns `audio_strategy` into the item's audio mode: only these two leave the
-# voiceover lane, and the worker takes the unified planner only outside it.
-_NON_VOICEOVER_AUDIO = frozenset({"original_audio", "licensed_music"})
+# Approval turns `audio_strategy` into the item's audio mode: only these leave the
+# voiceover lane, and the worker takes the unified planner only outside it. KRI-374:
+# `user_song` (audio_mode "song") also runs through the unified montage planner.
+_NON_VOICEOVER_AUDIO = frozenset({"original_audio", "licensed_music", "user_song"})
 
 
 def defers_to_unified_montage(
@@ -1306,6 +1316,8 @@ _LABEL = {
     "met": "Done",
     "partial": "Partly",
     "not_possible": "Couldn't",
+    # KRI-282: the creator was asked and chose the other side of a conflict.
+    "chosen": "As you chose",
 }
 
 
@@ -1337,7 +1349,7 @@ def reply_from_receipts(
         status = str(row.get("status") or "")
         if status not in _LABEL or not row.get("name"):
             continue
-        failed = failed or status != "met"
+        failed = failed or status not in {"met", "chosen"}
         line = f"{_LABEL[status]}: {row['name']}"
         if row.get("reason"):
             line += f" ({str(row['reason']).rstrip('.')})"

@@ -34,7 +34,7 @@ import tempfile
 from pathlib import Path
 
 from app import storage
-from app.kria.render_assets import RenderFingerprint, VoiceoverRenderAsset
+from app.kria.render_assets import RenderFingerprint, SongRenderAsset, VoiceoverRenderAsset
 
 # Mirrors `app.routes.plan_items._MAX_VOICEOVER_BYTES` (the upload-time cap).
 # Duplicated rather than imported to keep this service free of a route-layer
@@ -55,6 +55,45 @@ def inspect_voiceover_asset(path: str, *, asset_id: str, plan_item_id: str) -> V
         with local.open("rb") as source:
             digest = hashlib.file_digest(source, "sha256").hexdigest()
     return VoiceoverRenderAsset(
+        id=asset_id,
+        plan_item_id=plan_item_id,
+        generation=str(metadata.generation),
+        fingerprint=RenderFingerprint(sha256=digest, byte_count=metadata.size),
+    )
+
+
+# A creator song is audio of a few minutes; the cap only guards the hash download.
+MAX_SONG_BYTES = 200 * 1024 * 1024
+
+
+def inspect_song_asset(
+    path: str,
+    *,
+    asset_id: str,
+    plan_item_id: str,
+    expected_generation: str | int | None = None,
+) -> SongRenderAsset:
+    """Pin the song's generation before hashing (KRI-374).
+
+    The clone of ``inspect_voiceover_asset`` for a creator-uploaded song, minus the
+    cleaned-narration branch (a song has no derivative). ``expected_generation`` is
+    the generation the plan was approved against: an object whose live generation
+    differs was replaced since approval, so the receipt is refused rather than
+    pinned to the new bytes.
+    """
+    metadata = storage.object_metadata(path)
+    if not metadata.generation or not 0 < metadata.size <= MAX_SONG_BYTES:
+        raise ValueError("invalid song asset size or generation")
+    if expected_generation is not None and str(metadata.generation) != str(expected_generation):
+        raise ValueError("song asset was replaced")
+    with tempfile.TemporaryDirectory(prefix="kria_song_") as directory:
+        local = Path(directory) / "asset"
+        storage.download_generation_to_file(path, str(local), generation=str(metadata.generation))
+        if local.stat().st_size != metadata.size:
+            raise ValueError("song asset size changed")
+        with local.open("rb") as source:
+            digest = hashlib.file_digest(source, "sha256").hexdigest()
+    return SongRenderAsset(
         id=asset_id,
         plan_item_id=plan_item_id,
         generation=str(metadata.generation),

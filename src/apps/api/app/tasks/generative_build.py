@@ -2305,7 +2305,9 @@ def _run_generative_job_impl(
                             run_phone_speech_montage_job,
                         )
 
-                        if not run_phone_speech_montage_job(
+                        # KRI-374: a creator song is the whole soundtrack (camera audio
+                        # is muted), so a spoken-excerpt montage never applies to it.
+                        if candidates.get("user_song") or not run_phone_speech_montage_job(
                             job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
                         ):
                             # KRI-190/KRI-220: one montage plan, always. The guided plan
@@ -2358,11 +2360,19 @@ def _run_generative_job_impl(
                 # fall back to) must persist a failure_reason — without this, the
                 # generic `except Exception` fallback below only set error_detail,
                 # leaving the client with no reason code to render.
-                failure_reason = (
-                    "phone_plan_unsupported"
-                    if isinstance(exc, (UnsupportedPhonePlan, ValueError))
-                    else "phone_plan_failed"
+                from app.services.phone_rollout import (  # noqa: PLC0415
+                    PhoneCapabilityUnavailable,
                 )
+
+                # KRI-286: a capability the device has not verified yet is a rollout
+                # decision, not a plan defect -- it must stay retryable, so it gets its
+                # own code BEFORE the deterministic `phone_plan_unsupported` branch.
+                if isinstance(exc, PhoneCapabilityUnavailable):
+                    failure_reason = "phone_capability_unavailable"
+                elif isinstance(exc, (UnsupportedPhonePlan, ValueError)):
+                    failure_reason = "phone_plan_unsupported"
+                else:
+                    failure_reason = "phone_plan_failed"
                 log.error(
                     "phone_guided_job_failed",
                     job_id=job_id,
@@ -3852,8 +3862,8 @@ def _run_phone_guided_job(
     )
     from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
         UnsupportedPhonePlan,
-        compile_phone_guided_plan,
     )
+    from app.pipeline.phone_plan_repair import compile_phone_guided_repaired  # noqa: PLC0415
     from app.services.device_narration_binding import make_device_narration_binding  # noqa: PLC0415
     from app.services.device_render import (  # noqa: PLC0415
         DEVICE_RENDER_FIELD,
@@ -3952,14 +3962,39 @@ def _run_phone_guided_job(
                 "the approved voiceover was replaced since approval",
                 capability="narrationAudio",
             )
-    recipe = compile_phone_guided_plan(
+    song_bed = None
+    if plan.user_song is not None:
+        from app.services.phone_rollout import phone_user_song_supported  # noqa: PLC0415
+
+        # KRI-374: same recheck as the narration lane -- the dispatch gate cleared
+        # this, but a redelivery or a flag flip mid-flight must fail closed here.
+        if not phone_user_song_supported():
+            raise UnsupportedPhonePlan(
+                "phone rendering of your own song is currently unavailable",
+                capability="musicBed",
+            )
+        song_bed = _resolve_phone_song_bed(job_id, plan.user_song)
+    # KRI-286: deterministic repairs (sequence effect, unqualified font) are applied
+    # and noted instead of failing the job after approval. Kwargs are forwarded as-is.
+    compiled = compile_phone_guided_repaired(
         plan,
         bindings,
         visuals=visuals,
         narration=narration_bed,
+        song=song_bed,
         landscape_fit="fit" if landscape_fit == "fit" else "fill",
     )
+    recipe, repair_notes = compiled.recipe, compiled.notes
     validate_phone_pilot_recipe(recipe)
+    repaired_plan_payload = None
+    if compiled.plan is not plan:
+        repaired_plan_payload = compiled.plan.model_dump(mode="json", exclude_none=False)
+        # The editor recompiles from the persisted rows: keep them equal to what compiled.
+        for field in ("text_elements", "context_label_text_elements"):
+            raw_plan[field] = [
+                element.model_dump(mode="json", exclude_none=False)
+                for element in getattr(compiled.plan, field)
+            ]
     visual_rows = [visual.model_dump(mode="json") for visual in visuals]
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id="guided_story", revision=1, recipe=recipe
@@ -4013,6 +4048,18 @@ def _run_phone_guided_job(
                 "ok": False,
             }
         ]
+        if repair_notes:
+            # Creator-visible (job projection -> render_notes): what Kria changed so
+            # the plan could render on the phone (KRI-129: never a silent override).
+            current["variants"][0]["phone_repair_notes"] = list(repair_notes)
+        if repaired_plan_payload is not None:
+            # The editor's first Save recompiles from this private per-variant plan, not
+            # the approved canonical plan (whose text lane is re-validated against the
+            # approval and so must stay untouched). Without it a Save would re-hit the
+            # reject the repair removed.
+            from app.services.phone_editor import PHONE_EDITOR_PLAN_FIELD  # noqa: PLC0415
+
+            current["variants"][0][PHONE_EDITOR_PLAN_FIELD] = repaired_plan_payload
         if visual_rows:
             # Private receipts the editor recompiles from; each row keeps
             # gcs_path so pool deletion still sees the photo as referenced.
@@ -4521,6 +4568,9 @@ def _run_phone_voiceover_montage_job(
                 montage_preset=montage_preset,
                 strict_day_vlog=archetype == "day_vlog",
                 strict_single_hero=archetype == "single_hero",
+                # KRI-306: only an explicit creator choice moves the canvas;
+                # None keeps today's portrait default byte-identical.
+                orientation=_creator_shape_orientation(all_candidates),
             )
 
             gcs_to_media_id = {binding.proxy_path: binding.media_id for binding in bindings}
@@ -4838,6 +4888,216 @@ def _load_unified_montage_visuals(job_id: str, *, selected: frozenset[str] | Non
     return visuals
 
 
+# User-facing text for each way the lip-sync planner can decline (KRI-374). The
+# planner's own messages are developer-facing; these tell the creator what to do.
+_LIPSYNC_PLAN_ERROR_MESSAGES = {
+    "stale_alignment": (
+        "Your clips were matched against a different song than the one attached. "
+        "Re-attach your song or clips and try again."
+    ),
+    "song_not_analyzed": (
+        "I couldn't read your song yet, so I couldn't line your clips up with it. "
+        "Try again in a moment, or re-attach the song."
+    ),
+    "no_synced_takes": (
+        "I couldn't find where any of your clips sit in the song. Film each take with "
+        "the song playing out loud next to you, then try again."
+    ),
+    "span_too_short": (
+        "The clips I could match to the song cover less than three seconds of it. "
+        "Add longer takes of the part you want, then try again."
+    ),
+}
+_SONG_MISSING_MESSAGE = (
+    "Your song is no longer attached to this video. Add it again and try once more."
+)
+_SONG_REPLACED_MESSAGE = "Your song was replaced after this edit was approved. Ask for it again."
+_SONG_UNREADABLE_MESSAGE = (
+    "I couldn't read your song, so I couldn't build the montage around it. "
+    "Re-attach it (mp3, m4a or wav) and try again."
+)
+
+
+def _plan_phone_user_song_montage(
+    job_id: str,
+    user_song: dict,
+    *,
+    clips: list,
+    visuals: Any,
+    view: Any,
+    strategy: dict,
+    clip_intents_enabled: bool,
+    font_covers: Any,
+    creator_order: list[int],
+    output_orientation: str | None = None,
+) -> Any:
+    """Plan a phone montage around the creator's own song (KRI-374).
+
+    ``user_song`` is the dispatch record (``{gcs_path, generation, duration_s, sync}``).
+    Background: ``plan_unified_montage`` with the song's beats and lyric lines.
+    Lip-sync: ``plan_lipsync_montage`` over the take alignment, computed inline if the
+    background tasks have not left a current one. An uncertain take that the creator
+    did not confirm is never placed (the planner guarantees it; the alignment fed here
+    only ever narrows positions to the ones the creator chose). Every failure is an
+    ``UnsupportedPhonePlan`` with a message the creator can act on.
+    """
+    from app.pipeline.lipsync_montage import (  # noqa: PLC0415
+        LipsyncPlanError,
+        plan_lipsync_montage,
+    )
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+    from app.pipeline.unified_montage import plan_unified_montage  # noqa: PLC0415
+    from app.services.song_order import apply_resolved_song_takes  # noqa: PLC0415
+    from app.tasks.user_song import (  # noqa: PLC0415
+        ensure_song_alignment,
+        ensure_song_analysis,
+    )
+
+    item_id = _job_plan_item_id(job_id)
+    if item_id is None:
+        raise UnsupportedPhonePlan(_SONG_MISSING_MESSAGE, capability="musicBed")
+    try:
+        generation = int(user_song.get("generation"))
+    except (TypeError, ValueError) as exc:
+        raise UnsupportedPhonePlan(_SONG_MISSING_MESSAGE, capability="musicBed") from exc
+    sync = "lipsync" if user_song.get("sync") == "lipsync" else "background"
+
+    if sync == "lipsync":
+        analysis, alignment = ensure_song_alignment(item_id)
+    else:
+        analysis, alignment = ensure_song_analysis(item_id), None
+    if analysis is None:
+        raise UnsupportedPhonePlan(_SONG_MISSING_MESSAGE, capability="musicBed")
+    if analysis.generation != generation:
+        raise UnsupportedPhonePlan(_SONG_REPLACED_MESSAGE, capability="musicBed")
+    if analysis.status != "ready" or analysis.duration_s <= 0:
+        raise UnsupportedPhonePlan(_SONG_UNREADABLE_MESSAGE, capability="musicBed")
+
+    if sync == "background":
+        return plan_unified_montage(
+            clips,
+            view,
+            strategy=strategy,
+            clip_intents_enabled=clip_intents_enabled,
+            font_covers=font_covers,
+            creator_order=creator_order,
+            visuals=visuals,
+            song_beats=analysis.beats_s,
+            song_lines=analysis.lines,
+            song_duration_s=analysis.duration_s,
+            song_plan_item_id=str(item_id),
+            song_generation=generation,
+            output_orientation=output_orientation,
+        )
+
+    if alignment is None or alignment.song_generation != generation:
+        # No alignment could be produced even inline: every take is "unmatched",
+        # which the planner turns into its own `no_synced_takes` error.
+        from app.schemas.user_song import SongAlignment  # noqa: PLC0415
+
+        alignment = SongAlignment(song_generation=generation, takes={})
+    # A take whose proxy was replaced since it was aligned is not where the alignment
+    # says it is: drop its row (unmatched) rather than place a different file.
+    current_generations = {clip.media_id: str(clip.generation) for clip in clips}
+    alignment = alignment.model_copy(
+        update={
+            "takes": {
+                media_id: row
+                for media_id, row in alignment.takes.items()
+                if row.proxy_generation is None
+                or current_generations.get(media_id) == str(row.proxy_generation)
+            }
+        }
+    )
+    alignment, confirmed_order = apply_resolved_song_takes(
+        alignment, strategy.get("resolved_song_takes")
+    )
+    try:
+        return plan_lipsync_montage(
+            [*clips, *visuals],
+            alignment,
+            analysis,
+            view,
+            strategy,
+            confirmed_order,
+            plan_item_id=str(item_id),
+            font_covers=font_covers,
+            output_orientation=output_orientation,
+        )
+    except LipsyncPlanError as exc:
+        log.warning("lipsync_plan_declined", job_id=job_id, code=exc.code, error=str(exc))
+        raise UnsupportedPhonePlan(
+            _LIPSYNC_PLAN_ERROR_MESSAGES.get(exc.code, str(exc)), capability="musicBed"
+        ) from exc
+
+
+def _job_plan_item_id(job_id: str) -> uuid.UUID | None:
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        return getattr(job, "content_plan_item_id", None) if job is not None else None
+
+
+def _resolve_phone_song_bed(job_id: str, user_song: Any) -> Any:
+    """A fresh, pinned receipt for the creator's song (KRI-374); mirrors
+    ``_resolve_phone_voiceover_bed``.
+
+    Re-reads the job's own ``PlanItem`` CURRENT ``song_gcs_path`` / ``song_generation`` /
+    ``song_duration_s`` -- never trusting the plan's pinned values alone, since the
+    song could have been replaced or removed since approval -- and requires
+    ``audio_mode == "song"`` plus the plan's exact generation and duration. Then
+    ``inspect_song_asset`` pins that generation and hashes its bytes.
+    ``app.routes.device_render`` re-checks the same ``(path, generation)`` on every
+    device fetch and the device re-hashes the download against this fingerprint.
+
+    Raises ``UnsupportedPhonePlan`` (capability="musicBed") when the song is gone,
+    was replaced, no longer matches the approved duration, or cannot be read: a phone
+    job must never bake in a stale or mismatched song receipt.
+    """
+    from app.models import PlanItem  # noqa: PLC0415
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+    from app.pipeline.phone_recipe_shared import PhoneSongBed  # noqa: PLC0415
+    from app.services.phone_voiceover import inspect_song_asset  # noqa: PLC0415
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        item_id = getattr(job, "content_plan_item_id", None) if job is not None else None
+        item = db.get(PlanItem, item_id) if item_id is not None else None
+        if (
+            item is None
+            or getattr(item, "audio_mode", None) != "song"
+            or not item.song_gcs_path
+            or not item.song_generation
+            or not item.song_duration_s
+            or float(item.song_duration_s) <= 0
+        ):
+            raise UnsupportedPhonePlan(_SONG_MISSING_MESSAGE, capability="musicBed")
+        if (
+            str(item.id) != str(user_song.plan_item_id)
+            or str(item.song_generation) != str(user_song.generation)
+            or abs(float(item.song_duration_s) - float(user_song.duration_s)) > 0.05
+        ):
+            raise UnsupportedPhonePlan(_SONG_REPLACED_MESSAGE, capability="musicBed")
+        path = str(item.song_gcs_path)
+        plan_item_id = str(item.id)
+        duration_s = float(item.song_duration_s)
+        expected_generation = str(item.song_generation)
+    try:
+        asset = inspect_song_asset(
+            path,
+            asset_id=f"song-{plan_item_id}",
+            plan_item_id=plan_item_id,
+            expected_generation=expected_generation,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise UnsupportedPhonePlan(_SONG_REPLACED_MESSAGE, capability="musicBed") from exc
+    return PhoneSongBed(
+        plan_item_id=plan_item_id,
+        generation=asset.generation,
+        fingerprint=asset.fingerprint,
+        duration_s=duration_s,
+    )
+
+
 def _run_phone_unified_montage_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> dict | None:
@@ -4960,19 +5220,39 @@ def _run_phone_unified_montage_job(
                     capture_time=capture_time_from_facts(facts),
                 )
             )
-        plan = plan_unified_montage(
-            clips,
-            view,
-            strategy=strategy if isinstance(strategy, dict) else {},
-            clip_intents_enabled=settings.clip_intents_enabled,
-            font_covers=skia_font_covers,
-            creator_order=[
-                value
-                for value in all_candidates.get("creator_clip_order") or []
-                if isinstance(value, int) and not isinstance(value, bool)
-            ],
-            visuals=visuals,
-        )
+        user_song = all_candidates.get("user_song")
+        if isinstance(user_song, dict) and user_song.get("gcs_path"):
+            plan = _plan_phone_user_song_montage(
+                job_id,
+                user_song,
+                clips=clips,
+                visuals=visuals,
+                view=view,
+                strategy=strategy if isinstance(strategy, dict) else {},
+                clip_intents_enabled=settings.clip_intents_enabled,
+                font_covers=skia_font_covers,
+                creator_order=[
+                    value
+                    for value in all_candidates.get("creator_clip_order") or []
+                    if isinstance(value, int) and not isinstance(value, bool)
+                ],
+                output_orientation=_creator_shape_orientation(all_candidates),
+            )
+        else:
+            plan = plan_unified_montage(
+                clips,
+                view,
+                strategy=strategy if isinstance(strategy, dict) else {},
+                clip_intents_enabled=settings.clip_intents_enabled,
+                font_covers=skia_font_covers,
+                creator_order=[
+                    value
+                    for value in all_candidates.get("creator_clip_order") or []
+                    if isinstance(value, int) and not isinstance(value, bool)
+                ],
+                visuals=visuals,
+                output_orientation=_creator_shape_orientation(all_candidates),
+            )
     record = plan.record()
     if brief is not None and brief.live():
         from app.kria.brief_checks import (  # noqa: PLC0415
@@ -18399,6 +18679,13 @@ def _assembly_step_to_decision(
         slot_extra={k: v for k, v in slot.items() if k not in modeled_slot_keys},
         moment_extra={k: v for k, v in moment.items() if k not in modeled_moment_keys},
     )
+
+
+def _creator_shape_orientation(all_candidates: dict | None) -> str | None:
+    """KRI-306: the orientation the creator explicitly chose, else None (= default)."""
+    from app.services.render_shape import shape_from_all_candidates  # noqa: PLC0415
+
+    return (shape_from_all_candidates(all_candidates) or {}).get("output_orientation")
 
 
 def _decide_generative_variant(

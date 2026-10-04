@@ -64,6 +64,7 @@ from app.services.edit_proposals import (
     media_generations_match_sync,
     phone_renderable_media,
     phone_story_layouts,
+    renders_on_phone,
     save_proposal_draft,
 )
 from app.services.guided_speech_cleanup import (
@@ -289,6 +290,10 @@ def _creator_dispatch_context_for_guided_attempt(
         context = {
             "creator_strategy": edit_plan.strategy.model_dump(mode="json", exclude_none=True)
         }
+        # KRI-306: the creator's explicit output shape for this attempt, if any.
+        render_shape = active_plan.get("guided_render_shape")
+        if isinstance(render_shape, dict) and render_shape:
+            context["creator_render_shape"] = render_shape
         cleanup = active_plan.get("guided_speech_cleanup")
         if cleanup is not None:
             # Consent belongs to the same immutable attempt as the strategy.
@@ -2428,6 +2433,10 @@ def _run_draft_attempt(
             validate_proposal_compiles,
             validate_proposal_timing,
         )
+        from app.pipeline.phone_plan_repair import (  # noqa: PLC0415
+            PhoneProposalRejected,
+            validate_proposal_phone_compiles,
+        )
 
         snapshot = _snapshot_for(output)
         if snapshot is None:
@@ -2437,14 +2446,44 @@ def _run_draft_attempt(
         # planner now repairs an authored plan instead of rejecting it (KRI-129);
         # without this, a repaired plan the renderer cannot allocate would be
         # saved, approved, and fail in the render worker after approval.
+        # KRI-286: a phone destination must also compile on the PHONE compiler. Repairs
+        # (sequence effect, unqualified font) are deterministic and noted; what no
+        # repair fixes takes the same deterministic fallback as any other dry-run reject
+        # instead of failing after the creator approves.
+        phone_destination = renders_on_phone(
+            snapshot.media, owner_id, visuals_only_device=visuals_only_device
+        )
+        phone_repair_notes: list[str] = []
+
+        def _advisory_phone_notes(candidate: EditProposalSnapshot) -> list[str]:
+            # The deterministic fallback is already the last resort: surface what the
+            # phone would still repair, but never block it on a phone-only reject.
+            try:
+                return validate_proposal_phone_compiles(
+                    candidate, analyzed_assignments or assignments
+                )
+            except PhoneProposalRejected as phone_exc:
+                log.warning(
+                    "edit_proposal.fallback_phone_dry_run_rejected",
+                    item_id=item_id,
+                    error=str(phone_exc)[:300],
+                )
+                return []
+
         try:
             if fallback_used:
                 # A deterministic recovery also has to satisfy the stricter
                 # revision rules before it may be auto-approved.
                 validate_proposal_timing(snapshot)
+                if phone_destination:
+                    phone_repair_notes = _advisory_phone_notes(snapshot)
             else:
                 validate_proposal_compiles(snapshot)
-        except GuidedStoryError as exc:
+                if phone_destination:
+                    phone_repair_notes = validate_proposal_phone_compiles(
+                        snapshot, analyzed_assignments or assignments
+                    )
+        except (GuidedStoryError, PhoneProposalRejected) as exc:
             if (
                 output is None
                 or semantic_enabled
@@ -2473,6 +2512,16 @@ def _run_draft_attempt(
                 snapshot, owner_id, visuals_only_device=visuals_only_device
             )
             validate_proposal_timing(snapshot)
+            if phone_destination:
+                phone_repair_notes = _advisory_phone_notes(snapshot)
+        if phone_repair_notes:
+            snapshot = snapshot.model_copy(
+                update={
+                    "adjustments": [
+                        message[:160] for message in [*snapshot.adjustments, *phone_repair_notes]
+                    ][:6]
+                }
+            )
         with sync_session() as db:
             locked = _locked_item(db, iid, ownership_epoch)
             item = locked[0] if locked else None

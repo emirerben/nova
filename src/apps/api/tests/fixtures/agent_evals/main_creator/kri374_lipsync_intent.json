@@ -1,0 +1,346 @@
+{
+ "agent": "nova.creator.main",
+ "prompt_version": "2026-10-04-v42",
+ "input": {
+  "user_message": "Lip sync to the song I uploaded. I filmed three takes singing along while it played.",
+  "creator_request": "Lip sync to the song I uploaded. I filmed three takes singing along while it played.",
+  "creator_context": "Casual creator; short, energetic edits.",
+  "creator_direction": "",
+  "item_context": "A lip-sync video to my own song.",
+  "media_context": [
+   {
+    "media_id": "clip-1",
+    "kind": "video",
+    "duration_s": 21.0,
+    "creator_note": "take 1, singing along"
+   },
+   {
+    "media_id": "clip-2",
+    "kind": "video",
+    "duration_s": 19.5,
+    "creator_note": "take 2, singing along"
+   },
+   {
+    "media_id": "clip-3",
+    "kind": "video",
+    "duration_s": 23.0,
+    "creator_note": "take 3, singing along"
+   }
+  ],
+  "conversation": [],
+  "capability_manifest": {
+   "schema_version": 1,
+   "item_id": "item-kri374_lipsync_intent",
+   "edit_format": "montage",
+   "render_program": "guided",
+   "has_voiceover": false,
+   "has_user_song": true,
+   "user_song": {
+    "duration_s": 187.4,
+    "has_lyrics": true
+   },
+   "narration": null,
+   "current_edit": null,
+   "media": [
+    {
+     "media_id": "clip-1",
+     "kind": "video",
+     "duration_s": 21.0,
+     "label": "take 1, singing along"
+    },
+    {
+     "media_id": "clip-2",
+     "kind": "video",
+     "duration_s": 19.5,
+     "label": "take 2, singing along"
+    },
+    {
+     "media_id": "clip-3",
+     "kind": "video",
+     "duration_s": 23.0,
+     "label": "take 3, singing along"
+    }
+   ],
+   "catalog": [
+    {
+     "catalog_id": "music-track-1",
+     "kind": "music",
+     "label": "Warm travel beat"
+    }
+   ],
+   "capabilities": {
+    "set_item_intent": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "guided_story": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "native_render": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "draft_guided_proposal": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "dispatch_render": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "select_ready_variant": {
+     "available": false,
+     "reason_code": "no_ready_variant",
+     "reason": "a ready variant is required before selection"
+    },
+    "caption_style": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "automatic_cut": {
+     "available": false,
+     "reason_code": "disabled_by_setting",
+     "reason": "automatic speech cuts are disabled by the server"
+    },
+    "guided_voiceover": {
+     "available": false,
+     "reason_code": "unsupported_phone_audio",
+     "reason": "phone rendering does not support recorded voiceover"
+    },
+    "main_creator_agent": {
+     "available": false,
+     "reason_code": "rollout_disabled",
+     "reason": "main creator agent rollout is set to zero"
+    },
+    "execution": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "review": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "auto_iteration": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "guided_conversation": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "guided_direction_confirmation": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "guided_auto_design": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "transitions": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "wide_looks": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "wide_looks cannot render on the iPhone yet"
+    },
+    "media_overlays": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "media_overlays cannot render on the iPhone yet"
+    },
+    "visual_blocks": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "visual_blocks cannot render on the iPhone yet"
+    },
+    "motion_scenes": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "motion_scenes cannot render on the iPhone yet"
+    },
+    "sound_effects": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "sound_effects cannot render on the iPhone yet"
+    },
+    "phone_source_audio": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format_pending_voiceover:narrated_ready": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "narrated_ready does not render on this iPhone yet"
+    },
+    "phone_format_pending_voiceover:narrated": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "narrated does not render on this iPhone yet"
+    },
+    "phone_format_pending_voiceover:narrated_planned": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "narrated_planned does not render on this iPhone yet"
+    },
+    "phone_format:montage": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format:talking_head": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "talking_head does not render on this iPhone yet"
+    },
+    "phone_format:day_vlog": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format:single_hero": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format:subtitled": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "talking-to-camera rendering on this iPhone requires exactly one clip and no recorded voiceover"
+    },
+    "phone_format:narrated": {
+     "available": false,
+     "reason_code": "self_narration_multi_clip",
+     "reason": "Narrating across several clips isn't on iPhone yet. Record a voiceover, or keep one clip for talking-to-camera."
+    },
+    "phone_format:narrated_planned": {
+     "available": false,
+     "reason_code": "self_narration_multi_clip",
+     "reason": "Narrating across several clips isn't on iPhone yet. Record a voiceover, or keep one clip for talking-to-camera."
+    },
+    "phone_format:narrated_ready": {
+     "available": false,
+     "reason_code": "self_narration_multi_clip",
+     "reason": "Narrating across several clips isn't on iPhone yet. Record a voiceover, or keep one clip for talking-to-camera."
+    },
+    "phone_format:slides": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "slides does not render on this iPhone yet"
+    },
+    "reaction_beats": {
+     "available": false,
+     "reason_code": "phone_talking_only",
+     "reason": "reaction beats are only available on an iPhone talking-to-camera edit"
+    },
+    "user_song": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "edit_format:montage": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "edit_format:talking_head": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "talking_head is disabled or has no production renderer for this media snapshot"
+    },
+    "edit_format:day_vlog": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "edit_format:single_hero": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "edit_format:subtitled": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "subtitled is disabled or has no production renderer for this media snapshot"
+    },
+    "edit_format:narrated": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "narrated is disabled or has no production renderer for this media snapshot"
+    },
+    "edit_format:narrated_planned": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "narrated_planned is disabled or has no production renderer for this media snapshot"
+    },
+    "edit_format:narrated_ready": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "narrated_ready is disabled or has no production renderer for this media snapshot"
+    },
+    "edit_format:slides": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "slides is disabled or has no production renderer for this media snapshot"
+    }
+   },
+   "limits": {
+    "max_media_refs": 50,
+    "max_catalog_refs": 50,
+    "max_commands": 4,
+    "max_output_duration_s": 120.0
+   },
+   "context_hash": "d3aa5eefe3b9c8cb0f367543fb797c3eaac3ee1aa05a64afeaf255cb970f4e86",
+   "manifest_hash": "aac44c7b94b32de77d6c71533d071ab3c5d246ce3f3b98f10417782b11d14954"
+  }
+ },
+ "raw_text": "{\"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"fast_montage\", \"edit_format\": \"montage\", \"audio_strategy\": \"user_song\", \"story_structure\": [\"Cold open on the strongest take\", \"Build with quick cuts\", \"Land on the closing moment\"], \"caption_style\": \"none\", \"pacing\": \"fast\", \"target_duration_s\": 36, \"render_program\": \"guided\", \"selected_media_ids\": [], \"optional_treatments\": [], \"rationale\": \"The song is the master timeline, so each take is placed where it matches the music and the camera sound is muted.\", \"song_sync\": \"lipsync\"}, \"summary\": \"I'll lip-sync your three takes to your song, placing each one where it fits the music.\"}}",
+ "output": {
+  "action": {
+   "kind": "propose_strategy",
+   "strategy": {
+    "direction": "fast_montage",
+    "edit_format": "montage",
+    "audio_strategy": "user_song",
+    "story_structure": [
+     "Cold open on the strongest take",
+     "Build with quick cuts",
+     "Land on the closing moment"
+    ],
+    "caption_style": "none",
+    "song_sync": "lipsync",
+    "pacing": "fast",
+    "target_duration_s": 36,
+    "render_program": "guided",
+    "selected_media_ids": [],
+    "optional_treatments": [],
+    "video_reuse_policy": "once",
+    "rationale": "The song is the master timeline, so each take is placed where it matches the music and the camera sound is muted."
+   },
+   "summary": "I'll lip-sync your three takes to your song, placing each one where it fits the music."
+  }
+ },
+ "meta": {
+  "source": "hand_authored_not_live_recorded",
+  "user_song": {
+   "expect_sync": "lipsync"
+  },
+  "notes": "KRI-374: HAND-AUTHORED cassette, NOT live-recorded. An explicit lip-sync request with an uploaded song must come back audio_strategy=user_song, song_sync=lipsync."
+ }
+}
