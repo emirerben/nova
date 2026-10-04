@@ -39,6 +39,13 @@ from app.services.clip_intent_resolution import (
 
 pytestmark = pytest.mark.asyncio
 
+
+@pytest.fixture(autouse=True)
+def _text_only_clip_questions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests pin the text question; the picker has its own suite (test_clip_selection)."""
+    monkeypatch.setattr("app.config.settings.kria_clip_selection_questions_enabled", False)
+
+
 REQUEST = (
     "Group content by sport. For individual shots of people, add a text placeholder "
     "so I can replace with their real names"

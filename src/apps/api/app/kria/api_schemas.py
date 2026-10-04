@@ -13,6 +13,7 @@ from app.agents._schemas.visual_block import VisualBlock
 from app.kria.contracts import KriaProblem
 from app.kria.draft_schemas import DraftSnapshotOut as DraftSnapshotOut
 from app.routes.generative_jobs import EditorCommitRequest, TimelineSlotEdit
+from app.services.clip_selection import ClipSelectionIn
 
 TurnStatus = Literal[
     "pending",
@@ -102,6 +103,8 @@ class SubmitTurnBody(_StrictBody):
     expected_thread_revision: int = Field(ge=0)
     # Additive and dark (KRIA_EDITOR_STATE_TURNS_ENABLED); old clients omit it.
     editor_state: EditorStateIn | None = None
+    # KRI-282: the answer to a thumbnail clip question; old clients omit it.
+    clip_selection: ClipSelectionIn | None = None
 
     @field_validator("message")
     @classmethod

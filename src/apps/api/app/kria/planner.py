@@ -63,6 +63,7 @@ from app.routes.generative_jobs import variant_render_baseline
 from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
 from app.services.clip_intent_answers import persist_clip_intent_vision_answers
 from app.services.clip_intent_planning import plan_and_resolve_clip_intents
+from app.services.clip_selection import ClipSelections, fold_clip_selections
 from app.services.creator_sessions import (
     creator_context,
     load_intent_clips_for_item,
@@ -204,7 +205,11 @@ _CLIP_INTENT_PENDING_REPLY = (
 
 
 def _clip_intent_resolution_plan(
-    *, question: str | None, status: str, diagnostics: dict[str, Any] | None = None
+    *,
+    question: str | None,
+    status: str,
+    diagnostics: dict[str, Any] | None = None,
+    clip_question: dict[str, Any] | None = None,
 ) -> KriaTurnPlan:
     if status == "needs_creator":
         return KriaTurnPlan(
@@ -212,6 +217,7 @@ def _clip_intent_resolution_plan(
             turn_value="question",
             response=question or "Which clips should I use for that part?",
             diagnostics=_safe_diagnostics(status, diagnostics),
+            clip_question=clip_question,
         )
     # KRI-282: `pending` is NOT a failure -- the foreground vision budget ran out
     # with answers already cached for the next turn. Saying "couldn't match" made
@@ -800,6 +806,9 @@ async def _plan_from_creator_output(
         # any footage intents with a notice.
         and action.strategy.edit_format not in CLIP_INTENT_FREE_EDIT_FORMATS
     ):
+        clip_selections = None
+        if settings.kria_clip_selection_questions_enabled:
+            clip_selections = await _load_clip_selections(db, thread_id)
         try:
             planned = await plan_and_resolve_clip_intents(
                 creator_request=creator_request or user_message,
@@ -817,6 +826,7 @@ async def _plan_from_creator_output(
                 vision_deadline_s=settings.kria_clip_intents_vision_deadline_s,
                 # KRI-282 L2: hold the turn while background clip analysis is incomplete.
                 require_clip_understanding=settings.kria_clip_understanding_enabled,
+                **({"clip_selections": clip_selections} if clip_selections else {}),
             )
         except Exception as exc:  # noqa: BLE001 - no provider failure may mint a draft
             log.warning(
@@ -909,6 +919,11 @@ async def _plan_from_creator_output(
                         else planned.resolution.status
                     ),
                     diagnostics=_resolution_diagnostics(planned.resolution),
+                    clip_question=(
+                        planned.resolution.clip_question
+                        if planned.resolution.needs_creator
+                        else None
+                    ),
                 ),
                 manifest_hash=manifest.manifest_hash,
                 context_hash=manifest.context_hash,
@@ -947,6 +962,22 @@ async def _plan_from_creator_output(
         context_hash=manifest.context_hash,
         policy_notices=policy_notices,
     )
+
+
+async def _load_clip_selections(db: AsyncSession, thread_id: uuid.UUID) -> ClipSelections:
+    """Standing clip-picker answers, replayed from the thread's own events (KRI-282)."""
+    rows = (
+        await db.execute(
+            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == thread_id,
+                CreationThreadEvent.role.in_({"user", "assistant"}),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    await db.rollback()  # no connection pinned across the provider calls that follow
+    return fold_clip_selections((role, payload) for role, payload in rows)
 
 
 async def _refetch_item(db: AsyncSession, item_id: uuid.UUID) -> PlanItem:

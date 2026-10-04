@@ -512,6 +512,11 @@ class Settings(BaseSettings):
     # build on it instead of the saved variant / stale head. Off (default) = the
     # field is accepted and silently dropped, nothing stored, byte-identical to before.
     kria_editor_state_turns_enabled: bool = False
+    # KRI-282: thumbnail clip-picker questions. The server attaches `clip_question` to a
+    # "couldn't verify clips for X" question and honours the app's `clip_selection`
+    # answer as authoritative. Default TRUE; kill switch = false + restart (the field
+    # is then dropped, questions are text-only, byte-identical to before).
+    kria_clip_selection_questions_enabled: bool = True
     # KRI-189 (KRI-185 P3): clip facts -- capture time, place name and a
     # best-guess landmark per clip, each with provenance. Gates SERVER
     # CONSUMPTION only: the landmark agent run, exposing facts to the Main
