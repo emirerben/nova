@@ -6,7 +6,7 @@ kill_signal = "SIGTERM"
 kill_timeout = 300
 
 # Fly caps the machine stop timeout at five minutes. Remapping TERM to QUIT
-# lets Celery spend four of those minutes in soft shutdown, then restore any
+# lets Celery spend up to four of those minutes in soft shutdown, then restore any
 # unfinished late-acknowledged task with a one-minute margin before hard stop.
 [env]
   # REMAP_SIGTERM is read by the Celery worker process itself (a Celery 5.5
