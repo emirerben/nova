@@ -58,7 +58,7 @@ from app.models import (
     Persona,
     PlanItem,
 )
-from app.routes._copilot import CopilotTurnBody, run_copilot_turn
+from app.routes._copilot import CopilotTurnBody, is_overlay_display_ask, run_copilot_turn
 from app.routes.generative_jobs import variant_render_baseline
 from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
 from app.services.clip_intent_answers import persist_clip_intent_vision_answers
@@ -211,6 +211,7 @@ def _clip_intent_resolution_plan(
             mode="respond",
             turn_value="question",
             response=question or "Which clips should I use for that part?",
+            diagnostics=_safe_diagnostics(status, diagnostics),
         )
     # KRI-282: `pending` is NOT a failure -- the foreground vision budget ran out
     # with answers already cached for the next turn. Saying "couldn't match" made
@@ -622,6 +623,12 @@ async def _plan_editor_revision(
             # text/timeline/mix edits stay drafts until an explicit Save.
             request_render=any(op.get("op") == "apply_speech_cut_candidate" for op in response.ops),
         )
+    if response.outcome in {"unsupported", "no_effect"} and is_overlay_display_ask(user_message):
+        # KRI-297: a display-mode change (full-screen overlays) is not an in-place
+        # editor op. Decline the copilot refusal so the planner re-plans it as a
+        # fresh edit (strategy.overlay_display) -- or states the real limit.
+        log.info("kria_copilot_deferred_overlay_display", thread_id=str(thread_id))
+        return None
     if response.outcome in {"clarification", "unsupported", "stale", "failed", "no_effect"}:
         return KriaTurnPlan(
             mode="respond",

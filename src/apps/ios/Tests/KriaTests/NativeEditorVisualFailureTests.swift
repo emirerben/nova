@@ -57,7 +57,7 @@ import XCTest
                        "a failure the server won't retry never claims to retry")
         XCTAssertEqual(visual(detail: nil, retryable: false).statusCaptionParts(), .init(explanation: "Failed", nextStep: "Choose it again."))
         XCTAssertEqual(visual(detail: " \n", retryable: nil).statusCaptionParts(), .init(explanation: "Failed", nextStep: nil))
-        XCTAssertEqual(restarted().statusCaptionParts(retryingAutomatically: true), .init(explanation: "Uploaded", nextStep: nil))
+        XCTAssertEqual(restarted().statusCaptionParts(retryingAutomatically: true), .init(explanation: "Uploaded, waiting to be analyzed", nextStep: nil))
     }
 
     func testOneLineCaptionIsTheTileCaptionJoined() {
@@ -85,7 +85,7 @@ import XCTest
         XCTAssertEqual(NativeVisualPanel.assetAccessibilityLabel(visual(), retryingAutomatically: true),
                        "photo.jpg, Kria temporarily couldn't analyze this file. Retrying automatically…")
         XCTAssertEqual(NativeVisualPanel.assetAccessibilityLabel(visual(status: "analyzing", code: nil, detail: nil, retryable: false, filename: nil),
-                                                                 retryingAutomatically: false), "Visual, Analyzing")
+                                                                 retryingAutomatically: false), "Visual, Analyzing…")
     }
 
     // MARK: Polling

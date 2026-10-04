@@ -511,6 +511,11 @@ def build_generative_job(
             creator_strategy
         ).model_dump(mode="json", exclude_none=True)
         all_candidates["creator_render_contract_version"] = CREATOR_RENDER_CONTRACT_VERSION
+        # KRI-297: the confirmed strategy's full-screen Visuals choice, surfaced
+        # as a flat key for the phone worker (read like `landscape_fit`). Omitted
+        # unless "fullscreen" so every other job keeps its exact shape.
+        if all_candidates["creator_strategy"].get("overlay_display") == "fullscreen":
+            all_candidates["overlay_display"] = "fullscreen"
     bounded_creator_request = str(creator_request or "").strip()[:_MAX_CREATOR_REQUEST_CHARS]
     if bounded_creator_request:
         all_candidates["creator_request"] = bounded_creator_request

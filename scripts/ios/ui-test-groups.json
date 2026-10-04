@@ -120,6 +120,7 @@
       "KriaUITests/NativeEditorInspectorUITests/testLongPressDraggingTextBlockToRightEdgeAutoScrollsPastVisibleWindow",
       "KriaUITests/NativeEditorInspectorUITests/testDraggingLeadingClipHandleNearEdgeDoesNotAutoScroll",
       "KriaUITests/NativeCaptionVisualUITests/testAnalyzingGalleryCanScrollInBothDirections",
+      "KriaUITests/NativeCaptionVisualUITests/testAnalyzingGalleryShowsBatchProgress",
       "KriaUITests/NativeCaptionVisualUITests/testCaptionAndVisualPaperScreens",
       "KriaUITests/NativeCaptionVisualUITests/testLegacyServerAllowsOpeningVisualImporterAndAddingCard",
       "KriaUITests/NativeCaptionVisualUITests/testExistingVisualOpensEditorAndAddActionOpensLibrary",

@@ -420,6 +420,13 @@ class CreativeStrategy(_CreatorModel):
     render_program: RenderProgram = "guided"
     selected_media_ids: list[str] = Field(default_factory=list, max_length=MAX_CREATOR_MEDIA_REFS)
     optional_treatments: list[OptionalTreatment] = Field(default_factory=list, max_length=4)
+    # KRI-297: how Visuals overlays are shown. "fullscreen" = a full-frame
+    # cutaway sequence (phone Talking edits only; gated by the
+    # `media_overlays:fullscreen` capability). None/"pip" = the default card.
+    # Omitted from stored strategies when None (byte-identical to pre-KRI-297).
+    overlay_display: Literal["pip", "fullscreen"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     # A named licensed effect is an explicit, required treatment. It is kept
     # separate from optional_treatments so an unavailable named effect cannot
     # silently degrade to a generic SFX suggestion.

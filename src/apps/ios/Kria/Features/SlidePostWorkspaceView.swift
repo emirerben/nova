@@ -28,7 +28,8 @@ struct SlidePostWorkspaceView: View {
     @State private var pendingUploads: [UploadRecoveryRecord] = []
     @State private var uploadFailures: [UploadFailure] = []
     @State private var uploadInFlight: [UUID: BackgroundUploadCoordinator.InFlightUpload] = [:]
-    /// True while the software keyboard is up; text mode shrinks the stage so the Edit field stays visible.
+    /// True while the software keyboard is up; text mode shrinks the stage so the Edit field stays visible,
+    /// and the chat layout drops the strip and shrinks the preview so the thread and composer stay above it.
     @State private var keyboardUp = false
     @State private var photoSelections: [String: ProjectPhotoSelection] = [:]
     @State private var previewPlayer: AVPlayer?
