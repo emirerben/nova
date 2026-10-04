@@ -2363,3 +2363,347 @@ async def test_editor_ops_turn_receipts_cover_only_this_turns_requirements(
         assert content == 'Retitled the hook.\n- Done: "Fresh matcha, finally"'
     finally:
         await async_engine.dispose()
+
+
+async def _await_montage_approval(
+    monkeypatch: pytest.MonkeyPatch, *, suffix: str
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, str, int, int]:
+    """A pending montage strategy approval: ``(user, thread, item, approval, token, rev, draft)``."""
+    user_id, thread_id, _session_id, item_id = _seed_narration_ready_project()
+    strategy_plan = adapt_creator_action(
+        ProposeStrategy(
+            kind="propose_strategy",
+            strategy=CreativeStrategy(
+                direction="fast_montage",
+                edit_format="montage",
+                audio_strategy="licensed_music",
+                pacing="fast",
+                render_program="native",
+                selected_media_ids=[],
+                rationale="A quick montage.",
+            ),
+            summary="A quick montage of the footage.",
+        )
+    )
+
+    async def _planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        return PlannedKriaTurn(plan=strategy_plan, manifest_hash="a" * 64, context_hash="b" * 64)
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planned)
+    async with AsyncSessionLocal() as db:
+        accepted, _ = await submit_turn(
+            db,
+            thread_id=thread_id,
+            creator_id=user_id,
+            body=SubmitTurnBody(
+                message="Make a quick montage",
+                client_event_id=f"shape-{suffix}-{uuid.uuid4().hex}",
+                expected_thread_revision=2,
+            ),
+        )
+    result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+    assert result == {"turn_id": accepted.turn_id, "status": "awaiting_approval"}
+    with sync_session() as db:
+        turn = db.get(CreatorAgentTurn, uuid.UUID(accepted.turn_id))
+        approval = db.execute(
+            select(CreatorAgentApproval).where(CreatorAgentApproval.turn_id == turn.id)
+        ).scalar_one()
+        return (
+            user_id,
+            thread_id,
+            item_id,
+            approval.id,
+            approval_fingerprint(approval),
+            db.get(CreationThread, thread_id).revision,
+            approval.draft_revision,
+        )
+
+
+@pytest.mark.asyncio
+async def test_approval_output_shape_is_validated_stashed_and_applied_at_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-306 full path: a bad choice 422s without side effects; a good one is
+    stashed on the execution (fingerprint unchanged), applied to the item only at
+    claim time, and dispatch receives it as `creator_render_shape`."""
+    monkeypatch.setattr(settings, "ios_device_only_mode", True)
+    monkeypatch.setenv("LANDSCAPE_OUTPUT_ENABLED", "false")
+    try:
+        (
+            user_id,
+            thread_id,
+            item_id,
+            approval_id,
+            token,
+            thread_revision,
+            draft_revision,
+        ) = await _await_montage_approval(monkeypatch, suffix="approve")
+
+        def _body(**shape: object) -> ApprovalDecisionBody:
+            return ApprovalDecisionBody(
+                expected_thread_revision=thread_revision,
+                expected_draft_revision=draft_revision,
+                expected_approval_fingerprint=token,
+                **shape,
+            )
+
+        # --- 1) landscape is not offered (flag off): 422, nothing changed. ---
+        async with AsyncSessionLocal() as db:
+            with pytest.raises(RuntimeFailure) as failure:
+                await decide_approval(
+                    db,
+                    thread_id=thread_id,
+                    approval_id=approval_id,
+                    creator_id=user_id,
+                    decision="approve",
+                    body=_body(output_orientation="landscape"),
+                )
+        assert failure.value.status_code == 422
+        assert failure.value.code == "render_shape_unsupported"
+        with sync_session() as db:
+            approval = db.get(CreatorAgentApproval, approval_id)
+            assert approval.status == "pending"
+            assert approval_fingerprint(approval) == token
+            execution = db.get(CreatorAgentExecution, uuid.UUID(approval.execution_ids[0]))
+            assert "render_shape" not in (execution.result or {})
+            assert db.get(PlanItem, item_id).landscape_fit == "fit"
+
+        # --- 2) a valid portrait/crop choice: approved, stashed, item untouched. ---
+        async with AsyncSessionLocal() as db:
+            decision, _ = await decide_approval(
+                db,
+                thread_id=thread_id,
+                approval_id=approval_id,
+                creator_id=user_id,
+                decision="approve",
+                body=_body(output_orientation="portrait", landscape_fit="fill"),
+            )
+        assert decision.status == "approved"
+        with sync_session() as db:
+            approval = db.get(CreatorAgentApproval, approval_id)
+            assert approval_fingerprint(approval) == token  # never part of the fingerprint
+            execution = db.get(CreatorAgentExecution, uuid.UUID(approval.execution_ids[0]))
+            assert execution.result["render_shape"] == {
+                "output_orientation": "portrait",
+                "landscape_fit": "fill",
+            }
+            assert db.get(PlanItem, item_id).landscape_fit == "fit"  # applied at claim
+
+        # --- 3) claim applies it; dispatch receives it. ---
+        captured: dict[str, object] = {}
+
+        def _fake_dispatch(*args, **kwargs):  # noqa: ANN002, ANN003
+            captured["kwargs"] = kwargs
+            return DispatchResult("publish_failed", job_id=None)
+
+        monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
+        await asyncio.to_thread(execute_kria_approval.run, str(approval_id))
+        assert captured["kwargs"]["creator_render_shape"] == {
+            "output_orientation": "portrait",
+            "landscape_fit": "fill",
+        }
+        with sync_session() as db:
+            assert db.get(PlanItem, item_id).landscape_fit == "fill"
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_approval_without_a_shape_choice_dispatches_unchanged_and_deny_ignores_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "ios_device_only_mode", True)
+    try:
+        (
+            user_id,
+            thread_id,
+            item_id,
+            approval_id,
+            token,
+            thread_revision,
+            draft_revision,
+        ) = await _await_montage_approval(monkeypatch, suffix="plain")
+        async with AsyncSessionLocal() as db:
+            await decide_approval(
+                db,
+                thread_id=thread_id,
+                approval_id=approval_id,
+                creator_id=user_id,
+                decision="approve",
+                body=ApprovalDecisionBody(
+                    expected_thread_revision=thread_revision,
+                    expected_draft_revision=draft_revision,
+                    expected_approval_fingerprint=token,
+                ),
+            )
+        captured: dict[str, object] = {}
+
+        def _fake_dispatch(*args, **kwargs):  # noqa: ANN002, ANN003
+            captured["kwargs"] = kwargs
+            return DispatchResult("publish_failed", job_id=None)
+
+        monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
+        await asyncio.to_thread(execute_kria_approval.run, str(approval_id))
+        assert "creator_render_shape" not in captured["kwargs"]  # byte-identical call
+        with sync_session() as db:
+            assert db.get(PlanItem, item_id).landscape_fit == "fit"
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_deny_with_a_shape_choice_leaves_the_item_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "ios_device_only_mode", True)
+    try:
+        (
+            user_id,
+            thread_id,
+            item_id,
+            approval_id,
+            token,
+            thread_revision,
+            draft_revision,
+        ) = await _await_montage_approval(monkeypatch, suffix="deny")
+        async with AsyncSessionLocal() as db:
+            await decide_approval(
+                db,
+                thread_id=thread_id,
+                approval_id=approval_id,
+                creator_id=user_id,
+                decision="deny",
+                body=ApprovalDecisionBody(
+                    expected_thread_revision=thread_revision,
+                    expected_draft_revision=draft_revision,
+                    expected_approval_fingerprint=token,
+                    landscape_fit="fill",
+                ),
+            )
+        with sync_session() as db:
+            approval = db.get(CreatorAgentApproval, approval_id)
+            assert approval.status == "denied"
+            execution = db.get(CreatorAgentExecution, uuid.UUID(approval.execution_ids[0]))
+            assert "render_shape" not in (execution.result or {})
+            assert db.get(PlanItem, item_id).landscape_fit == "fit"
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_landscape_choice_reaches_dispatch_and_keeps_the_bars_preference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "ios_device_only_mode", True)
+    monkeypatch.setenv("LANDSCAPE_OUTPUT_ENABLED", "true")
+    try:
+        (
+            user_id,
+            thread_id,
+            item_id,
+            approval_id,
+            token,
+            thread_revision,
+            draft_revision,
+        ) = await _await_montage_approval(monkeypatch, suffix="landscape")
+        async with AsyncSessionLocal() as db:
+            await decide_approval(
+                db,
+                thread_id=thread_id,
+                approval_id=approval_id,
+                creator_id=user_id,
+                decision="approve",
+                body=ApprovalDecisionBody(
+                    expected_thread_revision=thread_revision,
+                    expected_draft_revision=draft_revision,
+                    expected_approval_fingerprint=token,
+                    output_orientation="landscape",
+                    landscape_fit="fit",
+                ),
+            )
+        captured: dict[str, object] = {}
+
+        def _fake_dispatch(*args, **kwargs):  # noqa: ANN002, ANN003
+            captured["kwargs"] = kwargs
+            return DispatchResult("publish_failed", job_id=None)
+
+        monkeypatch.setattr("app.tasks.content_plan_build.dispatch_item_render_for", _fake_dispatch)
+        await asyncio.to_thread(execute_kria_approval.run, str(approval_id))
+        # Landscape never has bars: the stored shape says crop, and the item's
+        # remembered bars/crop preference is left alone for later portrait edits.
+        assert captured["kwargs"]["creator_render_shape"] == {
+            "output_orientation": "landscape",
+            "landscape_fit": "fill",
+        }
+        with sync_session() as db:
+            assert db.get(PlanItem, item_id).landscape_fit == "fit"
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_thread_projects_render_shape_only_while_a_strategy_approval_is_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.routes.creation_threads import _response
+
+    monkeypatch.setattr(settings, "ios_device_only_mode", True)
+    monkeypatch.setenv("LANDSCAPE_OUTPUT_ENABLED", "true")
+    try:
+        (
+            user_id,
+            thread_id,
+            _item,
+            approval_id,
+            token,
+            thread_revision,
+            draft_revision,
+        ) = await _await_montage_approval(monkeypatch, suffix="projection")
+        async with AsyncSessionLocal() as db:
+            projected = await _response(db, await db.get(CreationThread, thread_id))
+        assert projected.render_shape is not None
+        assert projected.render_shape.model_dump() == {
+            "orientations": ["portrait", "landscape"],
+            "fit_choices": ["fit", "fill"],
+            "default": {"output_orientation": "portrait", "landscape_fit": "fit"},
+        }
+
+        # Flag off: landscape disappears from the offer, bars/crop stays.
+        monkeypatch.setenv("LANDSCAPE_OUTPUT_ENABLED", "false")
+        async with AsyncSessionLocal() as db:
+            projected = await _response(db, await db.get(CreationThread, thread_id))
+        assert projected.render_shape.orientations == ["portrait"]
+
+        # Decided (no longer pending): nothing to offer.
+        async with AsyncSessionLocal() as db:
+            await decide_approval(
+                db,
+                thread_id=thread_id,
+                approval_id=approval_id,
+                creator_id=user_id,
+                decision="deny",
+                body=ApprovalDecisionBody(
+                    expected_thread_revision=thread_revision,
+                    expected_draft_revision=draft_revision,
+                    expected_approval_fingerprint=token,
+                ),
+            )
+        async with AsyncSessionLocal() as db:
+            projected = await _response(db, await db.get(CreationThread, thread_id))
+        assert projected.render_shape is None
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_thread_without_a_pending_strategy_projects_no_render_shape() -> None:
+    from app.routes.creation_threads import _response
+
+    _user, thread_id, _session, _item = _seed_narration_ready_project()
+    try:
+        async with AsyncSessionLocal() as db:
+            projected = await _response(db, await db.get(CreationThread, thread_id))
+        assert projected.render_shape is None
+    finally:
+        await async_engine.dispose()

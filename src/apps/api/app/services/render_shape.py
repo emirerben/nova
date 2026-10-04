@@ -275,21 +275,6 @@ class EditorShapeOffer:
     landscape_fit: ShapeAxis
 
 
-def _guided_fit_supported() -> bool:
-    import inspect  # noqa: PLC0415
-
-    from app.pipeline.phone_guided_plan import compile_phone_guided_plan  # noqa: PLC0415
-
-    return "landscape_fit" in inspect.signature(compile_phone_guided_plan).parameters
-
-
-def montage_fit_supported() -> bool:
-    """True once the shared recipe-level fit helper exists (KRI-285 lane 1)."""
-    from app.pipeline import phone_recipe_shared  # noqa: PLC0415
-
-    return callable(getattr(phone_recipe_shared, "apply_landscape_fit", None))
-
-
 def current_fit_value(variant: Mapping[str, Any], all_candidates: Mapping[str, Any] | None) -> str:
     """The bars/crop value the variant was rendered with (display only)."""
     stored = variant.get("landscape_fit")
@@ -307,7 +292,6 @@ def device_editor_offer(
     variant: Mapping[str, Any],
     assembly: Mapping[str, Any],
     *,
-    landscape_enabled: bool,
     subtitled_lanes: bool = False,
     voiceover_lanes: bool = False,
     guided_revision: bool = False,
@@ -343,8 +327,6 @@ def device_editor_offer(
         if fit_axis is None:
             if not guided_revision:
                 fit_axis = closed("guided_story_revision_unavailable")
-            elif not _guided_fit_supported():
-                fit_axis = closed("not_available")
             else:
                 fit_axis = ShapeAxis(True, None, value)
         # The guided orientation capability is already revision-gated upstream.
@@ -363,8 +345,6 @@ def device_editor_offer(
         if fit_axis is None:
             if not voiceover_lanes:
                 fit_axis = closed("phone_edit_unsupported")
-            elif not montage_fit_supported():
-                fit_axis = closed("not_available")
             else:
                 fit_axis = ShapeAxis(True, None, value)
         # Save recompiles lanes/cut only: re-canvassing a voiceover montage is
@@ -384,7 +364,9 @@ def cloud_fit_axis(variant: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-async def offer_for_item(db: Any, item: object, strategy: object, creator_id: object) -> RenderShapeOffer:
+async def offer_for_item(
+    db: Any, item: object, strategy: object, creator_id: object
+) -> RenderShapeOffer:
     """``creation_offer`` with the item's previous ready variant and the account's
     render destination resolved (one unlocked Job read)."""
     from app.config import settings  # noqa: PLC0415

@@ -673,3 +673,122 @@ def test_phone_editor_cannot_place_an_unbound_approved_photo(monkeypatch, bound)
     request = device_status(job, "guided_story").request
     assert visual_assets(request) == [photos.photo_visual().render_asset()]
     assert request.recipe.tracks[0].clips[-1].source_asset_id == f"visual-{photos.PHOTO_ID}"
+
+
+# --- KRI-306: output shape in the guided/unified editor ---------------------------------
+
+
+def _guided_shape_job(monkeypatch):
+    job = phone_job(monkeypatch)
+    revision = _enable_guided_v2(job, monkeypatch)
+    # The v2 revision's own title text rides the authored-text renderer.
+    monkeypatch.setattr(
+        gj.settings,
+        "phone_render_verified_features",
+        [*gj.settings.phone_render_verified_features, "authoredText"],
+    )
+    return job, revision
+
+
+def _guided_save(job, revision, **sections):
+    variant = job.assembly_plan["variants"][0]
+    return gj.prepare_editor_commit(
+        job,
+        "guided_story",
+        gj.EditorCommitRequest(
+            base_generation=gj.variant_render_baseline(variant),
+            guided_revision_number=gj._guided_v2_revision(job, variant)["revision_number"],
+            **sections,
+        ),
+    )
+
+
+def test_guided_device_variant_advertises_bars_and_still_orientation(monkeypatch):
+    job, _ = _guided_shape_job(monkeypatch)
+    monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True)
+    caps = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
+    assert caps["landscape_fit"] == {"editable": True, "value": "fill", "reason": None}
+    assert caps["orientation"]["editable"] is True
+
+
+def test_guided_fit_save_compiles_with_the_choice_and_later_saves_keep_it(monkeypatch):
+    job, revision = _guided_shape_job(monkeypatch)
+    seen: list[str] = []
+    real = compile_phone_guided_plan
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs.get("landscape_fit"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr("app.services.phone_editor.compile_phone_guided_plan", spy)
+
+    prep = _guided_save(job, revision, landscape_fit="fit")
+    assert prep["sections"]["landscape_fit"] is True
+    assert seen == ["fit"]
+    assert job.assembly_plan["variants"][0]["landscape_fit"] == "fit"
+    assert device_status(job, "guided_story").request.identity.recipe_revision == 2
+
+    # A text-only Save must not silently drop the bars.
+    variant = job.assembly_plan["variants"][0]
+    element = {**variant["text_elements"][0], "text": "Again"}
+    _guided_save(job, revision, text_elements=[element])
+    assert seen[-1] == "fit"
+
+
+def test_guided_saves_without_a_choice_compile_with_crop(monkeypatch):
+    job, revision = _guided_shape_job(monkeypatch)
+    seen: list[str] = []
+    real = compile_phone_guided_plan
+    monkeypatch.setattr(
+        "app.services.phone_editor.compile_phone_guided_plan",
+        lambda *a, **k: seen.append(k.get("landscape_fit")) or real(*a, **k),
+    )
+    variant = job.assembly_plan["variants"][0]
+    _guided_save(job, revision, text_elements=[{**variant["text_elements"][0], "text": "X"}])
+    assert seen == ["fill"]
+
+
+def test_guided_landscape_save_recompiles_a_1920x1080_recipe(monkeypatch):
+    job, revision = _guided_shape_job(monkeypatch)
+    monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True)
+
+    prep = _guided_save(job, revision, orientation="landscape")
+
+    assert prep["sections"]["orientation"] is True
+    recipe = device_status(job, "guided_story").request.recipe
+    assert (recipe.canvas.width, recipe.canvas.height) == (1920, 1080)
+    assert job.assembly_plan["variants"][0]["orientation"] == "landscape"
+    # Landscape never has bars: nothing left to choose.
+    caps = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
+    assert caps["landscape_fit"]["editable"] is False
+    assert caps["landscape_fit"]["reason"] == "landscape_output"
+
+
+def test_a_revision_save_recompiles_from_the_workers_repaired_plan(monkeypatch):
+    """KRI-286 x KRI-306: a worker that repaired the approved plan for the phone pins
+    it on the variant; a non-text Save must build on it, not on the canonical plan."""
+    from app.services import phone_editor
+
+    job, revision = _guided_shape_job(monkeypatch)
+    canonical = job.assembly_plan["guided_story_execution_plan"]
+    repaired = copy.deepcopy(canonical)
+    repaired["_repair_marker"] = "repaired"
+    job.assembly_plan["variants"][0][phone_editor.PHONE_EDITOR_PLAN_FIELD] = repaired
+    bases: list[object] = []
+    real = phone_editor.compile_guided_runtime_plan
+
+    def spy(base, *args, **kwargs):
+        bases.append(base)
+        # The marker is not part of the plan schema; drop it as the worker's own
+        # repaired plan (a valid plan) would not carry it.
+        clean = {k: v for k, v in base.items() if k != "_repair_marker"}
+        return real(clean, *args, **kwargs)
+
+    monkeypatch.setattr(phone_editor, "compile_guided_runtime_plan", spy)
+
+    prep = _guided_save(job, revision, landscape_fit="fit")
+
+    assert prep["render_destination"] == "device"
+    assert len(bases) == 1
+    assert bases[0].get("_repair_marker") == "repaired"
+    assert device_status(job, "guided_story").request.identity.recipe_revision == 2

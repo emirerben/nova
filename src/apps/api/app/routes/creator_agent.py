@@ -211,6 +211,10 @@ class ConfirmBody(_StrictBody):
     # existing contract until that rollout reaches them.
     speech_cleanup_analysis_id: uuid.UUID | None = None
     speech_cleanup_choice: Literal["clean", "keep_original", "create_without_cleanup"] | None = None
+    # KRI-306: the creator's finished-video shape (see `app.services.render_shape`).
+    # Omitted unless the client was offered a choice; absent = today's behavior.
+    output_orientation: Literal["portrait", "landscape"] | None = None
+    landscape_fit: Literal["fit", "fill"] | None = None
 
 
 class CancelBody(_StrictBody):
@@ -3908,6 +3912,7 @@ def _seed_guided_specialist_brief(
     *,
     summary: str,
     creator_request: str = "",
+    output_orientation: str | None = None,
 ) -> None:
     """Delegate the confirmed strategy through the existing guided planner.
 
@@ -3971,7 +3976,11 @@ def _seed_guided_specialist_brief(
         "montage_cadence": specialist_cadence,
         "video_reuse_policy": plan.strategy.video_reuse_policy,
         "output_orientation": (
-            "portrait" if plan.strategy.mixed_media_timing is not None else None
+            "portrait"
+            if plan.strategy.mixed_media_timing is not None
+            # KRI-306: an explicit creator choice pins the canvas (the offer
+            # already withheld landscape for mixed-media timing).
+            else (output_orientation if output_orientation in ("portrait", "landscape") else None)
         ),
     }
     # These fields are optional on the worker-owned proposal contract. Passing
@@ -4289,6 +4298,35 @@ async def _original_current_edit_for_retry(
 _MISSING_RETRY_EDIT = object()
 
 
+async def _confirm_render_shape(
+    db: AsyncSession,
+    item: PlanItem,
+    edit_plan: CreatorEditPlan,
+    body: ConfirmBody,
+    user_id: uuid.UUID,
+    *,
+    strict: bool,
+) -> dict[str, str] | None:
+    """KRI-306: the creator's validated output-shape choice for this confirm.
+
+    ``strict`` (a fresh confirm) 422s an unavailable choice before anything is
+    reserved; a resumed confirm re-derives the same choice tolerantly.
+    """
+    if body.output_orientation is None and body.landscape_fit is None:
+        return None
+    from app.services import render_shape  # noqa: PLC0415
+
+    offer = await render_shape.offer_for_item(db, item, edit_plan.strategy, user_id)
+    try:
+        return render_shape.resolve_choice(offer, body.output_orientation, body.landscape_fit)
+    except render_shape.RenderShapeError as exc:
+        if not strict:
+            return None
+        raise HTTPException(
+            status_code=422, detail={"code": exc.code, "message": exc.message}
+        ) from exc
+
+
 async def confirm_creator_plan_controller(
     item_id: str,
     body: ConfirmBody,
@@ -4338,6 +4376,11 @@ async def confirm_creator_plan_controller(
     creator_session_id = session.id
     creator_ownership_epoch = getattr(session, "ownership_epoch", None)
     digest_input = body.model_dump(mode="json")
+    # An unset shape choice must not change the digest an in-flight (pre-deploy)
+    # request for the same client_event_id was stored under.
+    for shape_key in ("output_orientation", "landscape_fit"):
+        if digest_input.get(shape_key) is None:
+            digest_input.pop(shape_key, None)
     if recovery_requested:
         # The private recovery target participates in idempotency even though it
         # is intentionally absent from the public Creator confirm schema.
@@ -4361,6 +4404,7 @@ async def confirm_creator_plan_controller(
     active = session.active_plan or {}
     resuming = receipt is not None
     preflight_analysis_id: uuid.UUID | None = None
+    render_shape_choice: dict[str, str] | None = None
     if receipt is not None:
         if receipt.request_digest != request_digest:
             raise HTTPException(status_code=409, detail="Idempotency key reused")
@@ -4376,12 +4420,18 @@ async def confirm_creator_plan_controller(
         if session.status not in {"executing", "rendering"}:
             raise HTTPException(status_code=409, detail="Creator execution is not resumable")
         edit_plan = _confirmed_edit_plan(active)
+        render_shape_choice = await _confirm_render_shape(
+            db, item, edit_plan, body, user.id, strict=False
+        )
     else:
         if session.revision != body.expected_revision or session.status != "awaiting_confirmation":
             raise HTTPException(status_code=409, detail="Creator plan changed")
         if active.get("version") != body.plan_version or active.get("plan_hash") != body.plan_hash:
             raise HTTPException(status_code=409, detail="Creator plan changed")
         edit_plan = _confirmed_edit_plan(active)
+        render_shape_choice = await _confirm_render_shape(
+            db, item, edit_plan, body, user.id, strict=True
+        )
         from app.services.creator_execution_contract import (  # noqa: PLC0415
             requests_guided_voiceover,
         )
@@ -4508,6 +4558,11 @@ async def confirm_creator_plan_controller(
 
             current_cleanup = await mutation_current_analysis_async(db, item.id, for_update=True)
             _apply_plan_intent(item, edit_plan, current_cleanup)
+            if render_shape_choice is not None and (
+                render_shape_choice["output_orientation"] == "portrait"
+            ):
+                # Landscape never has bars, so it leaves the remembered preference.
+                item.landscape_fit = render_shape_choice["landscape_fit"]
             reconcile_item_policy_change(item, previous_speech_inputs)
             preflight_analysis_id = await schedule_item_preflight_async(db, item)
         if edit_plan.strategy.render_program == "guided":
@@ -4516,6 +4571,7 @@ async def confirm_creator_plan_controller(
                 edit_plan,
                 summary=str(active.get("summary") or ""),
                 creator_request=str(active.get("creator_request") or ""),
+                output_orientation=(render_shape_choice or {}).get("output_orientation"),
             )
             # Mint the immutable guided execution identity before publishing
             # any background work. A process crash after enqueue can then
@@ -4729,6 +4785,7 @@ async def confirm_creator_plan_controller(
                 creator_strategy=edit_plan.strategy.model_dump(mode="json", exclude_none=True),
                 creator_clip_order=preserved_clip_order,
                 creator_request=str(active.get("creator_request") or ""),
+                creator_render_shape=render_shape_choice,
                 speech_cleanup_analysis_id=(
                     str(body.speech_cleanup_analysis_id)
                     if body.speech_cleanup_analysis_id is not None

@@ -2487,7 +2487,13 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
                 else None
             ),
             speech_cleanup_choice=claim.speech_cleanup_choice,
-            creator_render_shape=getattr(claim, "render_shape", None),
+            # KRI-306: only an explicit choice rides the dispatch (absent =
+            # byte-identical call).
+            **(
+                {"creator_render_shape": claim.render_shape}
+                if getattr(claim, "render_shape", None)
+                else {}
+            ),
         )
         outcome = result.outcome
         result_job_id = result.job_id

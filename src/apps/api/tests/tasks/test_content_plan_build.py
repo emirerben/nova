@@ -4479,3 +4479,42 @@ def test_guided_voiceover_dispatch_binds_narration_to_the_cleanup_contract(
     run.bind_mock.assert_not_called()
     run.session.add.assert_not_called()
     run.session.commit.assert_not_called()
+
+
+# --- KRI-306: the creator's output shape rides the dispatch into the Job ---------------------
+
+
+def _dispatch_with_shape(**extra):
+    item = _cleanup_dispatch_item()
+    plan = SimpleNamespace(
+        id=uuid.uuid4(), user_id=uuid.uuid4(), preference_summary="", ownership_epoch=0
+    )
+    job = SimpleNamespace(
+        id=uuid.uuid4(), assembly_plan={}, all_candidates={"clip_paths": list(item.clip_gcs_paths)}
+    )
+    with (
+        patch("app.services.smart_captions.resolve_smart_captions_context_sync", return_value=None),
+        patch("app.services.generative_jobs.build_generative_job", return_value=job) as build,
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync"),
+    ):
+        result = _dispatch_item_render(
+            MagicMock(),
+            item,
+            plan,
+            {"tone": "direct", "content_pillars": []},
+            ownership_epoch=0,
+            **extra,
+        )
+    return result, build.call_args.kwargs
+
+
+def test_dispatch_forwards_the_creator_render_shape_to_the_job() -> None:
+    shape = {"output_orientation": "portrait", "landscape_fit": "fill"}
+    result, kwargs = _dispatch_with_shape(creator_render_shape=shape)
+    assert result.outcome == "dispatched"
+    assert kwargs["creator_render_shape"] == shape
+
+
+def test_dispatch_without_a_choice_forwards_none() -> None:
+    _result, kwargs = _dispatch_with_shape()
+    assert kwargs["creator_render_shape"] is None
