@@ -1418,23 +1418,62 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [ratio], timeout: 5), .completed, "preview is landscape: \(preview.frame)")
     }
 
-    /// KRI-306: a closed capability keeps the picker visible, disabled, with the server's reason.
-    func testVideoShapePickerShowsTheServerReasonWhenTheCapabilityIsClosed() {
+    /// KRI-306: a cloud editor closes both axes (reason `cloud_unsupported` on every map), so the
+    /// header carries no video-shape button at all.
+    func testVideoShapeButtonIsHiddenWhenBothCapabilitiesAreClosed() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-video-shape-closed"]
         app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
         app.launch()
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["native-editor-export"].exists)
+        XCTAssertFalse(app.buttons["native-editor-video-shape-button"].exists)
+    }
+
+    /// KRI-306: a format that can re-fit but not re-shape (voiceover montage) keeps the button; the
+    /// closed orientation row is disabled and says why while bars/crop stays usable.
+    func testVideoShapeShowsTheServerReasonWhenOnlyOrientationIsClosed() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-video-shape-fit-only"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 20))
         app.buttons["native-editor-video-shape-button"].tap()
-        let section = app.descendants(matching: .any)["native-editor-video-shape-section"].firstMatch
-        XCTAssertTrue(section.waitForExistence(timeout: 5))
-        for identifier in ["native-editor-video-shape-orientation-portrait", "native-editor-video-shape-orientation-landscape",
-                           "native-editor-video-shape-fit-fit", "native-editor-video-shape-fit-fill"] {
-            XCTAssertFalse(app.buttons[identifier].isEnabled, identifier)
-        }
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-video-shape-section"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["native-editor-video-shape-orientation-portrait"].isEnabled)
+        XCTAssertFalse(app.buttons["native-editor-video-shape-orientation-landscape"].isEnabled)
+        XCTAssertTrue(app.buttons["native-editor-video-shape-fit-fill"].isEnabled)
+        XCTAssertTrue(app.buttons["native-editor-video-shape-fit-fit"].isSelected, "the capability value seeds the picker")
         let reason = app.descendants(matching: .any)["native-editor-video-shape-locked-reason"].firstMatch
         XCTAssertTrue(reason.waitForExistence(timeout: 3))
         XCTAssertTrue(reason.label.contains("can’t change shape"), reason.label)
+        app.buttons["native-editor-video-shape-fit-fill"].tap()
+        XCTAssertTrue(app.buttons["native-editor-video-shape-fit-fill"].isSelected)
+        app.buttons["native-editor-video-shape-fit-fit"].tap()
+        app.buttons["native-editor-inspector-done"].tap()
+        XCTAssertFalse(app.buttons["native-editor-save"].isEnabled, "toggling back to the loaded value is not an edit")
+    }
+
+    /// KRI-306: at accessibility text sizes the picker stacks its options and keeps 44pt targets.
+    func testVideoShapePickerStacksAtAccessibilityTextSize() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-video-shape"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launchEnvironment["UI_TEST_DYNAMIC_TYPE_SIZE"] = "accessibility3"
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 20))
+        app.buttons["native-editor-video-shape-button"].tap()
+        let vertical = app.buttons["native-editor-video-shape-orientation-portrait"]
+        let landscape = app.buttons["native-editor-video-shape-orientation-landscape"]
+        XCTAssertTrue(vertical.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(landscape.frame.minY, vertical.frame.maxY - 1, "options stack vertically")
+        XCTAssertEqual(landscape.frame.minX, vertical.frame.minX, accuracy: 2)
+        for control in [vertical, landscape] {
+            XCTAssertGreaterThanOrEqual(control.frame.height, 42, "\(control.identifier): \(control.frame)")
+        }
+        let blackBars = app.buttons["native-editor-video-shape-fit-fit"]
+        XCTAssertTrue(blackBars.exists)
+        XCTAssertGreaterThanOrEqual(blackBars.frame.height, 42)
     }
 
     func testAllPersistedLanesExposeStableTimelineIdentityAndInspector() {

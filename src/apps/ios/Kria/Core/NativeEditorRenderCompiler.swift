@@ -56,7 +56,7 @@ enum NativeEditorRenderError: Error, Equatable {
             #endif
             throw NativeEditorRenderError.unsupportedLane("unknown")
         }
-        let canvas: KriaMediaEngine.Canvas = switch document.orientation {
+        let canvas: KriaMediaEngine.Canvas = switch EditorDocument.canonicalOrientation(document.orientation) {
         case "landscape": .init(width: 1920, height: 1080)
         case "square": .init(width: 1080, height: 1080)
         default: .init(width: 1080, height: 1920)
@@ -144,7 +144,9 @@ enum NativeEditorRenderError: Error, Equatable {
             // bars. Cropped and graded clips keep the engine's cover-fill: the
             // engine rejects a look combined with a non-identity transform, and
             // the backend refuses that combination for the same reason.
-            if document.landscapeFit == "fit", canvas.height > canvas.width, authoredSlot?.lookPreset != "golden_hour", video[video.count - 1].sourceCrop == nil {
+            // Held (slow / short source) clips are excluded like the backend's `_fit_eligible`.
+            if document.previewLetterboxesSidewaysClips, canvas.height > canvas.width, holdDuration <= 0,
+               authoredSlot?.lookPreset != "golden_hour", video[video.count - 1].sourceCrop == nil {
                 video[video.count - 1].transform = Self.fitTransform(display: source.asset.naturalSize, canvas: canvas, landscapeFit: "fit")
             }
         }

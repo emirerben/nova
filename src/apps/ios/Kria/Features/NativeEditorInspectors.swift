@@ -130,11 +130,10 @@ struct NativeDocumentInspector: View {
 /// KRI-306 helpers shared by the editor's picker and its tests.
 enum NativeVideoShape {
     /// The document stores the server's "portrait" | "landscape"; older fixtures say "9:16" / "16:9".
+    /// Same mapping the document, preview canvas and aspect ratio use (`canonicalOrientation`);
+    /// "square" has no picker entry and reads as portrait here.
     static func normalizedOrientation(_ raw: String?) -> String {
-        switch raw {
-        case "landscape", "16:9": RenderShapeOffer.landscape
-        default: RenderShapeOffer.portrait
-        }
+        EditorDocument.canonicalOrientation(raw) == RenderShapeOffer.landscape ? RenderShapeOffer.landscape : RenderShapeOffer.portrait
     }
     static func orientationLabel(_ raw: String?) -> String { VideoShapeCopy.orientationTitle(normalizedOrientation(raw)) }
 }
@@ -158,7 +157,8 @@ struct NativeVideoShapeSection: View {
     private var current: RenderShapeChoice {
         RenderShapeChoice(
             orientation: NativeVideoShape.normalizedOrientation(session.document.orientation ?? orientationCapability?.value),
-            landscapeFit: session.document.landscapeFit ?? fitCapability?.value ?? RenderShapeOffer.fill
+            // The same resolver the preview compiles with, so the label never disagrees with the picture.
+            landscapeFit: session.document.effectiveLandscapeFit
         )
     }
 
@@ -178,6 +178,7 @@ struct NativeVideoShapeSection: View {
     static func copy(for reason: String, axis: Axis) -> String {
         guard !reason.contains(" ") else { return reason }
         if reason == "disabled" { return "Changing the video shape isn’t available right now." }
+        if reason == "landscape_output" { return "Black bars and crop only apply to vertical videos." }
         switch axis {
         case .orientation: return "This edit’s format can’t change shape."
         case .fit: return "Black bars and crop can’t be changed for this edit."

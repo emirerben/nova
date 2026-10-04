@@ -31,6 +31,37 @@ enum EditorSection: String, Codable, CaseIterable, Hashable, Sendable {
     case carouselMoment = "carousel_moment", title
 }
 
+extension EditorDocument {
+    /// "9:16" / nil / "portrait" -> "portrait"; "16:9" / "landscape" -> "landscape"; anything else
+    /// (e.g. "square") is kept as is.
+    static func canonicalOrientation(_ raw: String?) -> String? {
+        switch raw {
+        case nil, "portrait", "9:16": "portrait"
+        case "landscape", "16:9": "landscape"
+        default: raw
+        }
+    }
+
+    /// Capability reasons of formats that ignore the bars/crop choice (narrated, speech montage,
+    /// cloud renders): their `landscape_fit.value` is informational, never rendered.
+    static let fitIgnoredReasons: Set<String> = ["unsupported_archetype", "cloud_unsupported"]
+
+    /// The ONE bars/crop value shown by the picker and rendered by the preview: the document's own
+    /// value, else what the server reports (variants rendered before it was stored), else "fill".
+    var effectiveLandscapeFit: String {
+        let value = landscapeFit ?? capabilities["landscape_fit"]?.value
+        return value == "fit" ? "fit" : "fill"
+    }
+
+    /// The preview letterboxes only for a format that honours the choice: the server advertises
+    /// `landscape_fit` and it is not one of the formats that ignore it.
+    var previewLetterboxesSidewaysClips: Bool {
+        guard let capability = capabilities["landscape_fit"] else { return false }
+        if let reason = capability.reason, Self.fitIgnoredReasons.contains(reason) { return false }
+        return effectiveLandscapeFit == "fit"
+    }
+}
+
 enum NativeEditorWireContract {
     static let lookPresets = ["none", "stadium_diffusion", "olive_film", "smoky_split_tone", "golden_hour", "faded_analog"]
     static let transitions = ["cut", "crossfade", "dip_to_black", "flash"]
@@ -404,6 +435,11 @@ struct EditorDocument: Equatable, Sendable {
                 ?? object(snapshot["capabilities"])
                 ?? object(sections["capabilities"])
         )
+        // KRI-306: one canonical orientation ("portrait" | "landscape", legacy "9:16" / "16:9", nil
+        // => portrait) and the fit the server reports when the variant stored none, set BEFORE the
+        // loaded baseline is captured so toggling a shape and back is never a false edit.
+        document.orientation = canonicalOrientation(document.orientation)
+        if document.landscapeFit == nil { document.landscapeFit = document.capabilities["landscape_fit"]?.value.flatMap { ["fit", "fill"].contains($0) ? $0 : nil } }
         document.clips = decodeSlots(array(sections["timeline_slots"] ?? object(snapshot["user_timeline"])?["slots"]) ?? []) .filter { !$0.removed }
         document.tombstones = decodeSlots(array(sections["timeline_slots"] ?? object(snapshot["user_timeline"])?["slots"]) ?? []) .filter(\.removed)
         document.textElements = decodeText(array(sections["text_elements"] ?? snapshot["text_elements"]) ?? [])

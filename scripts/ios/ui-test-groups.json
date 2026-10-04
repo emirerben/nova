@@ -143,7 +143,9 @@
       "KriaUITests/NativeCaptionVisualUITests/testVisualsTransitionsCategoryHiddenWhenCapabilityClosed",
       "KriaUITests/NativeEditorInspectorUITests/testMissingOriginalsOffersFindingFilesInsteadOfRetry",
       "KriaUITests/NativeEditorInspectorUITests/testVideoShapePickerIsEnabledFromTheCapabilityAndReshapesThePreview",
-      "KriaUITests/NativeEditorInspectorUITests/testVideoShapePickerShowsTheServerReasonWhenTheCapabilityIsClosed"
+      "KriaUITests/NativeEditorInspectorUITests/testVideoShapeButtonIsHiddenWhenBothCapabilitiesAreClosed",
+      "KriaUITests/NativeEditorInspectorUITests/testVideoShapeShowsTheServerReasonWhenOnlyOrientationIsClosed",
+      "KriaUITests/NativeEditorInspectorUITests/testVideoShapePickerStacksAtAccessibilityTextSize"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",

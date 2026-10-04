@@ -266,9 +266,12 @@ import KriaMediaEngine
     func testSectionCopyTurnsServerCodesIntoSentences() {
         XCTAssertEqual(NativeVideoShapeSection.copy(for: "orientation_unsupported", axis: .orientation), "This edit’s format can’t change shape.")
         XCTAssertEqual(NativeVideoShapeSection.copy(for: "cloud_unsupported", axis: .fit), "Black bars and crop can’t be changed for this edit.")
+        XCTAssertEqual(NativeVideoShapeSection.copy(for: "landscape_output", axis: .fit), "Black bars and crop only apply to vertical videos.")
         XCTAssertEqual(NativeVideoShapeSection.copy(for: "disabled", axis: .orientation), "Changing the video shape isn’t available right now.")
         XCTAssertEqual(NativeVideoShapeSection.copy(for: "Orientation is fixed by the rendered variant.", axis: .orientation), "Orientation is fixed by the rendered variant.")
         XCTAssertEqual(NativeVideoShape.normalizedOrientation("16:9"), "landscape")
+        XCTAssertEqual(EditorDocument.canonicalOrientation("9:16"), "portrait")
+        XCTAssertEqual(EditorDocument.canonicalOrientation("square"), "square", "no picker entry, kept as is")
         XCTAssertEqual(NativeVideoShape.normalizedOrientation(nil), "portrait")
     }
 
@@ -287,22 +290,100 @@ import KriaMediaEngine
         XCTAssertEqual(NativeEditorRenderCompiler.fitTransform(display: MediaSize(width: 1440, height: 1080), canvas: .init(width: 1920, height: 1080), landscapeFit: "fit"), .identity)
     }
 
-    func testCompilerLetterboxesASidewaysClipOnlyWhenBlackBarsAreChosen() throws {
+    private func compiledTransform(fit: String?, capability: EditorCapability?, raw: [String: JSONValue] = [:],
+                                   trimOut: Double = 3, orientation: String? = nil) throws -> MediaTransform? {
         let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
         let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
             asset: MediaAsset(id: "local", relativePath: "original.mp4", fingerprint: fingerprint, duration: 4,
                               naturalSize: MediaSize(width: 1920, height: 1080)),
             url: URL(fileURLWithPath: "/fixture/original.mp4"))
-        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3, trimIn: 0, trimOut: 3, sourceDuration: 4, slotID: "slot")
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3, trimIn: 0, trimOut: trimOut, sourceDuration: 4, slotID: "slot")
         let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
-        func transform(fit: String?, raw: [String: JSONValue] = [:]) throws -> MediaTransform? {
-            let document = EditorDocument(clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 3, raw: raw)], landscapeFit: fit)
-            return try compiler.compile(document: document, clips: [clip], items: [], sources: [0: source]).recipe.tracks.first?.clips.first?.transform
-        }
-        XCTAssertEqual(try XCTUnwrap(transform(fit: "fit")).scale, 0.31640625, accuracy: 1e-9)
-        XCTAssertEqual(try transform(fit: "fill"), .identity)
-        XCTAssertEqual(try transform(fit: nil), .identity, "an unchosen fit leaves every existing preview byte-identical")
-        XCTAssertEqual(try transform(fit: "fit", raw: ["source_crop": .object(["x": .number(0.1), "y": .number(0.1), "width": .number(0.5), "height": .number(0.5)])]), .identity,
+        let document = EditorDocument(clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 3, raw: raw)], orientation: orientation, landscapeFit: fit,
+                                      capabilities: capability.map { ["landscape_fit": $0] } ?? [:])
+        return try compiler.compile(document: document, clips: [clip], items: [], sources: [0: source]).recipe.tracks.first?.clips.first?.transform
+    }
+
+    func testCompilerLetterboxesASidewaysClipOnlyWhenBlackBarsAreChosen() throws {
+        let open = EditorCapability(editable: true, value: "fit")
+        XCTAssertEqual(try XCTUnwrap(compiledTransform(fit: "fit", capability: open)).scale, 0.31640625, accuracy: 1e-9)
+        XCTAssertEqual(try compiledTransform(fit: "fill", capability: open), .identity)
+        XCTAssertEqual(try compiledTransform(fit: nil, capability: EditorCapability(editable: true)), .identity, "no value anywhere reads as fill")
+        XCTAssertEqual(try compiledTransform(fit: "fit", capability: open, raw: ["source_crop": .object(["x": .number(0.1), "y": .number(0.1), "width": .number(0.5), "height": .number(0.5)])]), .identity,
                        "a cropped clip keeps the engine's cover-fill")
+    }
+
+    /// The picker and the preview read ONE resolver: a variant rendered before `landscape_fit` was stored
+    /// carries only the capability value, and both must treat it as the value in force.
+    func testPreviewFollowsTheCapabilityValueWhenTheDocumentStoresNoFit() throws {
+        let open = EditorCapability(editable: true, value: "fit")
+        XCTAssertEqual(try XCTUnwrap(compiledTransform(fit: nil, capability: open)).scale, 0.31640625, accuracy: 1e-9)
+        let document = EditorDocument(capabilities: ["landscape_fit": open])
+        XCTAssertEqual(document.effectiveLandscapeFit, "fit")
+        XCTAssertTrue(document.previewLetterboxesSidewaysClips)
+        XCTAssertEqual(EditorDocument(capabilities: ["landscape_fit": EditorCapability(editable: true, value: "fill")]).effectiveLandscapeFit, "fill")
+        XCTAssertEqual(EditorDocument().effectiveLandscapeFit, "fill")
+    }
+
+    func testPreviewIgnoresFitWhereTheFormatDoesNotHonourIt() throws {
+        // No capability (older server / unknown format): never letterbox.
+        XCTAssertEqual(try compiledTransform(fit: "fit", capability: nil), .identity)
+        // Narrated / speech montage and cloud renders ignore the choice.
+        XCTAssertEqual(try compiledTransform(fit: "fit", capability: EditorCapability(editable: false, reason: "unsupported_archetype", value: "fit")), .identity)
+        XCTAssertEqual(try compiledTransform(fit: "fit", capability: EditorCapability(editable: false, reason: "cloud_unsupported", value: "fit")), .identity)
+        // A fit-capable format that is merely not editable here still shows its bars.
+        XCTAssertEqual(try XCTUnwrap(compiledTransform(fit: "fit", capability: EditorCapability(editable: false, reason: "phone_edit_unsupported", value: "fit"))).scale, 0.31640625, accuracy: 1e-9)
+        // A held clip (source shorter than its slot) is not fitted, like the backend's `_fit_eligible`.
+        XCTAssertEqual(try compiledTransform(fit: "fit", capability: EditorCapability(editable: true, value: "fit"), raw: ["playback_rate": .number(1)], trimOut: 1), .identity)
+    }
+
+    func testPreviewCanvasAndAspectRatioAgreeOnLegacyOrientationSpellings() async throws {
+        XCTAssertEqual(EditorDocument.canonicalOrientation("16:9"), "landscape")
+        let (session, _) = await loadedSession(variant: variant(orientation: "16:9", fit: "fill"))
+        XCTAssertEqual(session.document.orientation, "landscape")
+        XCTAssertEqual(session.previewAspectRatio, 16.0 / 9.0, accuracy: 0.001)
+    }
+
+    // MARK: Picker agrees with the preview; clean baselines
+
+    func testLoadedVariantWithoutAStoredFitSeedsFromTheCapabilityAndSwitchingWorks() async {
+        var legacy = variant(orientation: "portrait", fit: nil)   // capability value "fit", no stored landscape_fit
+        legacy["landscape_fit"] = nil
+        let (session, _) = await loadedSession(variant: legacy)
+        XCTAssertEqual(session.document.effectiveLandscapeFit, "fit", "picker shows Black bars")
+        XCTAssertTrue(session.document.previewLetterboxesSidewaysClips, "and the preview letterboxes")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        session.setVideoShape(landscapeFit: "fit")
+        XCTAssertFalse(session.hasUnsavedChanges, "tapping the value in force is a no-op")
+        session.setVideoShape(landscapeFit: "fill")
+        XCTAssertEqual(session.document.effectiveLandscapeFit, "fill")
+        XCTAssertFalse(session.document.previewLetterboxesSidewaysClips)
+        XCTAssertTrue(session.isDirty(.landscapeFit))
+        session.setVideoShape(landscapeFit: "fit")
+        XCTAssertFalse(session.isDirty(.landscapeFit), "back to the loaded value is not an edit")
+    }
+
+    func testTogglingLandscapeAndBackIsNotAnEditForNilOrLegacyOrientation() async {
+        for stored in [nil, "9:16"] as [String?] {
+            var value = variant(orientation: "portrait", fit: "fit")
+            if let stored { value["orientation"] = .string(stored) } else { value["orientation"] = nil }
+            let (session, _) = await loadedSession(variant: value)
+            XCTAssertEqual(session.document.orientation, "portrait", "\(stored ?? "nil") reads as portrait")
+            session.setVideoShape(orientation: "landscape")
+            XCTAssertTrue(session.isDirty(.orientation))
+            session.setVideoShape(orientation: "portrait")
+            XCTAssertFalse(session.isDirty(.orientation), "\(stored ?? "nil"): back to portrait is not a re-render")
+            XCTAssertFalse(session.hasUnsavedChanges)
+        }
+    }
+
+    func testHeaderButtonNeedsAnEditableAxis() async {
+        let (closed, _) = await loadedSession(variant: variant(orientation: "portrait", fit: "fit", orientationEditable: false, fitEditable: false))
+        XCTAssertTrue(closed.hasVideoShapeCapability, "the keys exist (a cloud map always carries them)")
+        XCTAssertFalse(closed.canEditVideoShape, "but nothing can change, so no button")
+        let (fitOnly, _) = await loadedSession(variant: variant(orientation: "portrait", fit: "fit", orientationEditable: false, fitEditable: true))
+        XCTAssertTrue(fitOnly.canEditVideoShape)
+        let (orientationOnly, _) = await loadedSession(variant: variant(orientation: "portrait", fit: "fit", orientationEditable: true, fitEditable: false))
+        XCTAssertTrue(orientationOnly.canEditVideoShape)
     }
 }

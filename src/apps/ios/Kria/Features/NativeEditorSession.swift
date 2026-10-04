@@ -856,11 +856,17 @@ struct NativeEditorTemporaryVideo {
         // get a process launch arg.
         // KRI-306: the video-shape picker, open or closed by the server capability.
         // Values stay nil on the document so the fixture loads clean (no unsaved edit).
+        // `-video-shape-fit-only`: orientation closed, bars/crop open (a voiceover montage).
+        // `-video-shape-closed`: both closed (a cloud editor): no header button.
         let shapeOpen = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-video-shape")
-        if shapeOpen || ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-video-shape-closed") {
-            let reason: String? = shapeOpen ? nil : "This edit’s format can’t change shape."
-            document.capabilities["orientation"] = EditorCapability(editable: shapeOpen, reason: reason, value: "portrait")
-            document.capabilities["landscape_fit"] = EditorCapability(editable: shapeOpen, reason: reason, value: "fit")
+        let shapeFitOnly = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-video-shape-fit-only")
+        if shapeOpen || shapeFitOnly || ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-video-shape-closed") {
+            document.capabilities["orientation"] = EditorCapability(
+                editable: shapeOpen, reason: shapeOpen ? nil : "orientation_unsupported", value: "portrait")
+            document.capabilities["landscape_fit"] = EditorCapability(
+                editable: shapeOpen || shapeFitOnly, reason: shapeOpen || shapeFitOnly ? nil : "cloud_unsupported", value: "fit")
+            // The loaded baseline carries the same capabilities, as a real load does.
+            cleanDocument.capabilities = document.capabilities
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-transitions-closed") {
             document.capabilities["clips.transitions"] = EditorCapability(editable: false, reason: "transitions_disabled")
@@ -929,6 +935,9 @@ struct NativeEditorTemporaryVideo {
     func canEdit(_ section: EditorSection) -> Bool { canEditSection(section) }
     /// KRI-306: the server advertises the video-shape controls (either capability present).
     var hasVideoShapeCapability: Bool { document.capabilities["orientation"] != nil || document.capabilities["landscape_fit"] != nil }
+    /// At least one axis can be changed: the header button exists only then. A cloud editor
+    /// carries a closed `landscape_fit` on every map and keeps its read-only orientation row.
+    var canEditVideoShape: Bool { canEditSection(.orientation) || canEditSection(.landscapeFit) }
     func capability(for section: EditorSection) -> EditorCapability? {
         for key in sectionCapabilityKeys(section) { if let capability = document.capabilities[key] { return capability } }
         return nil
@@ -965,7 +974,7 @@ struct NativeEditorTemporaryVideo {
         }
     }
     var previewAspectRatio: CGFloat {
-        switch document.orientation {
+        switch EditorDocument.canonicalOrientation(document.orientation) {
         case "landscape": 16.0 / 9.0
         case "square": 1
         default: 9.0 / 16.0
@@ -4277,7 +4286,7 @@ struct NativeEditorTemporaryVideo {
         if let newOrientation, newOrientation != document.orientation, canEditSection(.orientation) {
             transactDocument(section: .orientation) { $0.orientation = newOrientation }
         }
-        if let newFit, newFit != document.landscapeFit, canEditSection(.landscapeFit) {
+        if let newFit, newFit != document.effectiveLandscapeFit, canEditSection(.landscapeFit) {
             transactDocument(section: .landscapeFit) { $0.landscapeFit = newFit }
         }
     }
@@ -4824,7 +4833,7 @@ struct NativeEditorTemporaryVideo {
             case .backgroundMusic: differs = document.backgroundMusic != cleanDocument.backgroundMusic
             case .lyrics: differs = document.lyrics != cleanDocument.lyrics
             case .orientation: differs = document.orientation != cleanDocument.orientation
-            case .landscapeFit: differs = document.landscapeFit != cleanDocument.landscapeFit
+            case .landscapeFit: differs = document.effectiveLandscapeFit != cleanDocument.effectiveLandscapeFit
             case .soundEffects: differs = document.soundEffects != cleanDocument.soundEffects
             case .mediaOverlays: differs = document.mediaOverlays != cleanDocument.mediaOverlays
             case .visualBlocks: differs = document.visualBlocks != cleanDocument.visualBlocks

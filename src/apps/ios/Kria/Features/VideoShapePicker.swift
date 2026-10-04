@@ -155,40 +155,58 @@ private struct VideoShapeSegments: View {
     let isEnabled: Bool
     let identifierPrefix: String
     let select: (String) -> Void
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    /// At accessibility sizes a half-width pill cannot hold its label: stack the options and let
+    /// the text wrap, keeping every target at least 44pt tall.
+    private var stacked: Bool { typeSize.isAccessibilitySize }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(KriaFont.body(12).weight(.semibold))
                 .foregroundStyle(KriaColor.zinc)
+                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityHidden(true)
-            HStack(spacing: 0) {
-                ForEach(options, id: \.self) { option in
-                    let selected = option == selection
-                    Button { select(option) } label: {
-                        HStack(spacing: 6) {
-                            if let glyph { glyph(option) }
-                            Text(label(option))
-                                .font(KriaFont.body(14).weight(selected ? .bold : .regular))
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.85)
-                        }
-                        .foregroundStyle(selected ? KriaColor.ink : KriaColor.zinc)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(selected ? KriaColor.paper : .clear, in: Capsule())
-                        .shadow(color: .black.opacity(selected ? 0.10 : 0), radius: 4, y: 1)
-                        .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("\(title): \(label(option))")
-                    .accessibilityAddTraits(selected ? .isSelected : [])
-                    .accessibilityIdentifier("\(identifierPrefix)-\(option)")
+            Group {
+                if stacked {
+                    VStack(spacing: 2) { segments }
+                } else {
+                    HStack(spacing: 0) { segments }
                 }
             }
             .padding(3)
-            .background(KriaColor.softZinc, in: Capsule())
+            .background(KriaColor.softZinc, in: stacked ? AnyShape(RoundedRectangle(cornerRadius: 22, style: .continuous)) : AnyShape(Capsule()))
             .opacity(isEnabled ? 1 : 0.55)
             .disabled(!isEnabled)
+        }
+    }
+
+    @ViewBuilder private var segments: some View {
+        ForEach(options, id: \.self) { option in
+            let selected = option == selection
+            Button { select(option) } label: {
+                HStack(spacing: 6) {
+                    if let glyph { glyph(option) }
+                    Text(label(option))
+                        .font(KriaFont.body(14).weight(selected ? .bold : .regular))
+                        .lineLimit(stacked ? nil : 2)
+                        .minimumScaleFactor(stacked ? 1 : 0.85)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(selected ? KriaColor.ink : KriaColor.zinc)
+                .padding(.vertical, 6)
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(selected ? KriaColor.paper : .clear, in: stacked ? AnyShape(RoundedRectangle(cornerRadius: 19, style: .continuous)) : AnyShape(Capsule()))
+                .shadow(color: .black.opacity(selected ? 0.10 : 0), radius: 4, y: 1)
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(title): \(label(option))")
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .accessibilityIdentifier("\(identifierPrefix)-\(option)")
         }
     }
 }

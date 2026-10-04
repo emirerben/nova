@@ -127,6 +127,8 @@ struct NativeEditorView: View {
             .navigationBarBackButtonHidden(true)
             .sheet(item: $inspector) { inspector in
                 NativeEditorInspectorView(inspector: inspector, session: session)
+                    // The sheet is its own presentation; hand it the editor's text size explicitly.
+                    .environment(\.dynamicTypeSize, dynamicTypeSize)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }

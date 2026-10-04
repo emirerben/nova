@@ -28,7 +28,7 @@ struct NativeEditorProjectHeader: View {
                     .accessibilityLabel("Back to chat")
                     .accessibilityIdentifier("native-editor-back")
                     // Balances the two trailing actions so the title stays centered.
-                    if session.hasVideoShapeCapability {
+                    if session.canEditVideoShape {
                         Button(action: onVideoShape) {
                             Image(systemName: "aspectratio")
                                 .frame(width: 44, height: 44)

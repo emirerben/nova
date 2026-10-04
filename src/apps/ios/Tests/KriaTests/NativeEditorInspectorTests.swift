@@ -158,7 +158,7 @@ final class NativeEditorInspectorTests: XCTestCase {
         XCTAssertEqual(session.document.visualBlocks.first?.kind, "text_card")
         XCTAssertEqual(session.document.backgroundMusic?.gainDB, -6)
         XCTAssertEqual(session.document.title, "All lanes fixture")
-        XCTAssertEqual(session.document.orientation, "9:16")
+        XCTAssertEqual(session.document.orientation, "portrait", "legacy 9:16 reads as portrait")
         XCTAssertNotNil(session.document.lyrics)
         XCTAssertFalse(session.canEdit("orientation"))
         XCTAssertEqual(session.capabilityReason("orientation"), "Orientation is fixed by the rendered variant.")
