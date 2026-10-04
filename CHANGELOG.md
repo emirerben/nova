@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.59.0] - 2026-10-04
+
+### Changed
+- docs(linear): feature roadmap workflow, /roadmap skill, TODOS.md moved to Linear (KRI-421) (#1375) <!-- release-pr: 1375 -->
+
 ## [0.78.58.0] - 2026-10-04
 
 ### Changed
