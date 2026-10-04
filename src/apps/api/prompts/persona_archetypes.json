@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-10-04",
   "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (best representative post per lane) so the persona generator surfaces proven lanes first. The agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
   "archetypes": [
     {
@@ -76,6 +76,28 @@
       "sample_hooks": ["felt cute this week", "before office", "the walk that fixes everything", "chic"],
       "source": "tiktok:@allexmarielle (2026-06)",
       "performance": {"engagement_rate": 0.128, "view_index": 1.05, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "everyday-wellness-lifestyle-01",
+      "niche": "daily wellness & simple living",
+      "summary": "You document the quiet pleasures of a healthy daily life — a short pilates session, a morning walk, coffee before the day starts. Intimate, unpolished, no big stories, just small felt moments.",
+      "tone": "intimate, unhurried, quietly content",
+      "content_pillars": ["morning pilates and movement", "simple daily rituals", "travel glimpses", "honest daily life"],
+      "audience": "people craving a calmer, more intentional daily rhythm",
+      "sample_hooks": ["just my morning", "keeping it simple", "small things that matter"],
+      "source": "tiktok:@izzsiomoi (2026-08)",
+      "performance": {"engagement_rate": 0.2547, "view_index": 21.7, "sampled_at": "2026-08"}
+    },
+    {
+      "id": "model-industry-insider-01",
+      "niche": "fashion industry & model life",
+      "summary": "You show the real world behind the fashion industry — casting calls, showroom fittings, fashion week walks, and the unglamorous grind between the beautiful moments.",
+      "tone": "candid, insider, quietly proud",
+      "content_pillars": ["casting call behind-the-scenes", "fashion week moments", "model life reality", "European fashion cities"],
+      "audience": "fashion-curious people who want to understand what the industry actually looks like from inside",
+      "sample_hooks": ["my first casting in [city]", "what fashion week actually looks like", "this is what modelling is really like"],
+      "source": "tiktok:@patricia.turchin (2026-08)",
+      "performance": {"engagement_rate": 0.0357, "view_index": 3.5, "sampled_at": "2026-08"}
     }
   ]
 }

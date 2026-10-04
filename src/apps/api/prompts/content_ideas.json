@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-10-04",
   "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
   "ideas": [
     {
@@ -212,6 +212,46 @@
       "filming_context": "15-30s of an aspirational scene — a city café, a mountain trail, a dream apartment — let it breathe; no narration needed",
       "source": "tiktok:@izzsiomoi (2026-06)",
       "performance": {"engagement_rate": 0.032, "view_index": 1.57, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "corporate-outfit-micro-reveal-01",
+      "niche": "professional lifestyle & city aesthetics",
+      "pillar": "work outfits (#9to5)",
+      "idea": "a 6-second pure outfit reveal with no text, no hashtags, just the look and the setting — the brevity and silence are the format",
+      "hook_pattern": "[no caption — let the outfit speak]",
+      "filming_context": "mirror or street exterior, 6s, natural light — absolutely no on-screen text; the zero-friction format is the point",
+      "source": "tiktok:@allexmarielle (2026-10)",
+      "performance": {"engagement_rate": 0.1808, "view_index": 10.4, "sampled_at": "2026-10"}
+    },
+    {
+      "id": "wellness-routine-glimpse-01",
+      "niche": "daily wellness & simple living",
+      "pillar": "morning pilates and movement",
+      "idea": "a 6-15s raw moment from a daily wellness ritual — morning pilates, a walk, stretching — no explanation, just the practice",
+      "hook_pattern": "[no hook needed — let the moment carry it]",
+      "filming_context": "6-15s, natural light, no text overlay; the rawness and brevity invite a rewatch; wide angle showing full body in motion works well",
+      "source": "tiktok:@izzsiomoi (2026-08)",
+      "performance": {"engagement_rate": 0.2547, "view_index": 21.7, "sampled_at": "2026-08"}
+    },
+    {
+      "id": "fashion-industry-casting-01",
+      "niche": "fashion industry & model life",
+      "pillar": "casting call behind-the-scenes",
+      "idea": "a 10-20s behind-the-scenes glimpse of a casting call — the waiting room, the walk, the quiet moments most people never see",
+      "hook_pattern": "my [city] casting today",
+      "filming_context": "candid handheld, natural showroom or agency light; capture the moments before or after, not during; 10-20s is enough",
+      "source": "tiktok:@patricia.turchin (2026-08)",
+      "performance": {"engagement_rate": 0.0357, "view_index": 3.5, "sampled_at": "2026-08"}
+    },
+    {
+      "id": "seasonal-european-mood-01",
+      "niche": "city lifestyle & food",
+      "pillar": "city seasonal moments",
+      "idea": "a 5-15s autumnal European city moment — cobblestones in the rain, a trench coat on a grey street, a café window in [city] — no narration, just the mood of the season",
+      "hook_pattern": "[city] in [season] feels like this",
+      "filming_context": "handheld, overcast or rainy light preferred; 5-15s; no on-screen text; the season and the city carry it entirely",
+      "source": "tiktok:@allexmarielle (2026-09)",
+      "performance": {"engagement_rate": 0.2165, "view_index": 1.4, "sampled_at": "2026-09"}
     }
   ]
 }

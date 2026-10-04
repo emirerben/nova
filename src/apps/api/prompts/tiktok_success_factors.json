@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-10-04",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -136,6 +136,33 @@
       "provenance": "corpus",
       "evidence": "In our fetched founder-lifestyle set, an event-appearance post indexed ~64x the account median at near-zero engagement (0.004) — the spike is discovery-only, not depth; use it to grow reach, then convert via your regular content cadence",
       "source": "tiktok market research 2026-06 (founder account, event sponsorship)"
+    },
+    {
+      "id": "wellness-ultrashort-engagement-corpus-10",
+      "factor": "Ultra-short (6-15s) wellness and lifestyle clips achieve the highest engagement rates in this corpus — higher than fashion, travel, or founder content",
+      "why": "Brevity creates a natural rewatch loop; a daily wellness glimpse is low-stakes to engage with because it doesn't demand the viewer do anything — it invites them to feel",
+      "applies_to": ["plan"],
+      "provenance": "corpus",
+      "evidence": "In our fetched wellness-lifestyle set, an 11s daily lifestyle clip indexed 21.7x the account median with 25.47% engagement rate — the highest engagement rate observed across all four accounts in the 2026-10 research cycle",
+      "source": "tiktok market research 2026-08 (wellness-lifestyle account)"
+    },
+    {
+      "id": "branded-collab-reach-spike-corpus-11",
+      "factor": "A brand collaboration post on an established niche account can achieve 100x+ reach spikes — use it for discovery growth, not for direct conversion",
+      "why": "A brand amplifies distribution through its own channels and promotion; the spike is algorithmic discovery, not depth — engagement rates drop sharply because new viewers have no prior relationship with the creator",
+      "applies_to": ["plan", "persona"],
+      "provenance": "corpus",
+      "evidence": "In our fetched lifestyle account, a branded collaboration post (49s) indexed 273.5x the account's median views at near-zero engagement (0.06%) — the reach spike was exceptional but audience depth was absent; plan follow-up cadence content to convert new viewers",
+      "source": "tiktok market research 2026-08 (Turkish lifestyle account, brand partnership)"
+    },
+    {
+      "id": "longer-narrative-dual-performance-corpus-12",
+      "factor": "For established accounts, 90-120s narrative storytelling can achieve both high reach AND high engagement simultaneously — longer is not always worse when the arc is genuinely compelling",
+      "why": "A well-structured narrative delivers completion because viewers are invested in the outcome; unlike short viral clips, high engagement rate alongside high reach signals genuine audience depth, not accidental discovery",
+      "applies_to": ["plan"],
+      "provenance": "corpus",
+      "evidence": "In our fetched lifestyle set, a 121s storytelling clip indexed 19.6x the account median with 8.15% engagement rate — a rare combination of reach and depth that outperformed the account's short clips on both dimensions simultaneously",
+      "source": "tiktok market research 2026-08 (Turkish lifestyle account)"
     }
   ]
 }
