@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -186,6 +187,72 @@ def test_phone_plan_unsupported_replays_real_message_through_worker_mapping(
     # (see the parametrized cases in test_phone_guided_dispatch.py).
     assert kwargs.get("failure_reason") == data["failure_reason"] == "phone_plan_unsupported"
     cloud.assert_not_called()
+
+
+def test_phone_plan_unsupported_prod_causes_are_repaired_or_caught_at_planning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-286: the prod `phone_plan_unsupported` messages no longer first surface
+    AFTER approval.
+
+    * 76db6913 "sequence effect needs composite-stream parity": repaired (fade-in).
+    * b33e1c88 "font instance awaits native parity": repaired (qualified default font;
+      covered in tests/pipeline/test_phone_plan_repair.py).
+    * 31eb638e (this fixture) "phone transition needs the full source window": a genuine
+      hole -- no plan edit conjures footage -- so the worker still fails closed, but the
+      planning-time dry run (`validate_proposal_phone_compiles`) now rejects it BEFORE
+      approval, which sends the draft to the deterministic fallback.
+    """
+
+    from typing import get_args
+
+    from app.agents._schemas.text_element import TextElement
+    from app.config import settings
+    from app.kria.recipes import MediaCapability
+    from app.pipeline.phone_plan_repair import (
+        PhoneProposalRejected,
+        compile_phone_guided_repaired,
+        validate_proposal_phone_compiles,
+    )
+    from tests.pipeline.test_phone_guided_plan import fixture, transition_fixture
+
+    data = _load("phone_plan_unsupported_1")
+    monkeypatch.setattr(settings, "phone_render_verified_features", list(get_args(MediaCapability)))
+
+    plan, bindings = fixture()
+    plan.text_elements = [
+        TextElement(
+            id="seq0", text="First", role="generative_sequence", effect="pop-in", start_s=0, end_s=2
+        )
+    ]
+    repaired = compile_phone_guided_repaired(plan, bindings)
+    assert repaired.notes and repaired.recipe.text_layers[0].effect == "fade-in"
+
+    plan, bindings = transition_fixture()
+    bindings[0].original.duration_s = 2.5
+    with pytest.raises(UnsupportedPhonePlan, match=data["error_message"]):
+        compile_phone_guided_repaired(plan, bindings)
+
+    monkeypatch.setattr(
+        "app.pipeline.guided_story.compile_proposal_execution_plan",
+        lambda _snapshot: plan.model_dump(mode="json"),
+    )
+    monkeypatch.setattr(
+        "app.services.phone_sources.bind_phone_sources", lambda _assignments, _paths: bindings
+    )
+    snapshot = SimpleNamespace(
+        media=[
+            SimpleNamespace(
+                lane="clip",
+                gcs_path=bindings[0].proxy_path,
+                media_id=bindings[0].media_id,
+                analysis={},
+                duration_s=10,
+            )
+        ]
+    )
+    with pytest.raises(PhoneProposalRejected, match=data["error_message"]):
+        validate_proposal_phone_compiles(snapshot, [])
 
 
 # --- speech_cleanup_failed (unsafe_plan): the bailout decision depends on a

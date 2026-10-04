@@ -1495,6 +1495,8 @@ def test_guided_v2_device_variant_closes_every_edit_the_phone_compiler_rejects(
         "lanes",
         "media_source_controls",
         "visual_editor_style",
+        # KRI-306: a guided device variant can Save bars/crop (cloud never can).
+        "landscape_fit",
         *("sfx", "overlays", "visual_blocks", "motion_scenes"),
         *("sfx_reason", "overlays_reason", "visual_blocks_reason", "motion_scenes_reason"),
     }
@@ -2598,6 +2600,7 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
         "background_music": False,
         "lyrics": False,
         "orientation": False,
+        "landscape_fit": False,
         "sound_effects": False,
         "media_overlays": False,
         "visual_blocks": False,
@@ -2769,6 +2772,7 @@ def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypa
         "background_music": False,
         "lyrics": False,
         "orientation": False,
+        "landscape_fit": False,
         "sound_effects": False,
         "media_overlays": False,
         "visual_blocks": False,
@@ -3181,6 +3185,7 @@ def test_background_music_commit_routes_to_fast_audio_pass(monkeypatch):
             "background_music": True,
             "lyrics": False,
             "orientation": False,
+            "landscape_fit": False,
             "sound_effects": False,
             "media_overlays": False,
             "visual_blocks": False,
@@ -4811,6 +4816,7 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
         "background_music": False,
         "lyrics": False,
         "orientation": False,
+        "landscape_fit": False,
         "sound_effects": False,
         "media_overlays": False,
         "visual_blocks": False,
@@ -5953,6 +5959,7 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
             "value": "portrait",
             "reason": "disabled",
         },
+        "landscape_fit": {"editable": False, "value": "fill", "reason": "cloud_unsupported"},
         # _arm leaves carousel_effects_enabled at its default (False).
         "carousel": False,
         "carousel_reason": "Carousel effects are disabled",

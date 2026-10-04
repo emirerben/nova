@@ -810,6 +810,12 @@ JOB_FAILURE_MESSAGES: dict[str, str] = {
         "This edit uses something your iPhone can't render yet. Start a new edit "
         "with a different clip or format."
     ),
+    # KRI-286: retryable -- the device capability this edit needs is not switched on
+    # yet (a rollout decision), so the same edit works once it is.
+    "phone_capability_unavailable": (
+        "This edit needs an iPhone feature that isn't available yet. "
+        "Try again later, or ask for a different style."
+    ),
     "phone_plan_failed": (
         "This edit couldn't render on your iPhone. Try again, or ask for a change to the direction."
     ),
@@ -1415,6 +1421,7 @@ def _dispatch_item_render(
     creator_clip_order: list[int] | None = None,
     creator_request: str = "",
     creator_guided_attempt_id: str | None = None,
+    creator_render_shape: dict | None = None,
     speech_cleanup_contract: str | None = None,
     speech_cleanup_analysis_id: str | None = None,
     speech_cleanup_choice: str | None = None,
@@ -2168,6 +2175,7 @@ def _dispatch_item_render(
             creator_strategy=creator_strategy,
             creator_clip_order=creator_clip_order,
             creator_request=str(creator_request or "")[:12000],
+            creator_render_shape=creator_render_shape,
             **({"phone_sources": phone_sources} if phone_sources else {}),
             **({"render_on_device": True} if visuals_only_device else {}),
             **({"phone_subtitled_lanes": phone_subtitled_lanes} if phone_subtitled_lanes else {}),
@@ -2452,6 +2460,7 @@ def dispatch_item_render_for(
     creator_clip_order: list[int] | None = None,
     creator_request: str = "",
     creator_guided_attempt_id: str | None = None,
+    creator_render_shape: dict | None = None,
     speech_cleanup_contract: str | None = None,
     speech_cleanup_action: str | None = None,
     speech_cleanup_analysis_id: str | None = None,
@@ -2780,6 +2789,7 @@ def dispatch_item_render_for(
             creator_clip_order=creator_clip_order,
             creator_request=creator_request,
             creator_guided_attempt_id=creator_guided_attempt_id,
+            creator_render_shape=creator_render_shape,
             speech_cleanup_contract=speech_cleanup_contract,
             speech_cleanup_analysis_id=speech_cleanup_analysis_id,
             speech_cleanup_choice=speech_cleanup_choice,

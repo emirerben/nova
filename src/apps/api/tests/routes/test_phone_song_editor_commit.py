@@ -23,7 +23,11 @@ from app.pipeline.unified_montage import plan_unified_montage
 from app.routes import generative_jobs as gj
 from app.services.device_render import device_status, pin_device_request
 from app.services.kria_editor_ops import compile_editor_ops
-from app.services.phone_editor import PHONE_EDITOR_PLAN_FIELD, prepare_phone_editor_commit
+from app.services.phone_editor import (
+    PHONE_EDITOR_PLAN_FIELD,
+    PHONE_EDITOR_SAVED_PLAN_FIELD,
+    prepare_phone_editor_commit,
+)
 from app.services.phone_sources import PHONE_SOURCES_FIELD
 from tests._prod_profile import PROD_VERIFIED_FEATURES
 from tests.pipeline.user_song_helpers import (
@@ -235,7 +239,7 @@ def test_retiming_a_background_montage_rewindows_the_song_from_the_same_start(ta
     payload.guided_revision_number = revision["revision_number"]
     gj.prepare_editor_commit(job, "guided_story", payload)
 
-    saved = job.assembly_plan["variants"][0][PHONE_EDITOR_PLAN_FIELD]
+    saved = job.assembly_plan["variants"][0][PHONE_EDITOR_SAVED_PLAN_FIELD]
     song = saved["user_song"]
     assert song["window_start_s"] == pytest.approx(result.user_song.window_start_s)
     assert song["window_end_s"] == pytest.approx(

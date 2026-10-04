@@ -118,6 +118,9 @@ class _ApprovalDispatchClaim:
     preflight_analysis_id: uuid.UUID | None = None
     speech_cleanup_analysis_id: uuid.UUID | None = None
     speech_cleanup_choice: str | None = None
+    # KRI-306: the creator's explicit output-shape choice (`{"output_orientation",
+    # "landscape_fit"}`), stashed by `decide_approval`; None = they never chose.
+    render_shape: dict[str, str] | None = None
     # What the plan item pointed at BEFORE a strategy dispatch mints its new Job, so a
     # failure after the pointer moves can put it back (never leave an orphan target).
     prior_item_status: str | None = None
@@ -1782,6 +1785,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
         preflight_analysis_id: uuid.UUID | None = None
         speech_cleanup_analysis_id: uuid.UUID | None = None
         speech_cleanup_choice: str | None = None
+        render_shape_choice: dict[str, str] | None = None
         target_variant_id = approval.target_variant_id
         target_generation_id = approval.target_generation_id
         if document.kind == "strategy":
@@ -1871,6 +1875,19 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                 except (TypeError, ValueError):
                     speech_cleanup_analysis_id = None
                 speech_cleanup_choice = stash.get("choice")
+            # KRI-306: apply the creator's output-shape choice HERE (not at
+            # approval time) so a deny, which never reaches the claim, has
+            # nothing to undo. Landscape never has bars, so it leaves the
+            # item's remembered bars/crop preference alone.
+            from app.services.render_shape import shape_from_all_candidates  # noqa: PLC0415
+
+            render_shape_choice = shape_from_all_candidates(
+                {"creator_render_shape": (execution.result or {}).get("render_shape")}
+            )
+            if render_shape_choice is not None and render_shape_choice["output_orientation"] == (
+                "portrait"
+            ):
+                item.landscape_fit = render_shape_choice["landscape_fit"]
         else:
             if current_job is None or not approval.target_variant_id:
                 return None
@@ -2003,6 +2020,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             preflight_analysis_id=preflight_analysis_id,
             speech_cleanup_analysis_id=speech_cleanup_analysis_id,
             speech_cleanup_choice=speech_cleanup_choice,
+            render_shape=render_shape_choice,
             prior_item_status=(
                 str(getattr(item, "item_status", None))
                 if getattr(item, "item_status", None) is not None
@@ -2476,6 +2494,13 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
                 else None
             ),
             speech_cleanup_choice=claim.speech_cleanup_choice,
+            # KRI-306: only an explicit choice rides the dispatch (absent =
+            # byte-identical call).
+            **(
+                {"creator_render_shape": claim.render_shape}
+                if getattr(claim, "render_shape", None)
+                else {}
+            ),
         )
         outcome = result.outcome
         result_job_id = result.job_id
@@ -2546,7 +2571,13 @@ def _unified_montage_review(
     """
 
     record = (job.assembly_plan or {}).get("unified_montage")
-    if not isinstance(record, dict) or not record.get("requirement_receipts"):
+    if not isinstance(record, dict):
+        return default_text, []
+    # KRI-282: what each requested group / sport name / chapter text did in the plan.
+    # It is read from the finished plan, not the brief ledger, so it is listed even
+    # when the ledger judged none of those asks.
+    outcomes = [row for row in record.get("intent_outcomes") or [] if isinstance(row, dict)]
+    if not record.get("requirement_receipts") and not outcomes:
         return default_text, []
     if not settings.creative_brief_for(thread.creator_id):
         return default_text, []
@@ -2560,7 +2591,7 @@ def _unified_montage_review(
     from app.kria.contracts import RequirementReceipt  # noqa: PLC0415
 
     receipts = []
-    for raw in record["requirement_receipts"]:
+    for raw in record.get("requirement_receipts") or []:
         try:
             receipts.append(RequirementReceipt.model_validate(raw))
         except ValueError:
@@ -2568,14 +2599,14 @@ def _unified_montage_review(
     live = {req.id: req for req in brief.live()}
     # A record planned before unjudged receipts were dropped can still carry some.
     receipts = [r for r in receipts if is_judged(live.get(r.requirement_id), r)]
-    if not receipts:
+    if not receipts and not outcomes:
         return default_text, []
     checked = CreativeBrief(
         version=brief.version,
         requirements=[live[receipt.requirement_id] for receipt in receipts],
     )
     return (
-        reply_from_receipts(checked, receipts, summary=default_text),
+        reply_from_receipts(checked, receipts, summary=default_text, outcomes=outcomes),
         [receipt.model_dump(mode="json") for receipt in receipts],
     )
 
@@ -2812,7 +2843,8 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 "Your iPhone couldn't finish the render. Your approved edit is still saved: "
                 "open the project on your iPhone and tap Retry."
             )
-        elif deterministic:
+        elif deterministic or failure_code == "phone_capability_unavailable":
+            # Retryable, but the generic "didn't finish" copy would hide WHY (KRI-286).
             failure_content = humanize_job_failure_reason(failure_code)
         else:
             failure_content = (

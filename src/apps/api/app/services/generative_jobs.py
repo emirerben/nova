@@ -315,6 +315,7 @@ def build_generative_job(
     creator_strategy: dict | None = None,
     creator_clip_order: list[int] | None = None,
     creator_request: str = "",
+    creator_render_shape: dict | None = None,
     phone_sources: tuple[PhoneSourceBinding, ...] = (),
     render_on_device: bool = False,
     phone_subtitled_lanes: dict | None = None,
@@ -543,6 +544,17 @@ def build_generative_job(
             normalized_creator_order.append(value)
         if normalized_creator_order:
             all_candidates["creator_clip_order"] = normalized_creator_order
+    # KRI-306: the creator's explicit finished-video shape. Written ONLY when they
+    # chose one, so every job without a choice keeps its exact all_candidates shape.
+    if creator_render_shape:
+        from app.services.render_shape import (  # noqa: PLC0415
+            CREATOR_RENDER_SHAPE_KEY,
+            shape_from_all_candidates,
+        )
+
+        chosen_shape = shape_from_all_candidates({CREATOR_RENDER_SHAPE_KEY: creator_render_shape})
+        if chosen_shape is not None:
+            all_candidates[CREATOR_RENDER_SHAPE_KEY] = chosen_shape
     # Landscape-fit preference (plan-item editor). Only stash when "fit" so
     # public/legacy jobs keep byte-identical all_candidates shape — same omit-
     # when-default discipline used for persona / user_style / filming_guide above.

@@ -2274,7 +2274,12 @@ def _run_generative_job_impl(
                 declared_format = coerce_edit_format(candidates.get("edit_format"))
                 has_voiceover_candidate = bool(candidates.get("voiceover_gcs_path"))
                 if isinstance(phone_snapshot.get("guided_edit"), dict):
-                    _run_phone_guided_job(job_id, phone_snapshot, ownership_epoch=ownership_epoch)
+                    _run_phone_guided_job(
+                        job_id,
+                        phone_snapshot,
+                        ownership_epoch=ownership_epoch,
+                        landscape_fit=_creator_landscape_fit(candidates),
+                    )
                 elif declared_format not in phone_render_supported_formats():
                     raise ValueError("No phone renderer is registered for this edit")
                 elif declared_format in GUIDED_EDIT_FORMATS:
@@ -2316,7 +2321,10 @@ def _run_generative_job_impl(
                             )
                             if unified_snapshot is not None:
                                 _run_phone_guided_job(
-                                    job_id, unified_snapshot, ownership_epoch=ownership_epoch
+                                    job_id,
+                                    unified_snapshot,
+                                    ownership_epoch=ownership_epoch,
+                                    landscape_fit=_creator_landscape_fit(candidates),
                                 )
                 elif declared_format == "subtitled" or (
                     declared_format in NARRATED_EDIT_FORMATS and not has_voiceover_candidate
@@ -2352,11 +2360,19 @@ def _run_generative_job_impl(
                 # fall back to) must persist a failure_reason — without this, the
                 # generic `except Exception` fallback below only set error_detail,
                 # leaving the client with no reason code to render.
-                failure_reason = (
-                    "phone_plan_unsupported"
-                    if isinstance(exc, (UnsupportedPhonePlan, ValueError))
-                    else "phone_plan_failed"
+                from app.services.phone_rollout import (  # noqa: PLC0415
+                    PhoneCapabilityUnavailable,
                 )
+
+                # KRI-286: a capability the device has not verified yet is a rollout
+                # decision, not a plan defect -- it must stay retryable, so it gets its
+                # own code BEFORE the deterministic `phone_plan_unsupported` branch.
+                if isinstance(exc, PhoneCapabilityUnavailable):
+                    failure_reason = "phone_capability_unavailable"
+                elif isinstance(exc, (UnsupportedPhonePlan, ValueError)):
+                    failure_reason = "phone_plan_unsupported"
+                else:
+                    failure_reason = "phone_plan_failed"
                 log.error(
                     "phone_guided_job_failed",
                     job_id=job_id,
@@ -3823,7 +3839,21 @@ def _run_generative_job_impl(
     )
 
 
-def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int | None) -> None:
+def _creator_landscape_fit(all_candidates: dict | None) -> str:
+    """The creator's EXPLICIT bars/crop choice (``creator_render_shape``), else
+    ``"fill"`` -- guided/unified phone output only letterboxes on request (KRI-285)."""
+    shape = (all_candidates or {}).get("creator_render_shape")
+    fit = shape.get("landscape_fit") if isinstance(shape, dict) else None
+    return fit if fit in ("fill", "fit") else "fill"
+
+
+def _run_phone_guided_job(
+    job_id: str,
+    snapshot: dict,
+    *,
+    ownership_epoch: int | None,
+    landscape_fit: str = "fill",
+) -> None:
     """Use cloud decisions only; never enter a media renderer for proxy sources."""
     from app.kria.device_render import make_device_request  # noqa: PLC0415
     from app.pipeline.guided_story import (  # noqa: PLC0415
@@ -3832,8 +3862,8 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
     )
     from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
         UnsupportedPhonePlan,
-        compile_phone_guided_plan,
     )
+    from app.pipeline.phone_plan_repair import compile_phone_guided_repaired  # noqa: PLC0415
     from app.services.device_narration_binding import make_device_narration_binding  # noqa: PLC0415
     from app.services.device_render import (  # noqa: PLC0415
         DEVICE_RENDER_FIELD,
@@ -3944,10 +3974,27 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
                 capability="musicBed",
             )
         song_bed = _resolve_phone_song_bed(job_id, plan.user_song)
-    recipe = compile_phone_guided_plan(
-        plan, bindings, visuals=visuals, narration=narration_bed, song=song_bed
+    # KRI-286: deterministic repairs (sequence effect, unqualified font) are applied
+    # and noted instead of failing the job after approval. Kwargs are forwarded as-is.
+    compiled = compile_phone_guided_repaired(
+        plan,
+        bindings,
+        visuals=visuals,
+        narration=narration_bed,
+        song=song_bed,
+        landscape_fit="fit" if landscape_fit == "fit" else "fill",
     )
+    recipe, repair_notes = compiled.recipe, compiled.notes
     validate_phone_pilot_recipe(recipe)
+    repaired_plan_payload = None
+    if compiled.plan is not plan:
+        repaired_plan_payload = compiled.plan.model_dump(mode="json", exclude_none=False)
+        # The editor recompiles from the persisted rows: keep them equal to what compiled.
+        for field in ("text_elements", "context_label_text_elements"):
+            raw_plan[field] = [
+                element.model_dump(mode="json", exclude_none=False)
+                for element in getattr(compiled.plan, field)
+            ]
     visual_rows = [visual.model_dump(mode="json") for visual in visuals]
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id="guided_story", revision=1, recipe=recipe
@@ -3996,10 +4043,23 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
                 "proposal_version": raw_plan["proposal_version"],
                 "media_digest": raw_plan["media_digest"],
                 "orientation": raw_plan.get("output_orientation", "portrait"),
+                "landscape_fit": "fit" if landscape_fit == "fit" else "fill",
                 **song_reference_variant_fields(raw_plan),
                 "ok": False,
             }
         ]
+        if repair_notes:
+            # Creator-visible (job projection -> render_notes): what Kria changed so
+            # the plan could render on the phone (KRI-129: never a silent override).
+            current["variants"][0]["phone_repair_notes"] = list(repair_notes)
+        if repaired_plan_payload is not None:
+            # The editor's first Save recompiles from this private per-variant plan, not
+            # the approved canonical plan (whose text lane is re-validated against the
+            # approval and so must stay untouched). Without it a Save would re-hit the
+            # reject the repair removed.
+            from app.services.phone_editor import PHONE_EDITOR_PLAN_FIELD  # noqa: PLC0415
+
+            current["variants"][0][PHONE_EDITOR_PLAN_FIELD] = repaired_plan_payload
         if visual_rows:
             # Private receipts the editor recompiles from; each row keeps
             # gcs_path so pool deletion still sees the photo as referenced.
@@ -4278,8 +4338,8 @@ def _run_phone_voiceover_montage_job(
     One variant per job (KRI-141): only the top-ranked spec renders; the rest are
     dropped (logged, never stored), matching the content-plan single-variant norm.
     Deferred (see docs/runbooks/phone-rendering.md): SFX/media-overlay lanes,
-    masonry/collage presets, lyric overlays, carousel-moment splices, letterboxed
-    landscape fit, editorial sequence/rhythm text, and audio ducking -- all fail
+    masonry/collage presets, lyric overlays, carousel-moment splices,
+    editorial sequence/rhythm text, and audio ducking -- all fail
     closed via `UnsupportedPhonePlan` inside the compiler.
     """
     from app.kria.device_render import make_device_request  # noqa: PLC0415
@@ -4508,6 +4568,9 @@ def _run_phone_voiceover_montage_job(
                 montage_preset=montage_preset,
                 strict_day_vlog=archetype == "day_vlog",
                 strict_single_hero=archetype == "single_hero",
+                # KRI-306: only an explicit creator choice moves the canvas;
+                # None keeps today's portrait default byte-identical.
+                orientation=_creator_shape_orientation(all_candidates),
             )
 
             gcs_to_media_id = {binding.proxy_path: binding.media_id for binding in bindings}
@@ -4574,6 +4637,7 @@ def _run_phone_voiceover_montage_job(
             "duration_s": decision.duration_s,
             "text_elements": decision.text_elements,
             "orientation": decision.orientation,
+            "landscape_fit": decision.extras.get("assembly_landscape_fit") or "fill",
             "music_track_id": decision.music_track_id,
             "music_start_s": decision.music_start_s,
             "ok": False,
@@ -4865,6 +4929,7 @@ def _plan_phone_user_song_montage(
     clip_intents_enabled: bool,
     font_covers: Any,
     creator_order: list[int],
+    output_orientation: str | None = None,
 ) -> Any:
     """Plan a phone montage around the creator's own song (KRI-374).
 
@@ -4922,6 +4987,7 @@ def _plan_phone_user_song_montage(
             song_duration_s=analysis.duration_s,
             song_plan_item_id=str(item_id),
             song_generation=generation,
+            output_orientation=output_orientation,
         )
 
     if alignment is None or alignment.song_generation != generation:
@@ -5169,6 +5235,7 @@ def _run_phone_unified_montage_job(
                     for value in all_candidates.get("creator_clip_order") or []
                     if isinstance(value, int) and not isinstance(value, bool)
                 ],
+                output_orientation=_creator_shape_orientation(all_candidates),
             )
         else:
             plan = plan_unified_montage(
@@ -5183,6 +5250,7 @@ def _run_phone_unified_montage_job(
                     if isinstance(value, int) and not isinstance(value, bool)
                 ],
                 visuals=visuals,
+                output_orientation=_creator_shape_orientation(all_candidates),
             )
     record = plan.record()
     if brief is not None and brief.live():
@@ -18610,6 +18678,13 @@ def _assembly_step_to_decision(
         slot_extra={k: v for k, v in slot.items() if k not in modeled_slot_keys},
         moment_extra={k: v for k, v in moment.items() if k not in modeled_moment_keys},
     )
+
+
+def _creator_shape_orientation(all_candidates: dict | None) -> str | None:
+    """KRI-306: the orientation the creator explicitly chose, else None (= default)."""
+    from app.services.render_shape import shape_from_all_candidates  # noqa: PLC0415
+
+    return (shape_from_all_candidates(all_candidates) or {}).get("output_orientation")
 
 
 def _decide_generative_variant(

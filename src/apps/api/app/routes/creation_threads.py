@@ -63,9 +63,11 @@ from app.models import (
     CreationThreadDeletion,
     CreationThreadEvent,
     CreationThreadUploadReservation,
+    CreatorAgentApproval,
     CreatorAgentEvent,
     CreatorAgentExecution,
     CreatorAgentSession,
+    CreatorEditDraft,
     CreatorMemoryOperation,
     EditArtifact,
     Job,
@@ -237,6 +239,8 @@ _ACTION_PAYLOAD_KEYS = {
         "plan_hash",
         "speech_cleanup_analysis_id",
         "speech_cleanup_choice",
+        "output_orientation",
+        "landscape_fit",
     },
     "generate": {
         "session_revision",
@@ -245,6 +249,8 @@ _ACTION_PAYLOAD_KEYS = {
         "base_generation",
         "speech_cleanup_analysis_id",
         "speech_cleanup_choice",
+        "output_orientation",
+        "landscape_fit",
     },
     "revise": {"intent", "session_revision", "plan_version", "plan_hash"},
     "retry": {
@@ -614,6 +620,19 @@ class ThreadProjectionIntegrityOut(BaseModel):
     codes: list[str] = Field(default_factory=list)
 
 
+class RenderShapeDefaultOut(BaseModel):
+    output_orientation: Literal["portrait", "landscape"]
+    landscape_fit: Literal["fit", "fill"]
+
+
+class RenderShapeOut(BaseModel):
+    """KRI-306: the finished-video shapes the confirm screen may offer."""
+
+    orientations: list[Literal["portrait", "landscape"]]
+    fit_choices: list[Literal["fit", "fill"]]
+    default: RenderShapeDefaultOut
+
+
 class CreationThreadOut(BaseModel):
     id: str
     runtime_version: Literal[1, 2] = 1
@@ -630,6 +649,10 @@ class CreationThreadOut(BaseModel):
     media_capabilities: dict[str, Any] | None = None
     direction_receipt: dict[str, Any] | None = None
     speech_cleanup: dict[str, Any] | None = None
+    # KRI-306: what the confirm screen may offer for the PENDING strategy
+    # approval/plan -- `{orientations, fit_choices, default}`. Null whenever no
+    # strategy is awaiting a decision or the format has nothing to choose.
+    render_shape: RenderShapeOut | None = None
     integrity: ThreadProjectionIntegrityOut | None = None
     events: list[EventOut]
     created_at: datetime
@@ -2009,6 +2032,10 @@ def _job_projection(job: Job | None) -> dict[str, Any] | None:
     ) + render_notes_from_overlay_receipt(
         primary_variant.get("phone_overlay_receipt") if primary_variant is not None else None
     )
+    # KRI-286: what the phone compiler repaired so this plan could render (never silent).
+    repair_notes = primary_variant.get("phone_repair_notes") if primary_variant else None
+    if isinstance(repair_notes, list):
+        render_notes += [note for note in repair_notes if isinstance(note, str) and note]
     return {
         "id": str(job.id),
         "status": job.status,
@@ -3033,6 +3060,62 @@ async def _fill_default_title_if_needed(
     await db.refresh(thread)
 
 
+async def _render_shape_projection(
+    db: AsyncSession,
+    thread: CreationThread,
+    item: PlanItem,
+    session: CreatorAgentSession | None,
+) -> dict[str, Any] | None:
+    """KRI-306 ``render_shape``: non-null only while a strategy awaits approval.
+
+    Best-effort: a malformed row simply offers nothing; it must never break the
+    thread read.
+    """
+    from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+    from app.services import render_shape  # noqa: PLC0415
+
+    try:
+        strategy: Any = None
+        request_text = ""
+        if int(getattr(thread, "runtime_version", 1)) == 2:
+            # One narrow query (this runs on a polled endpoint): the newest pending
+            # approval's draft body, nothing else.
+            snapshot = (
+                await db.execute(
+                    select(CreatorEditDraft.snapshot_json)
+                    .join(
+                        CreatorAgentApproval,
+                        CreatorAgentApproval.draft_id == CreatorEditDraft.id,
+                    )
+                    .where(
+                        CreatorAgentApproval.thread_id == thread.id,
+                        CreatorAgentApproval.status == "pending",
+                    )
+                    .order_by(CreatorAgentApproval.created_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if isinstance(snapshot, dict) and snapshot.get("kind") == "strategy":
+                raw = snapshot.get("strategy")
+                strategy = CreativeStrategy.model_validate(raw) if isinstance(raw, dict) else None
+                request_text = str(snapshot.get("intent") or "")
+        elif session is not None and session.status == "awaiting_confirmation":
+            active_plan = session.active_plan or {}
+            raw_plan = active_plan.get("edit_plan")
+            raw = raw_plan.get("strategy") if isinstance(raw_plan, dict) else None
+            strategy = CreativeStrategy.model_validate(raw) if isinstance(raw, dict) else None
+            request_text = str(active_plan.get("creator_request") or "")
+        if strategy is None:
+            return None
+        offer = await render_shape.offer_for_item(
+            db, item, strategy, thread.creator_id, creator_request=request_text
+        )
+        return offer.projection()
+    except Exception:  # noqa: BLE001 - an optional projection never breaks a read
+        log.warning("creation_thread.render_shape_projection_failed", exc_info=True)
+        return None
+
+
 async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadOut:
     if isinstance(db, AsyncSession) and (thread.state or {}).get("title_generation") == "pending":
         start_title_generation(thread.id)
@@ -3186,6 +3269,9 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
                 # every legacy required_v1 Job. An item genuinely in the cohort
                 # still gets its card through in_cohort.
                 speech_cleanup = None
+    render_shape_projection = None
+    if isinstance(db, AsyncSession) and item is not None:
+        render_shape_projection = await _render_shape_projection(db, thread, item, session)
     # A detached tier's raw pointer must not reach the client either: the web
     # and iOS clients infer "still rendering" from active_job_id being set
     # with no matching `job` projection, which would poll forever against an
@@ -3221,6 +3307,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
         media_capabilities=media_capabilities,
         direction_receipt=direction_receipt,
         speech_cleanup=speech_cleanup,
+        render_shape=render_shape_projection,
         integrity=integrity if integrity.codes else None,
         events=[
             EventOut(
@@ -5068,6 +5155,14 @@ async def action_thread(
                 ),
                 current_direction,
             )
+        shape_orientation = payload.get("output_orientation")
+        shape_fit = payload.get("landscape_fit")
+        if shape_orientation not in (None, "portrait", "landscape") or shape_fit not in (
+            None,
+            "fit",
+            "fill",
+        ):
+            raise HTTPException(status_code=422, detail="invalid output shape")
         confirmation = creator_agent.ConfirmBody(
             session_id=session.id,
             expected_revision=int(payload.get("session_revision", session.revision)),
@@ -5080,6 +5175,8 @@ async def action_thread(
             client_event_id=body.client_action_id,
             speech_cleanup_analysis_id=cleanup_analysis_id,
             speech_cleanup_choice=cleanup_choice,
+            output_orientation=shape_orientation,
+            landscape_fit=shape_fit,
         )
         if body.action == "revise":
             revision_intent = " ".join(

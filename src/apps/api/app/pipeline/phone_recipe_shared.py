@@ -14,13 +14,14 @@ from instead of copy-pasting again.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import Any
+from collections.abc import Iterable, Sequence
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.kria.recipes import Canvas, MediaTransform
-from app.kria.render_assets import RenderFingerprint
+from app.kria.recipes import Canvas, MediaTransform, TimelineClip
+from app.kria.recipes_v2 import EditRecipeV2
+from app.kria.render_assets import RenderAssetManifest, RenderFingerprint
 
 # Mirrors `phone_guided_plan._EXPORT_SAFETY_MARGIN_S` -- see that module's
 # docstring for the full AVFoundation-boundary rationale. Never fit a refit
@@ -69,6 +70,141 @@ def fit_transform(
     contain = min(canvas.width / display_w, canvas.height / display_h)
     cover = max(canvas.width / display_w, canvas.height / display_h)
     return MediaTransform(scale=contain / cover)
+
+
+def display_dims(original: Any) -> tuple[int, int]:
+    """(width, height) as actually DISPLAYED once `orientation_degrees` is
+    applied -- a 1080x1920-pixel file flagged 90/270 degrees is landscape on
+    screen despite carrying portrait pixel dimensions (and vice versa).
+
+    ``original`` is anything with ``width``/``height``/``orientation_degrees``
+    (``OriginalMediaDescriptor``, a Visuals-pool binding, ...). Mirrors the
+    golden-hour exact-canvas checks in the montage/guided compilers, which
+    reason about the same rotation flag.
+    """
+    if int(original.orientation_degrees) % 360 in (90, 270):
+        return original.height, original.width
+    return original.width, original.height
+
+
+# Main (cover-filled) video tracks whose clips may be letterboxed with
+# ``fit_transform``: the subtitled speaker, the voiceover-montage track and the
+# guided/unified-montage "story" track. Narrated / speech-montage / authored
+# tracks are intentionally absent (KRI-307: they ignore ``landscape_fit``).
+FIT_VIDEO_TRACK_IDS: frozenset[str] = frozenset({"subtitled", "montage", "story"})
+
+
+def landscape_fit_from_recipe(recipe: EditRecipeV2) -> Literal["fill", "fit"]:
+    """Inverse of the compilers' ``landscape_fit`` -> main-track transform
+    projection (KRI-283, KRI-285): ``"fit"`` when ANY clip of a fit-capable
+    main video track (``FIT_VIDEO_TRACK_IDS``) is scaled below 1, else
+    ``"fill"``. Lets an editor Save / re-cut re-derive the letterbox from the
+    previously pinned recipe, like ``keep_segments``.
+
+    Caveat: a recipe whose clips are ALL portrait/square compiled with
+    ``"fit"`` is indistinguishable from ``"fill"`` (every transform is the
+    identity), so callers that persist ``variant["landscape_fit"]`` should
+    prefer it over this inference.
+    """
+    for track in recipe.tracks:
+        if track.kind == "video" and track.id in FIT_VIDEO_TRACK_IDS:
+            if any(clip.transform.scale < 1 for clip in track.clips):
+                return "fit"
+    return "fill"
+
+
+def _fit_eligible(clip: TimelineClip) -> bool:
+    """A main-track clip whose transform is ours to set: a plain cover-filled
+    video clip (no look -- the device throws on look + transform, no re-frame
+    crop, no still card/hold) that still carries the compilers' centered,
+    unrotated transform."""
+    return (
+        clip.look is None
+        and clip.source_crop is None
+        and clip.still_layout is None
+        and clip.hold_duration is None
+        and clip.transform.rotation_degrees == 0
+        and clip.transform.position_x == 0
+        and clip.transform.position_y == 0
+    )
+
+
+def apply_landscape_fit(
+    recipe: EditRecipeV2,
+    bindings: Sequence[Any],
+    fit: Literal["fill", "fit"],
+) -> EditRecipeV2:
+    """``recipe`` with its main-track clips (re)letterboxed for ``fit``.
+
+    PURE and idempotent: every eligible clip's ``transform.scale`` is recomputed
+    from scratch with ``fit_transform``, so ``fit -> fill -> fit`` round-trips
+    and calling it twice changes nothing. ``"fill"`` restores the engine's
+    native cover-fill/center-crop (identity transform).
+
+    - Only clips of ``FIT_VIDEO_TRACK_IDS`` video tracks are touched. Overlay,
+      audio, Visuals, cutaway and ending tracks are never modified.
+    - Skipped (left as-is): clips with a ``look`` (golden_hour -- the device
+      throws on a look combined with a transform), a ``source_crop``, a still
+      card/hold, a non-centered/rotated transform, or whose source dimensions
+      are unknown (stills carry no ``natural_size``).
+    - A landscape (non-portrait) output canvas is returned unchanged: the
+      cloud's landscape output always crops (``resolve_output_fit``).
+    - Source dimensions come from ``bindings`` (``PhoneSourceBinding`` with an
+      ``original`` descriptor, matched by ``media_id`` == asset id) and fall
+      back to the recipe's own ``MediaAsset.natural_size``/orientation.
+    - Returns ``recipe`` itself when nothing changes (byte-identical).
+    """
+    canvas = recipe.canvas
+    if canvas.height <= canvas.width:
+        return recipe
+    originals = {
+        binding.media_id: binding.original for binding in bindings if hasattr(binding, "original")
+    }
+    recipe_assets = {asset.id: asset for asset in recipe.assets}
+
+    def _dims(asset_id: str) -> tuple[float, float] | None:
+        original = originals.get(asset_id)
+        if original is not None and original.width and original.height:
+            return display_dims(original)
+        asset = recipe_assets.get(asset_id)
+        if asset is None or asset.natural_size is None:
+            return None
+        size = asset.natural_size
+        if int(asset.orientation_degrees) % 360 in (90, 270):
+            return size.height, size.width
+        return size.width, size.height
+
+    changed = False
+    tracks = []
+    for track in recipe.tracks:
+        if track.kind != "video" or track.id not in FIT_VIDEO_TRACK_IDS:
+            tracks.append(track)
+            continue
+        clips = []
+        for clip in track.clips:
+            dims = _dims(clip.source_asset_id) if _fit_eligible(clip) else None
+            if dims is None:
+                clips.append(clip)
+                continue
+            scale = fit_transform(dims[0], dims[1], canvas, fit).scale
+            if scale == clip.transform.scale:
+                clips.append(clip)
+                continue
+            changed = True
+            clips.append(
+                clip.model_copy(
+                    update={"transform": clip.transform.model_copy(update={"scale": scale})}
+                )
+            )
+        tracks.append(track.model_copy(update={"clips": clips}))
+    if not changed:
+        return recipe
+    fields = {name: getattr(recipe, name) for name in type(recipe).model_fields}
+    fields.update(
+        tracks=tracks,
+        asset_manifest=RenderAssetManifest(assets=tuple(recipe.asset_manifest.assets)),
+    )
+    return EditRecipeV2(**fields)
 
 
 def snap_text_overshoot(layers: Iterable[Any], timeline_end_s: float) -> None:

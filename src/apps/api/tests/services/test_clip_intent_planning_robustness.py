@@ -267,3 +267,77 @@ async def test_terminal_failure_feeds_error_to_retry_names_dropped_and_logs_clas
     assert event["error_class"] == "source_quote_not_creator_text"
     assert event["request_chars"] == len(LONG_PROMPT)
     assert "Market morning" not in json.dumps(event, default=str)
+
+
+@pytest.mark.asyncio
+async def test_kri422_salvage_records_closed_vocabulary_reasons_on_the_turn(monkeypatch) -> None:
+    """A partly rejected inventory still asks the creator, but the turn now records
+    WHY, so the next incident is provable from the turn alone (KRI-422)."""
+    intents = _nine_intents()[:3]
+    intents.append(_intent("bad", "group", "rooftop clips", "Group the rooftop clips"))
+    client = MockModelClient()
+    client.queue("gemini-2.5-flash", {"intents": intents, "question": None})
+    resolver = _wire(monkeypatch, client)
+
+    with capture_logs() as logs:
+        result = await service.plan_and_resolve_clip_intents(
+            creator_request=LONG_PROMPT,
+            latest_user_message=None,
+            candidate_intents=None,
+            clips=_clips(5),
+            run_context=RunContext(),
+        )
+
+    assert len(client.invocations) == 1
+    assert result.resolution.needs_creator
+    assert result.resolution.error_code == "planner_salvage"
+    assert result.resolution.diagnostics == {
+        "stage": "planning",
+        "drop_classes": ["source_quote_not_creator_text"],
+        "kept": 3,
+    }
+    event = next(e for e in logs if e["event"] == "clip_intent_planner.salvaged")
+    assert event["reasons"] == ["source_quote_not_creator_text"]
+    assert "rooftop" not in json.dumps(event, default=str)
+    resolver.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_kri422_over_cap_salvage_reason_is_over_cap(monkeypatch) -> None:
+    client = MockModelClient()
+    client.queue("gemini-2.5-flash", {"intents": _nine_intents(), "question": None})
+    _wire(monkeypatch, client)
+
+    result = await service.plan_and_resolve_clip_intents(
+        creator_request=LONG_PROMPT,
+        latest_user_message=None,
+        candidate_intents=None,
+        clips=_clips(5),
+        run_context=RunContext(),
+    )
+
+    assert result.resolution.diagnostics["drop_classes"] == ["over_cap"]
+
+
+@pytest.mark.asyncio
+async def test_kri422_all_rejected_records_reasons_on_the_turn(monkeypatch) -> None:
+    bad = {"intents": [_intent("bad", "group", "rooftop clips", "Group the rooftop clips")]}
+    client = MockModelClient()
+    client.queue("gemini-2.5-flash", bad, bad)
+    _wire(monkeypatch, client)
+
+    result = await service.plan_and_resolve_clip_intents(
+        creator_request=LONG_PROMPT,
+        latest_user_message=None,
+        candidate_intents=None,
+        clips=_clips(5),
+        run_context=RunContext(),
+    )
+
+    assert result.resolution.error_code == "planner_rejected_all"
+    assert result.resolution.diagnostics == {
+        "stage": "planning",
+        "drop_classes": ["source_quote_not_creator_text"],
+        "kept": 0,
+        "dropped": 1,
+    }

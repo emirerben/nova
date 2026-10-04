@@ -234,14 +234,44 @@ async def plan_and_resolve_clip_intents(
                 "Please restate which clips to use, group, order, label, or caption."
             )
         return PlannedIntentResolution(
-            [], IntentResolution(status="needs_creator", question=question)
+            [],
+            IntentResolution(
+                status="needs_creator",
+                question=question,
+                error_code="planner_rejected_all",
+                diagnostics={
+                    "stage": "planning",
+                    "drop_classes": list(getattr(cause, "drop_classes", None) or [error_class]),
+                    "kept": 0,
+                    "dropped": len(dropped),
+                },
+            ),
         )
     if output.salvage_question:
         # Some instructions were valid but others could not be verified (or the
         # inventory exceeded the cap). Never act on a silent subset: ask about
-        # exactly the remainder.
+        # exactly the remainder. KRI-422: the closed-vocabulary reasons ride on
+        # the turn's diagnostics, so the next incident is provable from the turn.
+        log.warning(
+            "clip_intent_planner.salvaged",
+            reasons=output.salvage_reasons,
+            kept=len(output.intents),
+            request_chars=len(creator_request),
+            candidate_count=len(candidate_intents or []),
+            clip_count=len(clips),
+        )
         return PlannedIntentResolution(
-            [], IntentResolution(status="needs_creator", question=output.salvage_question)
+            [],
+            IntentResolution(
+                status="needs_creator",
+                question=output.salvage_question,
+                error_code="planner_salvage",
+                diagnostics={
+                    "stage": "planning",
+                    "drop_classes": output.salvage_reasons,
+                    "kept": len(output.intents),
+                },
+            ),
         )
     if output.question:
         return PlannedIntentResolution(

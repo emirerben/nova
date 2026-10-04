@@ -140,10 +140,19 @@ under the original-audio policy (KRI-141 chose dropping over telling the
 creator about a version they can't get).
 
 **Deferred, fails closed via `UnsupportedPhonePlan`:** SFX/media-overlay lanes,
-masonry/collage presets, lyric overlays, carousel-moment splices, letterboxed
-landscape fit, the editorial sequence/rhythm typographic upgrade, non-
+masonry/collage presets, lyric overlays, carousel-moment splices, the editorial sequence/rhythm typographic upgrade, non-
 `golden_hour`/`none` color grades, and ducking footage under a music bed
-(no cloud producer sets it).
+(no cloud producer sets it). Letterboxed landscape fit is NO LONGER deferred
+(KRI-285): the voiceover montage compiler applies `fit_transform` per clip on a
+portrait canvas from the item's `landscape_fit`, and a re-cut keeps the bars
+(a slot repointed at a different source recomputes its transform). The
+guided/unified compiler accepts `landscape_fit` too, but that path is DORMANT
+until the render-shape API PR writes `all_candidates["creator_render_shape"]`
+(only an explicit creator choice letterboxes guided output).
+`phone_recipe_shared.apply_landscape_fit` and `replace_voiceover_cut`'s
+`landscape_fit=` kwarg are consumed by that follow-up (the editor Save paths
+`phone_editor.py` do not pass the persisted fit yet). Narrated /
+speech-montage still crop (KRI-307).
 
 #### Recorded voiceover (KRI-132)
 
@@ -2253,3 +2262,21 @@ Tests: `tests/pipeline/test_song_alignment.py`,
 `tests/tasks/test_user_song_montage_job.py` (worker, both modes),
 `tests/routes/test_device_render.py` (`test_song_download_*`),
 `tests/routes/test_phone_song_editor_commit.py`.
+
+## Planning-time phone repair + failure split (KRI-286)
+
+Phone-inexpressible plans used to fail only after approval. Now:
+
+- `app/pipeline/phone_plan_repair.py`: `validate_proposal_phone_compiles` dry-runs
+  the phone compiler on every phone-destination draft (`edit_proposal_build`), and
+  `compile_phone_guided_with_repairs` is the worker's compile call in
+  `_run_phone_guided_job`. Deterministic repairs, each noted (never silent):
+  sequence effect outside the composite-safe set becomes `fade-in`; an unqualified
+  font becomes a qualified default (Inter). Notes land in the proposal's
+  `adjustments` and the variant's `phone_repair_notes` (job `render_notes`).
+- A genuine transition hole (outgoing source too short) is NOT repairable; the
+  dry run rejects it so the draft takes the deterministic fallback.
+- `PhoneCapabilityUnavailable` (`phone_rollout.py`) is raised for gates that depend on
+  `phone_render_verified_features`; the worker maps it to the retryable
+  `phone_capability_unavailable`. Everything else stays the deterministic
+  `phone_plan_unsupported`. Grep Fly logs for both after a deploy.

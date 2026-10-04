@@ -1,0 +1,119 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-03.2",
+  "input": {
+    "creator_request": "Opening title: \"A morning in Lisbon with Ana\" Closing title: \"See you at the next race, Ana\" Show this text on each shot, word for word: 1. The bakery photo of two friends with a cake: \"Ana's gift to Sam: her first Portuguese cake\" 2. The video of the girl skating: \"The only girl in the race: Lia\" 3. The video of the guy in the green T-shirt skating: \"Sam from Ghana: bakes cakes, skates too\" 4. The video of the guy in the red shirt talking to the camera: \"First place comes down to two: Rui...\" 5. The video of the guy with glasses in the grey T-shirt skating: \"...and Ana\" 6. The finish-line photo: \"Rui 42.1, Ana 42.6: a narrow win for Rui\" Don't add stock images, AI images or any other outside visuals. Make it 25 seconds.",
+    "latest_user_message": "Opening title: \"A morning in Lisbon with Ana\" Closing title: \"See you at the next race, Ana\" Show this text on each shot, word for word: 1. The bakery photo of two friends with a cake: \"Ana's gift to Sam: her first Portuguese cake\" 2. The video of the girl skating: \"The only girl in the race: Lia\" 3. The video of the guy in the green T-shirt skating: \"Sam from Ghana: bakes cakes, skates too\" 4. The video of the guy in the red shirt talking to the camera: \"First place comes down to two: Rui...\" 5. The video of the guy with glasses in the grey T-shirt skating: \"...and Ana\" 6. The finish-line photo: \"Rui 42.1, Ana 42.6: a narrow win for Rui\" Don't add stock images, AI images or any other outside visuals. Make it 25 seconds.",
+    "candidate_intents": null,
+    "clip_facts": true
+  },
+  "raw_text": "{\"intents\": [{\"intent_id\": \"caption_bakery_photo\", \"op\": \"caption\", \"attribute\": \"The bakery photo of two friends with a cake\", \"label_source\": \"clip\", \"transcript_kind\": null, \"creator_text\": \"Ana's gift to Sam: her first Portuguese cake\", \"caption_attribute\": null, \"position\": null, \"placeholder\": false, \"order_by\": null, \"source_quote\": \"1. The bakery photo of two friends with a cake: \\\"Ana's gift to Sam: her first Portuguese cake\\\"\"}, {\"intent_id\": \"caption_girl_skating_video\", \"op\": \"caption\", \"attribute\": \"The video of the girl skating\", \"label_source\": \"clip\", \"transcript_kind\": null, \"creator_text\": \"The only girl in the race: Lia\", \"caption_attribute\": null, \"position\": null, \"placeholder\": false, \"order_by\": null, \"source_quote\": \"2. The video of the girl skating: \\\"The only girl in the race: Lia\\\"\"}, {\"intent_id\": \"caption_guy_green_tshirt_skating_video\", \"op\": \"caption\", \"attribute\": \"The video of the guy in the green T-shirt skating\", \"label_source\": \"clip\", \"transcript_kind\": null, \"creator_text\": \"Sam from Ghana: bakes cakes, skates too\", \"caption_attribute\": null, \"position\": null, \"placeholder\": false, \"order_by\": null, \"source_quote\": \"3. The video of the guy in the green T-shirt skating: \\\"Sam from Ghana: bakes cakes, skates too\\\"\"}, {\"intent_id\": \"caption_guy_red_shirt_talking_video\", \"op\": \"caption\", \"attribute\": \"The video of the guy in the red shirt talking to the camera\", \"label_source\": \"clip\", \"transcript_kind\": null, \"creator_text\": \"First place comes down to two: Rui...\", \"caption_attribute\": null, \"position\": null, \"placeholder\": false, \"order_by\": null, \"source_quote\": \"4. The video of the guy in the red shirt talking to the camera: \\\"First place comes down to two: Rui...\\\"\"}, {\"intent_id\": \"caption_guy_glasses_grey_tshirt_skating_video\", \"op\": \"caption\", \"attribute\": \"The video of the guy with glasses in the grey T-shirt skating\", \"label_source\": \"clip\", \"transcript_kind\": null, \"creator_text\": \"...and Ana\", \"caption_attribute\": null, \"position\": null, \"placeholder\": false, \"order_by\": null, \"source_quote\": \"5. The video of the guy with glasses in the grey T-shirt skating: \\\"...and Ana\\\"\"}, {\"intent_id\": \"caption_finish_line_photo\", \"op\": \"caption\", \"attribute\": \"The finish-line photo\", \"label_source\": \"clip\", \"transcript_kind\": null, \"creator_text\": \"Rui 42.1, Ana 42.6: a narrow win for Rui\", \"caption_attribute\": null, \"position\": null, \"placeholder\": false, \"order_by\": null, \"source_quote\": \"6. The finish-line photo: \\\"Rui 42.1, Ana 42.6: a narrow win for Rui\\\"\"}], \"question\": null}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "caption_bakery_photo",
+        "op": "caption",
+        "attribute": "The bakery photo of two friends with a cake",
+        "creator_text": "Ana's gift to Sam: her first Portuguese cake",
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "1. The bakery photo of two friends with a cake: \"Ana's gift to Sam: her first Portuguese cake\""
+      },
+      {
+        "intent_id": "caption_girl_skating_video",
+        "op": "caption",
+        "attribute": "The video of the girl skating",
+        "creator_text": "The only girl in the race: Lia",
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "2. The video of the girl skating: \"The only girl in the race: Lia\""
+      },
+      {
+        "intent_id": "caption_guy_green_tshirt_skating_video",
+        "op": "caption",
+        "attribute": "The video of the guy in the green T-shirt skating",
+        "creator_text": "Sam from Ghana: bakes cakes, skates too",
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "3. The video of the guy in the green T-shirt skating: \"Sam from Ghana: bakes cakes, skates too\""
+      },
+      {
+        "intent_id": "caption_guy_red_shirt_talking_video",
+        "op": "caption",
+        "attribute": "The video of the guy in the red shirt talking to the camera",
+        "creator_text": "First place comes down to two: Rui...",
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "4. The video of the guy in the red shirt talking to the camera: \"First place comes down to two: Rui...\""
+      },
+      {
+        "intent_id": "caption_guy_glasses_grey_tshirt-4bb6a35f",
+        "op": "caption",
+        "attribute": "The video of the guy with glasses in the grey T-shirt skating",
+        "creator_text": "...and Ana",
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "5. The video of the guy with glasses in the grey T-shirt skating: \"...and Ana\""
+      },
+      {
+        "intent_id": "caption_finish_line_photo",
+        "op": "caption",
+        "attribute": "The finish-line photo",
+        "creator_text": "Rui 42.1, Ana 42.6: a narrow win for Rui",
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "6. The finish-line photo: \"Rui 42.1, Ana 42.6: a narrow win for Rui\""
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "KRI-422: synthetic shape of a real failed chat (opening + closing title, six numbered shots each with word-for-word quoted text). The model mints ids from the shot description and one runs past the 40-character bound; that id must be shortened, never drop the caption. Titles are not clip intents.",
+    "expect_intents": [
+      {
+        "op": "caption",
+        "creator_text": "Ana's gift to Sam: her first Portuguese cake",
+        "source_quote_keywords": [
+          "cake"
+        ]
+      },
+      {
+        "op": "caption",
+        "creator_text": "The only girl in the race: Lia",
+        "source_quote_keywords": [
+          "skating"
+        ]
+      },
+      {
+        "op": "caption",
+        "creator_text": "Sam from Ghana: bakes cakes, skates too",
+        "source_quote_keywords": [
+          "skating"
+        ]
+      },
+      {
+        "op": "caption",
+        "creator_text": "First place comes down to two: Rui...",
+        "source_quote_keywords": [
+          "camera"
+        ]
+      },
+      {
+        "op": "caption",
+        "creator_text": "...and Ana",
+        "source_quote_keywords": [
+          "skating"
+        ]
+      },
+      {
+        "op": "caption",
+        "creator_text": "Rui 42.1, Ana 42.6: a narrow win for Rui",
+        "source_quote_keywords": [
+          "photo"
+        ]
+      }
+    ],
+    "expect_any": true
+  }
+}

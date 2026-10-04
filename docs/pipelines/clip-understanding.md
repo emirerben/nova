@@ -90,6 +90,13 @@ Flow (flag on):
    Generated Creative Brief labels and Main Creator candidate intents remain
    non-authoritative hints; the planner verifies them against creator-authored
    wording and returns `intents=[]`, `question=null` for context-only requests.
+   `intent_id` is a handle the model invents, never part of the instruction: an
+   over-long id is shortened (`fit_intent_id`), a missing one minted, a duplicate
+   re-minted (KRI-422; a 41-45 character id used to drop a clear per-shot caption).
+   When instructions are still dropped, the "I understood N of your clip
+   instructions" reply carries closed-vocabulary `drop_classes` on the turn's
+   `plan.diagnostics` (`/admin/creation-threads/<id>/turns`) and a
+   `clip_intent_planner.salvaged` log line; the agent itself stores no raw output.
    `app/services/clip_intent_planning.py` forwards the complete inventory for
    grounding. Transcript-sourced requests stay in the complete inventory but
    bypass the visual resolver; they require a pinned guided narration before a

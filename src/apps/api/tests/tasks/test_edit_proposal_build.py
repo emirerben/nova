@@ -2489,6 +2489,38 @@ def test_creator_strategy_recovered_only_for_exact_owned_guided_attempt() -> Non
     )
 
 
+def test_guided_dispatch_context_carries_the_creators_output_shape() -> None:
+    """KRI-306: the async guided dispatch must receive the confirmed shape, or
+    "Vertical + Black bars" is silently rendered as a crop."""
+
+    edit_plan = CreatorEditPlan(
+        manifest_hash="a" * 64, context_hash="b" * 64, strategy=CreativeStrategy()
+    )
+    shape = {"output_orientation": "portrait", "landscape_fit": "fit"}
+
+    def _context(active_extra):
+        session = SimpleNamespace(
+            id=uuid.uuid4(),
+            active_plan={
+                "guided_generation_attempt_id": "attempt-1",
+                "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
+                **active_extra,
+            },
+        )
+        return proposal_build._creator_dispatch_context_for_guided_attempt(
+            _Db(_Result(rows=[session])),
+            item_id=uuid.uuid4(),
+            owner_id=uuid.uuid4(),
+            attempt_id="attempt-1",
+            ownership_epoch=0,
+        )
+
+    assert _context({"guided_render_shape": shape})["creator_render_shape"] == shape
+    # Never chosen (or cleared by a later no-choice confirm): the key is absent.
+    assert "creator_render_shape" not in _context({"guided_render_shape": None})
+    assert "creator_render_shape" not in _context({})
+
+
 def test_guided_dispatch_context_query_fences_owner_item_and_ownership_epoch() -> None:
     """Do not let the permissive row fixture hide a removed ownership fence."""
 
@@ -3890,3 +3922,79 @@ def test_semantic_planning_failure_keeps_its_retryability(monkeypatch) -> None:
     # diagnostic reason stays in the admin-only detail.
     assert persisted.failure.message == "Add more photos or videos."
     assert "pinned timing" in persisted.failure.detail
+
+
+# --- KRI-286: phone destinations dry-run the phone compiler at planning time ---
+
+
+def _phone_draft(monkeypatch, validator, *, phone: bool):
+    """Run one auto-approved draft with the phone dry-run stubbed to ``validator``."""
+
+    item_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    item = _prod_item(item_id, approval_mode="auto")
+    db = _Db(_Result(rows=[]))
+
+    @contextmanager
+    def _session():
+        yield db
+
+    monkeypatch.setattr(proposal_build, "sync_session", _session)
+    _auto_finalize_common_mocks(monkeypatch, item, owner_id)
+    monkeypatch.setattr(
+        "app.agents.edit_proposal.EditProposalAgent.run",
+        lambda self, input, **_kw: _FakeAgentOutput(  # noqa: A002
+            [_PROD_CLIP_ASSIGNMENT["media_id"]]
+        ),
+    )
+    monkeypatch.setattr(
+        "app.tasks.content_plan_build.dispatch_item_render_for",
+        lambda *_a, **_kw: SimpleNamespace(outcome="dispatched"),
+    )
+    monkeypatch.setattr(proposal_build, "renders_on_phone", lambda *_a, **_kw: phone)
+    monkeypatch.setattr(
+        "app.pipeline.phone_plan_repair.validate_proposal_phone_compiles", validator
+    )
+    proposal_build.draft_edit_proposal.run(str(item_id), "attempt-1", 0)
+    persisted = parse_edit_proposal(item.edit_proposal)
+    assert persisted is not None and persisted.status == "approved"
+    return persisted
+
+
+def test_phone_dry_run_repair_notes_reach_the_proposal_adjustments(monkeypatch) -> None:
+    calls = []
+
+    def validator(snapshot, assignments):  # noqa: ANN001
+        calls.append(assignments)
+        return ["Changed a text font to Inter so it renders on your iPhone"]
+
+    persisted = _phone_draft(monkeypatch, validator, phone=True)
+
+    assert calls, "a phone destination must dry-run the phone compiler"
+    snapshot = persisted.last_approved.snapshot
+    assert "Changed a text font to Inter so it renders on your iPhone" in snapshot.adjustments
+    assert persisted.planner_fallback is None
+
+
+def test_phone_dry_run_reject_takes_the_deterministic_fallback(monkeypatch) -> None:
+    from app.pipeline.phone_plan_repair import PhoneProposalRejected
+
+    def validator(_snapshot, _assignments):  # noqa: ANN001
+        raise PhoneProposalRejected("phone transition needs the full source window")
+
+    persisted = _phone_draft(monkeypatch, validator, phone=True)
+
+    snapshot = persisted.last_approved.snapshot
+    assert snapshot.adjustments[0] == "Kria used a simpler plan because the planner couldn't finish"
+    assert persisted.planner_fallback is not None
+    assert "phone transition needs the full source window" in persisted.planner_fallback.reason
+
+
+def test_non_phone_destination_never_runs_the_phone_dry_run(monkeypatch) -> None:
+    def validator(_snapshot, _assignments):  # noqa: ANN001
+        raise AssertionError("cloud destinations must be untouched")
+
+    persisted = _phone_draft(monkeypatch, validator, phone=False)
+
+    assert persisted.planner_fallback is None
+    assert persisted.last_approved.snapshot.adjustments == []

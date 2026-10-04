@@ -158,6 +158,12 @@ class ApprovalDecisionBody(_StrictBody):
     speech_cleanup_aware: bool = False
     speech_cleanup_analysis_id: uuid.UUID | None = None
     speech_cleanup_choice: Literal["clean", "keep_original", "create_without_cleanup"] | None = None
+    # KRI-306: the creator's finished-video shape, sent only when the thread's
+    # `render_shape` projection offered a choice. Optional and NOT part of
+    # `approval_fingerprint()` -- a shape is a setting on an already-reviewed
+    # direction, so changing it must never invalidate the approval.
+    output_orientation: Literal["portrait", "landscape"] | None = None
+    landscape_fit: Literal["fit", "fill"] | None = None
 
     @field_validator("expected_approval_fingerprint")
     @classmethod

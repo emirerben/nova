@@ -160,6 +160,7 @@ def _is_private_key(key: object) -> bool:
         or key == "_phone_visuals_v1"
         or key == "_editor_sources_v1"
         or key == "_phone_editor_plan_v1"
+        or key == "_phone_editor_saved_plan_v1"
         # KRI-174 Phase 1.5: the admin-authored subtitled media-lane request
         # carries pool storage paths (`gcs_path`/`generation` on each
         # overlay/ending-clip entry) -- never creator-safe.

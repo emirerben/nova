@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.65.0] - 2026-10-04
+
+### Changed
+- fix(clip-intents): a long model-minted intent id never drops a creator caption (KRI-422) (#1378) <!-- release-pr: 1378 -->
+
+## [0.78.64.0] - 2026-10-04
+
+### Added
+- feat(api): creator-selectable output shape (orientation + bars/crop) at approval and in device editor (KRI-306) (#1372) <!-- release-pr: 1372 -->
+
+## [0.78.63.0] - 2026-10-04
+
+### Fixed
+- fix(phone): repair phone-inexpressible plans at planning time + split capability errors (KRI-286) (#1370) <!-- release-pr: 1370 -->
+
+## [0.78.62.0] - 2026-10-04
+
+### Changed
+- feat(slide-post): server renders the full text style on slides (rotation, outline/shadow color, highlight, spacing) (#1368) <!-- release-pr: 1368 -->
+
+## [0.78.61.0] - 2026-10-04
+
+### Fixed
+- fix(phone): letterboxed landscape fit for voiceover montage + guided (KRI-285) (#1369) <!-- release-pr: 1369 -->
+
+## [0.78.60.0] - 2026-10-04
+
+### Changed
+- KRI-282: sport/chapter text from the creator's words + truthful receipt (#1377) <!-- release-pr: 1377 -->
+
 ## [0.78.59.0] - 2026-10-04
 
 ### Changed

@@ -36,6 +36,7 @@ authored/quoted caption phrase lives on ``ResolvedClipIntent.caption_text`` +
 
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from typing import Literal
@@ -60,6 +61,7 @@ GroundingSource = Literal["creator_text", "record_span", "vision_verified", "pla
 ResolutionStatus = Literal["resolved", "needs_creator"]
 
 MAX_CLIP_INTENTS = 8
+INTENT_ID_MAX_CHARS = 40
 # KRI-282: the generic stand-in printed on every clip a "placeholder" label
 # targets. System-chosen on purpose: the fence's invariant is that model or
 # Gemini output never becomes on-screen text, and the creator replaces this in
@@ -92,10 +94,25 @@ def _clean(value: object, limit: int) -> str:
     return " ".join(value.split())[:limit]
 
 
+def fit_intent_id(value: str) -> str:
+    """Shorten a model-minted intent id to the stored bound, deterministically.
+
+    The id is only a handle the model invents ("caption_guy_glasses_navy_tshirt_
+    bowling_video"); its length says nothing about whether the creator's
+    instruction is valid. KRI-422: rejecting an over-long id discarded a correctly
+    understood caption and asked the creator to restate it. Ids within the bound
+    are returned unchanged, so every persisted intent re-validates byte-identically.
+    """
+    if len(value) <= INTENT_ID_MAX_CHARS:
+        return value
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
+    return f"{value[: INTENT_ID_MAX_CHARS - len(digest) - 1]}-{digest}"
+
+
 class ClipIntent(BaseModel):
     """What the creator wants done with clips matching a described attribute."""
 
-    intent_id: str = Field(min_length=1, max_length=40)
+    intent_id: str = Field(min_length=1, max_length=INTENT_ID_MAX_CHARS)
     op: ClipIntentOp
     # Free text, the creator's own framing: "sport being played", "pub videos",
     # "people not playing sports", "me talking to the camera", "dish".
@@ -146,6 +163,11 @@ class ClipIntent(BaseModel):
     position: ClipOrderPosition | None = None
     # Only for op="order", and never together with `position`.
     order_by: ClipOrderBy | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @field_validator("intent_id", mode="before")
+    @classmethod
+    def _intent_id(cls, v: object) -> object:
+        return fit_intent_id(v) if isinstance(v, str) else v
 
     @field_validator("attribute", mode="before")
     @classmethod
@@ -319,6 +341,34 @@ def ground_label(
             intent_id=intent_id,
         )
     return None
+
+
+_LEADING_ARTICLES = frozenset({"the", "a", "an"})
+
+
+def chapter_name_caption(
+    *, attribute: str, caption_attribute: str | None, creator_request: str
+) -> str | None:
+    """The creator's own name for a chapter, when "a text for the pub" means just that.
+
+    KRI-282: for ``a text for the pub and the pregame`` the planner emits a caption
+    whose ``attribute`` ("the pub") and ``caption_attribute`` ("The Pub") name the SAME
+    chapter. The text the creator asked for is the chapter's own name, in their own
+    words, not a sentence the resolver writes about the footage ("Gathering and
+    relaxing on a grassy field"). Returns that name only when both fields agree
+    (ignoring a leading article) and the creator literally wrote it; otherwise None
+    and the caller falls back to the grounded authored phrase.
+    """
+    topic = clean_caption_text(caption_attribute)
+    if topic is None or not _contains_phrase(creator_request or "", topic):
+        return None
+
+    def core(text: str) -> list[str]:
+        words = _word_list(text)
+        return words[1:] if words and words[0] in _LEADING_ARTICLES else words
+
+    chapter = core(attribute or "")
+    return topic if chapter and chapter == core(topic) else None
 
 
 class GroundedCaption(BaseModel):

@@ -55,6 +55,7 @@ from app.kria.brief_route import (
     wants_hour_only_text,
 )
 from app.schemas.edit_proposal import (
+    CREATOR_SELECTED_ORIENTATION_REASON,
     MAX_PROPOSAL_DURATION_S,
     ClipLabel,
     EditProposalSnapshot,
@@ -363,6 +364,9 @@ class UnifiedMontagePlan:
     # KRI-296: the clips the creator described and gave exact text for, in plan
     # order. Empty when the text was not matched to described shots.
     label_scope_clip_ids: list[str] = field(default_factory=list)
+    # KRI-282: what each requested clip intent (group / sport label / chapter text)
+    # actually did in this plan, for an honest receipt. Empty without clip intents.
+    intent_outcomes: list[dict[str, Any]] = field(default_factory=list)
     # Zone the filming hours were printed in, "" when the labels are not hours.
     label_timezone: str = ""
     label_timezone_basis: str = ""
@@ -385,6 +389,7 @@ class UnifiedMontagePlan:
             if self.label_scope_clip_ids
             else {}
         )
+        outcomes = {"intent_outcomes": list(self.intent_outcomes)} if self.intent_outcomes else {}
         zone = (
             {
                 "label_timezone": self.label_timezone,
@@ -422,6 +427,7 @@ class UnifiedMontagePlan:
             **visuals,
             **closing_title,
             **scope,
+            **outcomes,
             **zone,
             **song,
         }
@@ -709,6 +715,7 @@ def plan_unified_montage(
     song_duration_s: float | None = None,
     song_plan_item_id: str | None = None,
     song_generation: int | None = None,
+    output_orientation: str | None = None,
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan for ``clips`` (attachment order).
 
@@ -735,6 +742,10 @@ def plan_unified_montage(
     every character of ``text`` (see ``skia_font_covers``); without it the
     default typography is used as is. ``visuals`` are the item's ready
     Visuals-pool items (``lane="asset"``) in upload order; see ``_scatter``.
+    ``output_orientation`` (KRI-306) is the creator's explicit finished-video
+    shape: ``"portrait"``/``"landscape"`` pins the canvas with the reason "The
+    creator selected this output format"; ``None`` keeps the snapshot's own
+    aspect-vote inference byte-identical.
     """
     view = view or BriefView()
     strategy = strategy or {}
@@ -800,7 +811,10 @@ def plan_unified_montage(
                     "capture_time",
                     False,
                 )
-        elif view.wants_per_clip_text:
+        elif view.wants_per_clip_text and not intent_labels:
+            # KRI-282: when the creator's own intents decide which clips carry text,
+            # a clip they did not name stays unlabelled. A place or landmark taken
+            # from clip facts is never printed in their place ("Wandsworth").
             fact = _fact_label(clip)
             if fact is not None:
                 chosen = (fact[0], "creator" if fact[1] == "creator" else "fact", fact[1], fact[2])
@@ -809,7 +823,7 @@ def plan_unified_montage(
             elif index == len(ordered) - 1 and end_fact and len(ordered) > 1:
                 chosen = (end_fact[:MAX_LABEL_CHARS], "brief", "end", False)
         if chosen is None:
-            if labels_requested and not described:
+            if labels_requested and not described and not intent_labels:
                 dropped.append(clip.media_id)
                 dropped_reasons[clip.media_id] = (
                     "no_capture_time" if view.per_clip_text_is_time else "no_fact"
@@ -1055,6 +1069,9 @@ def plan_unified_montage(
         snapshot_kwargs["opening_title_duration_s"] = hold
     if song_plan is not None:
         snapshot_kwargs["user_song"] = song_plan
+    if output_orientation in ("portrait", "landscape"):
+        snapshot_kwargs["output_orientation"] = output_orientation
+        snapshot_kwargs["output_orientation_reason"] = CREATOR_SELECTED_ORIENTATION_REASON
     style: dict[str, Any] = {}
     if family is not None:
         style["font_family"] = family
@@ -1092,7 +1109,10 @@ def plan_unified_montage(
         title=title,
         title_source=title_source,
         label_clip_ids=[clip.media_id for clip in ordered if clip.media_id in labels],
-        label_scope_clip_ids=[clip.media_id for clip in ordered if clip.ref_id in described],
+        label_scope_clip_ids=[
+            clip.media_id for clip in ordered if clip.ref_id in (described or intent_labels)
+        ],
+        intent_outcomes=_intent_outcomes(strategy, clip_intents_enabled, ordered, labels),
         dropped_label_clip_ids=dropped,
         short_label_clip_ids=short,
         ordering_basis=basis,
@@ -1181,44 +1201,82 @@ def _described_shot_labels(strategy: Mapping[str, Any], enabled: bool) -> dict[s
     Read from the server-verified ``op="caption"`` intents: the assignments say
     which clips the description matched, ``caption_text`` holds the words. Only
     the creator's own text counts; a phrase the resolver wrote is never printed.
+    A caption with no ``creator_text`` is not a described shot: it names a chapter
+    ("the pub") and is handled by ``_intent_labels``.
     """
     if not enabled:
         return {}
     rows: dict[str, str] = {}
     for intent in strategy.get("resolved_clip_intents") or []:
-        if not isinstance(intent, Mapping) or intent.get("op") != "caption":
-            continue
-        if intent.get("status", "resolved") != "resolved":
+        if not _is_resolved(intent, "caption") or not intent.get("creator_text"):
             continue
         if intent.get("caption_grounding") != "creator_text":
             continue
         text = _nfc(intent.get("caption_text"))
         if not text:
             continue
-        for assignment in intent.get("assignments") or []:
-            if not isinstance(assignment, Mapping):
-                continue
-            media_id = str(assignment.get("media_id") or "")
-            if media_id:
-                rows.setdefault(media_id, text)
+        for media_id in _members(intent):
+            rows.setdefault(media_id, text)
     return rows
 
 
-def _intent_labels(strategy: Mapping[str, Any], enabled: bool) -> dict[str, tuple[str, bool]]:
-    """media_id -> (text, creator_wrote_it) from server-verified label intents."""
-    if not enabled:
-        return {}
-    rows: dict[str, tuple[str, bool]] = {}
-    # KRI-282: a placeholder ("Name", for the creator to replace) is the more specific
-    # ask -- "individual shots of people" -- so it wins over a broader label on the
-    # same clip (a sport tag). It prints as the creator's own request, never inferred.
-    placeholders: dict[str, tuple[str, bool]] = {}
+def _is_resolved(intent: object, op: str) -> bool:
+    return (
+        isinstance(intent, Mapping)
+        and intent.get("op") == op
+        and intent.get("status", "resolved") == "resolved"
+    )
+
+
+def _members(intent: Mapping[str, Any]) -> list[str]:
+    return [
+        str(a["media_id"])
+        for a in intent.get("assignments") or []
+        if isinstance(a, Mapping) and a.get("media_id")
+    ]
+
+
+def _group_owners(strategy: Mapping[str, Any]) -> dict[str, list[str]]:
+    """media_id -> the creator's names (as written) of every group the clip is in."""
+    owners: dict[str, list[str]] = {}
     for intent in strategy.get("resolved_clip_intents") or []:
-        if not isinstance(intent, Mapping) or intent.get("op") != "label":
+        if not _is_resolved(intent, "group"):
             continue
-        for assignment in intent.get("assignments") or []:
-            if not isinstance(assignment, Mapping):
-                continue
+        name = _nfc(intent.get("attribute"))
+        for media_id in _members(intent):
+            if name and name not in owners.setdefault(media_id, []):
+                owners[media_id].append(name)
+    return owners
+
+
+def _label_rows(
+    strategy: Mapping[str, Any],
+) -> tuple[dict[str, tuple[str, bool]], dict[str, tuple[str, bool]]]:
+    """(text rows, placeholder rows) from resolved label intents (KRI-282).
+
+    A sport name comes from the creator's own group names, never from what the
+    resolver read in a clip's record. When the creator named the groups ("football,
+    dodgeball, beach volleyball ... group by sport") and the resolver's values for the
+    label are those names, a clip takes the name of the ONE group it is in; a clip in
+    no group, or in several, gets nothing rather than a guess like "Volleyballs".
+    """
+    rows: dict[str, tuple[str, bool]] = {}
+    placeholders: dict[str, tuple[str, bool]] = {}
+    owners = _group_owners(strategy)
+    group_names = {fold_text(name) for names in owners.values() for name in names}
+    for intent in strategy.get("resolved_clip_intents") or []:
+        if not _is_resolved(intent, "label"):
+            continue
+        assignments = [a for a in intent.get("assignments") or [] if isinstance(a, Mapping)]
+        by_group = not intent.get("placeholder") and any(
+            fold_text(_nfc(a.get("value"))) in group_names for a in assignments if a.get("value")
+        )
+        if by_group:
+            for media_id, names in owners.items():
+                if len(names) == 1:
+                    rows.setdefault(media_id, (names[0], True))
+            continue
+        for assignment in assignments:
             media_id = str(assignment.get("media_id") or "")
             value = _nfc(assignment.get("value"))
             if not (media_id and value):
@@ -1228,8 +1286,118 @@ def _intent_labels(strategy: Mapping[str, Any], enabled: bool) -> dict[str, tupl
                 placeholders.setdefault(media_id, (value, True))
             elif media_id not in rows:
                 rows[media_id] = (value, grounding == "creator_text")
+    return rows, placeholders
+
+
+def _intent_labels(strategy: Mapping[str, Any], enabled: bool) -> dict[str, tuple[str, bool]]:
+    """media_id -> (text, creator_wrote_it) from server-verified label intents."""
+    if not enabled:
+        return {}
+    rows, placeholders = _label_rows(strategy)
+    # KRI-282: "a text for the pub" prints the chapter's own name, in the creator's
+    # words, on that chapter's clips, over a broader sport tag.
+    for intent in strategy.get("resolved_clip_intents") or []:
+        if not _is_resolved(intent, "caption") or intent.get("creator_text"):
+            continue
+        text = _nfc(intent.get("caption_text"))
+        if text and intent.get("caption_grounding") == "creator_text":
+            for media_id in _members(intent):
+                rows[media_id] = (text, True)
+    # A placeholder ("Name", for the creator to replace) is the more specific
+    # ask -- "individual shots of people" -- so it wins over a broader label on the
+    # same clip (a sport tag). It prints as the creator's own request, never inferred.
     rows.update(placeholders)
     return rows
+
+
+def _group_outcome(groups: list[tuple[str, list[int]]]) -> dict[str, Any]:
+    """Are the clips of every group together in the final cut, one stretch each?"""
+    # A clip in several groups is ambiguous and belongs to none of them for this check.
+    tally: dict[int, int] = {}
+    for _name, spots in groups:
+        for i in spots:
+            tally[i] = tally.get(i, 0) + 1
+    owned = sorted(i for i, n in tally.items() if n == 1)
+    split: list[str] = []
+    for name, spots in groups:
+        mine = {i for i in spots if tally[i] == 1}
+        stretches, inside = 0, False
+        for i in owned:
+            if i in mine and not inside:
+                stretches += 1
+            inside = i in mine
+        if stretches > 1:
+            split.append(f"{name} is in {stretches} stretches")
+    row: dict[str, Any] = {"op": "group", "name": "group by " + ", ".join(n for n, _s in groups)}
+    if split:
+        return {
+            **row,
+            "status": "partial",
+            "reason": "clips stay in the order you filmed them, so " + "; ".join(split),
+        }
+    return {**row, "status": "met", "reason": None}
+
+
+def _intent_outcomes(
+    strategy: Mapping[str, Any],
+    enabled: bool,
+    ordered: Sequence[UnifiedClip],
+    labels: Mapping[str, ClipLabel],
+) -> list[dict[str, Any]]:
+    """What each requested group / sport label / chapter text did in this plan (KRI-282).
+
+    Computed from the finished plan, so a receipt can only report what rendered:
+    ``status`` is ``met`` / ``partial`` / ``not_possible`` like a requirement receipt.
+    The person placeholder is left out (its requirement receipt covers it).
+    """
+    if not enabled:
+        return []
+    position = {clip.ref_id: i for i, clip in enumerate(ordered)}
+    printed = {
+        clip.ref_id: labels[clip.media_id].text for clip in ordered if clip.media_id in labels
+    }
+    out: list[dict[str, Any]] = []
+    groups: list[tuple[str, list[int]]] = []
+    for intent in strategy.get("resolved_clip_intents") or []:
+        if not isinstance(intent, Mapping) or intent.get("placeholder"):
+            continue
+        op = intent.get("op")
+        name = _nfc(intent.get("attribute"))
+        members = [m for m in _members(intent) if m in position]
+        if op == "group" and intent.get("status", "resolved") == "resolved":
+            if members:
+                groups.append((name, sorted(position[m] for m in members)))
+            else:
+                out.append(
+                    {
+                        "op": "group",
+                        "name": name,
+                        "status": "not_possible",
+                        "reason": "I found no clips of it",
+                    }
+                )
+        elif _is_resolved(intent, "caption") and not intent.get("creator_text"):
+            text = _nfc(intent.get("caption_text"))
+            row = {"op": "caption", "name": f"text for {name}"}
+            if not members:
+                out.append({**row, "status": "not_possible", "reason": "I found no clips of it"})
+            elif not text or not any(printed.get(m) == text for m in members):
+                reason = "I couldn't put your own words on it"
+                out.append({**row, "status": "not_possible", "reason": reason})
+            else:
+                out.append({**row, "status": "met", "reason": None})
+    if groups:
+        out.append(_group_outcome(groups))
+        names = {fold_text(n) for n, _spots in groups}
+        for intent in strategy.get("resolved_clip_intents") or []:
+            if not _is_resolved(intent, "label") or intent.get("placeholder"):
+                continue
+            row = {"op": "label", "name": f"the {_nfc(intent.get('attribute'))} name on its clips"}
+            if any(fold_text(t) in names for t in printed.values()):
+                out.append({**row, "status": "met", "reason": None})
+            else:
+                out.append({**row, "status": "not_possible", "reason": "no clip got one"})
+    return out
 
 
 def _title(strategy: Mapping[str, Any], view: BriefView) -> tuple[str | None, str]:

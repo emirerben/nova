@@ -69,7 +69,11 @@ from app.pipeline.phone_captions import (
     compile_caption_layers,
 )
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
-from app.pipeline.phone_recipe_shared import fit_transform
+from app.pipeline.phone_recipe_shared import (
+    display_dims,
+    fit_transform,
+    landscape_fit_from_recipe,  # noqa: F401 - re-export, moved to phone_recipe_shared (KRI-285)
+)
 from app.pipeline.phone_subtitled_lanes import (
     CAPTION_BAND_TOP_FRAC,
     PhoneSubtitledLanes,
@@ -84,6 +88,9 @@ from app.services.phone_sources import (
     PhoneVisualBinding,
     require_bound_visual,
 )
+
+# Old private name, kept importable (moved to `phone_recipe_shared.display_dims`).
+_display_dims = display_dims
 
 # Mirrors `_render_subtitled_variant`'s own cap (generative_build.py, the
 # `probe.duration_s > 300.0` check ~line 20690): "subtitled clips are capped
@@ -1086,27 +1093,3 @@ def _sfx_volume(
     if overlap < _SFX_SPEECH_MIN_OVERLAP_S:
         return volume
     return round(volume * SFX_SPEECH_DUCK_GAIN, 4)
-
-
-def landscape_fit_from_recipe(recipe: EditRecipeV2) -> Literal["fill", "fit"]:
-    """Inverse of ``compile_phone_subtitled_plan``'s ``landscape_fit`` ->
-    speaker-clip transform projection (KRI-283): ``"fit"`` when the main
-    (``"subtitled"``) track's first clip -- always the speaker -- is scaled
-    below 1, else ``"fill"``. Lets an editor Save re-derive the letterbox from
-    the previously pinned recipe, like ``keep_segments``."""
-    main_track = next((track for track in recipe.tracks if track.id == "subtitled"), None)
-    if main_track is None or not main_track.clips:
-        return "fill"
-    first = min(main_track.clips, key=lambda clip: clip.timeline_start)
-    return "fit" if first.transform.scale < 1 else "fill"
-
-
-def _display_dims(original) -> tuple[int, int]:
-    """(width, height) as actually DISPLAYED once `orientation_degrees` is
-    applied -- a 1080x1920-pixel file flagged 90/270 degrees is portrait on
-    screen despite carrying landscape pixel dimensions (mirrors the
-    golden-hour exact-canvas check in `phone_voiceover_montage_plan.py`/
-    `phone_guided_plan.py`, which reasons about the same rotation flag)."""
-    if original.orientation_degrees in (90, 270):
-        return original.height, original.width
-    return original.width, original.height

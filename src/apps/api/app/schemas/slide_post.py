@@ -24,7 +24,7 @@ from __future__ import annotations
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
 
 from app.pipeline.look_presets import LookPreset
 from app.pipeline.slide_post.profiles import PlatformProfile
@@ -58,11 +58,33 @@ DEFAULT_SLIDE_TEXT_FONT = "Inter-Bold"
 # (round(1920 * 0.045)); used when a legacy `text` is lifted into an element.
 _LEGACY_TEXT_SIZE_PX = 86
 
+# Style fields added for video-editor Text-tool parity. All optional and
+# omitted from the serialized form while None, so a pre-parity element hashes
+# (`edits_cache_digest`) and serializes exactly as it did before they existed.
+_PARITY_STYLE_FIELDS = (
+    "rotation_deg",
+    "stroke_color",
+    "shadow_color",
+    "shadow_opacity",
+    "background_color",
+    "editor_preset",
+    "text_case",
+    "letter_spacing",
+    "line_spacing",
+)
+
 
 class SlideTextElement(BaseModel):
     """One styled text element on a single slide (rich text model, KRI-298).
 
-    A style vocabulary aligned with `agents/_schemas/text_element.TextElement`.
+    Slides are NOT a scaled-down video-editor document (no timing, animation,
+    captions, sounds or overlays), but the text style vocabulary is now shared
+    with the video editor's Text tool.
+
+    The style vocabulary is shared with `agents/_schemas/text_element.TextElement`
+    (the video editor's Text tool): validators and bounds for the parity fields
+    are reused from it, not copied. Timing, animation, behind-subject and
+    word-highlight are intentionally absent: they mean nothing on a still.
     Rendered by `pipeline/slide_post/build.py` through the Pillow
     `text_overlay._draw_text_png` path (PNG overlay) when
     `slide_post_rich_text_enabled` is on. All style fields default so a
@@ -79,7 +101,9 @@ class SlideTextElement(BaseModel):
     edited: bool = False
     font_family: str = DEFAULT_SLIDE_TEXT_FONT
     color: str = "#FFFFFF"
-    size_px: int = Field(default=_LEGACY_TEXT_SIZE_PX, ge=24, le=200)
+    # int|float: ints stay ints (legacy payloads/digests unchanged); native
+    # editor sizes may be fractional and go below the old 24 floor.
+    size_px: int | float = Field(default=_LEGACY_TEXT_SIZE_PX, ge=8, le=200, allow_inf_nan=False)
     alignment: Literal["left", "center", "right"] = "center"
     position: Literal["top", "center", "bottom", "custom"] = "bottom"
     # Fractions of the SLIDE canvas (so 4:5 slides place identically to the
@@ -88,9 +112,56 @@ class SlideTextElement(BaseModel):
     x_frac: float | None = Field(default=None, ge=0.0, le=1.0)
     y_frac: float | None = Field(default=None, ge=0.0, le=1.0)
     max_width_frac: float | None = Field(default=None, ge=0.2, le=1.0)
-    stroke_width: int = Field(default=0, ge=0, le=12)
+    stroke_width: int | float = Field(default=0, ge=0, le=20, allow_inf_nan=False)
     shadow_enabled: bool = True
     background: Literal["none", "box"] = "none"
+    # --- text-tool parity fields (all optional; None = renderer default) ---
+    rotation_deg: float | None = None  # clockwise, clamped to [-360, 360]
+    stroke_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    shadow_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    shadow_opacity: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    # Wins over the legacy `background` box when set (native "Highlight" preset).
+    background_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    editor_preset: Literal["Simple", "Bold", "Highlight"] | None = None
+    text_case: Literal["none", "upper", "lower", "title"] | None = None
+    letter_spacing: float | None = None  # em, clamped to [-0.05, 0.5]
+    line_spacing: float | None = None  # multiplier, clamped to [0.5, 3.0]
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_parity_fields(self, handler):
+        payload = handler(self)
+        for key in _PARITY_STYLE_FIELDS:
+            if payload.get(key) is None:
+                payload.pop(key, None)
+        return payload
+
+    @field_validator("rotation_deg", mode="before")
+    @classmethod
+    def _clamp_rotation(cls, value: object) -> float | None:
+        from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+
+        return TextElement._clamp_rotation_deg(value)
+
+    @field_validator("letter_spacing", mode="before")
+    @classmethod
+    def _clamp_letter(cls, value: object) -> float | None:
+        from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+
+        return TextElement._clamp_letter_spacing(value)
+
+    @field_validator("line_spacing", mode="before")
+    @classmethod
+    def _clamp_line(cls, value: object) -> float | None:
+        from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+
+        return TextElement._clamp_line_spacing(value)
+
+    @field_validator("text_case", mode="before")
+    @classmethod
+    def _coerce_case(cls, value: object) -> str | None:
+        from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+
+        return TextElement._coerce_text_case(value)
 
     @field_validator("font_family")
     @classmethod

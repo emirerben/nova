@@ -833,3 +833,29 @@ def test_the_reported_reunion_thread_plans_and_compiles():
     kinds = [(moment["lane"], moment["kind"]) for moment in compiled["story_timeline"]]
     assert kinds.count(("asset", "image")) == 2
     assert kinds.count(("clip", "video")) == 6
+
+
+# --- KRI-306: the creator's explicit output shape --------------------------------------
+
+
+@pytest.mark.parametrize("orientation", ["portrait", "landscape"])
+def test_creator_output_orientation_pins_the_canvas_with_its_reason(orientation):
+    plan = plan_unified_montage([clip(0), clip(1)], output_orientation=orientation)
+    assert plan.snapshot.output_orientation == orientation
+    assert plan.snapshot.output_orientation_reason == "The creator selected this output format."
+    assert plan.guided_edit()["approved_proposal"]["output_orientation"] == orientation
+
+
+def test_no_creator_choice_keeps_the_inferred_orientation_untouched():
+    plan = plan_unified_montage([clip(0), clip(1)])  # two 1920x1080 clips
+    assert plan.snapshot.output_orientation == "landscape"
+    assert plan.snapshot.output_orientation_reason.startswith("Auto-selected landscape")
+    # An unknown value is never trusted: it falls back to inference.
+    odd = plan_unified_montage([clip(0), clip(1)], output_orientation="square")
+    assert odd.snapshot.output_orientation == "landscape"
+    assert odd.snapshot.output_orientation_reason.startswith("Auto-selected")
+
+
+def test_a_vertical_choice_overrides_a_landscape_vote():
+    plan = plan_unified_montage([clip(0), clip(1)], output_orientation="portrait")
+    assert plan.snapshot.output_orientation == "portrait"
