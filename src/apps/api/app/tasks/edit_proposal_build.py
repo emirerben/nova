@@ -289,6 +289,10 @@ def _creator_dispatch_context_for_guided_attempt(
         context = {
             "creator_strategy": edit_plan.strategy.model_dump(mode="json", exclude_none=True)
         }
+        # KRI-306: the creator's explicit output shape for this attempt, if any.
+        render_shape = active_plan.get("guided_render_shape")
+        if isinstance(render_shape, dict) and render_shape:
+            context["creator_render_shape"] = render_shape
         cleanup = active_plan.get("guided_speech_cleanup")
         if cleanup is not None:
             # Consent belongs to the same immutable attempt as the strategy.

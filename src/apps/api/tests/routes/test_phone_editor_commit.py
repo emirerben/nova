@@ -792,3 +792,50 @@ def test_a_revision_save_recompiles_from_the_workers_repaired_plan(monkeypatch):
     assert len(bases) == 1
     assert bases[0].get("_repair_marker") == "repaired"
     assert device_status(job, "guided_story").request.identity.recipe_revision == 2
+
+
+def test_successive_revision_saves_compile_from_the_workers_plan_not_the_last_saves(monkeypatch):
+    """A Save must never overwrite the worker-pinned plan: the next revision Save
+    treats it as the provenance fence. Text added in Save 1 and deleted in Save 2
+    alongside a cut edit would otherwise trip the revision's text-identity check."""
+    from app.services import phone_editor
+
+    job, revision = _guided_shape_job(monkeypatch)
+    variant = job.assembly_plan["variants"][0]
+    worker_plan = copy.deepcopy(job.assembly_plan["guided_story_execution_plan"])
+    variant[phone_editor.PHONE_EDITOR_PLAN_FIELD] = copy.deepcopy(worker_plan)
+    original = copy.deepcopy(variant["text_elements"])
+    added = {**original[0], "id": "added-in-save-1", "text": "Added"}
+
+    # Save 1: add a text element (text-only Save).
+    _guided_save(job, revision, text_elements=[*original, added])
+    variant = job.assembly_plan["variants"][0]
+    assert any(e["id"] == "added-in-save-1" for e in variant["text_elements"])
+    assert variant[phone_editor.PHONE_EDITOR_PLAN_FIELD] == worker_plan  # untouched
+
+    # Save 2: a cut edit AND the added element deleted.
+    current = gj._guided_v2_revision(job, variant)
+    segment = current["segments"][0]
+    kept = [{**original[0], "start_s": 0.0, "end_s": 0.5}]  # inside the shorter cut
+    prep = _guided_save(
+        job,
+        revision,
+        text_elements=kept,
+        timeline_slots=[
+            gj.TimelineSlotEdit(
+                slot_id=segment["segment_id"], clip_index=0, in_s=2.2, duration_s=0.8
+            )
+        ],
+    )
+
+    assert prep["render_destination"] == "device"
+    variant = job.assembly_plan["variants"][0]
+    assert variant[phone_editor.PHONE_EDITOR_PLAN_FIELD] == worker_plan  # still untouched
+    assert all(e["id"] != "added-in-save-1" for e in variant["text_elements"])
+    assert device_status(job, "guided_story").request.identity.recipe_revision == 3
+    assert device_status(job, "guided_story").request.recipe.duration == pytest.approx(0.8)
+
+    # A later text-only Save still builds on what the last Save compiled (the cut).
+    again = [{**original[0], "text": "Again", "start_s": 0.0, "end_s": 0.5}]
+    _guided_save(job, revision, text_elements=again)
+    assert device_status(job, "guided_story").request.recipe.duration == pytest.approx(0.8)

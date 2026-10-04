@@ -4319,6 +4319,7 @@ async def _confirm_render_shape(
     user_id: uuid.UUID,
     *,
     strict: bool,
+    creator_request: str = "",
 ) -> dict[str, str] | None:
     """KRI-306: the creator's validated output-shape choice for this confirm.
 
@@ -4329,7 +4330,9 @@ async def _confirm_render_shape(
         return None
     from app.services import render_shape  # noqa: PLC0415
 
-    offer = await render_shape.offer_for_item(db, item, edit_plan.strategy, user_id)
+    offer = await render_shape.offer_for_item(
+        db, item, edit_plan.strategy, user_id, creator_request=creator_request
+    )
     try:
         return render_shape.resolve_choice(offer, body.output_orientation, body.landscape_fit)
     except render_shape.RenderShapeError as exc:
@@ -4429,7 +4432,13 @@ async def confirm_creator_plan_controller(
             raise HTTPException(status_code=409, detail="Creator execution is not resumable")
         edit_plan = _confirmed_edit_plan(active)
         render_shape_choice = await _confirm_render_shape(
-            db, item, edit_plan, body, user.id, strict=False
+            db,
+            item,
+            edit_plan,
+            body,
+            user.id,
+            strict=False,
+            creator_request=str(active.get("creator_request") or ""),
         )
     else:
         if session.revision != body.expected_revision or session.status != "awaiting_confirmation":
@@ -4438,7 +4447,13 @@ async def confirm_creator_plan_controller(
             raise HTTPException(status_code=409, detail="Creator plan changed")
         edit_plan = _confirmed_edit_plan(active)
         render_shape_choice = await _confirm_render_shape(
-            db, item, edit_plan, body, user.id, strict=True
+            db,
+            item,
+            edit_plan,
+            body,
+            user.id,
+            strict=True,
+            creator_request=str(active.get("creator_request") or ""),
         )
         from app.services.creator_execution_contract import (  # noqa: PLC0415
             requests_guided_voiceover,
@@ -4607,6 +4622,11 @@ async def confirm_creator_plan_controller(
                 # None on an ordinary confirmation prevents a later worker
                 # from borrowing consent recorded for an older attempt.
                 "guided_speech_cleanup": guided_speech_cleanup,
+                # KRI-306: the creator's validated output shape for THIS attempt. The
+                # proposal task dispatches the render after this request returns, so
+                # the shape rides the immutable attempt (like the cleanup choice),
+                # or "Vertical + Black bars" would silently crop. None = never chosen.
+                "guided_render_shape": render_shape_choice,
             }
         session.status = "executing"
         session.render_attempts += 1

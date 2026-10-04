@@ -3036,10 +3036,17 @@ async def _render_shape_projection(
 
     try:
         strategy: Any = None
+        request_text = ""
         if int(getattr(thread, "runtime_version", 1)) == 2:
-            approval = (
+            # One narrow query (this runs on a polled endpoint): the newest pending
+            # approval's draft body, nothing else.
+            snapshot = (
                 await db.execute(
-                    select(CreatorAgentApproval)
+                    select(CreatorEditDraft.snapshot_json)
+                    .join(
+                        CreatorAgentApproval,
+                        CreatorAgentApproval.draft_id == CreatorEditDraft.id,
+                    )
                     .where(
                         CreatorAgentApproval.thread_id == thread.id,
                         CreatorAgentApproval.status == "pending",
@@ -3048,22 +3055,21 @@ async def _render_shape_projection(
                     .limit(1)
                 )
             ).scalar_one_or_none()
-            draft = (
-                await db.get(CreatorEditDraft, approval.draft_id)
-                if approval is not None and approval.draft_id is not None
-                else None
-            )
-            snapshot = getattr(draft, "snapshot_json", None)
             if isinstance(snapshot, dict) and snapshot.get("kind") == "strategy":
                 raw = snapshot.get("strategy")
                 strategy = CreativeStrategy.model_validate(raw) if isinstance(raw, dict) else None
+                request_text = str(snapshot.get("intent") or "")
         elif session is not None and session.status == "awaiting_confirmation":
-            raw_plan = (session.active_plan or {}).get("edit_plan")
+            active_plan = session.active_plan or {}
+            raw_plan = active_plan.get("edit_plan")
             raw = raw_plan.get("strategy") if isinstance(raw_plan, dict) else None
             strategy = CreativeStrategy.model_validate(raw) if isinstance(raw, dict) else None
+            request_text = str(active_plan.get("creator_request") or "")
         if strategy is None:
             return None
-        offer = await render_shape.offer_for_item(db, item, strategy, thread.creator_id)
+        offer = await render_shape.offer_for_item(
+            db, item, strategy, thread.creator_id, creator_request=request_text
+        )
         return offer.projection()
     except Exception:  # noqa: BLE001 - an optional projection never breaks a read
         log.warning("creation_thread.render_shape_projection_failed", exc_info=True)

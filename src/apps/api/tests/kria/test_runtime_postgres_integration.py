@@ -2707,3 +2707,107 @@ async def test_thread_without_a_pending_strategy_projects_no_render_shape() -> N
         assert projected.render_shape is None
     finally:
         await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_a_stale_shape_stash_is_cleared_when_a_retry_sends_no_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A committed-then-refused first attempt must not leak its shape into the claim."""
+    monkeypatch.setattr(settings, "ios_device_only_mode", True)
+    try:
+        (
+            user_id,
+            thread_id,
+            _item,
+            approval_id,
+            token,
+            thread_revision,
+            draft_revision,
+        ) = await _await_montage_approval(monkeypatch, suffix="stale-stash")
+        with sync_session() as db:
+            approval = db.get(CreatorAgentApproval, approval_id)
+            execution = db.get(CreatorAgentExecution, uuid.UUID(approval.execution_ids[0]))
+            execution.result = {
+                **(execution.result or {}),
+                "render_shape": {"output_orientation": "portrait", "landscape_fit": "fill"},
+            }
+            db.commit()
+        async with AsyncSessionLocal() as db:
+            await decide_approval(
+                db,
+                thread_id=thread_id,
+                approval_id=approval_id,
+                creator_id=user_id,
+                decision="approve",
+                body=ApprovalDecisionBody(
+                    expected_thread_revision=thread_revision,
+                    expected_draft_revision=draft_revision,
+                    expected_approval_fingerprint=token,
+                ),
+            )
+        with sync_session() as db:
+            approval = db.get(CreatorAgentApproval, approval_id)
+            execution = db.get(CreatorAgentExecution, uuid.UUID(approval.execution_ids[0]))
+            assert "render_shape" not in (execution.result or {})
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_a_shape_choice_on_a_possible_speech_montage_is_not_applicable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The spoken-excerpt montage ignores the shape, so a choice is refused, not dropped."""
+    monkeypatch.setattr(settings, "ios_device_only_mode", True)
+    monkeypatch.setattr(settings, "speech_excerpt_montage_enabled", True)
+    monkeypatch.setenv("LANDSCAPE_OUTPUT_ENABLED", "true")
+    try:
+        (
+            user_id,
+            thread_id,
+            item_id,
+            approval_id,
+            token,
+            thread_revision,
+            draft_revision,
+        ) = await _await_montage_approval(monkeypatch, suffix="speech")
+        with sync_session() as db:
+            item = db.get(PlanItem, item_id)
+            item.voiceover_gcs_path = None  # a voiceover montage never takes this lane
+            item.clip_assignments = [
+                {
+                    "gcs_path": "users/u/talk.mp4",
+                    "kind": "video",
+                    "analysis": {"understanding": {"speech": {"has_speech": True}}},
+                }
+            ]
+            db.commit()
+        async with AsyncSessionLocal() as db:
+            projected = await _response_for(db, thread_id)
+        assert projected.render_shape is None
+        async with AsyncSessionLocal() as db:
+            with pytest.raises(RuntimeFailure) as failure:
+                await decide_approval(
+                    db,
+                    thread_id=thread_id,
+                    approval_id=approval_id,
+                    creator_id=user_id,
+                    decision="approve",
+                    body=ApprovalDecisionBody(
+                        expected_thread_revision=thread_revision,
+                        expected_draft_revision=draft_revision,
+                        expected_approval_fingerprint=token,
+                        output_orientation="landscape",
+                    ),
+                )
+        assert failure.value.status_code == 422
+        assert failure.value.code == "render_shape_not_applicable"
+    finally:
+        await async_engine.dispose()
+
+
+async def _response_for(db, thread_id):  # noqa: ANN001, ANN202
+    from app.routes.creation_threads import _response
+
+    return await _response(db, await db.get(CreationThread, thread_id))

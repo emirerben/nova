@@ -315,3 +315,103 @@ def test_job_carries_the_shape_only_when_the_creator_chose():
 def test_job_drops_a_malformed_shape():
     job = _build(creator_render_shape={"output_orientation": "square", "landscape_fit": "fit"})
     assert "creator_render_shape" not in job.all_candidates
+
+
+# ── review fixes ─────────────────────────────────────────────────────────────
+
+
+def _speaking_assignment(has_speech: bool = True) -> dict:
+    return {
+        "gcs_path": "users/u/talk.mp4",
+        "kind": "video",
+        "analysis": {"understanding": {"speech": {"has_speech": has_speech}}},
+    }
+
+
+def test_a_speech_montage_candidate_is_offered_no_shape(monkeypatch):
+    """The spoken-excerpt montage renders portrait and ignores bars/crop, so a
+    strategy that may route to it must not offer a shape it would silently drop."""
+    monkeypatch.setattr("app.config.settings.speech_excerpt_montage_enabled", True)
+    talking = _item([_speaking_assignment()])
+    offer = _offer(item=talking, creator_request="make a reel")
+    assert offer.has_choice is False
+    assert offer.reason == rs.REASON_SPEECH_MONTAGE
+    with pytest.raises(rs.RenderShapeError) as exc:
+        rs.resolve_choice(offer, "landscape", None)
+    assert exc.value.code == "render_shape_not_applicable"
+
+    # No speech clip, but the creator asks to use what they say: same lane.
+    silent = _item([_speaking_assignment(False)])
+    assert _offer(item=silent, creator_request="use what I say over the b-roll").has_choice is False
+
+
+def test_the_speech_gate_is_the_workers_own_predicate(monkeypatch):
+    from app.services.speech_montage_planning import speech_montage_possible
+
+    monkeypatch.setattr("app.config.settings.speech_excerpt_montage_enabled", True)
+    for request, speech in [
+        ("make a reel", True),
+        ("play my best lines", False),
+        ("make a reel", False),
+    ]:
+        item = _item([_speaking_assignment(speech)])
+        offered = _offer(item=item, creator_request=request).has_choice
+        assert offered is (not speech_montage_possible(request, any_clip_has_speech=speech))
+
+
+def test_speech_montage_gate_stays_off_with_its_kill_switch_or_a_voiceover(monkeypatch):
+    talking = _item([_speaking_assignment()])
+    monkeypatch.setattr("app.config.settings.speech_excerpt_montage_enabled", False)
+    assert _offer(item=talking, creator_request="make a reel").has_choice is True
+    monkeypatch.setattr("app.config.settings.speech_excerpt_montage_enabled", True)
+    voiced = _item([_speaking_assignment()])
+    voiced.voiceover_gcs_path = "users/u/voice.m4a"
+    assert _offer(item=voiced, creator_request="make a reel").has_choice is True
+
+
+def test_only_bars_next_to_a_landscape_default_is_a_conflict_not_a_silent_drop():
+    landscape_item = _item([_assignment(1920, 1080)] * 2)
+    offer = _offer(item=landscape_item)
+    assert offer.default_orientation == "landscape"
+    with pytest.raises(rs.RenderShapeError) as exc:
+        rs.resolve_choice(offer, None, "fit")
+    assert exc.value.code == "render_shape_unsupported"
+    # Crop-only next to a landscape default is consistent; an explicit Landscape
+    # with a stale bars value in the client's state is simply ignored.
+    assert rs.resolve_choice(offer, None, "fill")["output_orientation"] == "landscape"
+    assert rs.resolve_choice(offer, "landscape", "fit")["landscape_fit"] == "fill"
+
+
+@pytest.mark.parametrize(
+    "shapes",
+    [
+        [(1920, 1080), (1080, 1920)],  # tie: first non-square wins (landscape)
+        [(1080, 1920), (1920, 1080)],  # tie: first non-square wins (portrait)
+        [(1920, 1080), (1080, 1920), (1080, 1920)],
+        [(1920, 1080), (1920, 1080), (1080, 1920)],
+        [(1000, 1000), (1080, 1920), (1920, 1080)],
+    ],
+)
+def test_the_preselected_default_matches_what_the_auto_path_would_pick(shapes):
+    from app.pipeline.unified_montage import UnifiedClip, plan_unified_montage
+
+    clips = [
+        UnifiedClip(
+            media_id=f"c{i}",
+            proxy_path=f"users/u/analysis-proxy-c{i}.mp4",
+            generation="1",
+            duration_s=5.0,
+            width=w,
+            height=h,
+        )
+        for i, (w, h) in enumerate(shapes)
+    ]
+    auto = plan_unified_montage(clips).snapshot.output_orientation
+    voted = rs.vote_orientation([_assignment(w, h) for w, h in shapes]) or "portrait"
+    assert voted == auto
+
+
+def test_an_unknown_request_with_a_speaking_clip_still_withholds_the_shape(monkeypatch):
+    monkeypatch.setattr("app.config.settings.speech_excerpt_montage_enabled", True)
+    assert _offer(item=_item([_speaking_assignment()]), creator_request="").has_choice is False
+    assert _offer(item=_item([_speaking_assignment(False)]), creator_request="").has_choice is True

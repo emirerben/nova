@@ -211,7 +211,7 @@ def _shorten_ops(target_s, *, crossfade=True, strategy="proportional"):
 def _assert_clean_commit(
     job, prep, before_generation, *, target_s, clip_count=CLIP_COUNT, max_overlap_s=0.0
 ):
-    from app.services.phone_editor import PHONE_EDITOR_PLAN_FIELD
+    from app.services.phone_editor import PHONE_EDITOR_SAVED_PLAN_FIELD
 
     variant = job.assembly_plan["variants"][0]
     request = device_status(job, "guided_story").request
@@ -247,7 +247,7 @@ def _assert_clean_commit(
     # the plan the phone recipe was compiled from carries the same labels
     plan_labels = [
         e
-        for e in variant[PHONE_EDITOR_PLAN_FIELD]["text_elements"]
+        for e in variant[PHONE_EDITOR_SAVED_PLAN_FIELD]["text_elements"]
         if e["id"].startswith("clip-label-")
     ]
     assert {e["id"] for e in plan_labels} == {e["id"] for e in labels}

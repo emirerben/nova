@@ -47,6 +47,8 @@ REASON_FORMAT_CLOSED = "format_unsupported"
 REASON_MIXED_MEDIA = "mixed_media_timing"
 REASON_DISABLED = "disabled"
 REASON_NOT_ON_DEVICE = "not_on_device"
+REASON_SPEECH_MONTAGE = "speech_montage"
+REASON_LOOK = "look_unsupported"
 
 
 class RenderShapeError(Exception):
@@ -115,10 +117,14 @@ def vote_orientation(assignments: Iterable[object] | None) -> OutputOrientationC
     """Display-aspect vote over the attached clips; None when nothing votes.
 
     Reads ``upload_contract.proxy.original`` (width/height/rotation) -- the same
-    receipt the phone sources bind. Near-square clips are neutral. Landscape
-    wins only with a strict majority of the non-square votes.
+    receipt the phone sources bind. Near-square clips are neutral. Aligned with
+    ``infer_story_output_orientation`` (what the unified montage picks on its own
+    when nothing is chosen): the majority wins and a tie follows the FIRST
+    non-square clip, so the preselected default matches the auto path. Clips are
+    weighted equally -- a montage gives every clip a similar-length cut.
     """
     landscape = portrait = 0
+    first: OutputOrientationChoice | None = None
     for assignment in assignments or ():
         contract = _get(assignment, "upload_contract")
         proxy = _get(contract, "proxy") if contract else None
@@ -126,12 +132,16 @@ def vote_orientation(assignments: Iterable[object] | None) -> OutputOrientationC
         aspect = _media_display_aspect(original) if original else None
         if aspect is None or _PORTRAIT_ASPECT <= aspect <= _LANDSCAPE_ASPECT:
             continue
-        if aspect > _LANDSCAPE_ASPECT:
+        vote: OutputOrientationChoice = "landscape" if aspect > _LANDSCAPE_ASPECT else "portrait"
+        first = first or vote
+        if vote == "landscape":
             landscape += 1
         else:
             portrait += 1
-    if landscape == portrait == 0:
+    if first is None:
         return None
+    if landscape == portrait:
+        return first
     return "landscape" if landscape > portrait else "portrait"
 
 
@@ -149,6 +159,40 @@ def previous_ready_orientation(job: object | None) -> OutputOrientationChoice | 
     return None
 
 
+def _may_route_to_speech_montage(item: object, strategy: object, creator_request: str) -> bool:
+    """Whether the worker could take this montage down the spoken-excerpt lane.
+
+    Mirrors the dispatcher's own gate (`run_phone_speech_montage_job`): not a
+    voiceover montage, the kill switch on, and `speech_montage_possible` -- the
+    SAME first-stage predicate the worker uses -- over the creator's words and the
+    attached clips' analysed speech.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.services.clip_understanding import clip_record  # noqa: PLC0415
+    from app.services.speech_montage_planning import speech_montage_possible  # noqa: PLC0415
+
+    if not settings.speech_excerpt_montage_enabled:
+        return False
+    if _get(strategy, "audio_strategy") == "voiceover" or getattr(item, "voiceover_gcs_path", None):
+        return False
+    any_speech = False
+    for assignment in getattr(item, "clip_assignments", None) or ():
+        if not isinstance(assignment, Mapping):
+            continue
+        kind = "image" if str(assignment.get("kind") or "video") == "image" else "video"
+        try:
+            any_speech = any_speech or bool(
+                kind == "video"
+                and clip_record(assignment.get("analysis"), kind=kind).speech.has_speech
+            )
+        except Exception:  # noqa: BLE001 - an unreadable analysis is "no speech signal"
+            continue
+    # The worker's request is the first message plus the brief, which is never
+    # empty on a real thread; the draft/plan text available here can be, so an
+    # unknown request must not read as "nothing asked".
+    return speech_montage_possible(creator_request.strip() or "-", any_clip_has_speech=any_speech)
+
+
 def creation_offer(
     item: object,
     strategy: object,
@@ -156,12 +200,14 @@ def creation_offer(
     previous_orientation: str | None = None,
     device_render: bool = True,
     landscape_enabled: bool | None = None,
+    creator_request: str = "",
 ) -> RenderShapeOffer:
     """What the confirm screen offers for ``strategy`` on ``item``.
 
     ``device_render`` is whether this creator's render runs on the phone: the
     cloud generative loop does not take a creation-time orientation, so landscape
-    is only offered where the phone workers honour it.
+    is only offered where the phone workers honour it. ``creator_request`` is the
+    creator's own words (used only to spot a spoken-excerpt montage).
     """
     edit_format = str(_get(strategy, "edit_format") or "montage")
     if landscape_enabled is None:
@@ -184,6 +230,19 @@ def creation_offer(
             default_orientation="portrait",
             default_fit=default_fit,
             reason=REASON_FORMAT_CLOSED,
+        )
+
+    if edit_format in _LANDSCAPE_AND_FIT_FORMATS and _may_route_to_speech_montage(
+        item, strategy, creator_request
+    ):
+        # The spoken-excerpt montage renders portrait and has no bars/crop: offering
+        # a shape it would silently ignore breaks "no silent override" (KRI-129).
+        return RenderShapeOffer(
+            orientations=("portrait",),
+            fit_choices=(),
+            default_orientation="portrait",
+            default_fit=default_fit,
+            reason=REASON_SPEECH_MONTAGE,
         )
 
     reason: str | None = None
@@ -242,6 +301,15 @@ def resolve_choice(
     orientation = output_orientation or offer.default_orientation
     fit = landscape_fit or offer.default_fit
     if orientation == "landscape":
+        if landscape_fit == "fit" and output_orientation is None:
+            # The client only asked for bars, but the preselected shape is
+            # landscape, which never has them: a contradiction, not something to
+            # drop silently. (A client that explicitly picked Landscape may still
+            # carry a stale bars value in its state; that is simply ignored.)
+            raise RenderShapeError(
+                "render_shape_unsupported",
+                "Landscape videos always fill the frame; black bars aren't available.",
+            )
         fit = "fill"
     return {"output_orientation": orientation, "landscape_fit": fit}
 
@@ -288,6 +356,30 @@ def current_fit_value(variant: Mapping[str, Any], all_candidates: Mapping[str, A
     return "fit" if (all_candidates or {}).get("landscape_fit") == "fit" else "fill"
 
 
+def _pinned_recipe_has_look(variant: Mapping[str, Any], assembly: Mapping[str, Any]) -> bool:
+    """Whether a letterbox-capable main video track carries an edit-wide look."""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from app.pipeline.phone_recipe_shared import FIT_VIDEO_TRACK_IDS  # noqa: PLC0415
+    from app.services.device_render import device_status  # noqa: PLC0415
+
+    variant_id = variant.get("variant_id")
+    if not variant_id:
+        return False
+    try:
+        recipe = device_status(
+            SimpleNamespace(assembly_plan=dict(assembly)), str(variant_id)
+        ).request.recipe
+    except Exception:  # noqa: BLE001 - no pinned recipe -> no look signal
+        return False
+    return any(
+        clip.look is not None
+        for track in getattr(recipe, "tracks", ())
+        if track.kind == "video" and track.id in FIT_VIDEO_TRACK_IDS
+        for clip in track.clips
+    )
+
+
 def device_editor_offer(
     variant: Mapping[str, Any],
     assembly: Mapping[str, Any],
@@ -320,6 +412,10 @@ def device_editor_offer(
     if orientation_value == "landscape":
         # Landscape never has bars: nothing to choose.
         fit_axis = ShapeAxis(False, "landscape_output", "fill")
+    elif _pinned_recipe_has_look(variant, assembly):
+        # The device throws on a look + transform, so a look clip is never
+        # letterboxed: advertising bars would save an unchanged recipe.
+        fit_axis = closed(REASON_LOOK)
     else:
         fit_axis = None  # type: ignore[assignment]
 
@@ -365,7 +461,7 @@ def cloud_fit_axis(variant: Mapping[str, Any]) -> dict[str, Any]:
 
 
 async def offer_for_item(
-    db: Any, item: object, strategy: object, creator_id: object
+    db: Any, item: object, strategy: object, creator_id: object, *, creator_request: str = ""
 ) -> RenderShapeOffer:
     """``creation_offer`` with the item's previous ready variant and the account's
     render destination resolved (one unlocked Job read)."""
@@ -379,4 +475,5 @@ async def offer_for_item(
         strategy,
         previous_orientation=previous_ready_orientation(job),
         device_render=bool(settings.phone_rendering_for(creator_id)),
+        creator_request=creator_request,
     )

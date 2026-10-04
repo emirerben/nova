@@ -75,7 +75,13 @@ from app.services.phone_voiceover_timeline import (
 )
 
 log = structlog.get_logger()
+# The worker-pinned (possibly repaired) guided plan. ONLY the worker writes it: a
+# revision Save compiles from it as the provenance fence, so a Save must never
+# overwrite it with its own output.
 PHONE_EDITOR_PLAN_FIELD = "_phone_editor_plan_v1"
+# What the LAST Save compiled. A text-only Save reuses it so the approved timing
+# program (and any cut that Save made) survives; revision Saves never read it.
+PHONE_EDITOR_SAVED_PLAN_FIELD = "_phone_editor_saved_plan_v1"
 
 # The only native-editor sections a phone `subtitled` (Talking to camera)
 # variant honours today (KRI-182 step 1; `caption_cues`/`caption_meta` added
@@ -144,6 +150,7 @@ def is_phone_voiceover_montage_editor_variant(variant: object, assembly: dict) -
         and variant.get("render_destination") == "device"
         and variant.get("resolved_archetype") == "voiceover"
         and not variant.get(PHONE_EDITOR_PLAN_FIELD)
+        and not variant.get(PHONE_EDITOR_SAVED_PLAN_FIELD)
         and "guided_story_execution_plan" not in assembly
     )
 
@@ -235,9 +242,10 @@ def prepare_phone_editor_commit(
                 "edit its timeline in the app"
             )
         else:
-            plan = copy.deepcopy(
+            worker_plan = (
                 variant.get(PHONE_EDITOR_PLAN_FIELD) or assembly["guided_story_execution_plan"]
             )
+            plan = copy.deepcopy(variant.get(PHONE_EDITOR_SAVED_PLAN_FIELD) or worker_plan)
             revision = prep.get("guided_revision")
             render_sections = {key for key, value in prep["sections"].items() if value}
             if not (render_sections - {"text_elements"}):
@@ -257,7 +265,7 @@ def prepare_phone_editor_commit(
                     # A worker that repaired the approved plan for the phone (KRI-286)
                     # pins the repaired one: recompiling from the canonical plan
                     # would re-introduce what the repair removed.
-                    variant.get(PHONE_EDITOR_PLAN_FIELD) or assembly["guided_story_execution_plan"],
+                    worker_plan,
                     assembly["guided_edit"],
                     revision,
                     admitted_sources=editor_sources_for_variant(variant),
@@ -315,7 +323,7 @@ def prepare_phone_editor_commit(
                     variant["render_status"] = "awaiting_device"
                     variant["render_destination"] = "device"
                     variant["duration_s"] = plan["resolved_duration_s"]
-                    variant[PHONE_EDITOR_PLAN_FIELD] = plan
+                    variant[PHONE_EDITOR_SAVED_PLAN_FIELD] = plan
                     variant.update(song_reference_variant_fields(plan))
         staged.status = "awaiting_device"
     except (

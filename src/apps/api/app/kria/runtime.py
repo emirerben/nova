@@ -1328,6 +1328,7 @@ async def _validated_render_shape(
     plan_item: PlanItem | None,
     strategy_payload: dict[str, Any] | None,
     creator_id: uuid.UUID,
+    creator_request: str = "",
 ) -> dict[str, str]:
     """The ``creator_render_shape`` payload for an approve request, or a 422.
 
@@ -1346,7 +1347,11 @@ async def _validated_render_shape(
             recovery="ask_user",
         )
     offer = await render_shape.offer_for_item(
-        db, plan_item, CreativeStrategy.model_validate(strategy_payload), creator_id
+        db,
+        plan_item,
+        CreativeStrategy.model_validate(strategy_payload),
+        creator_id,
+        creator_request=creator_request,
     )
     try:
         chosen = render_shape.resolve_choice(offer, body.output_orientation, body.landscape_fit)
@@ -1657,12 +1662,32 @@ async def decide_approval(
             plan_item=plan_item if is_strategy_approval else None,
             strategy_payload=document_peek.strategy if is_strategy_approval else None,
             creator_id=creator_id,
+            creator_request=document_peek.intent if is_strategy_approval else "",
         )
 
     strategy_media: _StrategyApprovalMedia | None = None
     preflight_analysis_id_to_publish: uuid.UUID | None = None
-    if render_shape_stash is not None and execution is not None:
-        execution.result = {**(execution.result or {}), "render_shape": render_shape_stash}
+    if decision == "approve" and execution is not None:
+        # Set-or-clear on EVERY approve: a retry after a committed-then-refused
+        # first attempt (the speech-cleanup 409 commits) that carries no shape
+        # must not inherit the earlier attempt's choice at claim time.
+        stashed = {key: value for key, value in (execution.result or {}).items()}
+        if render_shape_stash is not None:
+            stashed["render_shape"] = render_shape_stash
+        else:
+            stashed.pop("render_shape", None)
+        if stashed != (execution.result or {}):
+            execution.result = stashed
+    elif render_shape_stash is not None:
+        # A validated choice with nowhere durable to put it would be dropped
+        # silently behind a 200.
+        raise RuntimeFailure(
+            409,
+            "approval_target_missing",
+            "The render for this approval is unavailable.",
+            phase="approval",
+            recovery="refresh_replan",
+        )
     if is_strategy_approval and decision == "approve" and plan_item is not None:
         strategy_media = await _apply_strategy_approval_media(
             db,

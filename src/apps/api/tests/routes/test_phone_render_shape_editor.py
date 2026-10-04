@@ -143,3 +143,65 @@ def test_a_cut_edit_keeps_the_bars_for_a_newly_placed_sideways_clip(monkeypatch)
     scales = [clip.transform.scale for clip in _track(_recipe(job, vid), "montage").clips]
     assert scales[-1] == pytest.approx(0.31640625)  # the new clip is letterboxed
     assert _variant(job)["landscape_fit"] == "fit"
+
+
+# --- a look (golden hour) is never letterboxed -----------------------------------------
+
+
+def _give_the_montage_a_look(job, variant_id: str) -> None:
+    """Re-pin the voiceover montage with a golden-hour look on every clip."""
+    from app.kria.device_render import make_device_request
+    from app.kria.recipes_v2 import EditRecipeV2
+    from app.services.device_render import pin_device_request
+
+    request = device_status(job, variant_id).request
+    recipe = request.recipe
+    fields = {name: getattr(recipe, name) for name in type(recipe).model_fields}
+    fields["tracks"] = [
+        track.model_copy(
+            update={"clips": [c.model_copy(update={"look": "golden_hour"}) for c in track.clips]}
+        )
+        if track.id == "montage"
+        else track
+        for track in recipe.tracks
+    ]
+    looked = EditRecipeV2(**fields)
+    pin_device_request(
+        job,
+        make_device_request(
+            job_id=job.id,
+            variant_id=variant_id,
+            revision=request.identity.recipe_revision + 1,
+            recipe=looked,
+        ),
+        base_generation="first",
+    )
+
+
+def test_a_look_closes_the_bars_control_and_save_refuses_clearly(monkeypatch):
+    _enable(monkeypatch)
+    job, vid = voiceover_job(archetype="voiceover")
+    _make_landscape(job)
+    _give_the_montage_a_look(job, vid)
+
+    caps = gj._editor_capabilities(job, _variant(job))
+    assert caps["landscape_fit"]["editable"] is False
+    assert caps["landscape_fit"]["reason"] == "look_unsupported"
+
+    before = device_status(job, vid).request
+    with pytest.raises(HTTPException) as error:
+        _save(job, vid, landscape_fit="fit")
+    assert error.value.status_code == 422
+    assert error.value.detail == {
+        "code": "landscape_fit_unsupported",
+        "reason": "look_unsupported",
+    }
+    # Nothing was silently "saved": no persisted value, no new revision.
+    assert "landscape_fit" not in _variant(job)
+    assert device_status(job, vid).request == before
+
+
+def test_without_a_look_the_bars_control_stays_open(monkeypatch):
+    _enable(monkeypatch)
+    job, _ = voiceover_job(archetype="voiceover")
+    assert gj._editor_capabilities(job, _variant(job))["landscape_fit"]["editable"] is True

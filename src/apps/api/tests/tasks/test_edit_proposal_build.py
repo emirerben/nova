@@ -2489,6 +2489,38 @@ def test_creator_strategy_recovered_only_for_exact_owned_guided_attempt() -> Non
     )
 
 
+def test_guided_dispatch_context_carries_the_creators_output_shape() -> None:
+    """KRI-306: the async guided dispatch must receive the confirmed shape, or
+    "Vertical + Black bars" is silently rendered as a crop."""
+
+    edit_plan = CreatorEditPlan(
+        manifest_hash="a" * 64, context_hash="b" * 64, strategy=CreativeStrategy()
+    )
+    shape = {"output_orientation": "portrait", "landscape_fit": "fit"}
+
+    def _context(active_extra):
+        session = SimpleNamespace(
+            id=uuid.uuid4(),
+            active_plan={
+                "guided_generation_attempt_id": "attempt-1",
+                "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
+                **active_extra,
+            },
+        )
+        return proposal_build._creator_dispatch_context_for_guided_attempt(
+            _Db(_Result(rows=[session])),
+            item_id=uuid.uuid4(),
+            owner_id=uuid.uuid4(),
+            attempt_id="attempt-1",
+            ownership_epoch=0,
+        )
+
+    assert _context({"guided_render_shape": shape})["creator_render_shape"] == shape
+    # Never chosen (or cleared by a later no-choice confirm): the key is absent.
+    assert "creator_render_shape" not in _context({"guided_render_shape": None})
+    assert "creator_render_shape" not in _context({})
+
+
 def test_guided_dispatch_context_query_fences_owner_item_and_ownership_epoch() -> None:
     """Do not let the permissive row fixture hide a removed ownership fence."""
 
