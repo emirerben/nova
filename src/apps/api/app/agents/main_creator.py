@@ -46,7 +46,9 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # are always captured when the creator asks the edit to follow a route or sequence (v39).
 # KRI-244: descriptive footage chronology remains creative context unless the
 # creator actually asks the edit to order, group, label, include, or caption it (v40).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-03-v41"
+# KRI-422: dictated per-shot texts are one per_clip brief entry per shot (they all
+# stay in force); `brief_updates` cap 8 -> 16 (v42).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-04-v42"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -199,7 +201,7 @@ named are added on iPhone. This edit always stays `edit_format: "subtitled"` wit
 _BRIEF_PROMPT_SECTION = """
 CREATIVE BRIEF
 The FULL CREATOR REQUEST CONTRACT lists every requirement the creator has stated so far. In
-ADDITION to `action`, return a top-level `brief_updates` list (at most 8 objects, in the same
+ADDITION to `action`, return a top-level `brief_updates` list (at most 16 objects, in the same
 JSON object as `action`) holding ONLY the requirements the CURRENT USER MESSAGE newly states or
 changes -- never re-list a requirement that is already in the contract and unchanged. Each
 object: {"kind": "text|order|select|timing|audio|style", "scope":
@@ -228,7 +230,13 @@ I filmed", "order them chronologically", "start the edit at X and finish at Y"):
 "order", "scope": "global", "facts": {"key": "capture_time"}} plus "start"/"end" when named.
 Merely narrating that footage was captured "from A to B", at sunset and then at night, or during
 two activities is not such an ask. One requirement per (kind, scope): a new one replaces the
-older one. A message that only asks to redo the edit ("do it again based on my prompt") adds no
+older one. The exception is exact text the creator dictates for particular shots ("1. The
+bookshop photo: "..." 2. The bowling video: "..."): add one {"kind": "text", "scope":
+"per_clip"} object PER SHOT with `literal` = that shot's exact words and `description` = the
+shot as the creator named it. All of them stay in force; to change one shot's text, restate
+only that shot and copy its `description` exactly as the contract shows it. The same words on
+every clip are one object with that `literal` and `description` null. A message that only asks
+to redo the edit ("do it again based on my prompt") adds no
 requirements -- propose a full strategy that honours EVERY requirement in the contract. Example:
 "Title it 20K Koşu, put the landmark name on each clip and order them by the time I filmed
 them" => brief_updates:

@@ -113,9 +113,13 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   version per turn (`UNIQUE(thread_id, version)`, idempotent per `source_turn_id`).
   Requirements have a server-assigned id (`r<n>`), `kind`, `scope`, `literal`
   (creator-written text only) or `description`, `facts`, and `status`. A later
-  requirement with the same `(kind, scope)` supersedes the earlier one. The
-  Main Creator (prompt v40) only proposes `brief_updates`; unparseable entries
-  are dropped, never fatal. Versions are written by the turn-completion
+  requirement with the same `(kind, scope)` supersedes the earlier one, except
+  dictated shot texts (KRI-422): a `per_clip` text with both a `literal` and a
+  `description` is keyed by its shot too, so six shots dictated in one message
+  all stay live and restating a shot replaces only that shot. A label-every-clip
+  rule (no such pair) still replaces the whole per-clip lane, shot texts
+  included. The Main Creator (prompt v42) only proposes `brief_updates`, at most
+  16 per turn; unparseable entries are dropped, never fatal. Versions are written by the turn-completion
   transaction under the thread lock, after the revision fence, so a requeued
   turn never persists one.
 - **Context is not a command.** The brief records requested output changes, not
