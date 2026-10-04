@@ -28,11 +28,14 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     private var delayedResponse: DispatchWorkItem?
     override func startLoading() {
-        if request.url?.path.hasSuffix("/messages") == true,
-           ProcessInfo.processInfo.environment["KRIA_CHAT_SLOW_CREATION"] == "1" {
+        // `KRIA_SLIDE_POST_CAPS=slow`: capabilities answer after 6s (the slide editor must not wait for them).
+        let slowCapabilities = request.url?.path.hasSuffix("/capabilities") == true
+            && ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CAPS"] == "slow"
+        if slowCapabilities || (request.url?.path.hasSuffix("/messages") == true
+            && ProcessInfo.processInfo.environment["KRIA_CHAT_SLOW_CREATION"] == "1") {
             let work = DispatchWorkItem { [weak self] in self?.finishLoading() }
             delayedResponse = work
-            DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: work)
+            DispatchQueue.global().asyncAfter(deadline: .now() + (slowCapabilities ? 6 : 5), execute: work)
         } else { finishLoading() }
     }
     private func finishLoading() {
@@ -81,6 +84,8 @@ private final class CreationChatFixture: @unchecked Sendable {
         let body = (try? JSONSerialization.jsonObject(with: bodyData(request))) as? [String: Any] ?? [:]
         func response(_ object: Any, status: Int = 200) -> (Int, Data) { (status, (try? JSONSerialization.data(withJSONObject: object)) ?? Data()) }
         if path == "/creation-threads/capabilities" {
+            // `KRIA_SLIDE_POST_CAPS=fail`: the capabilities request never gets an answer.
+            if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CAPS"] == "fail" { return nil }
             var capabilities: [String: Any] = ["formats": [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", 1), ("slides", "slides", 20)].map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_RICH_TEXT"] == "1" { capabilities["slide_post_rich_text"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CHAT_EDIT"] == "1" { capabilities["slide_post_chat_edit"] = true }
@@ -132,6 +137,11 @@ private final class CreationChatFixture: @unchecked Sendable {
             return response(Array(threads.values))
         }
         let parts = path.split(separator: "/").map(String.init)
+        // Gallery row for the READY slide post (`KRIA_SLIDE_POST_READY_THREAD=1`).
+        if path == "/me/jobs", ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_READY_THREAD"] == "1" {
+            let id = "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"
+            return response(["jobs": [["id": id, "title": "Weekend trip", "status": "ready", "output_variant_id": "slides", "content_plan_item_id": id, "created_at": "2026-09-10T10:00:00Z"]], "next_cursor": NSNull()])
+        }
         if parts.count >= 4, parts[0] == "me", parts[1] == "jobs", parts[3] == "device-render",
            let scenario = DeviceRenderUITestFixture.scenario, let jobID = UUID(uuidString: parts[2]) {
             return deviceRenderResponse(scenario: scenario, jobID: jobID, route: parts.count > 4 ? parts[4] : nil, body: body)

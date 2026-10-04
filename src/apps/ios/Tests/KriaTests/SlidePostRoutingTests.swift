@@ -99,4 +99,29 @@ final class SlidePostRoutingTests: XCTestCase {
         cached.editFormat = "slides"; cached.outputVariantID = "slides"
         XCTAssertTrue(cached.summary.isSlidePost)
     }
+
+    // MARK: Screen matrix (post-Back, cold open, loading)
+
+    func testScreenMatrixNeverShowsGenericChatOrVideoForASlidePost() throws {
+        let slideThread = try thread(state: ["format": "slides"])
+        // Signals from any one source land in the slide workspace.
+        XCTAssertEqual(SlidePostRouting.screen(selectedFormat: .slides, project: project(), thread: nil, isChoosingFormat: false), .slideWorkspace)
+        XCTAssertEqual(SlidePostRouting.screen(selectedFormat: nil, project: project(editFormat: "slides"), thread: nil, isChoosingFormat: false), .slideWorkspace)
+        XCTAssertEqual(SlidePostRouting.screen(selectedFormat: nil, project: project(), thread: slideThread, isChoosingFormat: false), .slideWorkspace)
+        // Back no longer flips the screen: the format-chooser flag is never set for a slide post.
+        XCTAssertEqual(SlidePostRouting.screen(selectedFormat: .slides, project: project(variant: "slides"), thread: slideThread, isChoosingFormat: false), .slideWorkspace)
+    }
+
+    func testStartedProjectWithNoSignalShowsNeutralLoadingNotGenericChat() throws {
+        XCTAssertEqual(SlidePostRouting.screen(selectedFormat: nil, project: project(), thread: nil, isChoosingFormat: false), .resolvingFormat)
+        // Once the thread proves it is not a slide post, the normal chat appears.
+        let montage = try thread(state: ["format": "montage"])
+        XCTAssertEqual(SlidePostRouting.screen(selectedFormat: nil, project: project(), thread: montage, isChoosingFormat: false), .genericChat)
+        XCTAssertFalse(SlidePostRouting.canOpenVideoEditor(selectedFormat: nil, project: project(), thread: nil), "no video entry while unknown")
+    }
+
+    func testNewDraftChatStillShowsTheFormatChooser() {
+        let draft = ProjectSummary(id: UUID(), title: "New", status: .draft, updatedAt: .now, posterURL: nil)
+        XCTAssertEqual(SlidePostRouting.screen(selectedFormat: nil, project: draft, thread: nil, isChoosingFormat: false), .genericChat)
+    }
 }

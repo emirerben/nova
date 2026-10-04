@@ -52,6 +52,7 @@ enum SlidePostMode: Equatable {
 /// `SlidePostTransportRow`, where the editor keeps its own transport row.
 struct SlidePostHeader: View {
     enum Action { case save, create, rendering, share, saving }
+    let title: String
     let action: Action
     let actionEnabled: Bool
     let onBack: () -> Void
@@ -60,7 +61,7 @@ struct SlidePostHeader: View {
     let onShare: () -> Void
 
     var body: some View {
-        WorkspaceTopRow(title: "Photo post") {
+        WorkspaceTopRow(title: title) {
             Button(action: onBack) {
                 Image(systemName: "chevron.left").font(.system(size: 15, weight: .semibold)).foregroundStyle(KriaColor.ink)
                     .frame(width: 44, height: 44).kriaFloatingSurface(Circle())
@@ -425,7 +426,7 @@ struct SlidePostToolBar: View {
                 .dynamicTypeSize(...DynamicTypeSize.xxxLarge).lineLimit(1).minimumScaleFactor(0.7)
         }
         .foregroundStyle(active ? KriaColor.ink : KriaColor.zinc)
-        .frame(minWidth: 62, maxWidth: .infinity).frame(height: NativeEditorIslandMetrics.toolHeight)
+        .frame(width: NativeEditorIslandMetrics.toolWidth, height: NativeEditorIslandMetrics.toolHeight)
         .background { if active { Capsule().fill(KriaColor.ink.opacity(0.07)) } }
         .contentShape(Capsule())
     }

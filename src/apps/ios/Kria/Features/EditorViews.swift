@@ -202,6 +202,8 @@ struct ResultsView: View {
     @State private var isPreparingShare = false
     @State private var showsEditor = false
     @State private var songReference: NativeSongReference?
+    @State private var resolvedSlideThread: CreationThread?
+    @State private var formatChecked = false
 
     init(project: ProjectSummary, libraryJobID: UUID? = nil) {
         self.project = project
@@ -210,11 +212,26 @@ struct ResultsView: View {
 
     var body: some View {
         // A slide post has no video timeline: never offer "Edit video" for one.
-        if project.isSlidePost {
-            SlidePostWorkspaceView(project: project)
+        if project.isSlidePost || resolvedSlideThread != nil {
+            SlidePostWorkspaceView(project: project, thread: resolvedSlideThread)
+        } else if needsFormatCheck && !formatChecked {
+            // A row with no format signal could still be a slide post: never offer the video editor yet.
+            ProgressView("Opening your project…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .task {
+                    if let thread = try? await model.api.project(threadID: project.id),
+                       SlidePostRouting.isSlidePost(selectedFormat: nil, project: project, thread: thread) {
+                        resolvedSlideThread = thread
+                    }
+                    formatChecked = true
+                }
         } else {
             videoBody
         }
+    }
+
+    private var needsFormatCheck: Bool {
+        project.activePlanItemID != nil && project.editFormat == nil && project.outputVariantID == nil
     }
 
     private var videoBody: some View {

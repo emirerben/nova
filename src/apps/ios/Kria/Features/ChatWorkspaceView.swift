@@ -309,6 +309,7 @@ private struct CreationWorkspaceView: View {
     /// so a server-side rollback of `editor_state_turns` takes effect without relaunching.
     @State private var capabilitiesReadAt: Date?
     @State private var isChoosingFormat = false
+    @State private var formatResolveFailed = false
     @State private var threadState: [String: JSONValue] = [:]
     @State private var afterSequence = -1
     @State private var threadRevision: Int
@@ -609,13 +610,40 @@ private struct CreationWorkspaceView: View {
         SlidePostRouting.canOpenVideoEditor(selectedFormat: selectedFormat, project: currentProject, thread: fullThread)
     }
 
+    private var workspaceScreen: SlidePostRouting.Screen {
+        SlidePostRouting.screen(selectedFormat: selectedFormat, project: currentProject, thread: fullThread, isChoosingFormat: isChoosingFormat)
+    }
+
+    /// Format unknown (list row had no signal): fetch the full projection NOW. The delta poll only pulls
+    /// it when the revision advances, which a quiet ready project never does.
+    private func resolveFormat() async {
+        formatResolveFailed = false
+        var attempts = 0
+        while !isFormatKnown, attempts < 5, !Task.isCancelled {
+            if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
+            attempts += 1
+            if !isFormatKnown { try? await Task.sleep(for: .seconds(1)) }
+        }
+        if !isFormatKnown, !Task.isCancelled { formatResolveFailed = true }
+    }
+
+    private func loadCapabilitiesWithRetry() async {
+        for delay in [0.0, 1.0, 3.0, 8.0] {
+            if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+            if Task.isCancelled { return }
+            await refreshCapabilities()
+            if capabilitiesAreAuthoritative { return }
+        }
+    }
+
     private var isSlidePostProject: Bool {
         SlidePostRouting.isSlidePost(selectedFormat: selectedFormat, project: currentProject, thread: fullThread)
     }
 
     var body: some View {
         Group {
-            if hasDedicatedSlideWorkspace {
+            switch workspaceScreen {
+            case .slideWorkspace:
                 SlidePostWorkspaceView(
                     project: currentProject,
                     thread: fullThread,
@@ -623,11 +651,18 @@ private struct CreationWorkspaceView: View {
                     capabilitiesLoaded: capabilitiesAreAuthoritative,
                     conversation: { AnyView(editorConversation) },
                     conversationAcceptedID: conversationAcceptedID,
-                    onBack: { isChoosingFormat = true },
+                    // Back returns to the chats drawer (where the user came from), never the format chooser.
+                    onBack: openProjects,
                     onAddMedia: openAttachments
                 )
                 .environmentObject(model)
-            } else {
+            case .resolvingFormat:
+                SlidePostResolvingView(
+                    title: currentProject.workspaceTitle, failed: formatResolveFailed,
+                    openProjects: openProjects,
+                    retry: { Task { await resolveFormat() } }
+                )
+            case .genericChat:
                 genericChatWorkspace
             }
         }
@@ -640,16 +675,10 @@ private struct CreationWorkspaceView: View {
         .onAppear { if prompt.isEmpty { prompt = model.chatDrafts.draft(for: project.id) } }
         .onChange(of: prompt) { _, text in model.chatDrafts.setDraft(text, for: project.id) }
         .task {
-            // History should not wait for the independent capability request.
-            async let capabilities: Void = refreshCapabilities()
-            // Format unknown (list row had no signal): fetch the full projection NOW. The delta poll only
-            // pulls it when the revision advances, which a quiet ready project never does.
-            var attempts = 0
-            while !isFormatKnown, attempts < 5, !Task.isCancelled {
-                if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
-                attempts += 1
-                if !isFormatKnown { try? await Task.sleep(for: .seconds(1)) }
-            }
+            // History should not wait for the independent capability request. Requested as soon as the
+            // project opens, and retried: a slow or failed fetch must not leave the screen without it.
+            async let capabilities: Void = loadCapabilitiesWithRetry()
+            await resolveFormat()
             await pollUntilDismissed()
             await capabilities
         }

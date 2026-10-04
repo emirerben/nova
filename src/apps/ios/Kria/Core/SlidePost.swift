@@ -546,7 +546,8 @@ private struct SlidePostItemResponse: Decodable {
 
     func propose(api: any KriaAPIClient, itemID: String, instruction: String, platformProfile: String? = nil) async {
         guard !isBusy else { return }
-        guard !hasUnsavedChanges else { error = "Save your slide edits before asking Kria for another direction."; return }
+        // A never-saved draft is only the editor's starting point, so it does not block a proposal.
+        guard !hasUnsavedChanges || state?.draft == nil else { error = "Save your slide edits before asking Kria for another direction."; return }
         let prompt = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, prompt.count <= 2000 else { error = "Tell Kria your direction in 2,000 characters or fewer."; return }
         guard !readyAssets.isEmpty else { error = "Add photos or videos and wait for them to finish preparing."; return }
@@ -796,6 +797,26 @@ private struct SlidePostItemResponse: Decodable {
         value.slides.removeAll { $0.id == id }; value.coverIndex = value.slides.firstIndex { $0.id == coverID } ?? 0
         stageDraft(value)
         if selectedID == id { selectedID = value.slides.first?.id }
+    }
+    /// A post with no saved draft yet starts as an unsaved local draft of every ready asset, in pool
+    /// order, so the editor is always the one rich layout (strip, text, look) instead of a separate
+    /// "start your post" screen. Nothing reaches the server until the user saves. Returns true when seeded.
+    @discardableResult
+    func seedDraftIfNeeded() -> Bool {
+        guard !isBusy, !isChatting, draft == nil, proposal == nil, state != nil, !readyAssets.isEmpty else { return false }
+        let ready = readyAssets
+        let profile = (ready.count >= 2 || ready.contains { $0.kind == "video" }) ? "instagram_carousel" : "tiktok_photo"
+        let limit = SlidePostAutoAppend.maxSlides(profile: profile)
+        let usable = ready.filter { profile != "tiktok_photo" || $0.kind != "video" }.prefix(limit)
+        guard !usable.isEmpty else { return false }
+        seenAssetIDs = Set(ready.map(\.id))
+        let value = SlidePostDraft(
+            version: baseVersion, platformProfile: profile,
+            slides: usable.map { SlidePostSlide(id: UUID().uuidString, assetID: $0.id, kind: $0.kind) }
+        )
+        draft = value
+        selectedID = value.slides.first?.id
+        return true
     }
     /// Appends every ready pool asset the session has not decided about yet, as ONE undoable step.
     /// Safe to call on any poll or refresh: it defers (touching nothing) while a save/propose or an AI

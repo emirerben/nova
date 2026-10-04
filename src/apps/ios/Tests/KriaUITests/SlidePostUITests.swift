@@ -18,7 +18,7 @@ import XCTest
             let row = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Weekend trip'")).firstMatch
             if row.waitForExistence(timeout: 4) { row.tap() }
         }
-        let slide = app.buttons["Add photos & videos"].firstMatch
+        let slide = app.buttons["slidepost-add-tile"].firstMatch
         _ = slide.waitForExistence(timeout: 15)
         XCTAssertTrue(slide.exists, "slide workspace appears")
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-preview"].exists)
@@ -26,29 +26,10 @@ import XCTest
         XCTAssertFalse(app.buttons["open-current-cut"].exists)
     }
 
-    func testSlidePostCreationUsesExplicitProposalAndCreateThenContextualKria() {
-        let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
-        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
-        app.launchEnvironment["KRIA_SLIDE_POST_FIXTURE"] = "1"
-        app.launch()
-        let menu = app.buttons["Open projects"]
-        XCTAssertTrue(menu.waitForExistence(timeout: 12)); menu.tap()
-        let newChat = app.buttons["drawer-new-chat"]
-        XCTAssertTrue(newChat.waitForExistence(timeout: 5)); newChat.tap()
-        let carousel = app.scrollViews["format-carousel"]
-        XCTAssertTrue(carousel.waitForExistence(timeout: 12))
-        carousel.swipeLeft()
-        let format = app.buttons["format-slides"]
-        XCTAssertTrue(format.waitForExistence(timeout: 5))
-        format.tap()
-        XCTAssertTrue(app.staticTexts["Start your post"].waitForExistence(timeout: 8))
-        let ask = app.buttons["Ask Kria"].firstMatch
-        scrollTo(ask, app: app); ask.tap()
-        let apply = app.buttons["Apply proposal"].firstMatch
-        XCTAssertTrue(apply.waitForExistence(timeout: 8))
-        XCTAssertFalse(app.buttons["slidepost-save-photos"].exists)
-        scrollTo(apply, app: app); apply.tap()
+    /// New chat -> Photo & video post lands straight in the one slide layout (no "Start your post"
+    /// screen): preview, strip, AI button and Save/Create, then Create and the contextual Kria sheet.
+    func testSlidePostCreationIsTheRichLayoutThenCreateThenKriaPropose() {
+        let app = openRichWorkspace(save: false)
         let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
         XCTAssertTrue(preview.waitForExistence(timeout: 5))
         let viewport = app.windows.firstMatch.frame
@@ -56,73 +37,72 @@ import XCTest
         XCTAssertLessThanOrEqual(preview.frame.height, viewport.height)
         XCTAssertEqual(preview.frame.width / preview.frame.height, 4.0 / 5.0, accuracy: 0.06)
         XCTAssertTrue(app.buttons["slidepost-openkria"].isHittable)
-        let draftPreview = XCTAttachment(screenshot: app.screenshot()); draftPreview.name = "Native slide draft preview"; draftPreview.lifetime = .keepAlways; add(draftPreview)
+        attach(app, "Native slide draft preview")
+        let save = app.buttons["slidepost-save"]
+        XCTAssertTrue(save.isEnabled, "a fresh draft is unsaved"); save.tap()
         let create = app.buttons["slidepost-create"]
-        scrollTo(create, app: app)
-        XCTAssertTrue(create.waitForExistence(timeout: 6)); create.tap()
-        let save = app.buttons["slidepost-save-photos"]
-        scrollTo(save, app: app)
-        XCTAssertTrue(save.waitForExistence(timeout: 8)); XCTAssertTrue(save.isEnabled)
-        let ready = XCTAttachment(screenshot: app.screenshot()); ready.name = "Native slide post ready"; ready.lifetime = .keepAlways; add(ready)
-        for _ in 0..<5 where !app.buttons["slidepost-openkria"].isHittable { app.swipeDown() }
+        XCTAssertTrue(create.waitForExistence(timeout: 8)); create.tap()
+        let share = app.buttons["slidepost-share"]
+        XCTAssertTrue(share.waitForExistence(timeout: 8)); XCTAssertTrue(share.isEnabled)
+        attach(app, "Native slide post ready")
         app.buttons["slidepost-openkria"].tap()
-        let prompt = app.descendants(matching: .any)["slidepost-prompt"].firstMatch
-        XCTAssertTrue(prompt.waitForExistence(timeout: 5))
-        // KRI-197: the sheet has no "Kria" title; its content scrolls with soft edges.
+        let input = app.textFields["Message Kria"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["Kria"].exists)
-        prompt.tap(); prompt.typeText(" End on the view.")
-        app.buttons["slidepost-ask"].tap()
+        input.tap(); input.typeText("End on the view.")
+        app.buttons["chat-send-message"].tap()
         let applyChange = app.buttons["slidepost-apply"]
         XCTAssertTrue(applyChange.waitForExistence(timeout: 8)); applyChange.tap()
-        let applied = XCTAttachment(screenshot: app.screenshot()); applied.name = "Native Kria applied proposal"; applied.lifetime = .keepAlways; add(applied)
+        attach(app, "Native Kria applied proposal")
     }
 
-    func testSlideFormatCoverAndBackRemainReachableAtLargeText() {
-        let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
-        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
-        app.launchEnvironment["KRIA_SLIDE_POST_FIXTURE"] = "1"
-        app.launchEnvironment["UI_TEST_DYNAMIC_TYPE_SIZE"] = "accessibility3"
-        app.launch()
-        XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 12))
-        app.buttons["Open projects"].tap()
-        app.buttons["drawer-new-chat"].tap()
-        let carousel = app.scrollViews["format-carousel"]
-        XCTAssertTrue(carousel.waitForExistence(timeout: 12)); carousel.swipeLeft()
-        let format = app.buttons["format-slides"]
-        XCTAssertTrue(format.waitForExistence(timeout: 5)); format.tap()
+    /// Back from a slide post returns to the chats drawer (where the user came from), NOT the format
+    /// chooser, and the project is still the slide editor when re-entered.
+    func testBackReturnsToTheDrawerNotTheFormatChooser() {
+        let app = openRichWorkspace(dynamicType: "accessibility3")
         XCTAssertTrue(app.buttons["Back to creation"].waitForExistence(timeout: 8))
         app.buttons["Back to creation"].tap()
-        XCTAssertTrue(app.staticTexts["What are we making?"].waitForExistence(timeout: 5))
-        let screenshot = XCTAttachment(screenshot: app.screenshot()); screenshot.name = "Slide format at large text"; screenshot.lifetime = .keepAlways; add(screenshot)
+        XCTAssertTrue(app.buttons["drawer-new-chat"].waitForExistence(timeout: 5), "Back opens the chats drawer")
+        XCTAssertFalse(app.staticTexts["What are we making?"].exists, "never the format chooser")
+        attach(app, "Back lands on the drawer")
     }
 
     // MARK: Redesigned workspace (KRIA_SLIDE_POST_RICH_TEXT=1)
 
     /// Walks the fixture creation flow to the redesigned workspace: format, direction, Apply.
-    private func openRichWorkspace(dynamicType: String? = nil, chatEdit: Bool = false, many: Bool = false, lateAsset: Bool = false) -> XCUIApplication {
-        let app = XCUIApplication()
-        app.launchArguments = ["-ui-testing-chat"]
-        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
-        app.launchEnvironment["KRIA_SLIDE_POST_FIXTURE"] = "1"
-        app.launchEnvironment["KRIA_SLIDE_POST_RICH_TEXT"] = "1"
-        if chatEdit { app.launchEnvironment["KRIA_SLIDE_POST_CHAT_EDIT"] = "1" }
-        if many { app.launchEnvironment["KRIA_SLIDE_POST_MANY"] = "1" }
-        if lateAsset { app.launchEnvironment["KRIA_SLIDE_POST_LATE_ASSET"] = "1" }
-        if let dynamicType { app.launchEnvironment["UI_TEST_DYNAMIC_TYPE_SIZE"] = dynamicType }
-        app.launch()
+    private func openRichWorkspace(dynamicType: String? = nil, chatEdit: Bool = false, many: Bool = false, lateAsset: Bool = false, capabilities: String? = nil, save: Bool = true) -> XCUIApplication {
+        let app = launchRich(dynamicType: dynamicType, chatEdit: chatEdit, many: many, lateAsset: lateAsset, capabilities: capabilities)
         XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 12)); app.buttons["Open projects"].tap()
         XCTAssertTrue(app.buttons["drawer-new-chat"].waitForExistence(timeout: 5)); app.buttons["drawer-new-chat"].tap()
         let carousel = app.scrollViews["format-carousel"]
-        XCTAssertTrue(carousel.waitForExistence(timeout: 12)); carousel.swipeLeft()
+        XCTAssertTrue(carousel.waitForExistence(timeout: 12))
+        expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: carousel); waitForExpectations(timeout: 20)
+        carousel.swipeLeft()
         XCTAssertTrue(app.buttons["format-slides"].waitForExistence(timeout: 5)); app.buttons["format-slides"].tap()
-        XCTAssertTrue(app.staticTexts["Start your post"].waitForExistence(timeout: 8))
-        let ask = app.buttons["Ask Kria"].firstMatch
-        scrollTo(ask, app: app); ask.tap()
-        let apply = app.buttons["Apply proposal"].firstMatch
-        XCTAssertTrue(apply.waitForExistence(timeout: 8)); scrollTo(apply, app: app); apply.tap()
-        XCTAssertTrue(app.buttons["slidepost-tool-text"].waitForExistence(timeout: 8), "the redesigned tool bar replaces the old buttons")
+        XCTAssertTrue(app.buttons["slidepost-tool-text"].waitForExistence(timeout: 12), "the one slide layout appears with its tool dock")
+        if save { saveDraft(app) }
         return app
+    }
+    private func launchRich(dynamicType: String? = nil, chatEdit: Bool = false, many: Bool = false, lateAsset: Bool = false, capabilities: String? = nil, readyThread: Bool = false) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = readyThread ? "v2" : "v1"
+        app.launchEnvironment["KRIA_SLIDE_POST_FIXTURE"] = "1"
+        // Capability fixtures: nil = loads true (rich + maybe chat edit), "slow" = answers after ~6s, "fail" = never answers.
+        if let capabilities { app.launchEnvironment["KRIA_SLIDE_POST_CAPS"] = capabilities } else { app.launchEnvironment["KRIA_SLIDE_POST_RICH_TEXT"] = "1" }
+        if chatEdit { app.launchEnvironment["KRIA_SLIDE_POST_CHAT_EDIT"] = "1" }
+        if many { app.launchEnvironment["KRIA_SLIDE_POST_MANY"] = "1" }
+        if lateAsset { app.launchEnvironment["KRIA_SLIDE_POST_LATE_ASSET"] = "1" }
+        if readyThread { app.launchEnvironment["KRIA_SLIDE_POST_READY_THREAD"] = "1" }
+        if let dynamicType { app.launchEnvironment["UI_TEST_DYNAMIC_TYPE_SIZE"] = dynamicType }
+        app.launch()
+        return app
+    }
+    private func saveDraft(_ app: XCUIApplication) {
+        let save = app.buttons["slidepost-save"]
+        if save.waitForExistence(timeout: 5), save.isEnabled { save.tap() }
+        expectation(for: NSPredicate(format: "label != %@", "Unsaved changes"), evaluatedWith: app.staticTexts["slidepost-subtitle"])
+        waitForExpectations(timeout: 10)
     }
     private func attach(_ app: XCUIApplication, _ name: String) {
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = name; shot.lifetime = .keepAlways; add(shot)
@@ -387,17 +367,18 @@ import XCTest
         let app = openRichWorkspace(chatEdit: true)
         XCTAssertTrue(app.buttons["slidepost-tile-1"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.textFields["slidepost-composer"].exists, "no chat composer on the page")
+        XCTAssertFalse(app.textFields["Message Kria"].exists, "the conversation lives only in the AI sheet")
         let ai = app.buttons["slidepost-openkria"]
         XCTAssertTrue(ai.isHittable)
         attach(app, "AI button on the page")
         ai.tap()
-        let input = app.textFields["slidepost-ai-input"]
+        let input = app.textFields["Message Kria"]
         XCTAssertTrue(input.waitForExistence(timeout: 5)); input.tap()
         input.typeText("Put them in chronological order and add each photo's location")
-        app.buttons["slidepost-ai-send"].tap()
-        let reply = app.staticTexts["slidepost-ai-reply"].firstMatch
+        app.buttons["chat-send-message"].tap()
+        let reply = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: Done.")).firstMatch
         XCTAssertTrue(reply.waitForExistence(timeout: 8), "Kria's reply is shown in the sheet")
-        XCTAssertTrue(reply.label.hasPrefix("Done. Your photos now follow the order"), "the reply is server text, verbatim")
+        XCTAssertTrue(reply.label.hasPrefix("Kria: Done. Your photos now follow the order"), "the reply is server text, verbatim")
         XCTAssertTrue(app.staticTexts["Reordered 3"].exists)
         XCTAssertTrue(app.staticTexts["1 photo has no location"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["slidepost-ai-note"].firstMatch.exists, "a missing location reads as a note")
@@ -406,13 +387,13 @@ import XCTest
         // Undo inside the sheet returns the page to the saved draft; the transcript stays.
         app.buttons["slidepost-ai-undo"].tap()
         XCTAssertFalse(app.descendants(matching: .any)["slidepost-ai-unsaved"].firstMatch.waitForExistence(timeout: 2))
-        XCTAssertTrue(app.staticTexts["slidepost-ai-reply"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: Done.")).firstMatch.exists)
         input.tap(); input.typeText("Again please")
-        app.buttons["slidepost-ai-send"].tap()
+        app.buttons["chat-send-message"].tap()
         let save = app.buttons["slidepost-ai-save"]
         expectation(for: NSPredicate(format: "isEnabled == true"), evaluatedWith: save); waitForExpectations(timeout: 10)
         // Leave it staged: the edit is visible on the page behind the sheet.
-        app.buttons["slidepost-ai-done"].tap()
+        app.swipeDown(velocity: .fast) // same dismissal as the video editor's Kria sheet
         XCTAssertTrue(app.buttons["slidepost-tool-text"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes", "the AI edit is staged on the page")
         app.buttons["slidepost-tile-1"].tap()
@@ -422,7 +403,7 @@ import XCTest
         app.buttons["slidepost-openkria"].tap()
         XCTAssertTrue(app.buttons["slidepost-ai-save"].waitForExistence(timeout: 5))
         app.buttons["slidepost-ai-save"].tap()
-        app.buttons["slidepost-ai-done"].tap()
+        app.swipeDown(velocity: .fast)
         let saved = NSPredicate(format: "label != %@", "Unsaved changes")
         expectation(for: saved, evaluatedWith: app.staticTexts["slidepost-subtitle"]); waitForExpectations(timeout: 8)
         XCTAssertFalse(app.descendants(matching: .any)["slidepost-error"].firstMatch.exists)
@@ -431,9 +412,8 @@ import XCTest
     func testAISheetWithoutChatEditKeepsTheProposeFlow() {
         let app = openRichWorkspace()
         app.buttons["slidepost-openkria"].tap()
-        XCTAssertTrue(app.descendants(matching: .any)["slidepost-prompt"].firstMatch.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["slidepost-ask"].exists)
-        XCTAssertFalse(app.textFields["slidepost-ai-input"].exists)
+        XCTAssertTrue(app.textFields["Message Kria"].waitForExistence(timeout: 5), "the same composer as the video editor's Kria sheet")
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "propose an arrangement")).firstMatch.exists, "propose-flow intro")
         attach(app, "AI sheet: propose flow")
     }
 
@@ -687,6 +667,117 @@ import XCTest
         attach(app, "Text panel with keyboard up")
         app.buttons["Style"].tap()
         attach(app, "Text panel style chips")
+    }
+
+    // MARK: One layout in every entry path and capability state
+
+    /// The slide editor, whatever loaded or didn't: tool dock, "+ Add" LAST in the strip with the tiles'
+    /// footprint, floating AI button, and none of the old layout's chat box / buttons / video editor.
+    private func assertRichLayout(_ app: XCUIApplication, _ context: String, lastTile: Int = 3, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(app.buttons["slidepost-tool-text"].firstMatch.waitForExistence(timeout: 20), "\(context): tool dock", file: file, line: line)
+        // From the gallery the post is also mounted (hidden) under the cover: use the visible one.
+        func visible(_ id: String) -> XCUIElement {
+            app.buttons.matching(identifier: id).allElementsBoundByIndex.first { $0.isHittable } ?? app.buttons.matching(identifier: id).firstMatch
+        }
+        XCTAssertTrue(app.buttons["slidepost-add-tile"].firstMatch.waitForExistence(timeout: 10), "\(context): + Add block", file: file, line: line)
+        XCTAssertTrue(app.buttons["slidepost-tile-\(lastTile)"].firstMatch.waitForExistence(timeout: 10), "\(context): slide \(lastTile)", file: file, line: line)
+        // Some pair (the visible post; the gallery also keeps the post mounted beneath) must have + Add one
+        // pitch (66pt) after the last tile, on its baseline. A selected tile's 2pt ring adds 4pt to its frame.
+        let adds = app.buttons.matching(identifier: "slidepost-add-tile").allElementsBoundByIndex
+        let tiles = app.buttons.matching(identifier: "slidepost-tile-\(lastTile)").allElementsBoundByIndex
+        let paired = adds.contains { add in
+            tiles.contains { tile in
+                abs(add.frame.midX - tile.frame.midX - 66) <= 1 && abs(add.frame.height - tile.frame.height) <= 5 && abs(add.frame.minY - tile.frame.minY) <= 3
+            }
+        }
+        XCTAssertTrue(paired, "\(context): + Add is the LAST block with the tiles' footprint and baseline", file: file, line: line)
+        XCTAssertTrue(visible("slidepost-openkria").isHittable, "\(context): floating AI button", file: file, line: line)
+        XCTAssertFalse(app.textFields["Message Kria"].exists, "\(context): no chat box on the page", file: file, line: line)
+        XCTAssertFalse(app.buttons["Add photos & videos"].exists, "\(context): no legacy add button", file: file, line: line)
+        XCTAssertFalse(app.buttons["Ask Kria"].exists, "\(context): no legacy Direction composer", file: file, line: line)
+        XCTAssertFalse(app.staticTexts["Start your post"].exists, file: file, line: line)
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-preview"].exists, "\(context): never the video editor", file: file, line: line)
+        XCTAssertFalse(app.buttons["Editor"].exists, file: file, line: line)
+        XCTAssertFalse(app.buttons["open-current-cut"].exists, file: file, line: line)
+    }
+
+    private func openWeekendTripFromDrawer(_ app: XCUIApplication) {
+        let menu = app.buttons["Open projects"]
+        if menu.waitForExistence(timeout: 6) {
+            menu.tap()
+            let row = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Weekend trip'")).firstMatch
+            if row.waitForExistence(timeout: 6) { row.tap() }
+        }
+    }
+
+    func testRichLayoutForANewChatWhenCapabilitiesAreSlow() {
+        let app = openRichWorkspace(capabilities: "slow", save: false)
+        assertRichLayout(app, "new chat, slow capabilities")
+        attach(app, "Entry: new chat (slow caps)")
+    }
+
+    func testRichLayoutForANewChatWhenCapabilitiesLoad() {
+        let app = openRichWorkspace(save: false)
+        assertRichLayout(app, "new chat, capabilities load")
+        attach(app, "Entry: new chat (caps true)")
+    }
+
+    func testRichLayoutFromTheDrawerWhenCapabilitiesFailToLoad() {
+        let app = launchRich(capabilities: "fail", readyThread: true)
+        openWeekendTripFromDrawer(app)
+        assertRichLayout(app, "drawer, capabilities fail")
+        attach(app, "Entry: drawer (caps fail)")
+        // Optional AI staging is off without capabilities: the sheet is the propose flow, the layout is unchanged.
+        app.buttons["slidepost-openkria"].tap()
+        XCTAssertTrue(app.textFields["Message Kria"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.textFields["Message Kria"].placeholderValue, "Describe the post…", "no capabilities => propose flow, not chat-edit staging")
+        attach(app, "AI sheet (caps fail)")
+    }
+
+    func testRichLayoutFromTheDrawerWhenCapabilitiesAreSlow() {
+        let app = launchRich(capabilities: "slow", readyThread: true)
+        openWeekendTripFromDrawer(app)
+        assertRichLayout(app, "drawer, slow capabilities")
+        attach(app, "Entry: drawer (slow caps)")
+    }
+
+    func testRichLayoutFromTheDrawerWhenCapabilitiesLoad() {
+        let app = launchRich(readyThread: true)
+        openWeekendTripFromDrawer(app)
+        assertRichLayout(app, "drawer, capabilities load")
+        attach(app, "Entry: drawer (caps true)")
+    }
+
+    func testRichLayoutFromTheGalleryForEveryCapabilityState() {
+        for caps in [nil, "slow", "fail"] as [String?] {
+            let app = launchRich(capabilities: caps, readyThread: true)
+            // The slide editor has no menu button: Back is the way to the drawer.
+            XCTAssertTrue(app.buttons["Back to creation"].waitForExistence(timeout: 15)); app.buttons["Back to creation"].tap()
+            let gallery = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Gallery'")).firstMatch
+            XCTAssertTrue(gallery.waitForExistence(timeout: 5)); gallery.tap()
+            let card = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Open post'")).firstMatch
+            XCTAssertTrue(card.waitForExistence(timeout: 10), "gallery lists the slide post"); card.tap()
+            assertRichLayout(app, "gallery, caps \(caps ?? "true")")
+            attach(app, "Entry: gallery (caps \(caps ?? "true"))")
+            app.terminate()
+        }
+    }
+
+    /// Back -> drawer -> tap the project again (and via a second project switch): always the slide editor.
+    func testReEnteringAfterBackAlwaysLandsInTheSlideEditor() {
+        let app = launchRich(readyThread: true)
+        openWeekendTripFromDrawer(app)
+        assertRichLayout(app, "first entry")
+        app.buttons["Back to creation"].tap()
+        XCTAssertTrue(app.buttons["drawer-new-chat"].waitForExistence(timeout: 5), "Back opens the drawer")
+        XCTAssertFalse(app.staticTexts["What are we making?"].exists, "not the format chooser")
+        attach(app, "Back: drawer")
+        // Re-enter through another project and back, like a user hopping chats.
+        app.buttons["drawer-new-chat"].tap()
+        XCTAssertTrue(app.scrollViews["format-carousel"].waitForExistence(timeout: 12), "a new chat shows the chooser, as it should")
+        openWeekendTripFromDrawer(app)
+        assertRichLayout(app, "re-entry after hopping chats")
+        attach(app, "Re-entry")
     }
 
     private func scrollTo(_ element: XCUIElement, app: XCUIApplication) {

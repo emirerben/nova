@@ -10,9 +10,9 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     /// Server accepts the editor's unsaved state with a chat turn (nil/false = legacy flush-then-send).
     var editorStateTurns: Bool? = nil
     var editorStateMaxBytes: Int? = nil
-    /// Server renders per-slide styled text (KRI-298); nil/false keeps the legacy single-text inspector.
+    /// Server renders per-slide styled text (KRI-298). Informational: the app always shows the rich editor.
     var slidePostRichText: Bool? = nil
-    /// Server edits slide posts from a chat message (KRI-298 Lane C); nil/false keeps the propose flow.
+    /// Server edits slide posts from a chat message (KRI-298 Lane C); nil/false (or not yet loaded) keeps the AI sheet on the propose flow.
     var slidePostChatEdit: Bool? = nil
     /// Additive server admission metadata. Nil preserves compatibility with a
     /// server predating iOS-only creation rollout.
@@ -21,9 +21,6 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var editorStateTurnsEnabled: Bool { editorStateTurns == true }
     var slidePostRichTextEnabled: Bool { slidePostRichText == true }
     var slidePostChatEditEnabled: Bool { slidePostChatEdit == true }
-    /// The chat composer needs BOTH flags: the server only reports chat-edit as on with rich text, and
-    /// a stale cached capability must not enable it when rich text is off.
-    var slidePostChatComposerEnabled: Bool { slidePostRichTextEnabled && slidePostChatEditEnabled }
     var preferredRuntimeVersion: Int { runtimeVersions?.contains(2) == true ? 2 : 1 }
     enum CodingKeys: String, CodingKey {
         case formats, media

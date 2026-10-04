@@ -25,10 +25,11 @@ private struct SlidePostWrap: Layout {
 }
 
 /// The ONLY place the slide editor talks to Kria. The page keeps a single AI button (the editor's
-/// sparkles entry) that opens this sheet. With `slide_post_chat_edit` on it drives the chat-edit flow:
-/// each message stages an edited draft on the page behind the sheet (unsaved, undoable) and the sheet
-/// keeps the transcript, change chips, retry, Undo and Save. With it off it is the explicit propose
-/// flow: ask, review the proposal, Apply or Undo.
+/// sparkles entry) that opens this sheet, and the sheet IS the video editor's Kria sheet: the same
+/// `ChatConversationScroll` + `ChatMessageRow` + `ThinkingRow` + `ChatComposer`, fed by the slide
+/// post's own thread. With `slide_post_chat_edit` on, each message stages an edited draft on the page
+/// behind the sheet (unsaved, undoable); with it off (or not loaded) a message asks Kria to propose an
+/// arrangement, shown inline with Apply and Undo.
 struct SlidePostAISheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var session: SlidePostSession
@@ -38,184 +39,64 @@ struct SlidePostAISheet: View {
     let canRequestProposal: Bool
     let uploadGuidance: String?
     @State private var prompt = ""
+    @FocusState private var composerFocused: Bool
 
     private static let noteFill = Color(red: 0xFD / 255, green: 0xF1 / 255, blue: 0xDC / 255)
 
     var body: some View {
-        NavigationStack {
-            Group { if chatEnabled { chatBody } else { proposeBody } }
-                .background(KriaColor.paper)
-                .toolbar {
-                    // Chat edits stage on the page behind; Done is the obvious way back to it.
-                    if chatEnabled {
-                        ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.accessibilityIdentifier("slidepost-ai-done") }
-                    }
-                }
-                .navigationBarTitleDisplayMode(chatEnabled ? .inline : .automatic)
-                // The visible "Kria" heading is gone; keep the sheet's VoiceOver context.
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel("Kria")
-                .onAppear { prompt = session.instruction }
-                .onChange(of: prompt) { _, value in session.instruction = value }
+        ChatConversationScroll(isLoaded: true, updateToken: updateToken, scrollRequest: 0, dismissKeyboard: { composerFocused = false }) {
+            conversation
         }
-    }
-
-    // MARK: Propose (slide_post_chat_edit off)
-
-    private var proposeBody: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    TextField("Describe the post", text: $prompt, axis: .vertical)
-                        .accessibilityLabel("Describe the post")
-                        .accessibilityIdentifier("slidepost-prompt")
-                        .lineLimit(2...5).padding(12).overlay(RoundedRectangle(cornerRadius: 12).stroke(KriaColor.border))
-                    Button(session.isBusy ? "Thinking…" : "Propose changes") { Task { await propose() } }
-                        .buttonStyle(KriaPrimaryButtonStyle()).frame(maxWidth: .infinity)
-                        .disabled(!canRequestProposal)
-                        .accessibilityIdentifier("slidepost-ask")
-                    if let uploadGuidance {
-                        Text(uploadGuidance).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
-                    }
-                    if let proposal = session.proposal {
-                        Text(proposal.summary).font(KriaFont.body(14))
-                        Text(proposal.draft.caption)
-                            .font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
-                        Button("Apply proposal") { Task { await apply() } }
-                            .buttonStyle(KriaPrimaryButtonStyle()).frame(maxWidth: .infinity).disabled(session.isBusy)
-                            .accessibilityIdentifier("slidepost-apply")
-                            .id("slidepost-apply")
-                    }
-                    if session.canUndo {
-                        Button("Undo applied change") { Task { await undo() } }
-                            .buttonStyle(KriaSecondaryButtonStyle()).frame(maxWidth: .infinity).disabled(session.isBusy)
-                    }
-                    if let error = session.error { Text(error).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText) }
-                }
-                .padding(20)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .scrollDismissesKeyboard(.interactively)
-            // The medium detent can't show a proposal below the prompt field; bring Apply into view.
-            .onChange(of: session.proposal != nil) { _, hasProposal in
-                if hasProposal { withAnimation { proxy.scrollTo("slidepost-apply", anchor: .bottom) } }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
+                actionRow
+                ChatComposer(
+                    text: $prompt, isSending: session.isBusy || session.isChatting, canAttach: false,
+                    blocksSubmission: !chatEnabled && !canRequestProposal,
+                    placeholder: chatEnabled ? "Ask Kria to edit your slides…" : "Describe the post…",
+                    isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
+                )
             }
         }
+        .background(KriaColor.paper)
+        .onAppear { prompt = session.instruction }
+        .onChange(of: prompt) { _, value in session.instruction = value }
     }
 
-    private func propose() async {
-        guard canRequestProposal, let itemID else { return }
-        let brief = prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Arrange these photos and videos into a cohesive post." : prompt
-        session.instruction = brief
-        await session.propose(api: api, itemID: itemID, instruction: brief)
+    private var updateToken: String {
+        "\(session.chat.map { $0.id.uuidString }.joined(separator: "|"))|\(session.isChatting)|\(session.isBusy)|\(session.proposal != nil)"
     }
-    private func apply() async { guard let itemID else { return }; await session.applyProposal(api: api, itemID: itemID); if session.error == nil && session.proposal == nil { dismiss() } }
-    private func undo() async { guard let itemID else { return }; await session.undo(api: api, itemID: itemID) }
 
-    // MARK: Chat edit (slide_post_chat_edit on)
+    // MARK: Conversation
 
-    private var hasText: Bool { !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    private var canSend: Bool { hasText && !session.isBusy && !session.isChatting && session.draft != nil && itemID != nil }
-
-    private var chatBody: some View {
-        VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if session.chat.isEmpty && !session.isChatting {
-                            Text("Tell Kria what to change: reorder the photos, add text, set a look or rewrite the caption.")
-                                .font(KriaFont.body(15)).foregroundStyle(KriaColor.zinc)
-                                .accessibilityIdentifier("slidepost-ai-empty")
-                        }
-                        ForEach(session.chat) { message in bubble(message) }
-                        if session.isChatting {
-                            HStack(spacing: 10) {
-                                ProgressView()
-                                Text("Kria is editing…").font(KriaFont.body(16)).foregroundStyle(KriaColor.zinc)
-                            }
-                            .accessibilityElement(children: .combine).accessibilityIdentifier("slidepost-ai-working")
-                        }
-                        if let error = session.error { Text(error).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText) }
-                        Color.clear.frame(height: 1).id("bottom")
-                    }
-                    .padding(.horizontal, 16).padding(.vertical, 12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .scrollDismissesKeyboard(.interactively)
-                .onChange(of: session.chat.count) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
-                .onChange(of: session.isChatting) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
-                .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
-            }
-            statusRow
-            composer
+    @ViewBuilder private var conversation: some View {
+        if session.chat.isEmpty && !session.isChatting && session.proposal == nil {
+            ChatMessageRow(message: .init(
+                id: "slidepost-ai-intro", role: .assistant,
+                content: chatEnabled
+                    ? "Tell me what to change: reorder the photos, add text, set a look or rewrite the caption."
+                    : "Tell me about the post and I'll propose an arrangement, cover and caption."
+            ))
+            .accessibilityIdentifier("slidepost-ai-empty")
         }
-    }
-
-    private var statusRow: some View {
-        HStack(spacing: 10) {
-            if session.hasUnsavedChanges {
-                HStack(spacing: 6) {
-                    Circle().fill(SlidePostTone.warning).frame(width: 7, height: 7)
-                    Text("Unsaved").font(KriaFont.body(15).weight(.semibold)).foregroundStyle(SlidePostTone.warning)
-                }
-                .padding(.horizontal, 12).frame(minHeight: 36).background(Self.noteFill, in: Capsule())
-                .accessibilityElement(children: .combine).accessibilityIdentifier("slidepost-ai-unsaved")
-            }
-            Spacer(minLength: 4)
-            Button("Undo") { session.undoEdit() }.buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
-                .disabled(!session.canUndoEdit || session.isChatting).accessibilityIdentifier("slidepost-ai-undo")
-            Button("Save") { Task { if let itemID { await session.save(api: api, itemID: itemID) } } }.buttonStyle(KriaPrimaryButtonStyle())
-                .disabled(!session.hasUnsavedChanges || session.isBusy || session.isChatting).accessibilityIdentifier("slidepost-ai-save")
-        }
-        .padding(.horizontal, 16).padding(.vertical, 8)
-    }
-
-    private var composer: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "sparkle").font(.system(size: 17, weight: .regular)).foregroundStyle(KriaColor.mutedInk).padding(.leading, 6)
-            TextField("Ask Kria to edit your slides…", text: $prompt)
-                .font(KriaFont.body(16)).submitLabel(.send).onSubmit { if canSend { Task { await send() } } }
-                .disabled(session.isChatting)
-                .accessibilityIdentifier("slidepost-ai-input")
-            Button { Task { await send() } } label: {
-                Image(systemName: "arrow.up").font(.system(size: 17, weight: .bold)).foregroundStyle(.white)
-                    .frame(width: 40, height: 40).background(KriaColor.ink, in: Circle())
-                    .opacity(canSend ? 1 : 0.4)
-            }
-            .disabled(!canSend).accessibilityLabel("Send to Kria").accessibilityIdentifier("slidepost-ai-send")
-        }
-        .padding(.leading, 12).padding(.trailing, 6).frame(minHeight: 52)
-        .kriaFloatingSurface(Capsule())
-        .padding(.horizontal, 16).padding(.bottom, 8)
-    }
-
-    /// The edit stages on the page behind the sheet; this only clears the field and sends.
-    private func send() async {
-        guard canSend, let itemID else { return }
-        let text = prompt
-        // Validate first: a rejected message (too long) keeps its text and shows the error.
-        guard session.canChat(message: text) else { return }
-        prompt = ""; session.instruction = ""
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        await session.chatEdit(api: api, itemID: itemID, message: text)
+        ForEach(session.chat) { message in bubble(message) }
+        if session.isChatting || (session.isBusy && !chatEnabled) { ThinkingRow().id("thinking") }
+        if let proposal = session.proposal { proposalCard(proposal) }
+        if let uploadGuidance { Text(uploadGuidance).font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc) }
+        if let error = session.error { Text(error).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText) }
     }
 
     @ViewBuilder private func bubble(_ message: SlidePostChatMessage) -> some View {
         if message.isUser {
-            Text(message.text).font(KriaFont.body(16)).foregroundStyle(.white)
-                .padding(.horizontal, 16).padding(.vertical, 12)
-                .background(KriaColor.ink, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .frame(maxWidth: .infinity, alignment: .trailing).padding(.leading, 56)
-                .accessibilityIdentifier("slidepost-ai-user")
+            ChatMessageRow(message: .init(id: message.id.uuidString, role: .user, content: message.text))
         } else {
             VStack(alignment: .leading, spacing: 10) {
-                Text(message.text).font(KriaFont.body(16)).foregroundStyle(KriaColor.ink)
-                    .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("slidepost-ai-reply")
+                ChatMessageRow(message: .init(id: message.id.uuidString, role: .assistant, content: message.text))
                 if !message.changes.isEmpty {
                     SlidePostWrap {
                         ForEach(message.changes, id: \.self) { change in
                             let note = SlidePostChatMessage.isNote(change)
-                            Text(change).font(KriaFont.body(14).weight(.semibold))
+                            Text(change).font(KriaFont.body(12).weight(.semibold))
                                 .foregroundStyle(note ? SlidePostTone.warning : KriaColor.success)
                                 .padding(.horizontal, 12).frame(minHeight: 32)
                                 .background(note ? Self.noteFill : KriaColor.successSoft, in: Capsule())
@@ -225,10 +106,72 @@ struct SlidePostAISheet: View {
                 }
                 if message.retryText != nil {
                     Button("Try again") { if let itemID { Task { await session.retryChat(api: api, itemID: itemID, bubble: message) } } }
-                        .buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
+                        .buttonStyle(CanonicalSecondaryButtonStyle()).frame(width: 140)
                         .accessibilityIdentifier("slidepost-ai-retry")
                 }
             }
         }
     }
+
+    private func proposalCard(_ proposal: SlidePostProposal) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ChatMessageRow(message: .init(id: "slidepost-ai-proposal", role: .assistant, content: proposal.summary, isProposal: true))
+            if !proposal.draft.caption.isEmpty {
+                Text(proposal.draft.caption).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
+            }
+            Button("Apply proposal") { Task { await apply() } }
+                .buttonStyle(CanonicalPrimaryButtonStyle()).disabled(session.isBusy)
+                .accessibilityIdentifier("slidepost-apply")
+        }
+        .id("slidepost-apply")
+    }
+
+    // MARK: Actions
+
+    private var hasText: Bool { !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    @ViewBuilder private var actionRow: some View {
+        if chatEnabled ? (session.hasUnsavedChanges || session.canUndoEdit) : session.canUndo {
+            HStack(spacing: 10) {
+                if chatEnabled, session.hasUnsavedChanges {
+                    HStack(spacing: 6) {
+                        Circle().fill(SlidePostTone.warning).frame(width: 7, height: 7)
+                        Text("Unsaved").font(KriaFont.body(12).weight(.semibold)).foregroundStyle(SlidePostTone.warning)
+                    }
+                    .padding(.horizontal, 12).frame(minHeight: 32).background(Self.noteFill, in: Capsule())
+                    .accessibilityElement(children: .combine).accessibilityIdentifier("slidepost-ai-unsaved")
+                }
+                Spacer(minLength: 4)
+                if chatEnabled {
+                    Button("Undo") { session.undoEdit() }.buttonStyle(CanonicalSecondaryButtonStyle()).frame(width: 96)
+                        .disabled(!session.canUndoEdit || session.isChatting).accessibilityIdentifier("slidepost-ai-undo")
+                    Button("Save") { Task { if let itemID { await session.save(api: api, itemID: itemID) } } }
+                        .buttonStyle(CanonicalPrimaryButtonStyle()).frame(width: 96)
+                        .disabled(!session.hasUnsavedChanges || session.isBusy || session.isChatting).accessibilityIdentifier("slidepost-ai-save")
+                } else {
+                    Button("Undo applied change") { Task { await undo() } }
+                        .buttonStyle(CanonicalSecondaryButtonStyle()).frame(width: 190).disabled(session.isBusy)
+                        .accessibilityIdentifier("slidepost-ai-undo-applied")
+                }
+            }
+            .padding(.horizontal, 14).padding(.top, 6)
+        }
+    }
+
+    private func send() async {
+        guard hasText, !session.isBusy, !session.isChatting, let itemID else { return }
+        let text = prompt
+        if chatEnabled {
+            guard session.draft != nil, session.canChat(message: text) else { return }
+            prompt = ""; session.instruction = ""
+            composerFocused = false
+            await session.chatEdit(api: api, itemID: itemID, message: text)
+        } else {
+            guard canRequestProposal else { return }
+            session.instruction = text
+            await session.propose(api: api, itemID: itemID, instruction: text)
+        }
+    }
+    private func apply() async { guard let itemID else { return }; await session.applyProposal(api: api, itemID: itemID); if session.error == nil && session.proposal == nil { dismiss() } }
+    private func undo() async { guard let itemID else { return }; await session.undo(api: api, itemID: itemID) }
 }

@@ -223,12 +223,12 @@ import XCTest
 
     // MARK: Review fixes
 
-    func testChatComposerNeedsBothCapabilities() throws {
+    func testChatEditFlagAloneDecidesStagingBecauseTheRichLayoutIsUnconditional() throws {
         func caps(_ json: String) throws -> CreationCapabilities { try JSONDecoder().decode(CreationCapabilities.self, from: Data(json.utf8)) }
-        XCTAssertTrue(try caps(#"{"formats":[],"slide_post_rich_text":true,"slide_post_chat_edit":true}"#).slidePostChatComposerEnabled)
-        XCTAssertFalse(try caps(#"{"formats":[],"slide_post_chat_edit":true}"#).slidePostChatComposerEnabled, "stale chat flag without rich text")
-        XCTAssertFalse(try caps(#"{"formats":[],"slide_post_chat_edit":true,"slide_post_rich_text":false}"#).slidePostChatComposerEnabled)
-        XCTAssertFalse(try caps(#"{"formats":[],"slide_post_rich_text":true}"#).slidePostChatComposerEnabled)
+        XCTAssertTrue(try caps(#"{"formats":[],"slide_post_chat_edit":true}"#).slidePostChatEditEnabled)
+        XCTAssertTrue(try caps(#"{"formats":[],"slide_post_rich_text":false,"slide_post_chat_edit":true}"#).slidePostChatEditEnabled)
+        XCTAssertFalse(try caps(#"{"formats":[],"slide_post_rich_text":true}"#).slidePostChatEditEnabled)
+        XCTAssertFalse(try caps(#"{"formats":[]}"#).slidePostChatEditEnabled, "unknown => propose flow")
     }
 
     func testFailedSendIsNotSentAsADanglingUserTurn() async throws {
