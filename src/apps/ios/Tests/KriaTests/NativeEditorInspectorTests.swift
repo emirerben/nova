@@ -39,6 +39,61 @@ final class NativeEditorInspectorTests: XCTestCase {
         XCTAssertEqual(contract.captionYFrac.max, 0.90)
     }
 
+    /// KRI-374: `user_song` is additive; anything missing or malformed reads as "no creator song".
+    func testUserSongDecodesLeniently() {
+        func variant(_ fields: [String: JSONValue]) -> [String: JSONValue] { ["user_song": .object(fields)] }
+        let valid: [String: JSONValue] = ["title": .string("  Midnight Drive "), "mode": .string("lipsync"),
+            "duration_s": .number(214), "window_start_s": .number(108), "window_end_s": .number(123)]
+        let song = NativeUserSong(variant: variant(valid))
+        XCTAssertEqual(song?.title, "Midnight Drive")
+        XCTAssertEqual(song?.mode, .lipsync)
+        XCTAssertEqual(song?.windowStartS, 108)
+        XCTAssertEqual(song?.windowEndS, 123)
+        XCTAssertEqual(song?.durationS, 214)
+
+        var untitled = valid; untitled["title"] = .null; untitled["duration_s"] = .string("long")
+        XCTAssertNil(NativeUserSong(variant: variant(untitled))?.title)
+        XCTAssertNil(NativeUserSong(variant: variant(untitled))?.durationS)
+        XCTAssertEqual(NativeUserSong(variant: variant(untitled))?.mode, .lipsync)
+
+        XCTAssertNil(NativeUserSong(variant: [:]), "every other variant has no user_song")
+        XCTAssertNil(NativeUserSong(variant: ["user_song": .string("nope")]))
+        for broken: [String: JSONValue] in [
+            valid.merging(["mode": .string("karaoke")]) { _, new in new },
+            valid.merging(["mode": .null]) { _, new in new },
+            valid.merging(["window_start_s": .number(-1)]) { _, new in new },
+            valid.merging(["window_end_s": .number(108)]) { _, new in new },
+            valid.merging(["window_end_s": .string("2:03")]) { _, new in new },
+            valid.filter { $0.key != "window_start_s" },
+        ] { XCTAssertNil(NativeUserSong(variant: variant(broken)), "\(broken)") }
+    }
+
+    func testYourSongRowShowsTitleWindowAndModeOrAnHonestFallback() {
+        let background = NativeUserSong(variant: ["user_song": .object(["title": .string("Midnight Drive"), "mode": .string("background"),
+            "duration_s": .number(214), "window_start_s": .number(108), "window_end_s": .number(123)])])
+        let row = NativeEditorYourSong.make(userSong: background, bed: nil)
+        XCTAssertEqual(row, NativeEditorYourSong(title: "Midnight Drive", window: "Plays 1:48 – 2:03", mode: "Background"))
+        XCTAssertEqual(row?.accessibilitySummary, "Midnight Drive, Plays 1:48 – 2:03, Background")
+
+        let lipsync = NativeUserSong(variant: ["user_song": .object(["mode": .string("lipsync"),
+            "window_start_s": .number(59.6), "window_end_s": .number(75)])])
+        XCTAssertEqual(NativeEditorYourSong.make(userSong: lipsync, bed: nil),
+                       NativeEditorYourSong(title: "Your song", window: "Plays 1:00 – 1:15", mode: "Lip-sync · master audio"))
+
+        // An older server sends no user_song: the recipe's clip still connects the tab, without claiming a mode.
+        let bed = NativeEditorSongBed(assetID: "song-item", sourceStart: 108, sourceDuration: 15)
+        XCTAssertEqual(NativeEditorYourSong.make(userSong: nil, bed: bed),
+                       NativeEditorYourSong(title: "Your song", window: "Plays 1:48 – 2:03", mode: nil))
+        XCTAssertNil(NativeEditorYourSong.make(userSong: nil, bed: nil))
+        XCTAssertTrue(NativeEditorYourSong.helperCopy.contains("Camera audio is muted"))
+    }
+
+    func testSoundsTabKeepsCatalogControlsWhenThereIsNoCreatorSong() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.allLanes)
+        XCTAssertNil(session.yourSong)
+        XCTAssertNil(session.deviceSongBed)
+    }
+
     func testInspectorMutationsStayInsideEditorCommitContract() {
         var draft = NativeEditorUITestFixtures.allLanes
         draft.serverSnapshot["editor_capabilities"] = .object([

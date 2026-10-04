@@ -2011,7 +2011,7 @@ async def _duplicate(
     ).scalar_one_or_none()
 
 
-def _job_projection(job: Job | None) -> dict[str, Any] | None:
+def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | None:
     if job is None:
         return None
     from app.routes.generative_jobs import _variants_for_response
@@ -2024,6 +2024,11 @@ def _job_projection(job: Job | None) -> dict[str, Any] | None:
     # Re-signing is authoritative. A storage/signing outage must be visible to
     # the client instead of returning an expired or stale playback URL.
     variants = _variants_for_response(job)
+    # KRI-374: the creator's own song (display-only; no query -- the owning item is
+    # already loaded). Absent for every variant without one.
+    from app.services.user_song_projection import attach_user_song  # noqa: PLC0415
+
+    attach_user_song(variants, job, song_filename=getattr(item, "song_filename", None))
     # KRI-178/KRI-183: same "primary variant" rule as `creator_sessions.py`
     # -- the first variant dict that carries a `variant_id` at all (there is
     # only ever one live variant on a phone job). Render notes are a
@@ -3312,7 +3317,7 @@ async def _response(db: AsyncSession, thread: CreationThread) -> CreationThreadO
         else None,
         active_job_id=str(response_active_job_id) if response_active_job_id else None,
         creator_agent=_creator_agent_projection(session, item=item),
-        job=_job_projection(job),
+        job=_job_projection(job, item=item),
         media_capabilities=media_capabilities,
         direction_receipt=direction_receipt,
         speech_cleanup=speech_cleanup,

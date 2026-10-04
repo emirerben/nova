@@ -70,6 +70,7 @@ final class NativeEditorSessionTests: XCTestCase {
         await session.prepareFixtureSourcePreview(url: sourceURL)
         XCTAssertEqual(session.sourcePreviewState, .ready)
         XCTAssertEqual(fake.deviceRenderCallCount, 1, "An authoritative no-narration recipe is memoized for its generation")
+        XCTAssertNil(session.yourSong, "a recipe without a song track connects nothing to the Sounds tab")
 
         let nextRequest = deviceRenderRequest(jobID: jobID, revision: 2, digest: "b")
         fake.deviceRenderResponse = DeviceRenderStatusResponse(
@@ -92,6 +93,122 @@ final class NativeEditorSessionTests: XCTestCase {
         await session.prepareFixtureSourcePreview(url: sourceURL)
         XCTAssertEqual(session.sourcePreviewState, .ready)
         XCTAssertEqual(fake.deviceRenderCallCount, 2, "A generation refresh must resolve its current device recipe again")
+    }
+
+    /// KRI-374: a creator-song montage has no music lane, so the live preview used to be silent. The pinned
+    /// device recipe's `song` clip now plays, camera audio is forced to 0, and the Sounds row stays connected
+    /// to it even when an older server sends no `user_song`.
+    func testDeviceRecipeSongPlaysInPreviewMutesCameraAndConnectsSoundsRow() async throws {
+        let threadID = UUID(), jobID = UUID()
+        let wav = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: wav) }
+        try Self.silentWAV(seconds: 4).write(to: wav)
+        let fingerprint = try SHA256Fingerprinter().fingerprint(file: wav)
+        let song = RenderAssetReference(id: "song-item", fingerprint: try RenderFingerprint(fingerprint),
+                                        source: .song(planItemID: "item", generation: "3"))
+        var recipe = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a").recipe
+        recipe.assets.append(MediaAsset(id: song.id, relativePath: song.id, fingerprint: fingerprint, duration: 4))
+        var bedClip = TimelineClip(id: "song-bed", sourceAssetID: song.id, sourceStart: 1, sourceDuration: 2, volume: 0.8)
+        bedClip.audioFadeIn = 0.25; bedClip.audioFadeOut = 0.5
+        recipe.tracks.append(TimelineTrack(id: "song", kind: .audio, clips: [bedClip]))
+        recipe.audio = AudioMixRecipe(musicAssetID: song.id, originalVolume: 0)
+        recipe.assetManifest = RenderAssetManifest(assets: [song])
+        let request = DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: jobID, variantID: "variant", recipeRevision: 1,
+            recipeDigest: String(repeating: "a", count: 64)), recipe: recipe)
+        // Seed the verified cache the editor's resolver reads, so no grant or download is needed.
+        let project = BackgroundUploadCoordinator.projectDirectory(threadID)
+        _ = try await RenderLibraryCache(root: project.root.appending(path: "library", directoryHint: .isDirectory))
+            .install(downloadedFile: wav, for: song)
+
+        var authoritative = Self.variant(duration: 2, generation: "generation-1")
+        authoritative["render_destination"] = .string("device")
+        authoritative["music_playback_mode"] = .string("reference_only")
+        func session(variant: [String: JSONValue]) async -> (NativeEditorSession, EditorCommitSpy) {
+            let fake = EditorCommitSpy(
+                draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+                    snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
+                    snapshot: [:], canUndo: false, createdAt: .now),
+                authoritativeVariant: variant
+            )
+            fake.sourcePoolResult = NativeEditorSourcePool(clips: [], baseGeneration: "generation-1")
+            fake.deviceRenderResponse = DeviceRenderStatusResponse(phase: "published", request: request, publishedGeneration: "generation-1")
+            let session = NativeEditorSession()
+            await session.load(api: fake, threadID: threadID)
+            return (session, fake)
+        }
+        let sourceURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+
+        // An older server: no `user_song`, so the row comes from the recipe's clip alone.
+        let (older, fake) = await session(variant: authoritative)
+        await older.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(older.sourcePreviewState, .ready)
+        XCTAssertEqual(fake.deviceRenderCallCount, 1)
+        XCTAssertEqual(older.deviceSongBed?.sourceStart, 1)
+        let displayed = try XCTUnwrap(older.displayedSourcePreviewRecipe)
+        let track = try XCTUnwrap(displayed.tracks.first { $0.id == "song" && $0.kind == .audio })
+        let clip = try XCTUnwrap(track.clips.first)
+        XCTAssertEqual(clip.sourceStart, 1)
+        XCTAssertEqual(clip.sourceDuration, 2, accuracy: 0.001)
+        XCTAssertEqual(clip.volume, 0.8, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(clip.audioFadeIn), 0.25, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(clip.audioFadeOut), 0.5, accuracy: 0.001)
+        let video = try XCTUnwrap(displayed.tracks.first { $0.kind == .video })
+        XCTAssertFalse(video.clips.isEmpty)
+        XCTAssertTrue(video.clips.allSatisfy { $0.volume == 0 }, "camera audio must never play over the song")
+        XCTAssertEqual(older.yourSong, NativeEditorYourSong(title: "Your song", window: "Plays 0:01 – 0:03", mode: nil))
+        // Preparing again is memoized: the recipe is not fetched twice for one generation.
+        await older.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(fake.deviceRenderCallCount, 1)
+
+        // The additive `user_song` field names the song and its mode.
+        authoritative["user_song"] = .object(["title": .string("Midnight Drive"), "mode": .string("lipsync"),
+            "duration_s": .number(214), "window_start_s": .number(108), "window_end_s": .number(123)])
+        let (current, _) = await session(variant: authoritative)
+        await current.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(current.yourSong, NativeEditorYourSong(title: "Midnight Drive", window: "Plays 1:48 – 2:03",
+                                                              mode: "Lip-sync · master audio"))
+    }
+
+    /// A recipe whose song cannot be resolved degrades to the finished-render fallback instead of a silent live preview.
+    func testUnresolvableDeviceSongFailsLivePreviewSoItFallsBackToTheFinishedRender() async throws {
+        let threadID = UUID(), jobID = UUID()
+        let fingerprint = AssetFingerprint(hex: String(repeating: "c", count: 64), byteCount: 10)
+        let song = RenderAssetReference(id: "song-item", fingerprint: try RenderFingerprint(fingerprint),
+                                        source: .song(planItemID: "item", generation: "3"))
+        var recipe = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a").recipe
+        recipe.assets.append(MediaAsset(id: song.id, relativePath: song.id, fingerprint: fingerprint, duration: 4))
+        recipe.tracks.append(TimelineTrack(id: "song", kind: .audio, clips: [
+            TimelineClip(id: "song-bed", sourceAssetID: song.id, sourceStart: 1, sourceDuration: 2)]))
+        recipe.audio = AudioMixRecipe(musicAssetID: "someone-else", originalVolume: 0)
+        recipe.assetManifest = RenderAssetManifest(assets: [song])
+        let request = DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: jobID, variantID: "variant", recipeRevision: 1,
+            recipeDigest: String(repeating: "a", count: 64)), recipe: recipe)
+        var authoritative = Self.variant(duration: 2, generation: "generation-1")
+        authoritative["render_destination"] = .string("device")
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1,
+                snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
+                snapshot: [:], canUndo: false, createdAt: .now),
+            authoritativeVariant: authoritative
+        )
+        fake.sourcePoolResult = NativeEditorSourcePool(clips: [], baseGeneration: "generation-1")
+        fake.deviceRenderResponse = DeviceRenderStatusResponse(phase: "published", request: request, publishedGeneration: "generation-1")
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: threadID)
+        let sourceURL = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        guard case .failed = session.sourcePreviewState else { return XCTFail("a song that cannot be resolved must not preview silently") }
+        XCTAssertNil(session.displayedSourcePreviewRecipe)
+    }
+
+    private static func silentWAV(seconds: Int, sampleRate: Int = 8000) -> Data {
+        let samples = seconds * sampleRate
+        func le32(_ v: Int) -> [UInt8] { (0..<4).map { UInt8((v >> (8 * $0)) & 0xff) } }
+        func le16(_ v: Int) -> [UInt8] { (0..<2).map { UInt8((v >> (8 * $0)) & 0xff) } }
+        var bytes: [UInt8] = Array("RIFF".utf8) + le32(36 + samples * 2) + Array("WAVEfmt ".utf8) + le32(16)
+        bytes += le16(1) + le16(1) + le32(sampleRate) + le32(sampleRate * 2) + le16(2) + le16(16)
+        bytes += Array("data".utf8) + le32(samples * 2) + [UInt8](repeating: 0, count: samples * 2)
+        return Data(bytes)
     }
 
     /// Job 385e3b13: a phone Talking edit with photo cards opened to a black

@@ -70,6 +70,18 @@ enum NativeEditorUITestFixtures {
         ])
     ]
 
+    /// A montage built on the creator's own song (KRI-374): reference-only, camera audio
+    /// muted, and the additive `user_song` field the Sounds tab reads
+    /// (`-ui-testing-editor-user-song`).
+    static let userSongVariant: [String: JSONValue] = [
+        "music_playback_mode": .string("reference_only"),
+        "source_audio_preserved": .bool(false),
+        "user_song": .object([
+            "title": .string("Midnight Drive"), "mode": .string("background"),
+            "duration_s": .number(214), "window_start_s": .number(108), "window_end_s": .number(123)
+        ])
+    ]
+
     static let legacyVisuals: EditorDraft = {
         var value = captionVisuals
         var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
