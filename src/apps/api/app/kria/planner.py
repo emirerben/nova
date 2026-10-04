@@ -1398,7 +1398,15 @@ async def plan_live_turn(
     allow_fast_path: bool = True,
     first_editor_result: tuple[KriaTurnPlan | None] | None = None,
     editor_state: Any = None,
+    answers_clip_question: bool = False,
 ) -> PlannedKriaTurn:
+    # KRI-282: `answers_clip_question` marks a turn that ANSWERS a clip-picker
+    # question: structured `clip_selection` plus a synthetic message ("Dodgeball:
+    # clip 21"). That message must never reach the editor copilot, which reads it
+    # as a text edit and prints the label on whatever montage bar the number hits.
+    # Only the re-plan folds the selection, so it forces the re-plan.
+    if answers_clip_question:
+        allow_fast_path = False
     item = await db.get(PlanItem, item_id)
     if item is None:
         raise RuntimeError("Kria target item is unavailable")
@@ -1479,9 +1487,10 @@ async def plan_live_turn(
             # The copilot already answered this exact message against this exact draft:
             # the router below reuses that answer instead of paying for a second call.
             first_editor_result=(fast_plan,),
+            answers_clip_question=answers_clip_question,
             **_state_kw(editor_state),
         )
-    if not extract_first:
+    if not extract_first and not answers_clip_question:
         has_render = item.current_job_id is not None
         _editor_target_miss.set(None)
         editor_plan = await _plan_editor_revision(
@@ -1534,7 +1543,7 @@ async def plan_live_turn(
             return inputs
         output = await _call_main_creator(inputs, thread_id=thread_id, creator_id=creator_id)
     except (RuntimeError, ValidationError):
-        if not extract_first:
+        if not extract_first or answers_clip_question:
             raise
         # KRI-188: the Main Creator now runs before the copilot only to extract
         # requirements. A failure there must not block a plain edit the copilot
@@ -1585,6 +1594,8 @@ async def plan_live_turn(
             # The route below would be a re-plan caused solely by the missing target.
             return _editor_target_recovery(manifest)
     route = route_requirements(fresh, shape, message=user_message)
+    if answers_clip_question:
+        route = "replan"
     if route == "editor_ops":
         if first_editor_result is not None:
             editor_plan = first_editor_result[0]
