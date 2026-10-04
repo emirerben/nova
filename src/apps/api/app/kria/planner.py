@@ -809,7 +809,6 @@ async def _plan_from_creator_output(
         clip_selections = None
         if settings.kria_clip_selection_questions_enabled:
             clip_selections = await _load_clip_selections(db, thread_id)
-            await db.rollback()  # no connection pinned across the provider calls below
         try:
             planned = await plan_and_resolve_clip_intents(
                 creator_request=creator_request or user_message,
@@ -977,6 +976,7 @@ async def _load_clip_selections(db: AsyncSession, thread_id: uuid.UUID) -> ClipS
             .order_by(CreationThreadEvent.sequence)
         )
     ).all()
+    await db.rollback()  # no connection pinned across the provider calls that follow
     return fold_clip_selections((role, payload) for role, payload in rows)
 
 
