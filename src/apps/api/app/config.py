@@ -517,6 +517,33 @@ class Settings(BaseSettings):
     # answer as authoritative. Default TRUE; kill switch = false + restart (the field
     # is then dropped, questions are text-only, byte-identical to before).
     kria_clip_selection_questions_enabled: bool = True
+    # KRI-374: creator-uploaded song on phone montages (background music bed, or
+    # lip-sync takes placed by song time). Default TRUE (no users yet); kill switch
+    # = false + restart (api + worker): capabilities hide `media.song`, the policy
+    # refuses `audio_strategy="user_song"`, byte-identical to before. Apply:
+    # `fly secrets set USER_SONG_MONTAGE_ENABLED=false --app nova-video` +
+    # `fly machine restart <id>`. Needs `musicBed` + `audioMix` in
+    # PHONE_RENDER_VERIFIED_FEATURES (both already verified in prod).
+    user_song_montage_enabled: bool = True
+    # Longest song accepted (seconds); the montage itself is capped at 120 s.
+    user_song_max_duration_s: float = Field(default=600.0, gt=0)
+    # How long a planner turn waits for song analysis / take alignment before it
+    # answers "still checking your clips".
+    song_alignment_turn_deadline_s: float = Field(default=45.0, ge=0)
+    # Aligner thresholds (see app/pipeline/song_alignment.py). A take is
+    # confident only when peak_z >= confident_peak_z AND peak_ratio >=
+    # confident_peak_ratio AND the drift check passes AND (the text anchor agrees
+    # within song_align_text_agree_s OR the audio peak alone is strong).
+    song_align_confident_peak_z: float = 8.0
+    song_align_confident_peak_ratio: float = 1.5
+    song_align_strong_peak_z: float = 12.0
+    song_align_strong_peak_ratio: float = 2.0
+    song_align_text_agree_s: float = 0.15
+    song_align_drift_tolerance_s: float = 0.04
+    # Fixed offset (seconds) added to every aligned delta to absorb a measured
+    # analysis-proxy vs original audio timing difference (AAC priming / edit
+    # lists). 0.0 until the device fixture measures one.
+    song_alignment_proxy_offset_s: float = 0.0
     # KRI-189 (KRI-185 P3): clip facts -- capture time, place name and a
     # best-guess landmark per clip, each with provenance. Gates SERVER
     # CONSUMPTION only: the landmark agent run, exposing facts to the Main
