@@ -104,10 +104,31 @@ Flag `slide_post_rich_text_enabled` (default `false`; capability
 list (max 4) of `SlideTextElement`: `id`, `text` (1-120), `role`
 (`text|label`), `label_source` (`place|capture_time`), `edited`,
 `font_family` (must be in `text_element._ALLOWED_FONTS`, default
-`Inter-Bold`), `color` (#RRGGBB), `size_px` (24-200, in 1920-canvas px),
+`Inter-Bold`), `color` (#RRGGBB), `size_px` (in 1920-canvas px),
 `alignment`, `position` (`top|center|bottom|custom`), `x_frac`/`y_frac`
 (fractions of the SLIDE canvas, read when `custom`), `max_width_frac`,
-`stroke_width`, `shadow_enabled`, `background` (`none|box`).
+`stroke_width` (0-20), `shadow_enabled`, `background` (`none|box`).
+`size_px` is 8-200 (int or float).
+
+**Text-tool parity (video-editor vocabulary).** The text style vocabulary is
+shared with the video editor's Text tool (`agents/_schemas/text_element.TextElement`;
+validators are reused, not copied). Slides still have NO timing, animation,
+captions, sounds or overlays, and `behind_subject`/`highlight_color` are not
+carried. Extra optional fields, all omitted from the serialized element while
+unset (so pre-parity elements serialize and hash identically): `rotation_deg`
+(-360..360, clockwise), `stroke_color`, `shadow_color` (#RRGGBB),
+`shadow_opacity` (0..1), `background_color` (#RRGGBB; wins over the legacy
+`background` box, which keeps its black@.45 look when no color is set),
+`editor_preset` (`Simple|Bold|Highlight`, informational), `text_case`
+(`none|upper|lower|title`, applied to the rendered string only; stored `text`
+keeps its casing), `letter_spacing` (em, -0.05..0.5), `line_spacing`
+(multiplier, 0.5..3.0). Rendered by `build.render_text_element_png` via
+`text_overlay._authored_pillow_paint` (same mapping as the video Pillow path);
+rotation is applied on the 1080x1920 raster (pivot = text anchor) BEFORE the 4:5
+band crop. `_draw_text_png` gained opt-in `letter_spacing`/`line_spacing`
+(per-glyph tracking via `_SpacedDraw`; None = historical pixels). The chat-edit
+compiler keeps these fields on existing elements (it rebuilds from
+`base.model_dump()`) but the copilot cannot read or set them.
 
 - **Legacy mirror.** Whenever `texts` is not None, `SlideEdits.text` is forced
   to a mirror of `texts[0]` (None when empty), so old clients and the flag-off
