@@ -71,6 +71,10 @@ struct SongOrderQuestion: Equatable, Sendable {
 
     /// Takes the creator should look at.
     var uncertainCount: Int { items.filter { $0.status.isUncertain }.count }
+    /// Takes whose place in the song is doubtful but have a best guess: the ones the creator can fix by reordering.
+    var ambiguousCount: Int { items.filter { $0.status == .ambiguous }.count }
+    /// Takes the server could not place at all. It can only use them as filler, so they are not reorderable.
+    var unmatchedCount: Int { items.filter { $0.status == .unmatched }.count }
 
     /// The proposed order cleaned for display: only known items, each once; items the server listed in `items`
     /// but left out of `proposed_order` follow, in item order. Never drops a take.
@@ -92,6 +96,15 @@ struct SongOrderSubmission: Encodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey { case questionID = "question_id", orderedMediaIDs = "ordered_media_ids" }
     /// The 409 `code` the server answers a `song_order` for a question it has since replaced.
     static let staleConflictCode = "song_order_stale"
+
+    /// The `song_order` a user message carried (the server echoes it on the stored event), or nil when the
+    /// message has none or it is malformed. This is how a relaunch knows which question was really answered.
+    static func parse(payload: [String: JSONValue]?) -> SongOrderSubmission? {
+        guard let fields = payload?["song_order"]?.objectValue,
+              let questionID = fields["question_id"]?.stringValue, !questionID.isEmpty else { return nil }
+        let ids = (fields["ordered_media_ids"]?.arrayValue ?? []).compactMap(\.stringValue)
+        return ids.isEmpty ? nil : SongOrderSubmission(questionID: questionID, orderedMediaIDs: ids)
+    }
 
     /// Short read-only summary once answered, e.g. "Clip 2 · Clip 1 · Clip 3".
     func summary(positions: [String: Int]) -> String {
@@ -167,30 +180,39 @@ enum SongOrderPositions {
 
 /// How a question in the transcript is presented.
 enum SongOrderPhase: Equatable {
-    /// The newest question with no later user message: interactive.
+    /// Still open: the newest question that no `song_order` has answered. Interactive.
     case active
-    /// A later user message exists (answered or superseded): read-only.
-    case answered
+    /// A later user message carried a `song_order` for this question: read-only. The submission is what
+    /// that message sent, so the card can say what was confirmed even after a relaunch.
+    case answered(SongOrderSubmission)
     /// A newer question replaced it and nobody answered this one: hidden.
     case superseded
 }
 
-/// Folds the transcript into per-question phases. Mirrors the clip picker's rule: the latest question
-/// that no later user message has answered is the only interactive one.
+/// Folds the transcript into per-question phases. The server keeps a question open until a `song_order` for
+/// that question arrives (`latest_open_song_order_question`), so a plain reply, a reaction, or a message
+/// about something else never closes the card: only a user message carrying a matching `song_order` does.
 enum SongOrderFold {
     struct Entry: Equatable {
         let messageID: String
         let question: SongOrderQuestion?
         let isUser: Bool
+        /// The `song_order` this message carried (user messages only).
+        var answer: SongOrderSubmission? = nil
     }
 
     static func phases(_ entries: [Entry]) -> [String: SongOrderPhase] {
         var result: [String: SongOrderPhase] = [:]
-        for (index, entry) in entries.enumerated() where entry.question != nil {
+        for (index, entry) in entries.enumerated() {
+            guard let question = entry.question else { continue }
             let later = entries[(index + 1)...]
-            if later.contains(where: { $0.isUser }) { result[entry.messageID] = .answered }
-            else if later.contains(where: { $0.question != nil }) { result[entry.messageID] = .superseded }
-            else { result[entry.messageID] = .active }
+            if let answer = later.lazy.compactMap({ $0.isUser ? $0.answer : nil }).first(where: { $0.questionID == question.questionID }) {
+                result[entry.messageID] = .answered(answer)
+            } else if later.contains(where: { $0.question != nil }) {
+                result[entry.messageID] = .superseded
+            } else {
+                result[entry.messageID] = .active
+            }
         }
         return result
     }

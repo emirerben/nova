@@ -6,7 +6,8 @@ import SwiftUI
 enum SongOrderCardMode {
     /// The latest unanswered question: interactive. `submit` receives the structured answer and its readable message.
     case active(isSending: Bool, submit: (SongOrderSubmission, String) -> Void)
-    /// Already answered (or superseded): read-only, collapsed. `summary` is nil after a relaunch.
+    /// Answered by a `song_order` message: read-only, collapsed. `summary` names the confirmed order; nil when
+    /// that message's clips can no longer be named, which reads as a neutral "Order question closed".
     case answered(summary: String?)
 }
 
@@ -33,6 +34,9 @@ struct SongOrderCard: View {
     var previewURL: @MainActor (String) -> URL?
     @State private var state: SongOrderState
     @State private var selectedMediaID: String?
+    /// The selected take's local original, resolved ONCE when the selection changes. Resolving in `body` hit the
+    /// source-asset store and the file system on every re-render, including every frame of a drag.
+    @State private var selectedPreviewURL: URL?
     @ScaledMetric(relativeTo: .body) private var rowHeight: CGFloat = 92
 
     init(question: SongOrderQuestion, media: [CreationAttachedMedia], projectID: UUID, mode: SongOrderCardMode,
@@ -47,12 +51,32 @@ struct SongOrderCard: View {
 
     private var positions: [String: Int] { SongOrderPositions.map(media: media, question: question) }
 
+    private func toggleSelection(_ mediaID: String) {
+        if selectedMediaID == mediaID {
+            selectedMediaID = nil
+            selectedPreviewURL = nil
+        } else {
+            selectedMediaID = mediaID
+            selectedPreviewURL = previewURL(mediaID)
+        }
+    }
+
+    /// Applies a reorder and tells VoiceOver where the take ended up (the row also moves, so focus alone says little).
+    private func reorder(_ mediaID: String, _ change: (inout SongOrderState) -> Void) {
+        change(&state)
+        let number = positions[mediaID] ?? 0
+        let position = state.position(of: mediaID) ?? 0
+        UIAccessibility.post(notification: .announcement,
+                             argument: "Clip \(number) moved to position \(position) of \(state.order.count)")
+    }
+
     var body: some View {
         switch mode {
         case .answered(let summary):
             HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(KriaColor.success)
-                Text(summary.map { "Order confirmed: \($0)" } ?? "Order confirmed")
+                Image(systemName: summary == nil ? "circle.dashed" : "checkmark.circle.fill")
+                    .foregroundStyle(summary == nil ? KriaColor.mutedInk : KriaColor.success)
+                Text(Self.answeredText(summary: summary))
                     .font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -63,7 +87,7 @@ struct SongOrderCard: View {
             VStack(alignment: .leading, spacing: 14) {
                 header
                 if let selectedMediaID {
-                    SongOrderPreview(mediaID: selectedMediaID, url: previewURL(selectedMediaID),
+                    SongOrderPreview(mediaID: selectedMediaID, url: selectedPreviewURL,
                                      title: "Clip \(positions[selectedMediaID] ?? 0)")
                 }
                 list(isSending: isSending)
@@ -81,10 +105,7 @@ struct SongOrderCard: View {
             Text("Check the order of your clips")
                 .font(KriaFont.body(15).weight(.semibold)).foregroundStyle(KriaColor.ink)
                 .accessibilityAddTraits(.isHeader)
-            let count = question.uncertainCount
-            Text(count > 0
-                 ? "Kria wasn’t sure where \(count == 1 ? "1 clip fits" : "\(count) clips fit") in your song. Tap a clip to watch it, then drag or use the arrows to fix the order."
-                 : "Tap a clip to watch it, then drag or use the arrows to change the order.")
+            Text(Self.hint(ambiguous: question.ambiguousCount, unmatched: question.unmatchedCount))
                 .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -96,13 +117,14 @@ struct SongOrderCard: View {
         List {
             ForEach(state.order, id: \.self) { mediaID in
                 row(mediaID, isSending: isSending)
+                    .moveDisabled(isUnplaced(mediaID))
                     .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
             }
             .onMove { source, destination in
-                guard !isSending else { return }
-                state.move(from: source, to: destination)
+                guard !isSending, let first = source.min(), state.order.indices.contains(first) else { return }
+                reorder(state.order[first]) { $0.move(from: source, to: destination) }
             }
         }
         .listStyle(.plain)
@@ -120,9 +142,10 @@ struct SongOrderCard: View {
         let attached = media.first { $0.id == mediaID }
             ?? CreationAttachedMedia(id: mediaID, filename: "Clip \(number)", kind: "video", previewURL: nil)
         let uncertain = item?.status.isUncertain ?? true
+        let unplaced = isUnplaced(mediaID)
         let isSelected = selectedMediaID == mediaID
         return HStack(spacing: 10) {
-            Button { selectedMediaID = isSelected ? nil : mediaID } label: {
+            Button { toggleSelection(mediaID) } label: {
                 HStack(spacing: 10) {
                     Text("\(position)")
                         .font(KriaFont.body(13).weight(.bold)).foregroundStyle(KriaColor.ink)
@@ -154,18 +177,31 @@ struct SongOrderCard: View {
             .accessibilityLabel("Clip \(number), position \(position) of \(state.order.count). \(Self.caption(for: item))")
             .accessibilityHint(isSelected ? "Stops the preview" : "Plays a preview")
             .accessibilityAddTraits(isSelected ? .isSelected : [])
+            // The custom actions sit on the take itself, which is a real accessibility element. On the row they
+            // were attached to a `.contain` container, which VoiceOver does not expose as an element, so they never
+            // showed in the actions rotor; the arrow buttons stay separate, reachable elements next to it.
+            .accessibilityAction(named: "Move up") { if !isSending && !unplaced && state.canMoveUp(mediaID) { reorder(mediaID) { $0.moveUp(mediaID) } } }
+            .accessibilityAction(named: "Move down") { if !isSending && !unplaced && state.canMoveDown(mediaID) { reorder(mediaID) { $0.moveDown(mediaID) } } }
             .accessibilityIdentifier("song-order-take-\(mediaID)")
-            VStack(spacing: 0) {
-                arrow("chevron.up", label: "Move clip \(number) up", id: "song-order-up-\(mediaID)",
-                      enabled: state.canMoveUp(mediaID) && !isSending) { state.moveUp(mediaID) }
-                arrow("chevron.down", label: "Move clip \(number) down", id: "song-order-down-\(mediaID)",
-                      enabled: state.canMoveDown(mediaID) && !isSending) { state.moveDown(mediaID) }
+            // A take Kria could not place has no position in the song: the server can only use it as filler, so
+            // reordering it would promise something that does not happen. It stays listed, without arrows.
+            if unplaced {
+                Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
+            } else {
+                VStack(spacing: 0) {
+                    arrow("chevron.up", label: "Move clip \(number) up", id: "song-order-up-\(mediaID)",
+                          enabled: state.canMoveUp(mediaID) && !isSending) { reorder(mediaID) { $0.moveUp(mediaID) } }
+                    arrow("chevron.down", label: "Move clip \(number) down", id: "song-order-down-\(mediaID)",
+                          enabled: state.canMoveDown(mediaID) && !isSending) { reorder(mediaID) { $0.moveDown(mediaID) } }
+                }
             }
         }
         .frame(height: rowHeight)
-        .accessibilityElement(children: .contain)
-        .accessibilityAction(named: "Move up") { if !isSending { state.moveUp(mediaID) } }
-        .accessibilityAction(named: "Move down") { if !isSending { state.moveDown(mediaID) } }
+    }
+
+    /// True for a take the server could not place at all. It has no position in the song, so it is not reorderable.
+    private func isUnplaced(_ mediaID: String) -> Bool {
+        (question.item(for: mediaID)?.status ?? .unmatched) == .unmatched
     }
 
     private func arrow(_ symbol: String, label: String, id: String, enabled: Bool, action: @escaping () -> Void) -> some View {
@@ -201,15 +237,39 @@ struct SongOrderCard: View {
 
     /// One line under a take's name: where Kria put it, or why it needs a look.
     static func caption(for item: SongOrderQuestion.Item?) -> String {
-        guard let item else { return "Kria couldn’t place this clip" }
+        guard let item else { return unplacedCaption }
         switch item.status {
         case .confident:
             return item.songStartS.map { "Starts at \(DurationFormatter.clock($0)) in the song" } ?? "Placed in your song"
         case .ambiguous:
             return item.songStartS.map { "Could fit a few places, about \(DurationFormatter.clock($0))" } ?? "Could fit a few places"
         case .unmatched:
-            return "Kria couldn’t place this clip"
+            return unplacedCaption
         }
+    }
+
+    /// Honest about what happens to it: with no position in the song the server can only use the clip as filler.
+    static let unplacedCaption = "Kria couldn’t place this clip — it will be used as filler"
+
+    /// The sentence under the card title. The "drag or use the arrows" advice is only given when some take can
+    /// actually be moved to fix a doubtful position; unplaced takes are explained instead.
+    static func hint(ambiguous: Int, unmatched: Int) -> String {
+        func clips(_ n: Int) -> String { n == 1 ? "1 clip" : "\(n) clips" }
+        var parts: [String] = []
+        if ambiguous > 0 {
+            parts.append("Kria wasn’t sure where \(ambiguous == 1 ? "1 clip fits" : "\(ambiguous) clips fit") in your song. Tap a clip to watch it, then drag or use the arrows to fix the order.")
+        } else {
+            parts.append("Tap a clip to watch it, then drag or use the arrows to change the order.")
+        }
+        if unmatched > 0 {
+            parts.append("\(clips(unmatched)) Kria couldn’t place will be used as filler.")
+        }
+        return parts.joined(separator: " ")
+    }
+
+    /// The collapsed line once answered. Without a nameable order it stays neutral rather than claiming a confirmation.
+    static func answeredText(summary: String?) -> String {
+        summary.map { "Order confirmed: \($0)" } ?? "Order question closed"
     }
 }
 
@@ -242,6 +302,9 @@ private struct SongOrderPreview: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .task(id: url) { model.play(url) }
                     .onDisappear { model.stop() }
+                    // The voiceover recorder switches the shared session to play-and-record; a preview still playing
+                    // underneath would fight it, so the recorder announces itself and the preview steps aside.
+                    .onReceive(NotificationCenter.default.publisher(for: .kriaAudioCaptureWillStart)) { _ in model.stop() }
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Preview of \(title)")
             } else {
@@ -258,16 +321,25 @@ private struct SongOrderPreview: View {
 @MainActor private final class SongOrderPreviewModel: ObservableObject {
     let player = AVQueuePlayer()
     private var looper: AVPlayerLooper?
+    private var isSessionActive = false
 
     func play(_ url: URL) {
-        stop()
+        halt()
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
-        try? AVAudioSession.sharedInstance().setActive(true)
+        isSessionActive = (try? AVAudioSession.sharedInstance().setActive(true)) != nil
         looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: url))
         player.play()
     }
 
+    /// Stops playback and gives the audio session back, so music the creator had playing resumes.
     func stop() {
+        halt()
+        guard isSessionActive else { return }
+        isSessionActive = false
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    private func halt() {
         player.pause()
         looper?.disableLooping()
         looper = nil
@@ -276,7 +348,8 @@ private struct SongOrderPreview: View {
 }
 
 /// A bare video surface. SwiftUI's `VideoPlayer` builds hidden playback controls that stall XCUITest's
-/// idle tracking (see `NativeEditorPlayerSurface`), and a muted-by-chrome preview needs none of them.
+/// idle tracking (see `NativeEditorPlayerSurface`), and a preview needs none of them. The preview plays the
+/// take's own audio (the creator is checking where it sits against the song), so there is no mute control.
 private struct SongOrderPlayerSurface: UIViewRepresentable {
     let player: AVPlayer
 

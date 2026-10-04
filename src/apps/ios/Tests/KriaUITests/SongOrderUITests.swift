@@ -48,6 +48,9 @@ final class SongOrderUITests: XCTestCase {
         XCTAssertTrue(app.buttons["song-order-take-fixture-clip-2"].label.contains("Could fit a few places"))
         XCTAssertTrue(app.buttons["song-order-take-fixture-clip-3"].label.contains("couldn’t place"))
         XCTAssertFalse(app.buttons["song-order-up-fixture-clip"].isEnabled, "the first take cannot move up")
+        XCTAssertTrue(app.buttons["song-order-take-fixture-clip-3"].label.contains("used as filler"), "an unplaced take says what happens to it")
+        XCTAssertFalse(app.buttons["song-order-up-fixture-clip-3"].exists, "an unplaced take is not reorderable")
+        XCTAssertFalse(app.buttons["song-order-down-fixture-clip-3"].exists)
         XCTAssertFalse(app.buttons["song-order-reset"].exists)
         // Reorder with the arrow buttons (the accessible path): take 1 down one place.
         bringIntoView(app.buttons["song-order-down-fixture-clip"], in: app)
@@ -64,6 +67,7 @@ final class SongOrderUITests: XCTestCase {
         let echo = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "order[fixture-clip-2+fixture-clip+fixture-clip-3+fixture-clip-4]")).firstMatch
         XCTAssertTrue(echo.waitForExistence(timeout: 10), "server received the confirmed order as song_order")
         XCTAssertTrue(app.descendants(matching: .any)["song-order-answered"].waitForExistence(timeout: 5), "the card collapses once answered")
+        XCTAssertTrue(app.descendants(matching: .any)["song-order-answered"].label.contains("Order confirmed"), "the stored message echoed the song_order")
         XCTAssertFalse(app.buttons["song-order-use"].exists)
     }
 

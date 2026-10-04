@@ -208,7 +208,10 @@ private final class CreationChatFixture: @unchecked Sendable {
             } else if action == "remove_media" { state["media"] = []; append("action_remove_media") }
         } else if parts.last == "messages" || parts.last == "turns" {
             let turnID = body["client_event_id"] as? String ?? id
-            append("user_message", role: "user", text: body["message"] as? String, clientEventID: turnID)
+            // Like the server (`runtime.py`), a stored user message echoes the `song_order` it carried; that echo
+            // is what closes the order card.
+            append("user_message", role: "user", text: body["message"] as? String,
+                   payload: (body["song_order"] as? [String: Any]).map { ["song_order": $0] } ?? [:], clientEventID: turnID)
             if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] != nil {
                 if let order = body["song_order"] as? [String: Any] {
                     // Echo what the server received so the UI test can pin the structured payload.
