@@ -36,6 +36,7 @@ authored/quoted caption phrase lives on ``ResolvedClipIntent.caption_text`` +
 
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from typing import Literal
@@ -60,6 +61,7 @@ GroundingSource = Literal["creator_text", "record_span", "vision_verified", "pla
 ResolutionStatus = Literal["resolved", "needs_creator"]
 
 MAX_CLIP_INTENTS = 8
+INTENT_ID_MAX_CHARS = 40
 # KRI-282: the generic stand-in printed on every clip a "placeholder" label
 # targets. System-chosen on purpose: the fence's invariant is that model or
 # Gemini output never becomes on-screen text, and the creator replaces this in
@@ -92,10 +94,25 @@ def _clean(value: object, limit: int) -> str:
     return " ".join(value.split())[:limit]
 
 
+def fit_intent_id(value: str) -> str:
+    """Shorten a model-minted intent id to the stored bound, deterministically.
+
+    The id is only a handle the model invents ("caption_guy_glasses_navy_tshirt_
+    bowling_video"); its length says nothing about whether the creator's
+    instruction is valid. KRI-422: rejecting an over-long id discarded a correctly
+    understood caption and asked the creator to restate it. Ids within the bound
+    are returned unchanged, so every persisted intent re-validates byte-identically.
+    """
+    if len(value) <= INTENT_ID_MAX_CHARS:
+        return value
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
+    return f"{value[: INTENT_ID_MAX_CHARS - len(digest) - 1]}-{digest}"
+
+
 class ClipIntent(BaseModel):
     """What the creator wants done with clips matching a described attribute."""
 
-    intent_id: str = Field(min_length=1, max_length=40)
+    intent_id: str = Field(min_length=1, max_length=INTENT_ID_MAX_CHARS)
     op: ClipIntentOp
     # Free text, the creator's own framing: "sport being played", "pub videos",
     # "people not playing sports", "me talking to the camera", "dish".
@@ -146,6 +163,11 @@ class ClipIntent(BaseModel):
     position: ClipOrderPosition | None = None
     # Only for op="order", and never together with `position`.
     order_by: ClipOrderBy | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @field_validator("intent_id", mode="before")
+    @classmethod
+    def _intent_id(cls, v: object) -> object:
+        return fit_intent_id(v) if isinstance(v, str) else v
 
     @field_validator("attribute", mode="before")
     @classmethod
