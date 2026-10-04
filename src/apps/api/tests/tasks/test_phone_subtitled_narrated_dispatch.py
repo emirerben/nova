@@ -2267,3 +2267,45 @@ def test_subtitled_beats_flag_off_sends_no_whisper_prompt(monkeypatch):
     gb._run_generative_job(str(job.id))
 
     assert transcribe.call_args.kwargs["verbatim_prompt"] is None
+
+
+# --- KRI-297: full-screen overlay mode ---------------------------------------
+
+
+def _fullscreen_setup(monkeypatch, *, overlay_display):
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    if overlay_display is not None:
+        job.all_candidates["overlay_display"] = overlay_display
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(gb.settings, "media_overlays_enabled", True)
+    monkeypatch.setattr(
+        gb.settings, "phone_render_verified_features", _overlay_grounding_features()
+    )
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind([]))
+    grounding_mock = _grounding_mock([_photo_card("pip-0", "photo1", start_s=0.0, end_s=2.0)])
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", grounding_mock
+    )
+    return job, grounding_mock
+
+
+def test_overlay_display_fullscreen_requests_the_sequence_layout(monkeypatch):
+    job, grounding_mock = _fullscreen_setup(monkeypatch, overlay_display="fullscreen")
+    gb._run_generative_job(str(job.id))
+    assert grounding_mock.call_args.kwargs["layout"] == "fullscreen"
+
+
+@pytest.mark.parametrize("value", [None, "pip", "bogus", 3])
+def test_overlay_display_absent_or_other_keeps_grounding_call_unchanged(monkeypatch, value):
+    job, grounding_mock = _fullscreen_setup(monkeypatch, overlay_display=value)
+    gb._run_generative_job(str(job.id))
+    assert "layout" not in grounding_mock.call_args.kwargs
+
+
+def test_overlay_display_fullscreen_kill_switch_falls_back_to_pip(monkeypatch):
+    job, grounding_mock = _fullscreen_setup(monkeypatch, overlay_display="fullscreen")
+    monkeypatch.setattr(
+        gb.settings, "phone_subtitled_fullscreen_overlays_enabled", False, raising=False
+    )
+    gb._run_generative_job(str(job.id))
+    assert "layout" not in grounding_mock.call_args.kwargs

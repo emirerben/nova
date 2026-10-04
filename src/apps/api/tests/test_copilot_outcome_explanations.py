@@ -136,3 +136,18 @@ def test_genuine_success_with_ops_is_untouched() -> None:
         intent="edit", ops=[], confidence=0.9, reply="Sounds good, a tighter pace works."
     )
     assert _honest_outcome(output, ops)[1] == "Sounds good, a tighter pace works."
+
+
+def test_unsupported_overlay_display_ask_names_the_real_limit() -> None:
+    from app.routes._copilot import OVERLAY_DISPLAY_LIMIT_REPLY, is_overlay_display_ask
+
+    output = EditCopilotOutput(intent="reject", ops=[], confidence=0.9, reply="")
+    outcome, response = _honest_outcome(output, [], message="Use all overlays as full screen.")
+    assert outcome == "unsupported"
+    assert response == OVERLAY_DISPLAY_LIMIT_REPLY
+    assert "fresh edit" in response
+    # Unrelated asks keep the generic fallback.
+    _, other = _honest_outcome(output, [], message="make the text bigger")
+    assert other == "That kind of edit isn't available for this draft yet."
+    assert is_overlay_display_ask("switch between the overlays full-screen")
+    assert not is_overlay_display_ask("make the captions full screen")

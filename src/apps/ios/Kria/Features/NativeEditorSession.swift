@@ -489,8 +489,11 @@ struct NativeEditorTemporaryVideo {
     /// Automatic reanalysis budget for transient analysis failures. It lives
     /// on the session, not the panel, so reopening Visuals doesn't reset it.
     @Published private(set) var visualAutoRetry = VisualAutoRetryScheduler()
+    /// How long each library Visual has been preparing (KRI-294), so a slow
+    /// wait says so. Session-owned like the retry budget.
+    @Published private(set) var visualPreparation = VisualPreparationClock()
     private var visualPollRunning = false
-    /// Clock seam so a test can step the automatic-retry schedule.
+    /// Clock seam so a test can step the automatic-retry and preparation schedules.
     var visualAutoRetryClock: () -> Date = { Date() }
     @Published private(set) var isAddingVisual = false
     @Published var visualError: String?
@@ -3030,6 +3033,10 @@ struct NativeEditorTemporaryVideo {
             #endif
             visualLibrary = library.assets
             visualLibraryLimit = library.maxAssets
+            var clock = visualPreparation
+            clock.observe(library.assets, now: visualAutoRetryClock())
+            // Publishes only real changes: every publish re-renders the editor.
+            if clock != visualPreparation { visualPreparation = clock }
             visualError = nil
             return true
         } catch {
@@ -3038,15 +3045,13 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
-    /// Statuses the server moves past on its own. A fresh upload and a
-    /// reanalyze both restart at `queued`, which the API reports as `uploaded`
-    /// until `pool_asset_queued_status_enabled` is on.
-    private static let visualInProgressStatuses: Set<String> = ["uploaded", "queued", "pending", "analyzing", "processing"]
-
-    /// Whether the Visuals panel should keep polling: an asset is still being
-    /// analyzed, or a transient failure still has an automatic retry to come.
+    /// Whether the Visuals panel should keep polling: an asset is still
+    /// preparing (a fresh upload and a reanalyze both restart at `queued`,
+    /// which the API reports as `uploaded` until
+    /// `pool_asset_queued_status_enabled` is on), or a transient failure still
+    /// has an automatic retry to come.
     var visualLibraryNeedsPolling: Bool {
-        visualLibrary.contains { Self.visualInProgressStatuses.contains($0.status) || visualAutoRetry.needsObservation(of: $0) }
+        visualLibrary.contains { $0.preparationStage != nil || visualAutoRetry.needsObservation(of: $0) }
     }
 
     /// One refresh of the library followed by any automatic reanalyze that is

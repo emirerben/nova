@@ -311,6 +311,12 @@ pressure returns to a larger VM before considering separate always-on workers.
 
 ## 5. Release 2 topology reduction (after Plan 025 is DONE)
 
+The final `worker` `-Q` list must keep `visuals-analysis` next to
+`autoplace-jobs`: once `VISUALS_ANALYSIS_QUEUE=visuals-analysis` is set,
+creator-facing Visuals analysis is published there
+(`docs/pipelines/clip-understanding.md`). `tests/test_worker_prewarm_gate.py`
+fails if a process consumes one of the two queues without the other.
+
 While the admission release still defines the old process groups, scale the
 drained dedicated groups to zero. This avoids depending on `fly deploy` to
 infer removal of groups that no longer exist in its target config:

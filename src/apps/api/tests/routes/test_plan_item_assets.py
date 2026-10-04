@@ -1738,7 +1738,13 @@ def test_list_keeps_cleanup_pending_reservation_until_maintenance_releases_it(
     ]
 
 
-def test_reanalyze_failed_asset_queues_fenced_attempt(client: TestClient, _no_real_broker_publish):
+@pytest.mark.parametrize(
+    ("visuals_queue", "expected"),
+    [("", "autoplace-jobs"), ("visuals-analysis", "visuals-analysis")],
+)
+def test_reanalyze_failed_asset_queues_fenced_attempt(
+    client: TestClient, _no_real_broker_publish, visuals_queue, expected
+):
     user = _user()
     item, plan = _owned_item(user.id)
     asset = _asset_row(item.id, user.id)
@@ -1754,6 +1760,8 @@ def test_reanalyze_failed_asset_queues_fenced_attempt(client: TestClient, _no_re
     _override(user, db)
     with (
         patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch(f"{SETTINGS}.pool_asset_analysis_queue", "autoplace-jobs"),
+        patch(f"{SETTINGS}.visuals_analysis_queue", visuals_queue),
         patch("app.routes.plan_items._load_owned_item", new=AsyncMock(return_value=item)),
         patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
     ):
@@ -1766,6 +1774,8 @@ def test_reanalyze_failed_asset_queues_fenced_attempt(client: TestClient, _no_re
     args = publish["args"]
     assert args[:2] == [str(asset.id), False]
     assert publish["headers"] == {"pool_asset_attempt_token": asset.analysis_attempt_token}
+    # Visuals never wait FIFO behind footage analysis once the queue is configured.
+    assert publish["queue"] == expected
 
 
 def test_reanalyze_active_asset_is_idempotent(client: TestClient, _no_real_broker_publish):

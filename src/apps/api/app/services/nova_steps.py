@@ -360,18 +360,16 @@ _MISS_REASON_NO_ROOM: frozenset[str] = frozenset({"no_safe_spot", "too_short", "
 # and a bare `f"error: {exc}"` string. Every bucket maps to a FIXED, honest
 # sentence -- the raw reason code is never quoted back to the creator.
 _OVERLAY_MISS_REASON_NO_SPOKEN_MATCH: frozenset[str] = frozenset({"no_spoken_match", "hook_window"})
-_OVERLAY_MISS_REASON_NO_ROOM: frozenset[str] = frozenset(
-    {
-        "no_safe_spot",
-        "duplicate",
-        "overlap",
-        "too_short",
-        "density_cap",
-        "hook_burst_concurrency",
-        "hook_burst_stagger",
-    }
-)
 _OVERLAY_MISS_REASON_VIDEO_UNSUPPORTED: frozenset[str] = frozenset({"video_not_supported"})
+# Geometry only: the card would have sat on the speaker's face / the captions.
+_OVERLAY_MISS_REASON_NO_SAFE_SPOT: frozenset[str] = frozenset({"no_safe_spot"})
+_OVERLAY_MISS_REASON_OVERLAP: frozenset[str] = frozenset({"overlap", "duplicate"})
+_OVERLAY_MISS_REASON_CROWDED: frozenset[str] = frozenset(
+    {"density_cap", "hook_burst_concurrency", "hook_burst_stagger"}
+)
+_OVERLAY_MISS_REASON_TOO_SHORT: frozenset[str] = frozenset({"too_short"})
+# KRI-297: a full-screen cutaway sequence ran out of timeline.
+_OVERLAY_MISS_REASON_NO_TIMELINE_ROOM: frozenset[str] = frozenset({"no_room_in_timeline"})
 # The iPhone uploads a Visual from a temp copy named "<random UUID>-<name>"
 # (UploadViews.swift / BackgroundUploads.swift), so that is its stored
 # filename; the creator only knows "<name>".
@@ -522,22 +520,29 @@ def _overlay_miss_sentence(label: str, reason: str | None) -> str:
     (videos aren't phone cards yet), or a post-grounding demotion reason
     (`missing_generation`/`bind_failed`/`compile_dropped`/`"error: ..."`) --
     an internal render-pipeline hiccup, reported honestly but generically.
-    Anything unrecognized (including an empty reason) falls back to the
-    "no spoken moment" sentence, same as `no_spoken_match`.
+    Anything unrecognized (including an empty reason) gets a neutral
+    "Couldn't place ..." sentence (no invented cause).
     """
     if reason in _OVERLAY_MISS_REASON_VIDEO_UNSUPPORTED:
         return f'"{label}" is a video, which can\'t be a card on your iPhone yet'
-    if reason in _OVERLAY_MISS_REASON_NO_ROOM:
+    if reason in _OVERLAY_MISS_REASON_NO_SAFE_SPOT:
         return f'No room to show "{label}" without covering your face or the captions'
+    if reason in _OVERLAY_MISS_REASON_OVERLAP:
+        return f'"{label}" overlapped another visual, so it was skipped'
+    if reason in _OVERLAY_MISS_REASON_CROWDED:
+        return f'Skipped "{label}" to keep the edit from getting crowded'
+    if reason in _OVERLAY_MISS_REASON_TOO_SHORT:
+        return f'"{label}" had too little time on screen to show'
+    if reason in _OVERLAY_MISS_REASON_NO_TIMELINE_ROOM:
+        return f'There wasn\'t enough room in the video to show "{label}" full screen'
     if reason in _OVERLAY_MISS_REASON_PIPELINE_ERROR or (
         isinstance(reason, str) and reason.startswith("error")
     ):
         return f'Couldn\'t add "{label}" to the phone render'
-    # `_OVERLAY_MISS_REASON_NO_SPOKEN_MATCH` and any unrecognized/empty
-    # reason share this sentence -- both mean "no card, and no clue why
-    # beyond the words never lining up", so there's nothing more specific
-    # to tell the creator either way.
-    return f'Couldn\'t find a spoken moment for "{label}"'
+    if reason in _OVERLAY_MISS_REASON_NO_SPOKEN_MATCH:
+        return f'Couldn\'t find a spoken moment for "{label}"'
+    # Unknown/empty reasons never claim a cause we can't back up.
+    return f'Couldn\'t place "{label}"'
 
 
 def render_notes_from_overlay_receipt(receipt: dict[str, Any] | None) -> list[str]:
@@ -575,10 +580,14 @@ def render_notes_from_overlay_receipt(receipt: dict[str, Any] | None) -> list[st
         return []
 
     notes: list[str] = []
+    fullscreen = receipt.get("layout") == "fullscreen"
     if unplaced_entries:
-        notes.append(f"Showed {placed_n} of {placed_n + len(unplaced_entries)} Visuals as cards")
+        where = "full screen" if fullscreen else "as cards"
+        notes.append(f"Showed {placed_n} of {placed_n + len(unplaced_entries)} Visuals {where}")
     elif placed_n == 1:
-        notes.append("1 Visual shown as a card")
+        notes.append("1 Visual shown full screen" if fullscreen else "1 Visual shown as a card")
+    elif fullscreen:
+        notes.append(f"{placed_n} Visuals shown full screen")
     else:
         notes.append(f"{placed_n} Visuals shown as cards")
     for entry in unplaced_entries[:_MAX_MISSED_DETAIL_LINES]:

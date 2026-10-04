@@ -77,6 +77,10 @@ CAPABILITY_REACTION_BEATS = "reaction_beats"
 # in `resolve_creator_manifest` for why it is omitted, not `_unavailable`,
 # otherwise.
 CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS = "media_overlays:video_cards"
+# KRI-297: ALL Visuals as a full-screen cutaway sequence on a phone `subtitled`
+# edit. Omitted (not `_unavailable`) when off so flag-off manifests stay
+# byte-identical.
+CAPABILITY_MEDIA_OVERLAY_FULLSCREEN = "media_overlays:fullscreen"
 TALKING_CLIP_INTENTS_DROPPED_NOTICE = (
     "Talking edits caption what you say, so I didn't add separate labels or captions "
     "to individual clips."
@@ -516,6 +520,13 @@ def resolve_creator_manifest(
         # images`/`phone_visual_videos` use above.
         if capabilities["media_overlays"].available and phone_subtitled_video_overlays_supported():
             capabilities[CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS] = _available()
+        if (
+            capabilities["media_overlays"].available
+            and phone.available
+            and coerce_edit_format(edit_format) == "subtitled"
+            and getattr(settings, "phone_subtitled_fullscreen_overlays_enabled", False)
+        ):
+            capabilities[CAPABILITY_MEDIA_OVERLAY_FULLSCREEN] = _available()
         if not phone.available:
             for capability_name in (
                 CAPABILITY_DRAFT_GUIDED_PROPOSAL,
@@ -993,6 +1004,21 @@ def compile_strategy_to_plan(
         # honor must not turn an otherwise renderable title into a failure.
         strategy = strategy.model_copy(update={"opening_title_duration_s": None})
     strategy_format = coerce_edit_format(strategy.edit_format)
+    if strategy.overlay_display == "fullscreen":
+        fullscreen_cap = manifest.capabilities.get(CAPABILITY_MEDIA_OVERLAY_FULLSCREEN)
+        if fullscreen_cap is None or not fullscreen_cap.available:
+            phone_cap = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+            if phone_cap is not None and phone_cap.available:
+                # Honest refusal: never silently fall back to small cards.
+                raise CreatorStrategyError(
+                    "Full-screen Visuals are only available on iPhone Talking-to-camera "
+                    "edits right now, and not for this draft. I can add them as small "
+                    "cards instead if you'd like.",
+                    code="unsupported_treatment",
+                    edit_format=strategy.edit_format,
+                )
+            # Cloud/web renders have their own per-overlay full-screen toggle.
+            strategy = strategy.model_copy(update={"overlay_display": None})
     effective_program = strategy.render_program
     selected_media_ids = list(strategy.selected_media_ids)
     treatment_capabilities = {

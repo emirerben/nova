@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.50.0] - 2026-10-04
+
+### Fixed
+- fix(visuals): keep Visuals analysis from waiting behind footage analysis (#1363) <!-- release-pr: 1363 -->
+
+## [0.78.49.0] - 2026-10-04
+
+### Changed
+- fix(worker): end Celery soft-shutdown wait once in-flight work finishes (#1362) <!-- release-pr: 1362 -->
+
+## [0.78.48.0] - 2026-10-04
+
+### Changed
+- fix(ios): show progress and next steps for Visuals stuck "Queued" (KRI-294) (#1361) <!-- release-pr: 1361 -->
+
+## [0.78.47.0] - 2026-10-04
+
+### Changed
+- fix(kria): put described-shot text on the matched clip, not its list position (KRI-296) (#1352) <!-- release-pr: 1352 -->
+
+## [0.78.46.0] - 2026-10-03
+
+### Changed
+- fix(clips): KRI-282 resolver question must not discard matches (#1355) <!-- release-pr: 1355 -->
+
+## [0.78.45.0] - 2026-10-03
+
+### Changed
+- feat(phone): full-screen Visuals sequence on Talking-to-camera + honest overlay notes (KRI-297) (#1353) <!-- release-pr: 1353 -->
+
 ## [0.78.44.0] - 2026-10-03
 
 ### Changed

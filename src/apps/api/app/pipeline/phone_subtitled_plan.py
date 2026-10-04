@@ -422,10 +422,38 @@ def compile_phone_subtitled_plan(
                 "audioMix",
             }
 
-    if lanes is not None and lanes.overlays:
+    fullscreen_cards = (
+        [c for c in lanes.overlays if c.display_mode == "fullscreen"] if lanes is not None else []
+    )
+    pip_cards = (
+        [c for c in lanes.overlays if c.display_mode != "fullscreen"] if lanes is not None else []
+    )
+    if fullscreen_cards:
+        # KRI-297: full-frame cutaways sit ABOVE the speaker track and BELOW
+        # the PiP card track (appended first) and below captions (text layers
+        # always composite last).
+        try:
+            fullscreen_track, fullscreen_has_video = _compile_fullscreen_track(
+                fullscreen_cards,
+                visuals=visuals,
+                speaker_end=speaker_end,
+                assets=assets,
+                manifest=manifest,
+            )
+        except UnsupportedPhonePlan:
+            raise
+        except Exception as exc:  # noqa: BLE001 - untrusted lane content
+            raise _lane_error("overlays", str(exc), capability="visualBlocks") from exc
+        if fullscreen_track.clips:
+            tracks.append(fullscreen_track)
+            required_capabilities |= {"visualBlocks", "alphaOverlay", "audioMix"}
+            if fullscreen_has_video:
+                required_capabilities |= {"visualVideos"}
+
+    if pip_cards:
         try:
             overlay_track, overlay_has_video = _compile_overlay_track(
-                lanes.overlays,
+                pip_cards,
                 visuals=visuals,
                 speaker_end=speaker_end,
                 assets=assets,
@@ -621,6 +649,114 @@ def _compile_overlay_track(
             )
         )
     return TimelineTrack(id="subtitled-overlays", kind="overlay", clips=clips), has_video
+
+
+_FULLSCREEN_TRACK_ID = "subtitled-fullscreen"
+_MIN_FULLSCREEN_S = 0.3
+
+
+def _compile_fullscreen_track(
+    cards: list[SubtitledOverlayCard],
+    *,
+    visuals: tuple[PhoneVisualBinding, ...],
+    speaker_end: float,
+    assets: dict[str, MediaAsset],
+    manifest: dict[str, object],
+) -> tuple[TimelineTrack, bool]:
+    """KRI-297: compile full-screen cutaway cards onto a muted, full-canvas
+    cover-fill overlay track (a `VisualMediaPlacement` with no
+    ``width_fraction`` -- the same shape `_compile_cutaway_track` uses, which
+    the native engine cover-fills for stills and video alike). Windows are
+    clamped to the speaker timeline, a video's window is shortened to its
+    footage, and two overlapping windows are rejected (`SubtitledLaneError`)
+    -- full-screen cards are a sequence, never a stack.
+    """
+    ordered = sorted(cards, key=lambda card: (card.start_s, card.end_s, card.id))
+    clips: list[TimelineClip] = []
+    has_video = False
+    previous_end = 0.0
+    for card in ordered:
+        window_start = max(card.start_s, 0.0)
+        window_end = min(card.end_s, speaker_end)
+        if window_end - window_start < _MIN_FULLSCREEN_S:
+            continue
+        if window_start < previous_end - 1e-6:
+            raise _lane_error(
+                "overlays",
+                "full-screen overlay windows must not overlap",
+                capability="visualBlocks",
+            )
+        try:
+            visual = require_bound_visual(
+                visuals, media_id=card.media_id, path=card.gcs_path, generation=card.generation
+            )
+        except ValueError as exc:
+            raise _lane_error("overlays", str(exc), capability="visualBlocks") from exc
+        asset = visual.render_asset()
+        source_start = 0.0
+        if card.kind == "video":
+            if visual.kind != "video":
+                raise _lane_error(
+                    "overlays",
+                    "video overlay card requires a video visual",
+                    capability="visualVideos",
+                )
+            has_video = True
+            source_start = card.source_start_s
+            available = (visual.duration_s or 0.0) - source_start
+            if available <= 0:
+                raise _lane_error(
+                    "overlays",
+                    "video overlay card's source_start_s is past the source video's duration",
+                    capability="visualVideos",
+                )
+            window_end = min(window_end, window_start + available)
+            if window_end - window_start < _MIN_FULLSCREEN_S:
+                continue
+            manifest[asset.id] = asset
+            assets[asset.id] = MediaAsset(
+                id=asset.id,
+                relative_path=asset.id,
+                fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
+                duration=(
+                    visual.duration_s
+                    if visual.duration_s is not None and visual.duration_s <= 1800
+                    else None
+                ),
+                natural_size=MediaSize(width=visual.width or 1, height=visual.height or 1),
+                orientation_degrees=visual.orientation_degrees,
+            )
+        else:
+            if visual.kind != "image":
+                raise _lane_error(
+                    "overlays", "overlay card requires an image visual", capability="visualBlocks"
+                )
+            manifest[asset.id] = asset
+            assets[asset.id] = MediaAsset(
+                id=asset.id,
+                relative_path=asset.id,
+                fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
+            )
+        clips.append(
+            TimelineClip(
+                id=f"subtitled-overlay-{card.id}",
+                source_asset_id=asset.id,
+                source_start=source_start,
+                source_duration=window_end - window_start,
+                timeline_start=window_start,
+                rate=1,
+                volume=0,
+                visual_placement=VisualMediaPlacement(
+                    order=1,
+                    window_start=window_start,
+                    window_end=window_end,
+                    fade_in=card.fade,
+                    fade_out=card.fade,
+                ),
+            )
+        )
+        previous_end = window_end
+    return TimelineTrack(id=_FULLSCREEN_TRACK_ID, kind="overlay", clips=clips), has_video
 
 
 def _compile_video_overlay_clip(

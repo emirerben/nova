@@ -13,6 +13,7 @@ from app.services.celery_isolation import (
     normalize_namespace,
     result_backend_transport_options,
 )
+from app.services.celery_soft_shutdown import install_soft_shutdown_early_exit
 
 # Local launchers set this once per worktree.  It is intentionally an env var,
 # rather than a settings field: the shared .env is symlinked by
@@ -143,11 +144,16 @@ celery_app.conf.update(
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,  # don't prefetch — FFmpeg tasks are long
     # Fly sends SIGTERM and waits 300s (fly.toml). REMAP_SIGTERM=SIGQUIT enters
-    # Celery's soft shutdown: active work gets four minutes to finish, then any
-    # unfinished late-acknowledged task is restored with 60s left before Fly's
-    # hard stop. Enable the same path while idle so reserved work is restored.
+    # Celery's soft shutdown: active work gets up to four minutes to finish,
+    # then any unfinished late-acknowledged task is restored with 60s left
+    # before Fly's hard stop. The early exit installed below ends the wait once
+    # the tasks in flight at the signal finish, and skips it when idle; reserved
+    # and ETA messages are restored when the broker channel closes either way.
+    # Stock on_idle sleeps the full window even with nothing running (the
+    # 4-minute per-group deploy gap in KRI-294), so it is only the kill-switch
+    # fallback. See agents/DECISIONS.md (2026-10-03).
     worker_soft_shutdown_timeout=240.0,
-    worker_enable_soft_shutdown_on_idle=True,
+    worker_enable_soft_shutdown_on_idle=not settings.celery_soft_shutdown_early_exit_enabled,
     result_expires=3600,
     # Redis broker visibility_timeout: how long a task can be "in-flight" on a
     # worker before the broker considers it lost and re-delivers to another
@@ -331,6 +337,9 @@ celery_app.conf.update(
         },
     },
 )
+
+if settings.celery_soft_shutdown_early_exit_enabled:
+    install_soft_shutdown_early_exit()
 
 # Every task name that appears in beat_schedule above, derived directly from
 # the dict rather than hand-duplicated into a second list — a future Beat

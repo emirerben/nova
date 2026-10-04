@@ -46,7 +46,7 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # are always captured when the creator asks the edit to follow a route or sequence (v39).
 # KRI-244: descriptive footage chronology remains creative context unless the
 # creator actually asks the edit to order, group, label, include, or caption it (v40).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-02-v40"
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-03-v41"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -585,7 +585,7 @@ def _explicit_media_scope_from_request(request: str) -> str | None:
         return "selected"
     if re.search(
         r"\b(?:all|every|each)\s+(?:the\s+)?(?:images?|photos?|videos?|clips?|media|footage)\b"
-        r"|\buse\s+(?:all|everything)\b"
+        r"|\buse\s+(?:all|everything)\b(?!\s+(?:of\s+)?(?:the\s+|my\s+)?(?:overlays?|visuals?)\b)"
         r"|\b(?:use|include|keep)\s+(?:these|those)(?:\s+\d+)?\s+"
         r"(?:images?|photos?|videos?|clips?|files?|pieces?\s+of\s+media)\b"
         r"|\b(?:all|every)\s+(?:uploaded|provided)\s+(?:media|files?|images?|photos?|videos?)\b",
