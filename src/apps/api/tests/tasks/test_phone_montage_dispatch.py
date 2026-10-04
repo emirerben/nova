@@ -530,3 +530,48 @@ def test_v2_dispatch_snapshot_pins_an_awaiting_device_job_the_runtime_observer_h
     assert job.status == "awaiting_device"
     execution = SimpleNamespace(target_variant_id=None, result={})
     assert _device_render_state(job, execution) == "pending"
+
+
+# --- KRI-306: the creator's output shape on a voiceover montage -----------------------------
+
+
+def _run_with_shape(monkeypatch, shape):
+    job, *_ = setup(monkeypatch)
+    if shape is not None:
+        job.all_candidates["creator_render_shape"] = shape
+    seen: dict[str, object] = {}
+    real = gb._decide_generative_variant
+
+    def spy(**kwargs):
+        seen["orientation"] = kwargs.get("orientation")
+        return real(**kwargs)
+
+    monkeypatch.setattr(gb, "_decide_generative_variant", spy)
+    gb._run_generative_job(str(job.id))
+    return job, seen
+
+
+def test_no_creator_choice_passes_no_orientation(monkeypatch):
+    job, seen = _run_with_shape(monkeypatch, None)
+    assert seen["orientation"] is None
+    recipe = device_status(job, "voiceover_only").request.recipe
+    assert (recipe.canvas.width, recipe.canvas.height) == (1080, 1920)
+
+
+def test_a_landscape_choice_renders_a_1920x1080_voiceover_montage(monkeypatch):
+    job, seen = _run_with_shape(
+        monkeypatch, {"output_orientation": "landscape", "landscape_fit": "fill"}
+    )
+    assert seen["orientation"] == "landscape"
+    recipe = device_status(job, "voiceover_only").request.recipe
+    assert (recipe.canvas.width, recipe.canvas.height) == (1920, 1080)
+    assert job.assembly_plan["variants"][0]["orientation"] == "landscape"
+
+
+def test_a_vertical_choice_keeps_the_portrait_canvas(monkeypatch):
+    job, seen = _run_with_shape(
+        monkeypatch, {"output_orientation": "portrait", "landscape_fit": "fill"}
+    )
+    assert seen["orientation"] == "portrait"
+    recipe = device_status(job, "voiceover_only").request.recipe
+    assert (recipe.canvas.width, recipe.canvas.height) == (1080, 1920)

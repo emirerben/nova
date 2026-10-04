@@ -4479,3 +4479,97 @@ def test_guided_voiceover_dispatch_binds_narration_to_the_cleanup_contract(
     run.bind_mock.assert_not_called()
     run.session.add.assert_not_called()
     run.session.commit.assert_not_called()
+
+
+# --- KRI-306: the creator's output shape rides the dispatch into the Job ---------------------
+
+
+def _dispatch_with_shape(**extra):
+    item = _cleanup_dispatch_item()
+    plan = SimpleNamespace(
+        id=uuid.uuid4(), user_id=uuid.uuid4(), preference_summary="", ownership_epoch=0
+    )
+    job = SimpleNamespace(
+        id=uuid.uuid4(), assembly_plan={}, all_candidates={"clip_paths": list(item.clip_gcs_paths)}
+    )
+    with (
+        patch("app.services.smart_captions.resolve_smart_captions_context_sync", return_value=None),
+        patch("app.services.generative_jobs.build_generative_job", return_value=job) as build,
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync"),
+    ):
+        result = _dispatch_item_render(
+            MagicMock(),
+            item,
+            plan,
+            {"tone": "direct", "content_pillars": []},
+            ownership_epoch=0,
+            **extra,
+        )
+    return result, build.call_args.kwargs
+
+
+def test_dispatch_forwards_the_creator_render_shape_to_the_job() -> None:
+    shape = {"output_orientation": "portrait", "landscape_fit": "fill"}
+    result, kwargs = _dispatch_with_shape(creator_render_shape=shape)
+    assert result.outcome == "dispatched"
+    assert kwargs["creator_render_shape"] == shape
+
+
+def test_dispatch_without_a_choice_forwards_none() -> None:
+    _result, kwargs = _dispatch_with_shape()
+    assert kwargs["creator_render_shape"] is None
+
+
+def test_guided_v1_black_bars_choice_reaches_the_job_and_the_phone_compile() -> None:
+    """KRI-306 end to end for runtime-v1 guided: the shape stored on the confirmed
+    attempt -> the async dispatch context -> a REAL Job's all_candidates -> the
+    `landscape_fit` the guided phone compile receives."""
+    from types import SimpleNamespace as NS
+
+    from app.agents._schemas.creator_agent import CreativeStrategy, CreatorEditPlan
+    from app.tasks import edit_proposal_build as proposal_build
+    from app.tasks import generative_build as gb
+
+    edit_plan = CreatorEditPlan(
+        manifest_hash="a" * 64, context_hash="b" * 64, strategy=CreativeStrategy()
+    )
+    session = NS(
+        id=uuid.uuid4(),
+        active_plan={
+            "guided_generation_attempt_id": "attempt-1",
+            "edit_plan": edit_plan.model_dump(mode="json", exclude_none=True),
+            "guided_render_shape": {"output_orientation": "portrait", "landscape_fit": "fit"},
+        },
+    )
+    db = MagicMock()
+    db.execute.return_value.scalars.return_value = [session]
+    context = proposal_build._creator_dispatch_context_for_guided_attempt(
+        db, item_id=uuid.uuid4(), owner_id=uuid.uuid4(), attempt_id="attempt-1", ownership_epoch=0
+    )
+    assert context is not None
+
+    item = _cleanup_dispatch_item()
+    item.landscape_fit = "fill"  # even an item preference of crop must not beat the choice
+    plan = NS(id=uuid.uuid4(), user_id=uuid.uuid4(), preference_summary="", ownership_epoch=0)
+    created: list = []
+    session_mock = MagicMock()
+    session_mock.add.side_effect = created.append
+    with (
+        patch("app.services.smart_captions.resolve_smart_captions_context_sync", return_value=None),
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync"),
+    ):
+        result = _dispatch_item_render(
+            session_mock,
+            item,
+            plan,
+            {"tone": "direct", "content_pillars": []},
+            ownership_epoch=0,
+            creator_render_shape=context["creator_render_shape"],
+        )
+    assert result.outcome == "dispatched"
+    job = created[0]
+    assert job.all_candidates["creator_render_shape"] == {
+        "output_orientation": "portrait",
+        "landscape_fit": "fit",
+    }
+    assert gb._creator_landscape_fit(job.all_candidates) == "fit"

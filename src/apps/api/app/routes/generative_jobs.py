@@ -126,6 +126,10 @@ from app.services.public_assembly_plan import (
     project_public_assembly_plan,
     project_public_assembly_plan_with_metadata,
 )
+from app.services.render_shape import (
+    cloud_fit_axis,
+    device_editor_offer,
+)
 from app.services.speech_cleanup_terminal import classify_route_speech_cut_rollback
 from app.services.tiktok_style_observations import effective_persona_style
 from app.services.variant_generation_guard import (
@@ -1226,6 +1230,9 @@ class EditorCommitRequest(BaseModel):
     background_music: EditorCommitBackgroundMusic | None = None
     lyrics: LyricsSectionRequest | None = None
     orientation: str | None = None
+    # KRI-306: bars ("fit") or crop ("fill") for sideways clips on a portrait
+    # device render. Cloud variants reject it (their capability is always closed).
+    landscape_fit: Literal["fit", "fill"] | None = None
     sound_effects: list[dict] | None = Field(default=None, max_length=100)
     media_overlays: list[dict] | None = Field(default=None, max_length=100)
     visual_blocks: list[VisualBlock] | None = None
@@ -1524,6 +1531,7 @@ class EditorCommitSections(BaseModel):
     background_music: bool = False
     lyrics: bool
     orientation: bool = False
+    landscape_fit: bool = False
     sound_effects: bool
     media_overlays: bool
     visual_blocks: bool
@@ -6702,8 +6710,14 @@ def _clamp_phone_editor_capabilities(
     narrated_captions: bool = False,
     voiceover_lanes: bool = False,
     voiceover_media: bool = False,
+    shape: Any = None,
 ) -> dict:
     """Close every control a device-rendered variant cannot save, shape-preserving.
+
+    ``shape`` (KRI-306, `render_shape.device_editor_offer`): what Save accepts for
+    orientation and bars/crop on this variant. Orientation is only ever CLOSED
+    here (never opened beyond the base map); `landscape_fit` is replaced by the
+    device truth (the cloud map always advertises it closed).
 
     ``source_crop`` (KRI-140): a guided-story device variant keeps the footage
     crop control once the device has verified ``sourceCrop`` -- the phone
@@ -6820,6 +6834,36 @@ def _clamp_phone_editor_capabilities(
             }
         if "caption_editor_style" in clamped:
             clamped["caption_editor_style"] = False
+    if shape is not None:
+        if shape.orientation is not None:
+            current = clamped.get("orientation")
+            if (
+                isinstance(current, dict)
+                and current.get("editable") is True
+                and not shape.orientation.editable
+            ):
+                clamped["orientation"] = {
+                    **current,
+                    "editable": False,
+                    "reason": shape.orientation.reason,
+                }
+            lanes = clamped.get("lanes")
+            if (
+                isinstance(lanes, dict)
+                and isinstance(lanes.get("orientation"), dict)
+                and lanes["orientation"].get("editable") is True
+                and not shape.orientation.editable
+            ):
+                clamped["lanes"] = {
+                    **lanes,
+                    "orientation": {"editable": False, "reason": shape.orientation.reason},
+                }
+        if "landscape_fit" in clamped:
+            clamped["landscape_fit"] = {
+                "editable": shape.landscape_fit.editable,
+                "value": shape.landscape_fit.value,
+                "reason": shape.landscape_fit.reason,
+            }
     if media_enabled or voiceover_media:
         clamped["phone_editor_media"] = {
             "enabled": True,
@@ -6835,15 +6879,30 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     capabilities = _base_editor_capabilities(job, variant)
     if variant.get("render_destination") == "device":
         voiceover_media = _phone_voiceover_editor_media_available(job, variant)
+        subtitled_lanes = _phone_subtitled_editor_lanes_available(job, variant)
+        voiceover_lanes = _phone_voiceover_editor_lanes_available(variant)
+        shape = device_editor_offer(
+            variant,
+            job.assembly_plan or {},
+            subtitled_lanes=subtitled_lanes,
+            voiceover_lanes=voiceover_lanes,
+            guided_revision=(
+                variant.get("resolved_archetype") == "guided_story"
+                and bool(getattr(settings, "guided_story_editor_v2_enabled", False))
+                and _guided_v2_revision(job, variant) is not None
+            ),
+            all_candidates=getattr(job, "all_candidates", None),
+        )
         return _clamp_phone_editor_capabilities(
             capabilities,
             media_enabled=voiceover_media or _phone_editor_media_available(job, variant),
-            subtitled_lanes=_phone_subtitled_editor_lanes_available(job, variant),
+            subtitled_lanes=subtitled_lanes,
             guided_story=variant.get("resolved_archetype") == "guided_story",
             narrated=variant.get("resolved_archetype") == "narrated",
             narrated_captions=_phone_narrated_caption_edits_available(variant),
-            voiceover_lanes=_phone_voiceover_editor_lanes_available(variant),
+            voiceover_lanes=voiceover_lanes,
             voiceover_media=voiceover_media,
+            shape=shape,
             source_crop=(
                 variant.get("resolved_archetype") == "guided_story"
                 and "sourceCrop" in settings.phone_render_verified_features
@@ -7013,6 +7072,7 @@ def _base_editor_capabilities(job: Job, variant: dict) -> dict:
                 "value": _variant_orientation(variant),
                 "reason": reason,
             },
+            "landscape_fit": cloud_fit_axis(variant),
             "carousel": False,
             "carousel_reason": reason,
             "caption_cues": caption_cues_capability,
@@ -7164,6 +7224,7 @@ def _base_editor_capabilities(job: Job, variant: dict) -> dict:
                 "swap_song": bool(revision is not None) and not reference_only,
                 "intro_controls": False,
                 "reason": revision_reason,
+                "landscape_fit": cloud_fit_axis(variant),
                 "orientation": operation(
                     _LANDSCAPE_OUTPUT_ENABLED and _orientation_unsupported_reason(variant) is None,
                     (
@@ -7235,6 +7296,7 @@ def _base_editor_capabilities(job: Job, variant: dict) -> dict:
                 "value": _variant_orientation(variant),
                 "reason": None if _LANDSCAPE_OUTPUT_ENABLED else "disabled",
             },
+            "landscape_fit": cloud_fit_axis(variant),
             "carousel": False,
             "carousel_reason": reason,
             "caption_cues": caption_cues_capability,
@@ -7400,6 +7462,7 @@ def _base_editor_capabilities(job: Job, variant: dict) -> dict:
             "value": _variant_orientation(variant),
             "reason": orientation_reason,
         },
+        "landscape_fit": cloud_fit_axis(variant),
         "carousel": carousel_reason is None,
         "carousel_reason": carousel_reason,
         "caption_cues": caption_cues_capability,
@@ -9682,6 +9745,25 @@ def prepare_editor_commit(
     return _prepare_editor_commit(job, variant_id, payload, **arguments)
 
 
+def _validate_landscape_fit_section(job: Job, variant: dict, value: str) -> str:
+    """The Save-time twin of the `landscape_fit` capability (KRI-306).
+
+    Rejects exactly what `_editor_capabilities` advertises closed, so the editor
+    never offers a Save the server would refuse (and vice versa). Cloud variants
+    are always closed.
+    """
+    capability = (_editor_capabilities(job, variant).get("landscape_fit")) or {}
+    if capability.get("editable") is not True:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "landscape_fit_unsupported",
+                "reason": capability.get("reason") or "cloud_unsupported",
+            },
+        )
+    return value
+
+
 def _prepare_editor_commit(
     job: Job,
     variant_id: str,
@@ -9805,6 +9887,7 @@ def _prepare_editor_commit(
             "camera_effects_override": None,
             "pending_overlay_camera_rebuild": False,
             "orientation_override": None,
+            "landscape_fit_override": None,
             "new_track_id": None,
             "remove_music": False,
             "music_window_alignment": None,
@@ -9824,6 +9907,7 @@ def _prepare_editor_commit(
                 "background_music": False,
                 "lyrics": False,
                 "orientation": False,
+                "landscape_fit": False,
                 "sound_effects": bool(current.get("sound_effects")),
                 "media_overlays": bool(current.get("media_overlays")),
                 "visual_blocks": bool(current.get("visual_blocks")),
@@ -9853,6 +9937,7 @@ def _prepare_editor_commit(
         and payload.background_music is None
         and payload.lyrics is None
         and payload.orientation is None
+        and payload.landscape_fit is None
         and payload.sound_effects is None
         and payload.media_overlays is None
         and payload.visual_blocks is None
@@ -10174,6 +10259,12 @@ def _prepare_editor_commit(
                 detail="Landscape output is not available.",
             )
         validated_orientation = validate_orientation_section(variant, payload.orientation)
+
+    validated_landscape_fit: str | None = None
+    if payload.landscape_fit is not None:
+        validated_landscape_fit = _validate_landscape_fit_section(
+            job, variant, payload.landscape_fit
+        )
 
     mix_override: float | None = None
     if payload.mix is not None:
@@ -10674,6 +10765,7 @@ def _prepare_editor_commit(
         or payload.background_music is not None
         or validated_lyrics is not None
         or validated_orientation is not None
+        or validated_landscape_fit is not None
         or validated_sfx is not None
         or validated_overlays is not None
         or validated_visual_blocks is not None
@@ -10793,6 +10885,8 @@ def _prepare_editor_commit(
             updated["lyric_line_overrides"] = overrides
         if validated_orientation is not None:
             updated["orientation"] = validated_orientation
+        if validated_landscape_fit is not None:
+            updated["landscape_fit"] = validated_landscape_fit
         if validated_sfx is not None:
             updated["sound_effects"] = validated_sfx or None
         if validated_overlays is not None:
@@ -10934,6 +11028,7 @@ def _prepare_editor_commit(
         "camera_effects_override": validated_camera_effects,
         "pending_overlay_camera_rebuild": pending_overlay_camera_rebuild,
         "orientation_override": validated_orientation,
+        "landscape_fit_override": validated_landscape_fit,
         "new_track_id": payload.music_track_id,
         "remove_music": payload.remove_music,
         "music_window_alignment": (
@@ -10960,6 +11055,7 @@ def _prepare_editor_commit(
             "background_music": payload.background_music is not None,
             "lyrics": payload.lyrics is not None or payload._lyric_line_suppressions is not None,
             "orientation": payload.orientation is not None,
+            "landscape_fit": validated_landscape_fit is not None,
             # validated_* (not raw payload presence) so an ignored empty-list
             # echo (see editor_commit_ignored_empty_section above) correctly
             # reports as NOT written — downstream render-lane routing below

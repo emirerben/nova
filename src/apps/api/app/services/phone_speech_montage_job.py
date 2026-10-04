@@ -37,8 +37,8 @@ from app.config import settings
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.services.speech_montage_planning import (
     SpeechCandidate,
-    mentions_speech,
     plan_speech_montage,
+    speech_montage_possible,
 )
 
 log = structlog.get_logger()
@@ -133,7 +133,9 @@ def run_phone_speech_montage_job(
         path_by_media[binding.media_id] = path
 
     request = _request_text(job_id, brief, gb._first_user_message(job_id))
-    if not request or not (any(c.has_speech for c in candidates) or mentions_speech(request)):
+    if not speech_montage_possible(
+        request, any_clip_has_speech=any(c.has_speech for c in candidates)
+    ):
         return False
 
     if load_words is None:

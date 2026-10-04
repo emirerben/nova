@@ -55,6 +55,7 @@ from app.kria.brief_route import (
     wants_hour_only_text,
 )
 from app.schemas.edit_proposal import (
+    CREATOR_SELECTED_ORIENTATION_REASON,
     MAX_PROPOSAL_DURATION_S,
     ClipLabel,
     EditProposalSnapshot,
@@ -620,6 +621,7 @@ def plan_unified_montage(
     font_covers: Callable[[str, str], bool] | None = None,
     creator_order: Sequence[int] = (),
     visuals: Sequence[UnifiedClip] = (),
+    output_orientation: str | None = None,
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan for ``clips`` (attachment order).
 
@@ -633,6 +635,10 @@ def plan_unified_montage(
     every character of ``text`` (see ``skia_font_covers``); without it the
     default typography is used as is. ``visuals`` are the item's ready
     Visuals-pool items (``lane="asset"``) in upload order; see ``_scatter``.
+    ``output_orientation`` (KRI-306) is the creator's explicit finished-video
+    shape: ``"portrait"``/``"landscape"`` pins the canvas with the reason "The
+    creator selected this output format"; ``None`` keeps the snapshot's own
+    aspect-vote inference byte-identical.
     """
     view = view or BriefView()
     strategy = strategy or {}
@@ -850,6 +856,9 @@ def plan_unified_montage(
     hold = strategy.get("opening_title_duration_s")
     if isinstance(hold, (int, float)) and not isinstance(hold, bool):
         snapshot_kwargs["opening_title_duration_s"] = hold
+    if output_orientation in ("portrait", "landscape"):
+        snapshot_kwargs["output_orientation"] = output_orientation
+        snapshot_kwargs["output_orientation_reason"] = CREATOR_SELECTED_ORIENTATION_REASON
     style: dict[str, Any] = {}
     if family is not None:
         style["font_family"] = family

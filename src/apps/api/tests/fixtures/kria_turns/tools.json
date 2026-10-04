@@ -19,6 +19,38 @@
           "title": "Expected Thread Revision",
           "type": "integer"
         },
+        "landscape_fit": {
+          "anyOf": [
+            {
+              "enum": [
+                "fit",
+                "fill"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Landscape Fit"
+        },
+        "output_orientation": {
+          "anyOf": [
+            {
+              "enum": [
+                "portrait",
+                "landscape"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Orientation"
+        },
         "speech_cleanup_analysis_id": {
           "anyOf": [
             {
@@ -1485,6 +1517,22 @@
               ],
               "default": null,
               "title": "Guided Revision Number"
+            },
+            "landscape_fit": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "fit",
+                    "fill"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Landscape Fit"
             },
             "lyrics": {
               "anyOf": [

@@ -1130,3 +1130,50 @@ def test_draft_attempt_keeps_every_source_for_more_sources_than_labels(
     assert used == {ref.media_id for ref in refs}
     texts = [row["text"] for row in _compile(snapshot)["text_elements"]]
     assert texts == [LEGENDS_TITLE, *LEGENDS_LABELS]
+
+
+@pytest.mark.parametrize(
+    ("chosen", "expected"), [(None, None), ("portrait", "portrait"), ("landscape", "landscape")]
+)
+def test_guided_seed_pins_only_an_explicit_creator_orientation(monkeypatch, chosen, expected):
+    """KRI-306 (runtime v1): the creator's output shape seeds the guided brief; absent
+    keeps the brief's own aspect inference."""
+
+    from app.routes.creator_agent import (
+        _apply_explicit_render_intent,
+        _seed_guided_specialist_brief,
+    )
+    from app.services import creator_capabilities
+    from app.services.creator_capabilities import (
+        compile_strategy_to_plan,
+        resolve_creator_manifest,
+    )
+
+    monkeypatch.setattr(creator_capabilities.settings, "guided_edit_capability_enabled", True)
+    refs = _refs()
+    manifest = resolve_creator_manifest(
+        item_id="item-shape",
+        edit_format="montage",
+        media=[
+            {"media_id": ref.media_id, "kind": ref.kind, "duration_s": ref.duration_s}
+            for ref in refs
+        ],
+    )
+    strategy = _apply_explicit_render_intent(
+        _barcelona_strategy(), PROMPT, render_intent_evidence=_barcelona_evidence()
+    )
+    edit_plan = compile_strategy_to_plan(manifest, strategy)
+    item = _prod_item(uuid.uuid4(), clip_assignments=[])
+    item.edit_proposal = None
+
+    _seed_guided_specialist_brief(
+        item,
+        edit_plan,
+        summary="Barcelona week trailer.",
+        creator_request=PROMPT,
+        output_orientation=chosen,
+    )
+
+    seeded = parse_edit_proposal(item.edit_proposal)
+    assert seeded is not None
+    assert seeded.brief.output_orientation == expected
