@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.55.0] - 2026-10-04
+
+### Changed
+- feat(ios): chat-AI editing for slide posts (KRI-304) (#1360) <!-- release-pr: 1360 -->
+
 ## [0.78.54.0] - 2026-10-04
 
 ### Changed
