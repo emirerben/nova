@@ -598,10 +598,10 @@ struct SlidePostWorkspaceView: View {
             previewMediaView.frame(width: size.width, height: size.height).clipped()
             SlidePostTextCanvas(
                 texts: texts, size: size, selectedID: session.selectedTextID, interactive: mode == .text,
-                onSelect: { session.selectedTextID = $0; textTab = .style },
-                onDrag: { id, x, y in
+                onSelect: { id in session.selectedTextID = id; if id != nil { textTab = .style } },
+                onTransform: { id, key, mutate in
                     guard let slideID = session.selectedSlide?.id else { return }
-                    session.updateText(slideID: slideID, textID: id, coalescing: "drag") { $0.position = "custom"; $0.xFrac = x; $0.yFrac = y }
+                    session.updateText(slideID: slideID, textID: id, coalescing: key, mutate)
                 }
             )
         }

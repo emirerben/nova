@@ -172,6 +172,69 @@ import XCTest
         attach(app, "Style applied to all slides")
     }
 
+    // MARK: Canvas text manipulation (KRI-298 Lane G: same gestures as the native video preview)
+
+    private func canvasText(_ app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'slidepost-canvas-text-'")).firstMatch
+    }
+    private func number(_ value: String, after key: String) -> Double {
+        guard let range = value.range(of: key + " ") else { return .nan }
+        let tail = value[range.upperBound...].prefix { "-0123456789.".contains($0) }
+        return Double(tail) ?? .nan
+    }
+
+    func testSlideTextSelectDragPinchRotateAndDeselect() {
+        let app = openRichWorkspace()
+        app.buttons["slidepost-tool-text"].tap()
+        let field = app.textFields["slidepost-text-field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap(); field.press(forDuration: 1.0)
+        if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
+        field.typeText("Athens")
+        app.buttons["slidepost-tab-style"].tap()
+        app.buttons["slidepost-position-center"].tap()
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        let text = canvasText(app)
+        XCTAssertTrue(text.waitForExistence(timeout: 5))
+        attach(app, "Slide canvas: text before manipulation")
+
+        // Select by tapping the text itself.
+        text.tap()
+        let handle = app.descendants(matching: .any)["slidepost-text-handle"].firstMatch
+        XCTAssertTrue(handle.waitForExistence(timeout: 3), "selecting shows the real resize/rotate handle")
+        XCTAssertTrue(preview.frame.insetBy(dx: -1, dy: -1).contains(CGPoint(x: handle.frame.midX, y: handle.frame.midY)), "the handle is fully inside the stage")
+        XCTAssertTrue(handle.frame.minX >= preview.frame.minX - 1 && handle.frame.maxX <= preview.frame.maxX + 1 && handle.frame.maxY <= preview.frame.maxY + 1, "the handle is never clipped")
+        attach(app, "Slide canvas: selected with handle")
+
+        // Drag moves the text.
+        let beforeMove = text.value as? String ?? ""
+        text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: preview.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.25)))
+        let afterMove = text.value as? String ?? ""
+        XCTAssertNotEqual(beforeMove, afterMove, "dragging changes the position")
+        XCTAssertLessThan(number(afterMove, after: "position"), 45)
+        attach(app, "Slide canvas: moved")
+
+        // Pinch resizes.
+        let sizeBefore = number(text.value as? String ?? "", after: "size")
+        preview.pinch(withScale: 1.5, velocity: 1)
+        let sizeAfter = number(text.value as? String ?? "", after: "size")
+        XCTAssertGreaterThan(sizeAfter, sizeBefore, "pinching out grows the text")
+        attach(app, "Slide canvas: resized")
+
+        // Two-finger rotate.
+        let rotationBefore = number(text.value as? String ?? "", after: "rotation")
+        preview.rotate(CGFloat.pi / 3, withVelocity: 1)
+        let rotation = number(text.value as? String ?? "", after: "rotation")
+        XCTAssertGreaterThan(abs(rotation - rotationBefore), 20, "twisting rotates the text")
+        attach(app, "Slide canvas: rotated")
+
+        // Tapping empty canvas deselects.
+        preview.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.06)).tap()
+        XCTAssertFalse(handle.waitForExistence(timeout: 2), "tapping empty canvas deselects")
+        attach(app, "Slide canvas: deselected")
+    }
+
     func testMoreMenuRemoveAndCover() {
         let app = openRichWorkspace()
         XCTAssertTrue(app.buttons["slidepost-tile-3"].exists)
