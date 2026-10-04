@@ -464,3 +464,59 @@ def test_tasks_are_registered_on_the_worker() -> None:
     celery_app.loader.import_default_modules()
     assert "tasks.analyze_user_song" in celery_app.tasks
     assert "tasks.align_user_song_takes" in celery_app.tasks
+
+
+# ── inline fallback used by the montage worker (KRI-374 D2) ──────────────────
+
+
+def test_ensure_alignment_computes_inline_when_the_tasks_have_not_run(aligner, monkeypatch) -> None:
+    item_id = _seed(analysis=None, clips=[_row(1), _row(2)])
+    monkeypatch.setattr(task, "detect_music_beats", lambda _local: [0.5, 1.0])
+    analysis, alignment = task.ensure_song_alignment(item_id)
+
+    assert analysis is not None and analysis.status == "ready" and analysis.beats_s == [0.5, 1.0]
+    assert alignment is not None and alignment.song_generation == 77
+    assert set(alignment.takes) == {"m1", "m2"}
+    # Persisted exactly as the background tasks would have left it.
+    assert set(_alignment(item_id).takes) == {"m1", "m2"}
+
+
+def test_ensure_alignment_reuses_a_current_row_without_recomputing(aligner) -> None:
+    item_id = _seed(analysis=_ready_analysis(), clips=[_row(1)])
+    task.align_user_song_takes_task.run(str(item_id))
+    assert aligner.calls == [["m1"]]
+
+    _analysis, alignment = task.ensure_song_alignment(item_id)
+
+    assert alignment is not None and set(alignment.takes) == {"m1"}
+    assert aligner.calls == [["m1"]]
+
+
+def test_ensure_alignment_recomputes_only_the_replaced_take(aligner) -> None:
+    item_id = _seed(analysis=_ready_analysis(), clips=[_row(1), _row(2)])
+    task.align_user_song_takes_task.run(str(item_id))
+    with sync_session() as db:
+        item = db.get(PlanItem, item_id)
+        item.clip_assignments = [_row(1), _row(2, "9")]  # m2's proxy was re-uploaded
+        db.commit()
+
+    _analysis, alignment = task.ensure_song_alignment(item_id)
+
+    assert aligner.calls == [["m1", "m2"], ["m2"]]
+    assert alignment is not None and alignment.takes["m2"].proxy_generation == 9
+
+
+def test_ensure_alignment_without_a_song_returns_nothing(aligner) -> None:
+    assert task.ensure_song_alignment(_seed(song=False)) == (None, None)
+    assert task.ensure_song_analysis(_seed(song=False)) is None
+
+
+def test_ensure_analysis_returns_the_recorded_failure_instead_of_raising(monkeypatch) -> None:
+    item_id = _seed()
+
+    def boom(*_a):
+        raise RuntimeError("storage down")
+
+    monkeypatch.setattr(task, "_download_song", boom)
+    analysis = task.ensure_song_analysis(item_id)
+    assert analysis is not None and analysis.status == "failed"

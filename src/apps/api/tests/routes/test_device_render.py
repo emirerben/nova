@@ -740,6 +740,126 @@ def test_voiceover_download_rejects_changed_voiceovers(fixture, monkeypatch, mut
     assert signer.call_count == int(mutation in {"removed", "unsignable"})
 
 
+def song_recipe(fixture, monkeypatch, *, item_id=None):
+    """Pin a recipe whose only asset is the job owner's own plan-item song (KRI-374)."""
+    from app.kria.recipes_v2 import EditRecipeV2
+    from app.kria.render_assets import SongRenderAsset
+    from app.models import PlanItem
+
+    item_id = item_id or uuid.uuid4()
+    fixture.job.content_plan_item_id = item_id
+    song_path = f"users/{fixture.user.id}/creation-threads/{uuid.uuid4()}/song.m4a"
+    item = SimpleNamespace(
+        id=item_id,
+        audio_mode="song",
+        song_gcs_path=song_path,
+        song_generation=42,
+        # The voiceover columns stay empty: a song never rides them.
+        voiceover_gcs_path=None,
+        voiceover_generation=None,
+    )
+    asset = SongRenderAsset(
+        id=f"song-{item_id}",
+        plan_item_id=str(item_id),
+        generation="42",
+        fingerprint={"sha256": "a" * 64, "byte_count": 12},
+    )
+    value = fixture.request.recipe.model_dump(mode="json")
+    value.update(
+        schema_version=2,
+        renderer_version="kria-ios-2",
+        asset_manifest={"assets": [asset.model_dump()]},
+    )
+    value["assets"][0].update(
+        id=asset.id,
+        relative_path=asset.id,
+        fingerprint={"algorithm": "sha256", "hex": "a" * 64, "byte_count": 12},
+    )
+    value["tracks"][0]["clips"][0]["source_asset_id"] = asset.id
+    fixture.request = make_device_request(
+        job_id=fixture.job.id,
+        variant_id="first",
+        revision=2,
+        recipe=EditRecipeV2.model_validate(value),
+    )
+    pin_device_request(fixture.job, fixture.request, base_generation="approved")
+    monkeypatch.setattr(routes, "_owned_job", AsyncMock(return_value=fixture.job))
+
+    async def get(model, key, **kwargs):
+        assert model is PlanItem
+        return item if key == item.id else None
+
+    fixture.db.get.side_effect = get
+    signer = MagicMock(return_value="https://storage.example/pinned-song")
+    monkeypatch.setattr(routes.storage, "signed_get_url_for_generation", signer)
+    return asset, item, signer
+
+
+def test_song_download_signs_exactly_the_pinned_generation(fixture, monkeypatch):
+    asset, item, signer = song_recipe(fixture, monkeypatch)
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 200, response.text
+    signer.assert_called_once_with(item.song_gcs_path, generation="42")
+    assert response.json()["asset_id"] == asset.id
+    assert response.json()["download_url"] == "https://storage.example/pinned-song"
+
+
+@pytest.mark.parametrize("mutation", ["other_item", "no_item"])
+def test_song_download_hides_songs_outside_the_jobs_own_item(fixture, monkeypatch, mutation):
+    asset, _item, signer = song_recipe(fixture, monkeypatch)
+    fixture.job.content_plan_item_id = uuid.uuid4() if mutation == "other_item" else None
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 404, response.text
+    assert response.json()["detail"] == "Song unavailable"
+    signer.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "row_missing",
+        "audio_mode",
+        "generation",
+        "no_path",
+        "no_generation",
+        "removed",
+        "unsignable",
+    ],
+)
+def test_song_download_rejects_replaced_or_removed_songs(fixture, monkeypatch, mutation):
+    asset, item, signer = song_recipe(fixture, monkeypatch)
+    if mutation == "row_missing":
+        item.id = uuid.uuid4()
+    elif mutation == "audio_mode":
+        item.audio_mode = "kria"  # the creator removed the song
+    elif mutation == "generation":
+        item.song_generation = 43  # replaced by another upload
+    elif mutation == "no_path":
+        item.song_gcs_path = None
+    elif mutation == "no_generation":
+        item.song_generation = None
+    elif mutation == "removed":
+        signer.side_effect = FileNotFoundError()
+    else:
+        signer.side_effect = ValueError("unsigned")
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "Song changed; refresh the recipe"
+    assert signer.call_count == int(mutation in {"removed", "unsignable"})
+
+
+def test_a_voiceover_item_cannot_be_used_to_fetch_a_song_asset(fixture, monkeypatch):
+    """The two private-audio kinds do not share a grant: a song asset needs the
+    item to be in ``song`` mode even when a voiceover with the same generation exists."""
+    asset, item, signer = song_recipe(fixture, monkeypatch)
+    item.audio_mode = "voiceover"
+    item.voiceover_gcs_path = item.song_gcs_path
+    item.voiceover_generation = "42"
+    response = download_asset(fixture, asset_id=asset.id)
+    assert response.status_code == 409, response.text
+    signer.assert_not_called()
+
+
 # --- "Clean up speech": a guided Job's cleaned derivative, never raw bytes ---
 #
 # The synthetic preflight snapshot's raw source is re-pinned at the recipe's

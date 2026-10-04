@@ -2350,6 +2350,24 @@ def _job_matches_guided_attempt(job: Job | None, attempt_id: str | None) -> bool
     return False
 
 
+def _model_strategy_hygiene(strategy: CreativeStrategy) -> CreativeStrategy:
+    """Drop what a model-authored strategy must never carry (KRI-127, KRI-374).
+
+    ``resolved_clip_intents`` and ``resolved_song_takes`` are server-owned (the clip
+    resolver and the song-order gate write them later), so whatever the model put
+    there is discarded. When clip intents are off, visual requests are discarded too;
+    transcript intents keep their existing pinned-narration materialization path.
+    """
+    update: dict[str, Any] = {"resolved_clip_intents": None, "resolved_song_takes": None}
+    if not settings.clip_intents_enabled:
+        update["clip_intents"] = [
+            intent
+            for intent in (strategy.clip_intents or [])
+            if intent.label_source == "transcript"
+        ] or None
+    return strategy.model_copy(update=update)
+
+
 async def _run_planning_turn(
     db: AsyncSession,
     *,
@@ -2653,25 +2671,10 @@ async def _run_planning_turn(
             )
             action = output.action
             if isinstance(action, ProposeStrategy):
-                # KRI-127 model-output hygiene, applied right where the model's
-                # ProposeStrategy is accepted, flag on or off. `resolved_clip_intents`
-                # is server-owned and must never be trusted from the model. When the
-                # flag is off, visual requests are discarded. Transcript intents
-                # keep their existing pinned-narration materialization path.
-                # KRI-374: `resolved_song_takes` is server-owned too (only the song-order gate
-                # writes it, after the creator answered); never trust the model's.
-                strategy_hygiene: dict[str, Any] = {
-                    "resolved_clip_intents": None,
-                    "resolved_song_takes": None,
-                }
-                if not settings.clip_intents_enabled:
-                    strategy_hygiene["clip_intents"] = [
-                        intent
-                        for intent in (action.strategy.clip_intents or [])
-                        if intent.label_source == "transcript"
-                    ] or None
+                # KRI-127 / KRI-374 model-output hygiene, applied right where the
+                # model's ProposeStrategy is accepted, flag on or off.
                 action = action.model_copy(
-                    update={"strategy": action.strategy.model_copy(update=strategy_hygiene)}
+                    update={"strategy": _model_strategy_hygiene(action.strategy)}
                 )
         except (AiBudgetExceededError, ProviderQuotaExceededError) as exc:
             locked = await _load_session(db, session.id, user.id, item.id, for_update=True)

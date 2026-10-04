@@ -273,3 +273,52 @@ def test_resolved_payload_shape_keeps_creator_order() -> None:
     payload = resolved_song_takes_payload(resolve_uncertain_takes(alignment, ["s", "a"]))
     assert [p["media_id"] for p in payload] == ["s", "a"]
     assert set(payload[0]) == {"media_id", "delta_s", "status", "confirmed_by_creator"}
+
+
+# ── apply_resolved_song_takes (the worker's read of the gate's answer) ───────
+
+
+def test_apply_resolved_takes_narrows_a_confirmed_take_to_the_creators_position() -> None:
+    from app.schemas.user_song import AlignmentAlternate, SongAlignment, TakeAlignment
+    from app.services.song_order import apply_resolved_song_takes
+
+    alignment = SongAlignment(
+        song_generation=1,
+        takes={
+            "a": TakeAlignment(media_id="a", status="confident", delta_s=5.0),
+            "b": TakeAlignment(
+                media_id="b",
+                status="ambiguous",
+                delta_s=70.0,
+                alternates=[AlignmentAlternate(delta_s=28.0, score=0.5)],
+            ),
+            "c": TakeAlignment(media_id="c", status="unmatched"),
+        },
+    )
+    resolved = [
+        {"media_id": "a", "delta_s": 5.0, "status": "confident", "confirmed_by_creator": False},
+        {"media_id": "b", "delta_s": 28.0, "status": "confident", "confirmed_by_creator": True},
+        {"media_id": "c", "delta_s": None, "status": "unmatched", "confirmed_by_creator": True},
+        {"media_id": "gone", "delta_s": 1.0, "status": "confident", "confirmed_by_creator": True},
+    ]
+
+    patched, order = apply_resolved_song_takes(alignment, resolved)
+
+    assert order == ["a", "b", "c"]  # a removed take is ignored
+    assert patched.takes["a"] == alignment.takes["a"]  # confident rows are untouched
+    assert (patched.takes["b"].status, patched.takes["b"].delta_s) == ("ambiguous", 28.0)
+    assert patched.takes["b"].alternates == []  # only the creator's position remains
+    assert (patched.takes["c"].status, patched.takes["c"].delta_s) == ("unmatched", None)
+    assert alignment.takes["b"].delta_s == 70.0  # the input is not mutated
+
+
+def test_apply_resolved_takes_without_an_answer_changes_nothing() -> None:
+    from app.schemas.user_song import SongAlignment, TakeAlignment
+    from app.services.song_order import apply_resolved_song_takes
+
+    alignment = SongAlignment(
+        song_generation=1,
+        takes={"a": TakeAlignment(media_id="a", status="ambiguous", delta_s=9.0)},
+    )
+    patched, order = apply_resolved_song_takes(alignment, None)
+    assert (patched, order) == (alignment, [])
