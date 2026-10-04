@@ -33,6 +33,7 @@ from app.kria.brief_route import (
     wants_hour_only_text,
 )
 from app.kria.contracts import InferredLabel, RequirementReceipt
+from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 
 if TYPE_CHECKING:
     from app.agents._schemas.creator_agent import ResolvedCreatorManifest
@@ -44,6 +45,18 @@ _CAPTURE_BASES = {"capture_time", "route", "capture_order"}
 
 
 _fold = fold_text
+
+_BRACKETED = re.compile(r"^\s*[\[(<{]\s*(.+?)\s*[\])>}]\s*$")
+
+
+def _stand_in_core(literal: str | None) -> str | None:
+    """The word inside a bracketed stand-in ("[Name]" -> "name"), else None.
+
+    A bracketed literal is a placeholder the creator will replace, not text that is
+    printed with its brackets; the server prints the fixed ``PLACEHOLDER_LABEL_TEXT``.
+    """
+    match = _BRACKETED.match(literal or "")
+    return _fold(match.group(1)) if match else None
 
 
 def _contains_text(haystack: str, wanted: str) -> bool:
@@ -551,6 +564,12 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
                 "hour. A re-render can't reformat them; ask me again to change them in the editor.",
             )
     wanted = _fold(req.literal or "")
+    core = _stand_in_core(req.literal)
+    if core is not None:
+        # KRI-282: "[Name]" is judged by the stand-in the plan actually printed.
+        stand_in = _fold(PLACEHOLDER_LABEL_TEXT)
+        printed = any(_fold(t) == stand_in for t in facts.per_clip_text.values())
+        wanted = stand_in if printed else core
     if facts.editor and not facts.has_clip_structure:
         # No per-clip diff for this edit: judge the literal if the creator wrote one
         # (it holds every on-screen text, so a missing literal is a real miss),
@@ -1296,6 +1315,7 @@ def reply_from_receipts(
     *,
     summary: str | None = None,
     notices: Sequence[str] = (),
+    outcomes: Sequence[Mapping[str, Any]] = (),
 ) -> str:
     """Compose the creator-facing reply from receipts only.
 
@@ -1310,6 +1330,18 @@ def reply_from_receipts(
     judged = [r for r in receipts if is_judged(by_id.get(r.requirement_id), r)]
     lines: list[str] = []
     guesses: list[str] = []
+    # KRI-282: what the render did for each requested group / label / chapter text,
+    # read from the finished plan, listed whether or not the brief ledger judged it.
+    failed = False
+    for row in outcomes:
+        status = str(row.get("status") or "")
+        if status not in _LABEL or not row.get("name"):
+            continue
+        failed = failed or status != "met"
+        line = f"{_LABEL[status]}: {row['name']}"
+        if row.get("reason"):
+            line += f" ({str(row['reason']).rstrip('.')})"
+        lines.append(line)
     for receipt in judged:
         line = f"{_LABEL[receipt.status]}: {by_id[receipt.requirement_id].text()}"
         if receipt.reason:
@@ -1318,9 +1350,12 @@ def reply_from_receipts(
         guesses.extend(receipt.inferred)
     if guesses:
         shown = ", ".join(dict.fromkeys(guesses))
-        lines.append(f"I guessed these, tell me if any is wrong: {shown}")
+        lines.append(
+            f"I guessed these, tell me if any is wrong: {shown} "
+            "(text I took from the footage, not from your words)"
+        )
     body = "\n".join(f"- {line}" for line in lines)
-    if any(r.status != "met" for r in judged):
+    if failed or any(r.status != "met" for r in judged):
         text = "Not everything you asked for made it in:\n" + body
         if notices:
             text += "\n" + " ".join(notices)
