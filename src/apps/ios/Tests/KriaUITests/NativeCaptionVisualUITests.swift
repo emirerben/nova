@@ -179,6 +179,34 @@ final class NativeCaptionVisualUITests: XCTestCase {
         XCTAssertFalse(first.isEnabled, "Scrolling must work before analysis finishes")
     }
 
+    /// KRI-294: a Visual that is still analyzing shows a spinner and a plain
+    /// status on its tile, and the batch summary above the library counts it
+    /// down instead of leaving a bare status with nothing moving.
+    func testAnalyzingGalleryShowsBatchProgress() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text", "-ui-testing-editor-analyzing-gallery"]
+        app.launch()
+        let visuals = app.buttons["native-editor-tool-visuals"]
+        XCTAssertTrue(visuals.waitForExistence(timeout: 20))
+        visuals.tap()
+        let summary = app.descendants(matching: .any)["visual-preparation-summary"].firstMatch
+        XCTAssertTrue(summary.waitForExistence(timeout: 5))
+        XCTAssertTrue(summary.label.hasPrefix("Getting your videos ready, 23 of 24 ready."), summary.label)
+        let analyzing = app.buttons["native-editor-add-visual-analyzing-0"]
+        XCTAssertTrue(analyzing.waitForExistence(timeout: 5))
+        XCTAssertEqual(analyzing.label, "Gallery video 0, Analyzing…")
+        XCTAssertFalse(analyzing.isEnabled, "a Visual can't be placed until it is ready")
+        // The panel opens short; raise it so the screenshot shows the summary above the tiles.
+        let handle = app.descendants(matching: .any)["native-editor-panel-resize"].firstMatch
+        XCTAssertTrue(handle.waitForExistence(timeout: 5))
+        let grab = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 10))
+        grab.press(forDuration: 0.1, thenDragTo: grab.withOffset(CGVector(dx: 0, dy: -420)))
+        XCTAssertTrue(summary.isHittable, "the summary sits at the top of the library")
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "kri-294-visuals-batch-progress"; attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     func testCaptionAndVisualPaperScreens() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text"]
