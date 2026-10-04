@@ -38,7 +38,11 @@
       "KriaUITests/AttachmentFlowUITests/testNarratedAttachmentsSwipeAndRequireExplicitAudioChoice",
       "KriaUITests/AttachmentFlowUITests/testImportedVoiceoverReviewsTimingAndPlaybackBeforeUpload",
       "KriaUITests/AttachmentFlowUITests/testUnknownFootageDurationDoesNotInventComparison",
-      "KriaUITests/AttachmentFlowUITests/testExistingVoiceoverKeepsItsCapacityAndContinueChoice"
+      "KriaUITests/AttachmentFlowUITests/testExistingVoiceoverKeepsItsCapacityAndContinueChoice",
+      "KriaUITests/CreationUITests/testClipPickerSelectsClipsAndSendsStructuredAnswerWithMissingThumbnailFallback",
+      "KriaUITests/CreationUITests/testClipPickerNoneOfTheseSendsNoneKeys",
+      "KriaUITests/CreationUITests/testClipPickerSkipSendsSkipped",
+      "KriaUITests/CreationUITests/testClipQuestionFallsBackToTextWhenServerLacksCapability"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -198,6 +202,8 @@
     "src/apps/ios/Kria/Features/NativeUpdateUITestTransport.swift": "projects",
     "src/apps/ios/Tests/KriaUITests/AttachmentFlowUITests.swift": "creation",
     "src/apps/ios/Kria/Features/CreationAttachmentPresentation.swift": "creation",
-    "src/apps/ios/Kria/Features/CreationVoiceRecorder.swift": "creation"
+    "src/apps/ios/Kria/Features/CreationVoiceRecorder.swift": "creation",
+    "src/apps/ios/Kria/Core/ClipSelection.swift": "creation",
+    "src/apps/ios/Kria/Features/ClipSelectionCard.swift": "creation"
   }
 }
