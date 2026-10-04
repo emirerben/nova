@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.49.0] - 2026-10-04
+
+### Changed
+- fix(worker): end Celery soft-shutdown wait once in-flight work finishes (#1362) <!-- release-pr: 1362 -->
+
 ## [0.78.48.0] - 2026-10-04
 
 ### Changed
