@@ -1,0 +1,345 @@
+{
+ "agent": "nova.creator.main",
+ "prompt_version": "2026-10-04-v42",
+ "input": {
+  "user_message": "Make a quick montage of my Lisbon trip with the song I uploaded.",
+  "creator_request": "Make a quick montage of my Lisbon trip with the song I uploaded.",
+  "creator_context": "Casual creator; short, energetic edits.",
+  "creator_direction": "",
+  "item_context": "A day exploring Lisbon.",
+  "media_context": [
+   {
+    "media_id": "clip-1",
+    "kind": "video",
+    "duration_s": 14.0,
+    "creator_note": "arrival at the airport"
+   },
+   {
+    "media_id": "clip-2",
+    "kind": "video",
+    "duration_s": 22.0,
+    "creator_note": "tram ride"
+   },
+   {
+    "media_id": "clip-3",
+    "kind": "video",
+    "duration_s": 17.0,
+    "creator_note": "sunset viewpoint"
+   }
+  ],
+  "conversation": [],
+  "capability_manifest": {
+   "schema_version": 1,
+   "item_id": "item-kri374_background_song",
+   "edit_format": "montage",
+   "render_program": "guided",
+   "has_voiceover": false,
+   "has_user_song": true,
+   "user_song": {
+    "duration_s": 187.4,
+    "has_lyrics": true
+   },
+   "narration": null,
+   "current_edit": null,
+   "media": [
+    {
+     "media_id": "clip-1",
+     "kind": "video",
+     "duration_s": 14.0,
+     "label": "arrival at the airport"
+    },
+    {
+     "media_id": "clip-2",
+     "kind": "video",
+     "duration_s": 22.0,
+     "label": "tram ride"
+    },
+    {
+     "media_id": "clip-3",
+     "kind": "video",
+     "duration_s": 17.0,
+     "label": "sunset viewpoint"
+    }
+   ],
+   "catalog": [
+    {
+     "catalog_id": "music-track-1",
+     "kind": "music",
+     "label": "Warm travel beat"
+    }
+   ],
+   "capabilities": {
+    "set_item_intent": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "guided_story": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "native_render": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "draft_guided_proposal": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "dispatch_render": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "select_ready_variant": {
+     "available": false,
+     "reason_code": "no_ready_variant",
+     "reason": "a ready variant is required before selection"
+    },
+    "caption_style": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "automatic_cut": {
+     "available": false,
+     "reason_code": "disabled_by_setting",
+     "reason": "automatic speech cuts are disabled by the server"
+    },
+    "guided_voiceover": {
+     "available": false,
+     "reason_code": "unsupported_phone_audio",
+     "reason": "phone rendering does not support recorded voiceover"
+    },
+    "main_creator_agent": {
+     "available": false,
+     "reason_code": "rollout_disabled",
+     "reason": "main creator agent rollout is set to zero"
+    },
+    "execution": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "review": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "auto_iteration": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "guided_conversation": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "guided_direction_confirmation": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "guided_auto_design": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "transitions": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "wide_looks": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "wide_looks cannot render on the iPhone yet"
+    },
+    "media_overlays": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "media_overlays cannot render on the iPhone yet"
+    },
+    "visual_blocks": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "visual_blocks cannot render on the iPhone yet"
+    },
+    "motion_scenes": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "motion_scenes cannot render on the iPhone yet"
+    },
+    "sound_effects": {
+     "available": false,
+     "reason_code": "unsupported_on_phone",
+     "reason": "sound_effects cannot render on the iPhone yet"
+    },
+    "phone_source_audio": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format_pending_voiceover:narrated_ready": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "narrated_ready does not render on this iPhone yet"
+    },
+    "phone_format_pending_voiceover:narrated": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "narrated does not render on this iPhone yet"
+    },
+    "phone_format_pending_voiceover:narrated_planned": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "narrated_planned does not render on this iPhone yet"
+    },
+    "phone_format:montage": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format:talking_head": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "talking_head does not render on this iPhone yet"
+    },
+    "phone_format:day_vlog": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format:single_hero": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "phone_format:subtitled": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "talking-to-camera rendering on this iPhone requires exactly one clip and no recorded voiceover"
+    },
+    "phone_format:narrated": {
+     "available": false,
+     "reason_code": "self_narration_multi_clip",
+     "reason": "Narrating across several clips isn't on iPhone yet. Record a voiceover, or keep one clip for talking-to-camera."
+    },
+    "phone_format:narrated_planned": {
+     "available": false,
+     "reason_code": "self_narration_multi_clip",
+     "reason": "Narrating across several clips isn't on iPhone yet. Record a voiceover, or keep one clip for talking-to-camera."
+    },
+    "phone_format:narrated_ready": {
+     "available": false,
+     "reason_code": "self_narration_multi_clip",
+     "reason": "Narrating across several clips isn't on iPhone yet. Record a voiceover, or keep one clip for talking-to-camera."
+    },
+    "phone_format:slides": {
+     "available": false,
+     "reason_code": "phone_format_unavailable",
+     "reason": "slides does not render on this iPhone yet"
+    },
+    "reaction_beats": {
+     "available": false,
+     "reason_code": "phone_talking_only",
+     "reason": "reaction beats are only available on an iPhone talking-to-camera edit"
+    },
+    "user_song": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "edit_format:montage": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "edit_format:talking_head": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "talking_head is disabled or has no production renderer for this media snapshot"
+    },
+    "edit_format:day_vlog": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "edit_format:single_hero": {
+     "available": true,
+     "reason_code": null,
+     "reason": null
+    },
+    "edit_format:subtitled": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "subtitled is disabled or has no production renderer for this media snapshot"
+    },
+    "edit_format:narrated": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "narrated is disabled or has no production renderer for this media snapshot"
+    },
+    "edit_format:narrated_planned": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "narrated_planned is disabled or has no production renderer for this media snapshot"
+    },
+    "edit_format:narrated_ready": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "narrated_ready is disabled or has no production renderer for this media snapshot"
+    },
+    "edit_format:slides": {
+     "available": false,
+     "reason_code": "format_unavailable",
+     "reason": "slides is disabled or has no production renderer for this media snapshot"
+    }
+   },
+   "limits": {
+    "max_media_refs": 50,
+    "max_catalog_refs": 50,
+    "max_commands": 4,
+    "max_output_duration_s": 120.0
+   },
+   "context_hash": "fa10f94372829d06f9b1473e81781fb0bf05fdd327c87994591fb54e2a47cfaa",
+   "manifest_hash": "bfc8e0d2a283f968465afa14099e8c164f4874b2ac3f822c07ac3d348447bdf6"
+  }
+ },
+ "raw_text": "{\"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"fast_montage\", \"edit_format\": \"montage\", \"audio_strategy\": \"user_song\", \"story_structure\": [\"Cold open on the strongest take\", \"Build with quick cuts\", \"Land on the closing moment\"], \"caption_style\": \"none\", \"pacing\": \"fast\", \"target_duration_s\": 24, \"render_program\": \"guided\", \"selected_media_ids\": [], \"optional_treatments\": [], \"rationale\": \"A fast Lisbon recap whose cuts follow the beat of the creator's own song.\", \"song_sync\": \"background\"}, \"summary\": \"I'll use your song as the background music and cut the Lisbon clips to its beat.\"}}",
+ "output": {
+  "action": {
+   "kind": "propose_strategy",
+   "strategy": {
+    "direction": "fast_montage",
+    "edit_format": "montage",
+    "audio_strategy": "user_song",
+    "story_structure": [
+     "Cold open on the strongest take",
+     "Build with quick cuts",
+     "Land on the closing moment"
+    ],
+    "caption_style": "none",
+    "song_sync": "background",
+    "pacing": "fast",
+    "render_program": "guided",
+    "selected_media_ids": [],
+    "optional_treatments": [],
+    "video_reuse_policy": "once",
+    "rationale": "A fast Lisbon recap whose cuts follow the beat of the creator's own song."
+   },
+   "summary": "I'll use your song as the background music and cut the Lisbon clips to its beat."
+  }
+ },
+ "meta": {
+  "source": "hand_authored_not_live_recorded",
+  "user_song": {
+   "expect_sync": "background"
+  },
+  "notes": "KRI-374: HAND-AUTHORED cassette, NOT live-recorded. An uploaded song with no lip-sync cue is a normal beat-synced music bed: audio_strategy=user_song, song_sync=background."
+ }
+}

@@ -122,6 +122,14 @@ CAPABILITY_PHONE_SOURCE_AUDIO = "phone_source_audio"
 # module never does.
 CAPABILITY_PHONE_STILL_IMAGES = "phone_still_images"
 CAPABILITY_PHONE_VISUAL_VIDEOS = "phone_visual_videos"
+# KRI-374: the creator's own uploaded song as the music of a phone montage.
+# Present on a manifest ONLY when a song is attached (available or not, with a
+# reason), so every manifest without a song keeps its pre-KRI-374 hash.
+CAPABILITY_USER_SONG = "user_song"
+USER_SONG_AUDIO_STRATEGY = "user_song"
+USER_SONG_PHONE_ONLY_CODE = "user_song_phone_only"
+USER_SONG_MISSING_CODE = "user_song_missing"
+USER_SONG_CONTRACT_CODE = "user_song_voiceover_contract"
 
 
 def _requires_guided_voiceover(
@@ -168,6 +176,59 @@ class PhoneFormatUnavailableError(MixedMediaTimingUnavailableError):
         self.voiceover = voiceover
 
 
+class UserSongUnavailableError(ValueError):
+    """A ``user_song`` strategy cannot be honoured for this manifest.
+
+    Carries a stable ``code`` (``user_song_phone_only`` /``user_song_missing`` /
+    ``user_song_voiceover_contract``). The capability compiler re-raises it as a
+    typed ``CreatorCapabilityError`` with the same code, so the v1 route and the
+    runtime-v2 policy both turn it into a plain-language question instead of a
+    render that can never start.
+    """
+
+    def __init__(self, message: str, *, code: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+USER_SONG_PHONE_ONLY_MESSAGE = (
+    "Your own song only works on edits that render on your iPhone. Should I make this "
+    "with licensed music instead?"
+)
+USER_SONG_MISSING_MESSAGE = (
+    "Upload the song first, then I'll build the edit around it. Or should I use licensed "
+    "music instead?"
+)
+USER_SONG_CONTRACT_MESSAGE = (
+    "A lip-sync edit follows your song, so it can't be timed to a recorded voiceover. "
+    "Which one do you want to keep?"
+)
+USER_SONG_BACKGROUND_NOTICE = "I'll use your song as the background music for this edit."
+USER_SONG_LIPSYNC_SHAPE_NOTICE = (
+    "A lip-sync edit follows your song, so I'm not using a day-vlog or single-hero shape."
+)
+
+
+def require_user_song(manifest: ResolvedCreatorManifest) -> None:
+    """Raise ``UserSongUnavailableError`` unless the manifest can carry a song.
+
+    Phone-only: no ``phone_source_audio`` capability, or one that is unavailable,
+    is the cloud/web path. With a phone manifest and no song attached the ask is
+    "upload it first". A song attached but its capability unavailable (flag off,
+    non-montage format, voiceover present, ...) is also reported as phone-only,
+    the one stable code for "your song can't be used on this edit".
+    """
+
+    phone = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    if phone is None or not phone.available:
+        raise UserSongUnavailableError(USER_SONG_PHONE_ONLY_MESSAGE, code=USER_SONG_PHONE_ONLY_CODE)
+    capability = manifest.capabilities.get(CAPABILITY_USER_SONG)
+    if capability is None:
+        raise UserSongUnavailableError(USER_SONG_MISSING_MESSAGE, code=USER_SONG_MISSING_CODE)
+    if not capability.available or not manifest.has_user_song:
+        raise UserSongUnavailableError(USER_SONG_PHONE_ONLY_MESSAGE, code=USER_SONG_PHONE_ONLY_CODE)
+
+
 class MontageCadenceUnavailableError(ValueError):
     """The requested exact cadence conflicts with the available render path."""
 
@@ -186,6 +247,13 @@ def effective_render_program(
         raise ValueError(f"edit format {strategy_format!r} is unavailable")
     if format_capability is not None and not format_capability.available:
         raise ValueError(f"edit format {strategy_format!r} is unavailable")
+    user_song_requested = strategy.audio_strategy == USER_SONG_AUDIO_STRATEGY
+    if user_song_requested:
+        # KRI-374: refuse before any render-program inference so a strategy that
+        # can never render (cloud path, no song, a voiceover contract) fails here.
+        require_user_song(manifest)
+        if strategy.song_sync == "lipsync" and strategy.execution_contract is not None:
+            raise UserSongUnavailableError(USER_SONG_CONTRACT_MESSAGE, code=USER_SONG_CONTRACT_CODE)
     montage_audio_requires_guided = bool(
         strategy.montage_audio is not None
         and (
@@ -369,6 +437,14 @@ def effective_render_program(
         if not (guided and guided.available):
             raise MontageCadenceUnavailableError(
                 "source-aware montage requires the guided proposal capability"
+            )
+        return "guided"
+    if user_song_requested:
+        # KRI-374: the song lane compiles through the guided phone planner only
+        # (`require_user_song` above already proved a usable phone montage).
+        if not (guided and guided.available):
+            raise MixedMediaTimingUnavailableError(
+                "phone rendering requires the guided proposal capability"
             )
         return "guided"
     if phone is not None:
@@ -756,7 +832,58 @@ def repair_creator_strategy_shape(
     )
 
 
+def repair_creator_user_song(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> tuple[CreativeStrategy, list[str]]:
+    """KRI-374: validate and repair the uploaded-song fields of a strategy.
+
+    * Not a ``user_song`` strategy: a stray ``song_sync`` / ``resolved_song_takes``
+      is dropped silently and the strategy is otherwise returned untouched, so
+      every existing strategy compiles byte-identically.
+    * ``user_song`` the manifest cannot carry: ``UserSongUnavailableError``
+      (``user_song_phone_only`` / ``user_song_missing``).
+    * ``song_sync`` unset: repaired to ``background`` with a notice.
+    * ``lipsync``: clears the story shape (the song is the master clock) and the
+      source-audio plan (camera audio is muted), and refuses the
+      ``guided_voiceover_v1`` execution contract.
+    """
+
+    if strategy.audio_strategy != USER_SONG_AUDIO_STRATEGY:
+        if strategy.song_sync is None and strategy.resolved_song_takes is None:
+            return strategy, []
+        return strategy.model_copy(update={"song_sync": None, "resolved_song_takes": None}), []
+
+    require_user_song(manifest)
+    notices: list[str] = []
+    update: dict[str, Any] = {}
+    sync = strategy.song_sync
+    if sync is None:
+        sync = "background"
+        update["song_sync"] = sync
+        notices.append(USER_SONG_BACKGROUND_NOTICE)
+    if sync == "lipsync":
+        if strategy.execution_contract is not None:
+            raise UserSongUnavailableError(USER_SONG_CONTRACT_MESSAGE, code=USER_SONG_CONTRACT_CODE)
+        if strategy.archetype is not None or strategy.hero_media_id is not None:
+            update["archetype"] = None
+            update["hero_media_id"] = None
+            if strategy.archetype is not None:
+                notices.append(USER_SONG_LIPSYNC_SHAPE_NOTICE)
+        if strategy.montage_audio is not None:
+            update["montage_audio"] = None
+    if not update:
+        return strategy, notices
+    return strategy.model_copy(update=update), notices
+
+
 __all__ = [
+    "CAPABILITY_USER_SONG",
+    "USER_SONG_CONTRACT_CODE",
+    "USER_SONG_MISSING_CODE",
+    "USER_SONG_PHONE_ONLY_CODE",
+    "UserSongUnavailableError",
+    "repair_creator_user_song",
+    "require_user_song",
     "MAX_MAIN_CREATOR_SELECTED_MEDIA",
     "CAPABILITY_DRAFT_GUIDED_PROPOSAL",
     "CAPABILITY_GUIDED_VOICEOVER",

@@ -1,5 +1,6 @@
 """Replay/live eval gate for nova.creator.main."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -272,3 +273,26 @@ def test_main_creator_eval(
         else:
             copy = f"{strategy.get('rationale', '')} {action.get('summary', '')}".casefold()
             assert "full-screen transition" not in copy
+
+    user_song_meta = fixture.meta.get("user_song")
+    if user_song_meta:
+        # KRI-374: with an uploaded song on the manifest the song IS the music,
+        # and the creator's words alone pick the mode. An explicit lip-sync /
+        # sing-along request => "lipsync"; anything else, including merely
+        # mentioning a concert or dancing => "background". The summary says
+        # which mode was chosen in plain words.
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        strategy = action["strategy"]
+        assert strategy["audio_strategy"] == "user_song"
+        assert strategy.get("song_sync") == user_song_meta["expect_sync"]
+        assert strategy.get("resolved_song_takes") is None
+        summary = action["summary"].casefold()
+        if user_song_meta["expect_sync"] == "lipsync":
+            assert re.search(r"\blip|\bsing", summary)
+            assert not strategy.get("archetype")
+            assert strategy.get("execution_contract") is None
+        else:
+            assert not re.search(r"\blip", summary)
+            assert any(word in summary for word in ("background", "music", "beat"))
