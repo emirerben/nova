@@ -330,6 +330,9 @@ class CreationCapabilitiesOut(BaseModel):
     # carries `editor_state` (KRIA_EDITOR_STATE_TURNS_ENABLED); max serialized size.
     editor_state_turns: bool = False
     editor_state_max_bytes: int = EDITOR_STATE_MAX_BYTES
+    # KRI-282: the server may attach `clip_question` to a clip question and accepts
+    # `clip_selection` on a turn (KRIA_CLIP_SELECTION_QUESTIONS_ENABLED).
+    clip_selection_questions: bool = False
     creation_mode: Literal["hybrid", "device_only"] = "hybrid"
     minimum_client_protocol: int = 2
     # Rich per-slide text (SlideEdits.texts) renders server-side (KRI-298).
@@ -3417,6 +3420,7 @@ async def capabilities(user: CurrentUser, native_client: NativeClient = False) -
         ),
         "editor_state_turns": bool(settings.kria_editor_state_turns_enabled),
         "editor_state_max_bytes": EDITOR_STATE_MAX_BYTES,
+        "clip_selection_questions": bool(settings.kria_clip_selection_questions_enabled),
         "slide_post_rich_text": bool(settings.slide_post_rich_text_enabled),
         # Chat edit round-trips rich per-slide text, so it needs that flag too.
         "slide_post_chat_edit": bool(

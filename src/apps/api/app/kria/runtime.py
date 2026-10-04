@@ -52,6 +52,7 @@ from app.models import (
     CreatorEditDraft,
     PlanItem,
 )
+from app.services.clip_selection import ClipSelectionIn, latest_open_clip_question
 from app.services.creation_thread_titles import (
     matches_conversation_revision,
     prepare_message_title,
@@ -83,8 +84,11 @@ def request_digest(body: SubmitTurnBody) -> str:
     # `editor_state` is deliberately outside the digest: a retry of the same
     # client_event_id carries a fresher snapshot of the editor, and the FIRST stored
     # state wins -- it must never turn a replay into idempotency_key_reused.
+    # `clip_selection` stays in the digest (a different tap set under one id is a
+    # different request) but is excluded when absent so pre-existing digests hold.
+    excluded = {"editor_state"} | ({"clip_selection"} if body.clip_selection is None else set())
     encoded = json.dumps(
-        body.model_dump(mode="json", exclude={"editor_state"}),
+        body.model_dump(mode="json", exclude=excluded),
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -118,6 +122,55 @@ def approval_fingerprint(approval: CreatorAgentApproval) -> str:
     }
     canonical = json.dumps(pins, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+async def _validate_clip_selection(
+    db: AsyncSession, thread: CreationThread, selection: ClipSelectionIn
+) -> None:
+    """The answer must target the thread's latest UNANSWERED clip question, and every
+    tapped clip must be one the server offered for that category (KRI-282)."""
+
+    rows = (
+        await db.execute(
+            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == thread.id,
+                CreationThreadEvent.role.in_({"user", "assistant"}),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    question = latest_open_clip_question((role, payload) for role, payload in rows)
+    if question is None or question.get("question_id") != selection.question_id:
+        raise RuntimeFailure(
+            422,
+            "clip_selection_stale",
+            "That clip question is no longer open. Refresh and answer the latest one.",
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        )
+    categories = {c["key"]: c for c in question.get("categories", [])}
+    unknown_keys = [a.key for a in selection.answers if a.key not in categories] + [
+        k for k in selection.none_keys if k not in categories
+    ]
+    if unknown_keys:
+        raise RuntimeFailure(
+            422,
+            "clip_selection_invalid",
+            "That answer names a category the question did not ask about.",
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        )
+    for answer in selection.answers:
+        offered = set(categories[answer.key].get("candidate_media_ids") or [])
+        if not set(answer.media_ids) <= offered:
+            raise RuntimeFailure(
+                422,
+                "clip_selection_invalid",
+                "That answer includes a clip the question did not offer.",
+                recovery="refresh_replan",
+                current_revision=int(thread.revision),
+            )
 
 
 async def _owned_thread(
@@ -258,6 +311,9 @@ async def submit_turn(
             recovery="refresh_replan",
             current_revision=int(thread.revision),
         )
+
+    if body.clip_selection is not None and settings.kria_clip_selection_questions_enabled:
+        await _validate_clip_selection(db, thread, body.clip_selection)
 
     active = (
         (
@@ -436,6 +492,13 @@ async def submit_turn(
             "runtime_version": 2,
             "turn_id": str(turn_id),
             "turn_status": turn_status,
+            # Flag off: dropped silently, nothing stored (byte-identical to old clients).
+            **(
+                {"clip_selection": body.clip_selection.model_dump(mode="json")}
+                if body.clip_selection is not None
+                and settings.kria_clip_selection_questions_enabled
+                else {}
+            ),
         },
         client_event_id=body.client_event_id,
     )

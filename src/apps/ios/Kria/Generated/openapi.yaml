@@ -754,6 +754,68 @@
         "title": "ClipPlace",
         "type": "object"
       },
+      "ClipSelectionAnswerIn": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Key",
+            "type": "string"
+          },
+          "media_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Media Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "ClipSelectionAnswerIn",
+        "type": "object"
+      },
+      "ClipSelectionIn": {
+        "additionalProperties": false,
+        "description": "The app's answer to a ``clip_question`` (SubmitTurnBody.clip_selection).",
+        "properties": {
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/ClipSelectionAnswerIn"
+            },
+            "maxItems": 8,
+            "title": "Answers",
+            "type": "array"
+          },
+          "none_keys": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "None Keys",
+            "type": "array"
+          },
+          "question_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "skipped": {
+            "default": false,
+            "title": "Skipped",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "question_id"
+        ],
+        "title": "ClipSelectionIn",
+        "type": "object"
+      },
       "CoarseLocation": {
         "additionalProperties": false,
         "properties": {
@@ -809,6 +871,11 @@
       },
       "CreationCapabilitiesOut": {
         "properties": {
+          "clip_selection_questions": {
+            "default": false,
+            "title": "Clip Selection Questions",
+            "type": "boolean"
+          },
           "creation_mode": {
             "default": "hybrid",
             "enum": [
@@ -7367,6 +7434,11 @@
             "minLength": 1,
             "title": "Client Event Id",
             "type": "string"
+          },
+          "clip_selection": {
+            "$ref": "#/components/schemas/ClipSelectionIn",
+            "default": null,
+            "nullable": true
           },
           "editor_state": {
             "$ref": "#/components/schemas/EditorStateIn",

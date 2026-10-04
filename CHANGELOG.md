@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.57.0] - 2026-10-04
+
+### Changed
+- KRI-282 clip selection ios: clip picker in chat (#1367) <!-- release-pr: 1367 -->
+
+## [0.78.56.0] - 2026-10-04
+
+### Changed
+- KRI-282 clip selection backend: thumbnail clip-picker question + authoritative selections (#1366) <!-- release-pr: 1366 -->
+
 ## [0.78.55.0] - 2026-10-04
 
 ### Changed
