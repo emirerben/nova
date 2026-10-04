@@ -71,10 +71,10 @@ async def test_zero_candidates_offers_every_clip_as_a_candidate(monkeypatch) -> 
     assert q is not None and q["version"] == 1 and q["allow_none"] is True
     (cat,) = q["categories"]
     assert cat["key"] == "group:dodgeball" == intent_key(_dodgeball())
-    assert cat["label"] == "Dodgeball" and cat["op"] == "group"
+    assert cat["label"] == "dodgeball" and cat["op"] == "group"
     assert cat["candidate_media_ids"] == [c.media_id for c in clips]
     assert cat["suggested_media_ids"] == []
-    assert "Dodgeball" in result.question and "Tap the clips" in result.question
+    assert "dodgeball" in result.question and "Tap the clips" in result.question
 
 
 @pytest.mark.asyncio

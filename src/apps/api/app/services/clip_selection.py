@@ -97,8 +97,8 @@ def _ops_compatible(a: str, b: str) -> bool:
 
 
 def category_label(intent: ClipIntent) -> str:
-    label = " ".join((intent.creator_text or intent.attribute).split())
-    return label[:1].upper() + label[1:] if label else "These clips"
+    """The creator's own description of WHICH clips (never the text printed on them)."""
+    return " ".join(intent.attribute.split()) or "these clips"
 
 
 def build_clip_question(
