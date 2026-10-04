@@ -56,6 +56,7 @@ from app.pipeline.unified_montage import (
     _window_start_s,
 )
 from app.schemas.edit_proposal import (
+    CREATOR_SELECTED_ORIENTATION_REASON,
     MAX_PROPOSAL_DURATION_S,
     EditProposalSnapshot,
     FastMontageCut,
@@ -507,6 +508,7 @@ def plan_lipsync_montage(
     *,
     plan_item_id: str,
     font_covers: Callable[[str, str], bool] | None = None,
+    output_orientation: str | None = None,
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan that lays ``clips`` on the song's clock.
 
@@ -516,7 +518,9 @@ def plan_lipsync_montage(
     media ids in the order they confirmed. It is the only thing that lets an
     ambiguous take be placed, and only at one of its own candidate positions that
     fits between its confirmed neighbours. ``strategy``/``view`` supply only the
-    creator's title, closing title and typography.
+    creator's title, closing title and typography. ``output_orientation`` is the
+    creator's explicit finished-video shape (KRI-306); without it the snapshot
+    infers one from the footage.
 
     Raises ``LipsyncPlanError`` (``stale_alignment``, ``song_not_analyzed``,
     ``no_synced_takes``, ``span_too_short``) when no montage can be made.
@@ -670,6 +674,9 @@ def plan_lipsync_montage(
     hold = strategy.get("opening_title_duration_s")
     if isinstance(hold, (int, float)) and not isinstance(hold, bool):
         snapshot_kwargs["opening_title_duration_s"] = hold
+    if output_orientation in ("portrait", "landscape"):
+        snapshot_kwargs["output_orientation"] = output_orientation
+        snapshot_kwargs["output_orientation_reason"] = CREATOR_SELECTED_ORIENTATION_REASON
     style: dict[str, Any] = {}
     if family is not None:
         style["font_family"] = family

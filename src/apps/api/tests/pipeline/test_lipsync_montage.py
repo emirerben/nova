@@ -405,3 +405,30 @@ def test_compile_rejects_a_plan_whose_song_window_disagrees_with_its_duration():
 
     with pytest.raises(GuidedStoryError):
         compile_execution_plan(guided, track=None)
+
+
+@pytest.mark.parametrize("orientation", ["portrait", "landscape"])
+def test_the_creators_output_shape_is_pinned_on_the_lipsync_snapshot(orientation):
+    """KRI-374 review: lip-sync dropped the creator's shape and inferred one from footage."""
+    result = plan_lipsync_montage(
+        [take("A"), take("B")],  # portrait footage: the creator's choice must still win
+        alignment(confident("A", 10), confident("B", 25)),
+        analysis(),
+        plan_item_id=SONG_ITEM_ID,
+        output_orientation=orientation,
+    )
+    assert result.snapshot.output_orientation == orientation
+    assert result.snapshot.output_orientation_reason == "The creator selected this output format."
+    assert result.guided_edit()["approved_proposal"]["output_orientation"] == orientation
+
+
+def test_no_creator_shape_keeps_the_lipsync_orientation_inferred():
+    result = plan_lipsync_montage(
+        [take("A"), take("B")],
+        alignment(confident("A", 10), confident("B", 25)),
+        analysis(),
+        plan_item_id=SONG_ITEM_ID,
+        output_orientation="square",  # an unknown value is never trusted
+    )
+    assert result.snapshot.output_orientation == "portrait"
+    assert result.snapshot.output_orientation_reason.startswith("Auto-selected")

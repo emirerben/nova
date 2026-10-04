@@ -5022,6 +5022,7 @@ def _plan_phone_user_song_montage(
             confirmed_order,
             plan_item_id=str(item_id),
             font_covers=font_covers,
+            output_orientation=output_orientation,
         )
     except LipsyncPlanError as exc:
         log.warning("lipsync_plan_declined", job_id=job_id, code=exc.code, error=str(exc))

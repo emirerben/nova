@@ -494,3 +494,22 @@ def test_song_bed_fails_closed_when_the_bytes_cannot_be_pinned(monkeypatch, erro
     monkeypatch.setattr(phone_voiceover, "inspect_song_asset", boom)
     with pytest.raises(UnsupportedPhonePlan, match="replaced"):
         _REAL_RESOLVE(str(job.id), _user_song())
+
+
+@pytest.mark.parametrize("sync", ["lipsync", "background"])
+def test_the_creators_output_shape_reaches_the_song_snapshot(harness, sync):
+    job, _snapshot, _bindings = harness(
+        sync=sync,
+        rows=[confident("clip-a", 10), confident("clip-b", 28), confident("clip-c", 46)],
+    )
+    job.all_candidates["creator_render_shape"] = {
+        "output_orientation": "landscape",
+        "landscape_fit": "fit",
+    }
+
+    gb._run_generative_job(str(job.id))
+
+    plan = job.assembly_plan["guided_story_execution_plan"]
+    assert plan["user_song"]["mode"] == sync
+    assert plan["output_orientation"] == "landscape"
+    assert plan["output_orientation_reason"] == "The creator selected this output format."
