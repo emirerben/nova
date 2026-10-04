@@ -7380,10 +7380,15 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
             effect_payload = load_licensed_sfx_effect(intent)
             validate_licensed_sfx_runtime(plan, intent, effect_payload)
     else:
-        # A pinned narration is the chosen audio; never silently add auto-matched music.
+        # A pinned narration, or the creator's own uploaded song (KRI-374), is the chosen
+        # audio; never silently add auto-matched music (the compiler would turn it into a
+        # catalog song_reference, which a creator-song plan refuses).
         matched = (
             None
-            if getattr(snapshot, "narration", None) is not None
+            if (
+                getattr(snapshot, "narration", None) is not None
+                or getattr(snapshot, "user_song", None) is not None
+            )
             else _match_best_track(matcher_clip_metas(snapshot), job_id=job_id)
         )
         track_payload = None

@@ -177,3 +177,25 @@ def test_a_montage_without_a_song_replays_byte_identically():
         "compiled": _digest(compiled),
         "record": _digest(plan.record()),
     } == GOLDEN
+
+
+CATALOG_TRACK = {
+    "track_id": "library-track-1",
+    "title": "Library Song",
+    "artist": "Somebody",
+    "start_s": 0.0,
+    "catalog_duration_s": 200.0,
+    "beat_timestamps_s": [0.5 * i for i in range(1, 80)],
+}
+
+
+def test_a_matched_catalog_track_never_lands_beside_a_creator_song():
+    """Production incident: the worker matches a library track for a montage without
+    narration and hands it to the compiler, which made a reference-only `song_reference`
+    that the creator-song validator refuses. Every other test compiled with `track=None`."""
+    plan = song_plan()
+    compiled = compile_execution_plan(plan.guided_edit(), track=dict(CATALOG_TRACK))
+    assert compiled["user_song"]["mode"] == "background"
+    assert compiled.get("song_reference") is None
+    assert compiled.get("music") is None
+    validate_execution_plan(compiled, plan.guided_edit())
