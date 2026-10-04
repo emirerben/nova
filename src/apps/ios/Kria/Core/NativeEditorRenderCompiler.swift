@@ -71,6 +71,10 @@ enum NativeEditorRenderError: Error, Equatable {
         var references: [String: RenderAssetReference] = [:]
         var urls: [String: URL] = [:]
         var video: [TimelineClip] = []
+        /// Each video clip's camera level if no song plays. The creator's song mutes the camera only
+        /// while a song bed is actually applied (KRI-428); removing the song, or a bed that cannot
+        /// play, restores these levels.
+        var cameraLevelWithoutSong: [Double] = []
         let requestedOriginalGain = document.mix["original_level"]?.numberValue ?? 1
         let originalGain = requestedOriginalGain.isFinite ? min(max(0, requestedOriginalGain), 1) : 1
         let hasExplicitOriginalGain = document.mix["original_level"] != nil
@@ -140,10 +144,12 @@ enum NativeEditorRenderError: Error, Equatable {
             let holdDuration = max(0, outputDuration - movingDuration)
             let hasExplicitClipAudio = authoredSlot?.raw["muted"] != nil
             let sourceGain: Double = hasExplicitOriginalGain || hasExplicitClipAudio || sourceAudioPreserved ? 1 : 0
+            let cameraLevel: Double = clip.muted || authoredSlot?.raw["muted"] == .bool(true) || audioSources["narration"] != nil ? 0 : sourceGain
+            cameraLevelWithoutSong.append(cameraLevel)
             video.append(TimelineClip(id: clip.slotID ?? clip.id.uuidString, sourceAssetID: id,
                 sourceStart: clip.trimIn, sourceDuration: consumedSourceDuration, timelineStart: clip.start,
                 rate: requestedRate, transition: transition,
-                volume: clip.muted || authoredSlot?.raw["muted"] == .bool(true) || audioSources["narration"] != nil || audioSources[Self.songSourceKey] != nil ? 0 : sourceGain, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
+                volume: audioSources[Self.songSourceKey] != nil ? 0 : cameraLevel, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
                 holdDuration: holdDuration > 0 ? holdDuration : nil,
                 sourceCrop: try Self.sourceCrop(authoredSlot?.raw["source_crop"])))
             // KRI-306: letterbox a sideways clip when the creator chose black
@@ -196,8 +202,9 @@ enum NativeEditorRenderError: Error, Equatable {
             ]))
         }
         // The creator's own song (KRI-374) is the project's soundtrack, played from the pinned
-        // device recipe's `song` clip. Camera audio is already forced to 0 above, whatever a
-        // slot's `muted` / `mix.original_level` says, so it never leaks over the song.
+        // device recipe's `song` clip. Camera audio is forced to 0 above while a song source is
+        // present, whatever a slot's `muted` / `mix.original_level` says, so it never leaks over
+        // the song. A caller that removed the song passes no song source at all.
         if let song = audioSources[Self.songSourceKey] {
             guard let fingerprint = song.asset.fingerprint, let available = song.asset.duration,
                   available.isFinite, available > 0 else { throw MediaEngineError.missingAsset(Self.songTrackID) }
@@ -214,6 +221,9 @@ enum NativeEditorRenderError: Error, Equatable {
                 clip.audioFadeIn = bed.fadeIn.map { min($0, length / 2) }
                 clip.audioFadeOut = bed.fadeOut.map { min($0, length / 2) }
                 audioTracks.append(TimelineTrack(id: id, kind: .audio, clips: [clip]))
+            } else {
+                // No song plays (its window is past the end of the file): the camera is not muted for nothing.
+                for index in video.indices { video[index].volume = cameraLevelWithoutSong[index] }
             }
         }
         // The rendered narration source already includes its approved music bed.

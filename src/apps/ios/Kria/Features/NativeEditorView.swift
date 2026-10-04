@@ -1136,7 +1136,14 @@ private struct NativeSoundsControls: View {
         VStack(alignment: .leading, spacing: 12) {
             if let song = session.yourSong {
                 // KRI-374: the creator's own song is the soundtrack; no catalog entry, mix or alignment applies.
-                NativeEditorYourSongRow(song: song)
+                NativeEditorYourSongRow(song: song, session: session)
+            } else if session.userSongRemoved {
+                // KRI-428: removed but unsaved. No catalog controls: the variant is reference-only, and
+                // Undo (or leaving without saving) brings the song back.
+                Label(NativeEditorYourSong.removedHelperCopy, systemImage: "speaker.wave.2")
+                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("native-editor-your-song-removed")
             } else if session.document.music == nil {
                 Text("Add music").font(KriaFont.body(15).weight(.semibold))
                 TextField("Music track ID", text: $panelDrafts.musicTrackID)
@@ -1171,7 +1178,7 @@ private struct NativeSoundsControls: View {
                 .accessibilityIdentifier("native-editor-music-volume")
                 .disabled(!session.canEditMix)
             }
-            if session.yourSong == nil, !session.canEditMix {
+            if session.yourSong == nil, !session.userSongRemoved, !session.canEditMix {
                 Label("Music level is unavailable for this edit. Existing audio stays unchanged.", systemImage: "lock")
                     .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
                     .fixedSize(horizontal: false, vertical: true)

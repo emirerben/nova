@@ -5095,6 +5095,7 @@ def _resolve_phone_song_bed(job_id: str, user_song: Any) -> Any:
         generation=asset.generation,
         fingerprint=asset.fingerprint,
         duration_s=duration_s,
+        volume=float(user_song.volume),
     )
 
 

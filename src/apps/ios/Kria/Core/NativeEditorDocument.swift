@@ -29,6 +29,9 @@ enum EditorSection: String, Codable, CaseIterable, Hashable, Sendable {
     case mediaOverlays = "media_overlays", visualBlocks = "visual_blocks"
     case motionScenes = "motion_scenes", cameraEffects = "camera_effects"
     case carouselMoment = "carousel_moment", title
+    /// The creator's own song (KRI-428): volume / start / remove. Lives in the commit request's
+    /// `user_song`, not in the lane snapshot.
+    case userSong = "user_song"
 }
 
 extension EditorDocument {
@@ -114,6 +117,36 @@ struct EditorRevision: Codable, Equatable, Sendable {
 }
 
 // MARK: - Lossless lane records
+
+/// The user's UNSAVED edits to the creator's own song (KRI-428). Nil fields mean
+/// "as the server has it", so the clean baseline is the empty state and a
+/// fresh load needs no seeding. The server-side song (title, mode, duration,
+/// saved volume and window) stays on the variant; `NativeUserSong.applying`
+/// overlays these edits on it.
+struct EditorUserSongState: Equatable, Sendable {
+    var volume: Double?
+    var windowStartS: Double?
+    var removed = false
+
+    init(volume: Double? = nil, windowStartS: Double? = nil, removed: Bool = false) {
+        self.volume = volume; self.windowStartS = windowStartS; self.removed = removed
+    }
+
+    /// `edit` laid over `base`: a removal wins, otherwise each set field overrides.
+    static func merged(_ base: EditorUserSongState?, _ edit: EditorUserSongState?) -> EditorUserSongState? {
+        guard let edit else { return base }
+        guard let base else { return edit }
+        if edit.removed || base.removed { return EditorUserSongState(removed: true) }
+        return EditorUserSongState(volume: edit.volume ?? base.volume, windowStartS: edit.windowStartS ?? base.windowStartS)
+    }
+
+    var isEmpty: Bool { volume == nil && windowStartS == nil && !removed }
+
+    /// The commit body: a removal carries nothing else.
+    var commit: EditorCommitUserSong {
+        removed ? EditorCommitUserSong(removed: true) : EditorCommitUserSong(volume: volume, windowStartS: windowStartS)
+    }
+}
 
 struct EditorTimelineSlot: Codable, Equatable, Sendable {
     var id: String?
@@ -334,6 +367,9 @@ struct EditorDocument: Equatable, Sendable {
     var landscapeFit: String?
     var capabilities: [String: EditorCapability]
     var revision: EditorRevision
+    /// Unsaved edits to the creator's own song (KRI-428); nil = untouched. Not part of the
+    /// lane snapshot (`encodeSnapshot` ignores it): it travels as the commit's `user_song`.
+    var userSong: EditorUserSongState?
     /// `empty` is an explicit creator decision, distinct from legacy snapshots
     /// that happen to omit a timeline and need local source hydration.
     var editorState: String
@@ -570,7 +606,7 @@ private enum NativeEditorMotionCodec {
 
 private extension EditorSection {
     var wireKey: String {
-        switch self { case .timeline: "timeline_slots"; case .text: "text_elements"; case .captions: "caption_cues"; case .captionMeta: "caption_meta"; case .mix: "mix"; case .music: "music"; case .backgroundMusic: "background_music"; case .lyrics: "lyrics"; case .orientation: "orientation"; case .landscapeFit: "landscape_fit"; case .soundEffects: "sound_effects"; case .mediaOverlays: "media_overlays"; case .visualBlocks: "visual_blocks"; case .motionScenes: "motion_scenes"; case .cameraEffects: "camera_effects"; case .carouselMoment: "carousel_moment"; case .title: "title" }
+        switch self { case .timeline: "timeline_slots"; case .text: "text_elements"; case .captions: "caption_cues"; case .captionMeta: "caption_meta"; case .mix: "mix"; case .music: "music"; case .backgroundMusic: "background_music"; case .lyrics: "lyrics"; case .orientation: "orientation"; case .landscapeFit: "landscape_fit"; case .soundEffects: "sound_effects"; case .mediaOverlays: "media_overlays"; case .visualBlocks: "visual_blocks"; case .motionScenes: "motion_scenes"; case .cameraEffects: "camera_effects"; case .carouselMoment: "carousel_moment"; case .title: "title"; case .userSong: "user_song" }
     }
 }
 
@@ -604,6 +640,7 @@ private extension EditorDocument {
         case .title: return loadedState.title != title
         case .orientation: return loadedState.orientation != orientation
         case .landscapeFit: return loadedState.landscapeFit != landscapeFit
+        case .userSong: return userSong != nil
         }
     }
 

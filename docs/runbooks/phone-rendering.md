@@ -2207,6 +2207,47 @@ unsupported_phone_edit` with a plain-language reason (squeezing or stretching a
 whole lip-sync montage is refused for the same reason). Background clips edit
 normally.
 
+Editor song controls (KRI-428): the Sounds tab edits the creator's own song through
+one Save section, `user_song: {volume?, window_start_s?, removed}` (all optional,
+`extra="forbid"`). Capabilities appear only while the variant's CURRENT plan has a
+song: `user_song: {volume, window, remove}`, each an `operation()` entry. The
+choices live on the guided revision (`GuidedEditorRevision.user_song`, omitted when
+unset so older revisions keep their state hash) and are replayed by
+`compile_guided_runtime_plan` onto the immutable approved plan on every Save.
+`UserSongPlan.volume` (0-1, omitted at 1.0) carries the volume to
+`_pinned_song_bed`, so no Save resets it.
+
+- **Volume.** 0-1 in both modes (the song track's clip volume).
+- **Start point.** Background only. The window keeps the video's length and slides
+  over the song; a start that puts the end past the song (including a
+  later duration change that pushes an already-set start past it) is `422
+  user_song_window_out_of_range` ("That edit runs past the end of your song."). Cuts are
+  KEPT: they are not re-snapped to the new window's beats, so a moved start can
+  land cuts off the beat (quality loss only, no re-plan). Lip-sync is locked (each
+  take's source offset depends on the start): a moved start is `422
+  user_song_lipsync_locked`; echoing the unchanged start is fine, and volume still
+  works. `removed: true` wins over every other field in the section (a moved start on a
+  lip-sync song is then a plain removal).
+- **Remove.** Both modes. The song and its track go away and the camera's own sound
+  returns at its normal level (a lip-sync take then plays the creator singing). This
+  is per-edit: `PlanItem.song_*` stays, so a chat re-plan can bring the song back.
+  Library music removal writes `audio.level = 0`, which would MUTE the phone's
+  camera; song removal deliberately leaves `editor_audio_level` at 1.0 and forces
+  `preserve_source_audio`.
+- A `user_song` section on a variant with no song (including after removal) is `422
+  user_song_unavailable`; authored/legacy guided paths reject it. Catalog-music
+  sections (`music_track_id`, `remove_music`, `music_window`, `background_music`,
+  `mix`) are still refused on reference-only guided plans.
+
+Deploy skew: `GuidedEditorRevision` is `extra="forbid"`, so deploy the API first, and do
+not roll the API back once any song edit has been saved (older code cannot load a
+revision carrying `user_song`).
+
+Guards: `tests/routes/test_phone_song_editor_commit.py` (KRI-428 block; drives the
+real `prepare_editor_commit` -> `prepare_phone_editor_commit` ->
+`compile_phone_guided_plan` path, never a stubbed commit),
+`tests/routes/test_song_reference.py`, `tests/schemas/test_guided_edit_revision.py`.
+
 Flags and rollout:
 
 - `USER_SONG_MONTAGE_ENABLED` (default `true`; no users depended on it before

@@ -154,6 +154,21 @@ class GuidedEditorAudio(BaseModel):
         return self
 
 
+class GuidedEditorUserSong(BaseModel):
+    """Editor choices for the creator's own song (KRI-428).
+
+    Volume, a moved start point and removal live on the revision (not the
+    approved plan), so a later Save replays them. ``window_start_s=None`` keeps
+    the plan's start; ``removed`` drops the song and brings back camera audio.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    volume: float = Field(default=1.0, ge=0.0, le=1.0, allow_inf_nan=False)
+    window_start_s: float | None = Field(default=None, ge=0.0, allow_inf_nan=False)
+    removed: bool = False
+
+
 class GuidedEditorRevision(BaseModel):
     """Canonical active post-approval editor state."""
 
@@ -183,6 +198,11 @@ class GuidedEditorRevision(BaseModel):
     # this separate from the text lane preserves pinned narration timing and
     # avoids manufacturing duplicate caption-cue records.
     caption_meta: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    # Omission is intentional: absent for every revision without a creator-song
+    # edit, so their state hashes are unchanged.
+    user_song: GuidedEditorUserSong | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
     lane_hashes: dict[str, str] = Field(default_factory=dict)

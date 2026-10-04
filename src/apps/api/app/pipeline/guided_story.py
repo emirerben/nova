@@ -88,6 +88,12 @@ def _story_canvas(orientation: str | None) -> Canvas:
     return LANDSCAPE if orientation == "landscape" else PORTRAIT
 
 
+# KRI-428: creator-song edit refusals that the phone Save passes through to the editor
+# unchanged (a dedicated code, not the generic `unsupported_phone_edit`).
+USER_SONG_WINDOW_OUT_OF_RANGE = "user_song_window_out_of_range"
+USER_SONG_LIPSYNC_LOCKED = "user_song_lipsync_locked"
+
+
 class GuidedStoryError(RuntimeError):
     """Plain-language strict-render failure with a stable machine code."""
 
@@ -3007,7 +3013,35 @@ def compile_guided_runtime_plan(
             }
         )
         song_row = runtime_payload.get("user_song")
+        song_edit = normalized_revision.get("user_song") or {}
+        if isinstance(song_row, dict) and song_edit.get("removed"):
+            # KRI-428: the creator removed their song. Drop it and fall back to the
+            # camera's own sound at its normal level. Unlike library music removal
+            # (`audio.level = 0`, which mutes the camera), `editor_audio_level`
+            # stays at the plan's default so the phone recipe keeps camera audio.
+            runtime_payload.pop("user_song", None)
+            runtime_payload["editor_audio_level"] = 1.0
+            if not plan_preserves_source_audio(runtime_payload):
+                # An explicit "no source audio" choice must not outlive the song.
+                runtime_payload["montage_audio"] = {
+                    **(runtime_payload.get("montage_audio") or {}),
+                    "preserve_source_audio": True,
+                }
+            song_row = None
         if isinstance(song_row, dict):
+            if song_edit.get("window_start_s") is not None:
+                new_start = float(song_edit["window_start_s"])
+                if abs(new_start - float(song_row["window_start_s"])) > 1e-3:
+                    if song_row.get("mode") == "lipsync":
+                        # Each take's source offset is pinned to the start, so a
+                        # moved start would take the footage off the song.
+                        raise GuidedStoryError(
+                            USER_SONG_LIPSYNC_LOCKED,
+                            "Lip-sync keeps the song where you filmed it.",
+                        )
+                    song_row["window_start_s"] = round(new_start, 3)
+            if "volume" in song_edit:
+                song_row["volume"] = float(song_edit["volume"])
             # KRI-374: the song window always equals the video's length, so a
             # trim or extension re-windows the song from the SAME start (the
             # per-take deltas are untouched; the song stays the master clock).
@@ -3017,7 +3051,7 @@ def compile_guided_runtime_plan(
             )
             if window_end > float(song_row["duration_s"]) + 1e-3:
                 raise GuidedStoryError(
-                    "guided_story_revision_invalid",
+                    USER_SONG_WINDOW_OUT_OF_RANGE,
                     "That edit runs past the end of your song.",
                 )
             song_row["window_end_s"] = window_end

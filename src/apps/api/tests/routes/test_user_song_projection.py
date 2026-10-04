@@ -50,10 +50,21 @@ def test_a_variant_with_a_creator_song_carries_title_mode_and_window(make_job, m
         "duration_s": song.duration_s,
         "window_start_s": song.window_start_s,
         "window_end_s": song.window_end_s,
+        "volume": 1.0,
     }
     print(json.dumps(variant["user_song"]))
     # Display-only: the catalog-music surface is untouched.
     assert variant.get("music_track_id") is None
+
+
+def test_a_saved_volume_shows_up_in_the_projection():
+    job, _result = background_job()
+    variant = job.assembly_plan["variants"][0]
+    saved = copy.deepcopy(job.assembly_plan["guided_story_execution_plan"])
+    saved["user_song"]["volume"] = 0.35
+    variant[PHONE_EDITOR_SAVED_PLAN_FIELD] = saved
+    (public,) = _public(job)
+    assert public["user_song"]["volume"] == 0.35
 
 
 def test_a_variant_without_a_creator_song_has_no_user_song_key():

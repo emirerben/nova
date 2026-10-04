@@ -32,6 +32,7 @@ class UserSongOut(BaseModel):
     duration_s: float
     window_start_s: float
     window_end_s: float
+    volume: float = 1.0
 
 
 def user_song_title(filename: str | None) -> str | None:
@@ -83,6 +84,7 @@ def user_song_for_variant(
         duration_s=song.duration_s,
         window_start_s=song.window_start_s,
         window_end_s=song.window_end_s,
+        volume=song.volume,
     ).model_dump(mode="json")
 
 
