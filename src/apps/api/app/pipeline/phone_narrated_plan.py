@@ -61,14 +61,19 @@ probe).
 Landscape footage policy
 ------------------------
 
-`compile_phone_voiceover_montage_plan` never rejects a landscape clip outright -- it
-only rejects the "letterboxed" (`fit`) landscape presentation, accepting
-"fill" (center-crop) for any source orientation; golden-hour color grading is
-the only lane that additionally demands an exact-canvas, unrotated source.
-Narrated footage is B-roll cut to a spoken narration, not a face-forward
-shot, so the same face-tracking concern that would justify a stricter policy
-doesn't apply here either. This compiler matches montage's policy exactly:
-no orientation check, center-crop fill for whatever the source measures.
+`compile_phone_voiceover_montage_plan` never rejects a landscape clip outright --
+since KRI-285 it letterboxes one when the creator's `landscape_fit` is "fit"
+(`phone_recipe_shared.fit_transform`) and center-crops ("fill") otherwise;
+golden-hour color grading is the only lane that additionally demands an
+exact-canvas, unrotated source. Narrated footage is B-roll cut to a spoken
+narration, not a face-forward shot, so the same face-tracking concern that
+would justify a stricter policy doesn't apply here either.
+
+This compiler INTENTIONALLY IGNORES `landscape_fit` (it takes no such
+argument): no orientation check, center-crop fill for whatever the source
+measures, whatever the item's fit preference says. Letterboxing narrated
+footage is a deliberate gap tracked by KRI-307 (the device editor advertises
+the fit control closed for narrated/speech-montage, with a reason).
 
 Captions
 --------

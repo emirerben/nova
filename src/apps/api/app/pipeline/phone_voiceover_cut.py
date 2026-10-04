@@ -28,7 +28,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from app.kria.recipes import AssetFingerprint, MediaAsset, MediaSize, TimelineClip, Transition
+from app.kria.recipes import (
+    AssetFingerprint,
+    MediaAsset,
+    MediaSize,
+    MediaTransform,
+    TimelineClip,
+    Transition,
+)
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest, VoiceoverRenderAsset
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
@@ -36,6 +43,9 @@ from app.pipeline.phone_narrated_plan import _fit_step_window
 from app.pipeline.phone_recipe_shared import (
     EXPORT_SAFETY_MARGIN_S,
     audio_fade,
+    display_dims,
+    fit_transform,
+    landscape_fit_from_recipe,
     refit_source_window,
     timeline_end_s,
 )
@@ -114,6 +124,7 @@ def _video_clips(
     canvas: Any,
     assets: dict[str, Any],
     manifest: dict[str, Any],
+    landscape_fit: str = "fill",
 ) -> list[TimelineClip]:
     by_id = {clip.id: clip for clip in previous}
     looks = {clip.look for clip in previous}
@@ -179,11 +190,21 @@ def _video_clips(
         ):
             # The montage compiler's own rule for a newly placed source.
             raise UnsupportedPhonePlan("phone looks require exact-canvas unrotated sources")
-        clips.append(
-            old.model_copy(update=update)
-            if old is not None
-            else TimelineClip(**update, look=default_look)
-        )
+        if old is not None:
+            clips.append(old.model_copy(update=update))
+        else:
+            # A newly placed clip keeps the recipe's letterbox (KRI-285): a
+            # surviving clip already carries its own transform, a new one must
+            # not silently revert to a center-crop beside neighbours with bars.
+            transform = MediaTransform()
+            if landscape_fit == "fit" and canvas.height > canvas.width:
+                display_w, display_h = display_dims(original)
+                transform = fit_transform(display_w, display_h, canvas, landscape_fit)
+            if default_look is not None and transform != MediaTransform():
+                raise UnsupportedPhonePlan(
+                    "a color grade cannot be combined with letterboxed landscape fit"
+                )
+            clips.append(TimelineClip(**update, transform=transform, look=default_look))
         cursor = timeline_start + source_duration / rate
     return clips
 
@@ -263,6 +284,7 @@ def replace_voiceover_cut(
     slots: Sequence[dict],
     bindings: Sequence[PhoneSourceBinding],
     pool: Sequence[str],
+    landscape_fit: str | None = None,
 ) -> EditRecipeV2:
     """``recipe`` with its main video track rebuilt from ``slots`` (KRI-290).
 
@@ -272,6 +294,13 @@ def replace_voiceover_cut(
     ``transition_after`` / ``transition_duration_s`` and, for a montage clip,
     ``playback_rate``. A clip whose id survives keeps every other pinned
     field (its look, for example).
+
+    ``landscape_fit`` (KRI-285): how NEWLY placed clips are framed on a portrait
+    montage canvas. ``None`` recovers it from the pinned recipe
+    (``landscape_fit_from_recipe``); callers that persisted
+    ``variant["landscape_fit"]`` should pass it, since an all-portrait cut
+    compiled with ``"fit"`` is indistinguishable from ``"fill"``. Narrated
+    recipes never letterbox (KRI-307).
 
     Raises `UnsupportedPhonePlan` when a slot cannot be built on the phone.
     """
@@ -293,6 +322,10 @@ def replace_voiceover_cut(
 
     assets: dict[str, Any] = {asset.id: asset for asset in recipe.assets}
     manifest: dict[str, Any] = {asset.id: asset for asset in recipe.asset_manifest.assets}
+    if archetype == "narrated":
+        resolved_fit = "fill"
+    else:
+        resolved_fit = landscape_fit or landscape_fit_from_recipe(recipe)
     clips = _video_clips(
         video.clips,
         slots=slots,
@@ -302,6 +335,7 @@ def replace_voiceover_cut(
         canvas=recipe.canvas,
         assets=assets,
         manifest=manifest,
+        landscape_fit=resolved_fit,
     )
     old_end = timeline_end_s(video.clips)
     new_end = timeline_end_s(clips)
