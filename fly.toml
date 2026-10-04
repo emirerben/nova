@@ -24,6 +24,8 @@ kill_timeout = 300
   POSTER_REPAIR_QUEUE = "autoplace-jobs"
   # Deploy the dedicated worker before switching POOL_ASSET_ANALYSIS_QUEUE via
   # a Fly secret. Initial routing deliberately remains the code default: celery.
+  # Same for VISUALS_ANALYSIS_QUEUE: deploy the autoplace process that consumes
+  # visuals-analysis first, then set the secret (unset it to roll back).
 
 [build]
   dockerfile = "Dockerfile"
@@ -47,19 +49,20 @@ kill_timeout = 300
   # allocation. Trade-off: half the parallel throughput, but each render
   # completes in roughly a quarter of the wall-clock.
   # -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs,creator-render-v2,
-  # creator-fidelity-v1,autoplace-jobs,speech-analysis: also drain the content-plan render and
-  # overlay queues. Per-item plan renders (generate_plan_item_videos →
-  # orchestrate_generative_job) are routed to `plan-jobs` so generate-first-week
+  # creator-fidelity-v1,autoplace-jobs,speech-analysis,visuals-analysis: also
+  # drain the content-plan render and overlay queues. Per-item plan renders
+  # (generate_plan_item_videos → orchestrate_generative_job) are routed to `plan-jobs` so generate-first-week
   # can enqueue 7 at once; the single concurrency=1 slot serializes them, so
   # they can never run simultaneously and OOM the worker (sized in [[vm]]
   # below; plan T3). creator-guided-jobs fences expanded mixed-media cuts and
   # creator-render-v2 fences chat Creator jobs from rolling legacy workers.
   # During the device-only admission release, the worker also subscribes to
-  # the analysis queues while their dedicated groups remain defined for a safe
-  # drain/canary window. One worker slot still means one task at a time.
+  # the analysis queues (visuals-analysis included) while their dedicated
+  # groups remain defined for a safe drain/canary window. One worker slot still
+  # means one task at a time.
   # This -Q list is CI-pinned against app/services/queue_state.py's
   # RENDER_WORKER_QUEUES by tests/test_worker_prewarm_gate.py.
-  worker = "celery -A app.worker worker --loglevel=info --concurrency=1 -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs,creator-render-v2,creator-fidelity-v1,autoplace-jobs,speech-analysis"
+  worker = "celery -A app.worker worker --loglevel=info --concurrency=1 -Q celery,plan-jobs,overlay-jobs,creator-guided-jobs,creator-render-v2,creator-fidelity-v1,autoplace-jobs,speech-analysis,visuals-analysis"
   # 2026-08-02 (render-worker autostop): moves ALL Beat-triggered tasks
   # (sweep_stale_jobs, cleanup_agent_runs, send_daily_digest,
   # cleanup_cancelled_job, and every app.tasks.tiktok.* periodic — see
@@ -78,7 +81,13 @@ kill_timeout = 300
   light = "celery -A app.worker worker --loglevel=info --concurrency=2 -Q maintenance,agent-control -B"
   # Image/video metadata analysis is network-bound but downloads media, so it
   # must not share the 1GB maintenance VM or wait behind long render jobs.
-  autoplace = "celery -A app.worker worker --loglevel=info --concurrency=2 -Q autoplace-jobs"
+  # visuals-analysis: creator-facing analyze_pool_asset runs (Visuals photos and
+  # videos) once VISUALS_ANALYSIS_QUEUE=visuals-analysis is set. Kombu's Redis
+  # transport rotates between the two queues, so a photo waits for the next free
+  # slot, never FIFO behind a footage backlog on autoplace-jobs. The unified
+  # worker consumes it too, exactly like autoplace-jobs, so dropping this process
+  # in the device-only topology release never strands Visuals analysis.
+  autoplace = "celery -A app.worker worker --loglevel=info --concurrency=2 -Q autoplace-jobs,visuals-analysis"
   # Speech preflight has independent latency/SLOs and may run bounded FFmpeg +
   # transcription work. Keep it off both the render and maintenance queues.
   speech_analysis = "celery -A app.worker worker --loglevel=info --concurrency=1 -Q speech-analysis"
