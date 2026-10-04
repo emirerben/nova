@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.65.0] - 2026-10-04
+
+### Changed
+- fix(clip-intents): a long model-minted intent id never drops a creator caption (KRI-422) (#1378) <!-- release-pr: 1378 -->
+
+## [0.78.64.0] - 2026-10-04
+
+### Added
+- feat(api): creator-selectable output shape (orientation + bars/crop) at approval and in device editor (KRI-306) (#1372) <!-- release-pr: 1372 -->
+
 ## [0.78.63.0] - 2026-10-04
 
 ### Fixed

@@ -4553,6 +4553,9 @@ def _run_phone_voiceover_montage_job(
                 montage_preset=montage_preset,
                 strict_day_vlog=archetype == "day_vlog",
                 strict_single_hero=archetype == "single_hero",
+                # KRI-306: only an explicit creator choice moves the canvas;
+                # None keeps today's portrait default byte-identical.
+                orientation=_creator_shape_orientation(all_candidates),
             )
 
             gcs_to_media_id = {binding.proxy_path: binding.media_id for binding in bindings}
@@ -5004,6 +5007,7 @@ def _run_phone_unified_montage_job(
                 if isinstance(value, int) and not isinstance(value, bool)
             ],
             visuals=visuals,
+            output_orientation=_creator_shape_orientation(all_candidates),
         )
     record = plan.record()
     if brief is not None and brief.live():
@@ -18431,6 +18435,13 @@ def _assembly_step_to_decision(
         slot_extra={k: v for k, v in slot.items() if k not in modeled_slot_keys},
         moment_extra={k: v for k, v in moment.items() if k not in modeled_moment_keys},
     )
+
+
+def _creator_shape_orientation(all_candidates: dict | None) -> str | None:
+    """KRI-306: the orientation the creator explicitly chose, else None (= default)."""
+    from app.services.render_shape import shape_from_all_candidates  # noqa: PLC0415
+
+    return (shape_from_all_candidates(all_candidates) or {}).get("output_orientation")
 
 
 def _decide_generative_variant(

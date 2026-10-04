@@ -361,3 +361,40 @@ def test_unused_intent_fields_never_appear_in_stored_strategy_or_brief():
         dumped = CreativeStrategy().model_dump(mode="json")
         assert "clip_intents" not in dumped
         assert "resolved_clip_intents" not in dumped
+
+
+def test_kri422_long_model_intent_id_is_shortened_deterministically_not_rejected():
+    """The id is a model-minted handle: its length never invalidates an instruction.
+
+    In-bound ids (every persisted intent) re-validate byte-identically.
+    """
+    from app.agents._schemas.creator_agent import CreativeStrategy
+
+    long_id = "caption_guy_glasses_grey_tshirt_skating_video"  # 45 chars
+    kept = ClipIntent(
+        intent_id="caption_bakery_photo", op="caption", attribute="a", creator_text="b"
+    )
+    assert kept.intent_id == "caption_bakery_photo"
+    exact = "x" * 40
+    assert ClipIntent(intent_id=exact, op="label", attribute="a").intent_id == exact
+
+    first = ClipIntent(intent_id=long_id, op="caption", attribute="a", creator_text="b")
+    again = ResolvedClipIntent(intent_id=long_id, op="caption", attribute="a", creator_text="b")
+    assert len(first.intent_id) == 40
+    assert first.intent_id == again.intent_id
+    assert first.intent_id.startswith(long_id[:31])
+    other = ClipIntent(intent_id=long_id + "_2", op="caption", attribute="a", creator_text="b")
+    assert other.intent_id != first.intent_id
+
+    # The Main Creator's strategy hints carry the same model-minted ids.
+    strategy = CreativeStrategy.model_validate(
+        {
+            "clip_intents": [
+                {"intent_id": long_id, "op": "caption", "attribute": "a", "creator_text": "b"}
+            ]
+        }
+    )
+    assert strategy.clip_intents[0].intent_id == first.intent_id
+
+    with pytest.raises(ValueError):
+        ClipIntent(intent_id="", op="label", attribute="a")

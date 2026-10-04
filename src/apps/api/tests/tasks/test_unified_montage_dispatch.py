@@ -853,3 +853,69 @@ def test_a_clip_shorter_than_any_cut_reaches_the_phone_recipe(harness):
     assert short.source_start_s == 0.0
     assert 0.297 <= short.source_end_s <= 0.29834
     assert device_status(job, "guided_story").request.recipe is not None
+
+
+# --- KRI-306: the creator's output shape rides the Job into the phone recipe ---------------
+
+
+def _guided_track_scales(job) -> list[float]:
+    recipe = device_status(job, "guided_story").request.recipe
+    track = next(t for t in recipe.tracks if t.id == "story")
+    return [clip.transform.scale for clip in track.clips]
+
+
+def test_without_a_creator_choice_the_shape_is_inferred_and_nothing_is_letterboxed(harness):
+    job, *_ = harness(brief=_brief())
+    assert "creator_render_shape" not in job.all_candidates
+    gb._run_generative_job(str(job.id))
+    # Fourteen 1920x1080 clips vote landscape on their own; no bars, ever, unasked.
+    recipe = device_status(job, "guided_story").request.recipe
+    assert (recipe.canvas.width, recipe.canvas.height) == (1920, 1080)
+    assert set(_guided_track_scales(job)) == {1.0}
+    assert job.assembly_plan["variants"][0]["landscape_fit"] == "fill"
+
+
+def test_a_vertical_choice_with_bars_pins_the_canvas_and_letterboxes_sideways_clips(harness):
+    job, *_ = harness(brief=_brief())
+    job.all_candidates["creator_render_shape"] = {
+        "output_orientation": "portrait",
+        "landscape_fit": "fit",
+    }
+
+    gb._run_generative_job(str(job.id))
+
+    snapshot = job.assembly_plan["guided_edit"]["approved_proposal"]
+    assert snapshot["output_orientation"] == "portrait"
+    assert snapshot["output_orientation_reason"] == "The creator selected this output format."
+    recipe = device_status(job, "guided_story").request.recipe
+    assert (recipe.canvas.width, recipe.canvas.height) == (1080, 1920)
+    # The written value reaches `compile_phone_guided_plan(landscape_fit=...)`.
+    assert _guided_track_scales(job) == pytest.approx([0.31640625] * CLIPS)
+    assert job.assembly_plan["variants"][0]["landscape_fit"] == "fit"
+
+
+def test_a_vertical_choice_with_crop_fills_the_frame(harness):
+    job, *_ = harness(brief=_brief())
+    job.all_candidates["creator_render_shape"] = {
+        "output_orientation": "portrait",
+        "landscape_fit": "fill",
+    }
+    gb._run_generative_job(str(job.id))
+    recipe = device_status(job, "guided_story").request.recipe
+    assert (recipe.canvas.width, recipe.canvas.height) == (1080, 1920)
+    assert set(_guided_track_scales(job)) == {1.0}
+
+
+def test_a_landscape_choice_pins_a_1920x1080_canvas_without_bars(harness):
+    job, *_ = harness(brief=_brief())
+    job.all_candidates["creator_render_shape"] = {
+        "output_orientation": "landscape",
+        "landscape_fit": "fill",
+    }
+    gb._run_generative_job(str(job.id))
+    assert job.assembly_plan["guided_edit"]["approved_proposal"]["output_orientation"] == (
+        "landscape"
+    )
+    recipe = device_status(job, "guided_story").request.recipe
+    assert (recipe.canvas.width, recipe.canvas.height) == (1920, 1080)
+    assert set(_guided_track_scales(job)) == {1.0}

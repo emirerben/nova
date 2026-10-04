@@ -6597,7 +6597,7 @@ async def test_chat_cleanup_publish_failure_crash_replay_refunds_once(
         plan_hash="a" * 64,
         client_event_id="cleanup-publish-replay:r7",
     )
-    digest_input = body.model_dump(mode="json")
+    digest_input = creator_routes.confirm_digest_input(body)
     digest_input.update(
         {
             "speech_cleanup_recovery_action": "retry_preflight_dispatch",
@@ -6683,6 +6683,7 @@ async def test_chat_cleanup_publish_failure_crash_replay_refunds_once(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("shape_choice", [None, ("portrait", "fit")])
 @pytest.mark.parametrize(
     ("phone_original_audio", "speech_cleanup_choice"),
     [(False, "clean"), (True, "keep_original"), (False, None)],
@@ -6691,6 +6692,7 @@ async def test_guided_confirm_returns_rendering_after_rollback_expires_loaded_ro
     monkeypatch,
     phone_original_audio,
     speech_cleanup_choice,
+    shape_choice,
 ) -> None:
     """The guided confirmation must not read ORM instances after its rollback.
 
@@ -6725,6 +6727,8 @@ async def test_guided_confirm_returns_rendering_after_rollback_expires_loaded_ro
         voiceover_gcs_path=None,
         voiceover_caption_style=None,
         user_edited=False,
+        landscape_fit="fill",
+        clip_assignments=[],
     )
     session = _ExpiringNamespace(
         id=session_id,
@@ -6875,6 +6879,13 @@ async def test_guided_confirm_returns_rendering_after_rollback_expires_loaded_ro
                 "choice": speech_cleanup_choice,
             }
         assert session.active_plan["guided_generation_attempt_id"] == generation_attempt_id
+        # KRI-306: the creator's shape rides the attempt (the proposal task dispatches
+        # the render after this request returns); an unchosen shape clears the key.
+        assert session.active_plan["guided_render_shape"] == (
+            None
+            if shape_choice is None
+            else {"output_orientation": shape_choice[0], "landscape_fit": shape_choice[1]}
+        )
         refreshed_item.edit_proposal = {
             "generation_attempt_id": generation_attempt_id,
             "proposal_version": 7,
@@ -6900,6 +6911,11 @@ async def test_guided_confirm_returns_rendering_after_rollback_expires_loaded_ro
                 speech_cleanup_analysis_id if speech_cleanup_choice is not None else None
             ),
             speech_cleanup_choice=speech_cleanup_choice,
+            **(
+                {}
+                if shape_choice is None
+                else {"output_orientation": shape_choice[0], "landscape_fit": shape_choice[1]}
+            ),
         ),
         user,
         db,
@@ -7107,7 +7123,7 @@ async def test_guided_confirm_resumes_exact_job_without_auto_design(monkeypatch)
     )
     receipt = SimpleNamespace(
         id=uuid.uuid4(),
-        request_digest=canonical_context_hash(body.model_dump(mode="json")),
+        request_digest=canonical_context_hash(creator_routes.confirm_digest_input(body)),
         status="running",
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )

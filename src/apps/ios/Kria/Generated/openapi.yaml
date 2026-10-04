@@ -128,6 +128,26 @@
             "title": "Expected Thread Revision",
             "type": "integer"
           },
+          "landscape_fit": {
+            "default": null,
+            "enum": [
+              "fit",
+              "fill"
+            ],
+            "nullable": true,
+            "title": "Landscape Fit",
+            "type": "string"
+          },
+          "output_orientation": {
+            "default": null,
+            "enum": [
+              "portrait",
+              "landscape"
+            ],
+            "nullable": true,
+            "title": "Output Orientation",
+            "type": "string"
+          },
           "speech_cleanup_analysis_id": {
             "default": null,
             "format": "uuid",
@@ -1103,6 +1123,11 @@
             "nullable": true,
             "title": "Media Capabilities",
             "type": "object"
+          },
+          "render_shape": {
+            "$ref": "#/components/schemas/RenderShapeOut",
+            "default": null,
+            "nullable": true
           },
           "revision": {
             "title": "Revision",
@@ -2519,6 +2544,16 @@
             "title": "Guided Revision Number",
             "type": "integer"
           },
+          "landscape_fit": {
+            "default": null,
+            "enum": [
+              "fit",
+              "fill"
+            ],
+            "nullable": true,
+            "title": "Landscape Fit",
+            "type": "string"
+          },
           "lyrics": {
             "$ref": "#/components/schemas/LyricsSectionRequest",
             "default": null,
@@ -2729,6 +2764,11 @@
           "carousel_moment": {
             "default": false,
             "title": "Carousel Moment",
+            "type": "boolean"
+          },
+          "landscape_fit": {
+            "default": false,
+            "title": "Landscape Fit",
             "type": "boolean"
           },
           "lyrics": {
@@ -3056,6 +3096,16 @@
             "nullable": true,
             "title": "Guided Revision Number",
             "type": "integer"
+          },
+          "landscape_fit": {
+            "default": null,
+            "enum": [
+              "fit",
+              "fill"
+            ],
+            "nullable": true,
+            "title": "Landscape Fit",
+            "type": "string"
           },
           "lyrics": {
             "$ref": "#/components/schemas/LyricsSectionRequest",
@@ -6237,6 +6287,69 @@
           "byte_count"
         ],
         "title": "RenderFingerprint",
+        "type": "object"
+      },
+      "RenderShapeDefaultOut": {
+        "properties": {
+          "landscape_fit": {
+            "enum": [
+              "fit",
+              "fill"
+            ],
+            "title": "Landscape Fit",
+            "type": "string"
+          },
+          "output_orientation": {
+            "enum": [
+              "portrait",
+              "landscape"
+            ],
+            "title": "Output Orientation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "output_orientation",
+          "landscape_fit"
+        ],
+        "title": "RenderShapeDefaultOut",
+        "type": "object"
+      },
+      "RenderShapeOut": {
+        "description": "KRI-306: the finished-video shapes the confirm screen may offer.",
+        "properties": {
+          "default": {
+            "$ref": "#/components/schemas/RenderShapeDefaultOut"
+          },
+          "fit_choices": {
+            "items": {
+              "enum": [
+                "fit",
+                "fill"
+              ],
+              "type": "string"
+            },
+            "title": "Fit Choices",
+            "type": "array"
+          },
+          "orientations": {
+            "items": {
+              "enum": [
+                "portrait",
+                "landscape"
+              ],
+              "type": "string"
+            },
+            "title": "Orientations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "orientations",
+          "fit_choices",
+          "default"
+        ],
+        "title": "RenderShapeOut",
         "type": "object"
       },
       "RequirementReceipt": {
