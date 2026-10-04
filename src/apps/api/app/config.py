@@ -1478,6 +1478,12 @@ class Settings(BaseSettings):
     # NEXT_PUBLIC_SLIDE_POSTS_ENABLED twin. Rollback:
     #   fly secrets set SLIDE_POSTS_ENABLED=false --app nova-video (api + worker)
     slide_posts_enabled: bool = True
+    # KRI-298/299: rich per-slide text (styled `SlideEdits.texts`, rendered as Pillow PNG
+    # overlays). Off: the renderer keeps the legacy drawtext path using the mirrored
+    # `text` (texts[0]); saved `texts` are preserved. Dual-flag with the iOS capability
+    # `slide_post_rich_text`. Apply: `fly secrets set SLIDE_POST_RICH_TEXT_ENABLED=true
+    # --app nova-video` + restart (api + worker).
+    slide_post_rich_text_enabled: bool = False
     main_creator_agent_freeform_uploads_enabled: bool = False
     main_creator_agent_workspace_enabled: bool = False
     main_creator_agent_rollout_percent: int = Field(default=0, ge=0, le=100)

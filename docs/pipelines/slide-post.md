@@ -97,6 +97,39 @@ download/upload. Per slide:
 6. Build `post.json` + `caption.txt` + `bundle.zip` (`build_post_manifest` /
    `build_bundle_zip`, stdlib `zipfile`, index-ordered filenames).
 
+## Rich per-slide text (KRI-298 / KRI-299)
+
+Flag `slide_post_rich_text_enabled` (default `false`; capability
+`slide_post_rich_text` in `CreationCapabilitiesOut`). `SlideEdits.texts` is a
+list (max 4) of `SlideTextElement`: `id`, `text` (1-120), `role`
+(`text|label`), `label_source` (`place|capture_time`), `edited`,
+`font_family` (must be in `text_element._ALLOWED_FONTS`, default
+`Inter-Bold`), `color` (#RRGGBB), `size_px` (24-200, in 1920-canvas px),
+`alignment`, `position` (`top|center|bottom|custom`), `x_frac`/`y_frac`
+(fractions of the SLIDE canvas, read when `custom`), `max_width_frac`,
+`stroke_width`, `shadow_enabled`, `background` (`none|box`).
+
+- **Legacy mirror.** Whenever `texts` is not None, `SlideEdits.text` is forced
+  to a mirror of `texts[0]` (None when empty), so old clients and the flag-off
+  renderer keep working. `effective_texts()` lifts a legacy-only `text` into
+  one boxed element.
+- **PUT merge** (`merge_legacy_text_edits`, `put_slide_post_draft`): a client
+  that omits `texts` (checked via `model_fields_set`) keeps the stored texts;
+  a changed legacy `text` is folded into `texts[0]` (cleared text drops it).
+  Explicit `texts` from a new client is taken as sent.
+- **Renderer.** Flag on and `texts` set: each element goes through
+  `text_overlay._draw_text_png` into a transparent PNG, composited with
+  `-filter_complex overlay` after scale/crop and the look preset. 4:5 canvases
+  remap `y' = (285 + y*1350)/1920` on the 1080x1920 raster then crop the band.
+  Legacy-only drafts (`texts is None`) always take the byte-identical drawtext
+  path, flag on or off.
+- **Cache key.** `edits_cache_digest` hashes the full edits; legacy-only edits
+  hash as before the field existed, and a `texts` slide gets a path-specific
+  suffix so flipping the flag never reuses the other path's derivative.
+- Tests: `tests/pipeline/test_slide_post_build.py` (real ffmpeg; drawtext
+  cases need an ffmpeg with the `drawtext` filter, e.g. `ffmpeg-full`),
+  `tests/test_slide_post_schema.py`, `tests/routes/test_slide_post_native_routes.py`.
+
 ## The variant contract — "give it a preview MP4 so nothing branches"
 
 The rendered variant (`variant_id` literally `"slides"` — never

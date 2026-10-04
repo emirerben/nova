@@ -19,7 +19,9 @@ from app.schemas.slide_post import (
     SlideEdits,
     SlidePostDraft,
     SlideRef,
+    SlideTextElement,
     TextOverlay,
+    merge_legacy_text_edits,
     parse_slide_post,
 )
 
@@ -113,3 +115,75 @@ def test_export_freshness_requires_complete_unique_rendered_assets() -> None:
     assert not _slide_post_export_is_current(
         draft.model_copy(update={"rendered_version": 2}), valid
     )
+
+
+class TestSlideRichText:
+    def test_legacy_jsonb_without_texts_parses(self):
+        edits = SlideEdits.model_validate({"text": {"content": "Hi", "position": "top"}})
+        assert edits.texts is None and edits.text is not None
+        lifted = edits.effective_texts()
+        assert len(lifted) == 1 and lifted[0].background == "box" and lifted[0].text == "Hi"
+        assert lifted[0].position == "top"
+
+    def test_texts_mirror_into_legacy_text(self):
+        edits = SlideEdits(
+            texts=[
+                SlideTextElement(id="a", text="One", position="top"),
+                SlideTextElement(id="b", text="Two"),
+            ]
+        )
+        assert edits.text == TextOverlay(content="One", position="top")
+        assert SlideEdits(texts=[]).text is None
+
+    def test_custom_position_mirrors_to_nearest_bucket(self):
+        edits = SlideEdits(
+            texts=[SlideTextElement(id="a", text="x", position="custom", y_frac=0.9)]
+        )
+        assert edits.text.position == "bottom"
+
+    def test_bad_font_color_size_count_and_ids_rejected(self):
+        with pytest.raises(ValidationError):
+            SlideTextElement(id="a", text="x", font_family="Comic Sans")
+        with pytest.raises(ValidationError):
+            SlideTextElement(id="a", text="x", color="red")
+        with pytest.raises(ValidationError):
+            SlideTextElement(id="a", text="x", size_px=500)
+        with pytest.raises(ValidationError):
+            SlideEdits(texts=[SlideTextElement(id=str(i), text="x") for i in range(5)])
+        with pytest.raises(ValidationError):
+            SlideEdits(
+                texts=[SlideTextElement(id="a", text="x"), SlideTextElement(id="a", text="y")]
+            )
+        with pytest.raises(ValidationError):
+            SlideTextElement(id="a", text="x" * 121)
+
+    def test_merge_keeps_stored_texts_when_old_client_omits_them(self):
+        aid = uuid.uuid4()
+        stored_edits = SlideEdits(texts=[SlideTextElement(id="a", text="Lisbon", color="#FF0000")])
+        stored = SlidePostDraft(
+            platform_profile="tiktok_photo",
+            slides=[SlideRef(id="s", asset_id=aid, kind="image", edits=stored_edits)],
+        )
+
+        def body(edits: dict) -> SlideRef:
+            return SlideRef.model_validate(
+                {"id": "s", "asset_id": str(aid), "kind": "image", "edits": edits}
+            )
+
+        # Old client round-trips the mirror unchanged, no `texts` key.
+        out = merge_legacy_text_edits(
+            stored, [body({"text": {"content": "Lisbon", "position": "bottom"}})]
+        )
+        assert out[0].edits.texts[0].color == "#FF0000"
+        # Old client changed the legacy text: lands in texts[0], style kept.
+        out = merge_legacy_text_edits(
+            stored, [body({"text": {"content": "Porto", "position": "bottom"}})]
+        )
+        edits = out[0].edits
+        assert edits.texts[0].text == "Porto" and edits.texts[0].color == "#FF0000"
+        assert edits.texts[0].edited is True and edits.text.content == "Porto"
+        # Old client cleared the text: texts[0] dropped.
+        assert merge_legacy_text_edits(stored, [body({"look_preset": "none"})])[0].edits.texts == []
+        # Explicit texts from a new client are taken as sent.
+        assert merge_legacy_text_edits(stored, [body({"texts": []})])[0].edits.texts == []
+        assert merge_legacy_text_edits(None, [body({"texts": []})])[0].edits.texts == []
