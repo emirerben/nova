@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.68.0] - 2026-10-04
+
+### Changed
+- KRI-374: creator-uploaded song montages (background + lip-sync), phone-rendered (#1382) <!-- release-pr: 1382 -->
+
 ## [0.78.67.0] - 2026-10-04
 
 ### Added
