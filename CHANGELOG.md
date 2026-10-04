@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.58.0] - 2026-10-04
+
+### Changed
+- fix(kria): KRI-282 keep clip picker when only some unresolved intents are tappable (#1374) <!-- release-pr: 1374 -->
+
 ## [0.78.57.0] - 2026-10-04
 
 ### Changed
