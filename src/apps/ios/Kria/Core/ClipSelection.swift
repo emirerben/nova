@@ -26,6 +26,12 @@ struct ClipQuestion: Equatable, Sendable {
     /// Highest `clip_question.version` this build understands; newer payloads degrade to the text question.
     static let supportedVersion = 1
 
+    /// The server sends the creator's own wording ("dodgeball"); capitalise the first letter for display.
+    static func displayLabel(_ raw: String) -> String {
+        guard let first = raw.first else { return raw }
+        return first.uppercased() + raw.dropFirst()
+    }
+
     /// nil when the payload has no usable question (absent, newer version, no categories, no candidates).
     static func parse(payload: [String: JSONValue]?) -> ClipQuestion? {
         guard let fields = payload?["clip_question"]?.objectValue else { return nil }
@@ -43,7 +49,8 @@ struct ClipQuestion: Equatable, Sendable {
             let candidates = ids("candidate_media_ids")
             guard !candidates.isEmpty else { return nil }
             let suggested = ids("suggested_media_ids").filter(candidates.contains)
-            let label = object["label"]?.stringValue.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 } ?? key
+            let rawLabel = object["label"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let label = displayLabel(rawLabel?.isEmpty == false ? rawLabel! : key)
             return Category(key: key, label: label, op: object["op"]?.stringValue ?? "group",
                             candidateMediaIDs: candidates, suggestedMediaIDs: suggested)
         }

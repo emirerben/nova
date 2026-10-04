@@ -36,6 +36,15 @@ final class ClipSelectionTests: XCTestCase {
         XCTAssertFalse(try question(allowNone: false).allowNone)
     }
 
+    func testLowercaseCreatorWordingIsCapitalisedForDisplay() throws {
+        let q = try XCTUnwrap(ClipQuestion.parse(payload: payload(categories: [
+            category("group:dodgeball", "dodgeball", ["a"]),
+            category("group:b", "bookshop photo of two guys with a book", ["b"]),
+        ])))
+        XCTAssertEqual(q.categories.map(\.label), ["Dodgeball", "Bookshop photo of two guys with a book"])
+        XCTAssertEqual(q.categories[0].key, "group:dodgeball")
+    }
+
     func testMalformedOrUnsupportedPayloadsYieldNoQuestion() {
         XCTAssertNil(ClipQuestion.parse(payload: nil))
         XCTAssertNil(ClipQuestion.parse(payload: [:]))
