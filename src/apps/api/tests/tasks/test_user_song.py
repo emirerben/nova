@@ -180,7 +180,7 @@ def test_analysis_writes_a_ready_song_analysis(monkeypatch, tmp_path, _sent) -> 
 def test_no_lyrics_is_still_ready(monkeypatch, _sent) -> None:
     item_id = _seed()
     monkeypatch.setattr(task, "_download_song", lambda *_a: None)
-    monkeypatch.setattr(task, "detect_music_beats", lambda _local: [0.5, 1.0])
+    monkeypatch.setattr(task, "detect_music_beats_strict", lambda _local: [0.5, 1.0])
 
     def boom(_local: str) -> list:
         raise RuntimeError("whisper down")
@@ -471,7 +471,7 @@ def test_tasks_are_registered_on_the_worker() -> None:
 
 def test_ensure_alignment_computes_inline_when_the_tasks_have_not_run(aligner, monkeypatch) -> None:
     item_id = _seed(analysis=None, clips=[_row(1), _row(2)])
-    monkeypatch.setattr(task, "detect_music_beats", lambda _local: [0.5, 1.0])
+    monkeypatch.setattr(task, "detect_music_beats_strict", lambda _local: [0.5, 1.0])
     analysis, alignment = task.ensure_song_alignment(item_id)
 
     assert analysis is not None and analysis.status == "ready" and analysis.beats_s == [0.5, 1.0]
@@ -520,3 +520,261 @@ def test_ensure_analysis_returns_the_recorded_failure_instead_of_raising(monkeyp
     monkeypatch.setattr(task, "_download_song", boom)
     analysis = task.ensure_song_analysis(item_id)
     assert analysis is not None and analysis.status == "failed"
+
+
+# ── KRI-374 review: a stuck pending/failed analysis is retried at render time ──
+
+
+def _ready_stub(monkeypatch, beats=(0.5, 1.0)) -> list[int]:
+    calls: list[int] = []
+
+    def analyse(song: dict, generation: int) -> SongAnalysis:
+        calls.append(generation)
+        return SongAnalysis(
+            generation=generation, status="ready", duration_s=4.0, beats_s=list(beats)
+        )
+
+    monkeypatch.setattr(task, "_analyze", analyse)
+    return calls
+
+
+@pytest.mark.parametrize("stuck", ["pending", "failed"])
+def test_ensure_analysis_reruns_a_pending_or_failed_row(monkeypatch, stuck) -> None:
+    """A first enqueue that failed/expired left `pending` forever: the row has the right
+    generation, so it was treated as current and never recomputed."""
+    item_id = _seed(analysis={"version": 1, "generation": 77, "status": stuck})
+    calls = _ready_stub(monkeypatch)
+
+    analysis = task.ensure_song_analysis(item_id)
+
+    assert calls == [77]
+    assert analysis is not None and analysis.status == "ready"
+    assert SongAnalysis.model_validate(_reload(item_id).song_analysis).status == "ready"
+
+
+@pytest.mark.parametrize("stuck", ["pending", "failed"])
+def test_ensure_alignment_reruns_a_pending_or_failed_analysis(aligner, monkeypatch, stuck) -> None:
+    item_id = _seed(analysis={"version": 1, "generation": 77, "status": stuck}, clips=[_row(1)])
+    calls = _ready_stub(monkeypatch)
+
+    analysis, alignment = task.ensure_song_alignment(item_id)
+
+    assert calls == [77]
+    assert analysis is not None and analysis.status == "ready"
+    assert alignment is not None and set(alignment.takes) == {"m1"}
+
+
+def test_a_ready_analysis_is_not_rerun_by_ensure(monkeypatch) -> None:
+    item_id = _seed(analysis=_ready_analysis())
+    monkeypatch.setattr(task, "_analyze", lambda *_a: pytest.fail("must not re-analyse"))
+    assert task.ensure_song_analysis(item_id) is not None
+
+
+def test_a_failing_retry_is_one_attempt_not_a_loop(monkeypatch) -> None:
+    item_id = _seed(analysis={"version": 1, "generation": 77, "status": "failed"})
+    attempts: list[int] = []
+
+    def boom(song: dict, generation: int) -> SongAnalysis:
+        attempts.append(generation)
+        raise RuntimeError("storage down")
+
+    monkeypatch.setattr(task, "_analyze", boom)
+    analysis = task.ensure_song_analysis(item_id)
+    assert attempts == [77]
+    assert analysis is not None and analysis.status == "failed"
+
+
+# ── KRI-374 review: infrastructure faults are retried, never recorded as verdicts ──
+
+
+def test_a_broken_beat_detector_fails_the_analysis_instead_of_storing_zero_beats(
+    monkeypatch,
+) -> None:
+    from app.pipeline.music_beats import BeatDetectionError  # noqa: PLC0415
+
+    item_id = _seed()
+    monkeypatch.setattr(task, "_download_song", lambda *_a: None)
+    monkeypatch.setattr(task, "_transcribe_words", lambda _local: [])
+
+    def broken(_local: str) -> list[float]:
+        raise BeatDetectionError("ffmpeg timed out")
+
+    monkeypatch.setattr(task, "detect_music_beats_strict", broken)
+
+    result = task.analyze_user_song_task.run(str(item_id), 77)
+
+    stored = SongAnalysis.model_validate(_reload(item_id).song_analysis)
+    assert result["status"] == "failed"
+    assert (stored.status, stored.beats_s) == ("failed", [])
+    assert stored.error
+
+
+def test_a_song_with_genuinely_no_beats_is_still_ready(monkeypatch) -> None:
+    item_id = _seed()
+    monkeypatch.setattr(task, "_download_song", lambda *_a: None)
+    monkeypatch.setattr(task, "_transcribe_words", lambda _local: [])
+    monkeypatch.setattr(task, "detect_music_beats_strict", lambda _local: [])
+
+    assert task.analyze_user_song_task.run(str(item_id), 77)["status"] == "ready"
+
+
+def test_the_strict_beat_detector_tells_an_ffmpeg_failure_from_an_empty_result(
+    monkeypatch,
+) -> None:
+    import subprocess  # noqa: PLC0415
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from app.pipeline import music_beats  # noqa: PLC0415
+
+    def run_failed(*_a, **_k):
+        return SimpleNamespace(returncode=1, stdout="", stderr="boom")
+
+    monkeypatch.setattr(music_beats.subprocess, "run", run_failed)
+    with pytest.raises(music_beats.BeatDetectionError):
+        music_beats.detect_music_beats_strict("x.wav")
+    assert music_beats.detect_music_beats("x.wav") == []  # the catalog contract is unchanged
+
+    def run_timeout(*_a, **_k):
+        raise subprocess.TimeoutExpired("ffmpeg", 120)
+
+    monkeypatch.setattr(music_beats.subprocess, "run", run_timeout)
+    with pytest.raises(music_beats.BeatDetectionError):
+        music_beats.detect_music_beats_strict("x.wav")
+    assert music_beats.detect_music_beats("x.wav") == []
+
+    def run_empty(*_a, **_k):
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(music_beats.subprocess, "run", run_empty)
+    assert music_beats.detect_music_beats_strict("x.wav") == []  # nothing to find, not a fault
+
+
+def test_a_lyrics_timeout_fails_the_analysis_so_it_is_retried(monkeypatch) -> None:
+    import subprocess  # noqa: PLC0415
+
+    item_id = _seed()
+    monkeypatch.setattr(task, "_download_song", lambda *_a: None)
+    monkeypatch.setattr(task, "detect_music_beats_strict", lambda _local: [0.5])
+
+    def hung(_local: str) -> list:
+        raise subprocess.TimeoutExpired("ffmpeg", 60)
+
+    monkeypatch.setattr(task, "_transcribe_words", hung)
+
+    assert task.analyze_user_song_task.run(str(item_id), 77)["status"] == "failed"
+    stored = SongAnalysis.model_validate(_reload(item_id).song_analysis)
+    assert stored.status == "failed"
+
+
+def test_a_worker_time_limit_in_the_lyrics_step_is_not_swallowed_as_no_lyrics(
+    monkeypatch,
+) -> None:
+    from billiard.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
+
+    item_id = _seed()
+    monkeypatch.setattr(task, "_download_song", lambda *_a: None)
+    monkeypatch.setattr(task, "detect_music_beats_strict", lambda _local: [0.5])
+
+    def limit(_local: str) -> list:
+        raise SoftTimeLimitExceeded()
+
+    monkeypatch.setattr(task, "_transcribe_words", limit)
+
+    assert task.analyze_user_song_task.run(str(item_id), 77)["status"] == "failed"
+    assert SongAnalysis.model_validate(_reload(item_id).song_analysis).status == "failed"
+
+
+def _timeout(*_a):  # noqa: ANN002, ANN202
+    import subprocess  # noqa: PLC0415
+
+    raise subprocess.TimeoutExpired("ffmpeg", 60)
+
+
+def _os_error(*_a):  # noqa: ANN002, ANN202
+    raise OSError("connection reset")
+
+
+@pytest.mark.parametrize("fault", [_timeout, _os_error])
+def test_a_take_decode_fault_leaves_the_take_out_of_the_stored_alignment(
+    monkeypatch, aligner, fault
+) -> None:
+    """Probe: `except Exception: pcm = None` stored a permanent `unmatched` for a take
+    whose decode merely timed out."""
+    item_id = _seed(analysis=_ready_analysis(), clips=[_row(1), _row(2)])
+    real_decode = task._decode_pcm
+    calls = {"n": 0}
+
+    def flaky(local: str):  # noqa: ANN202
+        calls["n"] += 1
+        if local.endswith("take-m1"):
+            return fault(local)
+        return real_decode(local)
+
+    monkeypatch.setattr(task, "_decode_pcm", flaky)
+
+    assert task.align_user_song_takes_task.run(str(item_id))["status"] == "ok"
+    assert set(_alignment(item_id).takes) == {"m2"}  # m1 is absent, not "unmatched"
+
+    # The next run (e.g. the render-time inline path) retries only the missing take.
+    monkeypatch.setattr(task, "_decode_pcm", lambda _local: [0.1, 0.2, 0.3])
+    task.align_user_song_takes_task.run(str(item_id))
+    assert _alignment(item_id).takes["m1"].status == "confident"
+
+
+def test_a_take_download_fault_is_retried_not_stored(monkeypatch, aligner) -> None:
+    item_id = _seed(analysis=_ready_analysis(), clips=[_row(1)])
+    monkeypatch.setattr(task, "_download_take", _os_error)
+
+    task.align_user_song_takes_task.run(str(item_id))
+
+    assert "m1" not in _alignment(item_id).takes
+
+
+def test_a_song_decode_fault_stores_no_verdict_for_any_take(monkeypatch, aligner) -> None:
+    item_id = _seed(analysis=_ready_analysis(), clips=[_row(1), _row(2)])
+
+    def flaky(local: str):  # noqa: ANN202
+        if local.endswith("song"):
+            return _timeout(local)
+        return [0.1, 0.2, 0.3]
+
+    monkeypatch.setattr(task, "_decode_pcm", flaky)
+
+    task.align_user_song_takes_task.run(str(item_id))
+    assert _alignment(item_id).takes == {}
+    assert aligner.calls == []
+
+    monkeypatch.setattr(task, "_decode_pcm", lambda _local: [0.1, 0.2, 0.3])
+    task.align_user_song_takes_task.run(str(item_id))
+    assert set(_alignment(item_id).takes) == {"m1", "m2"}
+
+
+def test_an_aligner_infrastructure_fault_stores_no_verdict(monkeypatch, aligner) -> None:
+    item_id = _seed(analysis=_ready_analysis(), clips=[_row(1)])
+    monkeypatch.setattr(task, "_run_aligner", _os_error)
+
+    task.align_user_song_takes_task.run(str(item_id))
+
+    assert _alignment(item_id).takes == {}
+
+
+def test_a_worker_time_limit_during_alignment_stores_nothing(monkeypatch, aligner) -> None:
+    from billiard.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
+
+    item_id = _seed(analysis=_ready_analysis(), clips=[_row(1)])
+
+    def limit(_local: str):  # noqa: ANN202
+        raise SoftTimeLimitExceeded()
+
+    monkeypatch.setattr(task, "_decode_pcm", limit)
+
+    assert task.align_user_song_takes_task.run(str(item_id))["status"] == "timed_out"
+    assert _reload(item_id).song_alignment is None
+
+
+def test_a_permanently_unreadable_take_is_still_unmatched(monkeypatch, aligner) -> None:
+    """Only infrastructure faults are retried; media that decodes to nothing is a verdict."""
+    monkeypatch.setattr(task, "_decode_pcm", lambda _local: [])
+    item_id = _seed(analysis=_ready_analysis(), clips=[_row(1)])
+    task.align_user_song_takes_task.run(str(item_id))
+    assert _alignment(item_id).takes["m1"].status == "unmatched"

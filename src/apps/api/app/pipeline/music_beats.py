@@ -15,8 +15,31 @@ import structlog
 log = structlog.get_logger()
 
 
+class BeatDetectionError(RuntimeError):
+    """The detector could not run (ffmpeg failed or timed out) -- NOT "no beats found"."""
+
+
 def detect_music_beats(audio_path: str, min_gap_s: float = 0.15) -> list[float]:
+    """Best-effort beats: any detector failure is logged and returns ``[]``.
+
+    The catalog music task keeps this contract (a track with no beats is marked
+    failed there). Callers that must tell "the detector broke" from "this audio
+    has no beats" use ``detect_music_beats_strict``.
+    """
+    try:
+        return detect_music_beats_strict(audio_path, min_gap_s)
+    except BeatDetectionError:
+        return []
+    except Exception as exc:
+        log.warning("music_beat_detect_failed", error=str(exc))
+        return []
+
+
+def detect_music_beats_strict(audio_path: str, min_gap_s: float = 0.15) -> list[float]:
     """Detect beats in a music track via FFmpeg RMS energy peak detection.
+
+    Raises ``BeatDetectionError`` when ffmpeg fails or times out; returns ``[]``
+    only when the audio genuinely has no detectable beats.
 
     Unlike silencedetect (which looks for silence→loud transitions and fails on
     continuous music), this uses per-frame RMS energy from astats and finds local
@@ -41,7 +64,7 @@ def detect_music_beats(audio_path: str, min_gap_s: float = 0.15) -> list[float]:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
         if result.returncode != 0:
             log.warning("music_beat_detect_ffmpeg_failed", stderr=result.stderr[-500:])
-            return []
+            raise BeatDetectionError("ffmpeg could not read the audio")
 
         # Parse timestamps and RMS levels from stdout (ametadata file=- writes there)
         lines = result.stdout.strip().split("\n")
@@ -82,6 +105,10 @@ def detect_music_beats(audio_path: str, min_gap_s: float = 0.15) -> list[float]:
         log.info("music_beat_detect_done", count=len(beats), threshold=round(threshold, 1))
         return beats
 
-    except Exception as exc:
+    except (subprocess.SubprocessError, OSError) as exc:
+        # A hung/missing ffmpeg is a fault of the run, not a property of the audio.
+        # Anything else (a worker's SoftTimeLimitExceeded, a parsing bug) propagates
+        # untouched: the strict caller must see it, and `detect_music_beats` is the
+        # one that downgrades it to ``[]``.
         log.warning("music_beat_detect_failed", error=str(exc))
-        return []
+        raise BeatDetectionError(str(exc) or exc.__class__.__name__) from exc

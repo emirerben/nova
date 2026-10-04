@@ -30,6 +30,7 @@ decoder (``app.pipeline.audio_pcm.decode_pcm_f32``) are imported lazily inside
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 import uuid
 from collections.abc import Callable
@@ -42,7 +43,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.database import sync_session
 from app.models import PlanItem
-from app.pipeline.music_beats import detect_music_beats
+from app.pipeline.music_beats import detect_music_beats_strict
 from app.schemas.user_song import (
     SONG_ALIGNMENT_VERSION,
     SONG_ANALYSIS_VERSION,
@@ -59,6 +60,21 @@ log = structlog.get_logger()
 # A lyric line ends on a long pause or after this many words.
 LINE_GAP_S = 0.8
 LINE_MAX_WORDS = 8
+
+
+# Faults of the run, not of the media: a hung/missing ffmpeg, a dropped
+# connection, a timeout. They must never be written down as a verdict about the
+# song or a take ("unmatched", "ready with no beats"); the work is simply
+# retried by the next run.
+_TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (
+    subprocess.TimeoutExpired,
+    TimeoutError,
+    OSError,
+)
+
+
+def _is_transient(exc: BaseException) -> bool:
+    return isinstance(exc, _TRANSIENT_ERRORS)
 
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
@@ -226,6 +242,14 @@ def _analysis_current(row: dict[str, Any] | None, generation: int) -> SongAnalys
     return analysis
 
 
+def _analysis_ready(row: dict[str, Any] | None, generation: int) -> bool:
+    """A current analysis that actually finished. ``pending`` and ``failed`` rows
+    are current for their generation but unusable, so the render-time inline path
+    runs them once (one attempt per call, never a loop) instead of trusting them."""
+    analysis = _analysis_current(row, generation)
+    return analysis is not None and analysis.status == "ready"
+
+
 def _alignment_current(row: dict[str, Any] | None, generation: int) -> SongAlignment | None:
     if not row:
         return None
@@ -251,10 +275,18 @@ def _analyze(song: dict[str, Any], generation: int) -> SongAnalysis:
     with tempfile.TemporaryDirectory(prefix="user-song-") as tmp:
         local = os.path.join(tmp, "song")
         _download_song(song["path"], generation, local)
-        beats = detect_music_beats(local)
+        # Raises ``BeatDetectionError`` when ffmpeg broke, so a failed detector is a
+        # failed analysis (retried), never a "ready" song with zero beats.
+        beats = detect_music_beats_strict(local)
         try:
             words = _song_words(_transcribe_words(local))
-        except Exception:  # noqa: BLE001 - lyrics are optional; instrumentals are valid
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception as exc:  # noqa: BLE001 - lyrics are optional; instrumentals are valid
+            if _is_transient(exc):
+                # A timeout is not "this song has no lyrics": fail the analysis so
+                # it is retried instead of freezing a lyric-less song.
+                raise
             log.warning("user_song_transcribe_failed", generation=generation, exc_info=True)
             words = []
     return SongAnalysis(
@@ -368,12 +400,18 @@ def _prepare_take(clip: dict[str, Any], tmp: str) -> dict[str, Any] | None:
     _download_take(clip, local)
     try:
         pcm = _decode_pcm(local)
-    except Exception:  # noqa: BLE001
+    except SoftTimeLimitExceeded:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        if _is_transient(exc):
+            raise  # the caller leaves the take out of the stored alignment (retried)
         pcm = None
     if pcm is None or len(pcm) == 0:
         return None
     try:
         words = _transcribe_words(local)
+    except SoftTimeLimitExceeded:
+        raise
     except Exception:  # noqa: BLE001 - text anchors are supporting evidence only
         words = []
     return {"media_id": str(clip["media_id"]), "pcm": pcm, "words": words}
@@ -390,8 +428,13 @@ def _compute_alignments(
             media_id = str(clip["media_id"])
             try:
                 take = _prepare_take(clip, tmp)
-            except Exception:  # noqa: BLE001 - one unreadable take must not stop the rest
+            except SoftTimeLimitExceeded:
+                raise
+            except Exception as exc:  # noqa: BLE001 - one unreadable take must not stop the rest
                 log.warning("user_song_take_prepare_failed", media_id=media_id, exc_info=True)
+                if _is_transient(exc):
+                    # Not stored at all: the take stays "to do" and the next run retries it.
+                    continue
                 take = None
             if take is None:
                 results[media_id] = _unmatched(media_id, _take_proxy_generation(clip))
@@ -403,7 +446,14 @@ def _compute_alignments(
         _download_song(song["path"], song["generation"], song_local)
         try:
             song_pcm = _decode_pcm(song_local)
-        except Exception:  # noqa: BLE001
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if _is_transient(exc):
+                # The song could not be read right now; no take can be judged. Leave
+                # the prepared takes out of the stored alignment so they are retried.
+                log.warning("user_song_song_decode_transient", exc_info=True)
+                return results
             song_pcm = None
         by_id = {str(clip["media_id"]): clip for clip in todo}
         if song_pcm is None or len(song_pcm) == 0:
@@ -413,8 +463,12 @@ def _compute_alignments(
             return results
         try:
             aligned = _run_aligner(song_pcm, analysis, prepared)
-        except Exception:  # noqa: BLE001 - recorded as unmatched; the planner will ask
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception as exc:  # noqa: BLE001 - recorded as unmatched; the planner will ask
             log.warning("user_song_aligner_failed", exc_info=True)
+            if _is_transient(exc):
+                return results
             aligned = {}
         for take in prepared:
             media_id = take["media_id"]
@@ -523,7 +577,8 @@ def ensure_song_alignment(
 
     Used by the montage worker so a render never depends on the background tasks
     having won a race: it runs the SAME bodies as the tasks (so the result is the
-    row the planner gate would have seen), then re-reads the row. Returns
+    row the planner gate would have seen), then re-reads the row. A ``pending``
+    (enqueue lost or expired) or ``failed`` analysis is retried once here. Returns
     ``(analysis, None)`` when the alignment could not be produced and
     ``(None, None)`` when there is no usable analysis; it does not raise for a
     recorded failure.
@@ -533,7 +588,7 @@ def ensure_song_alignment(
     if song is None:
         return None, None
     generation = song["generation"]
-    if _analysis_current(song["analysis"], generation) is None:
+    if not _analysis_ready(song["analysis"], generation):
         _run_analysis(identifier, generation, item_id=str(identifier))
     _run_alignment(identifier, item_id=str(identifier))
     song = _read_song(identifier)
@@ -552,7 +607,7 @@ def ensure_song_analysis(item_id: uuid.UUID | str) -> SongAnalysis | None:
     if song is None:
         return None
     generation = song["generation"]
-    if _analysis_current(song["analysis"], generation) is None:
+    if not _analysis_ready(song["analysis"], generation):
         _run_analysis(identifier, generation, item_id=str(identifier))
         song = _read_song(identifier)
         if song is None:
