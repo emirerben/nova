@@ -2812,6 +2812,19 @@ class PlanItem(Base):
     # no-track original-audio variant, and "voiceover" activates the separately
     # stored voiceover_gcs_path. The recording remains resumable when inactive.
     audio_mode: Mapped[str] = mapped_column(Text, nullable=False, server_default="kria")
+    # KRI-374: creator-uploaded song for phone montages. Kept apart from the
+    # voiceover columns so narration/voiceover routing never fires for it; the
+    # soundtrack policy is audio_mode == "song". song_generation is the immutable
+    # GCS object generation verified at attach, so analysis, alignment, render
+    # and the device grant all consume the exact bytes the creator uploaded.
+    song_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    song_generation: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    song_duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    song_filename: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # schemas.user_song.SongAnalysis / SongAlignment payloads (beats, lyric words,
+    # per-take song offsets). Written only by app/tasks/user_song.py.
+    song_analysis: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    song_alignment: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # Original-audio bed level for the narrated archetype (0.0 = voice only,
     # 1.0 = loudest). NULL → Kria's default level. Set via
     # PATCH /plan-items/{id}/voiceover-bed-level; threaded to build_generative_job

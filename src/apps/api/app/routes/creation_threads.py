@@ -312,6 +312,10 @@ class CreationMediaCapabilitiesOut(BaseModel):
     clips: CreationClipCapabilitiesOut
     visuals: CreationVisualCapabilitiesOut
     voiceover: CreationVoiceoverCapabilitiesOut
+    # KRI-374: present only when a creator-uploaded song can render for this
+    # account on this client (flag + phone cohort + verified device features +
+    # a client protocol new enough to decode the "song" asset).
+    song: CreationVoiceoverCapabilitiesOut | None = None
 
 
 class CreationCapabilitiesOut(BaseModel):
@@ -332,6 +336,9 @@ class CreationCapabilitiesOut(BaseModel):
     # Rich per-slide text (SlideEdits.texts) renders server-side (KRI-298).
     slide_post_rich_text: bool = False
     slide_post_chat_edit: bool = False
+    # KRI-374: the server may ask the creator to confirm the order of takes it
+    # could not place against their song (`song_order_question` on a turn plan).
+    song_order_questions: bool = False
 
 
 class CreateBody(StrictBody):
@@ -450,6 +457,10 @@ class UploadFile(StrictBody):
     content_type: str = Field(min_length=1, max_length=100)
     file_size_bytes: int = Field(gt=0, le=_MAX_FILE_BYTES)
     client_upload_id: str = Field(min_length=1, max_length=160)
+    # KRI-374: optional declared purpose of an audio upload. Reservation is
+    # role-agnostic (same content types, same object path); the role is only
+    # used to refuse a second song early and to refuse a song when unavailable.
+    role: Literal["voiceover", "song"] | None = None
 
     @field_validator("client_upload_id")
     @classmethod
@@ -482,6 +493,15 @@ class MediaInput(StrictBody):
     capture_time: datetime | None = None
     coarse_location: CoarseLocation | None = None
     place: ClipPlace | None = None
+    # KRI-374: audio only. An audio with no role stays the voiceover (unchanged
+    # behavior); ``"song"`` attaches the creator's own song for a montage.
+    role: Literal["voiceover", "song"] | None = None
+
+    @model_validator(mode="after")
+    def _role_is_audio_only(self) -> MediaInput:
+        if self.role is not None and self.kind != "audio":
+            raise ValueError("role applies to audio only")
+        return self
 
     @field_validator("capture_time", "coarse_location", "place", mode="wrap")
     @classmethod
@@ -524,8 +544,10 @@ class AttachBody(StrictBody):
         media_ids = [item.media_id for item in self.media]
         if len(media_ids) != len(set(media_ids)):
             raise ValueError("media IDs must be unique")
-        if sum(item.kind == "audio" for item in self.media) > 1:
+        if sum(item.kind == "audio" and item.role != "song" for item in self.media) > 1:
             raise ValueError("only one voiceover can be attached")
+        if sum(item.role == "song" for item in self.media) > 1:
+            raise ValueError("only one song can be attached")
         return self
 
 
@@ -781,6 +803,20 @@ def _media_capabilities(
             "max_file_bytes": _MAX_VOICEOVER_BYTES,
             "content_types": sorted(_SLOT_UPLOAD_AUDIO_CT),
         },
+        # Only once a song is attached, so every existing consumer of this
+        # projection is untouched for items without one.
+        **(
+            {
+                "song": {
+                    "current": 1,
+                    "max": 1,
+                    "max_file_bytes": _MAX_VOICEOVER_BYTES,
+                    "content_types": sorted(_SLOT_UPLOAD_AUDIO_CT),
+                }
+            }
+            if getattr(item, "song_gcs_path", None)
+            else {}
+        ),
     }
 
 
@@ -3286,9 +3322,41 @@ async def _agent_message(
     return await _link_creator_session(db, thread_id, owner_id, uuid.UUID(result.id))
 
 
+def _user_song_enabled(user_id: object) -> bool:
+    """Server-side admission for a creator-uploaded song (KRI-374).
+
+    Phone-only: the cloud renderer never plays a user song, and the kill switch
+    plus both device capabilities must hold (`phone_user_song_supported`).
+    """
+
+    from app.services.phone_rollout import phone_user_song_supported  # noqa: PLC0415
+
+    return bool(settings.phone_rendering_for(user_id) and phone_user_song_supported())
+
+
+def _user_song_available(user_id: object, client_protocol: int | None) -> bool:
+    """Should capabilities OFFER the song affordance to THIS client?
+
+    The protocol gate keeps an app build that cannot decode the ``"song"`` render
+    asset from being offered it (it also hides it from the web, which sends no
+    protocol header).
+    """
+
+    return bool(
+        _user_song_enabled(user_id)
+        and client_protocol is not None
+        and client_protocol >= settings.kria_minimum_client_protocol
+    )
+
+
 @router.get("/capabilities", response_model=CreationCapabilitiesOut)
-async def capabilities(user: CurrentUser, native_client: NativeClient = False) -> dict[str, Any]:
+async def capabilities(
+    user: CurrentUser,
+    native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
+) -> dict[str, Any]:
     phone_enabled = settings.phone_rendering_for(user.id)
+    song_available = _user_song_available(user.id, client_protocol)
     formats = _available_formats()
     if settings.ios_device_only_mode or (phone_enabled and native_client):
         # The app on a pilot account renders every project on the iPhone, and
@@ -3378,7 +3446,19 @@ async def capabilities(user: CurrentUser, native_client: NativeClient = False) -
                 "max_file_bytes": _MAX_VOICEOVER_BYTES,
                 "content_types": sorted(_SLOT_UPLOAD_AUDIO_CT),
             },
+            **(
+                {
+                    "song": {
+                        "max": 1,
+                        "max_file_bytes": _MAX_VOICEOVER_BYTES,
+                        "content_types": sorted(_SLOT_UPLOAD_AUDIO_CT),
+                    }
+                }
+                if song_available
+                else {}
+            ),
         },
+        "song_order_questions": song_available,
     }
 
 
@@ -4290,6 +4370,9 @@ async def action_thread(
                 # policy before preflight so Creator confirmation cannot turn
                 # the same source into a newly-stale analysis.
                 next_audio_mode = "original"
+            elif item.audio_mode == "song" and getattr(item, "song_gcs_path", None):
+                # A montage keeps the creator's own song across a format re-pick.
+                next_audio_mode = "song"
             else:
                 next_audio_mode = "kria"
             mutation = mutate_plan_item_media(
@@ -4351,6 +4434,8 @@ async def action_thread(
         legacy_candidates = [*paths]
         if item.voiceover_gcs_path:
             legacy_candidates.append(item.voiceover_gcs_path)
+        if getattr(item, "song_gcs_path", None):
+            legacy_candidates.append(item.song_gcs_path)
         legacy_path = _legacy_media_path(media_id, legacy_candidates)
         media_path = legacy_path or _media_path(user.id, thread.id, media_id)
         next_assignments = [
@@ -4387,6 +4472,16 @@ async def action_thread(
             )
 
             delete_prefix = derivative_item_prefix(owner_id=owner_id, item_id=item.id)
+        if getattr(item, "song_gcs_path", None) == media_path:
+            # Clears the song columns (and, in the facade, its cached analysis and
+            # alignment); a "song" soundtrack falls back to Kria's own choice.
+            mutation_kwargs.update(
+                song_gcs_path=None,
+                song_generation=None,
+                song_duration_s=None,
+                song_filename=None,
+                audio_mode="kria" if item.audio_mode == "song" else item.audio_mode,
+            )
         mutation = mutate_plan_item_media(
             item,
             detector_policy=current_detector_policy(),
@@ -5196,6 +5291,15 @@ async def upload_urls(
                 thread_id=str(thread.id),
                 content_type=content_type,
             )
+        if file.role is not None and not content_type.startswith("audio/"):
+            _reject_media(
+                "creation_thread.upload_urls.rejected",
+                422,
+                "Only audio can carry a role",
+                reason="role_requires_audio",
+                thread_id=str(thread.id),
+                content_type=content_type,
+            )
         if content_type in _IMAGE_CONTENT_TYPES:
             _reject_media(
                 "creation_thread.upload_urls.rejected",
@@ -5206,6 +5310,23 @@ async def upload_urls(
                 content_type=content_type,
             )
         elif content_type.startswith("audio/"):
+            if file.role == "song":
+                if not _user_song_enabled(user.id):
+                    _reject_media(
+                        "creation_thread.upload_urls.rejected",
+                        404,
+                        "Your own song is unavailable",
+                        reason="song_unavailable",
+                        thread_id=str(thread.id),
+                    )
+                if item is not None and getattr(item, "song_gcs_path", None):
+                    _reject_media(
+                        "creation_thread.upload_urls.rejected",
+                        409,
+                        "song_exists",
+                        reason="song_exists",
+                        thread_id=str(thread.id),
+                    )
             if file.file_size_bytes > _MAX_VOICEOVER_BYTES:
                 _reject_media(
                     "creation_thread.upload_urls.rejected",
@@ -5495,7 +5616,26 @@ async def attach_media(
             requested_clips=requested_clips,
             clip_limit=clip_limit,
         )
-    requested_voiceovers = sum(1 for source in body.media if source.kind == "audio")
+    requested_songs = sum(1 for source in body.media if source.role == "song")
+    requested_voiceovers = sum(
+        1 for source in body.media if source.kind == "audio" and source.role != "song"
+    )
+    if requested_songs and not _user_song_enabled(user.id):
+        _reject_media(
+            "creation_thread.attach_media.rejected",
+            404,
+            "Your own song is unavailable",
+            reason="song_unavailable",
+            thread_id=str(thread.id),
+        )
+    if requested_songs and getattr(item, "song_gcs_path", None):
+        _reject_media(
+            "creation_thread.attach_media.rejected",
+            409,
+            "song_exists",
+            reason="song_exists",
+            thread_id=str(thread.id),
+        )
     if item.voiceover_gcs_path and requested_voiceovers:
         _reject_media(
             "creation_thread.attach_media.rejected",
@@ -5674,10 +5814,35 @@ async def attach_media(
                     descriptor_has_audio=contract.proxy.original.has_audio,
                     probed_has_audio=has_audio,
                 )
+        if media.role == "song":
+            if duration_s > settings.user_song_max_duration_s:
+                _reject_media(
+                    "creation_thread.attach_media.rejected",
+                    422,
+                    f"Songs must be {int(settings.user_song_max_duration_s // 60)} minutes "
+                    "or shorter",
+                    reason="song_too_long",
+                    thread_id=str(thread.id),
+                    media_id=media.media_id,
+                    probed_duration_s=duration_s,
+                )
+            try:
+                int(generation)
+            except ValueError:
+                _reject_media(
+                    "creation_thread.attach_media.rejected",
+                    503,
+                    "Upload identity is unavailable",
+                    reason="identity_unavailable",
+                    thread_id=str(thread.id),
+                    media_id=media.media_id,
+                    media_kind=media.kind,
+                )
         verified.append(
             {
                 "media_id": _client_id(media.media_id),
                 "kind": media.kind,
+                **({"role": "song"} if media.role == "song" else {}),
                 "filename": media.filename,
                 "content_type": content_type,
                 "size_bytes": int(metadata.size),
@@ -5739,20 +5904,46 @@ async def attach_media(
     current_cleanup = await mutation_current_analysis_async(db, item.id, for_update=True)
     item_id_for_analysis = item.id  # read now: the commit below expires `item`
     mutation_kwargs: dict[str, Any] = {"clip_assignments": assignments}
-    if any(source["kind"] == "audio" for source in verified):
-        audio = next(source for source in reversed(verified) if source["kind"] == "audio")
+    if any(source["kind"] == "audio" and source.get("role") != "song" for source in verified):
+        audio = next(
+            source
+            for source in reversed(verified)
+            if source["kind"] == "audio" and source.get("role") != "song"
+        )
         mutation_kwargs.update(
             voiceover_gcs_path=audio["_path"],
             voiceover_generation=audio["generation"],
             voiceover_duration_s=audio["duration_s"],
             audio_mode="voiceover",
         )
+    song_source = next((source for source in verified if source.get("role") == "song"), None)
+    if song_source is not None:
+        # The song never touches the voiceover columns, so narration/voiceover
+        # routing cannot fire for it; only its own soundtrack policy flips.
+        mutation_kwargs.update(
+            song_gcs_path=song_source["_path"],
+            song_generation=int(song_source["generation"]),
+            song_duration_s=song_source["duration_s"],
+            song_filename=song_source["filename"],
+        )
+        if "audio_mode" not in mutation_kwargs:
+            mutation_kwargs["audio_mode"] = "song"
     mutation = mutate_plan_item_media(
         item,
         detector_policy=current_detector_policy(),
         current_analysis=current_cleanup,
         **mutation_kwargs,
     )
+    if song_source is not None:
+        from app.schemas.user_song import SongAnalysis  # noqa: PLC0415
+
+        # Visible to the planner immediately ("still analyzing"), before the
+        # worker finishes; the facade just cleared any previous song's cache.
+        item.song_analysis = SongAnalysis(
+            generation=int(song_source["generation"]),
+            status="pending",
+            duration_s=float(song_source["duration_s"]),
+        ).model_dump(mode="json")
     state = {
         **existing_state,
         "media": existing_media,
@@ -5790,12 +5981,27 @@ async def attach_media(
             ),
         )
     )
+    # Read before the commit expires `item`: the song work is enqueued only AFTER
+    # the commit so a worker can never read a row that does not exist yet.
+    song_generation_for_analysis = int(song_source["generation"]) if song_source else None
+    song_present_for_alignment = bool(getattr(item, "song_gcs_path", None))
     await db.commit()
     await db.refresh(thread)
     if preflight_analysis_id is not None:
         from app.services.plan_item_media import publish_preflight_after_commit  # noqa: PLC0415
 
         await asyncio.to_thread(publish_preflight_after_commit, preflight_analysis_id)
+    if song_generation_for_analysis is not None:
+        from app.tasks.user_song import enqueue_user_song_analysis  # noqa: PLC0415
+
+        await asyncio.to_thread(
+            enqueue_user_song_analysis, item_id_for_analysis, song_generation_for_analysis
+        )
+    elif song_present_for_alignment and any(source["kind"] == "video" for source in verified):
+        # A clip landed while a song exists: (re)align it against the song.
+        from app.tasks.user_song import enqueue_user_song_alignment  # noqa: PLC0415
+
+        await asyncio.to_thread(enqueue_user_song_alignment, item_id_for_analysis)
     # KRI-219: describe what the new clips show, in the background (never blocks attach).
     if any(source["kind"] == "video" for source in verified):
         from app.tasks.kria_clip_understanding import enqueue_clip_understanding  # noqa: PLC0415
