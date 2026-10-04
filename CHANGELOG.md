@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.50.0] - 2026-10-04
+
+### Fixed
+- fix(visuals): keep Visuals analysis from waiting behind footage analysis (#1363) <!-- release-pr: 1363 -->
+
 ## [0.78.49.0] - 2026-10-04
 
 ### Changed
