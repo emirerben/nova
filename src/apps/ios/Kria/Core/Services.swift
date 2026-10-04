@@ -110,6 +110,7 @@ struct KeychainError: Error, LocalizedError { let status: OSStatus; init(_ statu
 protocol KriaAPIClient: Sendable {
     func slidePost(itemID: String) async throws -> SlidePostState
     func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal
+    func slidePostChatEdit(itemID: String, body: SlidePostChatEditRequest) async throws -> SlidePostChatEditResponse
     func saveSlidePost(itemID: String, request: SlidePostSaveRequest) async throws -> SlidePostDraft
     func generateSlidePost(itemID: String, expectedVersion: Int) async throws
     func deviceRender(jobID: UUID, variantID: String) async throws -> DeviceRenderStatusResponse
@@ -206,6 +207,7 @@ extension KriaAPIClient {
     func refreshLibraryPosters(jobIDs: [UUID], brokenJobIDs: [UUID]) async throws -> [LibraryPoster] { throw APIError.unsupported }
     func slidePost(itemID: String) async throws -> SlidePostState { throw APIError.unsupported }
     func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal { throw APIError.unsupported }
+    func slidePostChatEdit(itemID: String, body: SlidePostChatEditRequest) async throws -> SlidePostChatEditResponse { throw APIError.unsupported }
     func saveSlidePost(itemID: String, request: SlidePostSaveRequest) async throws -> SlidePostDraft { throw APIError.unsupported }
     func generateSlidePost(itemID: String, expectedVersion: Int) async throws { throw APIError.unsupported }
     func requestAccountDeletion() async throws -> AccountDeletionRequest { throw APIError.unsupported }

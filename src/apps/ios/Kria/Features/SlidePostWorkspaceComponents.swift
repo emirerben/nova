@@ -41,7 +41,15 @@ extension Color {
     }
 }
 
-enum SlidePostMode: Equatable { case browse, arrange, text, look }
+enum SlidePostMode: Equatable {
+    case browse, arrange, text, look
+    /// The Kria thread only renders in browse mode, so sending a chat message always returns there;
+    /// otherwise an edit sent from Arrange would run with no visible feedback.
+    static let afterChatSend: SlidePostMode = .browse
+    static func showsChatThread(chatEnabled: Bool, chatOpen: Bool, mode: SlidePostMode) -> Bool {
+        chatEnabled && chatOpen && mode == .browse
+    }
+}
 
 // MARK: Header
 
@@ -306,6 +314,7 @@ struct SlidePostToolBar: View {
 struct SlidePostComposer: View {
     @Binding var text: String
     let canSend: Bool
+    var isLocked = false
     let onSend: () -> Void
 
     var body: some View {
@@ -313,6 +322,7 @@ struct SlidePostComposer: View {
             Image(systemName: "sparkle").font(.system(size: 17, weight: .regular)).foregroundStyle(KriaColor.mutedInk).padding(.leading, 6)
             TextField("Ask Kria to edit your slides…", text: $text)
                 .font(KriaFont.body(16)).submitLabel(.send).onSubmit { if canSend { onSend() } }
+                .disabled(isLocked)
                 .accessibilityIdentifier("slidepost-composer")
             Button(action: onSend) {
                 Image(systemName: "arrow.up").font(.system(size: 17, weight: .bold)).foregroundStyle(.white)
@@ -458,5 +468,126 @@ struct SlidePostTextCanvas: View {
                 onDrag(element.id, moved.x, moved.y)
             }
             .onEnded { _ in dragStart = nil }
+    }
+}
+
+// MARK: Kria thread (chat edit, KRI-298 Lane E; Paper art. 04)
+
+/// Wraps its children onto new lines (the change chips).
+private struct SlidePostWrap: Layout {
+    var spacing: CGFloat = 8
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(proposal.width ?? 320, subviews).size
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = arrange(bounds.width, subviews)
+        for (index, origin) in result.origins.enumerated() {
+            subviews[index].place(at: CGPoint(x: bounds.minX + origin.x, y: bounds.minY + origin.y), proposal: .unspecified)
+        }
+    }
+    private func arrange(_ width: CGFloat, _ subviews: Subviews) -> (size: CGSize, origins: [CGPoint]) {
+        var origins: [CGPoint] = [], x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, maxX: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width { x = 0; y += rowHeight + spacing; rowHeight = 0 }
+            origins.append(CGPoint(x: x, y: y)); x += size.width + spacing; rowHeight = max(rowHeight, size.height); maxX = max(maxX, x - spacing)
+        }
+        return (CGSize(width: maxX, height: y + rowHeight), origins)
+    }
+}
+
+/// The conversation below the compact preview: user bubble (ink, right), unboxed Kria reply, change
+/// chips, then Unsaved / Undo / Save. The reply text is the server's, shown verbatim.
+struct SlidePostChatThread: View {
+    let messages: [SlidePostChatMessage]
+    let isWorking: Bool
+    let unsaved: Bool
+    let canUndo: Bool
+    let canSave: Bool
+    let onUndo: () -> Void
+    let onSave: () -> Void
+    let onRetry: (SlidePostChatMessage) -> Void
+    let onClose: () -> Void
+
+    private static let noteFill = Color(red: 0xFD / 255, green: 0xF1 / 255, blue: 0xDC / 255)
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Kria").font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.zinc)
+                Spacer()
+                Button(action: onClose) {
+                    Text("Back to tools").font(KriaFont.body(14).weight(.semibold)).foregroundStyle(KriaColor.ink).frame(minHeight: 44)
+                }
+                .accessibilityIdentifier("slidepost-chat-close")
+            }
+            .padding(.horizontal, 16)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(messages) { message in bubble(message) }
+                        if isWorking {
+                            HStack(spacing: 10) {
+                                ProgressView()
+                                Text("Kria is editing…").font(KriaFont.body(16)).foregroundStyle(KriaColor.zinc)
+                            }
+                            .accessibilityElement(children: .combine).accessibilityIdentifier("slidepost-chat-working")
+                        }
+                        Color.clear.frame(height: 1).id("bottom")
+                    }
+                    .padding(.horizontal, 16).padding(.bottom, 8)
+                }
+                .onChange(of: messages.count) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
+                .onChange(of: isWorking) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
+                .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
+            HStack(spacing: 10) {
+                if unsaved {
+                    HStack(spacing: 6) {
+                        Circle().fill(SlidePostTone.warning).frame(width: 7, height: 7)
+                        Text("Unsaved").font(KriaFont.body(15).weight(.semibold)).foregroundStyle(SlidePostTone.warning)
+                    }
+                    .padding(.horizontal, 12).frame(minHeight: 36).background(Self.noteFill, in: Capsule())
+                    .accessibilityElement(children: .combine).accessibilityIdentifier("slidepost-chat-unsaved")
+                }
+                Spacer(minLength: 4)
+                Button("Undo", action: onUndo).buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
+                    .disabled(!canUndo).accessibilityIdentifier("slidepost-chat-undo")
+                Button("Save", action: onSave).buttonStyle(KriaPrimaryButtonStyle())
+                    .disabled(!canSave).accessibilityIdentifier("slidepost-chat-save")
+            }
+            .padding(.horizontal, 16).padding(.vertical, 8)
+        }
+    }
+
+    @ViewBuilder private func bubble(_ message: SlidePostChatMessage) -> some View {
+        if message.isUser {
+            Text(message.text).font(KriaFont.body(16)).foregroundStyle(.white)
+                .padding(.horizontal, 16).padding(.vertical, 12)
+                .background(KriaColor.ink, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .frame(maxWidth: .infinity, alignment: .trailing).padding(.leading, 56)
+                .accessibilityIdentifier("slidepost-chat-user")
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(message.text).font(KriaFont.body(16)).foregroundStyle(KriaColor.ink)
+                    .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("slidepost-chat-reply")
+                if !message.changes.isEmpty {
+                    SlidePostWrap {
+                        ForEach(message.changes, id: \.self) { change in
+                            let note = SlidePostChatMessage.isNote(change)
+                            Text(change).font(KriaFont.body(14).weight(.semibold))
+                                .foregroundStyle(note ? SlidePostTone.warning : KriaColor.success)
+                                .padding(.horizontal, 12).frame(minHeight: 32)
+                                .background(note ? Self.noteFill : KriaColor.successSoft, in: Capsule())
+                                .accessibilityIdentifier(note ? "slidepost-chat-note" : "slidepost-chat-change")
+                        }
+                    }
+                }
+                if message.retryText != nil {
+                    Button("Try again") { onRetry(message) }.buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
+                        .accessibilityIdentifier("slidepost-chat-retry")
+                }
+            }
+        }
     }
 }

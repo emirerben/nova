@@ -25,6 +25,7 @@
       "KriaUITests/SlidePostUITests/testSlidePreviewLeavesToolbarAndStripVisible",
       "KriaUITests/SlidePostUITests/testAddStyleAndApplyTextToAllSlides",
       "KriaUITests/SlidePostUITests/testMoreMenuRemoveAndCover",
+      "KriaUITests/SlidePostUITests/testSlideChatEditStagesAndSaves",
       "KriaUITests/SlidePostUITests/testArrangeDragReordersAndKeepsTheCover",
       "KriaUITests/SlidePostUITests/testWorkspaceKeepsToolbarReachableAtLargeText",
       "KriaUITests/SlidePostUITests/testTextPanelKeepsEditFieldVisibleWithKeyboardUp",
