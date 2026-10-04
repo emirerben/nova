@@ -73,6 +73,64 @@ final class ClipSelectionTests: XCTestCase {
         XCTAssertNil(ChatTranscriptMessage.from(event: event(role: "user", type: "user_message"))?.clipQuestion)
     }
 
+    /// KRI-282 root-cause pin. This is the wire shape of the production Olympics thread's question event (ids,
+    /// label and prose are synthetic): decoded through the real `ThreadEvent` decoder, the newest event must yield
+    /// a ready-to-render clip question -- with NO suggestions and many candidates.
+    func testProductionShapedQuestionEventDecodesToAPickerQuestion() throws {
+        let ids = (1...48).map { String(format: "analysis-proxy-ios-%08X-0000-4000-8000-%012X.mp4", $0, $0) }
+        let candidates = ids.map { "\"\($0)\"" }.joined(separator: ",")
+        let json = """
+        {"id":"db1b66d0-d9af-4a50-9938-8b76b0048bda","sequence":85,"revision":86,"role":"assistant","event_type":"assistant_response",
+         "client_event_id":null,"content":"I couldn't tell which of your clips show \\"dodgeball\\". Tap the clips that do, or tell me there aren't any.",
+         "created_at":"2026-10-04T12:24:17.698730Z",
+         "payload":{"turn_id":"46fac55c-0ffe-4d12-815a-7ee71cceb725","turn_value":"question","receipt_ids":[],"next_actions":[],"schema_version":2,
+           "clip_question":{"version":1,"allow_none":true,"question_id":"c61bd324-8553-467e-a332-4e68eae830f3",
+             "categories":[{"op":"group","key":"group:dodgeball","label":"dodgeball","candidate_media_ids":[\(candidates)],"suggested_media_ids":[]}]}}}
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { d in
+            let raw = try d.singleValueContainer().decode(String.self)
+            let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            return try XCTUnwrap(f.date(from: raw))
+        }
+        let event = try decoder.decode(ThreadEvent.self, from: Data(json.utf8))
+        let message = try XCTUnwrap(ChatTranscriptMessage.from(event: event))
+        let question = try XCTUnwrap(message.clipQuestion, "assistant_response with clip_question must carry the picker")
+        XCTAssertEqual(question.questionID, "c61bd324-8553-467e-a332-4e68eae830f3")
+        XCTAssertEqual(question.categories.count, 1)
+        XCTAssertEqual(question.categories[0].key, "group:dodgeball")
+        XCTAssertEqual(question.categories[0].label, "Dodgeball")
+        XCTAssertEqual(question.categories[0].candidateMediaIDs, ids)
+        XCTAssertTrue(question.categories[0].suggestedMediaIDs.isEmpty)
+        let state = ClipSelectionState(question: question)
+        XCTAssertEqual(state.selectedCount, 0)
+        XCTAssertFalse(state.canSend)
+    }
+
+    func testPickerIsOfferedUnlessTheServerExplicitlyDoesNotAdvertiseIt() throws {
+        XCTAssertTrue(ClipSelectionAvailability.isAvailable(capabilities: nil), "an unloaded capability read must not hide the picker")
+        let on = try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[],"clip_selection_questions":true}"#.utf8))
+        XCTAssertTrue(ClipSelectionAvailability.isAvailable(capabilities: on))
+        let old = try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[]}"#.utf8))
+        XCTAssertFalse(ClipSelectionAvailability.isAvailable(capabilities: old), "old server: text question")
+        let off = try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[],"clip_selection_questions":false}"#.utf8))
+        XCTAssertFalse(ClipSelectionAvailability.isAvailable(capabilities: off))
+    }
+
+    func testSelectAllAndClearAffectOnlyTheirCategory() throws {
+        var state = ClipSelectionState(question: try question())
+        state.toggleNone("dodgeball")
+        state.selectAll(in: "dodgeball")
+        XCTAssertEqual(state.count(in: "dodgeball"), 3)
+        XCTAssertFalse(state.isNone("dodgeball"), "select all clears none")
+        XCTAssertEqual(state.count(in: "football"), 0)
+        state.clear(in: "dodgeball")
+        XCTAssertEqual(state.count(in: "dodgeball"), 0)
+        XCTAssertFalse(state.canSend)
+        state.selectAll(in: "unknown")
+        XCTAssertEqual(state.selectedCount, 0)
+    }
+
     // MARK: selection state
 
     func testSuggestedClipsStartTickedAndTapTwiceUnselects() throws {
@@ -165,7 +223,7 @@ final class ClipSelectionTests: XCTestCase {
         let q = try question()
         var state = ClipSelectionState(question: q)
         state.toggleNone("football")
-        XCTAssertEqual(state.submission.summary(question: q), "Dodgeball 1 · Football: none")
+        XCTAssertEqual(state.submission.summary(question: q), "Dodgeball: 1 clip · Football: none")
         XCTAssertEqual(ClipSelectionSubmission.skip(q).summary(question: q), "Skipped, Kria decides")
     }
 

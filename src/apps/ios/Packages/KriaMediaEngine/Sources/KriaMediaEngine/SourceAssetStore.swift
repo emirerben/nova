@@ -67,6 +67,15 @@ public struct SourceAssetStore: Sendable {
         try JSONEncoder().encode(records).write(to: manifest, options: .atomic)
     }
 
+    /// The device-owned original for a media id when it is still on disk -- WITHOUT hashing it, so a
+    /// thumbnail or preview can use it cheaply. Never use this to authorize a render; `resolve` verifies.
+    public func localFileIfPresent(mediaID: String) -> URL? {
+        guard let binding = (try? bindings())?.first(where: { $0.mediaID == mediaID }),
+              let url = try? originalURL(binding.original),
+              FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
+    }
+
     public func resolve(mediaIDs: Set<String>) throws -> [String: URL] {
         let records = try bindings()
         var result: [String: URL] = [:]

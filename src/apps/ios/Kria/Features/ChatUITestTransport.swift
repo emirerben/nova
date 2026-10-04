@@ -1,6 +1,7 @@
 #if DEBUG
 import Foundation
 import KriaMediaEngine
+import UIKit
 
 /// Offline chat fixture: every HTTP request is intercepted, even if a caller
 /// changes its URL. The existing UI-only fallback supplies projects and drafts.
@@ -57,7 +58,7 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
 }
 /// Deterministic API fixture uses the same native request/response decoder as a
 /// real account. Enabled only by explicit UI-test environment in Debug builds.
-private final class CreationChatFixture: @unchecked Sendable {
+final class CreationChatFixture: @unchecked Sendable {
     static let shared = CreationChatFixture()
     private let lock = NSLock()
     private var threads: [String: [String: Any]] = [:]
@@ -83,7 +84,7 @@ private final class CreationChatFixture: @unchecked Sendable {
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CHAT_EDIT"] == "1" { capabilities["slide_post_chat_edit"] = true }
             // KRIA_CHAT_CLIP_QUESTION: "1" = server advertises clip_selection_questions; "legacy" = it still
             // sends the clip_question payload but does not advertise the capability (old-server fallback).
-            if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] == "1" { capabilities["clip_selection_questions"] = true }
+            if ["1", "history"].contains(ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"]) { capabilities["clip_selection_questions"] = true }
             // KRIA_CHAT_SONG_ORDER: "1" = server advertises media.song and song_order_questions (KRI-374);
             // "legacy" = it still sends the song_order_question payload but advertises nothing (old-app fallback).
             if ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] == "1" {
@@ -110,7 +111,12 @@ private final class CreationChatFixture: @unchecked Sendable {
                          "payload": [:], "created_at": "2026-09-10T10:00:00Z"]
                     }
                     : []
-                let thread: [String: Any] = ["id": id, "title": "Untitled project", "status": "active", "revision": fixtureEvents.count, "runtime_version": runtime, "state": [:], "events": fixtureEvents, "active_plan_item_id": id, "updated_at": "2026-09-10T10:00:00Z"]
+                var seededEvents = fixtureEvents
+                var seededState: [String: Any] = [:]
+                if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] == "history" {
+                    (seededEvents, seededState) = Self.realShapeClipQuestionHistory()
+                }
+                let thread: [String: Any] = ["id": id, "title": "Untitled project", "status": "active", "revision": seededEvents.count, "runtime_version": runtime, "state": seededState, "events": seededEvents, "active_plan_item_id": id, "updated_at": "2026-09-10T10:00:00Z"]
                 threads[id] = thread
                 return response(thread, status: 201)
             }
@@ -362,6 +368,56 @@ private final class CreationChatFixture: @unchecked Sendable {
          "inferred": ["Old Lighthouse"]],
         ["requirement_id": "req-drone", "status": "not_possible", "reason": "None of your clips is aerial footage."],
     ] }
+
+    /// KRI-282: a thread shaped like the production Olympics thread -- 48 phone analysis-proxy clips
+    /// (`analysis-proxy-ios-<UUID>.mp4` media ids), a long history, and the NEWEST event a clip question with
+    /// no suggestions. Ids, labels and prose are synthetic; only the shape is real.
+    static let realShapeMediaIDs = (1...48).map { String(format: "analysis-proxy-ios-%08X-0000-4000-8000-%012X.mp4", $0, $0) }
+
+    /// `KRIA_CHAT_CLIP_THUMBS=1`: the first 24 of those clips have a cached thumbnail (a numbered gradient) and
+    /// the rest do not, so a screenshot shows both a poster and the labelled placeholder.
+    @MainActor static func seedClipThumbnails() {
+        guard ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_THUMBS"] == "1" else { return }
+        let hues: [UIColor] = [.systemTeal, .systemOrange, .systemIndigo, .systemGreen, .systemPink, .systemBrown]
+        for (index, id) in realShapeMediaIDs.prefix(24).enumerated() {
+            let size = CGSize(width: 180, height: 320)
+            let image = UIGraphicsImageRenderer(size: size).image { context in
+                let colors = [hues[index % hues.count].cgColor, hues[(index + 2) % hues.count].withAlphaComponent(0.5).cgColor]
+                let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: [0, 1])!
+                context.cgContext.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: size.width, y: size.height), options: [])
+            }
+            guard let data = image.jpegData(compressionQuality: 0.8) else { continue }
+            let url = CreationMediaPreview.url(mediaID: id)
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    static func realShapeClipQuestionHistory() -> (events: [[String: Any]], state: [String: Any]) {
+        let ids = realShapeMediaIDs
+        var events: [[String: Any]] = []
+        func append(_ type: String, role: String, content: String = "", payload: [String: Any] = [:]) {
+            events.append(["id": UUID().uuidString, "sequence": events.count, "revision": events.count + 1, "role": role,
+                           "event_type": type, "content": content, "payload": payload, "created_at": "2026-10-04T10:00:00Z"])
+        }
+        append("action_select_format", role: "user", payload: ["action": "select_format", "format": "montage"])
+        var media: [[String: Any]] = []
+        for (index, id) in ids.enumerated() {
+            let clip: [String: Any] = ["kind": "video", "filename": "IMG_\(1000 + index).mov", "media_id": id, "duration_s": 7.3,
+                                       "content_type": "video/mp4", "upload_contract": ["purpose": "analysis_proxy"]]
+            media.append(clip)
+            append("media_added", role: "user", payload: ["media": [clip], "media_count": index + 1])
+        }
+        append("user_message", role: "user", content: "Make a day vlog of the tournament, grouped by sport.",
+               payload: ["turn_id": "t1", "turn_status": "accepted", "runtime_version": 2])
+        append("assistant_response", role: "assistant",
+               content: "I couldn't tell which of your clips show \"dodgeball\". Tap the clips that do, or tell me there aren't any.",
+               payload: ["turn_id": "t1", "turn_value": "question", "receipt_ids": [String](), "next_actions": [String](), "schema_version": 2,
+                         "clip_question": ["version": 1, "allow_none": true, "question_id": "real-shape-q",
+                                           "categories": [["op": "group", "key": "group:dodgeball", "label": "dodgeball",
+                                                           "candidate_media_ids": ids, "suggested_media_ids": [String]()]]] as [String: Any]])
+        return (events, ["format": "montage", "media": media])
+    }
 
     private static func fixtureBrief(threadID: String) -> [String: Any] {
         ["thread_id": threadID, "version": 1,

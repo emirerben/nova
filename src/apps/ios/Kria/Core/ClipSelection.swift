@@ -82,11 +82,11 @@ struct ClipSelectionSubmission: Encodable, Equatable, Sendable {
         Self(questionID: question.questionID, answers: [], noneKeys: [], skipped: true)
     }
 
-    /// Short read-only summary once answered, e.g. "Dodgeball 2 · Football 1" or "Skipped".
+    /// Short read-only summary once answered, e.g. "Dodgeball: 2 clips · Football: 1 clip" or "Skipped".
     func summary(question: ClipQuestion) -> String {
         if skipped { return "Skipped, Kria decides" }
         let labels = Dictionary(question.categories.map { ($0.key, $0.label) }, uniquingKeysWith: { first, _ in first })
-        var parts = answers.map { "\(labels[$0.key] ?? $0.key) \($0.mediaIDs.count)" }
+        var parts = answers.map { "\(labels[$0.key] ?? $0.key): \($0.mediaIDs.count) clip\($0.mediaIDs.count == 1 ? "" : "s")" }
         parts += noneKeys.map { "\(labels[$0] ?? $0): none" }
         return parts.joined(separator: " · ")
     }
@@ -110,6 +110,17 @@ struct ClipSelectionSubmission: Encodable, Equatable, Sendable {
     }
 }
 
+/// Whether to offer the picker for a clip question the server sent. The payload itself only exists when the
+/// server's `clip_selection_questions` flag is on, so a capability snapshot that is simply not loaded (nil: a
+/// failed or cancelled read, never retried) must NOT hide it -- only an explicit "this server does not
+/// advertise it" (an older server that still sends the payload) falls back to the plain text question.
+enum ClipSelectionAvailability {
+    static func isAvailable(capabilities: CreationCapabilities?) -> Bool {
+        guard let capabilities else { return true }
+        return capabilities.clipSelectionQuestionsEnabled
+    }
+}
+
 /// Mutable picker state for one question. Pure value type so the interactions are unit-testable.
 struct ClipSelectionState: Equatable {
     let question: ClipQuestion
@@ -123,6 +134,20 @@ struct ClipSelectionState: Equatable {
     }
 
     func isSelected(_ mediaID: String, in key: String) -> Bool { selected[key]?.contains(mediaID) == true }
+    func count(in key: String) -> Int { selected[key]?.count ?? 0 }
+
+    /// Ticks every candidate of one category (clears that category's "None of these").
+    mutating func selectAll(in key: String) {
+        guard let category = question.categories.first(where: { $0.key == key }) else { return }
+        selected[key] = Set(category.candidateMediaIDs)
+        none.remove(key)
+    }
+
+    /// Unticks every candidate of one category.
+    mutating func clear(in key: String) {
+        guard question.categories.contains(where: { $0.key == key }) else { return }
+        selected[key] = []
+    }
     func isNone(_ key: String) -> Bool { none.contains(key) }
 
     /// Tap a thumbnail; tapping a ticked one unticks it. Ticking clears that category's "None of these".
