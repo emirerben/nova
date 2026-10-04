@@ -251,21 +251,47 @@ def render_text_element_png(element, png_path: str, *, canvas: Canvas) -> None:
     band_top = max(0, (full_h - ch) // 2) if ch <= full_h else 0
     band_h = min(ch, full_h)
     y_full = (band_top + y * band_h) / full_h
+    from app.agents._schemas.text_element import apply_text_case  # noqa: PLC0415
+
+    # Same overlay-dict -> Pillow paint mapping the video editor uses, so the
+    # parity fields (rotation, stroke/shadow color, highlight, spacing) render
+    # identically. Unset fields are omitted => legacy pixels.
+    overlay = {
+        key: getattr(element, key)
+        for key in (
+            "stroke_color",
+            "shadow_color",
+            "shadow_opacity",
+            "background_color",
+            "rotation_deg",
+            "max_width_frac",
+        )
+        if getattr(element, key) is not None
+    }
+    paint = text_overlay._authored_pillow_paint(overlay)
+    if element.background == "box":
+        # Legacy box keeps its look; an explicit background_color wins.
+        paint.setdefault("background_color", _RICH_BOX_RGBA)
+    # Rotation is applied by _draw_text_png on the full 1080x1920 raster
+    # (pivot = the text anchor), BEFORE the 4:5 band crop below, so rotated
+    # text near the band edge is cropped like any other pixels, never clipped
+    # early.
     text_overlay._draw_text_png(
-        element.text,
+        apply_text_case(element.text, element.text_case),
         "center",
         png_path,
         font_family=element.font_family,
-        text_size_px=element.size_px,
+        text_size_px=round(element.size_px),
         text_color=_hex_rgba(element.color),
         position_x_frac=x,
         position_y_frac=y_full,
         text_anchor=element.alignment,
         vertical_anchor="center",
-        stroke_width=element.stroke_width,
+        stroke_width=round(element.stroke_width),
         shadow_enabled=element.shadow_enabled,
-        background_color=_RICH_BOX_RGBA if element.background == "box" else None,
-        max_width_frac=element.max_width_frac,
+        letter_spacing=element.letter_spacing,
+        line_spacing=element.line_spacing,
+        **paint,
     )
     if (cw, ch) != _FULL_CANVAS:
         with Image.open(png_path) as raster:

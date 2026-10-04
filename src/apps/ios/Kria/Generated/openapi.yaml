@@ -6931,7 +6931,7 @@
         "type": "object"
       },
       "SlideTextElement": {
-        "description": "One styled text element on a single slide (rich text model, KRI-298).\n\nA style vocabulary aligned with `agents/_schemas/text_element.TextElement`.\nRendered by `pipeline/slide_post/build.py` through the Pillow\n`text_overlay._draw_text_png` path (PNG overlay) when\n`slide_post_rich_text_enabled` is on. All style fields default so a\npartial payload from a client stays valid.",
+        "description": "One styled text element on a single slide (rich text model, KRI-298).\n\nSlides are NOT a scaled-down video-editor document (no timing, animation,\ncaptions, sounds or overlays), but the text style vocabulary is now shared\nwith the video editor's Text tool.\n\nThe style vocabulary is shared with `agents/_schemas/text_element.TextElement`\n(the video editor's Text tool): validators and bounds for the parity fields\nare reused from it, not copied. Timing, animation, behind-subject and\nword-highlight are intentionally absent: they mean nothing on a still.\nRendered by `pipeline/slide_post/build.py` through the Pillow\n`text_overlay._draw_text_png` path (PNG overlay) when\n`slide_post_rich_text_enabled` is on. All style fields default so a\npartial payload from a client stays valid.",
         "properties": {
           "alignment": {
             "default": "center",
@@ -6952,6 +6952,13 @@
             "title": "Background",
             "type": "string"
           },
+          "background_color": {
+            "default": null,
+            "nullable": true,
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Background Color",
+            "type": "string"
+          },
           "color": {
             "default": "#FFFFFF",
             "title": "Color",
@@ -6961,6 +6968,17 @@
             "default": false,
             "title": "Edited",
             "type": "boolean"
+          },
+          "editor_preset": {
+            "default": null,
+            "enum": [
+              "Simple",
+              "Bold",
+              "Highlight"
+            ],
+            "nullable": true,
+            "title": "Editor Preset",
+            "type": "string"
           },
           "font_family": {
             "default": "Inter-Bold",
@@ -6982,6 +7000,18 @@
             "nullable": true,
             "title": "Label Source",
             "type": "string"
+          },
+          "letter_spacing": {
+            "default": null,
+            "nullable": true,
+            "title": "Letter Spacing",
+            "type": "number"
+          },
+          "line_spacing": {
+            "default": null,
+            "nullable": true,
+            "title": "Line Spacing",
+            "type": "number"
           },
           "max_width_frac": {
             "default": null,
@@ -7011,29 +7041,83 @@
             "title": "Role",
             "type": "string"
           },
+          "rotation_deg": {
+            "default": null,
+            "nullable": true,
+            "title": "Rotation Deg",
+            "type": "number"
+          },
+          "shadow_color": {
+            "default": null,
+            "nullable": true,
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Shadow Color",
+            "type": "string"
+          },
           "shadow_enabled": {
             "default": true,
             "title": "Shadow Enabled",
             "type": "boolean"
           },
+          "shadow_opacity": {
+            "default": null,
+            "maximum": 1,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Shadow Opacity",
+            "type": "number"
+          },
           "size_px": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ],
             "default": 86,
-            "maximum": 200,
-            "minimum": 24,
-            "title": "Size Px",
-            "type": "integer"
+            "ge": 8,
+            "le": 200,
+            "title": "Size Px"
+          },
+          "stroke_color": {
+            "default": null,
+            "nullable": true,
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Stroke Color",
+            "type": "string"
           },
           "stroke_width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ],
             "default": 0,
-            "maximum": 12,
-            "minimum": 0,
-            "title": "Stroke Width",
-            "type": "integer"
+            "ge": 0,
+            "le": 20,
+            "title": "Stroke Width"
           },
           "text": {
             "maxLength": 120,
             "minLength": 1,
             "title": "Text",
+            "type": "string"
+          },
+          "text_case": {
+            "default": null,
+            "enum": [
+              "none",
+              "upper",
+              "lower",
+              "title"
+            ],
+            "nullable": true,
+            "title": "Text Case",
             "type": "string"
           },
           "x_frac": {
