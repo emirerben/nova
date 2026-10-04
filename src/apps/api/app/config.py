@@ -517,6 +517,12 @@ class Settings(BaseSettings):
     # answer as authoritative. Default TRUE; kill switch = false + restart (the field
     # is then dropped, questions are text-only, byte-identical to before).
     kria_clip_selection_questions_enabled: bool = True
+    # KRI-282: conflict-choice questions. When the creator's instructions conflict (e.g.
+    # "chronological" + "group by sport" over mixed-filmed clips) the server asks one
+    # focused question (`choice_question`) and follows the app's `choice_selection`.
+    # Default TRUE; kill switch = false + restart (the field is dropped, no question is
+    # asked, the montage behaves exactly as before).
+    kria_choice_questions_enabled: bool = True
     # KRI-189 (KRI-185 P3): clip facts -- capture time, place name and a
     # best-guess landmark per clip, each with provenance. Gates SERVER
     # CONSUMPTION only: the landmark agent run, exposing facts to the Main

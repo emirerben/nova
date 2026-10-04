@@ -16,6 +16,9 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostChatEdit: Bool? = nil
     /// Server sends `clip_question` payloads and accepts `clip_selection` on a turn (KRI-282). Nil/false = text question only.
     var clipSelectionQuestions: Bool? = nil
+    /// Server sends `choice_question` payloads (tappable options for a conflict in the instructions) and accepts
+    /// `choice_selection` on a turn (KRI-282). Nil/false = the plain text question only.
+    var choiceQuestions: Bool? = nil
     /// Additive server admission metadata. Nil preserves compatibility with a
     /// server predating iOS-only creation rollout.
     var creationMode: CreationMode? = nil
@@ -24,6 +27,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostRichTextEnabled: Bool { slidePostRichText == true }
     var slidePostChatEditEnabled: Bool { slidePostChatEdit == true }
     var clipSelectionQuestionsEnabled: Bool { clipSelectionQuestions == true }
+    var choiceQuestionsEnabled: Bool { choiceQuestions == true }
     /// The chat composer needs BOTH flags: the server only reports chat-edit as on with rich text, and
     /// a stale cached capability must not enable it when rich text is off.
     var slidePostChatComposerEnabled: Bool { slidePostRichTextEnabled && slidePostChatEditEnabled }
@@ -36,6 +40,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case slidePostRichText = "slide_post_rich_text"
         case slidePostChatEdit = "slide_post_chat_edit"
         case clipSelectionQuestions = "clip_selection_questions"
+        case choiceQuestions = "choice_questions"
         case creationMode = "creation_mode", minimumClientProtocol = "minimum_client_protocol"
     }
 }

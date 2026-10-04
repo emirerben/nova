@@ -52,6 +52,7 @@ from app.models import (
     CreatorEditDraft,
     PlanItem,
 )
+from app.services.choice_questions import ChoiceSelectionIn, latest_open_choice_question
 from app.services.clip_selection import ClipSelectionIn, latest_open_clip_question
 from app.services.creation_thread_titles import (
     matches_conversation_revision,
@@ -86,7 +87,11 @@ def request_digest(body: SubmitTurnBody) -> str:
     # state wins -- it must never turn a replay into idempotency_key_reused.
     # `clip_selection` stays in the digest (a different tap set under one id is a
     # different request) but is excluded when absent so pre-existing digests hold.
-    excluded = {"editor_state"} | ({"clip_selection"} if body.clip_selection is None else set())
+    excluded = (
+        {"editor_state"}
+        | ({"clip_selection"} if body.clip_selection is None else set())
+        | ({"choice_selection"} if body.choice_selection is None else set())
+    )
     encoded = json.dumps(
         body.model_dump(mode="json", exclude=excluded),
         sort_keys=True,
@@ -171,6 +176,42 @@ async def _validate_clip_selection(
                 recovery="refresh_replan",
                 current_revision=int(thread.revision),
             )
+
+
+async def _validate_choice_selection(
+    db: AsyncSession, thread: CreationThread, selection: ChoiceSelectionIn
+) -> None:
+    """The answer must target the thread's latest UNANSWERED choice question and name
+    one of the options the server offered (KRI-282)."""
+
+    rows = (
+        await db.execute(
+            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == thread.id,
+                CreationThreadEvent.role.in_({"user", "assistant"}),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    question = latest_open_choice_question((role, payload) for role, payload in rows)
+    if question is None or question.get("question_id") != selection.question_id:
+        raise RuntimeFailure(
+            422,
+            "choice_selection_stale",
+            "That question is no longer open. Refresh and answer the latest one.",
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        )
+    offered = {str(o.get("key")) for o in question.get("options") or [] if isinstance(o, dict)}
+    if selection.option_key not in offered:
+        raise RuntimeFailure(
+            422,
+            "choice_selection_invalid",
+            "That answer is not one of the options the question offered.",
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        )
 
 
 async def _owned_thread(
@@ -314,6 +355,8 @@ async def submit_turn(
 
     if body.clip_selection is not None and settings.kria_clip_selection_questions_enabled:
         await _validate_clip_selection(db, thread, body.clip_selection)
+    if body.choice_selection is not None and settings.kria_choice_questions_enabled:
+        await _validate_choice_selection(db, thread, body.choice_selection)
 
     active = (
         (
@@ -497,6 +540,11 @@ async def submit_turn(
                 {"clip_selection": body.clip_selection.model_dump(mode="json")}
                 if body.clip_selection is not None
                 and settings.kria_clip_selection_questions_enabled
+                else {}
+            ),
+            **(
+                {"choice_selection": body.choice_selection.model_dump(mode="json")}
+                if body.choice_selection is not None and settings.kria_choice_questions_enabled
                 else {}
             ),
         },
