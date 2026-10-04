@@ -140,6 +140,13 @@ enum NativeEditorRenderError: Error, Equatable {
                 volume: clip.muted || authoredSlot?.raw["muted"] == .bool(true) || audioSources["narration"] != nil ? 0 : sourceGain, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
                 holdDuration: holdDuration > 0 ? holdDuration : nil,
                 sourceCrop: try Self.sourceCrop(authoredSlot?.raw["source_crop"])))
+            // KRI-306: letterbox a sideways clip when the creator chose black
+            // bars. Cropped and graded clips keep the engine's cover-fill: the
+            // engine rejects a look combined with a non-identity transform, and
+            // the backend refuses that combination for the same reason.
+            if document.landscapeFit == "fit", canvas.height > canvas.width, authoredSlot?.lookPreset != "golden_hour", video[video.count - 1].sourceCrop == nil {
+                video[video.count - 1].transform = Self.fitTransform(display: source.asset.naturalSize, canvas: canvas, landscapeFit: "fit")
+            }
         }
         // The video track is the composition's clock. Without it text and
         // captions clip to nothing, yet an unclamped media overlay still makes
@@ -680,6 +687,21 @@ enum NativeEditorRenderError: Error, Equatable {
         let style = try JSONDecoder().decode(VisualEditorStyle.self, from: JSONEncoder().encode(raw))
         try style.validate()
         return style
+    }
+
+    /// Mirrors the backend's `phone_recipe_shared.fit_transform`. The engine
+    /// cover-fills each main-track clip and then scales about the canvas centre
+    /// over black, so a sideways clip needs `contain / cover` to end up whole
+    /// with bars (0.31640625 for 1920x1080 into 1080x1920). Portrait, square,
+    /// unknown-size and "fill" are the identity, which keeps those previews
+    /// byte-identical. `display` is the oriented (post-rotation) size.
+    static func fitTransform(display: MediaSize?, canvas: KriaMediaEngine.Canvas, landscapeFit: String) -> MediaTransform {
+        guard landscapeFit == "fit", canvas.height > canvas.width,
+              let display, display.width > display.height, display.height > 0 else { return .identity }
+        let canvasWidth = Double(canvas.width), canvasHeight = Double(canvas.height)
+        let contain = min(canvasWidth / display.width, canvasHeight / display.height)
+        let cover = max(canvasWidth / display.width, canvasHeight / display.height)
+        return MediaTransform(scale: contain / cover)
     }
 
     static func sourceCrop(_ raw: JSONValue?) throws -> NormalizedSourceRect? {

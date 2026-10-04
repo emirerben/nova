@@ -10,6 +10,9 @@ struct NativeEditorProjectHeader: View {
     let onShare: () -> Void
     /// Runs before Save, so an open caption line commits (and an emptied one is removed) first.
     var beforeSave: () -> Void = {}
+    /// KRI-306: opens the video-shape sheet. The button only exists when the server
+    /// advertises the shape capabilities; otherwise the slot stays an invisible balance.
+    var onVideoShape: () -> Void = {}
 
     /// Same floating header as the chat (`WorkspaceTopRow` + `WorkspaceModeSwitch`),
     /// in the same place, so switching Chat <-> Editor feels like a tab switch.
@@ -25,7 +28,18 @@ struct NativeEditorProjectHeader: View {
                     .accessibilityLabel("Back to chat")
                     .accessibilityIdentifier("native-editor-back")
                     // Balances the two trailing actions so the title stays centered.
-                    Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
+                    if session.hasVideoShapeCapability {
+                        Button(action: onVideoShape) {
+                            Image(systemName: "aspectratio")
+                                .frame(width: 44, height: 44)
+                                .kriaFloatingSurface(Circle())
+                        }
+                        .accessibilityLabel("Video shape")
+                        .accessibilityHint("Choose vertical or landscape, and black bars or crop")
+                        .accessibilityIdentifier("native-editor-video-shape-button")
+                    } else {
+                        Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
+                    }
                 }
             } trailing: {
                 HStack(spacing: 8) {

@@ -854,6 +854,14 @@ struct NativeEditorTemporaryVideo {
         // KRI-167: no existing shape fixture closes `clips.transitions`, and
         // UI tests can't construct an EditorDocument directly -- they only
         // get a process launch arg.
+        // KRI-306: the video-shape picker, open or closed by the server capability.
+        // Values stay nil on the document so the fixture loads clean (no unsaved edit).
+        let shapeOpen = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-video-shape")
+        if shapeOpen || ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-video-shape-closed") {
+            let reason: String? = shapeOpen ? nil : "This edit’s format can’t change shape."
+            document.capabilities["orientation"] = EditorCapability(editable: shapeOpen, reason: reason, value: "portrait")
+            document.capabilities["landscape_fit"] = EditorCapability(editable: shapeOpen, reason: reason, value: "fit")
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-transitions-closed") {
             document.capabilities["clips.transitions"] = EditorCapability(editable: false, reason: "transitions_disabled")
         }
@@ -919,6 +927,8 @@ struct NativeEditorTemporaryVideo {
     func capabilityReason(_ key: String) -> String? { document.capabilities[key]?.reason }
     func canEdit(_ key: String) -> Bool { document.capabilities[key]?.editable ?? false }
     func canEdit(_ section: EditorSection) -> Bool { canEditSection(section) }
+    /// KRI-306: the server advertises the video-shape controls (either capability present).
+    var hasVideoShapeCapability: Bool { document.capabilities["orientation"] != nil || document.capabilities["landscape_fit"] != nil }
     func capability(for section: EditorSection) -> EditorCapability? {
         for key in sectionCapabilityKeys(section) { if let capability = document.capabilities[key] { return capability } }
         return nil
@@ -4258,6 +4268,19 @@ struct NativeEditorTemporaryVideo {
         guard canEditSection(.backgroundMusic) else { return }
         transactDocument(section: .backgroundMusic) { $0.backgroundMusic = value }
     }
+    /// KRI-306: finished-video shape. `orientation` is "portrait" | "landscape"
+    /// (the wire values `PUT .../orientation` accepts); `landscapeFit` is
+    /// "fit" (black bars) | "fill" (crop). Each is gated by its own server
+    /// capability, which the picker already reflects; the guard keeps a stale
+    /// UI from dirtying a closed section.
+    func setVideoShape(orientation newOrientation: String? = nil, landscapeFit newFit: String? = nil) {
+        if let newOrientation, newOrientation != document.orientation, canEditSection(.orientation) {
+            transactDocument(section: .orientation) { $0.orientation = newOrientation }
+        }
+        if let newFit, newFit != document.landscapeFit, canEditSection(.landscapeFit) {
+            transactDocument(section: .landscapeFit) { $0.landscapeFit = newFit }
+        }
+    }
     func setBackgroundMusicLevel(_ levelDB: Double?) {
         guard canEditSection(.backgroundMusic) else { return }
         transactDocument(section: .backgroundMusic) { $0.backgroundMusic?.gainDB = levelDB }
@@ -4777,7 +4800,9 @@ struct NativeEditorTemporaryVideo {
         case .captions, .captionMeta: return canEditCaptions
         case .mix, .music, .backgroundMusic: return canEditMix
         case .soundEffects, .mediaOverlays, .visualBlocks, .motionScenes, .cameraEffects,
-             .carouselMoment, .lyrics, .orientation, .title: return false
+             .carouselMoment, .lyrics, .title: return false
+        // KRI-306: the server capability decides; with no capability the section stays closed.
+        case .orientation, .landscapeFit: return false
         }
     }
 
@@ -4799,6 +4824,7 @@ struct NativeEditorTemporaryVideo {
             case .backgroundMusic: differs = document.backgroundMusic != cleanDocument.backgroundMusic
             case .lyrics: differs = document.lyrics != cleanDocument.lyrics
             case .orientation: differs = document.orientation != cleanDocument.orientation
+            case .landscapeFit: differs = document.landscapeFit != cleanDocument.landscapeFit
             case .soundEffects: differs = document.soundEffects != cleanDocument.soundEffects
             case .mediaOverlays: differs = document.mediaOverlays != cleanDocument.mediaOverlays
             case .visualBlocks: differs = document.visualBlocks != cleanDocument.visualBlocks
@@ -4939,6 +4965,7 @@ struct NativeEditorTemporaryVideo {
             backgroundMusic: changedSections.contains(.backgroundMusic) ? (backgroundObject.map { EditorCommitBackgroundMusic(trackID: $0["track_id"]?.stringValue, enabled: Self.bool($0["enabled"]) ?? true, startS: Self.number($0["start_s"]), endS: Self.number($0["end_s"]), gainDB: Self.number($0["gain_db"]), muted: Self.bool($0["muted"]) ?? false) } ?? EditorCommitBackgroundMusic(enabled: false)) : nil,
             lyrics: changedSections.contains(.lyrics) ? (lyricsObject.map { EditorCommitLyrics(enabled: Self.bool($0["enabled"]), lineOverrides: Self.object($0["line_overrides"])) } ?? EditorCommitLyrics(enabled: false)) : nil,
             orientation: changedSections.contains(.orientation) ? value["orientation"]?.stringValue : nil,
+            landscapeFit: changedSections.contains(.landscapeFit) ? value["landscape_fit"]?.stringValue : nil,
             soundEffects: array("sound_effects", .soundEffects),
             mediaOverlays: array("media_overlays", .mediaOverlays),
             visualBlocks: array("visual_blocks", .visualBlocks),
@@ -4963,7 +4990,7 @@ struct NativeEditorTemporaryVideo {
         if sections.captionCues { result.insert(.captions) }; if sections.captionMeta { result.insert(.captionMeta) }
         if sections.mix { result.insert(.mix) }; if sections.music { result.insert(.music) }
         if sections.backgroundMusic { result.insert(.backgroundMusic) }; if sections.lyrics { result.insert(.lyrics) }
-        if sections.orientation { result.insert(.orientation) }; if sections.soundEffects { result.insert(.soundEffects) }
+        if sections.orientation { result.insert(.orientation) }; if sections.landscapeFit { result.insert(.landscapeFit) }; if sections.soundEffects { result.insert(.soundEffects) }
         if sections.mediaOverlays { result.insert(.mediaOverlays) }; if sections.visualBlocks { result.insert(.visualBlocks) }
         if sections.motionScenes { result.insert(.motionScenes) }; if sections.cameraEffects { result.insert(.cameraEffects) }
         if sections.carouselMoment { result.insert(.carouselMoment) }; if sections.title { result.insert(.title) }
@@ -5008,6 +5035,7 @@ struct NativeEditorTemporaryVideo {
         case .backgroundMusic: baseline.backgroundMusic = submitted.backgroundMusic
         case .lyrics: baseline.lyrics = submitted.lyrics
         case .orientation: baseline.orientation = submitted.orientation
+        case .landscapeFit: baseline.landscapeFit = submitted.landscapeFit
         case .soundEffects: baseline.soundEffects = submitted.soundEffects
         case .mediaOverlays: baseline.mediaOverlays = submitted.mediaOverlays
         case .visualBlocks: baseline.visualBlocks = submitted.visualBlocks

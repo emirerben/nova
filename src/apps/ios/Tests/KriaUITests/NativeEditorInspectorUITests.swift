@@ -1370,6 +1370,73 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(row.label.contains("Bu alan var mı? tamam"), "the open line's edit was committed: \(row.label)")
     }
 
+    /// KRI-306: the header's video-shape button opens Vertical / Landscape and Black bars / Crop, enabled
+    /// from the server capability; picking Landscape hides the fit row and reshapes the preview.
+    func testVideoShapePickerIsEnabledFromTheCapabilityAndReshapesThePreview() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-video-shape"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 20))
+        app.buttons["native-editor-video-shape-button"].tap()
+        let section = app.descendants(matching: .any)["native-editor-video-shape-section"].firstMatch
+        XCTAssertTrue(section.waitForExistence(timeout: 5))
+
+        let vertical = app.buttons["native-editor-video-shape-orientation-portrait"]
+        let landscape = app.buttons["native-editor-video-shape-orientation-landscape"]
+        let blackBars = app.buttons["native-editor-video-shape-fit-fit"]
+        let crop = app.buttons["native-editor-video-shape-fit-fill"]
+        XCTAssertTrue(vertical.isEnabled && landscape.isEnabled && blackBars.isEnabled && crop.isEnabled)
+        XCTAssertTrue(vertical.isSelected && blackBars.isSelected, "current values come from the capability")
+        // The sheet reports its content at ~0.96 of layout size (every row measures 42.25 for a 44pt
+        // minimum), so allow that scale here; the unscaled 44pt check runs on the confirm screen.
+        for control in [vertical, landscape, blackBars, crop] {
+            XCTAssertGreaterThanOrEqual(control.frame.height, 42, "touch target \(control.identifier): \(control.frame)")
+        }
+        XCTAssertFalse(app.staticTexts["native-editor-video-shape-locked-reason"].exists)
+
+        crop.tap()
+        XCTAssertTrue(crop.isSelected)
+        XCTAssertFalse(blackBars.isSelected)
+        landscape.tap()
+        XCTAssertTrue(landscape.isSelected)
+        XCTAssertFalse(crop.exists, "Landscape always crops, so the fit row goes away")
+        vertical.tap()
+        XCTAssertTrue(app.buttons["native-editor-video-shape-fit-fill"].waitForExistence(timeout: 3), "back to Vertical shows the fit row again")
+        XCTAssertTrue(app.buttons["native-editor-video-shape-fit-fill"].isSelected, "the Crop pick survived the round trip")
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "video-shape-editor-open"
+        capture.lifetime = .keepAlways
+        add(capture)
+
+        // The pick reshapes the preview behind the sheet: the frame goes wide.
+        landscape.tap()
+        app.buttons["native-editor-inspector-done"].tap()
+        XCTAssertTrue(app.buttons["native-editor-save"].isEnabled, "the pick is an unsaved edit")
+        let ratio = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in preview.frame.width > preview.frame.height }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ratio], timeout: 5), .completed, "preview is landscape: \(preview.frame)")
+    }
+
+    /// KRI-306: a closed capability keeps the picker visible, disabled, with the server's reason.
+    func testVideoShapePickerShowsTheServerReasonWhenTheCapabilityIsClosed() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-video-shape-closed"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 20))
+        app.buttons["native-editor-video-shape-button"].tap()
+        let section = app.descendants(matching: .any)["native-editor-video-shape-section"].firstMatch
+        XCTAssertTrue(section.waitForExistence(timeout: 5))
+        for identifier in ["native-editor-video-shape-orientation-portrait", "native-editor-video-shape-orientation-landscape",
+                           "native-editor-video-shape-fit-fit", "native-editor-video-shape-fit-fill"] {
+            XCTAssertFalse(app.buttons[identifier].isEnabled, identifier)
+        }
+        let reason = app.descendants(matching: .any)["native-editor-video-shape-locked-reason"].firstMatch
+        XCTAssertTrue(reason.waitForExistence(timeout: 3))
+        XCTAssertTrue(reason.label.contains("can’t change shape"), reason.label)
+    }
+
     func testAllPersistedLanesExposeStableTimelineIdentityAndInspector() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes"]

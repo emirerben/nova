@@ -258,7 +258,8 @@ struct NativeEditorView: View {
                 onBack: requestBack, onChat: conversation == nil ? requestBack : onBack,
                 onSaveToPhotos: { Task { await exporter.saveToPhotos(from: session, api: model.api, deviceLocalFile: deviceLocalFile) } },
                 onShare: { Task { await exporter.share(from: session, api: model.api, deviceLocalFile: deviceLocalFile) } },
-                beforeSave: { if captionEditing { panelLifecycle.prepareToClose(); resignKeyboard() } }
+                beforeSave: { if captionEditing { panelLifecycle.prepareToClose(); resignKeyboard() } },
+                onVideoShape: { changePanel(to: nil); inspector = .videoShape }
             )
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
             VStack(spacing: 0) {
@@ -862,12 +863,15 @@ private enum NativeEditorInspector: Identifiable {
     case tool(NativeEditorTool)
     case selection(EditorSelection)
     case adjust
+    /// KRI-306: Vertical / Landscape and Black bars / Crop for the finished video.
+    case videoShape
 
     var id: String {
         switch self {
         case .tool(let tool): return "tool-\(tool.rawValue)"
         case .selection(let selection): return "selection-\(selection.kind.rawValue)-\(selection.id)"
         case .adjust: return "adjust"
+        case .videoShape: return "video-shape"
         }
     }
 
@@ -886,6 +890,7 @@ private enum NativeEditorInspector: Identifiable {
             case .carousel: return "Carousel"
             }
         case .adjust: return "Adjust"
+        case .videoShape: return "Video shape"
         }
     }
 
@@ -911,6 +916,7 @@ private struct NativeEditorInspectorView: View {
                 case .tool: NativeEditorUnavailableView(title: "Editor", reason: "This tool is not available for the current render.", systemImage: "lock")
                 case .selection(let selection): NativeSelectionInspector(selection: selection, session: session)
                 case .adjust: NativeAdjustInspector(session: session)
+                case .videoShape: NativeVideoShapeInspector(session: session)
                 }
             }
             .navigationTitle(inspector.title)

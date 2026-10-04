@@ -38,7 +38,10 @@
       "KriaUITests/AttachmentFlowUITests/testNarratedAttachmentsSwipeAndRequireExplicitAudioChoice",
       "KriaUITests/AttachmentFlowUITests/testImportedVoiceoverReviewsTimingAndPlaybackBeforeUpload",
       "KriaUITests/AttachmentFlowUITests/testUnknownFootageDurationDoesNotInventComparison",
-      "KriaUITests/AttachmentFlowUITests/testExistingVoiceoverKeepsItsCapacityAndContinueChoice"
+      "KriaUITests/AttachmentFlowUITests/testExistingVoiceoverKeepsItsCapacityAndContinueChoice",
+      "KriaUITests/CreationUITests/testConfirmScreenLandscapeChoiceIsSentWithoutAFit",
+      "KriaUITests/CreationUITests/testConfirmScreenSendsTheSeededDefaultAndACropPick",
+      "KriaUITests/CreationUITests/testConfirmScreenHidesThePickerAndSendsNothingWhenTheServerOffersNoShape"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -138,7 +141,9 @@
       "KriaUITests/NativeCaptionVisualUITests/testTransitionControlHiddenWhenCapabilityClosed",
       "KriaUITests/NativeCaptionVisualUITests/testVisualsTransitionsCategoryVisibleOnDevice",
       "KriaUITests/NativeCaptionVisualUITests/testVisualsTransitionsCategoryHiddenWhenCapabilityClosed",
-      "KriaUITests/NativeEditorInspectorUITests/testMissingOriginalsOffersFindingFilesInsteadOfRetry"
+      "KriaUITests/NativeEditorInspectorUITests/testMissingOriginalsOffersFindingFilesInsteadOfRetry",
+      "KriaUITests/NativeEditorInspectorUITests/testVideoShapePickerIsEnabledFromTheCapabilityAndReshapesThePreview",
+      "KriaUITests/NativeEditorInspectorUITests/testVideoShapePickerShowsTheServerReasonWhenTheCapabilityIsClosed"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",

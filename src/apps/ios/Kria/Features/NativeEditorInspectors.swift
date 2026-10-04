@@ -106,14 +106,136 @@ struct NativeDocumentInspector: View {
                         .foregroundStyle(KriaColor.zinc)
             }
             LabeledContent("Title", value: session.document.title ?? "Untitled")
-            LabeledContent("Orientation", value: session.document.orientation ?? "9:16")
+            // KRI-306: the video shape is a real control now, gated by the server's
+            // `orientation` / `landscape_fit` capabilities. A server that advertises
+            // neither keeps the old read-only line.
+            if session.hasVideoShapeCapability {
+                NativeVideoShapeSection(session: session)
+            } else {
+                LabeledContent("Orientation", value: NativeVideoShape.orientationLabel(session.document.orientation))
+            }
             LabeledContent("Lyrics", value: session.document.lyrics == nil ? "None" : "Available")
             if !canEditBackground {
                 nativeLockedNote(session: session, keys: ["background_music"], fallback: "Background music is locked for this render.")
             }
-            nativeLockedNoteIfNeeded(session: session, keys: ["title", "orientation", "lyrics"], fallback: "Title, orientation, and lyrics are read-only in this native pass.")
+            nativeLockedNoteIfNeeded(session: session, keys: ["title", "lyrics"], fallback: "Title and lyrics are read-only in this native pass.")
+            if !session.hasVideoShapeCapability {
+                nativeLockedNoteIfNeeded(session: session, keys: ["orientation"], fallback: "Orientation is read-only in this native pass.")
+            }
         }
         .onAppear { backgroundLevel = session.document.backgroundMusic?.gainDB ?? 0 }
+    }
+}
+
+/// KRI-306 helpers shared by the editor's picker and its tests.
+enum NativeVideoShape {
+    /// The document stores the server's "portrait" | "landscape"; older fixtures say "9:16" / "16:9".
+    static func normalizedOrientation(_ raw: String?) -> String {
+        switch raw {
+        case "landscape", "16:9": RenderShapeOffer.landscape
+        default: RenderShapeOffer.portrait
+        }
+    }
+    static func orientationLabel(_ raw: String?) -> String { VideoShapeCopy.orientationTitle(normalizedOrientation(raw)) }
+}
+
+/// Vertical / Landscape and Black bars / Crop for a finished video, enabled from
+/// the server capability. The orientation and fit rows each follow their own
+/// capability; a closed one stays visible with the server's reason.
+struct NativeVideoShapeSection: View {
+    @ObservedObject var session: NativeEditorSession
+
+    private var orientationCapability: EditorCapability? { session.capability("orientation") }
+    private var fitCapability: EditorCapability? { session.capability("landscape_fit") }
+
+    private var offer: RenderShapeOffer? {
+        try? RenderShapeOffer(
+            orientations: orientationCapability == nil ? [RenderShapeOffer.portrait] : [RenderShapeOffer.portrait, RenderShapeOffer.landscape],
+            fitChoices: fitCapability == nil ? [] : [RenderShapeOffer.fit, RenderShapeOffer.fill]
+        )
+    }
+
+    private var current: RenderShapeChoice {
+        RenderShapeChoice(
+            orientation: NativeVideoShape.normalizedOrientation(session.document.orientation ?? orientationCapability?.value),
+            landscapeFit: session.document.landscapeFit ?? fitCapability?.value ?? RenderShapeOffer.fill
+        )
+    }
+
+    private var orientationEditable: Bool { orientationCapability?.editable ?? false }
+    private var fitEditable: Bool { fitCapability?.editable ?? false }
+
+    private var lockedReason: String? {
+        if !orientationEditable, let reason = orientationCapability?.reason { return Self.copy(for: reason, axis: .orientation) }
+        if !fitEditable, current.orientation == RenderShapeOffer.portrait, let reason = fitCapability?.reason { return Self.copy(for: reason, axis: .fit) }
+        return nil
+    }
+
+    enum Axis { case orientation, fit }
+
+    /// The server sends a code (`orientation_unsupported`, `cloud_unsupported`, ...) or a
+    /// sentence; show a sentence either way, naming the control that is closed.
+    static func copy(for reason: String, axis: Axis) -> String {
+        guard !reason.contains(" ") else { return reason }
+        if reason == "disabled" { return "Changing the video shape isn’t available right now." }
+        switch axis {
+        case .orientation: return "This edit’s format can’t change shape."
+        case .fit: return "Black bars and crop can’t be changed for this edit."
+        }
+    }
+
+    var body: some View {
+        if let offer {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Video shape")
+                    .font(KriaFont.body(16).weight(.semibold))
+                VideoShapePicker(
+                    offer: offer,
+                    choice: Binding(
+                        get: { current },
+                        set: { next in
+                            session.setVideoShape(
+                                orientation: next.orientation == current.orientation ? nil : next.orientation,
+                                landscapeFit: next.landscapeFit == current.landscapeFit ? nil : next.landscapeFit
+                            )
+                        }
+                    ),
+                    isEnabled: orientationEditable,
+                    fitEnabled: fitEditable,
+                    lockedReason: lockedReason,
+                    identifierPrefix: "native-editor-video-shape"
+                )
+                if orientationEditable || fitEditable {
+                    Text("Saving renders the video again in this shape.")
+                        .font(KriaFont.body(12))
+                        .foregroundStyle(KriaColor.zinc)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(KriaColor.softZinc)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .accessibilityIdentifier("native-editor-video-shape-section")
+        }
+    }
+}
+
+/// The sheet behind the header's video-shape button.
+struct NativeVideoShapeInspector: View {
+    @ObservedObject var session: NativeEditorSession
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                NativeVideoShapeSection(session: session)
+                Text("Pick a shape, then Save. The video renders again in that shape.")
+                    .font(KriaFont.body(13))
+                    .foregroundStyle(KriaColor.zinc)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(16)
+        }
+        .accessibilityIdentifier("native-editor-video-shape-inspector")
     }
 }
 
