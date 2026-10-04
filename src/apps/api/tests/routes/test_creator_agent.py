@@ -6597,7 +6597,7 @@ async def test_chat_cleanup_publish_failure_crash_replay_refunds_once(
         plan_hash="a" * 64,
         client_event_id="cleanup-publish-replay:r7",
     )
-    digest_input = body.model_dump(mode="json")
+    digest_input = creator_routes.confirm_digest_input(body)
     digest_input.update(
         {
             "speech_cleanup_recovery_action": "retry_preflight_dispatch",
@@ -7107,7 +7107,7 @@ async def test_guided_confirm_resumes_exact_job_without_auto_design(monkeypatch)
     )
     receipt = SimpleNamespace(
         id=uuid.uuid4(),
-        request_digest=canonical_context_hash(body.model_dump(mode="json")),
+        request_digest=canonical_context_hash(creator_routes.confirm_digest_input(body)),
         status="running",
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )

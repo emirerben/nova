@@ -4298,6 +4298,19 @@ async def _original_current_edit_for_retry(
 _MISSING_RETRY_EDIT = object()
 
 
+def confirm_digest_input(body: ConfirmBody) -> dict[str, Any]:
+    """The idempotency digest input for a confirm.
+
+    An unset output-shape choice (KRI-306) is left out so a request stored by a
+    pre-deploy build under the same ``client_event_id`` still replays.
+    """
+    digest_input = body.model_dump(mode="json")
+    for shape_key in ("output_orientation", "landscape_fit"):
+        if digest_input.get(shape_key) is None:
+            digest_input.pop(shape_key, None)
+    return digest_input
+
+
 async def _confirm_render_shape(
     db: AsyncSession,
     item: PlanItem,
@@ -4375,12 +4388,7 @@ async def confirm_creator_plan_controller(
     plan_item_id = item.id
     creator_session_id = session.id
     creator_ownership_epoch = getattr(session, "ownership_epoch", None)
-    digest_input = body.model_dump(mode="json")
-    # An unset shape choice must not change the digest an in-flight (pre-deploy)
-    # request for the same client_event_id was stored under.
-    for shape_key in ("output_orientation", "landscape_fit"):
-        if digest_input.get(shape_key) is None:
-            digest_input.pop(shape_key, None)
+    digest_input = confirm_digest_input(body)
     if recovery_requested:
         # The private recovery target participates in idempotency even though it
         # is intentionally absent from the public Creator confirm schema.
@@ -4785,7 +4793,12 @@ async def confirm_creator_plan_controller(
                 creator_strategy=edit_plan.strategy.model_dump(mode="json", exclude_none=True),
                 creator_clip_order=preserved_clip_order,
                 creator_request=str(active.get("creator_request") or ""),
-                creator_render_shape=render_shape_choice,
+                # Only an explicit choice rides the dispatch (absent = unchanged call).
+                **(
+                    {"creator_render_shape": render_shape_choice}
+                    if render_shape_choice is not None
+                    else {}
+                ),
                 speech_cleanup_analysis_id=(
                     str(body.speech_cleanup_analysis_id)
                     if body.speech_cleanup_analysis_id is not None
