@@ -397,3 +397,145 @@ def test_align_takes_ten_takes_against_180s_song_is_fast():
     assert result.takes["silent"].status == "unmatched"
     # Target is < 10 s on a laptop; the ceiling is generous so CI never flakes.
     assert elapsed < 20.0, f"10 takes took {elapsed:.1f}s"
+
+
+# --------------------------------------------------------------------------- #
+# KRI-374 review: repeats, unrelated takes, long lyrics
+# --------------------------------------------------------------------------- #
+
+
+def _loop_song(seconds: float = 60.0, loop_s: float = 4.0, seed: int = 31):
+    """A song that is one ``loop_s`` loop repeated, lyrics repeated with it."""
+    loop = make_song(loop_s, seed=seed)
+    reps = int(round(seconds / loop_s))
+    song = np.tile(loop, reps)
+    rng = np.random.default_rng(seed)
+    base = make_words(rng, loop_s)
+    words = [
+        SongWord(text=w.text, start_s=w.start_s + k * loop_s, end_s=w.end_s + k * loop_s)
+        for k in range(reps)
+        for w in base
+    ]
+    return song, words
+
+
+def test_a_looped_song_with_repeating_lyrics_is_never_confident_at_one_repetition():
+    """Probe: text agreed with *some* candidate, so noise let 2 of 12 takes through at a
+    random repetition. With repeats present the strong audio rule must decide."""
+    song, words = _loop_song()
+    spec = sa.precompute_song(song)
+    wrong = []
+    for k in range(12):
+        start = 3.0 + 4.0 * (k % 10) + 0.37 * k
+        take = add_noise(slice_take(song, start, 5.0), 20.0, seed=100 + k)
+        res = _align(spec, take, words=take_words(words, start, 5.0, seed=k), song_words=words)
+        if res.status == "confident":
+            wrong.append((k, start, res.delta_s))
+    assert wrong == []
+
+
+_SCALE = [220 * 2 ** (k / 12) for k in (0, 2, 4, 7, 9, 12, 14, 16)]
+
+
+def make_tonal(seconds: float, seed: int, note_s: float = 0.25) -> np.ndarray:
+    """Pure-tone "music": random scale notes with harmonics (heavy self-similarity)."""
+    rng = np.random.default_rng(seed)
+    n = int(seconds * SR)
+    seg = int(note_s * SR)
+    out = np.zeros(n)
+    tt = np.arange(seg) / SR
+    for k in range(n // seg + 1):
+        f = _SCALE[int(rng.integers(len(_SCALE)))]
+        tone = sum(np.sin(2 * np.pi * f * h * tt) / h for h in range(1, 5)) * np.hanning(seg) ** 0.3
+        a, b = k * seg, min(n, k * seg + seg)
+        out[a:b] += tone[: b - a]
+    return (out / np.abs(out).max() * 0.5).astype(np.float32)
+
+
+def test_an_unrelated_take_against_tonal_music_is_unmatched_not_ambiguous():
+    """Probe: strong peaks from coincidental note matches were offered as 'ambiguous'
+    placements, which a creator-confirmed order could then force the take onto."""
+    song = make_tonal(90.0, seed=1)
+    spec = sa.precompute_song(song)
+    take = make_tonal(12.0, seed=104)  # a different tune on the same scale
+    res = _align(spec, take)
+    assert res.status == "unmatched"
+    assert res.delta_s is None
+    assert res.alternates == []
+
+
+def test_a_chorus_sharing_85_percent_stays_ambiguous_with_every_offset():
+    song = make_song(90.0, seed=6)
+    a, b = int(20 * SR), int(50 * SR)
+    shared = int(0.85 * 12 * SR)
+    song[b : b + shared] = song[a : a + shared]  # the last 15% is new material
+    spec = sa.precompute_song(song)
+    res = _align(spec, slice_take(song, 21.0, 6.0))
+    assert res.status == "ambiguous"
+    deltas = sorted(alt.delta_s for alt in res.alternates)
+    assert any(abs(d - 21.0) < 0.01 for d in deltas)
+    assert any(abs(d - 51.0) < 0.01 for d in deltas)
+
+
+def test_repeat_similarity_threshold_is_a_setting():
+    assert settings.song_align_repeat_similarity_min == 0.5
+
+
+def _rap_words(count: int, seconds: float, seed: int = 22) -> list[SongWord]:
+    rng = np.random.default_rng(seed)
+    step = (seconds - 1.0) / count
+    return [
+        SongWord(text=f"w{int(rng.integers(250))}", start_s=0.5 + i * step, end_s=0.7 + i * step)
+        for i in range(count)
+    ]
+
+
+@pytest.mark.timeout(120)
+def test_a_ten_minute_song_keeps_its_late_lyrics_and_stays_fast():
+    """~2400 words used to be cut at 1500, silently dropping the last 40% of the song."""
+    song = make_song(600.0, seed=21)
+    words = _rap_words(2400, 600.0)
+    starts = [5.0, 60.5, 120.3, 180.0, 240.7, 300.1, 360.4, 420.9, 500.2, 560.6]
+    takes = {}
+    for k, start in enumerate(starts):
+        length = 40.0 + 2.0 * k
+        take = add_noise(phone_speaker(slice_take(song, start, length)), 0.0, seed=k)
+        takes[f"m{k}"] = (take, take_words(words, start, length, seed=k), k)
+
+    t0 = time.perf_counter()
+    result = sa.align_takes(song, takes, words, song_generation=1)
+    elapsed = time.perf_counter() - t0
+
+    for k, start in enumerate(starts):
+        row = result.takes[f"m{k}"]
+        assert row.status == "confident", (k, row)
+        assert row.delta_s == pytest.approx(start, abs=0.002)
+        assert row.text_score >= 3, (k, "late lyrics must reach the text aligner")
+    assert elapsed < 30.0, f"10 takes x 10 min took {elapsed:.1f}s"
+
+
+def test_a_take_beyond_the_truncated_lyrics_is_not_penalised_for_disagreeing(
+    song120, spec120, monkeypatch
+):
+    rng = np.random.default_rng(31)
+    words = make_words(rng, 120.0, repeat_at=(10.0, 90.0, 10.0))  # chorus at 10 s and 90 s
+    take = slice_take(song120, 90.0, 10.0)
+    chorus = take_words(words, 90.0, 10.0, seed=2)
+
+    full = _align(spec120, take, words=chorus, song_words=words)
+    assert full.status == "confident"
+
+    # Cap the lyrics at the first 60 s: the 90 s chorus is no longer visible to text,
+    # so the only text candidate points at 10 s and "disagrees" with the audio.
+    kept = sum(1 for w in words if w.start_s < 60.0)
+    monkeypatch.setattr(sa, "_TEXT_MAX_SONG_WORDS", kept)
+    sa._TRUNCATION_LOGGED.clear()
+    assert sa.song_text_coverage_s(words) is not None
+    capped = _align(spec120, take, words=chorus, song_words=words)
+    assert capped.status == "confident"
+    assert capped.confidence == pytest.approx(full.confidence)
+
+
+def test_song_text_coverage_is_none_when_nothing_is_dropped():
+    assert sa.song_text_coverage_s(_rap_words(2400, 600.0)) is None
+    assert sa.song_text_coverage_s(_rap_words(4100, 600.0)) is not None

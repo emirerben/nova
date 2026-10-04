@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+import structlog
 
 from app.config import settings
 from app.schemas.user_song import (
@@ -43,6 +44,7 @@ from app.schemas.user_song import (
 )
 
 logger = logging.getLogger(__name__)
+_slog = structlog.get_logger(__name__)
 
 SAMPLE_RATE = 16_000
 
@@ -64,7 +66,11 @@ _SW_MISMATCH = -1
 _SW_GAP = -1
 _TEXT_MIN_MATCHED = 3
 _TEXT_REL_BEST = 0.85
-_TEXT_MAX_WORDS = 1500
+# A 10-minute rap song carries ~2400 words; the take side stays small (a take
+# is <= 2 minutes). The Smith-Waterman rows are vectorized, so 4000 song words
+# cost ~O(take_words) numpy passes (measured: a 10-take x 10-min run is ~seconds).
+_TEXT_MAX_SONG_WORDS = 4000
+_TEXT_MAX_TAKE_WORDS = 1500
 _TEXT_MAX_CANDIDATES = 6
 
 # Drift check.
@@ -73,6 +79,11 @@ _DRIFT_MARGIN_S = 0.30
 _DRIFT_INFORMATIVE_Z = 6.0
 _WINDOW_TARGET_S = 3.0
 _WINDOW_COVERAGE = 0.6
+
+# Self-repeat similarity (ambiguity gate).
+_REPEAT_LAG_S = 0.05  # re-performed repeats may sit a few ms apart
+_REPEAT_MIN_OVERLAP_S = 0.5
+_TRUNCATION_LOGGED: set[int] = set()
 
 
 # --------------------------------------------------------------------------- #
@@ -230,7 +241,8 @@ def _normalize_word(text: str) -> str:
     return "".join(ch for ch in s if ch.isalnum() and not unicodedata.combining(ch))
 
 
-def _tokens(words: Any) -> tuple[list[str], list[float]]:
+def _tokens(words: Any, limit: int) -> tuple[list[str], list[float], bool]:
+    """Normalized tokens + start times, capped at ``limit``; the flag says it was capped."""
     toks: list[str] = []
     starts: list[float] = []
     for w in words or []:
@@ -239,7 +251,28 @@ def _tokens(words: Any) -> tuple[list[str], list[float]]:
         if norm:
             toks.append(norm)
             starts.append(start)
-    return toks[:_TEXT_MAX_WORDS], starts[:_TEXT_MAX_WORDS]
+    return toks[:limit], starts[:limit], len(toks) > limit
+
+
+def song_text_coverage_s(song_words: Any) -> float | None:
+    """Song time up to which the lyrics reach the text aligner, ``None`` if uncapped.
+
+    Past this point the song's words are dropped (``_TEXT_MAX_SONG_WORDS``), so a
+    take placed there by audio must not be penalized for "disagreeing" with text
+    that never saw its section.
+    """
+    toks, starts, capped = _tokens(song_words, _TEXT_MAX_SONG_WORDS)
+    if not capped:
+        return None
+    key = len(toks)
+    if key not in _TRUNCATION_LOGGED and len(_TRUNCATION_LOGGED) < 64:
+        _TRUNCATION_LOGGED.add(key)
+        _slog.warning(
+            "song_alignment_lyrics_truncated",
+            kept_words=len(toks),
+            covered_until_s=round(starts[-1], 2),
+        )
+    return float(starts[-1])
 
 
 def text_candidates(take_words: Any, song_words: Any) -> list[tuple[float, float, int]]:
@@ -249,8 +282,8 @@ def text_candidates(take_words: Any, song_words: Any) -> list[tuple[float, float
     candidate (so a chorus sung twice gives two). Candidates need at least 3
     matched words. Sorted best-first, deduped within 0.25 s.
     """
-    tw, t_start = _tokens(take_words)
-    sw, s_start = _tokens(song_words)
+    tw, t_start, _ = _tokens(take_words, _TEXT_MAX_TAKE_WORDS)
+    sw, s_start, _ = _tokens(song_words, _TEXT_MAX_SONG_WORDS)
     n, m = len(tw), len(sw)
     if n < _TEXT_MIN_MATCHED or m < _TEXT_MIN_MATCHED:
         return []
@@ -389,6 +422,39 @@ def _drift_ok(
     if audible == 0:
         return False
     return agreeing >= int(np.ceil(_WINDOW_COVERAGE * audible))
+
+
+# --------------------------------------------------------------------------- #
+# Self-repeat check
+# --------------------------------------------------------------------------- #
+
+
+def _repeat_similarity(
+    song: np.ndarray, delta_a: float, delta_b: float, take_len: int, sr: int
+) -> float:
+    """How alike the song sounds at two take placements, 0 (unrelated) .. 1 (identical).
+
+    Both placements cover ``take_len`` samples of the song; only the stretch that
+    sits inside the song at *both* is compared. The value is the band-limited PHAT
+    coherence peak within +/- ``_REPEAT_LAG_S`` (1.0 for an exact repeat, ~0 for
+    unrelated material), so a re-edited or 85%-shared chorus still scores high.
+    """
+    a0 = int(round(delta_a * sr))
+    b0 = int(round(delta_b * sr))
+    lo = max(0, -a0, -b0)
+    hi = min(take_len, song.shape[0] - a0, song.shape[0] - b0)
+    if hi - lo < int(_REPEAT_MIN_OVERLAP_S * sr):
+        return 0.0
+    seg_a = song[a0 + lo : a0 + hi]
+    seg_b = song[b0 + lo : b0 + hi]
+    nfft = _good_fft_size(2 * seg_a.shape[0])
+    c, _ = _phat_cross(np.fft.rfft(seg_a, nfft).astype(np.complex64), seg_b, nfft, sr)
+    k_lo = max(1, int(np.ceil(_BAND_HZ[0] * nfft / sr)))
+    k_hi = min(nfft // 2, int(np.floor(_BAND_HZ[1] * nfft / sr)))
+    full = 2.0 * (k_hi - k_lo + 1) / nfft  # the peak a perfect repeat would reach
+    lag = int(_REPEAT_LAG_S * sr)
+    near = np.concatenate((c[: lag + 1], c[nfft - lag :]))
+    return float(np.clip(np.max(near) / full, 0.0, 1.0)) if full > 0 else 0.0
 
 
 # --------------------------------------------------------------------------- #
@@ -543,13 +609,21 @@ def _align_take(
 
     text_agree = any(abs(d - best_delta) <= cfg.song_align_text_agree_s for d, _s, _k in t_cands)
     confidence = _confidence(peak_z, peak_ratio, cfg)
-    if t_cands and not text_agree:
+    # Lyrics beyond the aligner's word cap were never seen by the text pass, so a
+    # take whose audio peak sits there cannot "disagree" with them.
+    text_reach_s = song_text_coverage_s(song_words)
+    text_blind = text_reach_s is not None and best_delta >= text_reach_s
+    if t_cands and not text_agree and not text_blind:
         confidence *= 0.7
+    # Text can only confirm a placement that is unique. A second valid audio peak or
+    # a second text candidate means the song repeats (a chorus, a loop) and the lyrics
+    # agree with every repetition equally, so only the audio may decide.
+    text_decides = text_agree and len(valid) == 1 and len(t_cands) <= 1
 
     strong = (
         peak_z >= cfg.song_align_strong_peak_z and peak_ratio >= cfg.song_align_strong_peak_ratio
     )
-    is_confident = peak_ratio >= cfg.song_align_confident_peak_ratio and (text_agree or strong)
+    is_confident = peak_ratio >= cfg.song_align_confident_peak_ratio and (text_decides or strong)
     common = {
         "media_id": media_id,
         "proxy_generation": proxy_generation,
@@ -564,10 +638,20 @@ def _align_take(
             confidence=float(np.clip(confidence, 0.0, 1.0)),
             **common,
         )
-    if len(valid) >= 2:
+    # Ambiguous only when the competing placements are genuine song self-repeats:
+    # the song must sound alike at the best placement and at the alternate. A strong
+    # peak somewhere unrelated is a coincidence, not a repeat, and must not be offered
+    # to the planner as a place the take could be.
+    repeats = [valid[0]] + [
+        (i, v)
+        for i, v in valid[1:]
+        if _repeat_similarity(spec.pcm, best_delta, delta_of(i), tl, sr)
+        >= cfg.song_align_repeat_similarity_min
+    ]
+    if len(repeats) >= 2:
         alternates = [
             AlignmentAlternate(delta_s=delta_of(i) + offset, score=float(z_of(v)))
-            for i, v in valid[:_MAX_ALTERNATES]
+            for i, v in repeats[:_MAX_ALTERNATES]
         ]
         return TakeAlignment(
             status="ambiguous",

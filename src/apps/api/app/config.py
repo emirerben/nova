@@ -540,6 +540,12 @@ class Settings(BaseSettings):
     song_align_strong_peak_ratio: float = 2.0
     song_align_text_agree_s: float = 0.15
     song_align_drift_tolerance_s: float = 0.04
+    # A take is "ambiguous" (could sit at several places) only when the song itself
+    # repeats there: the song segments at the best placement and at an alternate must
+    # correlate at least this much (0 = unrelated, 1 = identical; an exact loop is
+    # ~1, a chorus with 85% shared material ~0.85). Alternates below this are
+    # coincidental peaks and are dropped; a take left with none is "unmatched".
+    song_align_repeat_similarity_min: float = Field(default=0.5, ge=0, le=1)
     # Fixed offset (seconds) added to every aligned delta to absorb a measured
     # analysis-proxy vs original audio timing difference (AAC priming / edit
     # lists). 0.0 until the device fixture measures one.
