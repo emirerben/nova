@@ -12,10 +12,16 @@ docstring for what the decision phase (`_decide_generative_variant`) has
 already resolved by the time it reaches here. Exactly like the guided
 compiler, no media is downloaded or rendered in this module; unsupported
 montage-family lanes (masonry/collage presets, lyric overlays, carousel-
-moment splices, letterboxed landscape fit, music ducking, an unexpressible
-intro text style, an unpublished/unresolved music track) fail closed with
+moment splices, music ducking, an unexpressible intro text style, an
+unpublished/unresolved music track) fail closed with
 `UnsupportedPhonePlan` until their native implementations and parity
 fixtures exist -- see docs/runbooks/phone-rendering.md.
+
+Letterboxed landscape fit (KRI-285): ``decision.extras["assembly_landscape_fit"]
+== "fit"`` letterboxes every landscape (display-wide) clip on a PORTRAIT canvas
+via ``phone_recipe_shared.fit_transform`` (a per-clip ``transform.scale``);
+``"fill"``/absent keeps the engine's native cover-fill, byte-identical to before.
+A landscape output canvas always crops (cloud parity).
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ from app.kria.recipes import (
     Canvas,
     MediaAsset,
     MediaSize,
+    MediaTransform,
     TimelineClip,
     TimelineTrack,
     Transition,
@@ -41,6 +48,8 @@ from app.pipeline.phone_recipe_shared import (
     PhoneMusicBed,
     PhoneNarrationBed,
     audio_fade,
+    display_dims,
+    fit_transform,
     refit_source_window,
 )
 from app.services.phone_sources import PhoneSourceBinding
@@ -135,8 +144,8 @@ def compile_phone_voiceover_montage_plan(
             capability="carouselEffects",
         )
     landscape_fit = extras.get("assembly_landscape_fit")
-    if landscape_fit not in (None, "fill"):
-        raise UnsupportedPhonePlan("letterboxed landscape fit is not yet supported on the phone")
+    if landscape_fit not in (None, "fill", "fit"):
+        raise UnsupportedPhonePlan(f"unsupported landscape fit: {landscape_fit}")
     if extras.get("duck_original_during_music"):
         raise UnsupportedPhonePlan(
             "audio ducking is not yet supported on the phone", capability="audioDucking"
@@ -214,6 +223,18 @@ def compile_phone_voiceover_montage_plan(
             transition = Transition(kind=kind, duration=duration)
             timeline_start = max(0.0, cursor - duration)
 
+        # KRI-285: letterbox a landscape clip on a portrait canvas. A landscape
+        # output canvas (and square/portrait sources) keep the identity.
+        transform = MediaTransform()
+        if landscape_fit == "fit" and story_canvas.height > story_canvas.width:
+            display_w, display_h = display_dims(original)
+            transform = fit_transform(display_w, display_h, story_canvas, landscape_fit)
+        if color_grade == "golden_hour" and transform != MediaTransform():
+            # Composition.swift throws on a look combined with a transform.
+            raise UnsupportedPhonePlan(
+                "a color grade cannot be combined with letterboxed landscape fit"
+            )
+
         asset = binding.render_asset()
         manifest[asset.id] = asset
         assets[asset.id] = MediaAsset(
@@ -235,6 +256,7 @@ def compile_phone_voiceover_montage_plan(
                 source_duration=source_duration,
                 timeline_start=timeline_start,
                 rate=rate,
+                transform=transform,
                 transition=transition,
                 look="golden_hour" if color_grade == "golden_hour" else None,
             )

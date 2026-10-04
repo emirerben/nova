@@ -2274,7 +2274,12 @@ def _run_generative_job_impl(
                 declared_format = coerce_edit_format(candidates.get("edit_format"))
                 has_voiceover_candidate = bool(candidates.get("voiceover_gcs_path"))
                 if isinstance(phone_snapshot.get("guided_edit"), dict):
-                    _run_phone_guided_job(job_id, phone_snapshot, ownership_epoch=ownership_epoch)
+                    _run_phone_guided_job(
+                        job_id,
+                        phone_snapshot,
+                        ownership_epoch=ownership_epoch,
+                        landscape_fit=_creator_landscape_fit(candidates),
+                    )
                 elif declared_format not in phone_render_supported_formats():
                     raise ValueError("No phone renderer is registered for this edit")
                 elif declared_format in GUIDED_EDIT_FORMATS:
@@ -2314,7 +2319,10 @@ def _run_generative_job_impl(
                             )
                             if unified_snapshot is not None:
                                 _run_phone_guided_job(
-                                    job_id, unified_snapshot, ownership_epoch=ownership_epoch
+                                    job_id,
+                                    unified_snapshot,
+                                    ownership_epoch=ownership_epoch,
+                                    landscape_fit=_creator_landscape_fit(candidates),
                                 )
                 elif declared_format == "subtitled" or (
                     declared_format in NARRATED_EDIT_FORMATS and not has_voiceover_candidate
@@ -3821,7 +3829,21 @@ def _run_generative_job_impl(
     )
 
 
-def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int | None) -> None:
+def _creator_landscape_fit(all_candidates: dict | None) -> str:
+    """The creator's EXPLICIT bars/crop choice (``creator_render_shape``), else
+    ``"fill"`` -- guided/unified phone output only letterboxes on request (KRI-285)."""
+    shape = (all_candidates or {}).get("creator_render_shape")
+    fit = shape.get("landscape_fit") if isinstance(shape, dict) else None
+    return fit if fit in ("fill", "fit") else "fill"
+
+
+def _run_phone_guided_job(
+    job_id: str,
+    snapshot: dict,
+    *,
+    ownership_epoch: int | None,
+    landscape_fit: str = "fill",
+) -> None:
     """Use cloud decisions only; never enter a media renderer for proxy sources."""
     from app.kria.device_render import make_device_request  # noqa: PLC0415
     from app.pipeline.guided_story import (  # noqa: PLC0415
@@ -3930,7 +3952,13 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
                 "the approved voiceover was replaced since approval",
                 capability="narrationAudio",
             )
-    recipe = compile_phone_guided_plan(plan, bindings, visuals=visuals, narration=narration_bed)
+    recipe = compile_phone_guided_plan(
+        plan,
+        bindings,
+        visuals=visuals,
+        narration=narration_bed,
+        landscape_fit="fit" if landscape_fit == "fit" else "fill",
+    )
     validate_phone_pilot_recipe(recipe)
     visual_rows = [visual.model_dump(mode="json") for visual in visuals]
     request = make_device_request(
@@ -3980,6 +4008,7 @@ def _run_phone_guided_job(job_id: str, snapshot: dict, *, ownership_epoch: int |
                 "proposal_version": raw_plan["proposal_version"],
                 "media_digest": raw_plan["media_digest"],
                 "orientation": raw_plan.get("output_orientation", "portrait"),
+                "landscape_fit": "fit" if landscape_fit == "fit" else "fill",
                 **song_reference_variant_fields(raw_plan),
                 "ok": False,
             }
@@ -4262,8 +4291,8 @@ def _run_phone_voiceover_montage_job(
     One variant per job (KRI-141): only the top-ranked spec renders; the rest are
     dropped (logged, never stored), matching the content-plan single-variant norm.
     Deferred (see docs/runbooks/phone-rendering.md): SFX/media-overlay lanes,
-    masonry/collage presets, lyric overlays, carousel-moment splices, letterboxed
-    landscape fit, editorial sequence/rhythm text, and audio ducking -- all fail
+    masonry/collage presets, lyric overlays, carousel-moment splices,
+    editorial sequence/rhythm text, and audio ducking -- all fail
     closed via `UnsupportedPhonePlan` inside the compiler.
     """
     from app.kria.device_render import make_device_request  # noqa: PLC0415
@@ -4558,6 +4587,7 @@ def _run_phone_voiceover_montage_job(
             "duration_s": decision.duration_s,
             "text_elements": decision.text_elements,
             "orientation": decision.orientation,
+            "landscape_fit": decision.extras.get("assembly_landscape_fit") or "fill",
             "music_track_id": decision.music_track_id,
             "music_start_s": decision.music_start_s,
             "ok": False,
