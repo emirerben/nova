@@ -190,21 +190,30 @@ def _video_clips(
         ):
             # The montage compiler's own rule for a newly placed source.
             raise UnsupportedPhonePlan("phone looks require exact-canvas unrotated sources")
-        if old is not None:
+        # KRI-285: a clip's letterbox transform is per SOURCE (its display
+        # aspect). A surviving slot id keeps every pinned field, but when the
+        # slot is repointed at a different source the old transform is stale
+        # (a portrait clip shrunk to 32% on black, or a landscape clip
+        # cropped), so recompute it for the new source. A newly placed clip
+        # gets the recipe's fit the same way.
+        if old is not None and old.source_asset_id == asset.id:
             clips.append(old.model_copy(update=update))
         else:
-            # A newly placed clip keeps the recipe's letterbox (KRI-285): a
-            # surviving clip already carries its own transform, a new one must
-            # not silently revert to a center-crop beside neighbours with bars.
             transform = MediaTransform()
-            if landscape_fit == "fit" and canvas.height > canvas.width:
+            keeps_identity = old is not None and (
+                old.source_crop is not None or old.still_layout is not None
+            )
+            if landscape_fit == "fit" and canvas.height > canvas.width and not keeps_identity:
                 display_w, display_h = display_dims(original)
                 transform = fit_transform(display_w, display_h, canvas, landscape_fit)
-            if default_look is not None and transform != MediaTransform():
+            if look is not None and transform != MediaTransform():
                 raise UnsupportedPhonePlan(
                     "a color grade cannot be combined with letterboxed landscape fit"
                 )
-            clips.append(TimelineClip(**update, transform=transform, look=default_look))
+            if old is not None:
+                clips.append(old.model_copy(update={**update, "transform": transform}))
+            else:
+                clips.append(TimelineClip(**update, transform=transform, look=default_look))
         cursor = timeline_start + source_duration / rate
     return clips
 

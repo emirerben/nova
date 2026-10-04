@@ -3832,7 +3832,8 @@ def _run_generative_job_impl(
 def _creator_landscape_fit(all_candidates: dict | None) -> str:
     """The creator's EXPLICIT bars/crop choice (``creator_render_shape``), else
     ``"fill"`` -- guided/unified phone output only letterboxes on request (KRI-285)."""
-    fit = ((all_candidates or {}).get("creator_render_shape") or {}).get("landscape_fit")
+    shape = (all_candidates or {}).get("creator_render_shape")
+    fit = shape.get("landscape_fit") if isinstance(shape, dict) else None
     return fit if fit in ("fill", "fit") else "fill"
 
 

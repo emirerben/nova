@@ -282,6 +282,61 @@ def test_apply_landscape_fit_is_a_noop_for_portrait_sources_and_landscape_canvas
 def test_apply_landscape_fit_skips_looked_clips():
     bindings = tuple(_binding(f"c{i}", width=1080, height=1920) for i in range(3))
     recipe = _compile("fill", bindings=bindings, extras={"recipe": {"color_grade": "golden_hour"}})
+    assert all(c.look == "golden_hour" for c in _clips(recipe))
     # Pretend the sources turned out landscape: a look is never transformed.
     landscape = _landscape_bindings()
     assert apply_landscape_fit(recipe, landscape, "fit") is recipe
+
+
+# ---- a repointed slot recomputes its transform for the NEW source -----------
+
+
+def _repoint(recipe, bindings, *, slot=0, to_index):
+    slots = _slots(recipe)
+    slots[slot]["clip_index"] = to_index
+    slots[slot]["in_s"] = 0.0
+    return _recut(recipe, bindings, slots)
+
+
+def test_recut_repointing_a_slot_to_a_portrait_source_drops_the_stale_letterbox():
+    recipe, _ = _recut_fixture()  # three landscape clips compiled with "fit"
+    bindings = (*_landscape_bindings(), _binding("c3", width=1080, height=1920))
+    edited = _repoint(recipe, bindings, to_index=3)
+    clips = _clips(edited)
+    assert clips[0].source_asset_id == "c3"
+    assert [c.transform.scale for c in clips] == [1, _FIT_SCALE, _FIT_SCALE]
+
+
+def test_recut_repointing_a_slot_to_a_landscape_source_letterboxes_it():
+    portrait_first = (
+        _binding("c0", width=1080, height=1920),
+        _binding("c1"),
+        _binding("c2"),
+    )
+    decision, _ = fixture(
+        bindings=portrait_first,
+        extras_overrides={"assembly_landscape_fit": "fit"},
+        steps=[_step("c0"), _step("c1"), _step("c2")],
+    )
+    recipe = compile_montage(decision, portrait_first)
+    assert [c.transform.scale for c in _clips(recipe)] == [1, _FIT_SCALE, _FIT_SCALE]
+    bindings = (*portrait_first, _binding("c3"))
+    edited = _repoint(recipe, bindings, to_index=3)
+    assert [c.transform.scale for c in _clips(edited)] == [_FIT_SCALE] * 3
+
+
+def test_recut_repointing_in_a_fill_recipe_stays_identity():
+    decision, _ = fixture(
+        bindings=_landscape_bindings(),
+        extras_overrides={"assembly_landscape_fit": "fill"},
+    )
+    recipe = compile_montage(decision, _landscape_bindings())
+    bindings = (*_landscape_bindings(), _binding("c3", width=1080, height=1920))
+    edited = _repoint(recipe, bindings, to_index=3)
+    assert [c.transform.scale for c in _clips(edited)] == [1, 1, 1]
+
+
+def test_recut_keeping_the_same_source_keeps_the_pinned_transform():
+    recipe, bindings = _recut_fixture()
+    edited = _recut(recipe, bindings, _slots(recipe))
+    assert _clips(edited) == _clips(recipe)
