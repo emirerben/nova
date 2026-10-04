@@ -5215,6 +5215,15 @@ def _run_phone_subtitled_job(
     landscape_fit: str = all_candidates.get("landscape_fit") or "fill"
     if landscape_fit not in ("fill", "fit"):
         landscape_fit = "fill"
+    # KRI-297: "fullscreen" => every Visual becomes a full-screen cutaway
+    # (deterministic even-spread sequence). Anything else (absent/None/"pip"/
+    # unknown) or the kill switch off => today's PiP grounding, unchanged.
+    overlay_layout: str = (
+        "fullscreen"
+        if all_candidates.get("overlay_display") == "fullscreen"
+        and getattr(settings, "phone_subtitled_fullscreen_overlays_enabled", True)
+        else "pip"
+    )
     language: str = all_candidates.get("language") or "en"
     # KRI-177: same explicit override contract as the cloud subtitled render —
     # re-validated here since a stray/legacy value must never silently win.
@@ -5775,6 +5784,11 @@ def _run_phone_subtitled_job(
                                 )
                                 | beat_media_ids,
                                 video_supported=video_overlays_enabled,
+                                **(
+                                    {"layout": "fullscreen"}
+                                    if overlay_layout == "fullscreen"
+                                    else {}
+                                ),
                             )
                         except OperationalError:
                             raise  # transient DB -> Celery autoretry, never a lane drop

@@ -95,6 +95,11 @@ class SubtitledOverlayCard(_LaneModel):
     # before the spoken window does (the device never holds the last frame).
     kind: Literal["image", "video"] = "image"
     source_start_s: float = Field(default=0.0, ge=0)
+    # KRI-297: "fullscreen" is a full-canvas cover-fill cutaway over the
+    # speaker (muted; speaker audio and captions are untouched). x_frac /
+    # y_frac / scale / z are ignored for it -- there is no caption-band clamp
+    # because the card covers the frame. Omitted from the dump while "pip".
+    display_mode: Literal["pip", "fullscreen"] = "pip"
 
     @model_validator(mode="after")
     def _window(self) -> SubtitledOverlayCard:
@@ -112,6 +117,8 @@ class SubtitledOverlayCard(_LaneModel):
         if self.kind == "image":
             payload.pop("kind", None)
             payload.pop("source_start_s", None)
+        if self.display_mode == "pip":
+            payload.pop("display_mode", None)
         return payload
 
 

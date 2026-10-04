@@ -344,7 +344,7 @@ def test_lanes_from_editor_sections_rejects_an_unpinned_overlay_path():
         )
 
 
-def test_lanes_from_editor_sections_rejects_fullscreen_display_mode():
+def test_lanes_from_editor_sections_rejects_a_new_fullscreen_display_mode():
     photo = _photo_visual()
     committed = [
         {
@@ -356,7 +356,7 @@ def test_lanes_from_editor_sections_rejects_fullscreen_display_mode():
             "end_s": 2.0,
         }
     ]
-    with pytest.raises(ValueError, match="picture-in-picture"):
+    with pytest.raises(ValueError, match="full-screen overlay"):
         lanes_from_editor_sections(
             previous=None,
             sound_effects=None,
@@ -662,3 +662,44 @@ def test_landscape_fit_from_recipe_round_trips_through_a_pinned_recompile():
             wide, caption_cues=_CUES, landscape_fit=landscape_fit_from_recipe(recipe)
         )
         assert recompiled.model_dump_json() == recipe.model_dump_json()
+
+
+def test_fullscreen_cards_round_trip_through_sections_and_recipe():
+    """KRI-297: a recipe with Kria's full-screen cards must Save without
+    raising or silently turning into pip."""
+    from app.pipeline.phone_subtitled_lanes import SubtitledOverlayCard
+    from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
+    from app.services.phone_subtitled_editor import lanes_from_recipe, sections_from_lanes
+
+    photo = _photo_visual()
+    card = SubtitledOverlayCard(
+        id="fs-0",
+        media_id=photo.media_id,
+        gcs_path=photo.gcs_path,
+        generation=photo.generation,
+        start_s=3.0,
+        end_s=6.0,
+        display_mode="fullscreen",
+    )
+    lanes = PhoneSubtitledLanes(overlays=[card])
+    sections = sections_from_lanes(lanes, labels={})
+    assert sections["media_overlays"][0]["display_mode"] == "fullscreen"
+
+    again = lanes_from_editor_sections(
+        previous=lanes,
+        sound_effects=None,
+        media_overlays=sections["media_overlays"],
+        visuals=(photo,),
+    )
+    assert again.overlays[0].display_mode == "fullscreen"
+    assert again.overlays[0].start_s == pytest.approx(3.0)
+
+    # Pinned-recipe derivation (before any editor Save persisted lanes).
+    from tests.pipeline.test_phone_subtitled_plan import _binding
+
+    recipe = compile_phone_subtitled_plan(
+        (_binding(duration_s=10.0),), caption_cues=[], visuals=(photo,), lanes=lanes
+    )
+    derived = lanes_from_recipe(recipe, visuals=(photo,))
+    assert [c.display_mode for c in derived.overlays] == ["fullscreen"]
+    assert derived.overlays[0].id == "fs-0"

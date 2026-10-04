@@ -443,9 +443,10 @@ def _merge_resolver_outputs(
     outputs: list[ClipRequestResolverOutput],
 ) -> ClipRequestResolverOutput:
     """Merge per-shard outputs. Aliases are disjoint across shards, so membership
-    simply concatenates; an intent-level question is clip-independent (first
-    wins); the single authored caption comes from the shard that matched the
-    most clips (its text is re-verified against the final members downstream)."""
+    simply concatenates; an intent-level question survives only when no shard
+    produced a candidate for that intent (first wins); the single authored caption
+    comes from the shard that matched the most clips (its text is re-verified against
+    the final members downstream)."""
     if len(outputs) == 1:
         return outputs[0]
     order: list[str] = []
@@ -466,11 +467,29 @@ def _merge_resolver_outputs(
                 intent_id=intent_id,
                 assignments=[a for g in group for a in g.assignments],
                 needs_vision=[v for g in group for v in g.needs_vision],
-                question=next((g.question for g in group if g.question), None),
+                # KRI-282: a shard with no matching clips may "ask" about an intent
+                # another shard matched fine; a question only survives when NO
+                # shard produced a candidate for the intent.
+                question=(
+                    None
+                    if any(g.assignments or g.needs_vision for g in group)
+                    else next((g.question for g in group if g.question), None)
+                ),
                 caption=best.caption if best else None,
             )
         )
     return ClipRequestResolverOutput(intents=merged)
+
+
+# KRI-282: ops whose low-confidence / unrecorded clips get a soft vision re-query.
+_SOFT_REQUERY_OPS = frozenset({"group", "include"})
+
+
+def _record_is_empty(record: ClipUnderstanding) -> bool:
+    """True when the stored understanding gives the resolver nothing to match on."""
+    return not any(
+        (record.subject, record.summary, record.activity, record.setting, record.speech.transcript)
+    )
 
 
 def _fallback_question(intent: ClipIntent) -> str:
@@ -810,16 +829,33 @@ async def resolve_clip_intents_for_turn(
             deferred[key] = DeferredVisionQuery(clip.media_id, candidate.question)
 
     vision_answers: dict[str, dict[str, dict[str, Any]]] = {}
+    question_intents = 0
+    intent_stats: list[str] = []
+    stray_questions_ignored = 0
+    soft_candidates: list[_VisionCandidate] = []
+    media_to_alias = {m: a for a, m in alias_to_media.items()}
 
     for intent in intents:
         work = work_by_id[intent.intent_id]
         resolved = resolver_by_id.get(intent.intent_id)
         if resolved is None:
             continue
-        if resolved.question:
+        has_candidates = bool(resolved.assignments or resolved.needs_vision)
+        confs = [a.confidence for a in resolved.assignments]
+        intent_stats.append(
+            f"{intent.intent_id}:n={len(confs)}"
+            f":min={min(confs, default=0.0):.2f}:max={max(confs, default=0.0):.2f}"
+            f":nv={len(resolved.needs_vision)}:q={int(bool(resolved.question))}"
+        )
+        if resolved.question and not has_candidates:
             work.intent_question = resolved.question
             work.had_any_candidate = True
+            question_intents += 1
             continue
+        if resolved.question:
+            # KRI-282: a model-authored question must never discard matches it also
+            # returned -- the creator would be asked to do the matching themselves.
+            stray_questions_ignored += 1
 
         assignment_by_media = {a.media: a for a in resolved.assignments}
         vision_media = {nv.media: nv.question for nv in resolved.needs_vision}
@@ -831,6 +867,7 @@ async def resolve_clip_intents_for_turn(
             work.authored_caption = resolved.caption
 
         candidate_media = list(dict.fromkeys([*assignment_by_media, *vision_media]))
+        soft_low: list[tuple[float, str]] = []
         for alias in candidate_media:
             media_id = alias_to_media.get(alias)
             if media_id is None:
@@ -1026,10 +1063,41 @@ async def resolve_clip_intents_for_turn(
                             grounding=None,
                         )
                     )
-                # else: a low-confidence membership guess is simply excluded,
-                # not escalated — group/order/include never re-queries vision
-                # on the resolver's own uncertainty, only on an explicit
-                # needs_vision entry (handled above).
+                elif intent.op in _SOFT_REQUERY_OPS:
+                    # KRI-282: a low-confidence guess is no longer silently dropped;
+                    # it is re-checked with a yes/no vision query while foreground
+                    # budget remains (soft: a failed check just excludes the clip).
+                    soft_low.append((assignment.confidence, media_id))
+                # else (order / described caption): excluded, only an explicit
+                # needs_vision entry escalates.
+
+        if intent.op in _SOFT_REQUERY_OPS and not background:
+            settled = {a.media_id for a in work.kept} | {
+                c.media_id for c in vision_candidates if c.intent_id == intent.intent_id
+            }
+            empties = [
+                c.media_id
+                for c in clips
+                if c.kind == "video"
+                and c.media_id not in settled
+                and media_to_alias.get(c.media_id) not in assignment_by_media
+                and _record_is_empty(records_by_id[c.media_id])
+            ]
+            lows = [m for _conf, m in sorted(soft_low, key=lambda t: -t[0]) if m not in settled]
+            for media_id in dict.fromkeys([*empties, *lows]):
+                if clip_by_id[media_id].kind != "video":
+                    continue
+                soft_candidates.append(
+                    _VisionCandidate(
+                        media_id=media_id,
+                        intent_id=intent.intent_id,
+                        op=intent.op,
+                        attribute=intent.attribute,
+                        question=_fallback_question(intent),
+                        fallback_value=None,
+                        creator_text=None,
+                    )
+                )
 
     # Both membership and caption checks share one budget, cache, concurrency
     # bound and checkpoint path. Caption work is admitted only after membership.
@@ -1040,7 +1108,8 @@ async def resolve_clip_intents_for_turn(
         else settings.clip_intents_vision_deadline_s
     )
 
-    def record_failure(candidates, error_code):
+    def record_failure(candidates, error_code, works=None):
+        works = work_by_id if works is None else works
         fields = {
             "provider_outcome_unknown": "provider_unknown_media_ids",
             "ai_budget_exhausted": "ai_budget_exhausted_media_ids",
@@ -1048,15 +1117,21 @@ async def resolve_clip_intents_for_turn(
             "clip_media_unavailable": "media_unavailable_media_ids",
         }
         for candidate in candidates:
-            work = work_by_id[candidate.intent_id]
+            work = works[candidate.intent_id]
             getattr(work, fields.get(error_code, "provider_unavailable_media_ids")).add(
                 candidate.media_id
             )
             if error_code in {"ai_budget_exhausted", "provider_quota_exceeded"}:
                 work.budget_exhausted_media_ids.add(candidate.media_id)
 
-    async def run_candidates(candidates, apply_result):
+    async def run_candidates(candidates, apply_result, *, soft=False):
         nonlocal calls_spent
+        # ``soft`` (KRI-282) = opportunistic re-query of a clip the resolver was unsure
+        # about: its failures/pending/over-cap outcomes land on a scratch ledger and are
+        # never deferred to the background worker, so they cannot turn into questions,
+        # a `pending` turn, or extra paid work beyond the foreground cap.
+        works = soft_scratch if soft else work_by_id
+        _defer = (lambda _c: None) if soft else defer
         # Build a stable round-robin order so the first intent cannot consume the
         # foreground budget, then collapse identical media/generation/question work.
         by_intent: dict[str, list[_VisionCandidate]] = {i.intent_id: [] for i in intents}
@@ -1074,7 +1149,7 @@ async def resolve_clip_intents_for_turn(
         for candidate in ordered_candidates:
             clip = clip_by_id.get(candidate.media_id)
             if clip is None:
-                work_by_id[candidate.intent_id].media_unavailable_media_ids.add(candidate.media_id)
+                works[candidate.intent_id].media_unavailable_media_ids.add(candidate.media_id)
                 continue
             key = (
                 candidate.media_id,
@@ -1118,21 +1193,19 @@ async def resolve_clip_intents_for_turn(
                 for dependent in dependents[
                     (candidate.media_id, str(clip.generation or ""), question_norm)
                 ]:
-                    work_by_id[dependent.intent_id].media_unavailable_media_ids.add(
-                        dependent.media_id
-                    )
+                    works[dependent.intent_id].media_unavailable_media_ids.add(dependent.media_id)
                 continue
             marker = vision_query_marker(clip.analysis, candidate.question, clip.generation)
             dependents_for_candidate = dependents[
                 (candidate.media_id, str(clip.generation or ""), question_norm)
             ]
             if marker.get("status") == "failed" and marker.get("error_code"):
-                record_failure(dependents_for_candidate, marker["error_code"])
+                record_failure(dependents_for_candidate, marker["error_code"], works)
                 continue
             if vision_query_pending(clip.analysis, candidate.question, clip.generation):
-                defer(candidate)
+                _defer(candidate)
                 for dependent in dependents_for_candidate:
-                    work_by_id[dependent.intent_id].pending_media_ids.add(dependent.media_id)
+                    works[dependent.intent_id].pending_media_ids.add(dependent.media_id)
                 continue
             to_call.append(candidate)
 
@@ -1154,14 +1227,14 @@ async def resolve_clip_intents_for_turn(
         allowed = 0 if terminal_budget else min(max(0, cap - calls_spent), len(to_call))
         for candidate in to_call[allowed:]:
             if not terminal_budget:
-                defer(candidate)
+                _defer(candidate)
             key = (
                 candidate.media_id,
                 str(clip_by_id[candidate.media_id].generation or ""),
                 normalize_question(candidate.question),
             )
             for dependent in dependents[key]:
-                work_by_id[dependent.intent_id].pending_media_ids.add(dependent.media_id)
+                works[dependent.intent_id].pending_media_ids.add(dependent.media_id)
         to_call = to_call[:allowed]
 
         question_agent = ClipQuestionAgent(default_client())
@@ -1170,14 +1243,14 @@ async def resolve_clip_intents_for_turn(
             batch = to_call[offset : offset + batch_size]
             if not background and asyncio.get_running_loop().time() >= foreground_deadline:
                 for candidate in batch:
-                    defer(candidate)
+                    _defer(candidate)
                     key = (
                         candidate.media_id,
                         str(clip_by_id[candidate.media_id].generation or ""),
                         normalize_question(candidate.question),
                     )
                     for dependent in dependents[key]:
-                        work_by_id[dependent.intent_id].pending_media_ids.add(dependent.media_id)
+                        works[dependent.intent_id].pending_media_ids.add(dependent.media_id)
                 continue
             calls_spent += len(batch)
             tasks = [
@@ -1211,18 +1284,18 @@ async def resolve_clip_intents_for_turn(
                 )
                 dependents_for_candidate = dependents[key]
                 if task not in done:
-                    defer(candidate)
+                    _defer(candidate)
                     for dependent in dependents_for_candidate:
-                        work_by_id[dependent.intent_id].pending_media_ids.add(dependent.media_id)
+                        works[dependent.intent_id].pending_media_ids.add(dependent.media_id)
                     task.cancel()
                     continue
                 try:
                     output = task.result()
                 except Exception as exc:  # noqa: BLE001 — classify per candidate
                     _status, error_code = _failure_status_and_code(exc)
-                    record_failure(dependents_for_candidate, error_code)
+                    record_failure(dependents_for_candidate, error_code, works)
                     if error_code == "vision_provider_error":
-                        defer(candidate)
+                        _defer(candidate)
                     continue
                 question_norm = normalize_question(candidate.question)
                 answer_record = {
@@ -1242,7 +1315,7 @@ async def resolve_clip_intents_for_turn(
                 work.ai_budget_exhausted_media_ids
                 or work.provider_quota_exhausted_media_ids
                 or work.provider_unknown_media_ids
-                for work in work_by_id.values()
+                for work in works.values()
             ):
                 for remaining in to_call[offset + batch_size :]:
                     remaining_key = (
@@ -1251,8 +1324,19 @@ async def resolve_clip_intents_for_turn(
                         normalize_question(remaining.question),
                     )
                     for dependent in dependents[remaining_key]:
-                        work_by_id[dependent.intent_id].pending_media_ids.add(dependent.media_id)
+                        works[dependent.intent_id].pending_media_ids.add(dependent.media_id)
                 break
+
+    soft_scratch: dict[str, _IntentWork] = {}
+
+    def apply_membership_soft(candidate, output):
+        _apply_vision_result(
+            candidate,
+            output,
+            work_by_id=soft_scratch,
+            records_by_id=records_by_id,
+            creator_request=creator_request,
+        )
 
     def apply_membership(candidate, output):
         _apply_vision_result(
@@ -1264,6 +1348,15 @@ async def resolve_clip_intents_for_turn(
         )
 
     await run_candidates(vision_candidates, apply_membership)
+
+    if soft_candidates:
+        # Runs AFTER the required work so it only spends leftover foreground cap
+        # (empty-record clips first, then the resolver's low-confidence guesses).
+        soft_scratch.update({i.intent_id: _IntentWork(intent=i) for i in intents})
+        await run_candidates(soft_candidates, apply_membership_soft, soft=True)
+        for intent_id, scratch in soft_scratch.items():
+            have = {a.media_id for a in work_by_id[intent_id].kept}
+            work_by_id[intent_id].kept.extend(a for a in scratch.kept if a.media_id not in have)
 
     # ── Caption text authoring (intent-level, after membership is final) ────
     # A caption is ONE phrase for the whole chapter, so it can only be
@@ -1434,12 +1527,28 @@ async def resolve_clip_intents_for_turn(
                 )
             )
 
+    redacted_counts = {
+        # Redacted counts only (no creator text / model output).
+        "resolver_question_intents": question_intents,
+        "stray_questions_ignored": stray_questions_ignored,
+        "empty_records": sum(1 for r in records_by_id.values() if _record_is_empty(r)),
+        "soft_requeries_queued": len(soft_candidates),
+        "intent_stats": intent_stats[:24],
+    }
+
     if not unresolved_work:
         return IntentResolution(
             intents=resolved_intents,
             question=None,
             vision_answers=vision_answers,
             status="resolved",
+            diagnostics={
+                "stage": "membership",
+                "reason": "resolved",
+                **shard_stats.as_dict(),
+                "vision_calls": calls_spent,
+                **redacted_counts,
+            },
         )
 
     if creator_work:
@@ -1483,6 +1592,7 @@ async def resolve_clip_intents_for_turn(
         "resolver_ms": resolver_ms,
         **shard_stats.as_dict(),
         "vision_calls": calls_spent,
+        **redacted_counts,
         "vision_answers": sum(len(v) for v in vision_answers.values()),
         "pending_clips": len(set().union(*(w.pending_media_ids for w in unresolved_work))),
         "deferred_queries": len(deferred),

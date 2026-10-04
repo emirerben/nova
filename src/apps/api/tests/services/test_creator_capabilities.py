@@ -2619,3 +2619,81 @@ def test_resolve_creator_image_media_ref_matches_id_or_label(monkeypatch):
     assert capabilities.resolve_creator_image_media_ref(manifest, None) is None
     # A video source is never resolved as an image, even by id.
     assert capabilities.resolve_creator_image_media_ref(manifest, "phone-a") is None
+
+
+# --- KRI-297: phone `subtitled` full-screen Visuals ---------------------------
+
+
+def _fullscreen_phone_manifest(monkeypatch, *, flag: bool = True, edit_format: str = "subtitled"):
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "media_overlays_enabled", True)
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_fullscreen_overlays_enabled", flag)
+    monkeypatch.setattr(
+        capabilities.settings,
+        "phone_render_verified_features",
+        list(PHONE_SUBTITLED_OVERLAY_FEATURES) + ["narrationAudio"],
+    )
+    return _phone_manifest(monkeypatch, edit_format, [{"media_id": "phone-a", "kind": "video"}])
+
+
+def _fullscreen_strategy() -> CreativeStrategy:
+    return CreativeStrategy(
+        edit_format="subtitled",
+        audio_strategy="original_audio",
+        selected_media_ids=["phone-a"],
+        optional_treatments=["overlays"],
+        overlay_display="fullscreen",
+    )
+
+
+def test_fullscreen_capability_available_and_strategy_keeps_choice(monkeypatch) -> None:
+    manifest = _fullscreen_phone_manifest(monkeypatch)
+    assert manifest.capabilities[capabilities.CAPABILITY_MEDIA_OVERLAY_FULLSCREEN].available
+    plan = capabilities.compile_strategy_to_plan(manifest, _fullscreen_strategy())
+    assert plan.strategy.overlay_display == "fullscreen"
+    assert plan.strategy.optional_treatments == ["overlays"]
+
+
+def test_fullscreen_capability_absent_when_kill_switch_off_and_refusal_is_honest(
+    monkeypatch,
+) -> None:
+    manifest = _fullscreen_phone_manifest(monkeypatch, flag=False)
+    assert capabilities.CAPABILITY_MEDIA_OVERLAY_FULLSCREEN not in manifest.capabilities
+    with pytest.raises(CreatorStrategyError, match="Full-screen Visuals") as exc_info:
+        capabilities.compile_strategy_to_plan(manifest, _fullscreen_strategy())
+    assert exc_info.value.code == "unsupported_treatment"
+
+
+def test_fullscreen_capability_absent_on_non_subtitled_phone_format(monkeypatch) -> None:
+    manifest = _fullscreen_phone_manifest(monkeypatch, edit_format="montage")
+    assert capabilities.CAPABILITY_MEDIA_OVERLAY_FULLSCREEN not in manifest.capabilities
+
+
+def test_fullscreen_choice_is_ignored_not_refused_on_cloud(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "media_overlays_enabled", True)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-cloud",
+        edit_format="subtitled",
+        media=[{"media_id": "clip-a", "kind": "video"}],
+    )
+    assert capabilities.CAPABILITY_MEDIA_OVERLAY_FULLSCREEN not in manifest.capabilities
+    strategy = _fullscreen_strategy().model_copy(update={"selected_media_ids": ["clip-a"]})
+    plan = capabilities.compile_strategy_to_plan(manifest, strategy)
+    assert plan.strategy.overlay_display is None
+
+
+def test_overlay_display_schema_defaults_and_omits_when_unset() -> None:
+    base = CreativeStrategy(edit_format="subtitled", audio_strategy="original_audio")
+    assert base.overlay_display is None
+    assert "overlay_display" not in base.model_dump(mode="json")
+    assert _fullscreen_strategy().model_dump(mode="json")["overlay_display"] == "fullscreen"
+    with pytest.raises(ValueError):
+        CreativeStrategy(
+            edit_format="subtitled",
+            audio_strategy="original_audio",
+            overlay_display="transition",  # type: ignore[arg-type]
+        )

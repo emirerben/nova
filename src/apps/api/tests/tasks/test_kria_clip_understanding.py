@@ -273,3 +273,36 @@ def test_analysis_prompt_still_demands_a_concrete_sport_activity() -> None:
 
     text = (Path(task.__file__).parents[2] / "prompts" / "analyze_clip.txt").read_text()
     assert "name the specific sport" in text
+
+
+def test_two_overlapping_runs_analyse_each_clip_once(monkeypatch) -> None:
+    """Prod 2026-10-03 (item c33a7b5a): one-by-one phone attaches put two runs for the
+    same item on both autoplace slots and every clip was paid for twice. Run A is
+    mid-analysis when run B starts; B must not touch a clip."""
+    import threading
+
+    item_id = _seed([_row(1), _row(2), _row(3)])
+    calls: list[str] = []
+    a_inside, a_release = threading.Event(), threading.Event()
+    analyze = _analyzer(calls)
+
+    def blocking(raw, pool, **kw):  # noqa: ANN001, ANN003, ANN202
+        a_inside.set()
+        assert a_release.wait(10)
+        return analyze(raw, pool, **kw)
+
+    monkeypatch.setattr("app.services.creator_clip_analysis.analyze_clip_assignment", blocking)
+    results: dict[str, dict] = {}
+    run_a = threading.Thread(
+        target=lambda: results.update(a=analyze_kria_clips.apply(args=[str(item_id)]).get())
+    )
+    run_a.start()
+    try:
+        assert a_inside.wait(10)
+        results["b"] = analyze_kria_clips.apply(args=[str(item_id)]).get()
+    finally:
+        a_release.set()
+        run_a.join(10)
+    assert results["b"]["status"] == "busy"
+    assert sorted(calls) == ["m1", "m2", "m3"], "each clip is analysed exactly once"
+    assert results["a"]["analyzed"] == 3

@@ -689,7 +689,7 @@ def _explicit_media_scope(request: str, manifest: Any | None = None) -> Literal[
         return "selected"
     if re.search(
         r"\b(?:all|every|each)\s+(?:the\s+)?(?:images?|photos?|videos?|clips?|media|footage)\b"
-        r"|\buse\s+(?:all|everything)\b"
+        r"|\buse\s+(?:all|everything)\b(?!\s+(?:of\s+)?(?:the\s+|my\s+)?(?:overlays?|visuals?)\b)"
         r"|\b(?:all|every)\s+(?:uploaded|provided)\s+(?:media|files?|images?|photos?|videos?)\b",
         normalized,
     ):
@@ -709,7 +709,7 @@ def _has_explicit_media_scope(request: str, manifest: Any | None = None) -> bool
     normalized = " ".join(str(request or "").casefold().split())
     if re.search(
         r"\b(?:all|every|each)\s+(?:the\s+)?(?:images?|photos?|videos?|clips?|media|footage)\b"
-        r"|\buse\s+(?:all|everything)\b"
+        r"|\buse\s+(?:all|everything)\b(?!\s+(?:of\s+)?(?:the\s+|my\s+)?(?:overlays?|visuals?)\b)"
         r"|\b(?:all|every)\s+(?:uploaded|provided)\s+(?:media|files?|images?|photos?|videos?)\b"
         r"|\b(?:do not|don't|dont|never|without|no)\b.{0,40}"
         r"\b(?:use|include|keep|select)\b.{0,20}"

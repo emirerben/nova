@@ -79,6 +79,43 @@ def test_confirmed_creator_strategy_is_schema_bounded_and_persisted() -> None:
         )
 
 
+def test_overlay_display_reaches_all_candidates_only_when_fullscreen() -> None:
+    """KRI-297: the strategy's full-screen choice is a flat `overlay_display` key
+    for the phone worker; absent/pip jobs keep their exact shape."""
+    base = {
+        "direction": "native",
+        "edit_format": "subtitled",
+        "audio_strategy": "original_audio",
+        "render_program": "native",
+        "selected_media_ids": ["clip-1"],
+    }
+    on = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4"],
+        creator_strategy={**base, "overlay_display": "fullscreen"},
+    )
+    assert on.all_candidates["overlay_display"] == "fullscreen"
+    assert on.all_candidates["creator_strategy"]["overlay_display"] == "fullscreen"
+    for strategy in (base, {**base, "overlay_display": "pip"}):
+        off = build_generative_job(
+            user_id=uuid.uuid4(),
+            clip_paths=["users/u/plan/i/a.mp4"],
+            creator_strategy=strategy,
+        )
+        assert "overlay_display" not in off.all_candidates
+    assert (
+        "overlay_display"
+        not in build_generative_job(
+            user_id=uuid.uuid4(), clip_paths=["users/u/plan/i/a.mp4"]
+        ).all_candidates
+    )
+    # A strategy that never set it serialises byte-identically (no null key).
+    unset = build_generative_job(
+        user_id=uuid.uuid4(), clip_paths=["users/u/plan/i/a.mp4"], creator_strategy=base
+    )
+    assert "overlay_display" not in unset.all_candidates["creator_strategy"]
+
+
 @pytest.mark.parametrize("repeat", [200, 2000])
 def test_creator_request_is_bounded_and_persisted_for_retries(repeat: int) -> None:
     request = "  Match the voiceover to the clips. " + ("Add score text. " * repeat)
