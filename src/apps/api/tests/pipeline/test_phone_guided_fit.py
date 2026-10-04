@@ -135,3 +135,13 @@ def test_apply_landscape_fit_skips_look_and_crop_clips():
     plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={"source_crop": CROP})
     recipe = compile_phone_guided_plan(plan, bindings)
     assert apply_landscape_fit(recipe, bindings, "fit") is recipe
+
+
+def test_apply_landscape_fit_skips_look_clips():
+    plan, bindings = _with_source(width=1080, height=1920)
+    plan.story_timeline[0].look_preset = "golden_hour"
+    recipe = compile_phone_guided_plan(plan, bindings)
+    assert _clips(recipe)[0].look == "golden_hour"
+    # Even if the source were landscape, a looked clip is never transformed.
+    plan2, landscape = _with_source(width=1920, height=1080)
+    assert apply_landscape_fit(recipe, landscape, "fit") is recipe

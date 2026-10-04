@@ -143,12 +143,16 @@ creator about a version they can't get).
 masonry/collage presets, lyric overlays, carousel-moment splices, the editorial sequence/rhythm typographic upgrade, non-
 `golden_hour`/`none` color grades, and ducking footage under a music bed
 (no cloud producer sets it). Letterboxed landscape fit is NO LONGER deferred
-(KRI-285): the voiceover montage and the guided/unified montage compilers apply
-`fit_transform` per clip on a portrait canvas (montage from the item's
-`landscape_fit`; guided/unified only when the creator explicitly chose via
-`all_candidates["creator_render_shape"]`); a re-cut keeps the bars and
-`phone_recipe_shared.apply_landscape_fit` re-letterboxes a pinned recipe.
-Narrated / speech-montage still crop (KRI-307).
+(KRI-285): the voiceover montage compiler applies `fit_transform` per clip on a
+portrait canvas from the item's `landscape_fit`, and a re-cut keeps the bars
+(a slot repointed at a different source recomputes its transform). The
+guided/unified compiler accepts `landscape_fit` too, but that path is DORMANT
+until the render-shape API PR writes `all_candidates["creator_render_shape"]`
+(only an explicit creator choice letterboxes guided output).
+`phone_recipe_shared.apply_landscape_fit` and `replace_voiceover_cut`'s
+`landscape_fit=` kwarg are consumed by that follow-up (the editor Save paths
+`phone_editor.py` do not pass the persisted fit yet). Narrated /
+speech-montage still crop (KRI-307).
 
 #### Recorded voiceover (KRI-132)
 

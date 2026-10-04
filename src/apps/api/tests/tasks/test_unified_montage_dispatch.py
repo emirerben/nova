@@ -326,6 +326,36 @@ def test_a_non_voiceover_montage_takes_unified_with_no_flag_set(harness):
     assert "unified_montage" in job.assembly_plan
 
 
+def test_unified_call_site_passes_the_explicit_creator_fit_to_the_guided_runner(
+    harness, monkeypatch
+):
+    """KRI-285: only an explicit `creator_render_shape` letterboxes the unified plan;
+    the item's own default `landscape_fit="fit"` never does."""
+    job, _snapshot, _session, _bindings, _plain = harness(brief=_brief())
+    real = gb._run_phone_guided_job
+    seen: list[str] = []
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs.get("landscape_fit"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(gb, "_run_phone_guided_job", spy)
+    assert job.all_candidates["landscape_fit"] == "fit"
+    gb._run_generative_job(str(job.id))
+    assert seen == ["fill"]
+    assert job.assembly_plan["variants"][0]["landscape_fit"] == "fill"
+
+    job2, _s, _se, _b, _p = harness(brief=_brief())
+    job2.all_candidates = {
+        **job2.all_candidates,
+        "creator_render_shape": {"output_orientation": "portrait", "landscape_fit": "fit"},
+    }
+    seen.clear()
+    gb._run_generative_job(str(job2.id))
+    assert seen == ["fit"]
+    assert job2.assembly_plan["variants"][0]["landscape_fit"] == "fit"
+
+
 def test_a_voiceover_montage_never_takes_the_unified_lane(harness, monkeypatch):
     job, _snapshot, _session, _bindings, plain = harness(brief=_brief())
     plain.side_effect = None
