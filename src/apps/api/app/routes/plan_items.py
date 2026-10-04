@@ -658,7 +658,7 @@ class PlanItemResponse(BaseModel):
     # NULL = no voiceover attached; non-null = user has recorded or uploaded one.
     voiceover_gcs_path: str | None = None
     # Soundtrack policy: Kria chooses, force original audio, or use voiceover.
-    audio_mode: Literal["kria", "original", "voiceover"] = "kria"
+    audio_mode: Literal["kria", "original", "voiceover", "song"] = "kria"
     # Landscape-clip fit preference. "fit" (letterbox, default) | "fill" (crop).
     # Only affects clips where width > height; portrait/square always crop.
     landscape_fit: Literal["fit", "fill"] = "fit"
@@ -788,7 +788,8 @@ def plan_item_response(
         voiceover_gcs_path=item.voiceover_gcs_path,
         audio_mode=(
             _am
-            if (_am := getattr(item, "audio_mode", None)) in {"kria", "original", "voiceover"}
+            if (_am := getattr(item, "audio_mode", None))
+            in {"kria", "original", "voiceover", "song"}
             else "kria"
         ),
         landscape_fit=(
