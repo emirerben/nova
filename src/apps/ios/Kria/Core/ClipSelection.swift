@@ -162,6 +162,19 @@ struct ClipSelectionState: Equatable {
         }
     }
 
+    /// Slide-to-select: ticks or unticks exactly `mediaIDs` (candidates only). Ticking clears "None of these".
+    mutating func set(_ mediaIDs: [String], selected isOn: Bool, in key: String) {
+        guard let category = question.categories.first(where: { $0.key == key }) else { return }
+        let valid = mediaIDs.filter(category.candidateMediaIDs.contains)
+        guard !valid.isEmpty else { return }
+        if isOn {
+            selected[key, default: []].formUnion(valid)
+            none.remove(key)
+        } else {
+            selected[key]?.subtract(valid)
+        }
+    }
+
     /// "None of these" is exclusive with ticks in the same category.
     mutating func toggleNone(_ key: String) {
         guard question.allowNone, question.categories.contains(where: { $0.key == key }) else { return }

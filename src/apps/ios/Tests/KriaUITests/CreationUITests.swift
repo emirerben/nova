@@ -610,6 +610,88 @@ final class CreationUITests: XCTestCase {
         try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: dir).appendingPathComponent("\(name).png"))
     }
 
+    private func openRealShapePicker() -> XCUIApplication {
+        let app = launchRealShapeHistory(thumbs: true)
+        XCTAssertTrue(app.buttons["clip-choose"].waitForExistence(timeout: 20))
+        app.buttons["clip-choose"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["clip-sheet"].waitForExistence(timeout: 5))
+        return app
+    }
+
+    private func tileButton(_ app: XCUIApplication, _ n: Int) -> XCUIElement {
+        app.buttons["clip-thumb-group:dodgeball-\(Self.realShapeIDs[n])"]
+    }
+
+    private func centre(_ element: XCUIElement) -> XCUICoordinate {
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+    }
+
+    private func selectedCount(_ app: XCUIApplication) -> String {
+        app.descendants(matching: .any)["clip-count"].label
+    }
+
+    /// KRI-282 follow-up: press-and-slide selects (or deselects, by the first tile) every tile it crosses, while
+    /// tap and press-and-hold-to-preview keep working.
+    func testClipPickerSlideAcrossTilesSelectsDeselectsAndKeepsTapAndHold() {
+        let app = openRealShapePicker()
+        XCTAssertTrue(tileButton(app, 2).waitForExistence(timeout: 5))
+        XCTAssertEqual(selectedCount(app), "0 of 48 selected")
+        // Slide across the first row from an unselected tile: selects 1-3.
+        centre(tileButton(app, 0)).press(forDuration: 0.1, thenDragTo: centre(tileButton(app, 2)))
+        XCTAssertTrue(eventually { selectedCount(app) == "3 of 48 selected" }, selectedCount(app))
+        XCTAssertEqual(tileButton(app, 1).value as? String, "Selected")
+        shoot(app, "4-slide-selected-row")
+        // Starting on a SELECTED tile flips the mode: sliding 2 -> 3 deselects both.
+        centre(tileButton(app, 1)).press(forDuration: 0.1, thenDragTo: centre(tileButton(app, 2)))
+        _ = eventually { selectedCount(app) == "1 of 48 selected" }
+        shoot(app, "4b-after-deselect-slide")
+        XCTAssertEqual(selectedCount(app), "1 of 48 selected", (0...3).map { "\($0):\(tileButton(app, $0).value as? String ?? "?")" }.joined(separator: " "))
+        XCTAssertEqual(tileButton(app, 0).value as? String, "Selected")
+        XCTAssertEqual(tileButton(app, 2).value as? String, "Not selected")
+        // A slide never leaves the sheet in a half state: tap still toggles a single tile.
+        tileButton(app, 4).tap()
+        XCTAssertEqual(selectedCount(app), "2 of 48 selected")
+        // Hold without moving still opens the preview pager and does not select.
+        tileButton(app, 5).press(forDuration: 0.8)
+        XCTAssertTrue(app.descendants(matching: .any)["clip-preview-title"].waitForExistence(timeout: 5))
+        app.buttons["clip-preview-close"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["clip-count"].waitForExistence(timeout: 5))
+        XCTAssertEqual(selectedCount(app), "2 of 48 selected")
+        // The structured answer is still the candidate-ordered set.
+        XCTAssertTrue(app.buttons["clip-done"].isEnabled)
+    }
+
+    /// A vertical drag scrolls (selects nothing); a slide that ends at the bottom edge auto-scrolls the grid and
+    /// keeps selecting the tiles that pass under the finger.
+    func testClipPickerSlideNearBottomEdgeAutoScrollsAndVerticalDragStillScrolls() {
+        let app = openRealShapePicker()
+        let grid = app.descendants(matching: .any)["clip-grid"]
+        XCTAssertTrue(grid.waitForExistence(timeout: 5))
+        XCTAssertTrue(tileButton(app, 0).waitForExistence(timeout: 5))
+        // Vertical swipe scrolls and selects nothing.
+        let firstBefore = tileButton(app, 0).frame.minY
+        let gridFrame = grid.frame
+        let top = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: gridFrame.midX + 60, dy: gridFrame.maxY - 80))
+        let bottomUp = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: gridFrame.midX + 60, dy: gridFrame.minY + 80))
+        top.press(forDuration: 0.05, thenDragTo: bottomUp, withVelocity: .slow, thenHoldForDuration: 0.1)
+        XCTAssertEqual(selectedCount(app), "0 of 48 selected", "a vertical drag must scroll, not select")
+        shoot(app, "5a-after-vertical")
+        XCTAssertTrue(eventually { tileButton(app, 0).frame.minY < firstBefore - 40 }, "grid scrolled \(firstBefore) -> \(tileButton(app, 0).frame.minY)")
+        bottomUp.press(forDuration: 0.05, thenDragTo: top, withVelocity: .slow, thenHoldForDuration: 0.1)
+        XCTAssertEqual(selectedCount(app), "0 of 48 selected")
+        // Slide sideways in the bottom edge zone and hold there: the grid auto-scrolls to the end.
+        let frame = grid.frame
+        let y = frame.maxY - 24
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        let start = origin.withOffset(CGVector(dx: frame.minX + 40, dy: y))
+        let finish = origin.withOffset(CGVector(dx: frame.maxX - 30, dy: y))
+        start.press(forDuration: 0.1, thenDragTo: finish, withVelocity: .slow, thenHoldForDuration: 6)
+        shoot(app, "5-slide-autoscroll")
+        XCTAssertTrue(eventually { self.selectedCount(app) != "0 of 48 selected" })
+        let count = Int(selectedCount(app).split(separator: " ").first ?? "0") ?? 0
+        XCTAssertGreaterThan(count, 8, "auto-scroll kept selecting as rows passed under the finger: \(count)")
+    }
+
     /// KRI-282 root-cause pin: the production-shaped question must always produce the card, never just text.
     func testRealShapeHistoryShowsClipQuestionCardAndOpensTheGridSheet() {
         let app = launchRealShapeHistory(thumbs: true)
