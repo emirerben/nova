@@ -160,7 +160,7 @@ struct SlidePostStrip: View {
     static let tileWidth: CGFloat = 60   // 56pt tile + 2pt selection ring each side
     static let spacing: CGFloat = 6
     static let pitch = tileWidth + spacing
-    private static let space = "slidepost-strip"
+    static let leadingInset: CGFloat = 16
 
     @State private var dragID: String?
     @State private var fingerX: CGFloat = 0
@@ -170,7 +170,6 @@ struct SlidePostStrip: View {
     @State private var autoOffset: CGFloat = 0
     @State private var metrics = SlidePostStripMetrics()
     @State private var position = ScrollPosition(edge: .leading)
-    @GestureState private var gestureActive = false
 
     private var dragFrom: Int? { dragID.flatMap { id in slides.firstIndex { $0.id == id } } }
     /// Finger travel plus however far the strip has scrolled since the lift.
@@ -189,19 +188,32 @@ struct SlidePostStrip: View {
                 addTile
             }
             .overlay(alignment: .topLeading) { insertionBar }
-            .padding(.horizontal, 16).padding(.vertical, 4)
+            // The hold-to-reorder recogniser lives on the scroll view's own UIKit layer, beside its pan,
+            // so a swipe is never claimed by the reorder gesture (see `SlidePostStripReorderRecognizer`).
+            .background {
+                SlidePostStripReorderRecognizer(
+                    slideIndexAt: { SlidePostReorderMath.slideIndex(atContentX: $0, count: slides.count, leading: Self.leadingInset, pitch: Self.pitch, tileWidth: Self.tileWidth) },
+                    onBegan: beginReorder, onMoved: { fingerX = $0; noteTargetChange() }, onFinished: finishReorder
+                )
+                .allowsHitTesting(false)
+            }
+            .padding(.horizontal, Self.leadingInset).padding(.vertical, 4)
         }
         .scrollPosition($position)
         .onScrollGeometryChange(for: SlidePostStripMetrics.self) {
             SlidePostStripMetrics(offset: $0.contentOffset.x, content: $0.contentSize.width, viewport: $0.containerSize.width)
         } action: { _, new in metrics = new }
         .scrollDisabled(dragID != nil)
-        .coordinateSpace(name: Self.space)
+        .mask(overflowFade)
         .frame(minHeight: 100, alignment: .top)
         .background(KriaColor.paper)
         .excludesDrawerGesture()
         .task(id: dragID) { await autoScrollLoop() }
-        .onChange(of: gestureActive) { _, active in if !active { endDrag() } }
+        .onChange(of: selectedID) { _, id in
+            // A slide picked from the preview, undo or the AI is brought into view (never while a block is lifted).
+            guard dragID == nil, let id, let index = slides.firstIndex(where: { $0.id == id }) else { return }
+            revealSlide(at: index)
+        }
         .onChange(of: slides.map(\.id)) { old, new in
             // A new slide (auto-added media, undo) scrolls into view; a mid-drag change drops the lift.
             if dragID != nil, dragFrom == nil { endDrag() }
@@ -313,35 +325,46 @@ struct SlidePostStrip: View {
         .offset(x: lifted ? dragDelta : shift).zIndex(lifted ? 1 : 0)
         .animation(.snappy(duration: 0.18), value: lifted)
         .animation(.snappy(duration: 0.18), value: shift)
-        .simultaneousGesture(reorderGesture(for: slide))
         .accessibilityAction(named: "Move earlier") { if index > 0 { onMove(slide.id, index - 1) } }
         .accessibilityAction(named: "Move later") { if index < slides.count - 1 { onMove(slide.id, index + 1) } }
     }
 
     // MARK: Reorder
 
-    private func reorderGesture(for slide: SlidePostSlide) -> some Gesture {
-        LongPressGesture(minimumDuration: 0.3).sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.space)))
-            .updating($gestureActive) { value, state, _ in if case .second(true, _) = value { state = true } }
-            .onChanged { value in
-                guard case .second(true, let drag) = value else { return }
-                if dragID != slide.id {
-                    dragID = slide.id; startOffset = metrics.offset; autoOffset = metrics.offset; startFingerX = nil
-                    lastTarget = slides.firstIndex { $0.id == slide.id }
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                }
-                if let drag {
-                    if startFingerX == nil { startFingerX = drag.startLocation.x }
-                    fingerX = drag.location.x
-                    if let target = dragTarget, target != lastTarget { lastTarget = target; UISelectionFeedbackGenerator().selectionChanged() }
-                }
-            }
-            .onEnded { value in
-                defer { endDrag() }
-                guard case .second(true, _) = value, dragID == slide.id, let from = dragFrom, let target = dragTarget, target != from else { return }
-                onMove(slide.id, target)
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            }
+    private func beginReorder(index: Int, fingerX x: CGFloat) {
+        guard slides.indices.contains(index) else { return }
+        dragID = slides[index].id; startOffset = metrics.offset; autoOffset = metrics.offset
+        startFingerX = x; fingerX = x; lastTarget = index
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    }
+
+    private func noteTargetChange() {
+        if let target = dragTarget, target != lastTarget { lastTarget = target; UISelectionFeedbackGenerator().selectionChanged() }
+    }
+
+    private func finishReorder(commit: Bool) {
+        defer { endDrag() }
+        guard commit, let id = dragID, let from = dragFrom, let target = dragTarget, target != from else { return }
+        onMove(id, target)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    /// Scrolls so the slide is fully on screen with its neighbours peeking (centred when it was cut or hidden).
+    private func revealSlide(at index: Int) {
+        guard let offset = SlidePostReorderMath.offsetToReveal(index: index, current: metrics.offset, viewport: metrics.viewport, content: metrics.content,
+                                                               leading: Self.leadingInset, pitch: Self.pitch, tileWidth: Self.tileWidth) else { return }
+        withAnimation(.snappy) { position.scrollTo(x: offset) }
+    }
+
+    /// Soft edges say there is more to scroll to (the next tile fades in rather than ending flush).
+    private var overflowFade: some View {
+        let canScrollBack = metrics.offset > 1
+        let canScrollOn = metrics.content - metrics.viewport - metrics.offset > 1
+        return LinearGradient(stops: [
+            .init(color: canScrollBack ? .clear : .black, location: 0), .init(color: .black, location: canScrollBack ? 0.05 : 0.001),
+            .init(color: .black, location: canScrollOn ? 0.93 : 0.999), .init(color: canScrollOn ? .black.opacity(0.35) : .black, location: 1),
+        ], startPoint: .leading, endPoint: .trailing)
+        .allowsHitTesting(false)
     }
 
     private func endDrag() {
@@ -363,6 +386,82 @@ struct SlidePostStrip: View {
             autoOffset = SlidePostReorderMath.clampedOffset(autoOffset + velocity * CGFloat(dt), content: metrics.content, viewport: metrics.viewport)
             position.scrollTo(x: autoOffset)
         }
+    }
+}
+
+// MARK: Hold-to-reorder recogniser
+
+/// A `UILongPressGestureRecognizer` attached to the strip's own `UIScrollView`. It is a SIBLING of the
+/// scroll view's pan (recognised simultaneously), so a quick drag scrolls normally and only a
+/// deliberate hold (0.3s, under 10pt of movement) lifts a block. Replaces a SwiftUI
+/// `LongPressGesture.sequenced(before: DragGesture(minimumDistance: 0))` on each tile, which claimed
+/// the touch and left the strip unscrollable.
+private struct SlidePostStripReorderRecognizer: UIViewRepresentable {
+    /// The slide under a content-space x, or nil over a gap, the "+ Add" block or a placeholder.
+    let slideIndexAt: (CGFloat) -> Int?
+    let onBegan: (_ index: Int, _ viewportX: CGFloat) -> Void
+    let onMoved: (_ viewportX: CGFloat) -> Void
+    let onFinished: (_ commit: Bool) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeUIView(context: Context) -> AnchorView {
+        let view = AnchorView()
+        view.isUserInteractionEnabled = false
+        view.onWindow = { [weak coordinator = context.coordinator] view in coordinator?.attach(from: view) }
+        return view
+    }
+    func updateUIView(_ view: AnchorView, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.attach(from: view)
+    }
+    static func dismantleUIView(_ view: AnchorView, coordinator: Coordinator) { coordinator.detach() }
+
+    final class AnchorView: UIView {
+        var onWindow: ((UIView) -> Void)?
+        override func didMoveToWindow() { super.didMoveToWindow(); if window != nil { onWindow?(self) } }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var parent: SlidePostStripReorderRecognizer
+        private weak var scrollView: UIScrollView?
+        private var recognizer: UILongPressGestureRecognizer?
+        init(_ parent: SlidePostStripReorderRecognizer) { self.parent = parent }
+
+        func attach(from view: UIView) {
+            var candidate = view.superview
+            while let current = candidate, !(current is UIScrollView) { candidate = current.superview }
+            guard let scroll = candidate as? UIScrollView, scroll !== scrollView else { return }
+            detach()
+            let press = UILongPressGestureRecognizer(target: self, action: #selector(handle(_:)))
+            press.minimumPressDuration = 0.3
+            press.allowableMovement = 10
+            press.delegate = self
+            scroll.addGestureRecognizer(press)
+            scrollView = scroll; recognizer = press
+        }
+        func detach() {
+            if let recognizer { scrollView?.removeGestureRecognizer(recognizer) }
+            recognizer = nil; scrollView = nil
+        }
+
+        @objc private func handle(_ press: UILongPressGestureRecognizer) {
+            guard let scroll = scrollView else { return }
+            let contentX = press.location(in: scroll).x
+            let viewportX = contentX - scroll.contentOffset.x
+            switch press.state {
+            case .began: if let index = parent.slideIndexAt(contentX) { parent.onBegan(index, viewportX) }
+            case .changed: parent.onMoved(viewportX)
+            case .ended: parent.onFinished(true)
+            case .cancelled, .failed: parent.onFinished(false)
+            default: break
+            }
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard let scroll = scrollView else { return false }
+            return parent.slideIndexAt(gestureRecognizer.location(in: scroll).x) != nil
+        }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
     }
 }
 

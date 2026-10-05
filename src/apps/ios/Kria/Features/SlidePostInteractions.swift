@@ -63,6 +63,25 @@ enum SlidePostReorderMath {
         min(max(offset, 0), max(0, content - viewport))
     }
 
+    /// The slide whose block is under a content-space x (nil over a gap or past the last slide).
+    static func slideIndex(atContentX x: CGFloat, count: Int, leading: CGFloat, pitch: CGFloat, tileWidth: CGFloat) -> Int? {
+        let relative = x - leading
+        guard relative >= 0, pitch > 0, count > 0 else { return nil }
+        let index = Int((relative / pitch).rounded(.down))
+        guard index < count, relative - CGFloat(index) * pitch <= tileWidth else { return nil }
+        return index
+    }
+
+    /// The scroll offset that brings a block fully on screen, or nil when it already is. A block cut by
+    /// (or beyond) an edge is centred so its neighbours peek in on both sides.
+    static func offsetToReveal(index: Int, current: CGFloat, viewport: CGFloat, content: CGFloat, leading: CGFloat, pitch: CGFloat, tileWidth: CGFloat, margin: CGFloat = 8) -> CGFloat? {
+        guard viewport > 0, content > viewport + 0.5 else { return nil }
+        let minX = leading + CGFloat(index) * pitch, maxX = minX + tileWidth
+        if minX >= current + margin, maxX <= current + viewport - margin { return nil }
+        let centred = minX + tileWidth / 2 - viewport / 2
+        return clampedOffset(centred, content: content, viewport: viewport)
+    }
+
     /// How far the lifted block sits from its resting place, in content coordinates.
     static func liftedOffset(fingerTravel: CGFloat, scrollTravel: CGFloat) -> CGFloat { fingerTravel + scrollTravel }
 

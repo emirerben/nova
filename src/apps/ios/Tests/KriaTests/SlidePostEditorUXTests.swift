@@ -85,6 +85,37 @@ final class SlidePostReorderMathTests: XCTestCase {
         XCTAssertEqual(SlidePostReorderMath.autoScrollVelocity(fingerX: 2, viewport: 0, content: 900), 0)
     }
 
+    // MARK: Strip scrollability
+
+    /// 12 slides + the "+ Add" block are far wider than any phone, so the strip must be scrollable.
+    func testTwelveSlidesAndAddBlockOverflowEveryPhoneViewport() {
+        let content = 16 + CGFloat(12 + 1) * SlidePostStrip.pitch - SlidePostStrip.spacing + 16
+        for viewport: CGFloat in [320, 375, 393, 402, 430, 440] {
+            XCTAssertGreaterThan(content, viewport + 0.5, "content must exceed the viewport so it scrolls (\(viewport))")
+            XCTAssertEqual(SlidePostReorderMath.clampedOffset(10_000, content: content, viewport: viewport), content - viewport, "the end is reachable")
+        }
+    }
+
+    func testSlideIndexHitTestIgnoresGapsAndTheAddBlock() {
+        func hit(_ x: CGFloat, count: Int = 3) -> Int? { SlidePostReorderMath.slideIndex(atContentX: x, count: count, leading: 16, pitch: 66, tileWidth: 60) }
+        XCTAssertNil(hit(10), "left padding")
+        XCTAssertEqual(hit(16), 0)
+        XCTAssertEqual(hit(75), 0)
+        XCTAssertNil(hit(77), "the 6pt gap between tiles")
+        XCTAssertEqual(hit(16 + 66 + 30), 1)
+        XCTAssertNil(hit(16 + 66 * 3 + 10), "the + Add block is not a slide")
+        XCTAssertNil(hit(100, count: 0))
+    }
+
+    func testOffsetToRevealOnlyScrollsWhenTheBlockIsCutOrHidden() {
+        func reveal(_ i: Int, at offset: CGFloat) -> CGFloat? { SlidePostReorderMath.offsetToReveal(index: i, current: offset, viewport: 400, content: 900, leading: 16, pitch: 66, tileWidth: 60) }
+        XCTAssertNil(reveal(2, at: 0), "already fully visible")
+        XCTAssertEqual(reveal(9, at: 0) ?? -1, 16 + 9 * 66 + 30 - 200, accuracy: 0.01, "far-right block is centred")
+        XCTAssertNotNil(reveal(5, at: 0), "a block cut by the right edge is brought in")
+        XCTAssertEqual(reveal(0, at: 300) ?? -1, 0, accuracy: 0.01, "scrolling back clamps at the start")
+        XCTAssertNil(SlidePostReorderMath.offsetToReveal(index: 1, current: 0, viewport: 400, content: 380, leading: 16, pitch: 66, tileWidth: 60), "content that fits never scrolls")
+    }
+
     func testAutoScrollInATinyViewportNeverOverlapsItsOwnZones() {
         // Two 56pt zones would overlap in a 80pt viewport; each side gets at most half.
         XCTAssertEqual(SlidePostReorderMath.autoScrollVelocity(fingerX: 40, viewport: 80, content: 500), 0, accuracy: 0.001)

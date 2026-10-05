@@ -458,6 +458,123 @@ import XCTest
         attach(app, "Reorder: after edge auto-scroll")
     }
 
+    // MARK: Strip scrolling with real-finger gestures (the strip must scroll on a plain swipe)
+
+    private func windowPoint(_ app: XCUIApplication, x: CGFloat, y: CGFloat) -> XCUICoordinate {
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: x, dy: y))
+    }
+    /// A finger drag from `fromX` to `toX` at the strip's height with a SHORT press (a real swipe never holds 0.3s).
+    private func fingerDrag(_ app: XCUIApplication, fromX: CGFloat, toX: CGFloat, y: CGFloat, hold: TimeInterval = 0.05, velocity: XCUIGestureVelocity = .default) {
+        windowPoint(app, x: fromX, y: y).press(forDuration: hold, thenDragTo: windowPoint(app, x: toX, y: y), withVelocity: velocity, thenHoldForDuration: 0)
+    }
+    private func assertStripReachesTheEnd(_ app: XCUIApplication, _ gesture: () -> Void, file: StaticString = #filePath, line: UInt = #line) {
+        let first = app.buttons["slidepost-tile-1"], add = app.buttons["slidepost-add-tile"]
+        XCTAssertTrue(first.waitForExistence(timeout: 8), file: file, line: line)
+        let window = app.windows.firstMatch.frame
+        let startX = first.frame.midX
+        XCTAssertFalse(add.frame.maxX <= window.maxX, "12 slides: the + Add block starts off screen", file: file, line: line)
+        for _ in 0..<8 where !(add.frame.maxX <= window.maxX && add.frame.minX >= 0) { gesture() }
+        XCTAssertLessThan(first.frame.midX, startX - 20, "the strip moved: the first tile scrolled left", file: file, line: line)
+        XCTAssertLessThan(first.frame.midX, window.minX, "the first tile scrolled off the left edge", file: file, line: line)
+        XCTAssertTrue(add.exists && add.frame.midX < window.maxX, "+ Add is reachable at the far right", file: file, line: line)
+        XCTAssertTrue(app.buttons["slidepost-tile-12"].frame.midX < window.maxX, "the last slide is reachable", file: file, line: line)
+    }
+
+    func testStripScrollsWithAShortPressFingerDrag() {
+        let app = openRichWorkspace(many: true)
+        let tile = app.buttons["slidepost-tile-3"]; XCTAssertTrue(tile.waitForExistence(timeout: 8))
+        let y = tile.frame.midY, w = app.windows.firstMatch.frame.width
+        assertStripReachesTheEnd(app) { fingerDrag(app, fromX: w - 40, toX: 40, y: y) }
+        attach(app, "Strip: scrolled to the end")
+        XCTAssertNotEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes", "scrolling never reorders")
+        XCTAssertFalse(app.buttons["drawer-new-chat"].isHittable, "scrolling the strip does not open the drawer")
+        for _ in 0..<8 { fingerDrag(app, fromX: 40, toX: w - 40, y: y) }
+        XCTAssertTrue(app.buttons["slidepost-tile-1"].isHittable, "scrolled back to the start")
+        attach(app, "Strip: scrolled back")
+    }
+
+    func testStripScrollsWithSlowFingerDragAndSwipes() {
+        let app = openRichWorkspace(many: true)
+        let tile = app.buttons["slidepost-tile-3"]; XCTAssertTrue(tile.waitForExistence(timeout: 8))
+        let y = tile.frame.midY, w = app.windows.firstMatch.frame.width
+        assertStripReachesTheEnd(app) { fingerDrag(app, fromX: w - 40, toX: 40, y: y, hold: 0.02, velocity: .slow) }
+        for _ in 0..<8 { fingerDrag(app, fromX: 30, toX: w - 30, y: y, velocity: .fast) }
+        XCTAssertTrue(app.buttons["slidepost-tile-1"].isHittable, "a swipe right scrolls back to the start")
+        // The stock XCUITest swipe, from a tile that is on screen at rest.
+        app.buttons["slidepost-tile-3"].swipeLeft()
+        XCTAssertLessThan(app.buttons["slidepost-tile-1"].frame.midX, 0, "swipeLeft scrolls the strip")
+    }
+
+    func testStripFlickScrollsFromATileTheGapAndTheAddBlock() {
+        let app = openRichWorkspace(many: true)
+        let tile = app.buttons["slidepost-tile-2"]; XCTAssertTrue(tile.waitForExistence(timeout: 8))
+        let y = tile.frame.midY
+        let tiles = [app.buttons["slidepost-tile-1"], app.buttons["slidepost-tile-2"]]
+        let gapX = (tiles[0].frame.maxX + tiles[1].frame.minX) / 2
+        let w = app.windows.firstMatch.frame.width
+        for (name, x) in [("tile", tile.frame.midX), ("gap", gapX)] {
+            let before = app.buttons["slidepost-tile-1"].frame.midX
+            windowPoint(app, x: x, y: y).press(forDuration: 0.03, thenDragTo: windowPoint(app, x: max(10, x - 220), y: y), withVelocity: .fast, thenHoldForDuration: 0)
+            XCTAssertLessThan(app.buttons["slidepost-tile-1"].frame.midX, before - 20, "a flick starting on the \(name) scrolls the strip")
+            for _ in 0..<4 { fingerDrag(app, fromX: 30, toX: w - 30, y: y, velocity: .fast) }
+        }
+        assertStripReachesTheEnd(app) { fingerDrag(app, fromX: w - 40, toX: 40, y: y, velocity: .fast) }
+        let add = app.buttons["slidepost-add-tile"]
+        let beforeAdd = app.buttons["slidepost-tile-12"].frame.minX
+        windowPoint(app, x: add.frame.midX, y: y).press(forDuration: 0.03, thenDragTo: windowPoint(app, x: 20, y: y), withVelocity: .default, thenHoldForDuration: 0)
+        XCTAssertLessThanOrEqual(app.buttons["slidepost-tile-12"].frame.minX, beforeAdd, "a drag that starts on + Add never moves the strip the wrong way")
+        XCTAssertNotEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes", "no flick reorders")
+    }
+
+    func testStripScrollsWithASelectedSlideAndShowsAnOverflowTile() {
+        let app = openRichWorkspace(many: true)
+        let tile = app.buttons["slidepost-tile-2"]; XCTAssertTrue(tile.waitForExistence(timeout: 8))
+        tile.tap(); XCTAssertTrue(tile.isSelected)
+        let window = app.windows.firstMatch.frame
+        let cut = (1...12).filter { app.buttons["slidepost-tile-\($0)"].frame.maxX > window.maxX }
+        XCTAssertFalse(cut.isEmpty, "a tile is cut by the right edge: the strip visibly overflows")
+        let y = tile.frame.midY
+        assertStripReachesTheEnd(app) { fingerDrag(app, fromX: window.width - 40, toX: 40, y: y) }
+        app.buttons["slidepost-tile-12"].tap()
+        XCTAssertTrue(app.buttons["slidepost-tile-12"].isSelected)
+    }
+
+    func testSelectingAHeldTextStillLetsTheStripScroll() {
+        let app = openRichWorkspace(many: true)
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 8))
+        // Hold-select the text on the preview (browse mode keeps the strip), then scroll the strip.
+        preview.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.8)
+        let tile = app.buttons["slidepost-tile-3"]; XCTAssertTrue(tile.waitForExistence(timeout: 8))
+        let y = tile.frame.midY, w = app.windows.firstMatch.frame.width
+        assertStripReachesTheEnd(app) { fingerDrag(app, fromX: w - 40, toX: 40, y: y) }
+    }
+
+    func testStripSwipeDoesNotOpenDrawerButAPreviewSwipeStillDoes() {
+        let app = openRichWorkspace(many: true)
+        let tile = app.buttons["slidepost-tile-3"]; XCTAssertTrue(tile.waitForExistence(timeout: 8))
+        let y = tile.frame.midY, w = app.windows.firstMatch.frame.width
+        for _ in 0..<3 { fingerDrag(app, fromX: 30, toX: w - 30, y: y) }
+        XCTAssertFalse(app.buttons["drawer-new-chat"].isHittable, "swiping the strip must not open the drawer")
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        let py = preview.frame.minY + 30
+        windowPoint(app, x: 4, y: py).press(forDuration: 0.05, thenDragTo: windowPoint(app, x: w * 0.85, y: py), withVelocity: .fast, thenHoldForDuration: 0)
+        XCTAssertTrue(app.buttons["drawer-new-chat"].waitForExistence(timeout: 3), "a swipe that starts above the strip still opens the drawer")
+        attach(app, "Drawer opens from outside the strip")
+    }
+
+    func testLongPressReorderStillWorksAfterScrollingTheStrip() {
+        let app = openRichWorkspace(many: true)
+        let tile = app.buttons["slidepost-tile-3"]; XCTAssertTrue(tile.waitForExistence(timeout: 8))
+        let y = tile.frame.midY, w = app.windows.firstMatch.frame.width
+        assertStripReachesTheEnd(app) { fingerDrag(app, fromX: w - 40, toX: 40, y: y) }
+        let last = app.buttons["slidepost-tile-12"], prior = app.buttons["slidepost-tile-11"]
+        XCTAssertEqual(coverIndex(app, count: 12), 1)
+        last.press(forDuration: 0.9, thenDragTo: prior, withVelocity: .slow, thenHoldForDuration: 0.2)
+        attach(app, "Strip: after reorder at the end")
+        XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes", "long press then drag reorders")
+    }
+
     /// The "+" block is the LAST item of the same row, with the tiles' footprint and baseline.
     func testAddBlockIsTheLastStripItemWithTheTileFootprint() {
         let app = openRichWorkspace()
