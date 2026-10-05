@@ -327,6 +327,10 @@ private struct CreationWorkspaceView: View {
     /// Approvals have no reply message, so a terminal job status also ends the wait (KRI-222).
     @State private var thinkingSettlesOnJobStatus = false
     @State private var failure: ChatFailure?
+    /// KRI-443: Stop on the live plan feed.
+    @State private var isStoppingRender = false
+    @State private var stopMessage: String?
+    @State private var stopUnavailableJobID: String?
     /// The server's reason the last confirmation was rejected, shown inside the card.
     @State private var confirmationConflict: CreationConfirmationConflict?
     @State private var showsAttachments = false
@@ -435,8 +439,77 @@ private struct CreationWorkspaceView: View {
         events.last { ChatTranscriptMessage.from(event: $0)?.clipQuestion != nil }?.id
     }
 
+    /// KRI-443: the live plan feed, reduced from the thread's `plan_block` events.
+    private var planFeed: PlanBlockFeedState { PlanBlockFeedState.reduce(events: events) }
+
+    private var showsPlanFeed: Bool {
+        PlanFeedVisibility.shows(
+            capabilityEnabled: capabilities?.livePlanReviewEnabled,
+            runtimeVersion: currentProject.runtimeVersion,
+            feed: planFeed,
+            activeJobID: fullThread?.activeJobID ?? currentProject.activeJobID?.uuidString
+        )
+    }
+
+    @ViewBuilder private var planFeedView: some View {
+        let feed = planFeed
+        PlanBlockFeed(
+            feed: feed,
+            canStop: feed.turnID != nil && stopUnavailableJobID != feed.jobID,
+            isStopping: isStoppingRender,
+            stopMessage: stopMessage,
+            stop: stopRender
+        )
+        .id("plan-feed")
+    }
+
+    /// Cancels the render behind the feed. Always sends the newest thread revision: every `plan_block`
+    /// event bumps it, so the revision the feed was drawn with is usually stale.
+    private func stopRender() {
+        let feed = planFeed
+        guard let turnID = feed.turnID, !isStoppingRender else { return }
+        isStoppingRender = true
+        stopMessage = nil
+        Task {
+            defer { isStoppingRender = false }
+            func hideStop() {
+                stopUnavailableJobID = feed.jobID
+                stopMessage = "This render can’t be stopped any more."
+            }
+            do {
+                _ = try await stopRenderRequest(turnID: turnID)
+                _ = try? await refreshDelta()
+                await refreshNow()
+            } catch let error as APIError where error.isConflict {
+                if error.conflictCode == "turn_not_cancellable" || (error.conflictDetail ?? "").contains("turn_not_cancellable") {
+                    hideStop()
+                } else {
+                    // A stale revision: take the latest from a fresh delta and try once more.
+                    _ = try? await refreshDelta()
+                    do {
+                        _ = try await stopRenderRequest(turnID: turnID)
+                        _ = try? await refreshDelta()
+                        await refreshNow()
+                    } catch let retry as APIError where retry.isConflict {
+                        hideStop()
+                    } catch {
+                        failure = ChatFailure("Kria couldn’t stop the render.", error: error)
+                    }
+                }
+            } catch {
+                failure = ChatFailure("Kria couldn’t stop the render.", error: error)
+            }
+        }
+    }
+
+    private func stopRenderRequest(turnID: String) async throws -> TurnCancelled {
+        try await model.api.cancelRender(threadID: project.id, turnID: turnID, revision: threadRevision)
+    }
+
     private var timelineUpdateToken: String {
-        timeline.map(\.id).joined(separator: "|") + "|\(isThinking)|\(isSending)|\(failure?.message ?? "")"
+        let feed = planFeed
+        return timeline.map(\.id).joined(separator: "|") + "|\(isThinking)|\(isSending)|\(failure?.message ?? "")"
+            + "|feed\(feed.decidedCount)/\(feed.totalCount)"
     }
 
     @ViewBuilder private var conversationContent: some View {
@@ -447,7 +520,9 @@ private struct CreationWorkspaceView: View {
                 timelineRow(group.entries[0])
             }
         }
-        if (isThinking || isSending) && workspaceStage != .rendering { ThinkingRow().id("thinking") }
+        if (isThinking || isSending) && workspaceStage != .rendering {
+            if showsPlanFeed { planFeedView } else { ThinkingRow().id("thinking") }
+        }
         if let approvalNotice { Text(approvalNotice).font(KriaFont.body(13)) }
         if let failure {
             RecoveryCard(failure: failure) { Task { await refreshCapabilities(); await refreshNow() } }
@@ -935,6 +1010,8 @@ private struct CreationWorkspaceView: View {
                     await refreshCapabilities()
                     await refreshDeviceRender(retry: true)
                 }
+            } else if showsPlanFeed {
+                planFeedView
             } else {
                 RenderingStage(
                     isPreparing: currentProject.activeJobID == nil,
@@ -1696,7 +1773,7 @@ enum ThreadRevisionOrder {
 /// the merged transcript and the sequence the turn was accepted at, never on which fetch delivered it.
 enum ChatThinkingSettlement {
     static let settledTypes: Set<String> = [
-        "generation_started", "render_queued", "render_started", "rendering",
+        "generation_started", "render_queued", "render_started", "rendering", "plan_block",
         "generation_ready", "render_failed", "generation_failed"
     ]
 

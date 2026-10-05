@@ -1198,6 +1198,123 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(inViewport() && element.isHittable, "\(element.identifier) must be on screen before it is tapped")
     }
 
+    // MARK: KRI-443 live plan feed
+
+    /// Launches the v2 creation flow with the staged `plan_block` fixture and taps Create, leaving the app
+    /// on the live feed.
+    private func launchLivePlanFeed(
+        reduceMotion: Bool, reduceTransparency: Bool = false, cancel: String? = nil, capability: Bool = true
+    ) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        if capability { app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS"] = "1" }
+        if reduceMotion { app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1" }
+        if reduceTransparency { app.launchEnvironment["UI_TEST_REDUCE_TRANSPARENCY"] = "1" }
+        if let cancel { app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_CANCEL"] = cancel }
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+        let next = app.buttons["Send clips"]
+        XCTAssertTrue(next.waitForExistence(timeout: 5))
+        next.tap()
+        let confirm = app.buttons["Create this video"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        confirm.tap()
+        return app
+    }
+
+    private func planBlockValue(_ app: XCUIApplication, _ section: String) -> String {
+        (app.buttons["plan-feed.block.\(section)"].value as? String) ?? ""
+    }
+
+    private func attach(_ app: XCUIApplication, _ name: String) {
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = name
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
+    func testLivePlanFeedFullSequence() {
+        let app = launchLivePlanFeed(reduceMotion: false)
+        let feed = app.otherElements["plan-feed"]
+        XCTAssertTrue(feed.waitForExistence(timeout: 30), "the feed replaces the thinking and rendering wait")
+        XCTAssertFalse(app.staticTexts["I’m shaping your video"].exists)
+        // Waiting sections show as chips under "Still to decide".
+        XCTAssertTrue(app.staticTexts["plan-feed.waiting-heading"].waitForExistence(timeout: 10))
+        XCTAssertTrue(eventually(timeout: 10) { app.descendants(matching: .any)["plan-feed.chip.look"].exists || self.planBlockValue(app, "look") != "" })
+        attach(app, "plan-feed-waiting")
+
+        // Title decides first and is expanded as the newest; clips then takes over and title collapses.
+        XCTAssertTrue(eventually(timeout: 30) { self.planBlockValue(app, "title").hasPrefix("decided") })
+        XCTAssertTrue(eventually(timeout: 30) { self.planBlockValue(app, "clips").hasPrefix("decided") })
+        XCTAssertTrue(eventually(timeout: 10) { !app.descendants(matching: .any)["plan-feed.change.title"].exists },
+                      "an older decision collapses to a one-line row")
+        attach(app, "plan-feed-midway")
+        app.buttons["plan-feed.block.title"].tap()
+        XCTAssertTrue(eventually(timeout: 5) { app.descendants(matching: .any)["plan-feed.change.title"].exists }, "tapping a collapsed row expands it")
+        XCTAssertFalse(app.descendants(matching: .any)["plan-feed.change.title"].isEnabled && false)
+        app.buttons["plan-feed.block.title"].tap()
+        XCTAssertTrue(eventually(timeout: 5) { !app.descendants(matching: .any)["plan-feed.change.title"].exists })
+
+        // Everything decided: progress, then the Review plan entry that expands every block.
+        let title = app.staticTexts["plan-feed.title"]
+        XCTAssertTrue(eventually(timeout: 60) { title.label == "Plan ready · 7 of 7 decided" })
+        XCTAssertEqual(app.otherElements["plan-feed.progress"].value as? String ?? app.descendants(matching: .any)["plan-feed.progress"].value as? String, "7 of 7 decided")
+        let review = app.buttons["plan-feed.review"]
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        XCTAssertTrue(planBlockValue(app, "overlays").contains("Not used"), "a skipped section counts as decided")
+        review.tap()
+        for section in ["title", "clips", "captions", "music", "sfx", "overlays", "look"] {
+            XCTAssertTrue(app.descendants(matching: .any)["plan-feed.change.\(section)"].waitForExistence(timeout: 5), "\(section) expanded in review")
+        }
+        attach(app, "plan-feed-review")
+        // ReadyStage is unchanged once the render finishes.
+        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 60))
+        XCTAssertFalse(feed.exists)
+    }
+
+    func testLivePlanFeedStaysOffWithoutTheCapability() {
+        let app = launchLivePlanFeed(reduceMotion: true, capability: false)
+        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.otherElements["plan-feed"].exists)
+    }
+
+    func testLivePlanFeedStopCancelsTheRender() {
+        let app = launchLivePlanFeed(reduceMotion: true)
+        let stop = app.buttons["plan-feed.stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 30))
+        XCTAssertGreaterThanOrEqual(stop.frame.height, 44)
+        XCTAssertTrue(eventually(timeout: 20) { self.planBlockValue(app, "title") != "" })
+        stop.tap()
+        XCTAssertTrue(eventually(timeout: 20) { !app.otherElements["plan-feed"].exists }, "a stopped render leaves the feed")
+        XCTAssertFalse(app.buttons["Open editor"].exists)
+        attach(app, "plan-feed-stopped")
+    }
+
+    func testLivePlanFeedStopHidesWhenTheRenderCannotBeCancelled() {
+        let app = launchLivePlanFeed(reduceMotion: true, cancel: "unavailable")
+        let stop = app.buttons["plan-feed.stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 30))
+        stop.tap()
+        XCTAssertTrue(app.staticTexts["plan-feed.stop-message"].waitForExistence(timeout: 10))
+        XCTAssertTrue(eventually(timeout: 5) { !app.buttons["plan-feed.stop"].exists })
+        XCTAssertTrue(app.otherElements["plan-feed"].exists, "the render carries on")
+    }
+
+    func testLivePlanFeedUnderReduceMotionAndReduceTransparency() {
+        let app = launchLivePlanFeed(reduceMotion: true, reduceTransparency: true)
+        XCTAssertTrue(app.otherElements["plan-feed"].waitForExistence(timeout: 30))
+        XCTAssertTrue(eventually(timeout: 40) {
+            ["title", "clips", "captions", "music", "sfx", "overlays", "look"].contains { self.planBlockValue(app, $0) == "deciding" }
+        })
+        attach(app, "plan-feed-reduced-deciding")
+        XCTAssertTrue(eventually(timeout: 60) { app.staticTexts["plan-feed.title"].label == "Plan ready · 7 of 7 decided" })
+        attach(app, "plan-feed-reduced-complete")
+        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 60))
+    }
+
     private func createFreshChat(in app: XCUIApplication) {
         XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 20))
         app.buttons["Open projects"].tap()

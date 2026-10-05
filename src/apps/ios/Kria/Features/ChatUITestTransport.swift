@@ -70,6 +70,10 @@ final class CreationChatFixture: @unchecked Sendable {
     private var slideDrafts: [String: [String: Any]] = [:]
     private var slideRendered: Set<String> = []
     private var deviceRevisions: [String: Int] = [:]
+    /// KRI-443 (`KRIA_CHAT_PLAN_BLOCKS=1`): how far the staged `plan_block` script has advanced, per thread.
+    private var planStages: [String: Int] = [:]
+    private var planTicks: [String: Int] = [:]
+    private var planTurnIDs: [String: String] = [:]
     private let approvalID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     private var runtime: Int { ProcessInfo.processInfo.environment["KRIA_CHAT_CREATION_FLOW"] == "v2" ? 2 : 1 }
     /// Returns nil when the request should fail without any HTTP response.
@@ -80,6 +84,7 @@ final class CreationChatFixture: @unchecked Sendable {
         func response(_ object: Any, status: Int = 200) -> (Int, Data) { (status, (try? JSONSerialization.data(withJSONObject: object)) ?? Data()) }
         if path == "/creation-threads/capabilities" {
             var capabilities: [String: Any] = ["formats": [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", 1), ("slides", "slides", 20)].map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1" { capabilities["live_plan_review_enabled"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_RICH_TEXT"] == "1" { capabilities["slide_post_rich_text"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CHAT_EDIT"] == "1" { capabilities["slide_post_chat_edit"] = true }
             // KRIA_CHAT_CLIP_QUESTION: "1" = server advertises clip_selection_questions; "legacy" = it still
@@ -142,6 +147,21 @@ final class CreationChatFixture: @unchecked Sendable {
             var event: [String: Any] = ["id": UUID().uuidString, "sequence": events.count, "revision": revision, "role": role, "event_type": type, "content": text ?? "", "payload": payload, "created_at": "2026-09-10T10:00:00Z"]
             if let clientEventID { event["client_event_id"] = clientEventID }
             events.append(event)
+        }
+        if parts.last == "cancel-render" {
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_CANCEL"] == "unavailable" {
+                return response(["problem": ["code": "turn_not_cancellable", "message": "This render can no longer be stopped."]], status: 409)
+            }
+            // Like the server, a stale revision is refused; the app retries once with the newest one.
+            if (body["expected_thread_revision"] as? Int) != revision {
+                return response(["problem": ["code": "revision_conflict", "message": "The thread moved on."]], status: 409)
+            }
+            let turn = parts.count >= 4 ? parts[3] : id
+            append("render_cancelled", role: "system", payload: ["turn_id": turn, "job_id": id])
+            thread["job"] = ["id": id, "status": "cancelled", "variants": []]
+            planStages[id] = nil; renders[id] = nil
+            thread["events"] = events; thread["revision"] = revision; threads[id] = thread
+            return response(["turn_id": turn, "thread_revision": revision, "status": "cancelled", "approval_ids": [String]()])
         }
         if parts.last == "actions" {
             let action = body["action"] as? String ?? ""
@@ -301,10 +321,15 @@ final class CreationChatFixture: @unchecked Sendable {
         } else if parts.contains("approvals") {
             if parts.last == "approve" {
                 if let mismatch = renderShapeMismatch(body) { return response(["detail": mismatch], status: 422) }
+                let approved = events.last(where: { $0["event_type"] as? String == "approval_requested" })?["payload"] as? [String: Any]
                 append("approval_approved")
                 thread["active_job_id"] = id
                 thread["job"] = ["id": id, "status": "processing", "variants": []]
                 renders[id] = 0
+                if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1" {
+                    planStages[id] = 0; planTicks[id] = 0
+                    planTurnIDs[id] = approved?["turn_id"] as? String ?? id
+                }
             } else {
                 let approvalPayload = events.last(where: { $0["event_type"] as? String == "approval_requested" })?["payload"] as? [String: Any]
                 let turnID = approvalPayload?["turn_id"] as? String ?? id
@@ -320,7 +345,7 @@ final class CreationChatFixture: @unchecked Sendable {
             }
         } else if parts.count == 2, let count = renders[id] {
             renders[id] = count + 1
-            if count >= 2 {
+            if count >= 2, (planStages[id] ?? Self.planScript.count + 8) >= Self.planScript.count + 8 {
                 thread["job"] = ["id": id, "status": "ready", "variants": [["variant_id": "original_text", "render_status": "ready", "output_url": "https://fixture.invalid/result.mp4"]]]
                 renders[id] = nil
                 append("generation_ready")
@@ -329,6 +354,16 @@ final class CreationChatFixture: @unchecked Sendable {
                     append("assistant_review", text: "The cut is ready. I did most of what you asked; one thing needs your call.",
                            payload: ["turn_id": id, "turn_value": "review", "requirement_receipts": Self.fixtureReceipts])
                 }
+            }
+        }
+        if parts.last == "delta", let stage = planStages[id] {
+            // One scripted step every second poll so a UI test can observe each state.
+            planTicks[id, default: 0] += 1
+            if planTicks[id, default: 0].isMultiple(of: 2) {
+                if stage < Self.planScript.count {
+                    append("plan_block", role: "system", payload: ["turn_id": planTurnIDs[id] ?? id, "job_id": id, "blocks": Self.planScript[stage]])
+                }
+                planStages[id] = stage + 1
             }
         }
         thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
@@ -340,6 +375,28 @@ final class CreationChatFixture: @unchecked Sendable {
         if parts.last == "approve" { return response(["approval_id": approvalID, "thread_id": id, "status": "approved", "thread_revision": revision]) }
         return response(withRenderShape(thread))
     }
+    /// KRI-443: the staged `plan_block` payloads, in the order the pipeline would decide them.
+    private static var planScript: [[[String: Any]]] {
+        func block(_ section: String, _ state: String, _ summary: String? = nil, detail: String? = nil, skipped: Bool = false) -> [String: Any] {
+            var value: [String: Any] = ["section_id": section, "state": state, "intent": false, "skipped": skipped]
+            if let summary { value["summary"] = summary }
+            if let detail { value["detail"] = detail }
+            if state == "decided" { value["decided_at"] = "2026-10-05T10:00:00Z" }
+            return value
+        }
+        let sections = ["title", "clips", "captions", "music", "sfx", "overlays", "look"]
+        return [
+            sections.map { block($0, "waiting") },
+            [block("title", "deciding")],
+            [block("title", "decided", "Sunday reset, slowed down", detail: "Opens on the kettle, then the walk."), block("clips", "deciding")],
+            [block("clips", "decided", "6 clips · 18s", detail: "Kettle, street, bakery, bench, harbor, sunset.")],
+            [block("captions", "decided", "Bold captions, lower third"), block("music", "deciding")],
+            [block("music", "decided", "Golden Hour by Kira"), block("sfx", "deciding")],
+            [block("sfx", "decided", "4 sound effects"), block("overlays", "decided", nil, skipped: true), block("look", "deciding")],
+            [block("look", "decided", "Warm film grain")],
+        ]
+    }
+
     /// KRI-306 fixture (`KRIA_CHAT_RENDER_SHAPE=1`): the server offers Vertical / Landscape and
     /// Black bars / Crop on a pending approval or plan, and nothing once a job exists.
     private func withRenderShape(_ thread: [String: Any]) -> [String: Any] {

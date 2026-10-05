@@ -55,7 +55,12 @@
       "KriaUITests/SongOrderUITests/testOrderQuestionFallsBackToTextWhenServerDoesNotAdvertiseIt",
       "KriaUITests/SongOrderUITests/testAddYourSongStepAppearsOnlyWhenTheServerAdvertisesIt",
       "KriaUITests/CreationUITests/testChoiceQuestionShowsRecommendedOptionAndSendsStructuredAnswerOnce",
-      "KriaUITests/CreationUITests/testChoiceQuestionFallsBackToTextWhenServerLacksCapability"
+      "KriaUITests/CreationUITests/testChoiceQuestionFallsBackToTextWhenServerLacksCapability",
+      "KriaUITests/CreationUITests/testLivePlanFeedFullSequence",
+      "KriaUITests/CreationUITests/testLivePlanFeedStaysOffWithoutTheCapability",
+      "KriaUITests/CreationUITests/testLivePlanFeedStopCancelsTheRender",
+      "KriaUITests/CreationUITests/testLivePlanFeedStopHidesWhenTheRenderCannotBeCancelled",
+      "KriaUITests/CreationUITests/testLivePlanFeedUnderReduceMotionAndReduceTransparency"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
