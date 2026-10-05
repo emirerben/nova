@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.76.0] - 2026-10-05
+
+### Changed
+- chore(evals): make paid AI evals opt-in, raise dev AI budget (#1391) <!-- release-pr: 1391 -->
+
 ## [0.78.75.0] - 2026-10-05
 
 ### Changed
