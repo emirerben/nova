@@ -12,15 +12,15 @@ func nativeEditorWireLabel(_ value: String) -> String {
     }
 }
 
-struct NativeEditorSlider<Label: View>: View {
-    @ObservedObject var session: NativeEditorSession
+struct NativeEditorSlider<Label: View, Session: NativeTransactionControlling>: View {
+    @ObservedObject var session: Session
     @Binding private var value: Double
     private let bounds: ClosedRange<Double>
     private let step: Double?
     private let label: () -> Label
 
     init(
-        session: NativeEditorSession,
+        session: Session,
         value: Binding<Double>,
         in bounds: ClosedRange<Double>,
         step: Double? = nil,

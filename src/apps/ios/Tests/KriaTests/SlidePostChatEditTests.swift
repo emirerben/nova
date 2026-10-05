@@ -223,18 +223,12 @@ import XCTest
 
     // MARK: Review fixes
 
-    func testSendingFromArrangeReturnsToBrowseSoTheThreadShows() {
-        XCTAssertEqual(SlidePostMode.afterChatSend, .browse)
-        XCTAssertFalse(SlidePostMode.showsChatThread(chatEnabled: true, chatOpen: true, mode: .arrange))
-        XCTAssertTrue(SlidePostMode.showsChatThread(chatEnabled: true, chatOpen: true, mode: SlidePostMode.afterChatSend))
-    }
-
-    func testChatComposerNeedsBothCapabilities() throws {
+    func testChatEditFlagAloneDecidesStagingBecauseTheRichLayoutIsUnconditional() throws {
         func caps(_ json: String) throws -> CreationCapabilities { try JSONDecoder().decode(CreationCapabilities.self, from: Data(json.utf8)) }
-        XCTAssertTrue(try caps(#"{"formats":[],"slide_post_rich_text":true,"slide_post_chat_edit":true}"#).slidePostChatComposerEnabled)
-        XCTAssertFalse(try caps(#"{"formats":[],"slide_post_chat_edit":true}"#).slidePostChatComposerEnabled, "stale chat flag without rich text")
-        XCTAssertFalse(try caps(#"{"formats":[],"slide_post_chat_edit":true,"slide_post_rich_text":false}"#).slidePostChatComposerEnabled)
-        XCTAssertFalse(try caps(#"{"formats":[],"slide_post_rich_text":true}"#).slidePostChatComposerEnabled)
+        XCTAssertTrue(try caps(#"{"formats":[],"slide_post_chat_edit":true}"#).slidePostChatEditEnabled)
+        XCTAssertTrue(try caps(#"{"formats":[],"slide_post_rich_text":false,"slide_post_chat_edit":true}"#).slidePostChatEditEnabled)
+        XCTAssertFalse(try caps(#"{"formats":[],"slide_post_rich_text":true}"#).slidePostChatEditEnabled)
+        XCTAssertFalse(try caps(#"{"formats":[]}"#).slidePostChatEditEnabled, "unknown => propose flow")
     }
 
     func testFailedSendIsNotSentAsADanglingUserTurn() async throws {
@@ -327,6 +321,54 @@ import XCTest
         await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "hi")
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertTrue(captured.putBodies.isEmpty, "create must not save while a chat turn is in flight")
+    }
+
+    // MARK: Brand-new post (locally seeded, unsaved draft)
+
+    private func newPostState() -> SlidePostState {
+        let ids = ["0b7f6d6e-1111-4a5b-8c11-000000000001", "0b7f6d6e-1111-4a5b-8c11-000000000002", "0b7f6d6e-1111-4a5b-8c11-000000000003"]
+        return SlidePostState(itemID: itemID, title: "New post", jobID: nil, draft: nil,
+            assets: ids.map { .init(id: $0, kind: "image", status: "ready", sourceURL: URL(string: "https://storage.test/source"), durationS: nil, mediaStatus: "available") },
+            renderStatus: "not_rendered", renderedVersion: nil, slides: [], bundleURL: nil)
+    }
+
+    /// Production 422 (2026-10-05): the seeded draft is version 0 and the server's `SlidePostDraft.version`
+    /// is `ge=1`. The chat-edit request for a never-saved post must carry a server-valid version.
+    func testBrandNewPostChatEditSendsAServerValidDraft() async throws {
+        let remote = newPostState()
+        serve(remote: remote) { try self.response("clarification", reply: "Which photos?") }
+        let session = await session(remote: remote)
+        XCTAssertNil(session.draft)
+        XCTAssertTrue(session.seedDraftIfNeeded())
+        XCTAssertEqual(session.draft?.version, 0, "the local seed is unsaved")
+        await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "make a slideshow")
+        let body = try XCTUnwrap(captured.chatBodies.last)
+        let sent = try XCTUnwrap(body["draft"] as? [String: Any], "an unsaved seed must be sent, the server has nothing stored")
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(sent["version"] as? Int), 1)
+        XCTAssertEqual(session.draft?.version, 0, "the editor's own stamp is untouched; only the wire copy is clamped")
+        let json = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+        print("KRIA_CHAT_EDIT_JSON \(String(decoding: json, as: UTF8.self))")
+    }
+
+    func testFailedChatEditExplainsClearlyAndKeepsTheMessageForRetry() async throws {
+        for (status, expect) in [(422, "couldn't use that edit request"), (500, "problem on its side")] {
+            defaults.removePersistentDomain(forName: suite)
+            let remote = state()
+            serve(remote: remote) { (status, Data(#"{"detail":[{"loc":["body","draft","version"],"msg":"Input should be greater than or equal to 1"}]}"#.utf8)) }
+            let session = await session(remote: remote)
+            session.setCaption("dirty")
+            await session.chatEdit(api: NativeEditorTestSupport.api(), itemID: itemID, message: "sort them")
+            let failure = try XCTUnwrap(session.chat.last)
+            XCTAssertTrue(failure.text.contains(expect), failure.text)
+            XCTAssertFalse(failure.text.contains("reach"), "a server answer must not be blamed on the connection")
+            XCTAssertFalse(failure.text.contains("body.draft"), "raw validation text is logged, not shown")
+            XCTAssertEqual(failure.retryText, "sort them")
+            XCTAssertEqual(session.chat.first?.text, "sort them", "the user's message is not dropped")
+        }
+    }
+
+    func testOfflineFailureBlamesTheConnection() {
+        XCTAssertTrue(SlidePostSession.chatFailureMessage(APIError.offline).contains("connection"))
     }
 }
 

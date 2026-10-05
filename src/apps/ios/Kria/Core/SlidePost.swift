@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import OSLog
 
 struct SlidePostText: Codable, Equatable, Sendable {
     var content: String
@@ -12,7 +13,7 @@ struct SlidePostText: Codable, Equatable, Sendable {
 struct SlidePostTextElement: Codable, Equatable, Identifiable, Sendable {
     static let defaultFont = "Inter-Bold"
     static let maxLength = 120
-    static let sizeRange = 24...200
+    static let sizeRange = 8...200
     var id: String
     var text: String
     var role = "text"
@@ -99,6 +100,9 @@ struct SlidePostTextElement: Codable, Equatable, Identifiable, Sendable {
         fontFamily = other.fontFamily; color = other.color; sizePx = other.sizePx; alignment = other.alignment
         position = other.position; xFrac = other.xFrac; yFrac = other.yFrac; maxWidthFrac = other.maxWidthFrac
         strokeWidth = other.strokeWidth; shadowEnabled = other.shadowEnabled; background = other.background
+        // Style keys not typed yet (rotation, outline colour, shadow, preset ...) move as a set: a default
+        // on the source clears the target's value instead of leaving it behind.
+        for key in Self.styleExtraKeys { extra[key] = nil }
         for (key, value) in other.extra { extra[key] = value }
     }
     var isInvalid: Bool {
@@ -106,7 +110,7 @@ struct SlidePostTextElement: Codable, Equatable, Identifiable, Sendable {
         text.isEmpty || text.unicodeScalars.count > Self.maxLength || fontFamily.isEmpty || !Self.sizeRange.contains(sizePx)
             || (maxWidthFrac.map { !(0.2...1).contains($0) } ?? false)
             || !["left", "center", "right"].contains(alignment) || !["top", "center", "bottom", "custom"].contains(position)
-            || !["none", "box"].contains(background) || !Self.isHex(color) || !(0...12).contains(strokeWidth)
+            || !["none", "box"].contains(background) || !Self.isHex(color) || !Self.strokeRange.contains(strokeWidth)
             || [xFrac, yFrac].contains { $0.map { !(0...1).contains($0) } ?? false }
     }
     /// Font chips for the Style tab: the default face first, then every live registry font, with
@@ -348,6 +352,15 @@ struct SlidePostChatEditRequest: Encodable, Sendable {
     let draft: SlidePostDraft?
     let turns: [SlidePostChatTurn]
     let clientRequestID: String
+    init(message: String, expectedVersion: Int, draft: SlidePostDraft?, turns: [SlidePostChatTurn], clientRequestID: String) {
+        self.message = message; self.expectedVersion = expectedVersion; self.turns = turns; self.clientRequestID = clientRequestID
+        // A brand-new post's locally seeded draft carries version 0 (nothing saved yet), but the server's
+        // draft model requires version >= 1 (`SlidePostDraft.version: ge=1`) and 422s the whole request.
+        // The server ignores the client's version here (it re-stamps from the stored one), so send >= 1.
+        var sent = draft
+        if var value = sent, value.version < 1 { value.version = 1; sent = value }
+        self.draft = sent
+    }
     enum CodingKeys: String, CodingKey {
         case message, draft, turns
         case expectedVersion = "expected_version", clientRequestID = "client_request_id"
@@ -436,6 +449,11 @@ private struct SlidePostItemResponse: Decodable {
     @Published private(set) var operationMessage: String?
     /// Text being edited on the canvas (not persisted; the text panel owns it).
     @Published var selectedTextID: String?
+    /// Why some freshly imported media did not become a slide (limit / photos-only). Cleared by the user.
+    @Published var autoAppendNotice: String?
+    /// Pool assets the session has already decided about (in the draft, removed, or skipped). Only an
+    /// asset outside this set is appended automatically; nil until the pool was first looked at.
+    private(set) var seenAssetIDs: Set<String>?
     /// The local draft always wins (KRI-298): a newer server version is rebased onto silently,
     /// so there is no conflict state. Kept as a constant for older call sites.
     var hasConflict: Bool { false }
@@ -538,7 +556,8 @@ private struct SlidePostItemResponse: Decodable {
 
     func propose(api: any KriaAPIClient, itemID: String, instruction: String, platformProfile: String? = nil) async {
         guard !isBusy else { return }
-        guard !hasUnsavedChanges else { error = "Save your slide edits before asking Kria for another direction."; return }
+        // A never-saved draft is only the editor's starting point, so it does not block a proposal.
+        guard !hasUnsavedChanges || state?.draft == nil else { error = "Save your slide edits before asking Kria for another direction."; return }
         let prompt = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, prompt.count <= 2000 else { error = "Tell Kria your direction in 2,000 characters or fewer."; return }
         guard !readyAssets.isEmpty else { error = "Add photos or videos and wait for them to finish preparing."; return }
@@ -548,6 +567,8 @@ private struct SlidePostItemResponse: Decodable {
         do {
             let profile = platformProfile ?? draft?.platformProfile ?? proposal?.draft.platformProfile ?? (readyAssets.contains(where: { $0.kind == "video" }) ? "instagram_carousel" : "tiktok_photo")
             let ids = draft?.slides.map(\.assetID) ?? proposal?.draft.slides.map(\.assetID) ?? readyAssets.map(\.id)
+            // Media that arrives while Kria arranges is not in this request, so it must stay unseen.
+            seenAssetIDs = (seenAssetIDs ?? []).union(ids)
             let result = try await api.proposeSlidePost(itemID: itemID, request: .init(expectedVersion: baseVersion, platformProfile: profile, assetIDs: ids, instruction: prompt))
             guard result.baseVersion == baseVersion else { throw APIError.conflict }
             proposal = result
@@ -624,8 +645,8 @@ private struct SlidePostItemResponse: Decodable {
                                             turns: Array(turns), clientRequestID: UUID().uuidString)
         let result: SlidePostChatEditResponse
         do { result = try await api.slidePostChatEdit(itemID: itemID, body: body) } catch is CancellationError { return false } catch {
-            let reason = (error as? APIError)?.conflictDetail ?? error.localizedDescription
-            chat.append(.init(role: "assistant", text: "I couldn't reach Kria just now. \(reason)", retryText: text))
+            Self.logChatFailure(error)
+            chat.append(.init(role: "assistant", text: Self.chatFailureMessage(error), retryText: text))
             return false
         }
         guard result.outcome == .edited, let proposed = result.draft else {
@@ -646,6 +667,26 @@ private struct SlidePostItemResponse: Decodable {
         selectedTextID = nil
         chat.append(.init(role: "assistant", text: result.reply, changes: result.changes))
         return true
+    }
+    /// Plain-language reason a chat send failed. Connection drops blame the connection; a server
+    /// refusal never does (it was reached) and never leaks raw validation text.
+    nonisolated static func chatFailureMessage(_ error: Error) -> String {
+        if let api = error as? APIError {
+            if let reason = api.conflictDetail { return "Kria couldn't apply that: \(reason)" }
+            if case let .requestFailed(status, _) = api {
+                if (500...599).contains(status) { return "Kria hit a problem on its side. Your slides are safe. Try again in a moment." }
+                return "Kria couldn't use that edit request. Your slides are safe. Try again, or rephrase."
+            }
+            if case .offline = api { return "I couldn't reach Kria. Check your connection and try again." }
+        }
+        return "Something went wrong sending that. Your message is kept; try again."
+    }
+    private static func logChatFailure(_ error: Error) {
+        if case let APIError.requestFailed(status, detail) = error {
+            Logger(subsystem: "com.kria.app", category: "slidepost").error("chat-edit failed status=\(status, privacy: .public) detail=\(detail.message ?? "none", privacy: .public)")
+        } else {
+            Logger(subsystem: "com.kria.app", category: "slidepost").error("chat-edit failed: \(String(describing: error), privacy: .public)")
+        }
     }
     /// Whether `message` would be sent; sets the user-facing error when it is too long. Callers that
     /// clear a composer must check this first so rejected text is never lost.
@@ -787,6 +828,44 @@ private struct SlidePostItemResponse: Decodable {
         stageDraft(value)
         if selectedID == id { selectedID = value.slides.first?.id }
     }
+    /// A post with no saved draft yet starts as an unsaved local draft of every ready asset, in pool
+    /// order, so the editor is always the one rich layout (strip, text, look) instead of a separate
+    /// "start your post" screen. Nothing reaches the server until the user saves. Returns true when seeded.
+    @discardableResult
+    func seedDraftIfNeeded() -> Bool {
+        guard !isBusy, !isChatting, draft == nil, proposal == nil, state != nil, !readyAssets.isEmpty else { return false }
+        let ready = readyAssets
+        let profile = (ready.count >= 2 || ready.contains { $0.kind == "video" }) ? "instagram_carousel" : "tiktok_photo"
+        let limit = SlidePostAutoAppend.maxSlides(profile: profile)
+        let usable = ready.filter { profile != "tiktok_photo" || $0.kind != "video" }.prefix(limit)
+        guard !usable.isEmpty else { return false }
+        seenAssetIDs = Set(ready.map(\.id))
+        let value = SlidePostDraft(
+            version: baseVersion, platformProfile: profile,
+            slides: usable.map { SlidePostSlide(id: UUID().uuidString, assetID: $0.id, kind: $0.kind) }
+        )
+        draft = value
+        selectedID = value.slides.first?.id
+        return true
+    }
+    /// Appends every ready pool asset the session has not decided about yet, as ONE undoable step.
+    /// Safe to call on any poll or refresh: it defers (touching nothing) while a save/propose or an AI
+    /// edit is in flight, so newer local edits and a staged AI result are never clobbered, and it never
+    /// re-adds an asset the user removed. Returns the number of slides added.
+    @discardableResult
+    func appendNewlyReadyAssets() -> Int {
+        guard !isBusy, !isChatting, proposal == nil, state != nil, let current = draft else { return 0 }
+        let plan = SlidePostAutoAppend.plan(draft: current, ready: readyAssets, seen: seenAssetIDs)
+        guard plan.seen != seenAssetIDs || !plan.toAppend.isEmpty else { return 0 }
+        seenAssetIDs = plan.seen
+        persist()
+        if let notice = plan.notice { autoAppendNotice = notice }
+        guard !plan.toAppend.isEmpty else { return 0 }
+        var value = current
+        value.slides.append(contentsOf: plan.toAppend.map { SlidePostSlide(id: UUID().uuidString, assetID: $0.id, kind: $0.kind) })
+        stageDraft(value)
+        return plan.toAppend.count
+    }
     func addAsset(id: String) {
         guard var value = draft,
               let asset = readyAssets.first(where: { $0.id == id }), !value.slides.contains(where: { $0.assetID == id }) else { return }
@@ -899,19 +978,21 @@ private struct SlidePostItemResponse: Decodable {
         let baseVersion: Int
         let baselineDraft: SlidePostDraft?
         var chat: [SlidePostChatMessage]? = nil
+        var seenAssets: [String]? = nil
     }
     private func persist() {
         guard !restoring, let itemID else { return }
-        let local = LocalState(draft: draft, proposal: proposal, selectedID: selectedID, instruction: instruction, baseVersion: baseVersion, baselineDraft: baselineDraft, chat: Array(chat.suffix(Self.maxPersistedChat)))
+        let local = LocalState(draft: draft, proposal: proposal, selectedID: selectedID, instruction: instruction, baseVersion: baseVersion, baselineDraft: baselineDraft, chat: Array(chat.suffix(Self.maxPersistedChat)), seenAssets: seenAssetIDs.map { Array($0).sorted() })
         guard let data = try? JSONEncoder().encode(local) else { return }
         defaults.set(data, forKey: "kria.slide-post.\(itemID)")
     }
     private func restore() {
         guard let itemID, let data = defaults.data(forKey: "kria.slide-post.\(itemID)"), let local = try? JSONDecoder().decode(LocalState.self, from: data) else {
-            draft = nil; proposal = nil; selectedID = nil; instruction = ""; baseVersion = 0; baselineDraft = nil; chat = []; return
+            draft = nil; proposal = nil; selectedID = nil; instruction = ""; baseVersion = 0; baselineDraft = nil; chat = []; seenAssetIDs = nil; return
         }
         draft = local.draft; proposal = local.proposal; selectedID = local.selectedID; instruction = local.instruction; baseVersion = local.baseVersion; baselineDraft = local.baselineDraft
         chat = Array((local.chat ?? []).suffix(Self.maxPersistedChat))
+        seenAssetIDs = local.seenAssets.map(Set.init)
     }
 }
 

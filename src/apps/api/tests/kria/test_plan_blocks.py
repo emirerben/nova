@@ -86,6 +86,133 @@ def test_blocks_from_guided_plan_uses_only_real_plan_fields() -> None:
     assert all(b["state"] == "decided" for b in by_id.values())
 
 
+def _prod_like_plan() -> dict:
+    """Shape of the KRI-443 prod job 41978c25 plan: own song, no text, 6 clips."""
+    return {
+        "text_elements": [],
+        "story_timeline": [{}] * 6,
+        "resolved_duration_s": 25.0,
+        "music": None,
+        "user_song": {"mode": "background", "duration_s": 329.4},
+        "typography": {"font": "Fraunces", "style_id": "guided_story_v2"},
+        "narration_label_text_elements": [],
+        "context_label_text_elements": [],
+        "editor_sound_effects": [],
+        "editor_media_overlays": [],
+    }
+
+
+def test_mapping_reports_the_creators_own_song_and_look_not_not_used() -> None:
+    by_id = {b["section_id"]: b for b in plan_blocks.blocks_from_guided_plan(_prod_like_plan())}
+    assert by_id["music"]["summary"] == "Your song" and by_id["music"]["skipped"] is False
+    assert by_id["music"]["detail"] == "Background"
+    assert by_id["look"]["summary"] == "Guided story v2" and by_id["look"]["skipped"] is False
+    assert by_id["clips"]["summary"] == "6 clips \u00b7 25s"
+    # Truly absent lanes stay "Not used".
+    for section in ("title", "captions", "sfx", "overlays"):
+        assert by_id[section]["skipped"] is True
+
+
+def test_mapping_counts_context_and_narration_labels_as_captions_and_voiceover() -> None:
+    plan = {
+        **_prod_like_plan(),
+        "user_song": None,
+        "narration": {"gcs_path": "x"},
+        "narration_label_text_elements": [{"id": "a"}],
+        "context_label_text_elements": [{"id": "b"}, {"id": "c"}],
+    }
+    by_id = {b["section_id"]: b for b in plan_blocks.blocks_from_guided_plan(plan)}
+    assert by_id["captions"]["summary"] == "3 captions"
+    assert by_id["music"]["summary"] == "Your voiceover"
+    lip = {**_prod_like_plan(), "user_song": {"mode": "lipsync"}}
+    assert plan_blocks.decided_block(lip, "music")["detail"] == "Lip-sync"
+
+
+def test_stage_reporter_sends_deciding_then_real_decided_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "live_plan_review_enabled", True)
+    sent: list[list[dict]] = []
+    monkeypatch.setattr(plan_blocks, "emit_plan_blocks", lambda _j, blocks: sent.append(blocks))
+    report = plan_blocks.make_stage_reporter("job", _prod_like_plan())
+    report(("music",), "deciding")
+    report(("music",), "decided")
+    assert sent[0][0]["state"] == "deciding" and sent[0][0]["decided_at"] is None
+    assert sent[1][0]["state"] == "decided" and sent[1][0]["summary"] == "Your song"
+
+
+def test_stage_reporter_is_silent_with_the_flag_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "live_plan_review_enabled", False)
+    boom = MagicMock(side_effect=AssertionError("must not emit"))
+    monkeypatch.setattr(plan_blocks, "emit_plan_blocks", boom)
+    plan_blocks.make_stage_reporter("job", _prod_like_plan())(("clips",), "deciding")
+    boom.assert_not_called()
+
+
+class _Stop(Exception):
+    pass
+
+
+def test_guided_render_paces_sections_to_real_stages(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """The feed must walk the render stages in order and never decide everything at once."""
+    from app.pipeline import guided_story as gs
+    from app.tasks import template_orchestrate
+
+    plan = {
+        **_prod_like_plan(),
+        "compiler_version": 5,
+        "transition_policy": {"type": "none", "duration_s": 0.0},
+        "story_timeline": [{"duration_s": 5.0}, {"duration_s": 5.0}],
+        "selected_media_ids": [],
+        "mixed_media_timing": None,
+        "text_elements": [],
+    }
+    monkeypatch.setattr(gs, "_download_selected", lambda p, t: ({}, []))
+    monkeypatch.setattr(gs, "_render_moments", lambda p, loc, t: (["a.mp4", "b.mp4"], []))
+    monkeypatch.setattr(gs, "_resolved_transition_boundaries", lambda p: ["cut"])
+    monkeypatch.setattr(template_orchestrate, "_concat_demuxer", lambda *a, **k: None)
+    monkeypatch.setattr(gs, "_audio_codec", lambda p: "aac")
+    monkeypatch.setattr(gs, "_compose_guided_pretext_lanes", lambda base, *a, **k: base)
+    monkeypatch.setattr(gs, "_compose_guided_sfx", lambda path, *a, **k: path)
+    monkeypatch.setattr(gs.shutil, "copyfile", lambda a, b: None)
+    monkeypatch.setattr(gs, "_verify_receipt", MagicMock(side_effect=_Stop))
+    calls: list[tuple[tuple[str, ...], str]] = []
+    with pytest.raises(_Stop):
+        gs.render_execution_plan(
+            plan,
+            job_id="j",
+            tmpdir=str(tmp_path),
+            track=None,
+            on_stage=lambda sections, state: calls.append((sections, state)),
+        )
+    assert calls == [
+        (("clips",), "deciding"),
+        (("clips",), "decided"),
+        (("music",), "decided"),
+        (("overlays",), "deciding"),
+        (("overlays",), "decided"),
+        (("title", "captions", "look"), "deciding"),
+        (("title", "captions", "look"), "decided"),
+        (("sfx",), "deciding"),
+        (("sfx",), "decided"),
+    ]
+    # No call decides every section in one go.
+    assert not any(state == "decided" and len(sections) == 7 for sections, state in calls)
+
+
+def test_render_without_a_stage_callback_is_unchanged(tmp_path) -> None:
+    import inspect
+
+    from app.pipeline import guided_story as gs
+    from app.tasks import generative_build as gb
+
+    assert inspect.signature(gs.render_execution_plan).parameters["on_stage"].default is None
+    # Phone path keeps the all-at-once report; the cloud render opts out.
+    assert inspect.signature(gb._guided_execution_plan).parameters["emit_decided"].default is True
+
+
 # ── best-effort helper ───────────────────────────────────────────────────────
 
 

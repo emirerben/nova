@@ -19,6 +19,15 @@ private func nativeTextPosition(_ layer: EditorTextElement) -> CGPoint {
     )
 }
 
+/// The shared transform layer's view of a native text element.
+@MainActor private func nativeTextTransformBaseline(_ layer: EditorTextElement) -> TextTransformBaseline {
+    TextTransformBaseline(
+        id: layer.id, anchor: nativeTextPosition(layer),
+        sizePx: NativeEditorSession.textSize(for: layer),
+        widthFrac: layer.raw["max_width_frac"]?.numberValue ?? 0.84,
+        rotationDeg: layer.raw["rotation_deg"]?.numberValue ?? 0)
+}
+
 private func nativeRawNumber(_ raw: [String: JSONValue], _ key: String) -> Double? {
     raw[key]?.numberValue ?? nativeRawTransformValue(raw, key)?.numberValue
 }
@@ -98,11 +107,9 @@ struct NativeVideoPreview: View {
     @State private var transformCenter: CGPoint?
     @State private var transformStartVector: CGVector?
     @State private var liveTextBaseline: EditorTextElement?
-    @State private var liveTextBounds: TextSelectionBounds?
     @State private var liveTextFrame: NativeEditorSession.TextInteractionFrame?
-    @State private var liveTextScale: Double = 1
-    @State private var liveTextRotation: Double = 0
-    @State private var liveTextTranslation = CGPoint.zero
+    /// Scale / rotation / translation of the in-flight text gesture (shared transform layer).
+    @State private var liveText = NativeTextLiveTransform()
     @State private var liveTextSampleCount = 0
     @State private var liveMediaFrame: NativeEditorSession.MediaInteractionFrame?
     @State private var liveMediaScale: CGFloat = 1
@@ -225,36 +232,20 @@ struct NativeVideoPreview: View {
     private func resizeText(_ baseline: EditorTextElement, scale: Double, rotation: Double, canvas: CGSize) {
         if liveTextBaseline == nil {
             liveTextBaseline = baseline
-            liveTextBounds = session.previewSelectionBounds(for: EditorSelection(kind: .text, id: baseline.id), at: clock.currentTime)
+            liveText.begin(baseline: nativeTextTransformBaseline(baseline),
+                           bounds: session.previewSelectionBounds(for: EditorSelection(kind: .text, id: baseline.id), at: clock.currentTime).map(TextTransformBounds.init))
         }
         if liveTextFrame == nil, let prepared = session.textInteractionFrame,
            prepared.element == baseline, abs(prepared.time - clock.currentTime) < 0.01 {
             liveTextFrame = prepared
         }
         updateTextAlignment(in: canvas)
-        let reference = liveTextBaseline ?? baseline
-        let size = NativeEditorSession.textSize(for: reference)
-        let width = reference.raw["max_width_frac"]?.numberValue ?? 0.84
-        liveTextScale = max(scale * NativeEditorSession.textSize(for: baseline) / size, max(8 / size, 0.2 / width))
-        let rawAngle = rotation + (baseline.raw["rotation_deg"]?.numberValue ?? 0)
-        let displayedAngle = transformBaseline != nil ? NativeTextRotationSnap.angle(rawAngle) : rawAngle
-        liveTextRotation = displayedAngle - (reference.raw["rotation_deg"]?.numberValue ?? 0)
-        let position = nativeTextPosition(baseline), origin = nativeTextPosition(reference)
-        liveTextTranslation = CGPoint(x: position.x - origin.x, y: position.y - origin.y)
+        liveText.resize(current: nativeTextTransformBaseline(baseline), scale: scale, rotation: rotation, snapRotation: transformBaseline != nil)
         if liveTextFrame != nil { liveTextSampleCount += 1 }
     }
 
     private func updateTextAlignment(in canvas: CGSize) {
-        guard let baseline = liveTextBaseline, let bounds = liveTextBounds else { return }
-        let anchor = nativeTextPosition(baseline)
-        let angle = liveTextRotation * .pi / 180
-        let dx = (bounds.centerX - anchor.x) * canvas.width * liveTextScale
-        let dy = (bounds.centerY - anchor.y) * canvas.height * liveTextScale
-        let center = CGPoint(x: (anchor.x + liveTextTranslation.x) * canvas.width + dx * cos(angle) - dy * sin(angle),
-                             y: (anchor.y + liveTextTranslation.y) * canvas.height + dx * sin(angle) + dy * cos(angle))
-        if textAlignmentFeedback.update(center: center,
-            size: CGSize(width: bounds.width * canvas.width * liveTextScale, height: bounds.height * canvas.height * liveTextScale),
-            rotation: (baseline.raw["rotation_deg"]?.numberValue ?? 0) + liveTextRotation, canvas: canvas) {
+        if liveText.updateAlignment(&textAlignmentFeedback, in: canvas) {
             textAlignmentHaptic.selectionChanged()
             textAlignmentHaptic.prepare()
         }
@@ -263,29 +254,21 @@ struct NativeVideoPreview: View {
     private func commitLiveText() {
         guard let baseline = liveTextBaseline else { return }
         #if DEBUG
-        NativePreviewDiagnostics.record("live-text-gesture", fields: ["samples": String(liveTextSampleCount), "scale": String(liveTextScale)])
+        NativePreviewDiagnostics.record("live-text-gesture", fields: ["samples": String(liveTextSampleCount), "scale": String(liveText.scale)])
         #endif
-        if liveTextScale != 1 || liveTextRotation != 0 {
-            session.transformText(from: baseline, scale: liveTextScale, rotationDelta: liveTextRotation)
+        if liveText.scale != 1 || liveText.rotation != 0 {
+            session.transformText(from: baseline, scale: liveText.scale, rotationDelta: liveText.rotation)
         }
-        if liveTextTranslation != .zero {
+        if liveText.translation != .zero {
             let position = nativeTextPosition(baseline)
-            session.setTextPosition(id: baseline.id, x: position.x + liveTextTranslation.x,
-                                    y: position.y + liveTextTranslation.y)
+            session.setTextPosition(id: baseline.id, x: position.x + liveText.translation.x,
+                                    y: position.y + liveText.translation.y)
         }
     }
 
     private func frame(for object: NativeEditorPreviewObject, in size: CGSize) -> CGRect {
-        if object.item.id == liveTextBaseline?.id, let bounds = liveTextBounds, let baseline = liveTextBaseline {
-            let anchor = nativeTextPosition(baseline)
-            let dx = (bounds.centerX - anchor.x) * size.width * liveTextScale
-            let dy = (bounds.centerY - anchor.y) * size.height * liveTextScale
-            let angle = liveTextRotation * .pi / 180
-            let center = CGPoint(x: (anchor.x + liveTextTranslation.x) * size.width + dx * cos(angle) - dy * sin(angle),
-                                 y: (anchor.y + liveTextTranslation.y) * size.height + dx * sin(angle) + dy * cos(angle))
-            let width = bounds.width * size.width * liveTextScale
-            let height = bounds.height * size.height * liveTextScale
-            return CGRect(x: center.x - width / 2, y: center.y - height / 2, width: width, height: height)
+        if object.item.id == liveTextBaseline?.id, let live = liveText.frame(in: size) {
+            return live
         }
         if let geometry = session.previewSelectionBounds(for: object.item.selection, at: clock.currentTime) {
             return CGRect(x: (geometry.centerX - geometry.width / 2) * size.width,
@@ -342,12 +325,8 @@ struct NativeVideoPreview: View {
         guard let selection = session.selection,
               let selected = objects.first(where: { $0.item.selection == selection }) else { return false }
         let bounds = frame(for: selected, in: size)
-        let radians = CGFloat(selected.rotation) * .pi / 180
-        let dx = bounds.width / 2
-        let dy = bounds.height / 2
-        let corner = CGPoint(x: bounds.midX + dx * cos(radians) - dy * sin(radians),
-                             y: bounds.midY + dx * sin(radians) + dy * cos(radians))
-        return hypot(point.x - corner.x, point.y - corner.y) <= 22
+        let corner = NativeTextTransformMath.cornerPoint(of: bounds, rotationDegrees: selected.rotation)
+        return hypot(point.x - corner.x, point.y - corner.y) <= NativeTextTransformMath.cornerGrabRadius
     }
 
     private func directMoveCandidate(at point: CGPoint, in size: CGSize) -> NativeEditorPreviewObject? {
@@ -384,16 +363,8 @@ struct NativeVideoPreview: View {
                selected.item.kind == .text, session.canEdit(.text),
                let text = session.document.textElements.first(where: { $0.id == selected.item.id }) {
                 let bounds = frame(for: selected, in: size)
-                let radians: CGFloat = CGFloat(text.raw["rotation_deg"]?.numberValue ?? 0) * .pi / 180
-                let dx: CGFloat = bounds.width / 2
-                let dy: CGFloat = bounds.height / 2
-                let cosine: CGFloat = cos(radians)
-                let sine: CGFloat = sin(radians)
-                let corner = CGPoint(x: bounds.midX + dx * cosine - dy * sine,
-                                     y: bounds.midY + dx * sine + dy * cosine)
-                let cornerDistance = hypot(value.startLocation.x - corner.x, value.startLocation.y - corner.y)
-                let centerDistance = hypot(value.startLocation.x - bounds.midX, value.startLocation.y - bounds.midY)
-                if cornerDistance <= 22 && cornerDistance < centerDistance {
+                let corner = NativeTextTransformMath.cornerPoint(of: bounds, rotationDegrees: text.raw["rotation_deg"]?.numberValue ?? 0)
+                if NativeTextTransformMath.grabsCorner(at: value.startLocation, corner: corner, bounds: bounds) {
                     directMoveObjectID = selected.id
                     transformBaseline = text
                     let anchor = nativeTextPosition(text)
@@ -409,14 +380,8 @@ struct NativeVideoPreview: View {
            let selected = objects.first(where: { $0.item.selection == selection }),
            selected.item.kind != .text, canDirectlyPosition(selected), session.canEdit("visual_editor_style") {
             let bounds = frame(for: selected, in: size)
-            let radians: CGFloat = CGFloat(selected.rotation) * .pi / 180
-            let dx: CGFloat = bounds.width / 2
-            let dy: CGFloat = bounds.height / 2
-            let cosine: CGFloat = cos(radians)
-            let sine: CGFloat = sin(radians)
-            let corner = CGPoint(x: bounds.midX + dx * cosine - dy * sine,
-                                 y: bounds.midY + dx * sine + dy * cosine)
-            if hypot(value.startLocation.x - corner.x, value.startLocation.y - corner.y) <= 22 {
+            let corner = NativeTextTransformMath.cornerPoint(of: bounds, rotationDegrees: selected.rotation)
+            if hypot(value.startLocation.x - corner.x, value.startLocation.y - corner.y) <= NativeTextTransformMath.cornerGrabRadius {
                 directMoveObjectID = selected.id
                 visualTransformBaseline = selected
                 if let prepared = session.mediaInteractionFrame,
@@ -441,10 +406,8 @@ struct NativeVideoPreview: View {
         }
         if let baseline = transformBaseline, let center = transformCenter, let start = transformStartVector {
             let next = CGVector(dx: value.location.x - center.x, dy: value.location.y - center.y)
-            let radius = hypot(start.dx, start.dy)
-            guard radius > 1 else { return }
-            let angle = atan2(next.dy, next.dx) - atan2(start.dy, start.dx)
-            resizeText(baseline, scale: hypot(next.dx, next.dy) / radius, rotation: angle * 180 / .pi, canvas: size)
+            guard let delta = NativeTextTransformMath.cornerDelta(start: start, next: next) else { return }
+            resizeText(baseline, scale: delta.scale, rotation: delta.rotationDegrees, canvas: size)
             updateTextAlignment(in: size)
             return
         }
@@ -464,14 +427,11 @@ struct NativeVideoPreview: View {
               let object = objects.first(where: { $0.id == objectID }),
               let onMove = positionHandler(for: object),
               size.width > 0, size.height > 0 else { return }
-        let position = CGPoint(
-            x: min(max(0, baseline.x + value.translation.width / size.width), 1),
-            y: min(max(0, baseline.y + value.translation.height / size.height), 1))
+        let position = NativeTextTransformMath.movedPosition(from: baseline, translation: value.translation, canvas: size)
         if object.item.kind == .text,
            let text = session.document.textElements.first(where: { $0.id == object.item.id }) {
             resizeText(text, scale: 1, rotation: 0, canvas: size)
-            let origin = nativeTextPosition(liveTextBaseline ?? text)
-            liveTextTranslation = CGPoint(x: position.x - origin.x, y: position.y - origin.y)
+            liveText.move(to: position)
             updateTextAlignment(in: size)
         } else {
             onMove(position)
@@ -497,11 +457,8 @@ struct NativeVideoPreview: View {
         liveMediaRotation = 0
         liveMediaTranslation = .zero
         liveTextBaseline = nil
-        liveTextBounds = nil
+        liveText.reset()
         liveTextFrame = nil
-        liveTextScale = 1
-        liveTextRotation = 0
-        liveTextTranslation = .zero
         // liveTextSampleCount is a UI-test diagnostic: "did the immediate text
         // layer render during a manipulation," read from the accessibility
         // value right after gesture end. Resetting it here raced XCUITest's
@@ -715,9 +672,9 @@ struct NativeVideoPreview: View {
                                 .offset(x: frozen.rect.minX * proxy.size.width, y: frozen.rect.minY * proxy.size.height)
                         }
                         .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
-                        .scaleEffect(liveTextScale, anchor: UnitPoint(x: anchor.x, y: anchor.y))
-                        .rotationEffect(.degrees(liveTextRotation), anchor: UnitPoint(x: anchor.x, y: anchor.y))
-                        .offset(x: liveTextTranslation.x * proxy.size.width, y: liveTextTranslation.y * proxy.size.height)
+                        .scaleEffect(liveText.scale, anchor: UnitPoint(x: anchor.x, y: anchor.y))
+                        .rotationEffect(.degrees(liveText.rotation), anchor: UnitPoint(x: anchor.x, y: anchor.y))
+                        .offset(x: liveText.translation.x * proxy.size.width, y: liveText.translation.y * proxy.size.height)
                         Image(uiImage: frozen.above).resizable().frame(width: proxy.size.width, height: proxy.size.height)
                     }
                 }.allowsHitTesting(false).accessibilityHidden(true)
@@ -736,7 +693,7 @@ struct NativeVideoPreview: View {
                             onMove: positionHandler(for: object),
                             onResize: scaleHandler(for: object),
                             showsContent: !session.hasSourcePreview,
-                            rotationOverride: object.item.id == liveTextBaseline?.id ? (liveTextBaseline?.raw["rotation_deg"]?.numberValue ?? 0) + liveTextRotation : nil
+                            rotationOverride: object.item.id == liveTextBaseline?.id ? (liveTextBaseline?.raw["rotation_deg"]?.numberValue ?? 0) + liveText.rotation : nil
                         )
                     }
                 }
@@ -818,8 +775,8 @@ struct NativeVideoPreview: View {
         .onChange(of: session.document) { _, _ in refreshObjects() }
         .onChange(of: session.scrubPreviewFrame) { _, _ in
             if !session.isDirectManipulating {
-                liveTextBaseline = nil; liveTextFrame = nil; liveTextBounds = nil
-                liveTextScale = 1; liveTextRotation = 0; liveTextTranslation = .zero
+                liveTextBaseline = nil; liveTextFrame = nil
+                liveText.reset()
             }
         }
     }
