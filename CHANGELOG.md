@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.85.0] - 2026-10-05
+
+### Changed
+- fix(kria): keep a named place's lone guess when vision can't name it (KRI-454) (#1400) <!-- release-pr: 1400 -->
+
 ## [0.78.84.0] - 2026-10-05
 
 ### Changed
