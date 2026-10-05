@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.87.0] - 2026-10-05
+
+### Changed
+- feat(ios): slide-post editor parity with the video editor (hold-to-transform, AI sheet, drag reorder, cached previews) (#1402) <!-- release-pr: 1402 -->
+
 ## [0.78.86.0] - 2026-10-05
 
 ### Changed
