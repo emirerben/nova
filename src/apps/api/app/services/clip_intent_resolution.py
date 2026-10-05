@@ -356,10 +356,16 @@ _RESOLVER_DEADLINE_S = 70.0
 # original single call (376 cells) hit the old 20s timeout, and #1343's fixed
 # 12-clip shards still sat within a 2x latency swing of the limit (any one shard
 # timing out fails the whole turn). Shards are sized by CELLS (clips x intents)
-# so each call carries about half that load, capped at 12 clips. Small projects
-# keep ONE call.
+# so each call carries about half that load, capped at 12 clips.
+#
+# KRI-454: a project that fits inside that measured 96-cell call keeps ONE call.
+# Matching needs every clip side by side ("the only food hall here is the market
+# the creator named"): split 5+5, the 10-clip x 9-intent Lisbon recap matched all
+# five place labels in 3 of 6 live replays, as one call in 6 of 6 (6-8s, no
+# vision). A timed-out call is still split and re-asked (`_run_resolver_shards`).
 _RESOLVER_SHARD_MAX_CLIPS = 12
 _RESOLVER_SHARD_CELLS = 48
+_RESOLVER_SINGLE_CALL_CELLS = 96
 _RESOLVER_MIN_SHARD_CLIPS = 3
 # Concurrent shard calls. The Gemini invoke pool has 8 slots shared per process
 # and a saturated pool fails a call after 1s, so never take the whole pool.
@@ -376,6 +382,11 @@ def _shard_resolver_input(
 ) -> list[ClipRequestResolverInput]:
     """Split the clip list into balanced shards; every shard sees every intent."""
     clips = resolver_input.clips
+    if (
+        len(clips) <= _RESOLVER_SHARD_MAX_CLIPS
+        and len(clips) * len(resolver_input.intents) <= _RESOLVER_SINGLE_CALL_CELLS
+    ):
+        return [resolver_input]
     limit = _shard_clip_limit(len(resolver_input.intents))
     shard_count = -(-len(clips) // limit)  # ceil
     if shard_count <= 1:

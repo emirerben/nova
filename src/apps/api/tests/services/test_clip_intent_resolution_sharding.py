@@ -138,6 +138,26 @@ def test_small_project_keeps_a_single_call() -> None:
     assert _shard_resolver_input(resolver_input) == [resolver_input]
 
 
+@pytest.mark.parametrize(
+    ("clips", "intents", "split"),
+    [
+        (10, 9, False),  # KRI-454: the Lisbon recap (90 cells), split 5+5 before
+        (12, 8, False),  # exactly the measured 96-cell call
+        (12, 9, True),  # 108 cells: over the measured single call
+        (13, 2, True),  # never more clips in one call than a shard may hold
+    ],
+)
+def test_project_within_the_measured_single_call_is_not_split(
+    clips: int, intents: int, split: bool
+) -> None:
+    """KRI-454: sharding hides clips from each other; split only above the load one
+    call was measured to handle (12 clips x 8 intents, 7-16s)."""
+    resolver_input, _a, _b = R._build_resolver_input(_intents(intents), "", _clips(clips))
+    shards = _shard_resolver_input(resolver_input)
+    assert (len(shards) > 1) is split
+    assert [c.alias for s in shards for c in s.clips] == [c.alias for c in resolver_input.clips]
+
+
 def test_resolver_agent_timeout_has_headroom_over_a_measured_slow_shard() -> None:
     # Live: a 96-cell shard took up to 16s (one needed a refusal retry). The
     # agent budget must be well above that and the chat deadline above 2 timeouts.

@@ -7,6 +7,7 @@ deadline + graceful-degradation logic only.
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -363,6 +364,59 @@ async def test_creator_text_label_grounds_as_creator_text(monkeypatch) -> None:
     assert result.intents[0].status == "resolved"
     assert result.intents[0].assignments[0].value == "Post Match Pub"
     assert result.intents[0].assignments[0].grounding == "creator_text"
+
+
+async def test_creator_named_place_labels_resolve_through_the_real_parser(monkeypatch) -> None:
+    """KRI-454 (prod thread FC88CF3E, "48h in Lisbon"): the resolver matched the place
+    labels but left `value` empty, as its prompt allows for creator text; parse() then
+    dropped every match and the turn asked the creator to tap clips for each place.
+    Drives the real parse(), which the faked-run tests above bypass."""
+    names = ["Alfama", "Pink Street"]
+    intents = [
+        ClipIntent(
+            intent_id=f"label-{name.lower().replace(' ', '-')}",
+            op="label",
+            attribute=f"shots: {name}",
+            creator_text=name,
+        )
+        for name in names
+    ]
+    clips = [
+        _video_clip("alley", subject="narrow cobbled street with laundry, likely Lisbon"),
+        _video_clip("night", subject="cobblestone street at night with umbrellas overhead"),
+    ]
+    raw = json.dumps(
+        {
+            "intents": [
+                {
+                    "intent_id": intent.intent_id,
+                    "assignments": [{"media": alias, "value": "", "confidence": 0.85}],
+                }
+                for intent, alias in zip(intents, ["m001", "m002"], strict=True)
+            ]
+        }
+    )
+
+    def _fake_run(self, input, *, ctx=None):  # noqa: A002, ANN001
+        return self.parse(raw, input)
+
+    monkeypatch.setattr(ClipRequestResolverAgent, "run", _fake_run)
+    _patch_vision_forbidden(monkeypatch)
+
+    result = await resolve_clip_intents_for_turn(
+        intents=intents,
+        creator_request="Put a short place label on these shots: Alfama, Pink Street.",
+        clips=clips,
+        run_context=RunContext(),
+    )
+
+    assert result.question is None
+    assert result.status == "resolved"
+    assert [(i.status, [(a.media_id, a.value) for a in i.assignments]) for i in result.intents] == [
+        ("resolved", [("alley", "Alfama")]),
+        ("resolved", [("night", "Pink Street")]),
+    ]
+    assert {label.grounding for label in grounded_labels(result.intents)} == {"creator_text"}
 
 
 async def test_resolver_terminal_error_degrades_gracefully(monkeypatch) -> None:
