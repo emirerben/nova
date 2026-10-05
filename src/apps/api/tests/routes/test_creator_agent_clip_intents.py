@@ -17,6 +17,7 @@ from app.agents._schemas.creator_agent import (
     ProposeStrategy,
     legacy_clip_intents,
 )
+from app.models import PlanItem, PlanItemAsset
 from app.routes import creator_agent as creator_routes
 from app.routes.creator_agent import _apply_explicit_render_intent, _seed_guided_specialist_brief
 from app.schemas.clip_intents import ClipAssignment, ClipIntent, ResolvedClipIntent
@@ -673,9 +674,9 @@ async def test_strict_vision_answer_cache_rejects_a_stale_asset_generation() -> 
 @pytest.mark.asyncio
 async def test_strict_vision_answer_cache_skips_raw_phone_clip_media() -> None:
     """KRI-291: iPhone montage clips are raw `clip_assignments`
-    (`analysis-proxy-ios-….mp4`) with no answer cache (pool assets only). Strict
-    mode fences a CHANGED pool asset; an uncacheable phone clip is the same
-    documented no-op as in best-effort mode, never a failure that ends the turn."""
+    (`analysis-proxy-ios-….mp4`). Strict mode fences a CHANGED pool asset; without
+    `cache_clip_assignments` a phone clip is the same documented no-op as in
+    best-effort mode, never a failure that ends the turn."""
     item_id = uuid.uuid4()
     asset_id = uuid.uuid4()
     asset = SimpleNamespace(plan_item_id=item_id, gcs_generation="7", analysis={})
@@ -701,6 +702,52 @@ async def test_strict_vision_answer_cache_skips_raw_phone_clip_media() -> None:
 
 
 @pytest.mark.asyncio
+async def test_kria_phone_clip_cache_locks_the_item_first_and_never_fails_the_turn() -> None:
+    """KRI-433: the Kria turn opts in (`cache_clip_assignments`), so phone answers are
+    cached on the assignment (covered with a real row in
+    tests/kria/test_clip_answer_cache_postgres.py). The PlanItem lock comes before any
+    pool-asset lock (canonical order), and a write that cannot happen -- here the item
+    row is gone -- only loses the cache."""
+    item_id = uuid.uuid4()
+    asset_id = uuid.uuid4()
+    asset = SimpleNamespace(plan_item_id=item_id, gcs_generation="7", analysis={})
+    item = SimpleNamespace(id=item_id)
+    db = _fake_db(side_effect=lambda model, *_a, **_k: asset if model is PlanItemAsset else None)
+
+    await persist_clip_intent_vision_answers(
+        db,
+        item,
+        {
+            "analysis-proxy-ios-0EBED783-578F-4DFB-B562-623C6776994C.mp4": {
+                "is someone bowling": {"answer": "yes", "confidence": 0.9}
+            },
+            f"asset-{asset_id}": {"is it a scoreboard": {"answer": "yes", "generation": "7"}},
+        },
+        strict=True,
+        cache_clip_assignments=True,
+    )
+
+    assert [call.args[0] for call in db.get.await_args_list] == [PlanItem, PlanItemAsset]
+    assert asset.analysis[ANSWERS_KEY] == {
+        "is it a scoreboard": {"answer": "yes", "generation": "7"}
+    }
+
+
+@pytest.mark.asyncio
+async def test_kria_phone_clip_cache_failure_never_raises() -> None:
+    item = SimpleNamespace(id=uuid.uuid4())
+    db = _fake_db(side_effect=RuntimeError("db is down"))
+
+    assert await persist_clip_intent_vision_answers(
+        db,
+        item,
+        {"analysis-proxy-ios-0EBED783.mp4": {"q": {"answer": "yes", "generation": "1"}}},
+        strict=True,
+        cache_clip_assignments=True,
+    )
+
+
+@pytest.mark.asyncio
 async def test_strict_vision_answer_cache_rejects_a_malformed_pool_asset_id() -> None:
     item = SimpleNamespace(id=uuid.uuid4())
     db = _fake_db(side_effect=AssertionError("must not be looked up"))
@@ -713,9 +760,10 @@ async def test_strict_vision_answer_cache_rejects_a_malformed_pool_asset_id() ->
 
 @pytest.mark.asyncio
 async def test_vision_answers_skip_raw_clip_assignments_media() -> None:
-    """Raw `clip_assignments` clips have no light-weight writer here (see the
-    docstring on `_persist_clip_intent_vision_answers`); persistence for them
-    is a documented no-op, never an error."""
+    """The legacy creator-agent route holds its CreatorAgentSession lock here, so it
+    must not lock the PlanItem (ranked before the session): raw `clip_assignments`
+    clips are skipped without a lookup, never an error (KRI-433 caches them only for
+    the Kria turn)."""
 
     item = SimpleNamespace(id=uuid.uuid4())
     db = _fake_db(side_effect=AssertionError("must not be looked up"))

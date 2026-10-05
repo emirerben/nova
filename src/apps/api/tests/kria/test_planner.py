@@ -803,6 +803,12 @@ async def test_phone_clip_vision_answers_do_not_fail_a_resolved_turn(
     assert strategy["resolved_clip_intents"][0]["assignments"][0]["media_id"] == phone_clip
     db.commit.assert_awaited_once()
     db.rollback.assert_not_awaited()
+    # KRI-433: the turn asks for the phone clip's answer to be cached on its
+    # assignment (the row is a stub here, so that write only logs and moves on).
+    assert any(
+        call.args[0] is PlanItem and call.kwargs.get("with_for_update")
+        for call in db.get.await_args_list
+    )
 
 
 async def _degraded_clip_intent_turn(
