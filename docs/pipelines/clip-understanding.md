@@ -256,7 +256,7 @@ the same way; visual intents are ignored (chat clears them, the build task and
 worker gate on the flag). Transcript intents and already-confirmed label
 elements keep their existing behavior. Flip while no task is running
 (`celery -A app.worker inspect active` on any machine), since the roll restarts
-the render worker. Before enabling, run the live evals:
+the render worker. Optionally (paid) run the live evals before enabling:
 `tests/evals/test_clip_request_resolver_evals.py`, `test_clip_question_evals.py`,
 `test_main_creator_evals.py`, `test_edit_proposal_evals.py` (`--eval-mode=live`,
 no judge).
@@ -367,8 +367,8 @@ the snapshot replan/direction-replacement planners and the editor-op tool
 `tests/agents/test_landmark_guess.py`, `tests/evals/test_landmark_guess_evals.py`.
 Current relevant prompt versions: `main_creator` 2026-10-02-v40,
 `edit_proposal` 1.18.0, `clip_intent_planner` 2026-10-02.2, and
-`landmark_guess` 2026-09-24.1. Live
-evals to run before enabling (`--eval-mode=live`, no judge):
+`landmark_guess` 2026-09-24.1. Optional
+live evals (`--eval-mode=live`, no judge):
 `test_landmark_guess_evals.py`, `test_clip_intent_planner_evals.py`,
 `test_main_creator_evals.py`, `test_edit_proposal_evals.py`.
 
