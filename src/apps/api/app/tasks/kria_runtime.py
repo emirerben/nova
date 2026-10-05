@@ -7,6 +7,7 @@ persisted approval. Workers report only durable receipts and observed Job truth.
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -39,7 +40,12 @@ from app.kria.brief_checks import (
 from app.kria.contracts import KriaObservedTurnResponse, KriaToolReceipt, KriaTurnPlan
 from app.kria.drafts import KriaDraftDocument, canonical_snapshot
 from app.kria.language import is_paraphrase_only
-from app.kria.planner import PlannedKriaTurn, extract_deferred_brief, plan_live_turn
+from app.kria.planner import (
+    PlannedKriaTurn,
+    extract_deferred_brief,
+    plan_live_turn,
+    turn_deadline,
+)
 from app.kria.registry import KRIA_TOOLS
 from app.models import (
     ContentPlan,
@@ -853,6 +859,9 @@ async def _plan_with_live_agent(
     # connection (a reconnect costs tens of ms against multi-second model calls).
     engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
     heartbeat = asyncio.create_task(_heartbeat())
+    # Bounded waits inside planning (clip understanding) must leave the turn time to
+    # finish before Celery's soft limit turns it into "I couldn't finish that step".
+    deadline = turn_deadline.set(time.monotonic() + float(run_kria_turn.soft_time_limit or 90))
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
             parsed_state = parse_editor_state(editor_state)
@@ -868,6 +877,7 @@ async def _plan_with_live_agent(
                 **({"answers_clip_question": True} if answers_clip_question else {}),
             )
     finally:
+        turn_deadline.reset(deadline)
         stop.set()
         try:
             await heartbeat
@@ -1268,11 +1278,13 @@ def _fail_turn(
         return None
 
 
+# 150 s soft limit: a clip-intent turn measured ~70 s of model + vision work, and may
+# also wait (bounded by this limit, see `turn_deadline`) for clip analysis in flight.
 @celery_app.task(
     bind=True,
     name="tasks.run_kria_turn",
-    soft_time_limit=90,
-    time_limit=120,
+    soft_time_limit=150,
+    time_limit=180,
     max_retries=0,
 )
 def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
