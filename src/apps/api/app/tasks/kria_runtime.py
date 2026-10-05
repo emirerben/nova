@@ -2347,6 +2347,24 @@ def _finish_approval_dispatch(
                     "receipt_ids": [str(execution.id)],
                 },
             )
+            if settings.live_plan_review_enabled:
+                # KRI-443: all seven sections start `waiting`, in the SAME transaction
+                # (and under the same thread lock) as `render_queued`.
+                from app.kria.plan_blocks import (  # noqa: PLC0415
+                    plan_block_payload,
+                    waiting_blocks,
+                )
+
+                _append_sync_event(
+                    db,
+                    thread,
+                    role="system",
+                    event_type="plan_block",
+                    content=None,
+                    payload=plan_block_payload(
+                        turn_id=str(turn.id), job_id=str(job_id), blocks=waiting_blocks()
+                    ),
+                )
             db.commit()
             return "dispatched", None
 
