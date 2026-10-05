@@ -1,0 +1,525 @@
+{
+  "agent": "nova.plan.clip_request_resolver",
+  "prompt_version": "2026-10-05.1",
+  "input": {
+    "creator_request": "Lisbon weekend recap. Title: \"48h in Lisbon 🇵🇹\". Start with the yellow tram and end on the sunset at the viewpoint. Put a short place label on these shots: Alfama, LX Factory, Belém Tower, Time Out Market, Pink Street. Use the two photos (the pastéis de nata and the blue tiles) somewhere in the middle. Quick cuts. Make it 15 seconds.",
+    "intents": [
+      {
+        "intent_id": "order-tram-first",
+        "op": "order",
+        "attribute": "yellow tram",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": "first"
+      },
+      {
+        "intent_id": "order-sunset-last",
+        "op": "order",
+        "attribute": "sunset at the viewpoint",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": "last"
+      },
+      {
+        "intent_id": "label-alfama",
+        "op": "label",
+        "attribute": "shots: Alfama",
+        "creator_text": "Alfama",
+        "caption_attribute": null,
+        "position": null
+      },
+      {
+        "intent_id": "label-lx-factory",
+        "op": "label",
+        "attribute": "shots: LX Factory",
+        "creator_text": "LX Factory",
+        "caption_attribute": null,
+        "position": null
+      },
+      {
+        "intent_id": "label-belem-tower",
+        "op": "label",
+        "attribute": "shots: Belém Tower",
+        "creator_text": "Belém Tower",
+        "caption_attribute": null,
+        "position": null
+      },
+      {
+        "intent_id": "label-time-out-market",
+        "op": "label",
+        "attribute": "shots: Time Out Market",
+        "creator_text": "Time Out Market",
+        "caption_attribute": null,
+        "position": null
+      },
+      {
+        "intent_id": "label-pink-street",
+        "op": "label",
+        "attribute": "shots: Pink Street",
+        "creator_text": "Pink Street",
+        "caption_attribute": null,
+        "position": null
+      },
+      {
+        "intent_id": "include-pasteis-nata",
+        "op": "include",
+        "attribute": "the pastéis de nata photo",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null
+      },
+      {
+        "intent_id": "include-blue-tiles",
+        "op": "include",
+        "attribute": "the blue tiles photo",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null
+      }
+    ],
+    "clips": [
+      {
+        "alias": "m001",
+        "kind": "video",
+        "record": {
+          "subject": "narrow street with buildings and a person watering plants",
+          "summary": "A person on a balcony waters plants in a narrow, cobbled street lined with colorful buildings and laundry hanging overhead. Another person briefly appears on a lower balcony.",
+          "setting": "narrow cobblestone street in a European city, likely Lisbon",
+          "activity": "watering plants on a balcony, observing surroundings",
+          "people": {
+            "speaks_to_camera": false,
+            "count": 2,
+            "note": "an older person and another individual on balconies"
+          },
+          "content_type": "ambience",
+          "audio_type": "ambient",
+          "notable_moments": [
+            {
+              "start_s": 2.9,
+              "end_s": 5.5,
+              "description": "empty street view with colorful buildings"
+            }
+          ]
+        }
+      },
+      {
+        "alias": "m002",
+        "kind": "video",
+        "record": {
+          "subject": "people dining in a buffet",
+          "summary": "People are gathered in a large dining hall, eating at a long communal table and serving themselves food from a buffet line.",
+          "setting": "indoor dining hall or food court",
+          "activity": "eating a meal, serving food from a buffet",
+          "people": {
+            "speaks_to_camera": false,
+            "count": 50,
+            "note": "diverse group of adults"
+          },
+          "content_type": "broll",
+          "audio_type": "ambient",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 3.0,
+              "description": "diners eating at long table"
+            },
+            {
+              "start_s": 4.0,
+              "end_s": 6.0,
+              "description": "people serving themselves from buffet"
+            },
+            {
+              "start_s": 7.0,
+              "end_s": 9.0,
+              "description": "patrons choosing food at buffet"
+            }
+          ]
+        }
+      },
+      {
+        "alias": "m003",
+        "kind": "video",
+        "record": {
+          "subject": "yellow tram",
+          "summary": "A vintage yellow tram travels down a narrow cobblestone street lined with colorful buildings in a European city. People are walking on the sidewalks.",
+          "setting": "narrow cobblestone street in a European city",
+          "activity": "yellow tram driving down a street",
+          "people": {
+            "speaks_to_camera": false,
+            "count": 4,
+            "note": "people walking on sidewalks"
+          },
+          "content_type": "broll",
+          "audio_type": "ambient",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 1.7,
+              "description": "tram approaching from distance"
+            },
+            {
+              "start_s": 2.1,
+              "end_s": 3.7,
+              "description": "tram moving closer"
+            }
+          ]
+        }
+      },
+      {
+        "alias": "m004",
+        "kind": "video",
+        "record": {
+          "subject": "man walking on a street at night",
+          "summary": "A man walks towards the camera, taking a sip from his drink, on a lively cobblestone street at night. Many other people are visible walking in both directions, and colorful umbrellas are strung overhead.",
+          "setting": "a narrow, cobblestone street at night, decorated with colorful umbrellas overhead, lined with buildings with neon signs",
+          "activity": "people walking and socializing on a lively street, a man walking and drinking",
+          "people": {
+            "speaks_to_camera": false,
+            "count": 20,
+            "note": "a man holding a drink and many other people walking"
+          },
+          "content_type": "broll",
+          "audio_type": "ambient",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 1.5,
+              "description": "man walks towards camera"
+            },
+            {
+              "start_s": 3.2,
+              "end_s": 5.4,
+              "description": "crowd walks past man"
+            }
+          ]
+        }
+      },
+      {
+        "alias": "m005",
+        "kind": "video",
+        "record": {
+          "subject": "Belém Tower",
+          "summary": "The video shows the historic Belém Tower situated in the water, with a crowd of tourists walking along a sunny waterfront promenade in the foreground.",
+          "setting": "Waterfront promenade in Lisbon, Portugal, by the Tagus River",
+          "activity": "sightseeing and walking along a promenade",
+          "people": {
+            "speaks_to_camera": false,
+            "count": 20,
+            "note": "diverse group of tourists walking"
+          },
+          "content_type": "ambience",
+          "audio_type": "ambient",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 4.0,
+              "description": "crowd walking past Belém Tower"
+            }
+          ]
+        }
+      },
+      {
+        "alias": "m006",
+        "kind": "video",
+        "record": {
+          "subject": "couple at sunset viewpoint",
+          "summary": "A couple sits on a stone wall, watching a vibrant sunset over a city with a historic castle silhouetted against the horizon and a body of water in the distance.",
+          "setting": "Rooftop viewpoint overlooking a city at sunset",
+          "activity": "Observing a sunset over a city",
+          "people": {
+            "speaks_to_camera": false,
+            "count": 2,
+            "note": "a man and a woman sitting on a wall"
+          },
+          "content_type": "ambience",
+          "audio_type": "ambient",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 2.5,
+              "description": "couple admiring city sunset"
+            },
+            {
+              "start_s": 2.5,
+              "end_s": 5.0,
+              "description": "couple watching sunset over cityscape"
+            }
+          ]
+        }
+      },
+      {
+        "alias": "m007",
+        "kind": "video",
+        "record": {
+          "subject": "people in a bookstore",
+          "summary": "The clip shows people browsing books in a large, open-air bookstore with colorful murals on the surrounding walls. A man walks down a narrow alleyway leading to the bookstore.",
+          "setting": "outdoor bookstore / alleyway with murals",
+          "activity": "browsing books",
+          "people": {
+            "speaks_to_camera": false,
+            "count": 6,
+            "note": "adults and a child browsing books, one man walking in the background"
+          },
+          "content_type": "broll",
+          "audio_type": "ambient",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 2.5,
+              "description": "people browsing books at shelves"
+            },
+            {
+              "start_s": 3.0,
+              "end_s": 5.0,
+              "description": "child reaching for a book"
+            }
+          ]
+        }
+      },
+      {
+        "alias": "m008",
+        "kind": "video",
+        "record": {
+          "subject": "ferry on water",
+          "summary": "The video captures a scenic view from a ferry crossing a body of water, with a large red suspension bridge in the background and seagulls flying alongside the boat.",
+          "setting": "open water on a sunny day",
+          "activity": "traveling on a ferry with a bridge in the distance",
+          "people": {
+            "speaks_to_camera": false,
+            "count": 5,
+            "note": "passengers sitting on a ferry"
+          },
+          "content_type": "ambience",
+          "audio_type": "ambient",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 1.7,
+              "description": "seagulls flying near ferry"
+            },
+            {
+              "start_s": 2.7,
+              "end_s": 4.5,
+              "description": "ferry passing bridge with seagulls"
+            }
+          ]
+        }
+      },
+      {
+        "alias": "m009",
+        "kind": "image",
+        "record": {
+          "subject": "Portuguese custard tarts and coffee",
+          "summary": "A close-up photo shows two round Portuguese custard tarts, known as Pastéis de Nata, sprinkled with cinnamon, resting on a white plate on a marble countertop, with a cup of espresso and a spoon blurred in the background."
+        }
+      },
+      {
+        "alias": "m010",
+        "kind": "image",
+        "record": {
+          "subject": "Lisbon tiled building street",
+          "summary": "A close-up photo of a building facade covered in intricate blue and white azulejo tiles, featuring an ornate rusty balcony and a window, with a yellow tram and pedestrians on a cobblestone street below."
+        }
+      }
+    ]
+  },
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"order-tram-first\",\n      \"assignments\": [\n        {\n          \"media\": \"m003\",\n          \"value\": \"\",\n          \"evidence\": \"yellow tram travels down a narrow cobblestone street\",\n          \"confidence\": 1.0\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"order-sunset-last\",\n      \"assignments\": [\n        {\n          \"media\": \"m006\",\n          \"value\": \"\",\n          \"evidence\": \"couple at sunset viewpoint; watching a vibrant sunset over a city; Rooftop viewpoint overlooking a city at sunset\",\n          \"confidence\": 1.0\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"label-alfama\",\n      \"assignments\": [\n        {\n          \"media\": \"m001\",\n          \"value\": \"cobblestone street\",\n          \"evidence\": \"narrow cobblestone street in a European city, likely Lisbon; narrow street with buildings\",\n          \"confidence\": 0.8\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"label-lx-factory\",\n      \"assignments\": [\n        {\n          \"media\": \"m007\",\n          \"value\": \"outdoor bookstore\",\n          \"evidence\": \"open-air bookstore with colorful murals on the surrounding walls; outdoor bookstore / alleyway with murals\",\n          \"confidence\": 0.8\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"label-belem-tower\",\n      \"assignments\": [\n        {\n          \"media\": \"m005\",\n          \"value\": \"Belém Tower\",\n          \"evidence\": \"The video shows the historic Belém Tower situated in the water\",\n          \"confidence\": 1.0\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"label-time-out-market\",\n      \"assignments\": [\n        {\n          \"media\": \"m002\",\n          \"value\": \"dining hall\",\n          \"evidence\": \"People are gathered in a large dining hall, eating at a long communal table and serving themselves food from a buffet line; indoor dining hall or food court\",\n          \"confidence\": 0.8\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"label-pink-street\",\n      \"assignments\": [\n        {\n          \"media\": \"m004\",\n          \"value\": \"cobblestone street\",\n          \"evidence\": \"lively cobblestone street at night; decorated with colorful umbrellas overhead\",\n          \"confidence\": 0.8\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"include-pasteis-nata\",\n      \"assignments\": [\n        {\n          \"media\": \"m009\",\n          \"value\": \"\",\n          \"evidence\": \"two round Portuguese custard tarts, known as Pastéis de Nata\",\n          \"confidence\": 1.0\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"include-blue-tiles\",\n      \"assignments\": [\n        {\n          \"media\": \"m010\",\n          \"value\": \"\",\n          \"evidence\": \"building facade covered in intricate blue and white azulejo tiles\",\n          \"confidence\": 1.0\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    }\n  ]\n}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "order-tram-first",
+        "assignments": [
+          {
+            "media": "m003",
+            "value": null,
+            "evidence": "yellow tram travels down a narrow cobblestone street",
+            "confidence": 1.0
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      },
+      {
+        "intent_id": "order-sunset-last",
+        "assignments": [
+          {
+            "media": "m006",
+            "value": null,
+            "evidence": "couple at sunset viewpoint; watching a vibrant sunset over a city; Rooftop viewpoint overlooking a city at sunset",
+            "confidence": 1.0
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      },
+      {
+        "intent_id": "label-alfama",
+        "assignments": [
+          {
+            "media": "m001",
+            "value": null,
+            "evidence": "narrow cobblestone street in a European city, likely Lisbon; narrow street with buildings",
+            "confidence": 0.8
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      },
+      {
+        "intent_id": "label-lx-factory",
+        "assignments": [
+          {
+            "media": "m007",
+            "value": null,
+            "evidence": "open-air bookstore with colorful murals on the surrounding walls; outdoor bookstore / alleyway with murals",
+            "confidence": 0.8
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      },
+      {
+        "intent_id": "label-belem-tower",
+        "assignments": [
+          {
+            "media": "m005",
+            "value": null,
+            "evidence": "The video shows the historic Belém Tower situated in the water",
+            "confidence": 1.0
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      },
+      {
+        "intent_id": "label-time-out-market",
+        "assignments": [
+          {
+            "media": "m002",
+            "value": null,
+            "evidence": "People are gathered in a large dining hall, eating at a long communal table and serving themselves food from a buffet line; indoor dining hall or food court",
+            "confidence": 0.8
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      },
+      {
+        "intent_id": "label-pink-street",
+        "assignments": [
+          {
+            "media": "m004",
+            "value": null,
+            "evidence": "lively cobblestone street at night; decorated with colorful umbrellas overhead",
+            "confidence": 0.8
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      },
+      {
+        "intent_id": "include-pasteis-nata",
+        "assignments": [
+          {
+            "media": "m009",
+            "value": null,
+            "evidence": "two round Portuguese custard tarts, known as Pastéis de Nata",
+            "confidence": 1.0
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      },
+      {
+        "intent_id": "include-blue-tiles",
+        "assignments": [
+          {
+            "media": "m010",
+            "value": null,
+            "evidence": "building facade covered in intricate blue and white azulejo tiles",
+            "confidence": 1.0
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      }
+    ]
+  },
+  "meta": {
+    "source": "kri454_live_recorded",
+    "case": "KRI-454 prod thread FC88CF3E ('48h in Lisbon'): five creator-named place labels whose names the clip records never spell out (only Belém Tower is named). Records are the real clip_metadata output for the M1 kit clips. Each place must be matched to its own clip by how it looks; a food hall with no sign is the hardest one.",
+    "expect_covered": {
+      "label-alfama": [
+        "m001"
+      ],
+      "label-lx-factory": [
+        "m007"
+      ],
+      "label-belem-tower": [
+        "m005"
+      ],
+      "label-time-out-market": [
+        "m002"
+      ],
+      "label-pink-street": [
+        "m004"
+      ]
+    },
+    "expect_not_assigned": {
+      "label-lx-factory": [
+        "m001",
+        "m002",
+        "m003",
+        "m004",
+        "m005",
+        "m006",
+        "m008",
+        "m009",
+        "m010"
+      ],
+      "label-belem-tower": [
+        "m001",
+        "m002",
+        "m003",
+        "m004",
+        "m006",
+        "m007",
+        "m008",
+        "m009",
+        "m010"
+      ],
+      "label-time-out-market": [
+        "m001",
+        "m003",
+        "m004",
+        "m005",
+        "m006",
+        "m007",
+        "m008",
+        "m009",
+        "m010"
+      ],
+      "label-pink-street": [
+        "m001",
+        "m002",
+        "m003",
+        "m005",
+        "m006",
+        "m007",
+        "m008",
+        "m009",
+        "m010"
+      ]
+    },
+    "expect_no_question": true
+  }
+}

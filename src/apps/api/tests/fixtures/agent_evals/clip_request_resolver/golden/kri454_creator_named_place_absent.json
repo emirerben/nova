@@ -1,0 +1,187 @@
+{
+  "agent": "nova.plan.clip_request_resolver",
+  "prompt_version": "2026-10-05.1",
+  "input": {
+    "creator_request": "Barcelona and Lisbon weekend. Put a place label on these shots: Belém Tower, Sagrada Família.",
+    "intents": [
+      {
+        "intent_id": "label-belem-tower",
+        "op": "label",
+        "attribute": "shots: Belém Tower",
+        "creator_text": "Belém Tower",
+        "caption_attribute": null,
+        "position": null
+      },
+      {
+        "intent_id": "label-sagrada-familia",
+        "op": "label",
+        "attribute": "shots: Sagrada Família",
+        "creator_text": "Sagrada Família",
+        "caption_attribute": null,
+        "position": null
+      }
+    ],
+    "clips": [
+      {
+        "alias": "m002",
+        "kind": "video",
+        "record": {
+          "subject": "people dining in a buffet",
+          "summary": "People are gathered in a large dining hall, eating at a long communal table and serving themselves food from a buffet line.",
+          "setting": "indoor dining hall or food court",
+          "activity": "eating a meal, serving food from a buffet",
+          "people": {
+            "speaks_to_camera": false,
+            "count": 50,
+            "note": "diverse group of adults"
+          },
+          "content_type": "broll",
+          "audio_type": "ambient",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 3.0,
+              "description": "diners eating at long table"
+            },
+            {
+              "start_s": 4.0,
+              "end_s": 6.0,
+              "description": "people serving themselves from buffet"
+            },
+            {
+              "start_s": 7.0,
+              "end_s": 9.0,
+              "description": "patrons choosing food at buffet"
+            }
+          ]
+        }
+      },
+      {
+        "alias": "m004",
+        "kind": "video",
+        "record": {
+          "subject": "man walking on a street at night",
+          "summary": "A man walks towards the camera, taking a sip from his drink, on a lively cobblestone street at night. Many other people are visible walking in both directions, and colorful umbrellas are strung overhead.",
+          "setting": "a narrow, cobblestone street at night, decorated with colorful umbrellas overhead, lined with buildings with neon signs",
+          "activity": "people walking and socializing on a lively street, a man walking and drinking",
+          "people": {
+            "speaks_to_camera": false,
+            "count": 20,
+            "note": "a man holding a drink and many other people walking"
+          },
+          "content_type": "broll",
+          "audio_type": "ambient",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 1.5,
+              "description": "man walks towards camera"
+            },
+            {
+              "start_s": 3.2,
+              "end_s": 5.4,
+              "description": "crowd walks past man"
+            }
+          ]
+        }
+      },
+      {
+        "alias": "m005",
+        "kind": "video",
+        "record": {
+          "subject": "Belém Tower",
+          "summary": "The video shows the historic Belém Tower situated in the water, with a crowd of tourists walking along a sunny waterfront promenade in the foreground.",
+          "setting": "Waterfront promenade in Lisbon, Portugal, by the Tagus River",
+          "activity": "sightseeing and walking along a promenade",
+          "people": {
+            "speaks_to_camera": false,
+            "count": 20,
+            "note": "diverse group of tourists walking"
+          },
+          "content_type": "ambience",
+          "audio_type": "ambient",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 4.0,
+              "description": "crowd walking past Belém Tower"
+            }
+          ]
+        }
+      },
+      {
+        "alias": "m008",
+        "kind": "video",
+        "record": {
+          "subject": "ferry on water",
+          "summary": "The video captures a scenic view from a ferry crossing a body of water, with a large red suspension bridge in the background and seagulls flying alongside the boat.",
+          "setting": "open water on a sunny day",
+          "activity": "traveling on a ferry with a bridge in the distance",
+          "people": {
+            "speaks_to_camera": false,
+            "count": 5,
+            "note": "passengers sitting on a ferry"
+          },
+          "content_type": "ambience",
+          "audio_type": "ambient",
+          "notable_moments": [
+            {
+              "start_s": 0.0,
+              "end_s": 1.7,
+              "description": "seagulls flying near ferry"
+            },
+            {
+              "start_s": 2.7,
+              "end_s": 4.5,
+              "description": "ferry passing bridge with seagulls"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"label-belem-tower\",\n      \"assignments\": [\n        {\n          \"media\": \"m005\",\n          \"value\": \"Belém Tower\",\n          \"evidence\": \"subject: Belém Tower; summary: The video shows the historic Belém Tower\",\n          \"confidence\": 1.0\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"label-sagrada-familia\",\n      \"assignments\": [],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    }\n  ]\n}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "label-belem-tower",
+        "assignments": [
+          {
+            "media": "m005",
+            "value": null,
+            "evidence": "subject: Belém Tower; summary: The video shows the historic Belém Tower",
+            "confidence": 1.0
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      },
+      {
+        "intent_id": "label-sagrada-familia",
+        "assignments": [],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      }
+    ]
+  },
+  "meta": {
+    "source": "kri454_live_recorded",
+    "case": "KRI-454 negative control: matching a creator-named place by how it looks must not invent one that is not in the footage. Sagrada Família appears in none of these Lisbon clips, so it stays empty while Belém Tower still matches.",
+    "expect_covered": {
+      "label-belem-tower": [
+        "m005"
+      ]
+    },
+    "expect_not_assigned": {
+      "label-sagrada-familia": [
+        "m002",
+        "m004",
+        "m005",
+        "m008"
+      ]
+    },
+    "expect_no_question": true
+  }
+}

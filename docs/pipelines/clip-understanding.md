@@ -125,7 +125,15 @@ Flow (flag on):
    remain untouched. A valid alias explicitly selected for a chapter establishes
    membership even when its generic clip record does not match, while factual
    labels and authored captions still require evidence from the selected clip's
-   record. Clips the record cannot answer go to `ClipQuestionAgent` (the vision
+   record. A `label` with `creator_text` is membership only: the resolver may
+   leave its `value` empty or paraphrase it and the match is kept, because the
+   creator's words are printed (KRI-454). When that text is a place name the
+   creator listed ("label these shots: Alfama, LX Factory"), the resolver matches
+   by what the place is known to look like, one name per clip, since the records
+   rarely spell the name out. The resolver runs as ONE call while the project
+   fits the measured 12-clip x 8-intent (96-cell) load; bigger projects split into
+   ~48-cell shards, which see only part of the footage at once.
+   Clips the record cannot answer go to `ClipQuestionAgent` (the vision
    model re-watches THAT clip): at most `clip_intents_max_vision_requeries`
    (4) per turn, under one `clip_intents_vision_deadline_s` (25 s) deadline, video
    only: a photo the record can't settle is an unknown the creator answers, never
