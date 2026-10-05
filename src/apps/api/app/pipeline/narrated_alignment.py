@@ -132,6 +132,69 @@ def contiguous_step_timings(
     return timings
 
 
+MIN_ALIGNED_STEP_S = 1.5
+# Tolerance for float noise and the 3-decimal rounding in contiguous_step_timings.
+_ALIGN_EPS = 1e-3
+
+
+def enforce_min_step_starts(
+    starts: list[float],
+    timeline_end: float,
+    *,
+    min_step_s: float = MIN_ALIGNED_STEP_S,
+) -> list[float] | None:
+    """Pull step starts earlier so every step lasts at least ``min_step_s``.
+
+    ``starts[0]`` is the timeline origin (always 0.0 on the output). Working from
+    the last step backwards, a step that is too short moves its own start earlier,
+    taking time from the step before it; that step is then checked in turn, so a
+    cluster of short steps cascades backwards. Boundaries never move later.
+    Returns ``None`` when the timeline is too short to give every step the
+    minimum (the caller falls back to its legacy split).
+    """
+    n = len(starts)
+    if n == 0 or timeline_end <= 0:
+        return None
+    adjusted = [0.0] + [float(s) for s in starts[1:]]
+    end = float(timeline_end)
+    for i in range(n - 1, 0, -1):
+        adjusted[i] = min(adjusted[i], end - min_step_s)
+        end = adjusted[i]
+    boundaries = [*adjusted, float(timeline_end)]
+    for i in range(n):
+        if boundaries[i + 1] - boundaries[i] < min_step_s - _ALIGN_EPS:
+            return None
+    return adjusted
+
+
+def resolve_aligned_steps(
+    clip_ids: list[str],
+    start_times_s: list[float],
+    timeline_end: float,
+    *,
+    min_step_s: float = MIN_ALIGNED_STEP_S,
+) -> list[tuple[str, StepTiming]] | None:
+    """Turn agent-chosen clip start times into contiguous, clip-tagged step windows.
+
+    ``start_times_s[i]`` is when ``clip_ids[i]`` should come on screen (the
+    voiceover word the agent picked). The first step always starts at 0.0 so any
+    leading line stays with the first clip. Returns ``None`` for any input that
+    cannot yield valid windows: mismatched lengths, non-increasing starts, or a
+    timeline too short for the minimum step length.
+    """
+    if not clip_ids or len(clip_ids) != len(start_times_s):
+        return None
+    if any(b <= a for a, b in zip(start_times_s, start_times_s[1:], strict=False)):
+        return None
+    starts = enforce_min_step_starts(start_times_s, timeline_end, min_step_s=min_step_s)
+    if starts is None:
+        return None
+    timings = contiguous_step_timings(starts, timeline_end)
+    if len(timings) != len(clip_ids):
+        return None
+    return list(zip(clip_ids, timings, strict=True))
+
+
 def align_script_to_voiceover(
     script_steps: list[StepScript],
     whisper_words: list[WordLike],

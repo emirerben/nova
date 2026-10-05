@@ -51,6 +51,7 @@ pytest tests/evals/test_narrated_storyboard_evals.py -v --with-judge
 | `nova.creator.main` | ✓ | `rubrics/main_creator.md` | hand-authored golden + exported | — |
 | `nova.compose.sfx_placement` | ✓ | `rubrics/sfx_placement.md` | hand-authored golden (visual moments) | — |
 | `nova.compose.narrated_storyboard` | ✓ | `rubrics/narrated_storyboard.md` | hand-authored sports, non-sports, and adversarial golden fixtures | `Job.assembly_plan.variants[].narrated_storyboard` |
+| `nova.compose.narrated_clip_alignment` | ✓ | `rubrics/narrated_clip_alignment.md` | live-captured goldens (cacio e pepe, locked + free order) | — |
 
 ## Layer-2 text-overlay pipeline eval
 

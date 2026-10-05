@@ -759,6 +759,12 @@ class Settings(BaseSettings):
     # Transcript-grounded visual matching and editable narrative overlays for
     # recorded voiceover edits. Off preserves the legacy upload-order path.
     narrated_storyboard_enabled: bool = False
+    # KRI-456 kill switch. Phone narrated edits with no filming guide let the
+    # `nova.compose.narrated_clip_alignment` agent choose the voiceover word at
+    # which each clip comes on screen, so a clip plays when the voice describes
+    # it. Fail-open: any agent/validation failure falls back to the legacy
+    # equal-duration bucket split. False is byte-identical to that split.
+    narrated_clip_alignment_enabled: bool = True
 
     # Kill switch for the terminal-job stuck-variant watchdog
     # (`reconcile_stuck_variants`). This sweep WRITES user-visible state — it
