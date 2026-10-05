@@ -2654,7 +2654,7 @@ def test_cloud_guided_render_publishes_an_applied_cleanup_receipt(monkeypatch, c
         "selected_media_ids": ["clip"],
         "beat_windows": [{}],
     }
-    monkeypatch.setattr(gb, "_guided_execution_plan", lambda *_: (execution_plan, None))
+    monkeypatch.setattr(gb, "_guided_execution_plan", lambda *_, **__: (execution_plan, None))
     monkeypatch.setattr(gb, "record_phase", lambda *a, **k: None)
     monkeypatch.setattr(gb, "_claim_guided_story_attempt", lambda *_: (claim, dict(rendered)))
     monkeypatch.setattr(gb, "_guided_story_attempt_heartbeat", lambda *_: nullcontext())
