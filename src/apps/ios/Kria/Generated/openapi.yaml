@@ -931,6 +931,11 @@
             "title": "Formats",
             "type": "array"
           },
+          "live_plan_review_enabled": {
+            "default": false,
+            "title": "Live Plan Review Enabled",
+            "type": "boolean"
+          },
           "media": {
             "$ref": "#/components/schemas/CreationMediaCapabilitiesOut"
           },
@@ -10505,6 +10510,87 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TurnAccepted"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "409": {
+            "description": "Revision or identity conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Web creation is retired"
+          },
+          "422": {
+            "description": "Invalid request"
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KriaProblemOut"
+                }
+              }
+            },
+            "description": "Native client update required"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ]
+      }
+    },
+    "/creation-threads/{thread_id}/turns/{turn_id}/cancel-render": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "turn_id",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "operationId": "cancelCreationRender",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TurnCancelBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurnCancelled"
                 }
               }
             },

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.82.0] - 2026-10-05
+
+### Changed
+- feat(kria): plan_block events + cancel-render behind LIVE_PLAN_REVIEW_ENABLED (KRI-443) (#1397) <!-- release-pr: 1397 -->
+
+## [0.78.81.0] - 2026-10-05
+
+### Fixed
+- fix(ios): clear message when picking Vertical on a landscape video (KRI-431) (#1390) <!-- release-pr: 1390 -->
+
 ## [0.78.80.0] - 2026-10-05
 
 ### Changed

@@ -354,6 +354,8 @@ class CreationCapabilitiesOut(BaseModel):
     # KRI-374: the server may ask the creator to confirm the order of takes it
     # could not place against their song (`song_order_question` on a turn plan).
     song_order_questions: bool = False
+    # KRI-443: plan_block events follow Create and cancel-render is available.
+    live_plan_review_enabled: bool = False
 
 
 class CreateBody(StrictBody):
@@ -3561,6 +3563,7 @@ async def capabilities(
             ),
         },
         "song_order_questions": song_available,
+        "live_plan_review_enabled": bool(settings.live_plan_review_enabled),
     }
 
 

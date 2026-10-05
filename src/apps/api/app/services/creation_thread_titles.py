@@ -78,6 +78,35 @@ def matches_conversation_revision(thread: CreationThread, expected_revision: int
     )
 
 
+async def conversation_revision_matches(
+    db: AsyncSession, thread: CreationThread, expected_revision: int
+) -> bool:
+    """`matches_conversation_revision`, also tolerating live plan-block events.
+
+    While a render runs, `plan_block` events bump the thread revision on their
+    own (KRI-443). They carry no conversation content, so a client that has not
+    yet polled them must not 409. Any other event in the gap is a real change.
+    """
+    if matches_conversation_revision(thread, expected_revision):
+        return True
+    current = int(thread.revision)
+    if not settings.live_plan_review_enabled or current <= expected_revision:
+        return False
+    rows = (
+        (
+            await db.execute(
+                select(CreationThreadEvent.event_type).where(
+                    CreationThreadEvent.thread_id == thread.id,
+                    CreationThreadEvent.revision > expected_revision,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return bool(rows) and all(kind == "plan_block" for kind in rows)
+
+
 def start_title_generation(thread_id: uuid.UUID) -> None:
     """Retain bounded background work; the DB claim also deduplicates API replicas."""
     if thread_id in _tasks:

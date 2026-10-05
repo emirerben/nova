@@ -25,7 +25,6 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
-from app import storage
 from app.agents._runtime import SUCCESS_OUTCOMES
 from app.database import get_db
 from app.kria.device_render import DeviceRetryOut
@@ -35,7 +34,6 @@ from app.models import (
     Job,
     JobClip,
     MusicTrack,
-    TikTokPublication,
     VideoTemplate,
 )
 from app.routes._admin_schemas import (
@@ -51,6 +49,11 @@ from app.services.device_render import (
     mark_device_failed,
     retry_device_render,
 )
+from app.services.job_cancel import (
+    JobCancelError,
+    lock_and_cancel_job,
+    revoke_and_cleanup_job,
+)
 from app.services.kria_trace import find_thread_link
 from app.services.public_assembly_plan import (
     project_admin_debug_candidates,
@@ -63,7 +66,6 @@ from app.services.queue_state import (
 )
 from app.services.render_summary import build_render_summary
 from app.services.speech_cleanup_rollout import project_admin_speech_cleanup_trace
-from app.services.speech_cleanup_terminal import active_speech_claim_task_id
 
 log = structlog.get_logger()
 
@@ -544,7 +546,7 @@ async def un_reap_falsely_failed_jobs(
     Idempotent: re-running returns {"restored": 0, "ids": []} because the
     restored rows no longer match the fingerprint.
     """
-    from sqlalchemy import case, update  # noqa: PLC0415
+    from sqlalchemy import case  # noqa: PLC0415
 
     # Use a JSONB existence check (assembly_plan ? 'output_url') so we only
     # restore rows that actually have a usable output. SQLAlchemy renders this
@@ -856,251 +858,23 @@ async def cancel_job(
          temp delete — 24h lifecycle is the real backstop).
     """
     try:
-        job_uuid = uuid.UUID(job_id)
-    except (ValueError, TypeError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid job_id: {exc}",
-        ) from exc
-
-    job_res = await db.execute(select(Job).where(Job.id == job_uuid).with_for_update())
-    job = job_res.scalar_one_or_none()
-    if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-
-    # Capture the speech worker identity from the same locked snapshot used for
-    # cancellation. Terminalization may legitimately clear this control below.
-    speech_task_id = active_speech_claim_task_id(job.assembly_plan)
-
-    from app.services.speech_cleanup_terminal import (  # noqa: PLC0415
-        terminalize_required_speech_generations,
-    )
-
-    terminalization = terminalize_required_speech_generations(
-        job.assembly_plan or {},
-        job_id=job_id,
-        error="render cancelled by administrator",
-    )
-    private_internal = (
-        (job.assembly_plan or {}).get("_speech_cleanup_internal")
-        if isinstance(job.assembly_plan, dict)
-        else None
-    )
-    private_locks = (
-        private_internal.get("required_speech_generation_locks")
-        if isinstance(private_internal, dict)
-        else None
-    )
-    terminal_gap_cancellable = job.status in {
-        "variants_ready",
-        "variants_ready_partial",
-        "variants_failed",
-    } and (
-        (terminalization.status == "terminalized" and terminalization.restored_last_good)
-        # Cancellation is an immediate tombstone even when fresh/malformed
-        # private ownership cannot yet be safely released. Preserve the exact
-        # owner on the cancelled row; the cancelled-row reaper will retry after
-        # claim/upload leases expire. Never turn ambiguity into a public swap.
-        or (
-            terminalization.status == "blocked"
-            and isinstance(private_locks, dict)
-            and private_locks
-        )
-    )
-    if job.status not in _CANCELLABLE_STATUSES and not terminal_gap_cancellable:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"Job status is '{job.status}' — only "
-                f"{', '.join(_CANCELLABLE_STATUSES)} jobs can be cancelled."
-            ),
-        )
-
-    previous_status = job.status
-    task_id = job.celery_task_id
-    revoke_task_ids = list(
-        dict.fromkeys(value for value in (task_id, speech_task_id) if isinstance(value, str))
-    )
-    terminal_plan = (
-        terminalization.plan if terminalization.status == "terminalized" else job.assembly_plan
-    )
-    if terminalization.status == "blocked":
-        # Cancellation remains immediate, but ambiguous ownership is retained
-        # on the cancelled row so the bounded Beat reconciler can retry safely.
-        log.warning(
-            "admin_cancel_required_speech_terminalization_blocked",
-            job_id=job_id,
-            reason=terminalization.reason,
-        )
-
-    # Lock and fail receipts that provably have not crossed the provider
-    # boundary. ``submitting`` is deliberately excluded: that state can mean
-    # TikTok already received an ambiguous request and must retain its audit
-    # receipt. Lock order is Job -> TikTokPublication, matching the submit task.
-    publication_rows = (
-        (
-            await db.execute(
-                select(TikTokPublication)
-                .where(
-                    TikTokPublication.job_id == job_uuid,
-                    TikTokPublication.processing_status.in_(["queued", "snapshotting"]),
-                )
-                .with_for_update()
-            )
-        )
-        .scalars()
-        .all()
-    )
-    publication_snapshots = [
-        row.snapshot_object_path for row in publication_rows if row.snapshot_object_path
-    ]
-    for publication in publication_rows:
-        publication.processing_status = "failed"
-        publication.retryable = False
-        publication.next_poll_at = None
-        publication.failure_code = "source_job_cancelled"
-        publication.failure_detail = "The source video was cancelled before TikTok submission"
-        publication.snapshot_object_path = None
-        publication.media_token_hash = None
-        publication.media_expires_at = None
-
-    # Append the audit event while the row lock is held. Broker/network work is
-    # deliberately deferred until after commit so a slow Celery control plane
-    # cannot extend this database critical section.
-    cancelled_at = datetime.now(UTC)
-    cancel_event = {
-        "ts": cancelled_at.isoformat(),
-        "stage": "cancel",
-        "event": "admin_cancel",
-        "data": {
-            "previous_status": previous_status,
-            "task_id": task_id,
-            "speech_task_id": speech_task_id,
-            "revoke_requested": bool(revoke_task_ids),
-        },
-    }
-    if terminalization.status == "terminalized":
-        internal = (job.assembly_plan or {}).get("_speech_cleanup_internal")
-        stages = internal.get("staged_render_results") if isinstance(internal, dict) else None
-        if isinstance(stages, dict):
-            from app.services.speech_cleanup_outcome import (  # noqa: PLC0415
-                append_speech_cleanup_render_outcome_locked,
-                build_speech_cleanup_render_outcome,
-            )
-
-            for staged in stages.values():
-                if not isinstance(staged, dict):
-                    continue
-                context = staged.get("_speech_cleanup_outcome_context")
-                generation = staged.get("render_generation_id")
-                variant_id = staged.get("variant_id")
-                if not isinstance(context, dict) or not generation or not variant_id:
-                    continue
-                try:
-                    append_speech_cleanup_render_outcome_locked(
-                        job,
-                        build_speech_cleanup_render_outcome(
-                            outcome="cancelled_owned",
-                            analysis_attempt_id=str(context["analysis_attempt_id"]),
-                            analysis_view=context["analysis_view"],
-                            detector_version=str(context["detector_version"]),
-                            source_tag=context.get("source_tag"),
-                            variant_id=str(variant_id),
-                            render_generation_id=str(generation),
-                            selected_plan=context.get("selected_plan"),
-                            candidate_status=context.get("candidate_status"),
-                            output_removal_count=int(context.get("output_removal_count") or 0),
-                            output_removed_ms=int(context.get("output_removed_ms") or 0),
-                        ),
-                    )
-                except Exception as exc:  # noqa: BLE001 - cancellation is authoritative
-                    log.warning(
-                        "admin_cancel_speech_outcome_build_failed",
-                        job_id=job_id,
-                        error_class=type(exc).__name__,
-                    )
-
-    trace = list(job.pipeline_trace or [])
-    if len(trace) < 500:
-        trace.append(cancel_event)
-    result = await db.execute(
-        update(Job)
-        .where(Job.id == job_uuid, Job.status == previous_status)
-        .values(
-            status="cancelled",
-            finished_at=cancelled_at,
-            failure_reason="cancelled_by_admin",
-            error_detail="Cancelled via admin UI",
-            pipeline_trace=trace,
-            assembly_plan=terminal_plan,
-        )
-    )
-    if result.rowcount == 0:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Job reached a terminal status before cancellation could apply.",
-        )
-    await db.commit()
-
-    from app.worker import celery_app  # noqa: PLC0415
-
-    revoke_dispatched = False
-    for revoke_task_id in revoke_task_ids:
-        try:
-            # terminate=True sends the configured signal to the worker
-            # process running the task. SIGTERM lets a Python try/except
-            # SoftTimeLimitExceeded-style handler run; SIGKILL would
-            # drop pending DB writes and FFmpeg subprocesses uncleanly.
-            celery_app.control.revoke(revoke_task_id, terminate=True, signal="SIGTERM")
-            revoke_dispatched = True
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "admin_cancel_revoke_failed",
-                job_id=job_id,
-                task_id=revoke_task_id,
-                error=str(exc),
-            )
-
-    # DB state is already terminal, so a cleanup outage cannot resurrect a
-    # publication. Revoke first, then delete exact snapshot keys after locks
-    # are released so storage latency cannot delay the worker stop request.
-    for snapshot_path in publication_snapshots:
-        storage.delete_object_best_effort(snapshot_path)
-
-    # Best-effort cleanup. Lifecycle rule is the backstop, so a failure
-    # to enqueue this task is non-fatal.
-    #
-    # countdown=30: SIGTERM doesn't synchronously kill the worker's
-    # ffmpeg subprocess. The worker may keep writing to GCS for a few
-    # seconds after revoke. Delaying cleanup by 30s avoids deleting a
-    # clip the dying worker is still uploading, which would otherwise
-    # produce orphaned partial blobs (harmless — lifecycle clears them
-    # in 24h — but noisy).
-    try:
-        from app.tasks.maintenance import cleanup_cancelled_job  # noqa: PLC0415
-
-        cleanup_cancelled_job.apply_async(args=[job_id], countdown=30)
-    except Exception as exc:  # noqa: BLE001
-        log.warning(
-            "admin_cancel_cleanup_enqueue_failed",
-            job_id=job_id,
-            error=str(exc),
-        )
-
+        outcome = await lock_and_cancel_job(db, job_id)
+    except JobCancelError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    revoke_dispatched = revoke_and_cleanup_job(outcome)
     log.info(
         "admin_cancel_done",
         job_id=job_id,
-        previous_status=previous_status,
-        task_id=task_id,
-        speech_task_id=speech_task_id,
+        previous_status=outcome.previous_status,
+        task_id=outcome.task_id,
+        speech_task_id=outcome.speech_task_id,
         revoke_dispatched=revoke_dispatched,
     )
     return CancelJobResponse(
         job_id=job_id,
-        previous_status=previous_status,
+        previous_status=outcome.previous_status,
         status="cancelled",
-        task_id=task_id,
+        task_id=outcome.task_id,
         revoke_dispatched=revoke_dispatched,
     )
 
