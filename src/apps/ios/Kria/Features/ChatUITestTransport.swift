@@ -71,6 +71,7 @@ private final class CreationChatFixture: @unchecked Sendable {
     private var failedGenerates: Set<String> = []
     private var slideDrafts: [String: [String: Any]] = [:]
     private var slideRendered: Set<String> = []
+    private var chatEditFailed = false
     /// `KRIA_SLIDE_POST_LATE_ASSET=1`: a fourth photo that is still processing for the first two reads
     /// after a draft exists and then turns ready, like an upload that finishes while the editor is open.
     private var lateAssetPolls: [String: Int] = [:]
@@ -319,8 +320,15 @@ private final class CreationChatFixture: @unchecked Sendable {
         let base = [("trulli-street", "jpg", "image"), ("istanbul", "mp4", "video"), ("lisbon", "jpg", "image")]
         let media = ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_MANY"] == "1" ? Array(repeating: base, count: 4).flatMap { $0 } : base
         var assets: [[String: Any]] = media.enumerated().map { index, media in
-            let url = Bundle.main.url(forResource: media.0, withExtension: media.1)?.absoluteString ?? ""
-            return ["id": "asset-\(index)", "kind": media.2, "status": "ready", "media_status": "available", "source_filename": "\(media.0).\(media.1)", "source_url": url, "display_url": url, "preview_url": media.2 == "video" ? Bundle.main.url(forResource: "trulli-street", withExtension: "jpg")!.absoluteString : url, "duration_s": 8]
+            var url = Bundle.main.url(forResource: media.0, withExtension: media.1)?.absoluteString ?? ""
+            var poster = media.2 == "video" ? Bundle.main.url(forResource: "trulli-street", withExtension: "jpg")!.absoluteString : url
+            // `KRIA_SLIDE_POST_REMOTE_MEDIA=1`: photos look remote (slow, re-signed on every response) so the image
+            // cache is exercised: same asset, new `sig` each time. Videos keep their local source for AVPlayer.
+            if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_REMOTE_MEDIA"] == "1" {
+                let signed = { (name: String, ext: String) in "https://fixture.invalid/\(name).\(ext)?sig=\(UUID().uuidString)" }
+                if media.2 == "image" { url = signed(media.0, media.1); poster = url } else { poster = signed("trulli-street", "jpg") }
+            }
+            return ["id": "asset-\(index)", "kind": media.2, "status": "ready", "media_status": "available", "source_filename": "\(media.0).\(media.1)", "source_url": url, "display_url": url, "preview_url": poster, "duration_s": 8]
         }
         let slides: [[String: Any]] = assets.enumerated().map { index, asset in ["id": "slide-\(index)", "asset_id": asset["id"]!, "kind": asset["kind"]!] }
         func lateAsset(status: String) -> [String: Any] {
@@ -339,6 +347,16 @@ private final class CreationChatFixture: @unchecked Sendable {
             // KRI-298 Lane E stub: reverse the slides and label the first two with a place. The editor's
             // own draft wins when sent; `base_version` is the stored version the next PUT must quote.
             let stored = slideDrafts[itemID]
+            // Mirrors the server's `SlidePostDraft.version: ge=1`: the first AI message on a brand-new post carries
+            // a never-saved draft, and an invalid one is a 422 (prod 2026-10-05).
+            if let sent = body["draft"] as? [String: Any], (sent["version"] as? Int ?? 0) < 1 {
+                return response(["detail": [["type": "greater_than_equal", "loc": ["body", "draft", "version"], "msg": "Input should be greater than or equal to 1"]]], status: 422)
+            }
+            // `KRIA_SLIDE_POST_CHAT_EDIT_FAIL_ONCE=1`: the first request fails with a server error, a retry works.
+            if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CHAT_EDIT_FAIL_ONCE"] == "1", !chatEditFailed {
+                chatEditFailed = true
+                return response(["detail": "boom"], status: 500)
+            }
             var draft = (body["draft"] as? [String: Any]) ?? stored ?? ["schema_version": 1, "platform_profile": "instagram_carousel", "slides": slides, "cover_index": 0, "caption": "", "user_edited": false]
             let base = stored?["version"] as? Int ?? 0
             guard var edited = (draft["slides"] as? [[String: Any]])?.reversed().map({ $0 }) else { return response(["detail": "no draft"], status: 409) }

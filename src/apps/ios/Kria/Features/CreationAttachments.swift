@@ -143,7 +143,7 @@ struct AttachmentSheet: View {
         NavigationStack {
             VStack(spacing: 0) {
                 attachmentNavigation
-                AttachmentStepProgress(steps: steps, current: step)
+                AttachmentStepProgress(steps: steps, current: step, overlaysTitle: usesVisualPoolOnly ? SlideMediaCopy.poolTitle : nil)
                 TabView(selection: $step) {
                     ForEach(steps) { aStep in
                         ScrollView {
@@ -314,20 +314,20 @@ struct AttachmentSheet: View {
 
     private var overlaysStep: some View {
         VStack(alignment: .leading, spacing: 20) {
-            AttachmentHeading(title: "Add overlays", subtitle: usesVisualPoolOnly ? "Add the photos and videos for your slides." : "Optional photos and supporting clips can add context to your video.")
-            if uploadDestination(for: .visual).canUpload { Text(usesVisualPoolOnly ? "Photos & videos" : visualsCaption).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc) }
-            if pool == nil, error == nil { ProgressView("Loading overlays…") }
+            AttachmentHeading(title: usesVisualPoolOnly ? SlideMediaCopy.addHeading : "Add overlays", subtitle: usesVisualPoolOnly ? SlideMediaCopy.subtitle : "Optional photos and supporting clips can add context to your video.")
+            if uploadDestination(for: .visual).canUpload, !usesVisualPoolOnly { Text(visualsCaption).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc) }
+            if pool == nil, error == nil { ProgressView(usesVisualPoolOnly ? SlideMediaCopy.loading : "Loading overlays…") }
             if pool != nil {
-                FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .visual), attachedClipCount: existing(for: .visual), attachedMediaIDs: attachedMediaIDs(for: .visual), role: .visual, itemID: itemID, limit: capabilities?.media?["visuals"], destination: uploadDestination(for: .visual), onPickerFilled: nil, onSelectionCompleted: nil, showsHeading: false)
+                FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .visual), attachedClipCount: existing(for: .visual), attachedMediaIDs: attachedMediaIDs(for: .visual), role: .visual, itemID: itemID, limit: capabilities?.media?["visuals"], destination: uploadDestination(for: .visual), onPickerFilled: nil, onSelectionCompleted: nil, showsHeading: false, titleOverride: usesVisualPoolOnly ? SlideMediaCopy.poolTitle : nil)
                     .id(AttachmentStep.overlays)
-                if let summary = VisualPreparationSummary(assets: pool?.assets ?? [], uploading: uploadingVisualCount, online: network.isOnline, slowIDs: preparation.slowIDs, surface: .addMediaSheet) {
+                if let summary = VisualPreparationSummary(assets: pool?.assets ?? [], uploading: uploadingVisualCount, online: network.isOnline, slowIDs: preparation.slowIDs, surface: .addMediaSheet, nounOverride: usesVisualPoolOnly ? SlideMediaCopy.preparingNoun : nil) {
                     VisualPreparationSummaryView(summary: summary)
                 }
                 visualList
             }
             if let error {
                 Text(error).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText)
-                Button("Retry loading overlays") { Task { await loadVisuals() } }
+                Button(usesVisualPoolOnly ? SlideMediaCopy.retryLoading : "Retry loading overlays") { Task { await loadVisuals() } }
             }
         }
     }
@@ -388,14 +388,14 @@ struct AttachmentSheet: View {
                     AsyncImage(url: asset.previewURL ?? (asset.kind == "image" ? asset.displayURL : nil)) { image in image.resizable().scaledToFill() } placeholder: { Image(systemName: asset.kind == "image" ? "photo" : "video") }
                         .frame(width: 52, height: 64).clipped().clipShape(RoundedRectangle(cornerRadius: 8))
                     VStack(alignment: .leading) {
-                        Text(asset.sourceFilename ?? "Visual").font(KriaFont.body(14)).lineLimit(1)
+                        Text(asset.sourceFilename ?? (usesVisualPoolOnly ? (asset.kind == "video" ? "Video" : "Photo") : "Visual")).font(KriaFont.body(14)).lineLimit(1)
                         VisualStatusLine(text: asset.statusCaption(retryingAutomatically: autoRetry.isRetryPending(asset.id)), preparing: asset.preparationStage != nil, color: asset.status == "failed" ? KriaColor.failureText : KriaColor.zinc)
                             .font(KriaFont.body(11))
                     }
                     Spacer()
                     if asset.status == "failed", asset.retryable != false { Button("Retry") { Task { await retry(asset) } }.disabled(mutatingVisual || !autoRetry.canRetryManually(asset.id)) }
                     Button { Task { await remove(asset) } } label: { Image(systemName: "trash").frame(width: 44, height: 44) }
-                        .accessibilityLabel("Remove \(asset.sourceFilename ?? "visual")").disabled(mutatingVisual)
+                        .accessibilityLabel("Remove \(asset.sourceFilename ?? (usesVisualPoolOnly ? SlideMediaCopy.removeFallback : "visual"))").disabled(mutatingVisual)
                 }
             }
         }

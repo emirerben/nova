@@ -31,7 +31,7 @@ struct SlidePostWorkspaceView: View {
     @State private var keyboardUp = false
     @State private var photoSelections: [String: ProjectPhotoSelection] = [:]
     @State private var previewPlayer: AVPlayer?
-    @State private var previewRetry = 0
+    @State private var previewPlayerAssetID: String?
     @State private var resolvedThread: CreationThread?
     @State private var resolvedCapabilities: CreationCapabilities?
     @State private var showsAttachments = false
@@ -157,33 +157,41 @@ struct SlidePostWorkspaceView: View {
     private func previewMediaView(rich: Bool) -> some View {
         let asset = session.selectedAsset
         let previewURL = previewURL(rich: rich)
-        return Group {
-            if let url = previewURL {
-                if asset?.kind == "video" { VideoPlayer(player: previewPlayer) }
-                else if url.isFileURL, let image = UIImage(contentsOfFile: url.path) { Image(uiImage: image).resizable().scaledToFill().accessibilityHidden(true) }
-                else {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image): image.resizable().scaledToFill().accessibilityHidden(true)
-                        case .failure:
-                            VStack(spacing: 8) {
-                                Image(systemName: "exclamationmark.triangle").foregroundStyle(KriaColor.zinc)
-                                Text("Preview unavailable").font(KriaFont.body(12))
-                                Button("Retry preview") { Task { await refresh(); previewRetry += 1 } }
-                                    .buttonStyle(KriaSecondaryButtonStyle())
-                            }
-                        default: ProgressView()
-                        }
-                    }
-                    .id(previewRetry)
+        return ZStack {
+            if let asset, let url = previewURL {
+                if asset.kind == "video" {
+                    // The poster is the cached thumbnail, so the frame is never blank while the player spins up.
+                    SlidePostCachedImage(assetID: asset.id, variant: .preview, url: asset.previewMediaURL, onExpired: { await refresh() }, showsSpinner: false)
+                    if previewPlayer != nil, previewPlayerAssetID == asset.id { VideoPlayer(player: previewPlayer) }
+                } else {
+                    SlidePostCachedImage(assetID: asset.id, variant: .preview, url: url, onExpired: { await refresh() },
+                                         loadingIdentifier: "slidepost-preview-loading", showsRetry: true)
+                        .accessibilityHidden(true)
+                        .overlay { Color.clear.accessibilityElement().accessibilityIdentifier("slidepost-preview-image").accessibilityValue(asset.id) }
                 }
             } else { Image(systemName: "photo.on.rectangle").font(.largeTitle).foregroundStyle(KriaColor.zinc) }
         }
-        .task(id: previewURL) {
-            guard session.selectedAsset?.kind == "video", let previewURL else { previewPlayer?.pause(); previewPlayer = nil; return }
-            previewPlayer?.pause(); previewPlayer = AVPlayer(url: previewURL)
+        // Keyed by the stable asset, not the signed URL: a poll that re-signs the same video never rebuilds
+        // the player, and selecting a photo leaves the last video's player warm (paused) for the return.
+        .task(id: asset.map { $0.kind == "video" ? $0.id : "" } ?? "") {
+            guard let asset, asset.kind == "video", let previewURL else { previewPlayer?.pause(); return }
+            if previewPlayerAssetID == asset.id, previewPlayer != nil { return }
+            previewPlayer?.pause()
+            previewPlayer = AVPlayer(url: previewURL); previewPlayerAssetID = asset.id
         }
+        .task(id: prefetchKey) { prefetchNeighbours() }
         .onDisappear { previewPlayer?.pause() }
+    }
+
+    /// Selected slide +/- 2 at preview size and every thumbnail, so selecting a neighbour is instant. Runs when
+    /// the strip first appears and after any reorder/add/remove (the key changes with the slide order).
+    private var prefetchKey: String {
+        "\(session.selectedID ?? "")|\(session.draft?.slides.map(\.assetID).joined(separator: ",") ?? "")|\(session.state?.assets.count ?? 0)"
+    }
+    private func prefetchNeighbours() {
+        guard let draft = session.draft, let assets = session.state?.assets else { return }
+        let selected = draft.slides.firstIndex { $0.id == session.selectedID }
+        SlidePostImageCache.shared.prefetch(SlidePostPrefetch.requests(slideAssetIDs: draft.slides.map(\.assetID), selectedIndex: selected, assets: assets))
     }
 
     /// Rich editor: always the SOURCE media (the live canvas draws the editable text over it); the render is
@@ -556,9 +564,10 @@ struct SlidePostAssetThumbnail: View {
             .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
     }
     @ViewBuilder private var content: some View {
-        if let url = asset?.previewURL ?? asset?.displayURL {
-            if url.isFileURL, let image = UIImage(contentsOfFile: url.path) { Image(uiImage: image).resizable().scaledToFill().frame(width: size.width, height: size.height).clipped() }
-            else { AsyncImage(url: url) { $0.resizable().scaledToFill().frame(width: size.width, height: size.height).clipped() } placeholder: { ProgressView() } }
+        if let asset, let url = asset.thumbnailURL {
+            // Same cache the preview uses: the strip tile is what the preview blurs up from.
+            SlidePostCachedImage(assetID: asset.id, variant: .thumb, url: url)
+                .frame(width: size.width, height: size.height).clipped()
         }
         else { Image(systemName: asset?.kind == "video" ? "video" : "photo").foregroundStyle(KriaColor.zinc) }
     }

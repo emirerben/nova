@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import OSLog
 
 struct SlidePostText: Codable, Equatable, Sendable {
     var content: String
@@ -351,6 +352,15 @@ struct SlidePostChatEditRequest: Encodable, Sendable {
     let draft: SlidePostDraft?
     let turns: [SlidePostChatTurn]
     let clientRequestID: String
+    init(message: String, expectedVersion: Int, draft: SlidePostDraft?, turns: [SlidePostChatTurn], clientRequestID: String) {
+        self.message = message; self.expectedVersion = expectedVersion; self.turns = turns; self.clientRequestID = clientRequestID
+        // A brand-new post's locally seeded draft carries version 0 (nothing saved yet), but the server's
+        // draft model requires version >= 1 (`SlidePostDraft.version: ge=1`) and 422s the whole request.
+        // The server ignores the client's version here (it re-stamps from the stored one), so send >= 1.
+        var sent = draft
+        if var value = sent, value.version < 1 { value.version = 1; sent = value }
+        self.draft = sent
+    }
     enum CodingKeys: String, CodingKey {
         case message, draft, turns
         case expectedVersion = "expected_version", clientRequestID = "client_request_id"
@@ -635,8 +645,8 @@ private struct SlidePostItemResponse: Decodable {
                                             turns: Array(turns), clientRequestID: UUID().uuidString)
         let result: SlidePostChatEditResponse
         do { result = try await api.slidePostChatEdit(itemID: itemID, body: body) } catch is CancellationError { return false } catch {
-            let reason = (error as? APIError)?.conflictDetail ?? error.localizedDescription
-            chat.append(.init(role: "assistant", text: "I couldn't reach Kria just now. \(reason)", retryText: text))
+            Self.logChatFailure(error)
+            chat.append(.init(role: "assistant", text: Self.chatFailureMessage(error), retryText: text))
             return false
         }
         guard result.outcome == .edited, let proposed = result.draft else {
@@ -657,6 +667,26 @@ private struct SlidePostItemResponse: Decodable {
         selectedTextID = nil
         chat.append(.init(role: "assistant", text: result.reply, changes: result.changes))
         return true
+    }
+    /// Plain-language reason a chat send failed. Connection drops blame the connection; a server
+    /// refusal never does (it was reached) and never leaks raw validation text.
+    nonisolated static func chatFailureMessage(_ error: Error) -> String {
+        if let api = error as? APIError {
+            if let reason = api.conflictDetail { return "Kria couldn't apply that: \(reason)" }
+            if case let .requestFailed(status, _) = api {
+                if (500...599).contains(status) { return "Kria hit a problem on its side. Your slides are safe. Try again in a moment." }
+                return "Kria couldn't use that edit request. Your slides are safe. Try again, or rephrase."
+            }
+            if case .offline = api { return "I couldn't reach Kria. Check your connection and try again." }
+        }
+        return "Something went wrong sending that. Your message is kept; try again."
+    }
+    private static func logChatFailure(_ error: Error) {
+        if case let APIError.requestFailed(status, detail) = error {
+            Logger(subsystem: "com.kria.app", category: "slidepost").error("chat-edit failed status=\(status, privacy: .public) detail=\(detail.message ?? "none", privacy: .public)")
+        } else {
+            Logger(subsystem: "com.kria.app", category: "slidepost").error("chat-edit failed: \(String(describing: error), privacy: .public)")
+        }
     }
     /// Whether `message` would be sent; sets the user-facing error when it is too long. Callers that
     /// clear a composer must check this first so rejected text is never lost.

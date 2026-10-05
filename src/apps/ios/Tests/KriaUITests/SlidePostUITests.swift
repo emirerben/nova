@@ -70,8 +70,8 @@ import XCTest
     // MARK: Redesigned workspace (KRIA_SLIDE_POST_RICH_TEXT=1)
 
     /// Walks the fixture creation flow to the redesigned workspace: format, direction, Apply.
-    private func openRichWorkspace(dynamicType: String? = nil, chatEdit: Bool = false, many: Bool = false, lateAsset: Bool = false, capabilities: String? = nil, save: Bool = true) -> XCUIApplication {
-        let app = launchRich(dynamicType: dynamicType, chatEdit: chatEdit, many: many, lateAsset: lateAsset, capabilities: capabilities)
+    private func openRichWorkspace(dynamicType: String? = nil, chatEdit: Bool = false, many: Bool = false, lateAsset: Bool = false, capabilities: String? = nil, save: Bool = true, extraEnv: [String: String] = [:]) -> XCUIApplication {
+        let app = launchRich(dynamicType: dynamicType, chatEdit: chatEdit, many: many, lateAsset: lateAsset, capabilities: capabilities, extraEnv: extraEnv)
         XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 12)); app.buttons["Open projects"].tap()
         XCTAssertTrue(app.buttons["drawer-new-chat"].waitForExistence(timeout: 5)); app.buttons["drawer-new-chat"].tap()
         let carousel = app.scrollViews["format-carousel"]
@@ -83,8 +83,9 @@ import XCTest
         if save { saveDraft(app) }
         return app
     }
-    private func launchRich(dynamicType: String? = nil, chatEdit: Bool = false, many: Bool = false, lateAsset: Bool = false, capabilities: String? = nil, readyThread: Bool = false) -> XCUIApplication {
+    private func launchRich(dynamicType: String? = nil, chatEdit: Bool = false, many: Bool = false, lateAsset: Bool = false, capabilities: String? = nil, readyThread: Bool = false, extraEnv: [String: String] = [:]) -> XCUIApplication {
         let app = XCUIApplication()
+        for (key, value) in extraEnv { app.launchEnvironment[key] = value }
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = readyThread ? "v2" : "v1"
         app.launchEnvironment["KRIA_SLIDE_POST_FIXTURE"] = "1"
@@ -936,6 +937,75 @@ import XCTest
         openWeekendTripFromDrawer(app)
         assertRichLayout(app, "re-entry after hopping chats")
         attach(app, "Re-entry")
+    }
+
+    // MARK: Brand-new post: AI + add-media copy + seamless slide switching
+
+    /// Prod 2026-10-05: the first AI message on a never-saved post sent a version-0 draft and the server 422'd it.
+    /// The stub enforces the same rule, so this fails if the wire draft is ever invalid again.
+    func testFirstAIMessageOnABrandNewPostSucceedsWithoutSavingFirst() {
+        let app = openRichWorkspace(chatEdit: true, save: false)
+        XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes", "the post is brand new: nothing saved")
+        app.buttons["slidepost-openkria"].tap()
+        let input = app.textFields["Message Kria"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5)); input.tap(); input.typeText("Order them by time")
+        app.buttons["chat-send-message"].tap()
+        let reply = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: Done.")).firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 8), "a new post's first AI request succeeds")
+        XCTAssertFalse(app.buttons["slidepost-ai-retry"].exists)
+        attach(app, "New post: AI request succeeded")
+    }
+
+    /// A failed AI request says what happened, keeps the user's message, and offers Try again.
+    func testFailedAIRequestShowsAClearMessageAndRetryKeepsTheMessage() {
+        let app = openRichWorkspace(chatEdit: true, save: false, extraEnv: ["KRIA_SLIDE_POST_CHAT_EDIT_FAIL_ONCE": "1"])
+        app.buttons["slidepost-openkria"].tap()
+        let input = app.textFields["Message Kria"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5)); input.tap(); input.typeText("Order them by time")
+        app.buttons["chat-send-message"].tap()
+        let retry = app.buttons["slidepost-ai-retry"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 8), "failure offers Try again")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "problem on its side")).firstMatch.exists, "a clear reason, not a bare failure")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Order them by time")).firstMatch.exists, "the user's message is still shown")
+        attach(app, "AI failure: clear message and Try again")
+        retry.tap()
+        let reply = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: Done.")).firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 8), "retrying resends the same message")
+    }
+
+    /// The add-media sheet for a slide post never says "overlays" or "visuals".
+    func testAddMediaSheetForSlidePostsSaysPhotosAndVideos() {
+        let app = openRichWorkspace(save: false)
+        let add = app.buttons["slidepost-add-tile"].firstMatch
+        XCTAssertTrue(add.waitForExistence(timeout: 8)); add.tap()
+        XCTAssertTrue(app.staticTexts["Add photos & videos"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.staticTexts["Add overlays"].exists)
+        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] 'overlay' OR label CONTAINS[c] 'visuals'")).firstMatch.exists)
+        attach(app, "Add photos & videos sheet")
+    }
+
+    /// Photos are served by a slow fixture "CDN" with a fresh signature on every response. Once a slide has
+    /// loaded, selecting it again (or a prefetched neighbour) never shows a loading state.
+    func testSwitchingSlidesNeverShowsALoadingStateForLoadedImages() {
+        let app = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_REMOTE_MEDIA": "1", "KRIA_SLIDE_POST_MEDIA_DELAY_MS": "600"])
+        let loading = app.descendants(matching: .any)["slidepost-preview-loading"]
+        let image = app.descendants(matching: .any)["slidepost-preview-image"]
+        let first = Date()
+        XCTAssertTrue(image.waitForExistence(timeout: 10), "the first photo appears")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: loading); waitForExpectations(timeout: 10)
+        let firstVisible = Date().timeIntervalSince(first)
+        sleep(3) // neighbours are prefetched in the background
+        attach(app, "Slide 1 loaded")
+        var switches: [TimeInterval] = []
+        for tile in ["slidepost-tile-3", "slidepost-tile-1", "slidepost-tile-3", "slidepost-tile-1"] {
+            let started = Date()
+            app.buttons[tile].tap()
+            XCTAssertFalse(loading.exists, "no loading indicator right after selecting \(tile)")
+            XCTAssertTrue(image.exists, "the photo is on screen immediately")
+            switches.append(Date().timeIntervalSince(started))
+        }
+        attach(app, "After switching slides")
+        print("KRIA_SLIDE_TIMING first-visible=\(String(format: "%.3f", firstVisible))s switch-taps=\(switches.map { String(format: "%.3f", $0) })")
     }
 
     private func scrollTo(_ element: XCUIElement, app: XCUIApplication) {
