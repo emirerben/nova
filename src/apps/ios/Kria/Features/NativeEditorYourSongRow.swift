@@ -40,6 +40,8 @@ struct NativeEditorYourSongRow: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("native-editor-your-song-note")
         }
+        // Leaving the Sounds panel (or removing the song) ends any audition in progress.
+        .onDisappear { session.songAudition.cancel() }
     }
 
     private var volumeBinding: Binding<Double> {
@@ -70,9 +72,9 @@ struct NativeEditorYourSongRow: View {
         switch controls.mode {
         case .background:
             NativeSongWindowBar(controls: controls, audioURL: session.userSongAudioURL,
-                                onChange: { session.setUserSongStart($0) },
-                                onBegin: { session.beginTransaction() },
-                                onEnd: { session.endTransaction() })
+                                onChange: { session.moveSongStart($0) },
+                                onBegin: { session.beginSongStartDrag() },
+                                onEnd: { session.endSongStartDrag() })
                 .disabled(!controls.canEditStart)
         case .lipsync:
             Label(NativeEditorYourSong.lipSyncLockCopy, systemImage: "lock")
