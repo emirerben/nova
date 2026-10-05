@@ -7,6 +7,7 @@
       "KriaUITests/CreationUITests/testEveryCreationFormatOpensTheAttachmentFlow",
       "KriaUITests/CreationUITests/testLibraryPickerReturnsToChatByDoneAndBySinglePick",
       "KriaUITests/CreationUITests/testStartOfCreationGallerySlidesToSelectAndKeepsApplePickerFallback",
+      "KriaUITests/CreationUITests/testGalleryPickIsReadFromPhotosAndReachesUpload",
       "KriaUITests/CreationUITests/testCreationWithAttachedFootageReachesConfirmationAndReadyForBothRuntimes",
       "KriaUITests/CreationUITests/testClipsOnlySubmissionUsesSuggestAnEdit",
       "KriaUITests/CreationUITests/testIncomingResponseDoesNotPullReaderFromScrolledHistory",

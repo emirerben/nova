@@ -353,8 +353,8 @@ struct FootagePickerView: View {
         for identifier in diff.added {
             guard let item = byIdentifier[identifier] else { continue }
             uploads.select(.init(assetIdentifier: identifier, projectID: projectID, role: role, purpose: uploadPurpose, itemID: itemID, limit: limit, attachedMediaIDs: attachedMediaIDs)) {
-                guard let media = try await item.loadTransferable(type: ImportedMedia.self) else { throw UnreadablePhoto() }
-                return media.url
+                // Gallery picks have no item provider (KRI-282 regression): PhotoItemFileLoader reads them from Photos.
+                try await PhotoItemFileLoader().load(item: item, identifier: identifier)
             }
         }
         // Only what the library can still show can have been un-ticked. Anything else was dropped by the
@@ -481,7 +481,6 @@ struct FootagePickerView: View {
     }
 }
 
-private struct UnreadablePhoto: Error {}
 
 /// Applies the library-backed picker (real checkmarks, live selection, non-nil `itemIdentifier`)
 /// when Photos access was granted, and today's permission-free picker otherwise.
