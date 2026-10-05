@@ -279,6 +279,17 @@ class Settings(BaseSettings):
     # + `fly machine restart <id>` (api). No NEXT_PUBLIC twin (the iOS editor
     # follows the server's capability map).
     phone_narrated_caption_edits_enabled: bool = True
+    # KRI-455 (titles on phone Voiceover edits): a confirmed `opening_title` on
+    # a phone-rendered `narrated` edit burns like the cloud narrated intro
+    # (`phone_narrated_plan`, "Opening title") instead of the planner asking to
+    # drop it. Also requires "positionedText" + "animatedText" in
+    # `phone_render_verified_features` -- see
+    # `app.services.phone_rollout.phone_narrated_title_supported`. False: the
+    # planner asks to make the edit without the title again, as before; an
+    # already-approved title still renders. Rollback: `fly secrets set
+    # PHONE_NARRATED_TITLE_ENABLED=false --app nova-video` + `fly machine
+    # restart <id>` (api).
+    phone_narrated_title_enabled: bool = True
     # KRI-290 (free clip edits on phone Voiceover videos): a phone `narrated`
     # or montage `voiceover` variant's timeline opens (trim, extend, reorder,
     # split, delete) instead of being locked to the voiceover. A Save swaps the

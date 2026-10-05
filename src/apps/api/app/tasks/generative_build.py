@@ -4455,6 +4455,7 @@ def _run_phone_voiceover_montage_job(
     creator_request = str(all_candidates.get("creator_request") or "")[:1000]
     user_style = _effective_render_user_style(all_candidates)
     raw_creator_strategy = all_candidates.get("creator_strategy") or {}
+    creator_opening_title = raw_creator_strategy.get("opening_title")
     creator_font_family = raw_creator_strategy.get("font_family")
     creator_text_color = raw_creator_strategy.get("text_color")
     raw_pacing = raw_creator_strategy.get("pacing")
@@ -4486,16 +4487,26 @@ def _run_phone_voiceover_montage_job(
             if narrative_order:
                 hero = next((m for m in clip_metas if m.clip_id == narrative_order[0]), hero)
 
-            agent_text, agent_form = _run_text_agents(
-                clip_metas,
-                hero,
-                job_id=job_id,
-                language=language,
-                persona=persona,
-                filming_guide=filming_guide_candidates,
-                clip_notes=clip_notes_candidates,
-                creator_direction=creator_request,
-            )
+            if isinstance(creator_opening_title, str) and creator_opening_title:
+                # KRI-455: same as the cloud's `_text_then_style` -- confirmed
+                # copy is the intro, never rewritten by intro_writer.
+                import types as _types  # noqa: PLC0415
+
+                agent_text = _types.SimpleNamespace(
+                    text=creator_opening_title, highlight_word=None, word_roles=None
+                )
+                agent_form = {}
+            else:
+                agent_text, agent_form = _run_text_agents(
+                    clip_metas,
+                    hero,
+                    job_id=job_id,
+                    language=language,
+                    persona=persona,
+                    filming_guide=filming_guide_candidates,
+                    clip_notes=clip_notes_candidates,
+                    creator_direction=creator_request,
+                )
             pinned_set_id = str(user_style.get("style_set_id") or "").strip()
             if pinned_set_id and pinned_set_id != "default":
                 from app.pipeline.style_sets import style_set_ids  # noqa: PLC0415
@@ -6707,6 +6718,7 @@ def _run_phone_narrated_job(
     from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
         NarratedPhoneStep,
         compile_phone_narrated_plan,
+        narrated_title_end_s,
     )
     from app.pipeline.phrase_sequence import split_phrases  # noqa: PLC0415
     from app.pipeline.transcribe import Transcript, Word, transcribe_whisper  # noqa: PLC0415
@@ -6771,6 +6783,9 @@ def _run_phone_narrated_job(
         "word" if all_candidates.get("voiceover_caption_style") == "word" else "sentence"
     )
     language: str = all_candidates.get("language") or "en"
+    # KRI-455: the confirmed title burns like the cloud narrated intro.
+    raw_opening_title = (all_candidates.get("creator_strategy") or {}).get("opening_title")
+    opening_title = raw_opening_title if isinstance(raw_opening_title, str) else None
 
     # `required_v1`: the recorded voiceover is a normal, fully uploaded audio
     # file (never an analysis proxy -- see `content_plan_build.py`'s dispatch
@@ -7014,6 +7029,10 @@ def _run_phone_narrated_job(
                 caption_style=caption_style,
                 target_lufs=settings.output_target_lufs,
                 duck_footage_bed="audioDucking" in settings.phone_render_verified_features,
+                opening_title=opening_title,
+                opening_title_end_s=narrated_title_end_s(
+                    transcript.words[0].end_s if transcript.words else None
+                ),
             )
 
     validate_phone_pilot_recipe(recipe)

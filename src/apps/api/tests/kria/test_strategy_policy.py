@@ -87,7 +87,21 @@ def test_title_on_talking_edit_is_asked_about_not_silently_dropped(prod_profile)
     assert refused.question.endswith("?")
 
 
-def test_title_on_phone_voiceover_edit_is_asked_about(prod_profile) -> None:
+def test_title_on_phone_voiceover_edit_renders(prod_profile) -> None:
+    """KRI-455: the phone voiceover compiler burns the title like the cloud."""
+    checked = check_strategy_for_runtime_v2(
+        _narrated_manifest(), _narrated(opening_title="Cacio e pepe in 10 minutes")
+    )
+
+    assert isinstance(checked, CheckedStrategy)
+    assert checked.strategy.opening_title == "Cacio e pepe in 10 minutes"
+
+
+def test_title_on_phone_voiceover_edit_is_asked_about_when_switched_off(
+    prod_profile, monkeypatch
+) -> None:
+    monkeypatch.setattr(capabilities.settings, "phone_narrated_title_enabled", False)
+
     refused = check_strategy_for_runtime_v2(
         _narrated_manifest(), _narrated(opening_title="Barcelona")
     )

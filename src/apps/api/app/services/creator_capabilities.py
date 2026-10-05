@@ -57,6 +57,7 @@ from app.services.creator_errors import CreatorCapabilityError, CreatorStrategyE
 from app.services.phone_destination import phone_drawable_visual_kinds
 from app.services.phone_rollout import (
     phone_guided_narration_supported,
+    phone_narrated_title_supported,
     phone_render_supported_formats,
     phone_subtitled_overlays_supported,
     phone_subtitled_reaction_beats_supported,
@@ -1074,9 +1075,11 @@ def compile_strategy_to_plan(
         and strategy.render_program != "guided"
         and phone_capability is not None
         and phone_capability.available
+        and not phone_narrated_title_supported()
     ):
         # KRI-142: the phone voiceover compiler (`compile_phone_narrated_plan`)
-        # has no title lane; only the cloud narrated render burns one.
+        # had no title lane. KRI-455 added one; this refusal is now only its
+        # kill switch (`PHONE_NARRATED_TITLE_ENABLED=false`).
         raise CreatorStrategyError(
             f"opening_title is not supported by the phone {strategy.edit_format} renderer",
             code="unsupported_treatment",

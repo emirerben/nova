@@ -56,7 +56,7 @@ def _bindings():
     return (_binding("c0"), _binding("c1", duration_s=2.0), _binding("c2"))
 
 
-def _pinned_recipe(*, cues=_CUES, style="sentence"):
+def _pinned_recipe(*, cues=_CUES, style="sentence", title=None):
     # The worker's real knobs: a ducked footage bed and loudness target, both
     # of which a Save must carry over untouched.
     return compile_phone_narrated_plan(
@@ -73,17 +73,19 @@ def _pinned_recipe(*, cues=_CUES, style="sentence"):
         caption_style=style,
         target_lufs=-14.0,
         duck_footage_bed=True,
+        opening_title=title,
+        opening_title_end_s=1.6 if title else None,
     )
 
 
-def phone_job(monkeypatch, *, cues=_CUES, style="sentence", narration_binding=None):
+def phone_job(monkeypatch, *, cues=_CUES, style="sentence", narration_binding=None, title=None):
     """A device `narrated` variant exactly as `_run_phone_narrated_job` leaves it:
     caption cues + style on the variant, no base video, no guided plan."""
     monkeypatch.setattr(gj.settings, "phone_rendering_enabled", True)
     monkeypatch.setattr(gj.settings, "phone_render_user_ids", [])
     monkeypatch.setattr(gj.settings, "phone_render_verified_features", list(_VERIFIED_FEATURES))
     monkeypatch.setattr(gj.settings, "phone_narrated_caption_edits_enabled", True)
-    recipe = _pinned_recipe(cues=cues, style=style)
+    recipe = _pinned_recipe(cues=cues, style=style, title=title)
     job = SimpleNamespace(
         id=uuid.uuid4(),
         user_id=uuid.uuid4(),
@@ -142,6 +144,35 @@ def _assert_only_captions_moved(old, new):
     assert new.canvas == old.canvas
     non_font = [a for a in old.asset_manifest.assets if not a.id.startswith("font-")]
     assert [a for a in new.asset_manifest.assets if not a.id.startswith("font-")] == non_font
+
+
+# --- opening title (KRI-455) --------------------------------------------------------
+
+
+def _titles(recipe):
+    return [layer for layer in recipe.text_layers if layer.id.startswith("title-")]
+
+
+@pytest.mark.parametrize(
+    "sections",
+    [
+        {"caption_cues": [dict(_CUES[0], text="First we pack light"), _CUES[1]]},
+        {"caption_cues": []},
+        {"caption_meta": gj.EditorCommitCaptionMeta(enabled=False)},
+        {"caption_meta": gj.EditorCommitCaptionMeta(font_family="Montserrat Bold")},
+    ],
+)
+def test_a_caption_save_keeps_the_opening_title(monkeypatch, sections):
+    job = phone_job(monkeypatch, title="Cacio e pepe in 10 minutes")
+    old = device_status(job, "narrated").request.recipe
+    assert _titles(old)
+
+    save(job, **sections)
+
+    new = device_status(job, "narrated").request.recipe
+    assert _titles(new) == _titles(old)
+    assert {run.font_asset_id for layer in _titles(new) for run in layer.runs} <= set(_fonts(new))
+    assert {"positionedText", "animatedText"} <= new.required_capabilities
 
 
 # --- happy path --------------------------------------------------------------------
