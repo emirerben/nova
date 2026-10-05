@@ -38,6 +38,10 @@ struct FootagePickerView: View {
     /// to this callback. It deliberately does not enqueue an upload.
     let onAudioFileSelected: ((URL) -> Void)?
     let showsHeading: Bool
+    /// Names the media in headings, the system picker title and the limit line. Slide posts pass
+    /// `SlideMediaCopy.poolTitle` so their photos and videos are never called "visuals".
+    let titleOverride: String?
+    private var displayTitle: String { titleOverride ?? role.title }
     @ObservedObject private var uploads: BackgroundUploadCoordinator
     /// Upload rows say when they are waiting for a connection (KRI-294).
     @ObservedObject private var network = NetworkReachability.shared
@@ -64,8 +68,10 @@ struct FootagePickerView: View {
         onPickerFilled: (() -> Void)? = nil,
         onSelectionCompleted: (() -> Void)? = nil,
         onAudioFileSelected: ((URL) -> Void)? = nil,
-        showsHeading: Bool = true
+        showsHeading: Bool = true,
+        titleOverride: String? = nil
     ) {
+        self.titleOverride = titleOverride
         self.onPickerFilled = onPickerFilled
         self.onSelectionCompleted = onSelectionCompleted
         self.onAudioFileSelected = onAudioFileSelected
@@ -161,7 +167,7 @@ struct FootagePickerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if showsHeading { KriaSectionLabel(title: "Add \(role.title.lowercased())") }
+            if showsHeading { KriaSectionLabel(title: "Add \(displayTitle.lowercased())") }
             if !role.isAudio {
             Button { beginImport(source: .photos) } label: {
                 Label("Choose from Photos", systemImage: "photo.on.rectangle").frame(maxWidth: .infinity, minHeight: 48)
@@ -175,7 +181,7 @@ struct FootagePickerView: View {
                 filter: role == .visual ? visualPickerFilter : .videos,
                 kinds: role == .visual ? visualGalleryKinds : .videos,
                 libraryBacked: libraryAuthorized,
-                title: role.title,
+                title: displayTitle,
                 onFilled: onPickerFilled,
                 didChooseNewFootage: $photosPickerHasNewFootage,
                 onSelectionCompleted: onSelectionCompleted
@@ -200,7 +206,7 @@ struct FootagePickerView: View {
                 Text(disclosure).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
             }
             if selectionCapacity.remaining == 0 {
-                Text("You’ve reached the limit for \(role.title.lowercased()).")
+                Text("You’ve reached the limit for \(displayTitle.lowercased()).")
                     .font(KriaFont.body(12))
                     .foregroundStyle(KriaColor.zinc)
             } else if let selectionMessage {

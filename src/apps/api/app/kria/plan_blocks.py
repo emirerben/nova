@@ -222,62 +222,108 @@ def _count_label(count: int, singular: str, plural: str | None = None) -> str:
     return f"{count} {singular if count == 1 else (plural or singular + 's')}"
 
 
-def blocks_from_guided_plan(plan: dict[str, Any]) -> list[dict[str, Any]]:
-    """All seven sections `decided` from a pinned guided execution plan.
+def _skipped(section: str) -> dict[str, Any]:
+    return block(section, "decided", "Not used", skipped=True)
 
-    Values come only from fields the plan actually carries; a section with nothing
-    in the plan is `decided` + `skipped` ("Not used"). Nothing is invented.
-    """
-    out: list[dict[str, Any]] = []
 
-    texts = [t for t in (plan.get("text_elements") or []) if isinstance(t, dict) and t.get("text")]
-    out.append(
-        block("title", "decided", str(texts[0]["text"]))
-        if texts
-        else block("title", "decided", "Not used", skipped=True)
-    )
+def _caption_count(plan: dict[str, Any]) -> int:
+    count = 0
+    for field in ("narration_label_text_elements", "context_label_text_elements"):
+        rows = plan.get(field) or []
+        if isinstance(rows, list):
+            count += sum(1 for row in rows if isinstance(row, dict))
+    return count
 
-    timeline = plan.get("story_timeline")
-    duration = plan.get("resolved_duration_s")
-    if isinstance(timeline, list) and timeline:
-        summary = _count_label(len(timeline), "clip")
-        if isinstance(duration, int | float) and duration > 0:
-            summary += f" · {round(float(duration))}s"
-        out.append(block("clips", "decided", summary))
-    else:
-        out.append(block("clips", "decided", "Not used", skipped=True))
 
-    labels = plan.get("narration_label_text_elements") or []
-    if isinstance(labels, list) and labels:
-        out.append(block("captions", "decided", _count_label(len(labels), "caption")))
-    else:
-        out.append(block("captions", "decided", "Not used", skipped=True))
-
+def _music_block(plan: dict[str, Any]) -> dict[str, Any]:
     music = plan.get("music")
     if isinstance(music, dict) and music.get("title"):
         artist = music.get("artist")
-        out.append(
-            block("music", "decided", f"{music['title']} · {artist}" if artist else music["title"])
+        return block(
+            "music", "decided", f"{music['title']} \u00b7 {artist}" if artist else music["title"]
         )
-    else:
-        out.append(block("music", "decided", "Not used", skipped=True))
+    song = plan.get("user_song")
+    if isinstance(song, dict):
+        lipsync = song.get("mode") == "lipsync"
+        return block("music", "decided", "Your song", "Lip-sync" if lipsync else "Background")
+    if plan.get("narration"):
+        return block("music", "decided", "Your voiceover")
+    return _skipped("music")
 
-    sfx = plan.get("editor_sound_effects") or []
-    if isinstance(sfx, list) and sfx:
-        out.append(block("sfx", "decided", _count_label(len(sfx), "sound effect")))
-    else:
-        out.append(block("sfx", "decided", "Not used", skipped=True))
 
-    overlays = plan.get("editor_media_overlays") or []
-    if isinstance(overlays, list) and overlays:
-        out.append(block("overlays", "decided", _count_label(len(overlays), "overlay")))
-    else:
-        out.append(block("overlays", "decided", "Not used", skipped=True))
+def decided_block(plan: dict[str, Any], section: str) -> dict[str, Any]:
+    """One section `decided` from a pinned guided plan. Only fields the plan carries."""
+    if section == "title":
+        texts = [
+            t for t in (plan.get("text_elements") or []) if isinstance(t, dict) and t.get("text")
+        ]
+        return block("title", "decided", str(texts[0]["text"])) if texts else _skipped("title")
+    if section == "clips":
+        timeline = plan.get("story_timeline")
+        duration = plan.get("resolved_duration_s")
+        if isinstance(timeline, list) and timeline:
+            summary = _count_label(len(timeline), "clip")
+            if isinstance(duration, int | float) and duration > 0:
+                summary += f" \u00b7 {round(float(duration))}s"
+            return block("clips", "decided", summary)
+        return _skipped("clips")
+    if section == "captions":
+        count = _caption_count(plan)
+        return (
+            block("captions", "decided", _count_label(count, "caption"))
+            if count
+            else _skipped("captions")
+        )
+    if section == "music":
+        return _music_block(plan)
+    if section == "sfx":
+        sfx = plan.get("editor_sound_effects") or []
+        if isinstance(sfx, list) and sfx:
+            return block("sfx", "decided", _count_label(len(sfx), "sound effect"))
+        return _skipped("sfx")
+    if section == "overlays":
+        overlays = plan.get("editor_media_overlays") or []
+        if isinstance(overlays, list) and overlays:
+            return block("overlays", "decided", _count_label(len(overlays), "overlay"))
+        return _skipped("overlays")
+    if section == "look":
+        typography = plan.get("typography")
+        style_id = typography.get("style_id") if isinstance(typography, dict) else None
+        if style_id:
+            return block("look", "decided", str(style_id).replace("_", " ").capitalize())
+        return _skipped("look")
+    raise ValueError(f"unknown plan block section: {section}")
 
-    typography = plan.get("typography")
-    style_id = typography.get("style_id") if isinstance(typography, dict) else None
-    if style_id:
-        out.append(block("look", "decided", str(style_id).replace("_", " ").capitalize()))
-    else:
-        out.append(block("look", "decided", "Not used", skipped=True))
-    return out
+
+def blocks_from_guided_plan(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    """All seven sections `decided` from a pinned guided execution plan (phone path:
+    the render happens on the device, so the cloud decisions are the whole story)."""
+    return [decided_block(plan, section) for section in SECTION_ORDER]
+
+
+def deciding_blocks(sections: tuple[str, ...] | list[str]) -> list[dict[str, Any]]:
+    return [block(section, "deciding") for section in sections]
+
+
+def make_stage_reporter(job_id: str | uuid.UUID, plan: dict[str, Any]):
+    """Callback for the real render stages: `report(sections, state)`.
+
+    `state="deciding"` marks work started; `"decided"` reports the plan's real values
+    (or `Not used` when the plan truly lacks them). Best-effort; never raises. Call it
+    only from the render thread with no Job/PlanItem/Plan lock held.
+    """
+
+    def report(sections: tuple[str, ...] | list[str], state: str) -> None:
+        if not enabled():
+            return
+        try:
+            blocks = (
+                deciding_blocks(sections)
+                if state == "deciding"
+                else [decided_block(plan, section) for section in sections]
+            )
+            emit_plan_blocks(job_id, blocks)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("plan_blocks_stage_failed", error=str(exc)[:200])
+
+    return report

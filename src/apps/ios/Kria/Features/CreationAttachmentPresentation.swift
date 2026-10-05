@@ -8,6 +8,20 @@ enum AttachmentStep: String, CaseIterable, Identifiable {
     var accessibilityID: String { "attachment-step-\(rawValue)" }
 }
 
+/// Slide posts have ONE media pool, the photos and videos of the post. The server and the video
+/// editor call it "visuals"/"overlays"; a person making a slideshow never should. Display copy only:
+/// role identifiers (`CreationMediaRole.visual`, `AttachmentStep.overlays`) stay as they are.
+/// Pinned by `SlidePostCopyTests`.
+enum SlideMediaCopy {
+    static let poolTitle = "Photos & videos"
+    static let addHeading = "Add photos & videos"
+    static let subtitle = "Add the photos and videos for your slides."
+    static let loading = "Loading photos & videos…"
+    static let retryLoading = "Retry loading photos & videos"
+    static let removeFallback = "photo or video"
+    static let preparingNoun = "photos & videos"
+}
+
 struct AttachmentHeading: View {
     let title: String
     let subtitle: String
@@ -22,11 +36,13 @@ struct AttachmentHeading: View {
 struct AttachmentStepProgress: View {
     let steps: [AttachmentStep]
     let current: AttachmentStep
+    /// Replaces the "Overlays" step name (slide posts call that pool "Photos & videos").
+    var overlaysTitle: String? = nil
     var body: some View {
         HStack(spacing: 12) {
             ForEach(Array(steps.enumerated()), id: \.element) { index, step in
                 VStack(alignment: .leading, spacing: 9) {
-                    Text("\(index + 1)  \(step.title)")
+                    Text("\(index + 1)  \(step == .overlays ? (overlaysTitle ?? step.title) : step.title)")
                         .font(KriaFont.body(13).weight(step == current ? .semibold : .regular))
                         .foregroundStyle(step == current ? KriaColor.ink : KriaColor.mutedInk)
                     Capsule().fill(step == current ? KriaColor.sky : index < (steps.firstIndex(of: current) ?? 0) ? KriaColor.sage : KriaColor.line).frame(height: 3)
