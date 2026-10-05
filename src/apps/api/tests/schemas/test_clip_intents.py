@@ -13,10 +13,12 @@ import pytest
 from app.schemas.clip_intents import (
     CAPTION_MAX_CHARS,
     CAPTION_MAX_WORDS,
+    CREATOR_CAPTION_MAX_CHARS,
     LABEL_MIN_CONFIDENCE,
     ClipIntent,
     ResolvedClipIntent,
     clean_caption_text,
+    clean_creator_caption_text,
     clean_label_text,
     ground_caption,
     ground_label,
@@ -398,3 +400,87 @@ def test_kri422_long_model_intent_id_is_shortened_deterministically_not_rejected
 
     with pytest.raises(ValueError):
         ClipIntent(intent_id="", op="label", attribute="a")
+
+
+# ── Creator caption copy (2026-10-04 La Mercè chat) ──────────────────────────
+# The creator's own word-for-word chapter line is not a model-authored phrase:
+# the 60-char / 10-word / narrow-charset shape bounds only what a MODEL may write.
+
+_MERCE_LINE = "It's La Mercè, Barcelona's biggest festival. Every September."
+_GAUDI_LINE = (
+    "#1 Antoni Gaudí gave Barcelona its skyline, and he’s buried inside his unfinished church…"
+)
+_CHAPTER_REQUEST = (
+    "Show each chapter line word for word. Chapter 5 · fireworks · 4 seconds · "
+    f"{_MERCE_LINE} Chapter 6 · Gaudí · 5 s · {_GAUDI_LINE}"
+)
+
+
+@pytest.mark.parametrize("line", [_MERCE_LINE, _GAUDI_LINE])
+def test_creator_caption_copy_is_grounded_verbatim_past_the_phrase_bounds(line):
+    assert clean_caption_text(line) is None  # the authored-phrase shape still refuses it
+    caption = ground_caption(
+        value=line,
+        confidence=1.0,
+        creator_request=_CHAPTER_REQUEST,
+        records=[ClipUnderstanding()],
+        creator_copy=True,
+    )
+    assert caption is not None
+    assert caption.grounding == "creator_text"
+    assert caption.text == line
+
+
+def test_creator_caption_copy_must_still_be_the_creators_words():
+    invented = "A magical night of fireworks over the old harbour of Barcelona."
+    assert (
+        ground_caption(
+            value=invented,
+            confidence=1.0,
+            creator_request=_CHAPTER_REQUEST,
+            records=[ClipUnderstanding()],
+            creator_copy=True,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("value", ["", "   ", "…", None, 42, "x" * 201, "bad\x01copy here"])
+def test_creator_caption_copy_rejects_empty_oversized_or_control_text(value):
+    request = f"{_CHAPTER_REQUEST} {value}" if isinstance(value, str) else _CHAPTER_REQUEST
+    assert clean_creator_caption_text(value) is None
+    assert (
+        ground_caption(
+            value=value,
+            confidence=1.0,
+            creator_request=request,
+            records=[ClipUnderstanding()],
+            creator_copy=True,
+        )
+        is None
+    )
+
+
+def test_authored_captions_keep_the_short_phrase_bounds():
+    """Without creator_copy (a resolver-authored phrase) the old fence is unchanged."""
+    assert (
+        ground_caption(
+            value=_MERCE_LINE,
+            confidence=1.0,
+            creator_request=_CHAPTER_REQUEST,
+            records=[ClipUnderstanding()],
+        )
+        is None
+    )
+
+
+def test_intent_models_hold_long_creator_caption_copy_untruncated():
+    assert CREATOR_CAPTION_MAX_CHARS == 200
+    intent = ClipIntent(
+        intent_id="c5", op="caption", attribute="Chapter 5", creator_text=_GAUDI_LINE
+    )
+    assert intent.creator_text == _GAUDI_LINE
+    resolved = ResolvedClipIntent(
+        **intent.model_dump(), caption_text=_GAUDI_LINE, caption_grounding="creator_text"
+    )
+    assert resolved.caption_text == _GAUDI_LINE

@@ -20,7 +20,7 @@ from app.agents.clip_intent_planner import (
     ClipIntentPlannerInput,
     ClipIntentSchemaError,
 )
-from app.schemas.clip_intents import MAX_CLIP_INTENTS
+from app.schemas.clip_intents import CREATOR_CAPTION_MAX_CHARS, MAX_CLIP_INTENTS
 from app.services import clip_intent_planning as service
 from app.services.clip_intent_resolution import IntentClip, IntentResolution
 from tests.agents.conftest import MockModelClient
@@ -95,6 +95,15 @@ def _nine_intents() -> list[dict]:
     ]
 
 
+def _over_cap_intents() -> list[dict]:
+    """One more distinct, source-backed operation than the cap allows."""
+    extra = [
+        _intent(f"i{n}", "label", f"detail {n}", "Label the activity in each clip")
+        for n in range(10, MAX_CLIP_INTENTS + 2)
+    ]
+    return [*_nine_intents(), *extra]
+
+
 def _agent() -> ClipIntentPlannerAgent:
     return ClipIntentPlannerAgent(None)  # type: ignore[arg-type]
 
@@ -116,13 +125,13 @@ def test_curly_quotes_and_multiline_copy_are_source_backed() -> None:
 
 
 def test_over_cap_keeps_first_valid_intents_and_asks_about_the_rest() -> None:
-    out = _parse(_nine_intents())
+    out = _parse(_over_cap_intents())
     assert [intent.intent_id for intent in out.intents] == [
         f"i{n}" for n in range(1, MAX_CLIP_INTENTS + 1)
     ]
     assert len(out.intents) == MAX_CLIP_INTENTS
     assert out.salvage_question is not None
-    assert f"{9 - MAX_CLIP_INTENTS} more" in out.salvage_question
+    assert "so 1 more weren't included" in out.salvage_question
     assert "Home again" not in out.salvage_question  # names instructions, never copies copy
     assert len(out.salvage_question) <= 400
 
@@ -138,7 +147,7 @@ def test_invalid_intents_are_dropped_and_named() -> None:
 
 
 def test_over_long_creator_text_drops_only_that_intent() -> None:
-    long_copy = "x" * 80
+    long_copy = "x" * (CREATOR_CAPTION_MAX_CHARS + 1)
     request = f'{LONG_PROMPT}\nSay "{long_copy}" on the finale chapter.'
     intents = [
         *_nine_intents()[:2],
@@ -201,7 +210,7 @@ def _wire(monkeypatch, client: MockModelClient) -> AsyncMock:
 @pytest.mark.asyncio
 async def test_fifty_clip_long_prompt_over_cap_asks_one_focused_question(monkeypatch) -> None:
     client = MockModelClient()
-    client.queue("gemini-2.5-flash", {"intents": _nine_intents(), "question": None})
+    client.queue("gemini-2.5-flash", {"intents": _over_cap_intents(), "question": None})
     resolver = _wire(monkeypatch, client)
 
     result = await service.plan_and_resolve_clip_intents(
@@ -215,7 +224,7 @@ async def test_fifty_clip_long_prompt_over_cap_asks_one_focused_question(monkeyp
     assert len(client.invocations) == 1  # salvaged, no retry spent
     assert result.resolution.needs_creator
     question = result.resolution.question or ""
-    assert f"{9 - MAX_CLIP_INTENTS} more" in question
+    assert "so 1 more weren't included" in question
     assert "restate which clips to use" not in question  # not the generic dead end
     resolver.assert_not_called()
 
@@ -305,7 +314,7 @@ async def test_kri422_salvage_records_closed_vocabulary_reasons_on_the_turn(monk
 @pytest.mark.asyncio
 async def test_kri422_over_cap_salvage_reason_is_over_cap(monkeypatch) -> None:
     client = MockModelClient()
-    client.queue("gemini-2.5-flash", {"intents": _nine_intents(), "question": None})
+    client.queue("gemini-2.5-flash", {"intents": _over_cap_intents(), "question": None})
     _wire(monkeypatch, client)
 
     result = await service.plan_and_resolve_clip_intents(

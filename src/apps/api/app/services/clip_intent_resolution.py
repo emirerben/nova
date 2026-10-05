@@ -1465,6 +1465,7 @@ async def resolve_clip_intents_for_turn(
                 creator_request=creator_request,
                 records=member_records,
                 intent_id=intent.intent_id,
+                creator_copy=True,
             )
             if grounded is not None:
                 work.caption_text = grounded.text

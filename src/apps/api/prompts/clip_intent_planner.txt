@@ -117,6 +117,10 @@ ask them to name the sports again.
 Every intent must contain:
 - intent_id: stable short identifier you create; every intent_id must be unique
 - op, attribute, and optional position/caption_attribute per the JSON schema
+- `position` is exactly "first", "last", or null, and only on order. "Day shots
+  first and night shots last" is TWO order intents. A request to keep the order
+  the creator listed ("in this chapter order", "in this order") is one order
+  intent with position null; never write the order itself into position.
 - label_source ("clip" unless the creator explicitly asks for a spoken
   narration label); transcript_kind is required only for label_source
   "transcript" and must be participant, score, or topic
