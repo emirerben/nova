@@ -2138,6 +2138,27 @@ guided-story media imports). Saved media keeps rendering either way.
 Tests: `tests/routes/test_phone_voiceover_editor_media.py`; iOS
 `NativeEditorSessionTests.testPhoneVoiceoverEdit*`.
 
+**Opening title in the preview (KRI-455).** A confirmed `opening_title` burns as
+`title-*` layers in the pinned recipe (`phone_narrated_plan`, "Opening title"),
+but the editor preview compiles text from the variant, never from the recipe.
+So `_run_phone_narrated_job` also persists the element it compiled
+(`narrated_title_text_elements`, from `narrated_title_text_elements()`), and the
+status route prepends it to `text_elements` (`_with_phone_narrated_title`). It
+is read-only: `source_params.read_only`, `text_elements` stays closed, no Save
+lane carries it, and it is not in the deletion baseline (a hand-made `text`
+deletion is a 409). Only builds declaring `X-Kria-Client-Protocol` >=
+`PHONE_NARRATED_TITLE_PREVIEW_MIN_CLIENT_PROTOCOL` (default 4) get it: protocol
+4 keeps a `read_only` element off the timeline, out of the Text list and out of
+every mutation (`EditorTextElement.isReadOnly`); older builds would offer
+Delete and 422. The element spells out the cloud's "top"/"large"/default face
+(custom y 0.15, 120 px, Playfair Display), pinned to the cloud layers by
+`test_title_element_spells_out_exactly_the_cloud_intro`. Not covered: cloud
+narrated storyboard titles (`text_elements_materialized_from ==
+"narrated_storyboard"`), which the read path still drops. Tests:
+`tests/routes/test_phone_narrated_title_preview.py`; iOS
+`NativeEditorRenderCompilerTests.testReadOnlyTitle*`,
+`NativeEditorSessionTests.testReadOnlyTitle*`.
+
 ## Your song montages (KRI-374)
 
 A creator attaches their own song to a phone montage ("Add your song" in the

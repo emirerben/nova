@@ -6732,6 +6732,7 @@ def _run_phone_narrated_job(
         NarratedPhoneStep,
         compile_phone_narrated_plan,
         narrated_title_end_s,
+        narrated_title_text_elements,
     )
     from app.pipeline.phrase_sequence import split_phrases  # noqa: PLC0415
     from app.pipeline.transcribe import Transcript, Word, transcribe_whisper  # noqa: PLC0415
@@ -7032,6 +7033,9 @@ def _run_phone_narrated_job(
             bed_level = max(0.0, min(1.0, bed_level))
             mix = 1.0 - bed_level
 
+            opening_title_end_s = narrated_title_end_s(
+                transcript.words[0].end_s if transcript.words else None
+            )
             recipe = compile_phone_narrated_plan(
                 steps,
                 bindings,
@@ -7043,9 +7047,7 @@ def _run_phone_narrated_job(
                 target_lufs=settings.output_target_lufs,
                 duck_footage_bed="audioDucking" in settings.phone_render_verified_features,
                 opening_title=opening_title,
-                opening_title_end_s=narrated_title_end_s(
-                    transcript.words[0].end_s if transcript.words else None
-                ),
+                opening_title_end_s=opening_title_end_s,
             )
 
     validate_phone_pilot_recipe(recipe)
@@ -7090,6 +7092,13 @@ def _run_phone_narrated_job(
             "voiceover_bed_level": bed_level,
             "ok": False,
         }
+        # KRI-455: the editor preview draws text from the variant, not the
+        # pinned recipe, so keep the title element the recipe was compiled from.
+        title_elements = narrated_title_text_elements(
+            recipe, opening_title, end_s=opening_title_end_s
+        )
+        if title_elements:
+            new_entry["narrated_title_text_elements"] = title_elements
         # KRI-281: persist the cut the editor shows, derived from the very recipe
         # just pinned (same code the read-time projection uses for videos rendered
         # before this existed). Clip ids index the source pool the timeline lists.

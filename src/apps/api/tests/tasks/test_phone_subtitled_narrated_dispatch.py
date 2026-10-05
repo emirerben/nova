@@ -2181,6 +2181,26 @@ def test_narrated_burns_the_confirmed_title_like_the_cloud_intro(monkeypatch):
     assert [layer.id for layer in recipe.text_layers[1:]] and all(
         layer.id.startswith("caption") for layer in recipe.text_layers[1:]
     )
+    # The editor preview reads text from the variant, not the recipe: the row
+    # keeps the very element the title layer was compiled from.
+    from app.agents._schemas.text_element import TextElement
+    from app.pipeline.generative_overlays import build_overlays_from_text_elements
+    from app.pipeline.portable_text_layout import compile_text_overlay
+
+    [variant] = job.assembly_plan["variants"]
+    [row] = variant["narrated_title_text_elements"]
+    assert row["text"] == "Cacio e pepe in 10 minutes"
+    assert (row["start_s"], row["end_s"]) == (0.0, pytest.approx(1.5))
+    assert row["source_params"]["read_only"] is True
+    [overlay] = build_overlays_from_text_elements(
+        [TextElement.model_validate(row)],
+        video_duration_s=recipe.duration,
+        independent_box_alignment=True,
+    )
+    layer, _font = compile_text_overlay(
+        overlay, layer_id="title-0", canvas=recipe.canvas, dissolve_seed=101
+    )
+    assert layer == title
 
 
 def test_narrated_without_a_title_has_only_captions(monkeypatch):
@@ -2191,6 +2211,8 @@ def test_narrated_without_a_title_has_only_captions(monkeypatch):
     recipe = device_status(job, "narrated").request.recipe
     assert recipe.text_layers
     assert all(layer.id.startswith("caption") for layer in recipe.text_layers)
+    [variant] = job.assembly_plan["variants"]
+    assert "narrated_title_text_elements" not in variant
 
 
 def test_narrated_worker_rejects_format_it_does_not_own(monkeypatch):
