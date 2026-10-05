@@ -130,7 +130,12 @@ Flow (flag on):
    creator's words are printed (KRI-454). When that text is a place name the
    creator listed ("label these shots: Alfama, LX Factory"), the resolver matches
    by what the place is known to look like, one name per clip, since the records
-   rarely spell the name out. The resolver runs as ONE call while the project
+   rarely spell the name out. The vision check can't confirm a proper name from
+   pixels, so it answers "unknown" even on the right clip. When that happens to the
+   resolver's only guess for such a label (confidence at least 0.6, no other named
+   label wants the same clip, vision did not say "no"), the guess stands instead of
+   asking the creator (`_settle_named_label_guesses`, diagnostics
+   `named_guesses_settled`). The resolver runs as ONE call while the project
    fits the measured 12-clip x 8-intent (96-cell) load; bigger projects split into
    ~48-cell shards, which see only part of the footage at once.
    Clips the record cannot answer go to `ClipQuestionAgent` (the vision
