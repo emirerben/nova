@@ -1121,8 +1121,8 @@ private struct NativeSoundsPanel: View {
                 NativeSoundEffectsPanelBody(session: session, panelDrafts: panelDrafts, player: player, waveforms: waveforms)
             }
         }
-        .onChange(of: panelDrafts.soundsTab) { _, _ in player.stop() }
-        .onDisappear { player.stop(); session.endTransaction() }
+        .onChange(of: panelDrafts.soundsTab) { _, _ in player.stop(); session.songAudition.cancel() }
+        .onDisappear { player.stop(); session.songAudition.cancel(); session.endTransaction() }
     }
 }
 
