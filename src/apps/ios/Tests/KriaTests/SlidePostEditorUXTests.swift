@@ -259,14 +259,17 @@ final class SlidePostPendingMediaTests: XCTestCase {
     private var suite: String!
     private var remote: SlidePostState!
 
-    override func setUp() {
-        super.setUp(); suite = "SlidePostSessionAutoAppendTests.\(UUID())"; defaults = UserDefaults(suiteName: suite)
+    // Async overrides keep these on the main actor; the synchronous form trips "sending 'self' risks
+    // causing data races" on older CI toolchains when `state(...)` is called from a nonisolated setUp.
+    override func setUp() async throws {
+        try await super.setUp()
+        suite = "SlidePostSessionAutoAppendTests.\(UUID())"; defaults = UserDefaults(suiteName: suite)
         remote = state(assets: ["asset-1", "asset-2"])
     }
-    override func tearDown() {
+    override func tearDown() async throws {
         NativeEditorURLProtocol.handler = nil
         defaults.removePersistentDomain(forName: suite); defaults = nil
-        super.tearDown()
+        try await super.tearDown()
     }
 
     /// A saved draft of asset-1 and asset-2 plus any further assets sitting in the pool.
