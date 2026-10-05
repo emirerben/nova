@@ -140,12 +140,12 @@ Two workflows. The manual one (works on any prompt) and the automatic one (live-
 git stash
 pytest tests/evals/test_clip_metadata_evals.py -v --with-judge | tee /tmp/old.log
 git stash pop
-# 4) Test the candidate against live Gemini:
+# 4) OPTIONAL (paid): test the candidate against live Gemini:
 NOVA_EVAL_MODE=live pytest tests/evals/test_clip_metadata_evals.py \
   -v --eval-mode=live --usage-purpose=live_eval \
   --test-run-id=clip-metadata-<date> --max-cost-usd=2 \
   --approve-reservation | tee /tmp/new.log
-# 5) Compare avg scores per fixture. Ship only if no fixture regressed.
+# 5) Compare avg scores per fixture if you ran step 4. Live runs are optional, not a merge gate.
 ```
 
 ### Auto `--shadow-prompts-dir` mode (live-only)
@@ -219,8 +219,8 @@ python -m tests.evals.request_following.report --phase P0 \
   so a change to any of them moves the score; `v2_kria` turns go through
   `app.kria.replay.replay_thread` (multi-turn, state carried); `recorded` turns use the stored
   outcome. `mode="live"` swaps the recorded model text for a real Gemini call on `v1_copilot`
-  turns; use the same paid-run guards as the rest of this directory. **Run it live before merging
-  any planner, copilot or prompt change.**
+  turns; use the same paid-run guards as the rest of this directory. Running it live is optional
+  (paid); use it when investigating a suspected regression.
 - **Provenance.** `east_run` is a read-only prod capture (KRI-185, regenerate with
   `python -m tests.evals.request_following.capture_east_run`). The other 29 are authored briefs
   (`author_fixtures.py`, five synthetic footage sets incl. `harbor_run`, invented places only)
@@ -245,8 +245,8 @@ python -m tests.evals.request_following.report --phase P0 \
 
 - **Default CI:** runs structural-only on every PR (~30s, no secrets).
 - **Paid:** `.github/workflows/agent-evals.yml` permits manual runs only for
-  prompt/model/provider/structured-output changes and runs one fixture weekly
-  as a provider smoke. The workflow uses the development key and reservation ledger.
+  prompt/model/provider/structured-output changes (no schedule). Live runs are
+  optional, never a merge requirement. The workflow uses the development key and reservation ledger.
 - Successful paid responses are uploaded as replay-capture artifacts; review and
   copy the capture into the matching fixture directory before subsequent prompt work.
 

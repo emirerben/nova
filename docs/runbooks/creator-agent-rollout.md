@@ -99,7 +99,7 @@ make a backend route safe.
      --max-cost-usd=2 --approve-reservation
    ```
 
-   Select `main_creator` in the protected `Agent evals` workflow for the paid
+   Optionally select `main_creator` in the protected `Agent evals` workflow for a paid
    provider pass. Run `pytest tests/evals/test_main_creator_evals.py --with-judge`
    separately in replay mode; the protected workflow has no Anthropic key.
 
@@ -232,7 +232,7 @@ paths for every row. A green unit suite is not a substitute for the human rows.
 |---|---|---|
 | Migration | `alembic current` and `alembic heads` show the repository head; history/schema tests include 0085 proposal, 0086 receipt, 0087 opt-in/count state, 0088 processing claims, and 0089 bounded-query indexes | |
 | Replay evals | Focused Creator Agent/schema/capability/session/workspace tests pass | |
-| Live eval | attributed `test_main_creator_evals.py --eval-mode=live` passes under a ≤$2 approved run; replay judge passes separately | |
+| Live eval (optional) | attributed `test_main_creator_evals.py --eval-mode=live` passes under a ≤$2 approved run; replay judge passes separately | |
 | Stage 2 exact render | Ready Job/variant/generation receipt; review evidence and stale-target case | |
 | Stage 4 bounded auto-iteration | Explicit opt-in; threshold skips; one allowlisted command; exact pins; duplicate recovery; one-cycle cap; prior-generation rollback receipt; fail-open craft/render case | |
 | Stage 3 craft | Caption, transition, look, SFX, overlay, and speech-cut receipts; enqueue rollback case | |

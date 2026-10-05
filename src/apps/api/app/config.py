@@ -411,7 +411,7 @@ class Settings(BaseSettings):
     # £22/£2/£2 allocations with exchange-rate headroom; operators may tighten
     # them without a deploy.
     ai_production_monthly_budget_usd: float = Field(default=28.0, gt=0, le=1000)
-    ai_development_monthly_budget_usd: float = Field(default=2.5, gt=0, le=1000)
+    ai_development_monthly_budget_usd: float = Field(default=25.0, gt=0, le=1000)
     ai_omni_lab_monthly_budget_usd: float = Field(default=2.5, gt=0, le=1000)
     ai_release_canary_monthly_budget_usd: float = Field(default=2.5, gt=0, le=1000)
     ai_weekly_smoke_max_cost_usd: float = Field(default=0.20, gt=0, le=2.0)
@@ -1689,6 +1689,10 @@ class Settings(BaseSettings):
     # knows what the footage shows (`analysis["understanding"]`). Needs a Gemini key.
     # false = no analysis; chat edits then clarify instead of describing clips.
     kria_clip_understanding_enabled: bool = True
+    # How long a chat turn whose clip instructions need that analysis waits for it
+    # (re-reading every 2 s) before replying "I'm still checking some of your clips".
+    # Also capped by the turn's own time limit. 0 = one fresh re-read, no waiting.
+    kria_clip_understanding_wait_s: float = Field(default=45.0, ge=0, le=90)
     # KRI-282: prompt-directed spoken-excerpt montage. A phone montage whose
     # footage includes a talking-to-camera clip may play chosen excerpts of that
     # speech over other footage, cut to the speaker, and return to fast montage

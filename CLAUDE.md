@@ -106,7 +106,7 @@ make local-render MODE=generative CLIPS="a.mp4 b.mp4 c.mp4"
 - **Never write unit tests after you write code** (they restate the implementation and pass by construction).
 - **Highly prefer E2E tests as the sole testing mechanism.** Use them to verify complex features work, and end with a verifiable, repeatable artifact (`make verify-overlays` `report.json` + `montage.png`, Playwright report/trace, XCUITest result bundle, `make local-render` MP4 + its command).
 - **If you must test a system in isolation, first write down all the ways it could fail, then write the code.**
-- Exempt (keep current): guard tests named in this file, cross-platform parity fixtures, `tests/evals/` fixtures (`require-eval-fixture.yml`). Prune audit: `docs/reviews/kri-198-test-prune.md`.
+- Exempt (keep current): guard tests named in this file, cross-platform parity fixtures, `tests/evals/` fixtures (replay evals run in `test-api`). Prune audit: `docs/reviews/kri-198-test-prune.md`.
 
 ## Admin API access (for automation / Claude Code)
 Use `scripts/admin.py` instead of curling `/admin/*` with a raw token — the token stays in `.env`, never in commands or transcripts.
@@ -224,7 +224,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers the Big 5 (`template_recipe`, `clip_metadata`, `creative_direction`, `song_classifier`, `music_matcher`) plus the in-pipeline `transcript`, `platform_copy`, `audio_template`, and `template_text` agents.
 - Default: `cd src/apps/api && pytest tests/evals/ -v` — structural-only, replay mode, no network. Runs in CI.
 - With judge: `... --with-judge` (replay only; needs `ANTHROPIC_API_KEY`). Paid live Gemini requires an approved development-ledger run (hard cap $2, no judge); see `tests/evals/README.md`.
-- **Prompt-change rule:** when editing any file under `src/apps/api/prompts/` or any `render_prompt()`, bump the agent's `prompt_version` in its `AgentSpec` AND run live evals against current fixtures before merge.
+- **Prompt-change rule:** when editing any file under `src/apps/api/prompts/` or any `render_prompt()`, bump the agent's `prompt_version` in its `AgentSpec`; free replay evals must pass. Live/judge runs are OPTIONAL (paid), never a merge requirement.
 - **template_text live-eval wrapper:** `bash src/apps/api/scripts/run_template_text_eval.sh`. See `tests/evals/README.md` for the full prompt-iteration loop.
 - **Layer-2 cache-bump rule:** any PR touching `text_overlay_v2/`, the Stage E/F agents/schemas, or their prompts must bump `TEXT_OVERLAY_VERSION_V2` in `template_cache.py`. Guard: `.github/workflows/layer2-cache-guard.yml`. Escape hatch: `[skip-layer2-cache-bump]` in a commit message.
 - See `docs/pipelines/layer2-text-overlay.md` for Layer-2 stage details, OCR backend divergence (local Apple Vision ≠ prod Cloud Vision), and the template_text agent rubric.

@@ -256,7 +256,7 @@ the same way; visual intents are ignored (chat clears them, the build task and
 worker gate on the flag). Transcript intents and already-confirmed label
 elements keep their existing behavior. Flip while no task is running
 (`celery -A app.worker inspect active` on any machine), since the roll restarts
-the render worker. Before enabling, run the live evals:
+the render worker. Optionally (paid) run the live evals before enabling:
 `tests/evals/test_clip_request_resolver_evals.py`, `test_clip_question_evals.py`,
 `test_main_creator_evals.py`, `test_edit_proposal_evals.py` (`--eval-mode=live`,
 no judge).
@@ -367,8 +367,8 @@ the snapshot replan/direction-replacement planners and the editor-op tool
 `tests/agents/test_landmark_guess.py`, `tests/evals/test_landmark_guess_evals.py`.
 Current relevant prompt versions: `main_creator` 2026-10-02-v40,
 `edit_proposal` 1.18.0, `clip_intent_planner` 2026-10-02.2, and
-`landmark_guess` 2026-09-24.1. Live
-evals to run before enabling (`--eval-mode=live`, no judge):
+`landmark_guess` 2026-09-24.1. Optional
+live evals (`--eval-mode=live`, no judge):
 `test_landmark_guess_evals.py`, `test_clip_intent_planner_evals.py`,
 `test_main_creator_evals.py`, `test_edit_proposal_evals.py`.
 
@@ -402,6 +402,36 @@ Guards: `tests/test_pool_asset_fly_contract.py` and `tests/test_worker_prewarm_g
 (the Visuals queue has exactly the consumers of `autoplace-jobs`, and the switch is not
 in `[env]`); the queue assertions in `tests/routes/test_plan_item_assets.py` and
 `tests/tasks/test_pool_asset_reconcile.py`.
+
+## Chat turns wait for analysis in flight
+
+A Kria turn whose clip instructions need clip understanding gates on it in
+`plan_and_resolve_clip_intents` (`require_clip_understanding`). Before 2026-10-04 the
+gate judged the clip snapshot taken at turn start, before the ~20 s Main Creator call,
+and replied "I'm still checking some of your clips … Send it again" at once. On prod
+thread b2a41da6, 7 phone clips were attached 11–35 s before the message. The reply
+went out at 10:56:02Z, and the analysis run finished all 7 at 10:56:03Z.
+
+- **Re-read, then wait.** The gate re-reads the item (`planner._reload_intent_clips`)
+  and polls every 2 s until each clip is understood or the wait runs out. Only
+  analysis for the same `media_id` + `gcs_path` + generation is taken, so the pinned
+  manifest never changes.
+- **Wait budget.** The wait ends at an absolute time, whichever comes first:
+  `KRIA_CLIP_UNDERSTANDING_WAIT_S` (default 45) after clip-intent planning starts, or
+  the resolver's vision deadline plus 20 s before `run_kria_turn`'s soft limit (150 s).
+  A slow clip-intent planner call shortens the wait, never the resolver's time. With
+  `0`, the gate re-reads once and does not wait.
+- **Fallback.** If a clip is still unanalysed after the wait, the turn returns the same
+  pending reply. `plan.diagnostics.understanding_wait_s` shows how long it waited.
+- **Re-kick.** The turn re-enqueues `analyze_kria_clips` when its snapshot has
+  unanalysed clips. The task is single flight, so a live run makes the call a no-op. A
+  run killed mid-analysis is restarted once its lock expires, instead of every turn
+  answering "still checking".
+
+Guards: `tests/kria/test_clip_understanding_wait_postgres.py` (the real re-read and the
+real background writer), `tests/services/test_clip_intent_understanding_gate.py`, and
+the budget and deadline tests in `tests/kria/test_planner.py` and
+`tests/kria/test_runtime_v2.py`.
 
 ## Known gaps
 

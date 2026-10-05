@@ -159,7 +159,7 @@ prompt-change rule so whoever applies it doesn't ship a stale-cache bug:
 - bump `INTERVIEWER_PROMPT_VERSION` in `app/agents/interviewer_agent.py` to a fresh
   date string (add `.1`/`.2` if today's is already committed);
 - or `STYLE_INTENT_PROMPT_VERSION` in `app/agents/style_intent.py` if touching style_intent;
-- re-run the agent's eval before merge:
+- optionally (paid, not a merge requirement) re-run the agent's eval:
   ```
   NOVA_EVAL_MODE=live GEMINI_API_KEY=… ANTHROPIC_API_KEY=… \
     pytest tests/evals/ -v --eval-mode=live --with-judge -k interviewer

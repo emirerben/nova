@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.76.0] - 2026-10-05
+
+### Changed
+- chore(evals): make paid AI evals opt-in, raise dev AI budget (#1391) <!-- release-pr: 1391 -->
+
+## [0.78.75.0] - 2026-10-05
+
+### Changed
+- fix(kria): wait for clip analysis in flight instead of "send it again" (#1381) <!-- release-pr: 1381 -->
+
 ## [0.78.74.0] - 2026-10-04
 
 ### Changed
