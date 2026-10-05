@@ -173,6 +173,7 @@ struct FootagePickerView: View {
                 selection: $photoItems,
                 limit: selectionCapacity.pickerSelectionLimit,
                 filter: role == .visual ? visualPickerFilter : .videos,
+                kinds: role == .visual ? visualGalleryKinds : .videos,
                 libraryBacked: libraryAuthorized,
                 title: role.title,
                 onFilled: onPickerFilled,
@@ -271,6 +272,13 @@ struct FootagePickerView: View {
         default: .any(of: [.videos, .images])
         }
     }
+    private var visualGalleryKinds: LibraryMediaKinds {
+        switch destination.visualKinds {
+        case [.image]: .images
+        case [.video]: .videos
+        default: [.videos, .images]
+        }
+    }
     private var visualContentTypes: [UTType] {
         switch destination.visualKinds {
         case [.image]: [.image]
@@ -321,9 +329,11 @@ struct FootagePickerView: View {
     /// `nonisolated` so the change block isn't MainActor-isolated: Photos runs it on its own queue,
     /// and the isolation check traps (SIGTRAP) there.
     private nonisolated static func seedUITestVideo() async {
-        guard PHAsset.fetchAssets(with: .video, options: nil).count == 0, let url = KriaBranding.outroURL() else { return }
+        let wanted = ProcessInfo.processInfo.arguments.contains("-ui-testing-seed-photo-videos") ? 6 : 1
+        let existing = PHAsset.fetchAssets(with: .video, options: nil).count
+        guard existing < wanted, let url = KriaBranding.outroURL() else { return }
         try? await PHPhotoLibrary.shared().performChanges {
-            _ = PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: url)
+            for _ in existing..<wanted { _ = PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: url) }
         }
     }
 
@@ -484,6 +494,7 @@ private struct FootagePhotosPicker: ViewModifier {
     @Binding var selection: [PhotosPickerItem]
     let limit: Int
     let filter: PHPickerFilter
+    let kinds: LibraryMediaKinds
     let libraryBacked: Bool
     let title: String
     /// Runs once the sheet has closed itself because a pick filled it, so the host can go further back.
@@ -506,7 +517,7 @@ private struct FootagePhotosPicker: ViewModifier {
                 if closedByFilling { closedByFilling = false; onFilled?() }
                 completeSelectionIfNeeded()
             }) {
-                LibraryPhotosPickerSheet(title: title, selection: $selection, limit: limit, filter: filter) { filled in
+                LibraryPhotosPickerSheet(title: title, selection: $selection, limit: limit, filter: filter, kinds: kinds) { filled in
                     closedByFilling = filled
                     isPresented = false
                 }
@@ -525,21 +536,34 @@ private struct LibraryPhotosPickerSheet: View {
     @Binding var selection: [PhotosPickerItem]
     let limit: Int
     let filter: PHPickerFilter
+    let kinds: LibraryMediaKinds
     let close: (_ filled: Bool) -> Void
+    /// The in-app gallery (slide-to-select) is the default under full access; Apple's inline picker stays one tap away.
+    @State private var usesApplePicker = ProcessInfo.processInfo.arguments.contains("-ui-testing-apple-photo-picker")
 
     var body: some View {
         NavigationStack {
-            PhotosPicker(selection: $selection, maxSelectionCount: limit, selectionBehavior: .continuousAndOrdered,
-                         matching: filter, photoLibrary: .shared()) { EmptyView() }
-                .photosPickerStyle(.inline)
-                .ignoresSafeArea(edges: .bottom)
-                .navigationTitle(title)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { close(false) }.accessibilityIdentifier("photos-picker-done")
-                    }
+            Group {
+                if usesApplePicker {
+                    PhotosPicker(selection: $selection, maxSelectionCount: limit, selectionBehavior: .continuousAndOrdered,
+                                 matching: filter, photoLibrary: .shared()) { EmptyView() }
+                        .photosPickerStyle(.inline)
+                        .ignoresSafeArea(edges: .bottom)
+                } else {
+                    LibraryGalleryGrid(selection: $selection, limit: limit, kinds: kinds)
                 }
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(usesApplePicker ? "Kria gallery" : "Apple's picker") { usesApplePicker.toggle() }
+                        .accessibilityIdentifier("gallery-toggle-picker")
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { close(false) }.accessibilityIdentifier("photos-picker-done")
+                }
+            }
         }
         .onChange(of: selection) { previous, current in
             let ids = current.compactMap(\.itemIdentifier)

@@ -136,6 +136,8 @@ struct ClipPickerSheet: View {
     @State private var categoryKey: String
     @State private var previewing: PreviewTarget?
     @State private var doneToken = 0
+    /// Selection as it was when a slide-to-select began; each update re-applies the touched range onto it.
+    @State private var dragBase: ClipSelectionState?
 
     struct PreviewTarget: Identifiable { let index: Int; var id: Int { index } }
 
@@ -158,9 +160,26 @@ struct ClipPickerSheet: View {
         VStack(spacing: 0) {
             header
             if question.categories.count > 1 { categoryPicker }
-            ScrollView {
+            DragSelectScrollView(
+                isEnabled: !isSending,
+                isSelected: { index in
+                    guard category.candidateMediaIDs.indices.contains(index) else { return false }
+                    return state.isSelected(category.candidateMediaIDs[index], in: category.key)
+                },
+                begin: { dragBase = state },
+                apply: { indices, isOn in
+                    guard let base = dragBase else { return }
+                    let ids = category.candidateMediaIDs
+                    var next = base
+                    next.set(indices.compactMap { ids.indices.contains($0) ? ids[$0] : nil }, selected: isOn, in: category.key)
+                    if next != state { state = next }
+                },
+                end: { dragBase = nil }
+            ) {
                 LazyVGrid(columns: columns, spacing: 8) {
-                    ForEach(category.candidateMediaIDs, id: \.self) { mediaID in tile(mediaID) }
+                    ForEach(Array(category.candidateMediaIDs.enumerated()), id: \.element) { index, mediaID in
+                        tile(mediaID).dragSelectTile(index: index)
+                    }
                 }
                 .padding(.horizontal, 16).padding(.top, 4).padding(.bottom, 20)
             }
@@ -198,7 +217,7 @@ struct ClipPickerSheet: View {
                 .accessibilityIdentifier("clip-sheet-close")
             }
             HStack(spacing: 8) {
-                Text("Tap clips to select. Hold one to watch it.")
+                Text("Tap clips, or slide across them to select. Hold one to watch it.")
                     .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
