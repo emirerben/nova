@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.82.0] - 2026-10-05
+
+### Changed
+- feat(kria): plan_block events + cancel-render behind LIVE_PLAN_REVIEW_ENABLED (KRI-443) (#1397) <!-- release-pr: 1397 -->
+
 ## [0.78.81.0] - 2026-10-05
 
 ### Fixed
