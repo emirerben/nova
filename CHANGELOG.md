@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.83.0] - 2026-10-05
+
+### Changed
+- KRI-282 fix unreadable files from the in-app gallery (#1399) <!-- release-pr: 1399 -->
+
 ## [0.78.82.0] - 2026-10-05
 
 ### Changed
