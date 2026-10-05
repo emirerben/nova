@@ -76,6 +76,9 @@ from app.kria.plan_blocks import (
 from app.kria.plan_blocks import (
     emit_skipped_remainder as _emit_plan_blocks_remainder,
 )
+from app.kria.plan_blocks import (
+    make_stage_reporter as _make_plan_stage_reporter,
+)
 from app.models import Job, MusicTrack
 from app.pipeline.canvas import PORTRAIT, Canvas, canvas_for_orientation
 from app.pipeline.generative_decision import (
@@ -7110,8 +7113,15 @@ def _run_phone_narrated_job(
         db.commit()
 
 
-def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, MusicTrack | None]:
-    """Load or atomically pin the deterministic strict-story execution plan."""
+def _guided_execution_plan(
+    job_id: str, guided_snapshot: dict, *, emit_decided: bool = True
+) -> tuple[dict, MusicTrack | None]:
+    """Load or atomically pin the deterministic strict-story execution plan.
+
+    ``emit_decided=False`` (the cloud render path) leaves the KRI-443 feed to the real
+    render stages in `render_execution_plan`; the phone path keeps the all-at-once
+    report because its render happens on the device.
+    """
 
     from app.pipeline.guided_story import (  # noqa: PLC0415
         compile_execution_plan,
@@ -7533,7 +7543,8 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
 
     # KRI-443: the plan is pinned and every lock above is released (each `with` block
     # committed), so the live feed may report all seven sections now. Best-effort.
-    _emit_plan_blocks(job_id, _blocks_from_guided_plan(plan))
+    if emit_decided:
+        _emit_plan_blocks(job_id, _blocks_from_guided_plan(plan))
 
     music = plan.get("music")
     if music is None:
@@ -7747,7 +7758,7 @@ def _run_guided_story_job(
     )
 
     compile_t0 = time.monotonic()
-    plan, track = _guided_execution_plan(job_id, guided_snapshot)
+    plan, track = _guided_execution_plan(job_id, guided_snapshot, emit_decided=False)
     record_phase(
         job_id,
         "analyze_clips",
@@ -7806,6 +7817,8 @@ def _run_guided_story_job(
                     tmpdir=tmpdir,
                     track=track,
                     attempt_id=attempt_id,
+                    # KRI-443: the feed follows the real render stages (no lock held here).
+                    on_stage=_make_plan_stage_reporter(job_id, plan),
                 )
     result["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
     result["render_generation_id"] = attempt_id

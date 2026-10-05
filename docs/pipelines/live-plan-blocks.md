@@ -48,7 +48,8 @@ worker.
 | When | Where | Event |
 | --- | --- | --- |
 | Approval dispatched | `_finish_approval_dispatch` (`tasks/kria_runtime.py`) | all 7 sections `waiting`, appended in the SAME transaction as `render_queued` (thread lock already held) |
-| Guided / phone-guided / unified montage | `_guided_execution_plan` (`tasks/generative_build.py`) | `music` deciding before the matcher; then all 7 sections `decided` from the pinned plan (`blocks_from_guided_plan`; a section the plan does not carry is `decided` + `skipped`) |
+| Phone-guided (device render) | `_guided_execution_plan` (`tasks/generative_build.py`) | `music` deciding before the matcher; then all 7 sections `decided` from the pinned plan (`blocks_from_guided_plan`; absent section = `decided` + `skipped`). The render is on the device, so the cloud decisions are the whole story |
+| Cloud guided / unified montage | `render_execution_plan(on_stage=...)` (`pipeline/guided_story.py`), reporter from `plan_blocks.make_stage_reporter` | paced to real stages: `clips` deciding at download, decided after assembly; `music` deciding/decided around the bed mix; `overlays` around the pretext lanes; `title`+`captions`+`look` around the text burn; `sfx` around the SFX pass. `music` is `deciding` before the matcher (in `_guided_execution_plan(emit_decided=False)`). Values come from the plan: catalog track, creator's own song (`user_song`), voiceover, caption/label counts |
 | Cloud (non-guided) path | `orchestrate_generative_job` | after clip analysis: `clips` decided + `title`/`look`/`music` deciding; after the text/style/music join: `title`, `look`, `music` decided |
 | Job finalize | `_finalize_job` and the cloud finalize call site | `emit_skipped_remainder`: every section never decided for the job is sent `decided` + `skipped:true` |
 
