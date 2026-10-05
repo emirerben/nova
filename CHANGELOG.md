@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.84.0] - 2026-10-05
+
+### Changed
+- feat(song): seamless volume and start-point audition in the editor (KRI-432) (#1396) <!-- release-pr: 1396 -->
+
 ## [0.78.83.0] - 2026-10-05
 
 ### Changed
