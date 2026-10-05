@@ -183,6 +183,54 @@ def test_parse_label_value_over_three_words_dropped() -> None:
     assert out.intents[0].assignments == []
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["", None, "street at night", "Pink Street", "lively street full of people at night"],
+)
+def test_parse_creator_text_label_keeps_match_whatever_its_value(value: object) -> None:
+    """KRI-454: the prompt lets the model leave a creator-written label's value empty
+    (or paraphrase it). Dropping those matches left every place label in the Lisbon
+    recap unmatched; the caller prints creator_text, so the value is never needed."""
+    input_ = ClipRequestResolverInput(
+        creator_request="Put a short place label on these shots: Pink Street.",
+        intents=[
+            ResolverIntentIn(
+                intent_id="label-pink-street",
+                op="label",
+                attribute="shots: Pink Street",
+                creator_text="Pink Street",
+            )
+        ],
+        clips=[
+            ResolverClipIn(
+                alias="m001",
+                record={"setting": "narrow street at night with colorful umbrellas overhead"},
+            )
+        ],
+    )
+    raw = json.dumps(
+        {
+            "intents": [
+                {
+                    "intent_id": "label-pink-street",
+                    "assignments": [{"media": "m001", "value": value, "confidence": 0.8}],
+                }
+            ]
+        }
+    )
+    out = _agent().parse(raw, input_)
+    [assignment] = out.intents[0].assignments
+    assert assignment.media == "m001"
+    assert assignment.value is None
+    assert assignment.confidence == 0.8
+
+
+def test_prompt_lets_creator_named_places_match_by_how_they_look() -> None:
+    prompt = _agent().render_prompt(_input())
+    assert "creator has told you that named place IS in their footage" in prompt
+    assert "do not put two of those names on one clip" in prompt
+
+
 def test_parse_empty_is_valid_not_a_refusal() -> None:
     out = _agent().parse(json.dumps({"intents": []}), _input())
     assert out.intents == []

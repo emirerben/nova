@@ -166,8 +166,28 @@ struct NativeVideoShapeSection: View {
     private var fitEditable: Bool { fitCapability?.editable ?? false }
 
     private var lockedReason: String? {
-        if !orientationEditable, let reason = orientationCapability?.reason { return Self.copy(for: reason, axis: .orientation) }
-        if !fitEditable, current.orientation == RenderShapeOffer.portrait, let reason = fitCapability?.reason { return Self.copy(for: reason, axis: .fit) }
+        Self.lockedReason(
+            orientationEditable: orientationEditable,
+            orientationReason: orientationCapability?.reason,
+            fitEditable: fitEditable,
+            fitReason: fitCapability?.reason,
+            pickedOrientation: current.orientation
+        )
+    }
+
+    /// The one line shown under a closed row. Pure so the picked-vs-saved cases are testable.
+    /// `pickedOrientation` is what the picker shows (the unsaved pick wins over the saved shape).
+    static func lockedReason(
+        orientationEditable: Bool,
+        orientationReason: String?,
+        fitEditable: Bool,
+        fitReason: String?,
+        pickedOrientation: String
+    ) -> String? {
+        if !orientationEditable, let reason = orientationReason { return copy(for: reason, axis: .orientation) }
+        // The fit row only shows for Vertical. If the server still says `landscape_output`, the
+        // saved video is landscape and Vertical is an unsaved pick: bars/crop open after Save.
+        if !fitEditable, pickedOrientation == RenderShapeOffer.portrait, let reason = fitReason { return copy(for: reason, axis: .fit) }
         return nil
     }
 
@@ -178,7 +198,9 @@ struct NativeVideoShapeSection: View {
     static func copy(for reason: String, axis: Axis) -> String {
         guard !reason.contains(" ") else { return reason }
         if reason == "disabled" { return "Changing the video shape isn’t available right now." }
-        if reason == "landscape_output" { return "Black bars and crop only apply to vertical videos." }
+        // Reached only while Vertical is picked on a still-landscape video (the fit row is hidden
+        // for Landscape): the server opens bars/crop once the switch is saved and re-rendered.
+        if reason == "landscape_output" { return "Save the switch to vertical first, then you can choose black bars or crop." }
         switch axis {
         case .orientation: return "This edit’s format can’t change shape."
         case .fit: return "Black bars and crop can’t be changed for this edit."

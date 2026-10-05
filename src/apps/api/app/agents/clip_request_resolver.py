@@ -31,7 +31,9 @@ Label values are capped to <=3 words in ``parse()`` (reusing
 ``app.schemas.clip_intents.clean_label_text`` — the SAME rule the render-lane
 grounding fence enforces) and forced to ``None`` for membership ops
 (``group``/``order``/``include``/``caption``): only ``label`` prints a
-per-clip value. ``caption`` (KRI-129) is membership-only at the assignment
+per-clip value. A ``label`` with ``creator_text`` is membership-only too: its
+value is forced to ``None`` (never dropped), since the caller prints the
+creator's own words. ``caption`` (KRI-129) is membership-only at the assignment
 level too — its ONE authored on-screen phrase for the whole chapter lives on
 the intent-level ``caption`` output field instead, capped to <=10 words via
 ``app.schemas.clip_intents.clean_caption_text``. A caption intent that quotes
@@ -177,7 +179,7 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.clip_request_resolver",
         prompt_id="clip_request_resolver",
-        prompt_version="2026-10-03.1",  # KRI-282: empty category is [] never a question.
+        prompt_version="2026-10-05.1",  # KRI-454: creator-named places match by look.
         # Text-only match against pre-computed clip records; flash + a small
         # thinking budget mirrors clip_plan_matcher's measured setting.
         model="gemini-2.5-flash",
@@ -189,6 +191,8 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
         # KRI-282: 30s, not 20s. A shard is sized to ~half the load that took
         # 7-16s live (clip_intent_resolution._RESOLVER_SHARD_CELLS), so 30s is
         # >3x headroom; a timeout is an UNKNOWN outcome and is not re-sent whole.
+        # KRI-454: a small project (at most that measured 96-cell load) runs as one
+        # call, ~2x headroom; its timeout splits the call in half and re-asks.
         max_attempts=2,
         backoff_s=(1.0,),
         timeout_s=30.0,
@@ -265,7 +269,13 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
                     confidence = 0.0
                 confidence = max(0.0, min(1.0, confidence))
                 value: str | None = None
-                if op == "label":
+                if op == "label" and by_id[intent_id].creator_text:
+                    # KRI-454: the creator wrote this label, so the assignment only
+                    # decides membership and the caller prints creator_text verbatim.
+                    # The prompt lets the model leave `value` empty (or paraphrase
+                    # it), so the match must never be dropped over its value.
+                    value = None
+                elif op == "label":
                     value = clean_label_text(a.get("value"))
                     # A label op with no usable (<=3 word, clean) value carries
                     # no information the render fence could ever accept — drop

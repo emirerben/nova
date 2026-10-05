@@ -266,13 +266,46 @@ import KriaMediaEngine
     func testSectionCopyTurnsServerCodesIntoSentences() {
         XCTAssertEqual(NativeVideoShapeSection.copy(for: "orientation_unsupported", axis: .orientation), "This edit’s format can’t change shape.")
         XCTAssertEqual(NativeVideoShapeSection.copy(for: "cloud_unsupported", axis: .fit), "Black bars and crop can’t be changed for this edit.")
-        XCTAssertEqual(NativeVideoShapeSection.copy(for: "landscape_output", axis: .fit), "Black bars and crop only apply to vertical videos.")
+        XCTAssertEqual(NativeVideoShapeSection.copy(for: "landscape_output", axis: .fit), "Save the switch to vertical first, then you can choose black bars or crop.")
         XCTAssertEqual(NativeVideoShapeSection.copy(for: "disabled", axis: .orientation), "Changing the video shape isn’t available right now.")
         XCTAssertEqual(NativeVideoShapeSection.copy(for: "Orientation is fixed by the rendered variant.", axis: .orientation), "Orientation is fixed by the rendered variant.")
         XCTAssertEqual(NativeVideoShape.normalizedOrientation("16:9"), "landscape")
         XCTAssertEqual(EditorDocument.canonicalOrientation("9:16"), "portrait")
         XCTAssertEqual(EditorDocument.canonicalOrientation("square"), "square", "no picker entry, kept as is")
         XCTAssertEqual(NativeVideoShape.normalizedOrientation(nil), "portrait")
+    }
+
+    /// KRI-431: a saved-landscape video with an unsaved Vertical pick used to read
+    /// "Black bars and crop only apply to vertical videos", which contradicted the pick.
+    func testPickingVerticalOnALandscapeVideoNeverSaysBarsOnlyApplyToVertical() {
+        let message = NativeVideoShapeSection.lockedReason(
+            orientationEditable: true, orientationReason: nil,
+            fitEditable: false, fitReason: "landscape_output",
+            pickedOrientation: RenderShapeOffer.portrait
+        )
+        XCTAssertEqual(message, "Save the switch to vertical first, then you can choose black bars or crop.")
+        XCTAssertFalse(message?.contains("only apply to vertical") ?? false)
+    }
+
+    func testLockedReasonStaysQuietWhereTheFitRowIsHiddenOrOpen() {
+        // Landscape picked: the fit row is hidden, so no line about it.
+        XCTAssertNil(NativeVideoShapeSection.lockedReason(
+            orientationEditable: true, orientationReason: nil,
+            fitEditable: false, fitReason: "landscape_output",
+            pickedOrientation: RenderShapeOffer.landscape
+        ))
+        // Fit open: nothing to explain.
+        XCTAssertNil(NativeVideoShapeSection.lockedReason(
+            orientationEditable: true, orientationReason: nil,
+            fitEditable: true, fitReason: nil,
+            pickedOrientation: RenderShapeOffer.portrait
+        ))
+        // A closed orientation row still wins and keeps its own reason.
+        XCTAssertEqual(NativeVideoShapeSection.lockedReason(
+            orientationEditable: false, orientationReason: "orientation_unsupported",
+            fitEditable: true, fitReason: nil,
+            pickedOrientation: RenderShapeOffer.portrait
+        ), "This edit’s format can’t change shape.")
     }
 
     // MARK: Preview transform
