@@ -270,6 +270,7 @@
     "src/apps/ios/Kria/Features/SongOrderCard.swift": "creation",
     "src/apps/ios/Tests/KriaUITests/SongOrderUITests.swift": "creation",
     "src/apps/ios/Kria/Core/NativeUserSong.swift": "editor",
-    "src/apps/ios/Kria/Features/NativeEditorYourSongRow.swift": "editor"
+    "src/apps/ios/Kria/Features/NativeEditorYourSongRow.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeSongAudition.swift": "editor"
   }
 }
