@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.86.0] - 2026-10-05
+
+### Changed
+- fix(kria): pace plan_block events to real render steps + fix section values (KRI-443) (#1401) <!-- release-pr: 1401 -->
+
 ## [0.78.85.0] - 2026-10-05
 
 ### Changed
