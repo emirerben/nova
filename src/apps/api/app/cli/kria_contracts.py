@@ -758,6 +758,23 @@ def mobile_openapi_json() -> str:
                     "responses": _json_responses(DraftSnapshotOut),
                 },
             },
+            "/creation-threads/{thread_id}/turns/{turn_id}/cancel-render": {
+                "parameters": [
+                    thread_id,
+                    {
+                        "name": "turn_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "format": "uuid"},
+                    },
+                ],
+                "post": {
+                    "operationId": "cancelCreationRender",
+                    "security": bearer,
+                    "requestBody": _json_request(TurnCancelBody),
+                    "responses": _json_responses(TurnCancelled),
+                },
+            },
             "/creation-threads/{thread_id}/approvals/{approval_id}/{decision}": {
                 "parameters": [
                     thread_id,

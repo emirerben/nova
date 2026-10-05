@@ -980,7 +980,7 @@ class TestCancelJob:
         with (
             patch("app.routes.admin.settings") as s,
             patch.object(celery_app, "control") as mock_control,
-            patch("app.routes.admin_jobs.storage.delete_object_best_effort") as delete_snapshot,
+            patch("app.services.job_cancel.storage.delete_object_best_effort") as delete_snapshot,
             patch("app.tasks.maintenance.cleanup_cancelled_job") as mock_cleanup,
         ):
             s.admin_api_key = VALID_TOKEN

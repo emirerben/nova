@@ -64,6 +64,18 @@ from app.agents._schemas.edit_format import (
 from app.config import settings
 from app.database import sync_session as _sync_session
 from app.db_locks import CONTENT_PLAN_LOCK
+from app.kria.plan_blocks import (  # KRI-443 live plan feed; every call is best-effort
+    block as _plan_block,
+)
+from app.kria.plan_blocks import (
+    blocks_from_guided_plan as _blocks_from_guided_plan,
+)
+from app.kria.plan_blocks import (
+    emit_plan_blocks as _emit_plan_blocks,
+)
+from app.kria.plan_blocks import (
+    emit_skipped_remainder as _emit_plan_blocks_remainder,
+)
 from app.models import Job, MusicTrack
 from app.pipeline.canvas import PORTRAIT, Canvas, canvas_for_orientation
 from app.pipeline.generative_decision import (
@@ -2952,6 +2964,20 @@ def _run_generative_job_impl(
             job_id=job_id,
             strict=edit_format == "day_vlog",
         )
+        _emit_plan_blocks(
+            job_id,
+            [
+                _plan_block(
+                    "clips",
+                    "decided",
+                    f"{len(clip_metas)} clip{'s' if len(clip_metas) != 1 else ''}"
+                    + (f" · {round(available_footage_s)}s" if available_footage_s > 0 else ""),
+                ),
+                _plan_block("title", "deciding"),
+                _plan_block("look", "deciding"),
+                _plan_block("music", "deciding"),
+            ],
+        )
         if narrative_order:
             # Ground the hook text in the clip that actually OPENS the edit
             # (the guide's first shot), not the max-hook_score clip. Intro
@@ -3115,6 +3141,26 @@ def _run_generative_job_impl(
         else:
             pool.shutdown(wait=True)
 
+        _emit_plan_blocks(
+            job_id,
+            [
+                _plan_block("title", "decided", str(agent_text))
+                if agent_text
+                else _plan_block("title", "decided", "Not used", skipped=True),
+                _plan_block("look", "decided", str(style_set_id).replace("_", " ").capitalize())
+                if style_set_id
+                else _plan_block("look", "decided", "Not used", skipped=True),
+                _plan_block(
+                    "music",
+                    "decided",
+                    f"{best_track.title} · {best_track.artist}"
+                    if getattr(best_track, "artist", None)
+                    else str(best_track.title),
+                )
+                if best_track is not None and getattr(best_track, "title", None)
+                else _plan_block("music", "decided", "Not used", skipped=True),
+            ],
+        )
         record_pipeline_event("reframe", "hdr_pretonemap_done", {"clips_converted": n_tonemapped})
         record_pipeline_event("overlay", "agent_text_done", {"has_text": bool(agent_text)})
         record_pipeline_event("overlay", "style_set_selected", {"style_set_id": style_set_id})
@@ -3821,6 +3867,7 @@ def _run_generative_job_impl(
             isinstance(finalization, JobFinalizationResult) and not finalization.accepted
         ) or finalization is False:
             return
+        _emit_plan_blocks_remainder(job_id)
         if speech_cut_operation_id and speech_cut_attempt_id:
             _compose_speech_cut_rerender(
                 job_id,
@@ -7384,6 +7431,11 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
         # A pinned narration, or the creator's own uploaded song (KRI-374), is the chosen
         # audio; never silently add auto-matched music (the compiler would turn it into a
         # catalog song_reference, which a creator-song plan refuses).
+        if not (
+            getattr(snapshot, "narration", None) is not None
+            or getattr(snapshot, "user_song", None) is not None
+        ):
+            _emit_plan_blocks(job_id, [_plan_block("music", "deciding")])
         matched = (
             None
             if (
@@ -7478,6 +7530,10 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
                     "guided_story_execution_plan": plan,
                 }
                 db.commit()
+
+    # KRI-443: the plan is pinned and every lock above is released (each `with` block
+    # committed), so the live feed may report all seven sections now. Best-effort.
+    _emit_plan_blocks(job_id, _blocks_from_guided_plan(plan))
 
     music = plan.get("music")
     if music is None:
@@ -29370,6 +29426,8 @@ def _finalize_job(
     )
     if decision.error is not None:
         raise decision.error
+    if decision.accepted:
+        _emit_plan_blocks_remainder(job_id)
     return decision.accepted
 
 
