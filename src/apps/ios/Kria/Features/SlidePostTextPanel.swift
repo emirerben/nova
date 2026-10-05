@@ -1,244 +1,167 @@
 import SwiftUI
 
-/// Slide-scoped text editing (Edit | Style). Reads and writes only through `SlidePostSession`,
-/// so every change is one undoable step and nothing here knows about the video timeline editor.
+/// Slide-scoped text editing: the REAL native Text panel (Edit text | Style) over a slide-backed
+/// adapter, plus the slide-only actions (add text, switch text, apply style to all slides).
+/// Reads and writes only through `SlidePostSession`, so every change is one undoable step and
+/// nothing here knows about the video timeline editor. Overlays/stickers are out of scope.
 struct SlidePostTextPanel: View {
     enum Tab: String { case edit = "Edit", style = "Style" }
     @ObservedObject var session: SlidePostSession
     let slideID: String
     @Binding var tab: Tab
+    /// Keyboard up on a short phone: the pinned Add text / Apply row steps aside so the text box stays visible.
+    var compact = false
+    /// Changes whenever the canvas asks for the keyboard (a tap on the text already being edited).
+    var focusToken = 0
+    let onDone: () -> Void
+    @StateObject private var editor: SlidePostTextEditor
     @State private var appliedMessage: String?
-    @FocusState private var focusedTextID: String?
+    /// The tab the panel itself last reported; a binding change that differs came from outside
+    /// (a canvas tap) and re-creates the panel on the requested tab.
+    @State private var reportedTab: Tab
+    @State private var reloadToken = 0
 
-    private static let swatches = ["#FFFFFF", "#30352C", "#FFF0A6", "#9BCAFF", "#E7DDF5", "#A63224"]
+    init(session: SlidePostSession, slideID: String, tab: Binding<Tab>, compact: Bool = false, focusToken: Int = 0, onDone: @escaping () -> Void) {
+        self.session = session; self.slideID = slideID; self._tab = tab; self.compact = compact; self.focusToken = focusToken; self.onDone = onDone
+        _editor = StateObject(wrappedValue: SlidePostTextEditor(session: session, slideID: slideID))
+        _reportedTab = State(initialValue: tab.wrappedValue)
+    }
 
     private var texts: [SlidePostTextElement] {
         session.draft?.slides.first { $0.id == slideID }?.edits?.effectiveTexts ?? []
     }
     private var selected: SlidePostTextElement? { texts.first { $0.id == session.selectedTextID } ?? texts.first }
-    private var slideNumber: Int { (session.draft?.slides.firstIndex { $0.id == slideID } ?? 0) + 1 }
 
+    private var configuration: NativeTextPanelConfiguration {
+        var value = NativeTextPanelConfiguration()
+        value.hidesTiming = true
+        value.hidesAnimation = true
+        value.doneIdentifier = "slidepost-done"
+        value.contentIdentifier = "slidepost-text-field"
+        value.maxTextLength = SlidePostTextElement.maxLength
+        value.focusesContentOnAppear = true
+        value.onTabChange = { next in
+            let mapped: Tab = next == .edit ? .edit : .style
+            reportedTab = mapped; tab = mapped
+        }
+        return value
+    }
+
+    /// The editor's connected bottom shell: a 32pt-radius island holding the real Text panel and,
+    /// pinned under it, the actions only slides have.
     var body: some View {
-        VStack(spacing: 14) {
-            segmented
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 16) {
-                    if tab == .edit || selected == nil { editTab } else { styleTab }
+        GeometryReader { geometry in
+            VStack(spacing: 6) {
+                if let selected {
+                    NativeEditorTextPanel(
+                        id: selected.id, session: editor, initialTab: tab == .edit ? .edit : .style,
+                        configuration: configuration, onDone: onDone
+                    )
+                    .id("\(selected.id)-\(reloadToken)")
+                    // Scrolled content ends clear of the pinned action row below it.
+                    .contentMargins(.bottom, 16, for: .scrollContent)
+                    .environment(\.nativeEditorConnectedPanel, true)
+                    .environment(\.nativeEditorPanelContentWidth, max(0, geometry.size.width - 72))
+                } else {
+                    emptyState
                 }
-                .padding(.bottom, 8)
+                if !(compact && tab == .edit) {
+                    Rectangle().fill(KriaColor.line.opacity(0.5)).frame(height: 1).padding(.horizontal, 24)
+                    actions
+                }
             }
-            .scrollDismissesKeyboard(.interactively)
-            if tab == .style, let selected {
-                applyToAll(selected)
-            }
+            .padding(.top, 10).padding(.bottom, 8)
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
         }
-        .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 10)
-        .background(KriaColor.paper, in: UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28, style: .continuous))
-        .shadow(color: .black.opacity(0.07), radius: 10, y: -2)
+        .font(KriaFont.body(14)).tint(KriaColor.ink)
+        .nativeEditorIslandSurface(cornerRadius: 32)
         .excludesDrawerGesture()
-        .onAppear { if session.selectedTextID == nil { session.selectedTextID = texts.first?.id } }
-    }
-
-    // MARK: Segmented control
-
-    private var segmented: some View {
-        HStack(spacing: 0) {
-            ForEach([Tab.edit, Tab.style], id: \.self) { item in
-                Button { tab = item } label: {
-                    Text(item.rawValue).font(KriaFont.body(16).weight(tab == item ? .bold : .regular))
-                        .foregroundStyle(tab == item ? KriaColor.ink : KriaColor.zinc)
-                        .frame(maxWidth: .infinity, minHeight: 36)
-                        .background(tab == item ? KriaColor.paper : .clear, in: Capsule())
-                        .shadow(color: .black.opacity(tab == item ? 0.10 : 0), radius: 4, y: 1)
-                }
-                .buttonStyle(.plain).accessibilityAddTraits(tab == item ? .isSelected : [])
-                .accessibilityIdentifier("slidepost-tab-\(item.rawValue.lowercased())")
-            }
+        .onAppear {
+            editor.slideID = slideID
+            if session.selectedTextID == nil || !texts.contains(where: { $0.id == session.selectedTextID }) { session.selectedTextID = texts.first?.id }
         }
-        .padding(3).background(KriaColor.softZinc, in: Capsule())
-    }
-
-    // MARK: Edit tab
-
-    private var editTab: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Slide \(slideNumber) · Text").font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.zinc)
-            ForEach(texts) { element in
-                HStack(spacing: 8) {
-                    TextField("Slide text", text: Binding(
-                        get: { element.text },
-                        set: { value in session.updateText(slideID: slideID, textID: element.id, coalescing: "edit") { $0.text = String(value.prefix(SlidePostTextElement.maxLength)) } }
-                    ), axis: .vertical)
-                    .font(KriaFont.body(16)).lineLimit(1...3).focused($focusedTextID, equals: element.id)
-                    .padding(12)
-                    .background(element.id == selected?.id ? KriaColor.selectionSoft : KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .onTapGesture { session.selectedTextID = element.id; focusedTextID = element.id }
-                    .accessibilityIdentifier("slidepost-text-field")
-                    Button { session.removeText(slideID: slideID, textID: element.id) } label: {
-                        Image(systemName: "trash").frame(width: 44, height: 44).foregroundStyle(KriaColor.failureText)
-                    }
-                    .accessibilityLabel("Remove text").accessibilityIdentifier("slidepost-text-remove")
-                }
-            }
-            if texts.count < SlidePostEdits.maxTexts {
-                Button {
-                    if let id = session.addText(slideID: slideID) { focusedTextID = id }
-                } label: { Label("Add text", systemImage: "plus").frame(maxWidth: .infinity, minHeight: 44) }
-                    .buttonStyle(KriaSecondaryButtonStyle()).accessibilityIdentifier("slidepost-add-text")
-            } else {
-                Text("A slide holds up to 4 texts.").font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
-            }
-        }
-    }
-
-    // MARK: Style tab
-
-    @ViewBuilder private var styleTab: some View {
-        if let element = selected {
-            VStack(spacing: 16) {
-                fontChips(element)
-                colorSwatches(element)
-                sizeRow(element)
-                HStack(spacing: 10) { alignmentControl(element); positionControl(element) }
-                toggles(element)
-            }
-        }
-    }
-
-    private func update(_ element: SlidePostTextElement, key: String? = nil, _ mutate: @escaping (inout SlidePostTextElement) -> Void) {
-        session.updateText(slideID: slideID, textID: element.id, coalescing: key, mutate)
-    }
-
-    private func fontChips(_ element: SlidePostTextElement) -> some View {
-        let names = SlidePostTextElement.fontChoices()
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(names, id: \.self) { name in
-                    let on = element.fontFamily == name
-                    Button { update(element) { $0.fontFamily = name } } label: {
-                        Text(name == SlidePostTextElement.defaultFont ? "Inter Bold" : name)
-                            // Chrome stays Inter; the chosen font is applied to the canvas text, not the chip.
-                            .font(KriaFont.body(16))
-                            .foregroundStyle(on ? KriaColor.plum : KriaColor.ink)
-                            .padding(.horizontal, 16).frame(minHeight: 44)
-                            .background(on ? KriaColor.lilac : KriaColor.paper, in: Capsule())
-                            .overlay(Capsule().strokeBorder(on ? KriaColor.plum : KriaColor.line, lineWidth: on ? 1.5 : 1))
-                    }
-                    .buttonStyle(.plain).accessibilityAddTraits(on ? .isSelected : [])
-                    .accessibilityLabel(name).accessibilityIdentifier("slidepost-font-\(name)")
-                }
-            }
-            .padding(.vertical, 2)
-        }
-        .excludesDrawerGesture()
-    }
-
-    private func colorSwatches(_ element: SlidePostTextElement) -> some View {
-        HStack(spacing: 10) {
-            ForEach(Self.swatches, id: \.self) { hex in
-                let on = element.color.uppercased() == hex
-                Button { update(element) { $0.color = hex } } label: {
-                    Circle().fill(Color(slideHex: hex)).frame(width: 32, height: 32)
-                        .overlay(Circle().strokeBorder(KriaColor.line, lineWidth: 1))
-                        .padding(5).overlay(Circle().strokeBorder(KriaColor.ink, lineWidth: on ? 2 : 0))
-                        .frame(minWidth: 44, minHeight: 44)
-                }
-                .buttonStyle(.plain).accessibilityLabel("Color \(hex)").accessibilityAddTraits(on ? .isSelected : [])
-                .accessibilityIdentifier("slidepost-color-\(hex.dropFirst())")
-            }
-            ColorPicker("Custom color", selection: Binding(
-                get: { Color(slideHex: element.color) },
-                set: { value in let hex = value.slideHexString; update(element, key: "color") { $0.color = hex } }
-            ), supportsOpacity: false)
-            .labelsHidden().scaleEffect(1.3).frame(width: 44, height: 44)
-            .accessibilityLabel("Custom color").accessibilityIdentifier("slidepost-color-custom")
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func sizeRow(_ element: SlidePostTextElement) -> some View {
-        HStack(spacing: 12) {
-            Text("Size").font(KriaFont.body(16)).foregroundStyle(KriaColor.zinc)
-            Slider(value: Binding(
-                get: { Double(element.sizePx) },
-                set: { value in update(element, key: "size") { $0.sizePx = Int(value.rounded()) } }
-            ), in: Double(SlidePostTextElement.sizeRange.lowerBound)...Double(SlidePostTextElement.sizeRange.upperBound), step: 1)
-            .tint(KriaColor.ink).accessibilityLabel("Text size").accessibilityIdentifier("slidepost-size")
-            Text("\(element.sizePx)").font(KriaFont.body(18).weight(.bold)).foregroundStyle(KriaColor.ink).frame(minWidth: 36, alignment: .trailing)
-        }
-    }
-
-    private func alignmentControl(_ element: SlidePostTextElement) -> some View {
-        segmentGroup {
-            ForEach([("left", "text.alignleft"), ("center", "text.aligncenter"), ("right", "text.alignright")], id: \.0) { value, symbol in
-                segment(on: element.alignment == value, label: "Align \(value)", id: "slidepost-align-\(value)") {
-                    Image(systemName: symbol).font(.system(size: 16))
-                } action: { update(element) { $0.alignment = value } }
-            }
-        }
-    }
-    private func positionControl(_ element: SlidePostTextElement) -> some View {
-        segmentGroup {
-            ForEach(["top", "center", "bottom"], id: \.self) { value in
-                segment(on: element.position == value, label: value.capitalized, id: "slidepost-position-\(value)") {
-                    Text(value.capitalized).font(KriaFont.body(15).weight(element.position == value ? .bold : .regular)).lineLimit(1).minimumScaleFactor(0.7)
-                } action: { update(element) { $0.position = value; $0.xFrac = nil; $0.yFrac = nil } }
-            }
-        }
-    }
-    private func segmentGroup<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        HStack(spacing: 0) { content() }.padding(3).background(KriaColor.softZinc, in: Capsule())
-    }
-    private func segment<Label: View>(on: Bool, label: String, id: String, @ViewBuilder content: () -> Label, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            content().foregroundStyle(on ? KriaColor.ink : KriaColor.zinc).frame(maxWidth: .infinity, minHeight: 38)
-                .background(on ? KriaColor.paper : .clear, in: Capsule()).shadow(color: .black.opacity(on ? 0.10 : 0), radius: 3, y: 1)
-        }
-        .buttonStyle(.plain).accessibilityLabel(label).accessibilityAddTraits(on ? .isSelected : []).accessibilityIdentifier(id)
-    }
-
-    private func toggles(_ element: SlidePostTextElement) -> some View {
-        HStack(spacing: 10) {
-            toggle("Outline", on: element.strokeWidth > 0, id: "slidepost-toggle-outline") { update(element) { $0.strokeWidth = $0.strokeWidth > 0 ? 0 : 6 } }
-            toggle("Shadow", on: element.shadowEnabled, id: "slidepost-toggle-shadow") { update(element) { $0.shadowEnabled.toggle() } }
-            toggle("Box", on: element.background == "box", id: "slidepost-toggle-box") { update(element) { $0.background = $0.background == "box" ? "none" : "box" } }
-            Spacer(minLength: 0)
-        }
-    }
-    private func toggle(_ title: String, on: Bool, id: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title).font(KriaFont.body(16).weight(on ? .bold : .regular))
-                .foregroundStyle(on ? KriaColor.mutedInk : KriaColor.ink).padding(.horizontal, 18).frame(minHeight: 44)
-                .background(on ? KriaColor.selectionSoft : KriaColor.paper, in: Capsule())
-                .overlay(Capsule().strokeBorder(on ? KriaColor.mutedInk : KriaColor.line, lineWidth: on ? 1.5 : 1))
-        }
-        .buttonStyle(.plain).accessibilityAddTraits(on ? .isSelected : []).accessibilityIdentifier(id)
-    }
-
-    private func applyToAll(_ element: SlidePostTextElement) -> some View {
-        VStack(spacing: 6) {
-            Button {
-                session.applyStyleToAllSlides(slideID: slideID, textID: element.id)
-                let others = (session.draft?.slides.count ?? 1) - 1
-                appliedMessage = others > 0 ? "Style applied to \(others) other slide\(others == 1 ? "" : "s")" : nil
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-            } label: {
-                Label("Apply style to all slides", systemImage: "square.on.square").font(KriaFont.body(17).weight(.bold))
-                    .foregroundStyle(KriaColor.ink).frame(maxWidth: .infinity, minHeight: 54).background(KriaColor.butter, in: Capsule())
-            }
-            .accessibilityIdentifier("slidepost-apply-all")
-            if let appliedMessage {
-                Text(appliedMessage).font(KriaFont.body(12)).foregroundStyle(KriaColor.success).accessibilityIdentifier("slidepost-apply-all-result")
-            }
+        .onChange(of: tab) { _, next in
+            if next != reportedTab { reportedTab = next; reloadToken += 1 }
         }
         .onChange(of: session.selectedTextID) { _, _ in appliedMessage = nil }
+        // Re-creating the panel re-runs its focus-on-appear, putting the keyboard on the text field.
+        .onChange(of: focusToken) { _, _ in reloadToken += 1 }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Text("No text on this slide yet.").font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc)
+            Button(action: onDone) { Text("Done").frame(minWidth: 64, minHeight: 44) }.accessibilityIdentifier("slidepost-done")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: Slide-only actions
+
+    private var actions: some View {
+        VStack(spacing: 6) {
+            if texts.count > 1 { textChips }
+            HStack(spacing: 10) {
+                if texts.count < SlidePostEdits.maxTexts {
+                    Button {
+                        tab = .edit; reportedTab = .edit
+                        _ = session.addText(slideID: slideID)
+                    } label: { Label("Add text", systemImage: "plus").frame(maxWidth: tab == .style ? nil : .infinity, minHeight: 44).fixedSize(horizontal: tab == .style, vertical: false) }
+                        .buttonStyle(KriaSecondaryButtonStyle()).accessibilityIdentifier("slidepost-add-text")
+                } else {
+                    Text("A slide holds up to 4 texts.").font(KriaFont.body(11)).foregroundStyle(KriaColor.zinc)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if tab == .style, let selected { applyToAllButton(selected) }
+            }
+            if let appliedMessage {
+                Text(appliedMessage).font(KriaFont.body(11)).foregroundStyle(KriaColor.success).accessibilityIdentifier("slidepost-apply-all-result")
+            }
+        }
+        .padding(.horizontal, 24)
+    }
+
+    private var textChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Array(texts.enumerated()), id: \.element.id) { index, element in
+                    let on = element.id == selected?.id
+                    Button { session.selectedTextID = element.id } label: {
+                        Text(element.text.isEmpty ? "Text \(index + 1)" : String(element.text.prefix(14)))
+                            .font(KriaFont.body(13).weight(on ? .semibold : .regular)).lineLimit(1)
+                            .foregroundStyle(on ? KriaColor.mutedInk : KriaColor.ink)
+                            .padding(.horizontal, 14).frame(minHeight: 44)
+                            .background(on ? KriaColor.selectionSoft : KriaColor.paper, in: Capsule())
+                            .overlay(Capsule().strokeBorder(on ? KriaColor.mutedInk : KriaColor.line, lineWidth: on ? 1.5 : 1))
+                    }
+                    .buttonStyle(.plain).accessibilityAddTraits(on ? .isSelected : [])
+                    .accessibilityLabel("Text \(index + 1)").accessibilityIdentifier("slidepost-text-chip-\(index + 1)")
+                }
+            }
+        }
+        .excludesDrawerGesture()
+    }
+
+    private func applyToAllButton(_ element: SlidePostTextElement) -> some View {
+        Button {
+            session.applyStyleToAllSlides(slideID: slideID, textID: element.id)
+            let others = (session.draft?.slides.count ?? 1) - 1
+            appliedMessage = others > 0 ? "Style applied to \(others) other slide\(others == 1 ? "" : "s")" : nil
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } label: {
+            Text("Apply to all slides").frame(maxWidth: .infinity, minHeight: 44)
+                .lineLimit(1).minimumScaleFactor(0.8)
+        }
+        .buttonStyle(KriaPrimaryButtonStyle())
+        .accessibilityIdentifier("slidepost-apply-all")
     }
 }
 
-/// Look presets for the selected slide, shown in the same bottom panel position as the text panel.
+/// Look presets for the selected slide, in the same connected bottom shell as the text panel.
 struct SlidePostLookPanel: View {
     @ObservedObject var session: SlidePostSession
     let slideID: String
+    let onDone: () -> Void
     private static let looks: [(String, String)] = [
         ("none", "Original"), ("stadium_diffusion", "Stadium Diffusion"), ("olive_film", "Olive Film"),
         ("smoky_split_tone", "Smoky Split-Tone"), ("golden_hour", "Golden Hour"), ("faded_analog", "Faded Analog"),
@@ -246,27 +169,37 @@ struct SlidePostLookPanel: View {
     private var current: String { session.draft?.slides.first { $0.id == slideID }?.edits?.lookPreset ?? "none" }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Look").font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.zinc)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Look").font(KriaFont.body(18).weight(.semibold))
+                Spacer()
+                Button(action: onDone) {
+                    Text("Done").font(KriaFont.body(14)).frame(minWidth: 64, minHeight: 44)
+                        .background(KriaColor.ink.opacity(0.06), in: Capsule())
+                }
+                .accessibilityIdentifier("slidepost-done")
+            }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(Self.looks, id: \.0) { value, title in
                         let on = current == value
                         Button { session.setLook(slideID: slideID, preset: value) } label: {
-                            Text(title).font(KriaFont.body(16)).foregroundStyle(on ? KriaColor.plum : KriaColor.ink)
-                                .padding(.horizontal, 16).frame(minHeight: 44)
-                                .background(on ? KriaColor.lilac : KriaColor.paper, in: Capsule())
-                                .overlay(Capsule().strokeBorder(on ? KriaColor.plum : KriaColor.line, lineWidth: on ? 1.5 : 1))
+                            Text(title).font(KriaFont.body(14).weight(on ? .semibold : .regular))
+                                .foregroundStyle(on ? KriaColor.mutedInk : KriaColor.ink)
+                                .padding(.horizontal, 14).frame(minHeight: 44)
+                                .background(on ? KriaColor.selectionSoft : KriaColor.paper, in: Capsule())
+                                .overlay(Capsule().strokeBorder(on ? KriaColor.mutedInk : KriaColor.line, lineWidth: on ? 1.5 : 1))
                         }
                         .buttonStyle(.plain).accessibilityAddTraits(on ? .isSelected : []).accessibilityIdentifier("slidepost-look-\(value)")
                     }
                 }
             }
             .excludesDrawerGesture()
-            Text("Save to apply this look to the rendered slide.").font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
+            Text("Save to apply this look to the rendered slide.").font(KriaFont.body(11)).foregroundStyle(KriaColor.zinc)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 16).padding(.top, 18).padding(.bottom, 10).frame(maxWidth: .infinity, alignment: .leading)
-        .background(KriaColor.paper, in: UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28, style: .continuous))
+        .padding(.horizontal, 24).padding(.top, 10).padding(.bottom, 8).frame(maxWidth: .infinity, alignment: .leading)
+        .font(KriaFont.body(14)).tint(KriaColor.ink)
+        .nativeEditorIslandSurface(cornerRadius: 32)
     }
 }

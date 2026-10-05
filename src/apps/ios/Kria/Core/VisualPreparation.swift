@@ -87,7 +87,7 @@ struct VisualPreparationSummary: Equatable, Sendable {
     ///     explains itself on its own row, and counting them would keep the bar
     ///     from ever filling.
     ///   - uploading: chosen files still uploading, which the pool doesn't list yet.
-    init?(assets: [CreationVisual], uploading: Int = 0, online: Bool = true, slowIDs: Set<String>, surface: Surface) {
+    init?(assets: [CreationVisual], uploading: Int = 0, online: Bool = true, slowIDs: Set<String>, surface: Surface, nounOverride: String? = nil) {
         let counted = assets.filter { $0.status == "ready" || $0.preparationStage != nil }
         let ready = counted.filter { $0.status == "ready" }.count
         let total = counted.count + max(0, uploading)
@@ -97,7 +97,7 @@ struct VisualPreparationSummary: Equatable, Sendable {
         self.isSlow = counted.contains { $0.preparationStage != nil && slowIDs.contains($0.id) }
         self.waitingForConnection = !online && uploading > 0
         let kinds = Set(counted.map(\.kind))
-        self.noun = kinds == ["image"] ? "photos" : kinds == ["video"] ? "videos" : "visuals"
+        self.noun = nounOverride ?? (kinds == ["image"] ? "photos" : kinds == ["video"] ? "videos" : "visuals")
         self.surface = surface
     }
 
