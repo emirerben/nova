@@ -411,7 +411,7 @@ class Settings(BaseSettings):
     # £22/£2/£2 allocations with exchange-rate headroom; operators may tighten
     # them without a deploy.
     ai_production_monthly_budget_usd: float = Field(default=28.0, gt=0, le=1000)
-    ai_development_monthly_budget_usd: float = Field(default=2.5, gt=0, le=1000)
+    ai_development_monthly_budget_usd: float = Field(default=25.0, gt=0, le=1000)
     ai_omni_lab_monthly_budget_usd: float = Field(default=2.5, gt=0, le=1000)
     ai_release_canary_monthly_budget_usd: float = Field(default=2.5, gt=0, le=1000)
     ai_weekly_smoke_max_cost_usd: float = Field(default=0.20, gt=0, le=2.0)

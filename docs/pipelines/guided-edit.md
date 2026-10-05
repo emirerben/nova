@@ -48,7 +48,7 @@ exist. Never remove their schedules or down-convert approved timing.
 Focused gates include `test_semantic_edit_scheduler.py`,
 `test_proposal_planning.py`, `test_semantic_schedule_compiler.py` (baseline hashes
 for v1–7), semantic proposal route/task tests, and
-`tests/evals/test_semantic_edit_proposal_evals.py`. The live eval gate includes all
+`tests/evals/test_semantic_edit_proposal_evals.py`. The (optional, paid) live eval run includes all
 existing fixture families plus five repetitions of the real KRI-129 16-clip case,
 each requiring 1,800 frames, grouping, exact title/caption, grounded labels and
 original audio. Use the cost-capped harness described in `tests/evals/README.md`.

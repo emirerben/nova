@@ -64,7 +64,7 @@ shape? abstract pillar upstream in the persona?).
 Concrete, minimal edits — quote the current line and the proposed line. Prefer
 ONE of: (a) tighten a prompt clause, (b) add a banned-pattern example, (c) add a
 negative/positive example to content_ideas.json or persona_archetypes.json. End
-with the exact version-bump + eval command to run before merging (see below).
+with the exact version-bump (+ optional paid eval command) (see below).
 Do NOT apply them.
 ```
 
@@ -171,7 +171,7 @@ applies it doesn't ship a stale-cache bug (CLAUDE.md "Prompt-change rule"):
   date string (add `.1`/`.2` if today's is already committed);
 - if you touched a bank's `version`, bump the coupled constant too
   (guarded by `tests/agents/test_market_research_banks.py`);
-- re-run the eval before merge and compare scores to the prior version:
+- optionally (paid, not a merge requirement) re-run the eval and compare scores to the prior version:
   ```
   NOVA_EVAL_MODE=live GEMINI_API_KEY=… ANTHROPIC_API_KEY=… \
     pytest tests/evals/test_content_plan_generator_evals.py -v --eval-mode=live --with-judge
