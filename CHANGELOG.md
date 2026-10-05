@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.88.0] - 2026-10-05
+
+### Changed
+- fix(kria): render titles on iPhone voiceover edits (KRI-455) (#1403) <!-- release-pr: 1403 -->
+
 ## [0.78.87.0] - 2026-10-05
 
 ### Changed
