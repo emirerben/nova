@@ -433,16 +433,49 @@ real background writer), `tests/services/test_clip_intent_understanding_gate.py`
 the budget and deadline tests in `tests/kria/test_planner.py` and
 `tests/kria/test_runtime_v2.py`.
 
+## Chat turns that run out of vision budget
+
+A Kria turn may spend `KRIA_CLIP_INTENTS_MAX_VISION_REQUERIES` (18) vision checks
+within `KRIA_CLIP_INTENTS_VISION_DEADLINE_S` (40 s), in batches of 6. When unanswered
+checks remain, it replies that it is still checking and asks for a short "go ahead".
+It never asks the creator to resend the request: every user message joins the
+combined creator request (12,000 characters), so a pasted resend duplicates each
+instruction.
+
+- **Answers survive the turn (KRI-433).** Pool-asset answers were already cached on
+  `PlanItemAsset.analysis["answers"]`. Every iPhone clip is a raw `clip_assignments`
+  row, and those answers were dropped, so the follow-up re-asked everything. On prod
+  thread D1FDCA87 (2026-10-05), the follow-up finished only because its planner emitted
+  fewer intents. `persist_clip_intent_vision_answers` now also writes
+  `clip_assignments[i]["analysis"]["answers"]`. It locks the item first (the canonical
+  lock order), keeps an answer only for the same media id and storage generation, goes
+  through `mutate_plan_item_media`, and undoes the write if footage identity would
+  change. A failed write loses only the cache and never fails the turn (KRI-291).
+- **Why 18 is not enough.** A check is keyed on (clip, generation, question), and a
+  membership question is built from the intent's `attribute`. On D1FDCA87 the planner
+  emitted an include and a caption for each of 6 chapters, worded differently: 18 calls
+  for 9 clip and chapter pairs. Two calls were still running at the deadline, and two
+  clips stayed unchecked.
+- **Diagnostics.** A pending turn's `plan.diagnostics` (`GET /admin/creation-threads/<id>/turns`)
+  carries `vision_cap`, `vision_calls`, `vision_over_cap` (checks the cap left out),
+  `vision_deadline_cut` (checks the deadline cut off), `vision_cached` (checks the
+  cache answered) and `vision_multi_question_clips` (clips asked more than one distinct
+  question, the doubling signal).
+
+Guards: `tests/kria/test_clip_answer_cache_postgres.py` (real row, real writer, real
+loader: the follow-up turn only checks what the budget left) and
+`test_pending_diagnostics_show_differently_worded_chapter_intents_doubling_checks` in
+`tests/services/test_clip_intent_resolution.py`.
+
 ## Known gaps
 
 - Vision re-query remains video-only. Images need an inline media input path.
 - KRI-154 overflow results are picked up on the next creator message. KRI-151's
   separate durable preparation flow can finish and publish the original turn.
-- Vision answers are cached for pool assets only, not raw `clip_assignments`
-  (every iPhone montage clip, `analysis-proxy-ios-…`). The Kria turn's strict
-  cache write skips those ids; failing on them ended every resolved iPhone turn
-  that needed a vision check with "I couldn't reliably match that request to
-  your clips" (KRI-291).
+- Two intents about the same chapter, worded differently, each pay for their own
+  vision checks (see "Chat turns that run out of vision budget" below).
+- A membership check sees only the intent's `attribute`. A bare chapter name
+  ("Chapter 1") gives the vision model nothing to check against.
 
 KRI-154 regression coverage: `tests/services/test_clip_intent_resolution.py`
 replays the 30-clip / 8-vague-clip overflow and cache pickup;

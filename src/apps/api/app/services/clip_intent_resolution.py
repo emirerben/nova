@@ -1177,6 +1177,21 @@ async def resolve_clip_intents_for_turn(
         if vision_deadline_s is not None
         else settings.clip_intents_vision_deadline_s
     )
+    vision_cap = (
+        max(1, min(len(intents), 6) * 50)
+        if background
+        else (
+            max_vision_requeries
+            if max_vision_requeries is not None
+            else min(4, settings.clip_intents_max_vision_requeries)
+        )
+    )
+    # KRI-433: which limit a pending turn hit (the call cap or the deadline), how much
+    # the cache saved, and how many clips needed more than one distinct question (two
+    # intents about the same chapter worded differently each pay for a check).
+    # Required work only; soft re-queries are opportunistic. Redacted counts.
+    vision_stats = {"cached": 0, "over_cap": 0, "deadline_cut": 0}
+    questions_by_clip: dict[str, set[str]] = {}
 
     def record_failure(candidates, error_code, works=None):
         works = work_by_id if works is None else works
@@ -1235,10 +1250,14 @@ async def resolve_clip_intents_for_turn(
         for candidate in unique:
             clip = clip_by_id[candidate.media_id]
             question_norm = normalize_question(candidate.question)
+            if not soft:
+                questions_by_clip.setdefault(candidate.media_id, set()).add(question_norm)
             cached = vision_answers.get(candidate.media_id, {}).get(
                 question_norm
             ) or _cached_answer(clip, question_norm)
             if cached is not None:
+                if not soft:
+                    vision_stats["cached"] += 1
                 output = ClipQuestionOutput(
                     answer=str(cached.get("answer", "") or ""),
                     confidence=float(cached.get("confidence", 0.0) or 0.0),
@@ -1279,15 +1298,7 @@ async def resolve_clip_intents_for_turn(
                 continue
             to_call.append(candidate)
 
-        cap = (
-            max(1, min(len(intents), 6) * 50)
-            if background
-            else (
-                max_vision_requeries
-                if max_vision_requeries is not None
-                else min(4, settings.clip_intents_max_vision_requeries)
-            )
-        )
+        cap = vision_cap
         terminal_budget = any(
             work.ai_budget_exhausted_media_ids
             or work.provider_quota_exhausted_media_ids
@@ -1295,6 +1306,8 @@ async def resolve_clip_intents_for_turn(
             for work in work_by_id.values()
         )
         allowed = 0 if terminal_budget else min(max(0, cap - calls_spent), len(to_call))
+        if not soft and not terminal_budget:
+            vision_stats["over_cap"] += len(to_call) - allowed
         for candidate in to_call[allowed:]:
             if not terminal_budget:
                 _defer(candidate)
@@ -1312,6 +1325,8 @@ async def resolve_clip_intents_for_turn(
         for offset in range(0, len(to_call), batch_size):
             batch = to_call[offset : offset + batch_size]
             if not background and asyncio.get_running_loop().time() >= foreground_deadline:
+                if not soft:
+                    vision_stats["deadline_cut"] += len(batch)
                 for candidate in batch:
                     _defer(candidate)
                     key = (
@@ -1354,6 +1369,8 @@ async def resolve_clip_intents_for_turn(
                 )
                 dependents_for_candidate = dependents[key]
                 if task not in done:
+                    if not soft:
+                        vision_stats["deadline_cut"] += 1
                     _defer(candidate)
                     for dependent in dependents_for_candidate:
                         works[dependent.intent_id].pending_media_ids.add(dependent.media_id)
@@ -1625,6 +1642,11 @@ async def resolve_clip_intents_for_turn(
         "empty_records": sum(1 for r in records_by_id.values() if _record_is_empty(r)),
         "soft_requeries_queued": len(soft_candidates),
         "intent_stats": intent_stats[:24],
+        "vision_cap": vision_cap,
+        "vision_cached": vision_stats["cached"],
+        "vision_over_cap": vision_stats["over_cap"],
+        "vision_deadline_cut": vision_stats["deadline_cut"],
+        "vision_multi_question_clips": sum(1 for q in questions_by_clip.values() if len(q) > 1),
     }
 
     if not unresolved_work:

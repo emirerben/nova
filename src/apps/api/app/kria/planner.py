@@ -228,9 +228,14 @@ def _full_creator_request(rows: list[CreationThreadEvent], *, current_message: s
     return request if len(request) <= 12_000 else None
 
 
+# KRI-433: ask for a short follow-up, never the request again. Every user message
+# joins the combined request (`_full_creator_request`, 12,000 chars), so a pasted
+# resend duplicates every instruction. Answered checks are cached per clip (pool
+# assets and iPhone clip assignments), so the next turn only does the rest.
 _CLIP_INTENT_PENDING_REPLY = (
     "I'm still checking some of your clips against that request. "
-    "Send it again in a moment and I'll pick up where I left off."
+    'Reply "go ahead" in a moment and I\'ll pick up where I left off. '
+    "No need to send the whole request again."
 )
 
 

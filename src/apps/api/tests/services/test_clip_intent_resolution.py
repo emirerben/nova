@@ -1616,6 +1616,9 @@ async def test_deadline_retains_fast_answer_and_defers_only_slow_clip(monkeypatc
     assert set(result.vision_answers) == {"m1"}
     assert [q.media_id for q in result.deferred_queries] == ["m2"]
     assert result.intents[0].status == "needs_creator"
+    # KRI-433: the diagnostics name the deadline, not the call cap, as the limit hit.
+    assert result.diagnostics["vision_deadline_cut"] == 1
+    assert result.diagnostics["vision_over_cap"] == 0
 
 
 async def test_photo_the_record_cannot_settle_asks_the_creator(monkeypatch):
@@ -1946,3 +1949,74 @@ async def test_long_creator_chapter_line_resolves_verbatim(monkeypatch) -> None:
     assert resolved.status == "resolved"
     assert resolved.caption_text == line
     assert resolved.caption_grounding == "creator_text"
+
+
+async def test_pending_diagnostics_show_differently_worded_chapter_intents_doubling_checks(
+    monkeypatch,
+):
+    """KRI-433 (prod thread D1FDCA87, La Mercè): the planner emitted an include AND a
+    caption per chapter with different `attribute` wording. A membership check is keyed
+    on the attribute, so every clip was checked once per intent: 18 calls for 9 clip and
+    chapter pairs, the 18-call budget ran out, and the turn replied "still checking".
+    The diagnostics now show the cap (not the deadline) and how many clips needed more
+    than one question."""
+    from app.services import clip_intent_resolution as service
+
+    intents = [
+        ClipIntent(
+            intent_id="chapter_1_include", op="include", attribute="a child at the top of a tower"
+        ),
+        ClipIntent(
+            intent_id="chapter_1_caption",
+            op="caption",
+            attribute="Chapter 1",
+            creator_text="Watch the very top.",
+        ),
+        ClipIntent(
+            intent_id="chapter_2_include", op="include", attribute="fireworks over a lit tower"
+        ),
+        ClipIntent(
+            intent_id="chapter_2_caption",
+            op="caption",
+            attribute="Chapter 2",
+            creator_text="It's La Merce.",
+        ),
+    ]
+    members = {"chapter_1": ["m001", "m002"], "chapter_2": ["m003"]}
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id=intent.intent_id,
+                    needs_vision=[
+                        ResolverVisionQuestion(media=alias, question="Is this that chapter?")
+                        for alias in members[intent.intent_id.rsplit("_", 1)[0]]
+                    ],
+                )
+                for intent in intents
+            ]
+        ),
+    )
+
+    async def vision(candidate, clip, **kwargs):
+        return ClipQuestionOutput(answer="yes", confidence=0.9, evidence="seen")
+
+    monkeypatch.setattr(service, "_run_vision_candidate", vision)
+    result = await resolve_clip_intents_for_turn(
+        intents=intents,
+        creator_request="Chapter 1 · a child at the top of a tower · Watch the very top.",
+        clips=[_video_clip(f"m{i}") for i in (1, 2, 3)],
+        run_context=RunContext(),
+        max_vision_requeries=4,
+        vision_deadline_s=30,
+    )
+
+    assert result.status == "pending"
+    assert result.diagnostics["vision_cap"] == 4
+    assert result.diagnostics["vision_calls"] == 4
+    # 3 clip and chapter pairs, asked twice each: 6 checks for a 4-call budget.
+    assert result.diagnostics["vision_over_cap"] == 2
+    assert result.diagnostics["vision_deadline_cut"] == 0
+    assert result.diagnostics["vision_multi_question_clips"] == 3
+    assert result.diagnostics["vision_cached"] == 0

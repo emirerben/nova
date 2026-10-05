@@ -17,6 +17,7 @@ from app.agents._schemas.creator_agent import (
     ProposeStrategy,
     legacy_clip_intents,
 )
+from app.models import PlanItem, PlanItemAsset
 from app.routes import creator_agent as creator_routes
 from app.routes.creator_agent import _apply_explicit_render_intent, _seed_guided_specialist_brief
 from app.schemas.clip_intents import ClipAssignment, ClipIntent, ResolvedClipIntent
@@ -671,16 +672,17 @@ async def test_strict_vision_answer_cache_rejects_a_stale_asset_generation() -> 
 
 
 @pytest.mark.asyncio
-async def test_strict_vision_answer_cache_skips_raw_phone_clip_media() -> None:
+async def test_strict_vision_answer_cache_never_fails_on_raw_phone_clip_media() -> None:
     """KRI-291: iPhone montage clips are raw `clip_assignments`
-    (`analysis-proxy-ios-….mp4`) with no answer cache (pool assets only). Strict
-    mode fences a CHANGED pool asset; an uncacheable phone clip is the same
-    documented no-op as in best-effort mode, never a failure that ends the turn."""
+    (`analysis-proxy-ios-….mp4`). Strict mode fences a CHANGED pool asset; a phone
+    clip's answers are cached on its assignment best effort (KRI-433, covered with a
+    real row in tests/kria/test_clip_answer_cache_postgres.py), never a failure that
+    ends the turn -- here the item row is gone by the time the cache is written."""
     item_id = uuid.uuid4()
     asset_id = uuid.uuid4()
     asset = SimpleNamespace(plan_item_id=item_id, gcs_generation="7", analysis={})
     item = SimpleNamespace(id=item_id)
-    db = _fake_db(return_value=asset)
+    db = _fake_db(side_effect=lambda model, *_a, **_k: asset if model is PlanItemAsset else None)
 
     await persist_clip_intent_vision_answers(
         db,
@@ -694,7 +696,7 @@ async def test_strict_vision_answer_cache_skips_raw_phone_clip_media() -> None:
         strict=True,
     )
 
-    db.get.assert_awaited_once()  # only the pool asset has a row to write
+    assert [call.args[0] for call in db.get.await_args_list] == [PlanItem, PlanItemAsset]
     assert asset.analysis[ANSWERS_KEY] == {
         "is it a scoreboard": {"answer": "yes", "generation": "7"}
     }
@@ -712,10 +714,9 @@ async def test_strict_vision_answer_cache_rejects_a_malformed_pool_asset_id() ->
 
 
 @pytest.mark.asyncio
-async def test_vision_answers_skip_raw_clip_assignments_media() -> None:
-    """Raw `clip_assignments` clips have no light-weight writer here (see the
-    docstring on `_persist_clip_intent_vision_answers`); persistence for them
-    is a documented no-op, never an error."""
+async def test_raw_clip_assignment_answer_cache_failure_never_raises() -> None:
+    """Raw `clip_assignments` clips are cached on the assignment (KRI-433); a failed
+    write there only loses the cache, never raises (KRI-291)."""
 
     item = SimpleNamespace(id=uuid.uuid4())
     db = _fake_db(side_effect=AssertionError("must not be looked up"))
