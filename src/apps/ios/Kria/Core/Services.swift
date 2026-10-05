@@ -1276,7 +1276,14 @@ struct KriaAPI: KriaAPIClient {
     /// same server-authored message instead of discarding the response body.
     private static func decodeDetail(from data: Data) -> String? {
         guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
-        return body["detail"] as? String
+        if let text = body["detail"] as? String { return text }
+        // FastAPI validation errors (422) send a list of {loc, msg}; keep the first as "field: reason"
+        // so it can be logged. Never shown to the user verbatim.
+        if let items = body["detail"] as? [[String: Any]], let first = items.first, let msg = first["msg"] as? String {
+            let loc = (first["loc"] as? [Any])?.map { "\($0)" }.joined(separator: ".") ?? ""
+            return loc.isEmpty ? msg : "\(loc): \(msg)"
+        }
+        return nil
     }
     /// Decodes the runtime-v2 `KriaProblemOut` envelope (`{"problem": {"code",
     /// "message", ...}}`). Nil when the body isn't shaped that way, e.g. the

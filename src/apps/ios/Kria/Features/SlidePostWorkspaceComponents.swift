@@ -10,7 +10,7 @@ enum SlidePostTone {
     static let warning = Color(red: 0x8A / 255, green: 0x4B / 255, blue: 0x14 / 255)
     /// Insertion bar while reordering.
     static let insertion = KriaColor.sky.mix(with: KriaColor.ink, by: 0.42)
-    static let stage = KriaColor.softZinc
+    static let stage = KriaColor.paper
 }
 
 extension View {
@@ -42,160 +42,266 @@ extension Color {
 }
 
 enum SlidePostMode: Equatable {
-    case browse, arrange, text, look
-    /// The Kria thread only renders in browse mode, so sending a chat message always returns there;
-    /// otherwise an edit sent from Arrange would run with no visible feedback.
-    static let afterChatSend: SlidePostMode = .browse
-    static func showsChatThread(chatEnabled: Bool, chatOpen: Bool, mode: SlidePostMode) -> Bool {
-        chatEnabled && chatOpen && mode == .browse
-    }
+    case browse, text, look
 }
 
 // MARK: Header
 
+/// The native editor's floating header (`WorkspaceTopRow` + `kriaFloatingSurface`): a circle back
+/// button, a centred title and one floating action capsule. Undo/redo and the status line live in
+/// `SlidePostTransportRow`, where the editor keeps its own transport row.
 struct SlidePostHeader: View {
     enum Action { case save, create, rendering, share, saving }
-    let subtitle: String
-    let unsaved: Bool
-    let inTextMode: Bool
-    let canUndo: Bool
-    let canRedo: Bool
+    let title: String
     let action: Action
     let actionEnabled: Bool
     let onBack: () -> Void
-    let onUndo: () -> Void
-    let onRedo: () -> Void
-    let onDone: () -> Void
     let onAction: () -> Void
     let onSaveToPhotos: () -> Void
     let onShare: () -> Void
 
     var body: some View {
-        HStack(spacing: 2) {
-            Button(action: onBack) { Image(systemName: "chevron.left").font(.system(size: 18, weight: .semibold)).frame(width: 44, height: 44) }
-                .accessibilityLabel("Back to creation")
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Photo post").font(KriaFont.headline(19)).foregroundStyle(KriaColor.ink).lineLimit(1).minimumScaleFactor(0.8)
-                Text(subtitle).font(KriaFont.body(12.5).weight(unsaved ? .semibold : .regular))
-                    .foregroundStyle(unsaved ? SlidePostTone.warning : KriaColor.zinc).lineLimit(1).minimumScaleFactor(0.8)
-                    .accessibilityIdentifier("slidepost-subtitle")
+        WorkspaceTopRow(title: title) {
+            Button(action: onBack) {
+                Image(systemName: "chevron.left").font(.system(size: 15, weight: .semibold)).foregroundStyle(KriaColor.ink)
+                    .frame(width: 44, height: 44).kriaFloatingSurface(Circle())
             }
-            Spacer(minLength: 4)
-            historyButton("arrow.uturn.backward", label: "Undo", id: "slidepost-undo", enabled: canUndo, action: onUndo)
-            historyButton("arrow.uturn.forward", label: "Redo", id: "slidepost-redo", enabled: canRedo, action: onRedo)
-            trailing
+            .accessibilityLabel("Back to creation")
+        } trailing: {
+            trailing.frame(minWidth: 44, alignment: .trailing)
         }
-        .padding(.leading, 6).padding(.trailing, 14).frame(minHeight: 60).background(KriaColor.paper)
-    }
-
-    private func historyButton(_ symbol: String, label: String, id: String, enabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 18, weight: .medium)).frame(width: 40, height: 44)
-                .foregroundStyle(enabled ? KriaColor.ink : KriaColor.line)
-        }
-        .disabled(!enabled).accessibilityLabel(label).accessibilityIdentifier(id)
+        .buttonStyle(.plain)
+        .foregroundStyle(KriaColor.ink)
     }
 
     @ViewBuilder private var trailing: some View {
-        if inTextMode {
-            pill("Done", id: "slidepost-done", enabled: true, action: onDone)
-        } else {
-            switch action {
-            case .save: pill("Save", id: "slidepost-save", enabled: actionEnabled, action: onAction)
-            case .saving: pill("Saving…", id: "slidepost-save", enabled: false, action: {})
-            case .create: pill("Create post", id: "slidepost-create", enabled: actionEnabled, action: onAction)
-            case .rendering: pill("Rendering…", id: "slidepost-rendering", enabled: false, action: {})
-            case .share:
-                Menu {
-                    Button("Save to Photos", action: onSaveToPhotos).accessibilityIdentifier("slidepost-save-photos")
-                    Button("Share files", action: onShare).accessibilityIdentifier("slidepost-share-files")
-                } label: { pillLabel("Share", enabled: true) }
-                .accessibilityIdentifier("slidepost-share")
-            }
+        switch action {
+        case .save: pill("Save", id: "slidepost-save", enabled: actionEnabled, action: onAction)
+        case .saving: pill("Saving…", id: "slidepost-save", enabled: false, action: {})
+        case .create: pill("Create post", id: "slidepost-create", enabled: actionEnabled, action: onAction)
+        case .rendering: pill("Rendering…", id: "slidepost-rendering", enabled: false, action: {})
+        case .share:
+            Menu {
+                Button("Save to Photos", action: onSaveToPhotos).accessibilityIdentifier("slidepost-save-photos")
+                Button("Share files", action: onShare).accessibilityIdentifier("slidepost-share-files")
+            } label: { pillLabel("Share", enabled: true) }
+            .accessibilityIdentifier("slidepost-share")
         }
     }
     private func pill(_ title: String, id: String, enabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) { pillLabel(title, enabled: enabled) }
             .disabled(!enabled).accessibilityIdentifier(id)
     }
+    // Same capsule as the editor's Save: 14pt semibold, 44pt tall, floating frosted surface.
     private func pillLabel(_ title: String, enabled: Bool) -> some View {
-        Text(title).font(KriaFont.body(16).weight(.bold)).foregroundStyle(KriaColor.ink)
-            .padding(.horizontal, 20).frame(minHeight: 44).background(KriaColor.butter, in: Capsule())
-            .opacity(enabled ? 1 : 0.55)
+        Text(title).font(KriaFont.body(14).weight(.semibold)).foregroundStyle(enabled ? KriaColor.ink : KriaColor.zinc)
+            .lineLimit(1).fixedSize().padding(.horizontal, 16).frame(minWidth: 44, minHeight: 44)
+            .kriaFloatingSurface(Capsule())
+    }
+}
+
+/// The row under the preview, in the slot (and metrics) of the editor's transport row: status line
+/// on the left, undo/redo on the right.
+struct SlidePostTransportRow: View {
+    let subtitle: String
+    let unsaved: Bool
+    let canUndo: Bool
+    let canRedo: Bool
+    let onUndo: () -> Void
+    let onRedo: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(subtitle)
+                .font(KriaFont.body(13).weight(.semibold))
+                .foregroundStyle(unsaved ? SlidePostTone.warning : KriaColor.zinc)
+                .lineLimit(1).minimumScaleFactor(0.7)
+                .accessibilityIdentifier("slidepost-subtitle")
+            Spacer(minLength: 4)
+            historyButton("arrow.uturn.backward", label: "Undo", id: "slidepost-undo", enabled: canUndo, action: onUndo)
+            historyButton("arrow.uturn.forward", label: "Redo", id: "slidepost-redo", enabled: canRedo, action: onRedo)
+        }
+        .padding(.horizontal, 14).frame(height: 54).background(KriaColor.paper)
+    }
+
+    private func historyButton(_ symbol: String, label: String, id: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
+                .foregroundStyle(enabled ? KriaColor.ink : KriaColor.line)
+        }
+        .buttonStyle(.plain).disabled(!enabled).accessibilityLabel(label).accessibilityIdentifier(id)
     }
 }
 
 // MARK: Slide strip
 
+/// Scroll geometry the strip reads back for drag math and auto-scroll.
+private struct SlidePostStripMetrics: Equatable {
+    var offset: CGFloat = 0
+    var content: CGFloat = 0
+    var viewport: CGFloat = 0
+}
+
+/// One horizontal row: every slide, then any media still arriving, then the "+" block, all with the
+/// same 60x76 footprint and number-label row. Long-press a slide and drag to reorder; the strip
+/// auto-scrolls when the finger nears either edge.
 struct SlidePostStrip: View {
     let slides: [SlidePostSlide]
     let coverIndex: Int
     let selectedID: String?
-    let arranging: Bool
     let asset: (SlidePostSlide) -> SlidePostAsset?
+    var pending: [SlidePostPendingTile] = []
     let onSelect: (String) -> Void
     let onMove: (String, Int) -> Void
-    let onSetCover: (String) -> Void
-    let onRemove: (String) -> Void
+    var onTapPending: (SlidePostPendingTile) -> Void = { _ in }
     let onAdd: () -> Void
 
-    private static let tileWidth: CGFloat = 60   // 56pt tile + 2pt selection ring each side
-    private static let spacing: CGFloat = 6
-    private static let pitch = tileWidth + spacing
+    static let thumbSize = CGSize(width: 56, height: 72)
+    static let tileWidth: CGFloat = 60   // 56pt tile + 2pt selection ring each side
+    static let spacing: CGFloat = 6
+    static let pitch = tileWidth + spacing
+    static let leadingInset: CGFloat = 16
 
     @State private var dragID: String?
-    @State private var dragOffset: CGFloat = 0
+    @State private var fingerX: CGFloat = 0
+    @State private var startFingerX: CGFloat?
+    @State private var startOffset: CGFloat = 0
+    @State private var lastTarget: Int?
+    @State private var autoOffset: CGFloat = 0
+    @State private var metrics = SlidePostStripMetrics()
+    @State private var position = ScrollPosition(edge: .leading)
 
+    private var dragFrom: Int? { dragID.flatMap { id in slides.firstIndex { $0.id == id } } }
+    /// Finger travel plus however far the strip has scrolled since the lift.
+    private var dragDelta: CGFloat {
+        SlidePostReorderMath.liftedOffset(fingerTravel: fingerX - (startFingerX ?? fingerX), scrollTravel: metrics.offset - startOffset)
+    }
     private var dragTarget: Int? {
-        guard let dragID, let from = slides.firstIndex(where: { $0.id == dragID }) else { return nil }
-        return min(max(from + Int((dragOffset / Self.pitch).rounded()), 0), slides.count - 1)
+        dragFrom.map { SlidePostReorderMath.targetIndex(from: $0, delta: dragDelta, pitch: Self.pitch, count: slides.count) }
     }
 
     var body: some View {
-        ZStack(alignment: .trailing) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: Self.spacing) {
-                    ForEach(Array(slides.enumerated()), id: \.element.id) { index, slide in tile(slide, index: index) }
-                }
-                .overlay(alignment: .topLeading) { insertionBar }
-                .padding(.leading, 16).padding(.trailing, 92).padding(.vertical, 4)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: Self.spacing) {
+                ForEach(Array(slides.enumerated()), id: \.element.id) { index, slide in tile(slide, index: index) }
+                ForEach(Array(pending.enumerated()), id: \.element.id) { index, tile in pendingTile(tile, index: index) }
+                addTile
             }
-            .scrollDisabled(dragID != nil)
-            HStack(spacing: 0) {
-                LinearGradient(colors: [KriaColor.paper.opacity(0), KriaColor.paper], startPoint: .leading, endPoint: .trailing).frame(width: 28)
-                addTile.padding(.trailing, 16).background(KriaColor.paper)
+            .overlay(alignment: .topLeading) { insertionBar }
+            // The hold-to-reorder recogniser lives on the scroll view's own UIKit layer, beside its pan,
+            // so a swipe is never claimed by the reorder gesture (see `SlidePostStripReorderRecognizer`).
+            .background {
+                SlidePostStripReorderRecognizer(
+                    slideIndexAt: { SlidePostReorderMath.slideIndex(atContentX: $0, count: slides.count, leading: Self.leadingInset, pitch: Self.pitch, tileWidth: Self.tileWidth) },
+                    onBegan: beginReorder, onMoved: { fingerX = $0; noteTargetChange() }, onFinished: finishReorder
+                )
+                .allowsHitTesting(false)
             }
-            .frame(height: 100, alignment: .top).padding(.top, 4)
+            .padding(.horizontal, Self.leadingInset).padding(.vertical, 4)
         }
-        .frame(minHeight: 104, alignment: .top)
+        .scrollPosition($position)
+        .onScrollGeometryChange(for: SlidePostStripMetrics.self) {
+            SlidePostStripMetrics(offset: $0.contentOffset.x, content: $0.contentSize.width, viewport: $0.containerSize.width)
+        } action: { _, new in metrics = new }
+        .scrollDisabled(dragID != nil)
+        .mask(overflowFade)
+        .frame(minHeight: 100, alignment: .top)
         .background(KriaColor.paper)
         .excludesDrawerGesture()
+        .task(id: dragID) { await autoScrollLoop() }
+        .onChange(of: selectedID) { _, id in
+            // A slide picked from the preview, undo or the AI is brought into view (never while a block is lifted).
+            guard dragID == nil, let id, let index = slides.firstIndex(where: { $0.id == id }) else { return }
+            revealSlide(at: index)
+        }
+        .onChange(of: slides.map(\.id)) { old, new in
+            // A new slide (auto-added media, undo) scrolls into view; a mid-drag change drops the lift.
+            if dragID != nil, dragFrom == nil { endDrag() }
+            if new.count > old.count, dragID == nil { withAnimation(.snappy) { position.scrollTo(edge: .trailing) } }
+        }
+        .onChange(of: pending.count) { old, new in
+            if new > old, dragID == nil { withAnimation(.snappy) { position.scrollTo(edge: .trailing) } }
+        }
     }
 
+    // MARK: Blocks
+
     private var addTile: some View {
-        Button(action: onAdd) {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(KriaColor.zinc, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
-                .frame(width: 56, height: 72)
-                .overlay { Image(systemName: "plus").font(.system(size: 20, weight: .medium)).foregroundStyle(KriaColor.ink) }
-                .padding(2)
+        VStack(spacing: 3) {
+            Button(action: onAdd) {
+                RoundedRectangle(cornerRadius: 10, style: .continuous).fill(KriaColor.softZinc)
+                    .frame(width: Self.thumbSize.width, height: Self.thumbSize.height)
+                    .overlay { Image(systemName: "plus").font(.system(size: 20, weight: .medium)).foregroundStyle(KriaColor.ink) }
+                    .padding(2)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Add photos and videos").accessibilityIdentifier("slidepost-add-tile")
+            Text("Add").font(KriaFont.body(11).weight(.semibold)).foregroundStyle(KriaColor.zinc).accessibilityHidden(true)
         }
-        .accessibilityLabel("Add photos and videos").accessibilityIdentifier("slidepost-add-tile")
+        .frame(width: Self.tileWidth)
+    }
+
+    private func pendingTile(_ tile: SlidePostPendingTile, index: Int) -> some View {
+        let failed: Bool = { if case .failed = tile.phase { true } else { false } }()
+        return VStack(spacing: 3) {
+            Button { onTapPending(tile) } label: {
+                RoundedRectangle(cornerRadius: 10, style: .continuous).fill(failed ? KriaColor.failureSoft : KriaColor.softZinc)
+                    .frame(width: Self.thumbSize.width, height: Self.thumbSize.height)
+                    .overlay { pendingContent(tile.phase) }
+                    .padding(2)
+            }
+            .buttonStyle(.plain).disabled(!failed)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(pendingLabel(tile.phase))
+            .accessibilityValue(pendingValue(tile.phase))
+            .accessibilityIdentifier("slidepost-pending-\(index + 1)")
+            Text(failed ? "Retry" : "Adding").font(KriaFont.body(11).weight(.semibold))
+                .foregroundStyle(failed ? KriaColor.failureText : KriaColor.zinc).lineLimit(1).minimumScaleFactor(0.7).accessibilityHidden(true)
+        }
+        .frame(width: Self.tileWidth)
+    }
+
+    @ViewBuilder private func pendingContent(_ phase: SlidePostPendingTile.Phase) -> some View {
+        switch phase {
+        case .uploading(let progress?):
+            ZStack {
+                Circle().stroke(KriaColor.line, lineWidth: 3)
+                Circle().trim(from: 0, to: max(0.04, min(1, progress))).stroke(KriaColor.ink, style: StrokeStyle(lineWidth: 3, lineCap: .round)).rotationEffect(.degrees(-90))
+            }
+            .frame(width: 26, height: 26)
+        case .uploading(nil), .processing:
+            ProgressView()
+        case .failed:
+            Image(systemName: "arrow.clockwise").font(.system(size: 18, weight: .semibold)).foregroundStyle(KriaColor.failureText)
+        }
+    }
+    private func pendingLabel(_ phase: SlidePostPendingTile.Phase) -> String {
+        switch phase {
+        case .uploading: "Uploading media"
+        case .processing: "Preparing media"
+        case .failed(let message, let record): record == nil ? "Failed, choose again. \(message)" : "Failed, retry. \(message)"
+        }
+    }
+    private func pendingValue(_ phase: SlidePostPendingTile.Phase) -> String {
+        if case .uploading(let progress?) = phase { return "\(Int((progress * 100).rounded())) percent" }
+        return ""
     }
 
     @ViewBuilder private var insertionBar: some View {
-        if let dragID, let target = dragTarget, let from = slides.firstIndex(where: { $0.id == dragID }), target != from {
+        if let from = dragFrom, let target = dragTarget, target != from {
             let gap = target > from ? CGFloat(target + 1) * Self.pitch - Self.spacing / 2 : CGFloat(target) * Self.pitch - Self.spacing / 2
             RoundedRectangle(cornerRadius: 2).fill(SlidePostTone.insertion).frame(width: 4, height: 72).offset(x: gap - 2, y: 2)
+                .allowsHitTesting(false)
         }
     }
 
     private func tile(_ slide: SlidePostSlide, index: Int) -> some View {
         let selected = slide.id == selectedID
         let lifted = slide.id == dragID
+        let shift = (dragFrom != nil && !lifted) ? SlidePostReorderMath.neighbourShift(index: index, from: dragFrom ?? index, target: dragTarget ?? index, pitch: Self.pitch) : 0
         return VStack(spacing: 3) {
             Button { onSelect(slide.id) } label: {
-                SlidePostAssetThumbnail(asset: asset(slide), size: CGSize(width: 56, height: 72), radius: 10)
+                SlidePostAssetThumbnail(asset: asset(slide), size: Self.thumbSize, radius: 10)
                     .overlay(alignment: .bottomLeading) {
                         if index == coverIndex {
                             Text("Cover").font(KriaFont.body(10).weight(.bold)).foregroundStyle(KriaColor.ink)
@@ -216,41 +322,159 @@ struct SlidePostStrip: View {
         .frame(width: Self.tileWidth)
         .scaleEffect(lifted ? 1.06 : 1).rotationEffect(.degrees(lifted ? 4 : 0))
         .shadow(color: .black.opacity(lifted ? 0.28 : 0), radius: 10, y: 6)
-        .offset(x: lifted ? dragOffset : 0).zIndex(lifted ? 1 : 0)
+        .offset(x: lifted ? dragDelta : shift).zIndex(lifted ? 1 : 0)
         .animation(.snappy(duration: 0.18), value: lifted)
-        .contextMenu {
-            Button { onSetCover(slide.id) } label: { Label("Set as cover", systemImage: "star.square") }
-            Button(role: .destructive) { onRemove(slide.id) } label: { Label("Remove slide", systemImage: "trash") }
-                .disabled(slides.count <= 1)
-        }
-        .highPriorityGesture(reorderGesture(for: slide), isEnabled: arranging)
+        .animation(.snappy(duration: 0.18), value: shift)
+        .accessibilityAction(named: "Move earlier") { if index > 0 { onMove(slide.id, index - 1) } }
+        .accessibilityAction(named: "Move later") { if index < slides.count - 1 { onMove(slide.id, index + 1) } }
     }
 
-    private func reorderGesture(for slide: SlidePostSlide) -> some Gesture {
-        LongPressGesture(minimumDuration: 0.2).sequenced(before: DragGesture(minimumDistance: 0))
-            .onChanged { value in
-                guard case .second(true, let drag) = value else { return }
-                if dragID != slide.id { dragID = slide.id; UIImpactFeedbackGenerator(style: .light).impactOccurred() }
-                dragOffset = drag?.translation.width ?? 0
-            }
-            .onEnded { value in
-                defer { dragID = nil; dragOffset = 0 }
-                guard case .second(true, let drag?) = value, let from = slides.firstIndex(where: { $0.id == slide.id }) else { return }
-                let to = min(max(from + Int((drag.translation.width / Self.pitch).rounded()), 0), slides.count - 1)
-                if to != from { onMove(slide.id, to) }
-            }
+    // MARK: Reorder
+
+    private func beginReorder(index: Int, fingerX x: CGFloat) {
+        guard slides.indices.contains(index) else { return }
+        dragID = slides[index].id; startOffset = metrics.offset; autoOffset = metrics.offset
+        startFingerX = x; fingerX = x; lastTarget = index
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    }
+
+    private func noteTargetChange() {
+        if let target = dragTarget, target != lastTarget { lastTarget = target; UISelectionFeedbackGenerator().selectionChanged() }
+    }
+
+    private func finishReorder(commit: Bool) {
+        defer { endDrag() }
+        guard commit, let id = dragID, let from = dragFrom, let target = dragTarget, target != from else { return }
+        onMove(id, target)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    /// Scrolls so the slide is fully on screen with its neighbours peeking (centred when it was cut or hidden).
+    private func revealSlide(at index: Int) {
+        guard let offset = SlidePostReorderMath.offsetToReveal(index: index, current: metrics.offset, viewport: metrics.viewport, content: metrics.content,
+                                                               leading: Self.leadingInset, pitch: Self.pitch, tileWidth: Self.tileWidth) else { return }
+        withAnimation(.snappy) { position.scrollTo(x: offset) }
+    }
+
+    /// Soft edges say there is more to scroll to (the next tile fades in rather than ending flush).
+    private var overflowFade: some View {
+        let canScrollBack = metrics.offset > 1
+        let canScrollOn = metrics.content - metrics.viewport - metrics.offset > 1
+        return LinearGradient(stops: [
+            .init(color: canScrollBack ? .clear : .black, location: 0), .init(color: .black, location: canScrollBack ? 0.05 : 0.001),
+            .init(color: .black, location: canScrollOn ? 0.93 : 0.999), .init(color: canScrollOn ? .black.opacity(0.35) : .black, location: 1),
+        ], startPoint: .leading, endPoint: .trailing)
+        .allowsHitTesting(false)
+    }
+
+    private func endDrag() {
+        guard dragID != nil || startFingerX != nil else { return }
+        withAnimation(.snappy(duration: 0.18)) { dragID = nil }
+        startFingerX = nil; lastTarget = nil
+    }
+
+    /// Scrolls while a block is held near either edge. Runs only while a block is lifted.
+    private func autoScrollLoop() async {
+        guard dragID != nil else { return }
+        var last = Date()
+        while !Task.isCancelled, dragID != nil {
+            try? await Task.sleep(for: .milliseconds(16))
+            let now = Date(); let dt = now.timeIntervalSince(last); last = now
+            guard startFingerX != nil else { continue }
+            let velocity = SlidePostReorderMath.autoScrollVelocity(fingerX: fingerX, viewport: metrics.viewport, content: metrics.content)
+            guard velocity != 0 else { autoOffset = metrics.offset; continue }
+            autoOffset = SlidePostReorderMath.clampedOffset(autoOffset + velocity * CGFloat(dt), content: metrics.content, viewport: metrics.viewport)
+            position.scrollTo(x: autoOffset)
+        }
     }
 }
 
-// MARK: Glass tool bar
+// MARK: Hold-to-reorder recogniser
 
+/// A `UILongPressGestureRecognizer` attached to the strip's own `UIScrollView`. It is a SIBLING of the
+/// scroll view's pan (recognised simultaneously), so a quick drag scrolls normally and only a
+/// deliberate hold (0.3s, under 10pt of movement) lifts a block. Replaces a SwiftUI
+/// `LongPressGesture.sequenced(before: DragGesture(minimumDistance: 0))` on each tile, which claimed
+/// the touch and left the strip unscrollable.
+private struct SlidePostStripReorderRecognizer: UIViewRepresentable {
+    /// The slide under a content-space x, or nil over a gap, the "+ Add" block or a placeholder.
+    let slideIndexAt: (CGFloat) -> Int?
+    let onBegan: (_ index: Int, _ viewportX: CGFloat) -> Void
+    let onMoved: (_ viewportX: CGFloat) -> Void
+    let onFinished: (_ commit: Bool) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeUIView(context: Context) -> AnchorView {
+        let view = AnchorView()
+        view.isUserInteractionEnabled = false
+        view.onWindow = { [weak coordinator = context.coordinator] view in coordinator?.attach(from: view) }
+        return view
+    }
+    func updateUIView(_ view: AnchorView, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.attach(from: view)
+    }
+    static func dismantleUIView(_ view: AnchorView, coordinator: Coordinator) { coordinator.detach() }
+
+    final class AnchorView: UIView {
+        var onWindow: ((UIView) -> Void)?
+        override func didMoveToWindow() { super.didMoveToWindow(); if window != nil { onWindow?(self) } }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var parent: SlidePostStripReorderRecognizer
+        private weak var scrollView: UIScrollView?
+        private var recognizer: UILongPressGestureRecognizer?
+        init(_ parent: SlidePostStripReorderRecognizer) { self.parent = parent }
+
+        func attach(from view: UIView) {
+            var candidate = view.superview
+            while let current = candidate, !(current is UIScrollView) { candidate = current.superview }
+            guard let scroll = candidate as? UIScrollView, scroll !== scrollView else { return }
+            detach()
+            let press = UILongPressGestureRecognizer(target: self, action: #selector(handle(_:)))
+            press.minimumPressDuration = 0.3
+            press.allowableMovement = 10
+            press.delegate = self
+            scroll.addGestureRecognizer(press)
+            scrollView = scroll; recognizer = press
+        }
+        func detach() {
+            if let recognizer { scrollView?.removeGestureRecognizer(recognizer) }
+            recognizer = nil; scrollView = nil
+        }
+
+        @objc private func handle(_ press: UILongPressGestureRecognizer) {
+            guard let scroll = scrollView else { return }
+            let contentX = press.location(in: scroll).x
+            let viewportX = contentX - scroll.contentOffset.x
+            switch press.state {
+            case .began: if let index = parent.slideIndexAt(contentX) { parent.onBegan(index, viewportX) }
+            case .changed: parent.onMoved(viewportX)
+            case .ended: parent.onFinished(true)
+            case .cancelled, .failed: parent.onFinished(false)
+            default: break
+            }
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard let scroll = scrollView else { return false }
+            return parent.slideIndexAt(gestureRecognizer.location(in: scroll).x) != nil
+        }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+    }
+}
+
+// MARK: Tool dock
+
+/// The editor's tool island (`NativeEditorIslandGroup` + `nativeEditorIslandSurface`) with the
+/// editor's tool metrics: 62pt tall, 17pt medium icons, 11pt labels, ink-7% selection capsule.
 struct SlidePostToolBar: View {
     let mode: SlidePostMode
     let canCover: Bool
     let canRemove: Bool
     let canDuplicateText: Bool
     let onText: () -> Void
-    let onArrange: () -> Void
     let onCover: () -> Void
     let onLook: () -> Void
     let onRemove: () -> Void
@@ -258,25 +482,22 @@ struct SlidePostToolBar: View {
     let onCaption: () -> Void
 
     var body: some View {
-        // Fits the width at normal type; at accessibility sizes the same row scrolls instead of truncating.
-        ViewThatFits(in: .horizontal) {
-            row
-            ScrollView(.horizontal, showsIndicators: false) { row.padding(.horizontal, 4) }
+        NativeEditorIslandGroup {
+            // Fits the width at normal type; at accessibility sizes the same row scrolls instead of truncating.
+            ViewThatFits(in: .horizontal) {
+                row
+                ScrollView(.horizontal, showsIndicators: false) { row }
+            }
+            .frame(height: NativeEditorIslandMetrics.islandHeight)
+            .nativeEditorIslandSurface()
         }
-        .frame(minHeight: 58)
-        .padding(.vertical, 2)
-        .background(KriaColor.paper.opacity(0.82), in: Capsule())
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(KriaColor.ink.opacity(0.14), lineWidth: 1))
-        .shadow(color: .black.opacity(0.10), radius: 14, y: 6)
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 12)
         .excludesDrawerGesture()
     }
 
     private var row: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: NativeEditorIslandMetrics.toolSpacing) {
             item("textformat", "Text", id: "slidepost-tool-text", active: mode == .text, action: onText)
-            item("arrow.up.arrow.down", "Arrange", id: "slidepost-tool-arrange", active: mode == .arrange, action: onArrange)
             item("star.square", "Cover", id: "slidepost-tool-cover", active: false, enabled: canCover, action: onCover)
             item("circle.lefthalf.filled", "Look", id: "slidepost-tool-look", active: mode == .look, action: onLook)
             Menu {
@@ -286,7 +507,8 @@ struct SlidePostToolBar: View {
             } label: { label("ellipsis", "More", active: false) }
             .accessibilityIdentifier("slidepost-tool-more")
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, NativeEditorIslandMetrics.islandHorizontalPadding)
+        .padding(.vertical, NativeEditorIslandMetrics.islandVerticalPadding)
     }
 
     private func item(_ symbol: String, _ title: String, id: String, active: Bool, enabled: Bool = true, action: @escaping () -> Void) -> some View {
@@ -297,44 +519,15 @@ struct SlidePostToolBar: View {
     }
 
     private func label(_ symbol: String, _ title: String, active: Bool) -> some View {
-        VStack(spacing: 2) {
-            Image(systemName: symbol).font(.system(size: 20, weight: .regular)).frame(height: 24)
-            Text(title).font(KriaFont.body(11).weight(.semibold)).lineLimit(1).fixedSize()
+        VStack(spacing: 4) {
+            Image(systemName: symbol).font(.system(size: 17, weight: .medium)).frame(height: 22)
+            Text(title).font(KriaFont.body(11).weight(active ? .semibold : .medium))
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge).lineLimit(1).minimumScaleFactor(0.7)
         }
-        .foregroundStyle(KriaColor.ink)
-        .padding(.horizontal, 12).padding(.vertical, 6).frame(minWidth: 64, minHeight: 50)
-        .background(active ? KriaColor.selectionSoft : .clear, in: Capsule())
+        .foregroundStyle(active ? KriaColor.ink : KriaColor.zinc)
+        .frame(width: NativeEditorIslandMetrics.toolWidth, height: NativeEditorIslandMetrics.toolHeight)
+        .background { if active { Capsule().fill(KriaColor.ink.opacity(0.07)) } }
         .contentShape(Capsule())
-    }
-}
-
-// MARK: Chat composer
-
-/// "Ask Kria to edit your slides…". Lane D sends it to the existing propose flow; Lane E swaps in chat-edit.
-struct SlidePostComposer: View {
-    @Binding var text: String
-    let canSend: Bool
-    var isLocked = false
-    let onSend: () -> Void
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "sparkle").font(.system(size: 17, weight: .regular)).foregroundStyle(KriaColor.mutedInk).padding(.leading, 6)
-            TextField("Ask Kria to edit your slides…", text: $text)
-                .font(KriaFont.body(16)).submitLabel(.send).onSubmit { if canSend { onSend() } }
-                .disabled(isLocked)
-                .accessibilityIdentifier("slidepost-composer")
-            Button(action: onSend) {
-                Image(systemName: "arrow.up").font(.system(size: 17, weight: .bold)).foregroundStyle(.white)
-                    .frame(width: 40, height: 40).background(KriaColor.ink, in: Circle())
-                    .opacity(canSend ? 1 : 0.4)
-            }
-            .disabled(!canSend).accessibilityLabel("Send to Kria").accessibilityIdentifier("slidepost-composer-send")
-        }
-        .padding(.leading, 12).padding(.trailing, 6).frame(minHeight: 52)
-        .background(KriaColor.paper, in: Capsule())
-        .overlay(Capsule().strokeBorder(KriaColor.line, lineWidth: 1))
-        .padding(.horizontal, 16)
     }
 }
 
@@ -370,224 +563,5 @@ struct SlidePostVeil: View {
             .padding(20)
         }
         .accessibilityElement(children: .combine).accessibilityIdentifier("slidepost-veil")
-    }
-}
-
-// MARK: Canvas text
-
-/// The text layer of the preview. Selection frame + drag handle when `interactive`; dragging sets
-/// the free position (`x_frac` / `y_frac`, position "custom").
-struct SlidePostTextCanvas: View {
-    let texts: [SlidePostTextElement]
-    let size: CGSize
-    let selectedID: String?
-    let interactive: Bool
-    let onSelect: (String) -> Void
-    let onDrag: (String, Double, Double) -> Void
-
-    @State private var dragStart: (id: String, element: SlidePostTextElement)?
-
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            ForEach(texts) { element in textView(element) }
-        }
-        .frame(width: size.width, height: size.height, alignment: .topLeading)
-        .coordinateSpace(name: "slidepost-canvas")
-        .allowsHitTesting(interactive)
-    }
-
-    private func textView(_ element: SlidePostTextElement) -> some View {
-        let scale = size.width / 1080
-        let points = max(8, CGFloat(element.sizePx) * scale)
-        let font = NativeFontCatalog.shared.ctFont(element.fontFamily, size: points).map(Font.init) ?? KriaFont.body(points).weight(.bold)
-        let selected = interactive && element.id == selectedID
-        let alignment: TextAlignment = element.alignment == "left" ? .leading : (element.alignment == "right" ? .trailing : .center)
-        let stroke = element.strokeWidth > 0 ? max(0.6, CGFloat(element.strokeWidth) * scale) : 0
-        let anchor = SlidePostTextLayout.anchor(for: element)
-        // Server parity: x is the left edge / centre / right edge by alignment; y is the block centre.
-        let frameAlignment: Alignment = element.alignment == "left" ? .leading : (element.alignment == "right" ? .trailing : .center)
-        let offsetX = element.alignment == "left" ? anchor.x : (element.alignment == "right" ? anchor.x - 1 : anchor.x - 0.5)
-        let makeText: (Color) -> Text = { Text(element.text).font(font).foregroundStyle($0) }
-        return styled(makeText, color: Color(slideHex: element.color), alignment: alignment, stroke: stroke, shadow: element.shadowEnabled, scale: scale)
-            .padding(.horizontal, element.background == "box" ? points * 0.45 : 0).padding(.vertical, element.background == "box" ? points * 0.22 : 0)
-            .background { if element.background == "box" { RoundedRectangle(cornerRadius: points * 0.25, style: .continuous).fill(.black.opacity(0.55)) } }
-            .frame(maxWidth: size.width * CGFloat(element.maxWidthFrac ?? 0.88))
-            .overlay { if selected { selectionFrame.padding(-6) } }
-            .overlay(alignment: .bottom) { if selected { handle.offset(y: 40) } }
-            .contentShape(Rectangle().inset(by: -6))
-            .onTapGesture { onSelect(element.id) }
-            .gesture(drag(for: element))
-            .frame(width: size.width, height: size.height, alignment: frameAlignment)
-            .offset(x: CGFloat(offsetX) * size.width, y: CGFloat(anchor.y - 0.5) * size.height)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(element.text)
-            .accessibilityHint(selected ? "Drag to move" : "Double tap to edit")
-            .accessibilityIdentifier("slidepost-canvas-text-\(element.id)")
-    }
-
-    @ViewBuilder private func styled(_ makeText: @escaping (Color) -> Text, color: Color, alignment: TextAlignment, stroke: CGFloat, shadow: Bool, scale: CGFloat) -> some View {
-        let base = ZStack {
-            if stroke > 0 {
-                ForEach(Array(Self.outlineOffsets.enumerated()), id: \.offset) { _, offset in
-                    makeText(.black).offset(x: offset.width * stroke, y: offset.height * stroke)
-                }
-            }
-            makeText(color)
-        }
-        .multilineTextAlignment(alignment)
-        if shadow { base.shadow(color: .black.opacity(0.55), radius: max(1, 5 * scale), x: 0, y: max(1, 2 * scale)) } else { base }
-    }
-    private static let outlineOffsets: [CGSize] = [(-1, 0), (1, 0), (0, -1), (0, 1), (-0.7, -0.7), (0.7, -0.7), (-0.7, 0.7), (0.7, 0.7)].map { CGSize(width: $0.0, height: $0.1) }
-
-    private var selectionFrame: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 3).strokeBorder(KriaColor.sky, lineWidth: 1.5)
-            GeometryReader { geometry in
-                ForEach(0..<4, id: \.self) { corner in
-                    Circle().fill(KriaColor.paper).overlay(Circle().strokeBorder(KriaColor.sky, lineWidth: 2)).frame(width: 12, height: 12)
-                        .position(x: corner % 2 == 0 ? 0 : geometry.size.width, y: corner < 2 ? 0 : geometry.size.height)
-                }
-            }
-        }
-        .allowsHitTesting(false)
-    }
-    private var handle: some View {
-        Image(systemName: "arrow.up.and.down.and.arrow.left.and.right").font(.system(size: 16, weight: .medium)).foregroundStyle(KriaColor.ink)
-            .frame(width: 40, height: 28).background(KriaColor.paper, in: Capsule()).shadow(color: .black.opacity(0.18), radius: 4, y: 2)
-            .allowsHitTesting(false)
-    }
-
-    private func drag(for element: SlidePostTextElement) -> some Gesture {
-        DragGesture(minimumDistance: 3, coordinateSpace: .named("slidepost-canvas"))
-            .onChanged { value in
-                guard interactive else { return }
-                // The start is captured once per gesture so a mid-drag update can't compound.
-                if dragStart?.id != element.id { dragStart = (element.id, element); onSelect(element.id) }
-                let origin = dragStart?.element ?? element
-                let moved = SlidePostTextLayout.dragged(from: origin, translation: value.translation, canvas: size)
-                onDrag(element.id, moved.x, moved.y)
-            }
-            .onEnded { _ in dragStart = nil }
-    }
-}
-
-// MARK: Kria thread (chat edit, KRI-298 Lane E; Paper art. 04)
-
-/// Wraps its children onto new lines (the change chips).
-private struct SlidePostWrap: Layout {
-    var spacing: CGFloat = 8
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        arrange(proposal.width ?? 320, subviews).size
-    }
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let result = arrange(bounds.width, subviews)
-        for (index, origin) in result.origins.enumerated() {
-            subviews[index].place(at: CGPoint(x: bounds.minX + origin.x, y: bounds.minY + origin.y), proposal: .unspecified)
-        }
-    }
-    private func arrange(_ width: CGFloat, _ subviews: Subviews) -> (size: CGSize, origins: [CGPoint]) {
-        var origins: [CGPoint] = [], x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, maxX: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > 0, x + size.width > width { x = 0; y += rowHeight + spacing; rowHeight = 0 }
-            origins.append(CGPoint(x: x, y: y)); x += size.width + spacing; rowHeight = max(rowHeight, size.height); maxX = max(maxX, x - spacing)
-        }
-        return (CGSize(width: maxX, height: y + rowHeight), origins)
-    }
-}
-
-/// The conversation below the compact preview: user bubble (ink, right), unboxed Kria reply, change
-/// chips, then Unsaved / Undo / Save. The reply text is the server's, shown verbatim.
-struct SlidePostChatThread: View {
-    let messages: [SlidePostChatMessage]
-    let isWorking: Bool
-    let unsaved: Bool
-    let canUndo: Bool
-    let canSave: Bool
-    let onUndo: () -> Void
-    let onSave: () -> Void
-    let onRetry: (SlidePostChatMessage) -> Void
-    let onClose: () -> Void
-
-    private static let noteFill = Color(red: 0xFD / 255, green: 0xF1 / 255, blue: 0xDC / 255)
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Kria").font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.zinc)
-                Spacer()
-                Button(action: onClose) {
-                    Text("Back to tools").font(KriaFont.body(14).weight(.semibold)).foregroundStyle(KriaColor.ink).frame(minHeight: 44)
-                }
-                .accessibilityIdentifier("slidepost-chat-close")
-            }
-            .padding(.horizontal, 16)
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(messages) { message in bubble(message) }
-                        if isWorking {
-                            HStack(spacing: 10) {
-                                ProgressView()
-                                Text("Kria is editing…").font(KriaFont.body(16)).foregroundStyle(KriaColor.zinc)
-                            }
-                            .accessibilityElement(children: .combine).accessibilityIdentifier("slidepost-chat-working")
-                        }
-                        Color.clear.frame(height: 1).id("bottom")
-                    }
-                    .padding(.horizontal, 16).padding(.bottom, 8)
-                }
-                .onChange(of: messages.count) { _, _ in withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
-                .onChange(of: isWorking) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
-                .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
-            }
-            HStack(spacing: 10) {
-                if unsaved {
-                    HStack(spacing: 6) {
-                        Circle().fill(SlidePostTone.warning).frame(width: 7, height: 7)
-                        Text("Unsaved").font(KriaFont.body(15).weight(.semibold)).foregroundStyle(SlidePostTone.warning)
-                    }
-                    .padding(.horizontal, 12).frame(minHeight: 36).background(Self.noteFill, in: Capsule())
-                    .accessibilityElement(children: .combine).accessibilityIdentifier("slidepost-chat-unsaved")
-                }
-                Spacer(minLength: 4)
-                Button("Undo", action: onUndo).buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
-                    .disabled(!canUndo).accessibilityIdentifier("slidepost-chat-undo")
-                Button("Save", action: onSave).buttonStyle(KriaPrimaryButtonStyle())
-                    .disabled(!canSave).accessibilityIdentifier("slidepost-chat-save")
-            }
-            .padding(.horizontal, 16).padding(.vertical, 8)
-        }
-    }
-
-    @ViewBuilder private func bubble(_ message: SlidePostChatMessage) -> some View {
-        if message.isUser {
-            Text(message.text).font(KriaFont.body(16)).foregroundStyle(.white)
-                .padding(.horizontal, 16).padding(.vertical, 12)
-                .background(KriaColor.ink, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .frame(maxWidth: .infinity, alignment: .trailing).padding(.leading, 56)
-                .accessibilityIdentifier("slidepost-chat-user")
-        } else {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(message.text).font(KriaFont.body(16)).foregroundStyle(KriaColor.ink)
-                    .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("slidepost-chat-reply")
-                if !message.changes.isEmpty {
-                    SlidePostWrap {
-                        ForEach(message.changes, id: \.self) { change in
-                            let note = SlidePostChatMessage.isNote(change)
-                            Text(change).font(KriaFont.body(14).weight(.semibold))
-                                .foregroundStyle(note ? SlidePostTone.warning : KriaColor.success)
-                                .padding(.horizontal, 12).frame(minHeight: 32)
-                                .background(note ? Self.noteFill : KriaColor.successSoft, in: Capsule())
-                                .accessibilityIdentifier(note ? "slidepost-chat-note" : "slidepost-chat-change")
-                        }
-                    }
-                }
-                if message.retryText != nil {
-                    Button("Try again") { onRetry(message) }.buttonStyle(KriaSecondaryButtonStyle(minHeight: 44))
-                        .accessibilityIdentifier("slidepost-chat-retry")
-                }
-            }
-        }
     }
 }
