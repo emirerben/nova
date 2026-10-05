@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.78.0] - 2026-10-05
+
+### Changed
+- KRI-282 slide-to-select Photos gallery at start of creation (#1393) <!-- release-pr: 1393 -->
+
 ## [0.78.77.0] - 2026-10-05
 
 ### Changed
