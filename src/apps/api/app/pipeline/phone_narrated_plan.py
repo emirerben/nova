@@ -96,6 +96,18 @@ referenced font as a manifest asset, exactly like `phone_voiceover_montage_plan.
 `phone_guided_plan.py` already do with the font asset `compile_text_overlay`
 returns directly.
 
+Opening title (KRI-455)
+-----------------------
+
+The cloud narrated render burns a confirmed ``opening_title`` as one
+``generative_intro`` TextElement: top, large, fade-in, from 0 until a second
+after the first spoken word (`generative_build._narrated_storyboard_text_elements`).
+This compiler builds the same element and compiles it through the shared
+`build_overlays_from_text_elements` + `compile_text_overlay` path the phone
+guided compiler uses, so the device draws it where the cloud would. Title
+layers carry the ``title-`` id prefix; `replace_narrated_captions` keeps them
+(and their fonts) when it swaps the caption layers.
+
 Audio mix approximation (documented divergence, accepted for v1)
 ------------------------------------------------------------------
 
@@ -153,10 +165,20 @@ if TYPE_CHECKING:
     from app.pipeline.phone_captions import PhoneCaptionLook
     from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes
 
-# Only caption layers ask for these in a narrated recipe. `authoredText` is
-# added by the `EditRecipeV2` validator for variable-font runs, so the swap
-# clears it with the rest and the validator puts it back when it applies.
+# Only text layers (captions and the opening title) ask for these in a
+# narrated recipe. `authoredText` is added by the `EditRecipeV2` validator for
+# variable-font runs, so the swap clears it with the rest and the validator
+# puts it back when it applies.
 _CAPTION_CAPABILITIES = frozenset({"positionedText", "animatedText", "authoredText"})
+
+# Opening-title layers (KRI-455). Every other text layer in a narrated recipe
+# is a caption, so recipes pinned before titles existed swap exactly as before.
+TITLE_LAYER_PREFIX = "title-"
+# Mirrors the cloud narrated intro window (`_narrated_storyboard_text_elements`).
+_TITLE_MIN_S = 0.5
+_TITLE_MAX_S = 3.0
+_TITLE_AFTER_FIRST_WORD_S = 1.0
+_TITLE_MAX_CHARS = 80
 
 # Mirrors `app.pipeline.narrated_assembler._MIN_USABLE_S` / `_EOF_GUARD_S` --
 # see the module docstring for why they're reimplemented here rather than
@@ -250,52 +272,74 @@ def _compile_caption_layers(
         raise UnsupportedPhonePlan(f"unable to compile captions: {exc}") from exc
 
 
-def _is_caption_font(asset: object) -> bool:
-    # Captions are the only text a narrated recipe carries, so every bundled
-    # font in it belongs to a caption layer.
+def narrated_title_end_s(first_word_end_s: float | None) -> float:
+    """When the opening title fades out: a second after the first spoken word,
+    held between 0.5 s and 3 s, like the cloud narrated intro. With no spoken
+    word to anchor it, the title holds the full 3 s."""
+    if first_word_end_s is None:
+        return _TITLE_MAX_S
+    return max(_TITLE_MIN_S, min(_TITLE_MAX_S, float(first_word_end_s) + _TITLE_AFTER_FIRST_WORD_S))
+
+
+def _compile_title_layers(
+    opening_title: str, *, canvas: Canvas, end_s: float, timeline_duration_s: float
+) -> list[Any]:
+    from app.agents._schemas.text_element import TextElement
+    from app.pipeline.generative_overlays import build_overlays_from_text_elements
+    from app.pipeline.portable_text_layout import compile_text_overlay
+
+    text = " ".join(opening_title.split())[:_TITLE_MAX_CHARS]
+    end_s = min(float(end_s), timeline_duration_s)
+    if not text or end_s <= 0:
+        return []
+    # The cloud narrated intro element, field for field.
+    element = TextElement(
+        id="narrated-title",
+        text=text,
+        start_s=0.0,
+        end_s=end_s,
+        role="generative_intro",
+        position="top",
+        size_class="large",
+        effect="fade-in",
+        source_params={"narrated_storyboard": "intro"},
+    )
+    try:
+        overlays = build_overlays_from_text_elements(
+            [element], video_duration_s=timeline_duration_s, independent_box_alignment=True
+        )
+        return [
+            compile_text_overlay(
+                overlay,
+                layer_id=f"{TITLE_LAYER_PREFIX}{index}",
+                canvas=canvas,
+                dissolve_seed=101 + index * 37,
+            )[0]
+            for index, overlay in enumerate(overlays)
+        ]
+    except Exception as exc:  # noqa: BLE001 - untrusted title text
+        raise UnsupportedPhonePlan(f"unable to compile the title: {exc}") from exc
+
+
+def _is_title_layer(layer: object) -> bool:
+    return str(getattr(layer, "id", "")).startswith(TITLE_LAYER_PREFIX)
+
+
+def _is_text_font(asset: object) -> bool:
+    # Text layers (captions and the title) are the only users of bundled fonts
+    # in a narrated recipe.
     return getattr(asset, "kind", None) == "library" and str(getattr(asset, "id", "")).startswith(
         "font-"
     )
 
 
-def replace_narrated_captions(
-    recipe: EditRecipeV2,
-    *,
-    caption_cues: list[dict] | None,
-    caption_style: str = "sentence",
-    look: PhoneCaptionLook | None = None,
-) -> EditRecipeV2:
-    """``recipe`` with only its caption layers recompiled (KRI-280).
-
-    A narrated device variant has no guided plan and no cloud base: its only
-    program is the recipe pinned for the phone. A caption Save (text, timing,
-    style or look) therefore keeps every clip, the narration bed and the
-    audio mix exactly as pinned and swaps just the caption layers, their
-    bundled fonts and the text capabilities. Nothing is re-derived from the
-    voiceover, so a Save can never move a cut or change the mix.
-
-    `compile_phone_narrated_plan` builds its own captions through this
-    function, so recompiling a recipe with the cues and style it was compiled
-    with returns an equal recipe.
-    """
-    video = next((track for track in recipe.tracks if track.id == "narrated"), None)
-    if video is None or not video.clips:
-        raise UnsupportedPhonePlan("pinned narrated recipe has no video track")
-
-    layers: list[Any] = []
-    if caption_cues:
-        layers = _compile_caption_layers(
-            caption_cues,
-            canvas=recipe.canvas,
-            caption_style=caption_style,
-            timeline_duration_s=timeline_end_s(video.clips),
-            look=look,
-        )
-
+def _with_text_layers(recipe: EditRecipeV2, layers: list[Any]) -> EditRecipeV2:
+    """``recipe`` carrying exactly ``layers`` as its text, with the bundled
+    fonts and text capabilities they need (and none they don't)."""
     from app.pipeline.phone_captions import caption_font_assets
 
     fonts = caption_font_assets(layers)
-    dropped = {asset.id for asset in recipe.asset_manifest.assets if _is_caption_font(asset)}
+    dropped = {asset.id for asset in recipe.asset_manifest.assets if _is_text_font(asset)}
     voiceover_ids = {
         asset.id
         for asset in recipe.asset_manifest.assets
@@ -350,6 +394,44 @@ def replace_narrated_captions(
     return EditRecipeV2(**fields)
 
 
+def replace_narrated_captions(
+    recipe: EditRecipeV2,
+    *,
+    caption_cues: list[dict] | None,
+    caption_style: str = "sentence",
+    look: PhoneCaptionLook | None = None,
+) -> EditRecipeV2:
+    """``recipe`` with only its caption layers recompiled (KRI-280).
+
+    A narrated device variant has no guided plan and no cloud base: its only
+    program is the recipe pinned for the phone. A caption Save (text, timing,
+    style or look) therefore keeps every clip, the narration bed and the
+    audio mix exactly as pinned and swaps just the caption layers, their
+    bundled fonts and the text capabilities. Nothing is re-derived from the
+    voiceover, so a Save can never move a cut or change the mix. The opening
+    title (KRI-455) is not a caption: it stays exactly as pinned.
+
+    `compile_phone_narrated_plan` builds its own captions through this
+    function, so recompiling a recipe with the cues and style it was compiled
+    with returns an equal recipe.
+    """
+    video = next((track for track in recipe.tracks if track.id == "narrated"), None)
+    if video is None or not video.clips:
+        raise UnsupportedPhonePlan("pinned narrated recipe has no video track")
+
+    layers: list[Any] = []
+    if caption_cues:
+        layers = _compile_caption_layers(
+            caption_cues,
+            canvas=recipe.canvas,
+            caption_style=caption_style,
+            timeline_duration_s=timeline_end_s(video.clips),
+            look=look,
+        )
+    titles = [layer.model_copy() for layer in recipe.text_layers if _is_title_layer(layer)]
+    return _with_text_layers(recipe, [*titles, *layers])
+
+
 def compile_phone_narrated_plan(
     steps: list[NarratedPhoneStep],
     bindings: tuple[PhoneSourceBinding, ...],
@@ -365,6 +447,8 @@ def compile_phone_narrated_plan(
     caption_look: PhoneCaptionLook | None = None,
     lanes: PhoneSubtitledLanes | None = None,
     visuals: tuple[PhoneVisualBinding, ...] = (),
+    opening_title: str | None = None,
+    opening_title_end_s: float | None = None,
 ) -> EditRecipeV2:
     """See the module docstring for the full contract.
 
@@ -374,6 +458,10 @@ def compile_phone_narrated_plan(
     ``caption_look`` (KRI-280): the caption appearance a phone-editor Save
     persisted (`phone_captions.caption_look_from_variant`); ``None`` is the
     default look every first render uses.
+
+    ``opening_title`` / ``opening_title_end_s`` (KRI-455): the creator's
+    confirmed title and when it fades out (`narrated_title_end_s`; ``None``
+    holds it the full 3 s). See "Opening title" in the module docstring.
 
     ``steps`` must already be in narration-timeline order and tile
     ``[0, voiceover_duration_s]`` contiguously (see "Step-timing contract").
@@ -517,6 +605,20 @@ def compile_phone_narrated_plan(
         audio=audio,
         required_capabilities=required_capabilities,
     )
+    if opening_title:
+        recipe = _with_text_layers(
+            recipe,
+            _compile_title_layers(
+                opening_title,
+                canvas=story_canvas,
+                end_s=(
+                    opening_title_end_s
+                    if opening_title_end_s is not None
+                    else narrated_title_end_s(None)
+                ),
+                timeline_duration_s=timeline_end_s(clips),
+            ),
+        )
     if caption_cues:
         # Captions go through the same swap a phone-editor caption Save uses
         # (KRI-280), so the first render and every later Save compile them alike.

@@ -551,6 +551,41 @@ def _run_with_shape(monkeypatch, shape):
     return job, seen
 
 
+def test_a_confirmed_title_is_the_intro_not_intro_writer_copy(monkeypatch):
+    """KRI-455: like the cloud's `_text_then_style`, a confirmed title is burned
+    exactly as written; intro_writer never runs to replace it."""
+    job, _snapshot, _session, _bindings, _cloud = setup(
+        monkeypatch,
+        spec={
+            "variant_id": "voiceover_only",
+            "text_mode": "agent_text",
+            "track": None,
+            "archetype": "voiceover",
+            "voiceover_gcs_path": _VOICEOVER_PATH,
+            "mix": 1.0,
+        },
+    )
+    job.all_candidates["creator_strategy"] = {"opening_title": "Cacio e pepe in 10 minutes"}
+    monkeypatch.setattr(
+        gb,
+        "_run_text_agents",
+        Mock(side_effect=AssertionError("intro_writer replaced the confirmed title")),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        [*gb.settings.phone_render_verified_features, "positionedText", "animatedText"],
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    recipe = device_status(job, "voiceover_only").request.recipe
+    burned = " ".join(run.text for layer in recipe.text_layers for run in layer.runs)
+    assert "Cacio e pepe" in burned
+
+
 def test_no_creator_choice_passes_no_orientation(monkeypatch):
     job, seen = _run_with_shape(monkeypatch, None)
     assert seen["orientation"] is None
