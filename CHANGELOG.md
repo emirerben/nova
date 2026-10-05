@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.80.0] - 2026-10-05
+
+### Changed
+- fix(kria): match creator-named place labels to their clips (KRI-454) (#1395) <!-- release-pr: 1395 -->
+
 ## [0.78.79.0] - 2026-10-05
 
 ### Changed
