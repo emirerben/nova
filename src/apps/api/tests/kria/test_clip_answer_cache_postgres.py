@@ -113,7 +113,9 @@ async def _turn(db, item_id: uuid.UUID):  # noqa: ANN001, ANN202
         vision_deadline_s=30,
     )
     item = await db.get(PlanItem, item_id, populate_existing=True)
-    await persist_clip_intent_vision_answers(db, item, result.vision_answers, strict=True)
+    await persist_clip_intent_vision_answers(
+        db, item, result.vision_answers, strict=True, cache_clip_assignments=True
+    )
     await db.commit()
     return result
 
@@ -214,7 +216,9 @@ async def test_a_replaced_clip_never_inherits_the_old_answer(monkeypatch):
                 )
                 sync_db.commit()
             item = await db.get(PlanItem, item_id, populate_existing=True)
-            await persist_clip_intent_vision_answers(db, item, result.vision_answers, strict=True)
+            await persist_clip_intent_vision_answers(
+                db, item, result.vision_answers, strict=True, cache_clip_assignments=True
+            )
             await db.commit()
     finally:
         await async_engine.dispose()

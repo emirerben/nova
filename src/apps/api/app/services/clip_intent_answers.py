@@ -25,6 +25,7 @@ async def persist_clip_intent_vision_answers(
     *,
     creator_id: uuid.UUID | None = None,
     strict: bool = False,
+    cache_clip_assignments: bool = False,
 ) -> bool:
     """Best-effort cache write for vision re-query answers on owned clips.
 
@@ -35,8 +36,11 @@ async def persist_clip_intent_vision_answers(
 
     ``strict`` raises when a pool asset's answers cannot be written (missing,
     foreign, or replaced). Raw ``clip_assignments`` media (every iPhone clip)
-    are cached on their assignment instead (KRI-433), best effort in both modes:
-    their cache bookkeeping never fails a turn (KRI-291).
+    are skipped unless ``cache_clip_assignments`` is set (KRI-433); then they are
+    cached on their assignment, best effort in both modes: their cache
+    bookkeeping never fails a turn (KRI-291). That write locks the PlanItem row,
+    so only a caller holding no lock ranked after PlanItem (the Kria turn holds
+    none) may set it; the legacy creator-agent route already holds its session lock.
     """
     if not vision_answers:
         return True
@@ -45,7 +49,7 @@ async def persist_clip_intent_vision_answers(
         for media_id, answers in vision_answers.items()
         if not media_id.startswith("asset-") and answers
     }
-    if assignment_answers:
+    if cache_clip_assignments and assignment_answers:
         # Before the asset rows: the canonical row-lock order takes PlanItem first.
         await _persist_clip_assignment_answers(db, item, assignment_answers)
     ok = True

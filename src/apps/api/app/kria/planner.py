@@ -1209,6 +1209,10 @@ async def _plan_from_creator_output(
                     planned.resolution.vision_answers,
                     creator_id=creator_id,
                     strict=True,
+                    # KRI-433: keep iPhone clip answers so a follow-up finishes the
+                    # checks. Safe here: this session holds no row lock (rolled back
+                    # before provider I/O), so locking the PlanItem keeps lock order.
+                    cache_clip_assignments=True,
                 )
                 await db.commit()
             except Exception as exc:  # noqa: BLE001 - cache failure must not mint a draft

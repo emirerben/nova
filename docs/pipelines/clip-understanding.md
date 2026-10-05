@@ -446,11 +446,14 @@ instruction.
   `PlanItemAsset.analysis["answers"]`. Every iPhone clip is a raw `clip_assignments`
   row, and those answers were dropped, so the follow-up re-asked everything. On prod
   thread D1FDCA87 (2026-10-05), the follow-up finished only because its planner emitted
-  fewer intents. `persist_clip_intent_vision_answers` now also writes
+  fewer intents. For the Kria turn (`cache_clip_assignments=True`),
+  `persist_clip_intent_vision_answers` now also writes
   `clip_assignments[i]["analysis"]["answers"]`. It locks the item first (the canonical
   lock order), keeps an answer only for the same media id and storage generation, goes
   through `mutate_plan_item_media`, and undoes the write if footage identity would
-  change. A failed write loses only the cache and never fails the turn (KRI-291).
+  change. A failed write loses only the cache and never fails the turn (KRI-291). The
+  legacy creator-agent route skips raw clips: it already holds its session lock, which
+  ranks after PlanItem.
 - **Why 18 is not enough.** A check is keyed on (clip, generation, question), and a
   membership question is built from the intent's `attribute`. On D1FDCA87 the planner
   emitted an include and a caption for each of 6 chapters, worded differently: 18 calls
