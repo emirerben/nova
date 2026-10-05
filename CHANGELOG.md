@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.79.0] - 2026-10-05
+
+### Changed
+- fix(kria): keep iPhone clip vision answers so "go ahead" finishes the checks (KRI-433) (#1394) <!-- release-pr: 1394 -->
+
 ## [0.78.78.0] - 2026-10-05
 
 ### Changed
