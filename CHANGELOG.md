@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.77.0] - 2026-10-05
+
+### Changed
+- fix(planner): keep the creator's own long chapter lines instead of asking to restate them (#1389) <!-- release-pr: 1389 -->
+
 ## [0.78.76.0] - 2026-10-05
 
 ### Changed
