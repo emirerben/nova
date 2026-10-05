@@ -323,6 +323,11 @@ class _IntentWork:
     # on-screen phrase + its grounding source, or None if it never grounded.
     caption_text: str | None = None
     caption_grounding: str | None = None
+    # op="label" with creator_text only (KRI-454): the resolver's below-bar guesses
+    # sent to vision, {media_id: resolver confidence}, and the clips vision said
+    # "no" to. See `_settle_named_label_guesses`.
+    named_guesses: dict[str, float] = field(default_factory=dict)
+    vision_no_media_ids: set[str] = field(default_factory=set)
 
 
 def _cached_answer(clip: IntentClip, question_norm: str) -> dict[str, Any] | None:
@@ -1033,6 +1038,8 @@ async def resolve_clip_intents_for_turn(
                                 )
                             )
                             continue
+                    if assignment.confidence >= MEMBERSHIP_MIN_CONFIDENCE:
+                        work.named_guesses[media_id] = assignment.confidence
                     vision_candidates.append(
                         _VisionCandidate(
                             media_id=media_id,
@@ -1586,6 +1593,10 @@ async def resolve_clip_intents_for_turn(
 
     await run_candidates(caption_to_call, apply_caption)
 
+    named_guesses_settled = _settle_named_label_guesses(
+        work_by_id, records_by_id=records_by_id, creator_request=creator_request
+    )
+
     # ── Assemble the result ──────────────────────────────────────────────────
     resolved_intents: list[ResolvedClipIntent] = []
     unresolved_work: list[_IntentWork] = []
@@ -1658,6 +1669,7 @@ async def resolve_clip_intents_for_turn(
         "vision_over_cap": vision_stats["over_cap"],
         "vision_deadline_cut": vision_stats["deadline_cut"],
         "vision_multi_question_clips": sum(1 for q in questions_by_clip.values() if len(q) > 1),
+        "named_guesses_settled": named_guesses_settled,
     }
 
     if not unresolved_work:
@@ -1755,6 +1767,75 @@ async def resolve_clip_intents_for_turn(
     )
 
 
+def _settle_named_label_guesses(
+    work_by_id: dict[str, _IntentWork],
+    *,
+    records_by_id: dict[str, ClipUnderstanding],
+    creator_request: str,
+) -> int:
+    """KRI-454: keep the resolver's one guess for a name the creator wrote when the
+    vision check could only say "unknown".
+
+    The vision model answers from pixels alone, so it cannot confirm a proper name
+    ("is this Alfama?"): it says "unknown" even on the right clip. The creator has
+    already said the place is in their footage and the text printed is theirs, so a
+    lone guess at the membership bar stands unless vision said "no" or another named
+    label wants the same clip. Returns how many labels were settled this way."""
+    named = {
+        intent_id: work
+        for intent_id, work in work_by_id.items()
+        if work.intent.op == "label" and work.intent.creator_text and not work.intent.placeholder
+    }
+    claimed: dict[str, int] = {}
+    for work in named.values():
+        for media_id in {a.media_id for a in work.kept} | set(work.named_guesses):
+            claimed[media_id] = claimed.get(media_id, 0) + 1
+
+    settled = 0
+    for work in named.values():
+        if (
+            work.kept
+            or work.intent_question
+            or len(work.failed_media_ids) != 1
+            or work.pending_media_ids
+            or work.provider_unavailable_media_ids
+            or work.provider_unknown_media_ids
+            or work.budget_exhausted_media_ids
+            or work.media_unavailable_media_ids
+        ):
+            continue
+        [media_id] = work.failed_media_ids
+        if (
+            media_id not in work.named_guesses
+            or media_id in work.vision_no_media_ids
+            or claimed.get(media_id, 0) > 1
+            or media_id not in records_by_id
+        ):
+            continue
+        label = ground_label(
+            media_id=media_id,
+            value=work.intent.creator_text,
+            confidence=1.0,
+            creator_request=creator_request,
+            record=records_by_id[media_id],
+            intent_id=work.intent.intent_id,
+        )
+        if label is None:
+            continue
+        work.kept.append(
+            ClipAssignment(
+                media_id=media_id,
+                value=label.text,
+                evidence="best match for a name the creator gave; the clip check could not name it",
+                confidence=label.confidence,
+                grounding=label.grounding,
+            )
+        )
+        work.failed_media_ids.clear()
+        settled += 1
+    return settled
+
+
 def _apply_vision_result(
     candidate: _VisionCandidate,
     output: ClipQuestionOutput | None,
@@ -1771,6 +1852,8 @@ def _apply_vision_result(
 
     if candidate.is_membership_check:
         verdict = _yes_no(output.answer)
+        if verdict is False:
+            work.vision_no_media_ids.add(candidate.media_id)
         if verdict is False and output.confidence >= MEMBERSHIP_MIN_CONFIDENCE:
             return  # confidently NOT a member: settled, nothing to ask about
         if verdict is not True or output.confidence < MEMBERSHIP_MIN_CONFIDENCE:
