@@ -138,12 +138,64 @@ final class CreationUITests: XCTestCase {
         }
     }
 
+    /// KRI-282 follow-up: the in-app Photos gallery at the start of creation supports tap and slide-to-select
+    /// (pick-order numbers), and Apple's picker stays one tap away.
+    func testStartOfCreationGallerySlidesToSelectAndKeepsApplePickerFallback() {
+        let app = XCUIApplication()
+        app.resetAuthorizationStatus(for: .photos)
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-seed-photo-video", "-ui-testing-seed-photo-videos"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launch()
+        createFreshChat(in: app)
+        let card = app.buttons["format-montage"]
+        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.tap()
+        let chooseVideos = app.buttons["choose-videos"]
+        XCTAssertTrue(chooseVideos.waitForExistence(timeout: 5))
+        chooseVideos.tap()
+        func allowFullAccess(_ alert: XCUIElement) -> Bool {
+            guard alert.buttons.count == 3 else { return false }
+            alert.buttons.element(boundBy: 1).tap()
+            return true
+        }
+        let monitor = addUIInterruptionMonitor(withDescription: "Photos access", handler: allowFullAccess)
+        defer { removeUIInterruptionMonitor(monitor) }
+        let photos = app.buttons["Choose from Photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 3))
+        photos.tap()
+        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
+
+        let tile0 = app.buttons["gallery-tile-0"], tile1 = app.buttons["gallery-tile-1"], tile2 = app.buttons["gallery-tile-2"]
+        XCTAssertTrue(tile0.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(tile2.exists)
+        let count = app.staticTexts["gallery-count"]
+        // Slide across three tiles: all selected, numbered in touch order.
+        tile0.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: tile2.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+        XCTAssertTrue(eventually { count.label.hasPrefix("3 of") }, count.label)
+        XCTAssertEqual(tile1.value as? String, "Selected, 2")
+        // A slide that starts on a selected tile deselects.
+        tile1.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: tile2.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+        XCTAssertTrue(eventually { count.label.hasPrefix("1 of") }, count.label)
+        XCTAssertEqual(tile0.value as? String, "Selected, 1")
+        // Tap toggles one tile.
+        tile2.tap()
+        XCTAssertTrue(eventually { count.label.hasPrefix("2 of") }, count.label)
+        // Fallback to Apple's picker.
+        app.buttons["gallery-toggle-picker"].tap()
+        XCTAssertTrue(app.scrollViews["photosView_content_scroll_view"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["photos-picker-done"].exists)
+    }
+
     /// Full-access Photos returns to the attachment flow on Done. A selected
     /// talking-to-camera clip advances to overlays; Done there returns to chat.
     func testLibraryPickerReturnsToChatByDoneAndBySinglePick() {
         let app = XCUIApplication()
         app.resetAuthorizationStatus(for: .photos)
-        app.launchArguments = ["-ui-testing-chat", "-ui-testing-seed-photo-video"]
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-seed-photo-video", "-ui-testing-apple-photo-picker"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launch()
         createFreshChat(in: app)
