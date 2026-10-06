@@ -727,7 +727,7 @@ enum DeviceRenderUITestFixture {
             if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_DEVICE"] == "1" {
                 // Real, steady progress so a UI test can watch the live feed advance with the build.
                 for step in 1...8 {
-                    try await Task.sleep(for: .milliseconds(700))
+                    try await Task.sleep(for: .milliseconds(1500))
                     progress?(Double(step) / 8)
                 }
             } else {

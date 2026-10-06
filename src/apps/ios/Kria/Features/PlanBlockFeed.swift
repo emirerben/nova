@@ -59,6 +59,8 @@ struct PlanBlockFeed: View {
         .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.36, dampingFraction: 0.88), value: reviewingAll)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("plan-feed")
+        // One atomic snapshot of every displayed section, so UI tests don't sample rows one query at a time.
+        .accessibilityValue(feed.blocks.map { "\($0.section.rawValue)=\($0.state == .decided ? "decided" : $0.state == .deciding ? "deciding" : "waiting")" }.joined(separator: ","))
         .onAppear { seedAnnouncements() }
         .onChange(of: feed) { _, _ in announceNewlyDecided() }
     }
