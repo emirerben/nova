@@ -60,11 +60,9 @@ struct SlidePostTextCanvas: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            ZStack(alignment: .topLeading) {
-                ForEach(texts) { element in textView(element) }
-            }
-            .frame(width: size.width, height: size.height, alignment: .topLeading)
-            .allowsHitTesting(false)
+            SlidePostTextLayerView(texts: texts, size: size, accessibility: .init(
+                selectedID: showsSelection ? selectedID : nil, onSelect: onSelect, onTapText: onTapText))
+                .allowsHitTesting(false)
             if interactive || tapsToEdit {
                 gestureSurface
             }
@@ -291,14 +289,34 @@ struct SlidePostTextCanvas: View {
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .allowsHitTesting(false)
     }
+}
 
-    // MARK: Text rendering
+/// The pure text layer of a slide: every text element positioned, styled and rotated on a `size` canvas
+/// (text scales by `size.width / 1080`). Shared by the editor canvas (which layers gestures on top) and
+/// the on-device exporter (which renders it at full output pixels), so preview and export cannot drift.
+struct SlidePostTextLayerView: View {
+    /// Present only in the editor: VoiceOver labels and actions for each text. Export renders none.
+    struct Accessibility {
+        var selectedID: String?
+        var onSelect: (String?) -> Void
+        var onTapText: (String?) -> Void
+    }
+    let texts: [SlidePostTextElement]
+    let size: CGSize
+    var accessibility: Accessibility? = nil
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(texts) { element in textView(element) }
+        }
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+    }
 
     private func textView(_ element: SlidePostTextElement) -> some View {
         let scale = size.width / 1080
         let points = max(8, CGFloat(element.sizePx) * scale)
         let font = NativeFontCatalog.shared.ctFont(element.fontFamily, size: points).map(Font.init) ?? KriaFont.body(points).weight(.bold)
-        let selected = showsSelection && element.id == selectedID
+        let selected = accessibility?.selectedID == element.id
         let alignment: TextAlignment = element.alignment == "left" ? .leading : (element.alignment == "right" ? .trailing : .center)
         let stroke = element.strokeWidth > 0 ? max(0.6, CGFloat(element.strokeWidth) * scale) : 0
         let anchor = SlidePostTextLayout.anchor(for: element)
@@ -318,22 +336,7 @@ struct SlidePostTextCanvas: View {
             .frame(width: size.width, height: size.height, alignment: frameAlignment)
             .rotationEffect(.degrees(element.rotationDeg), anchor: UnitPoint(x: pivotX, y: 0.5))
             .offset(x: CGFloat(offsetX) * size.width, y: CGFloat(anchor.y - 0.5) * size.height)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(element.text)
-            .accessibilityValue(accessibilityValue(element, selected: selected))
-            .accessibilityHint(selected ? "Drag to move, pinch to resize, twist to rotate" : "Double tap to select")
-            .accessibilityAddTraits(selected ? .isSelected : [])
-            .accessibilityAction(named: "Select") { onSelect(element.id) }
-            .accessibilityAction(named: "Edit text") { onTapText(element.id) }
-            .accessibilityIdentifier("slidepost-canvas-text-\(element.id)")
-    }
-
-    private func accessibilityValue(_ element: SlidePostTextElement, selected: Bool) -> String {
-        let anchor = SlidePostTextLayout.anchor(for: element)
-        var parts = ["size \(element.sizePx)", "rotation \(Int(element.rotationDeg))",
-                     "position \(Int((anchor.x * 100).rounded()))%, \(Int((anchor.y * 100).rounded()))%"]
-        if selected { parts.append("selected") }
-        return parts.joined(separator: ", ")
+            .modifier(SlidePostTextAccessibility(element: element, selected: selected, accessibility: accessibility))
     }
 
     @ViewBuilder private func styled(_ makeText: @escaping (Color) -> Text, color: Color, alignment: TextAlignment, stroke: CGFloat, shadow: Bool, scale: CGFloat) -> some View {
@@ -349,6 +352,34 @@ struct SlidePostTextCanvas: View {
         if shadow { base.shadow(color: .black.opacity(0.55), radius: max(1, 5 * scale), x: 0, y: max(1, 2 * scale)) } else { base }
     }
     private static let outlineOffsets: [CGSize] = [(-1, 0), (1, 0), (0, -1), (0, 1), (-0.7, -0.7), (0.7, -0.7), (-0.7, 0.7), (0.7, 0.7)].map { CGSize(width: $0.0, height: $0.1) }
+}
+
+private struct SlidePostTextAccessibility: ViewModifier {
+    let element: SlidePostTextElement
+    let selected: Bool
+    let accessibility: SlidePostTextLayerView.Accessibility?
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if let accessibility {
+            content
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(element.text)
+                .accessibilityValue(value)
+                .accessibilityHint(selected ? "Drag to move, pinch to resize, twist to rotate" : "Double tap to select")
+                .accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityAction(named: "Select") { accessibility.onSelect(element.id) }
+                .accessibilityAction(named: "Edit text") { accessibility.onTapText(element.id) }
+                .accessibilityIdentifier("slidepost-canvas-text-\(element.id)")
+        } else { content }
+    }
+
+    private var value: String {
+        let anchor = SlidePostTextLayout.anchor(for: element)
+        var parts = ["size \(element.sizePx)", "rotation \(Int(element.rotationDeg))",
+                     "position \(Int((anchor.x * 100).rounded()))%, \(Int((anchor.y * 100).rounded()))%"]
+        if selected { parts.append("selected") }
+        return parts.joined(separator: ", ")
+    }
 }
 
 /// Last time a drag or pinch changed. A reference type so writing it never re-renders.
