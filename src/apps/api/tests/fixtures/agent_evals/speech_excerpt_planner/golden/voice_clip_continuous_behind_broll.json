@@ -1,0 +1,128 @@
+{
+  "agent": "nova.plan.speech_excerpt_planner",
+  "prompt_version": "2026-10-06.1",
+  "input": {
+    "creator_request": "Use the voice from the talk to camera video and split around the video behind a fast pace montage of the remaining videos. Show them chronologically.",
+    "target_duration_s": 30,
+    "voice_clip_ref": "c1",
+    "speech_clips": [
+      {
+        "ref": "c1",
+        "duration_s": 147.7,
+        "to_camera": true,
+        "summary": "Creator talking to camera introducing the games",
+        "language": "en",
+        "segments": [
+          {
+            "s": 0.0,
+            "e": 7.5,
+            "text": "Okay, hello world. First of all, thank you to everyone who has ever taken part in the Olympics."
+          },
+          {
+            "s": 8.0,
+            "e": 16.0,
+            "text": "Now we are international, across the pond, the London edition, hosted right here in Wimbledon."
+          },
+          {
+            "s": 16.5,
+            "e": 24.0,
+            "text": "The first one was the London 2012 tennis, but this is a one of a kind event."
+          },
+          {
+            "s": 24.5,
+            "e": 33.0,
+            "text": "Three sports as usual, and as usual the rules are made up by me on the spot."
+          },
+          {
+            "s": 33.5,
+            "e": 42.0,
+            "text": "The first sport is a relay around the park, and everyone has to carry something ridiculous."
+          },
+          {
+            "s": 42.5,
+            "e": 51.0,
+            "text": "The second sport is a trivia round, and the loser buys the next round of drinks."
+          },
+          {
+            "s": 51.5,
+            "e": 60.0,
+            "text": "The last sport is the big final on the tennis court, winner takes the golden trophy."
+          },
+          {
+            "s": 60.5,
+            "e": 68.0,
+            "text": "Let us get started, and may the best person win. Good luck everybody!"
+          }
+        ]
+      }
+    ],
+    "other_clips": [
+      {
+        "ref": "v1",
+        "duration_s": 6.0,
+        "summary": "people queueing at a park gate"
+      },
+      {
+        "ref": "v2",
+        "duration_s": 6.0,
+        "summary": "a relay baton handoff"
+      },
+      {
+        "ref": "v3",
+        "duration_s": 6.0,
+        "summary": "pub table with drinks"
+      },
+      {
+        "ref": "v4",
+        "duration_s": 6.0,
+        "summary": "tennis court at dusk"
+      },
+      {
+        "ref": "v5",
+        "duration_s": 6.0,
+        "summary": "trophy on a shelf"
+      },
+      {
+        "ref": "v6",
+        "duration_s": 6.0,
+        "summary": "crowd cheering"
+      }
+    ]
+  },
+  "raw_text": "{\"wants_speech_excerpts\": true, \"sections\": [{\"kind\": \"speech\", \"clip_ref\": \"c1\", \"quote\": \"Okay, hello world ... taken part in the Olympics\", \"visual\": \"speaker\"}, {\"kind\": \"speech\", \"clip_ref\": \"c1\", \"quote\": \"Now we are international ... right here in Wimbledon\", \"visual\": \"cutaways\"}, {\"kind\": \"speech\", \"clip_ref\": \"c1\", \"quote\": \"The first one was the London 2012 tennis ... one of a kind event\", \"visual\": \"cutaways\"}, {\"kind\": \"speech\", \"clip_ref\": \"c1\", \"quote\": \"Three sports as usual ... made up by me on the spot\", \"visual\": \"cutaways\"}], \"question\": null}",
+  "output": {
+    "wants_speech_excerpts": true,
+    "sections": [
+      {
+        "kind": "speech",
+        "clip_ref": "c1",
+        "quote": "Okay, hello world ... taken part in the Olympics",
+        "visual": "speaker"
+      },
+      {
+        "kind": "speech",
+        "clip_ref": "c1",
+        "quote": "Now we are international ... right here in Wimbledon",
+        "visual": "cutaways"
+      },
+      {
+        "kind": "speech",
+        "clip_ref": "c1",
+        "quote": "The first one was the London 2012 tennis ... one of a kind event",
+        "visual": "cutaways"
+      },
+      {
+        "kind": "speech",
+        "clip_ref": "c1",
+        "quote": "Three sports as usual ... made up by me on the spot",
+        "visual": "cutaways"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Prod job fecf9337: strategy-designated voice clip, 30s target, voice continuous behind b-roll (was a 7.6s two-quote plan from the wrong clip).",
+    "expect": "excerpts"
+  }
+}
