@@ -44,6 +44,8 @@ REQUEST_TYPES: tuple[str, ...] = get_args(RequestType)
 ScoreStatus = Literal["met", "partial", "unmet"]
 TurnEngine = Literal["recorded", "v1_copilot", "v2_kria"]
 Provenance = Literal["prod_capture", "authored"]
+ExecutionPath = Literal["replay_only", "compile_only", "rendered"]
+GateStatus = Literal["passed", "failed", "incomplete"]
 
 
 class _Strict(BaseModel):
@@ -188,6 +190,66 @@ class RecordedOutcome(_Strict):
     plan_before: FinalPlan | None = None
 
 
+class LiveBudget(_Strict):
+    """Declared target accounting for a live run; never proof of observed spend."""
+
+    cap_usd: float = Field(ge=0)
+    spent_usd: float = Field(ge=0)
+    complete: bool = False
+
+
+class ObservedLiveBudget(_Strict):
+    """Ledger evidence provided by the caller after an opted-in live run."""
+
+    cap_usd: float = Field(ge=0)
+    spent_usd: float | None = Field(default=None, ge=0)
+    complete: bool = False
+    test_run_id: str = Field(min_length=1)
+    source: Literal["ledger"]
+
+
+class RolloutGateResult(_Strict):
+    status: GateStatus
+    reasons: list[str] = Field(default_factory=list)
+    required_fixture_ids: list[str] = Field(default_factory=list)
+    observed_fixture_ids: list[str] = Field(default_factory=list)
+    compile_only_count: int = 0
+    rendered_count: int = 0
+
+
+class EvalEvidence(_Strict):
+    """Execution provenance. Compile-only results never imply a render/export occurred."""
+
+    fixture_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    execution_path: ExecutionPath
+    model_actual: str | None = None
+    prompt_version: str | None = None
+    compiler_version: str | None = None
+    replay_only: bool = False
+    live_budget: LiveBudget | None = None
+
+    @property
+    def rollout_eligible(self) -> bool:
+        return (
+            not self.replay_only
+            and self.execution_path != "replay_only"
+            and bool(self.model_actual and self.prompt_version and self.compiler_version)
+            and self.live_budget is not None
+            and self.live_budget.complete
+            and self.live_budget.spent_usd <= self.live_budget.cap_usd
+        )
+
+
+class TurnExecutionProof(_Strict):
+    execution_path: ExecutionPath
+    model_actual: str | None = None
+    prompt_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    prompt_version: str | None = None
+    compiler_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    model_call_observed: bool = False
+    rendered: bool = False
+
+
 class Turn(_Strict):
     turn_id: str
     user_message: str
@@ -202,6 +264,8 @@ class Turn(_Strict):
     # plan for "v2_kria" (whose replay only inspects, it does not edit). Absent on a turn
     # that is authored but not yet recorded.
     recorded: RecordedOutcome | None = None
+    # Independent expectation for an executable v2 cassette. It is never a fallback result.
+    expected_outcome: RecordedOutcome | None = None
     # Requirement ids this turn's reply is responsible for (honesty audit). Defaults to the
     # requirements introduced in this turn.
     addresses: list[str] | None = None
@@ -228,6 +292,7 @@ class RFFixture(_Strict):
     reference: RecordedOutcome | None = None
     # Baseline statuses recorded when the fixture was captured/authored; the regression pin.
     baseline: dict[str, ScoreStatus] = Field(default_factory=dict)
+    live_budget: LiveBudget | None = None
 
     @model_validator(mode="after")
     def _consistent(self) -> RFFixture:
@@ -260,6 +325,9 @@ class TurnResult(_Strict):
     notes: list[str] = Field(default_factory=list)
     # True when the turn had no recording to replay (authored, awaiting recordings).
     unrecorded: bool = False
+    expected_plan_after: FinalPlan | None = None
+    expected_reply: str | None = None
+    execution_proof: TurnExecutionProof | None = None
 
 
 class ThreadResult(_Strict):
@@ -269,3 +337,8 @@ class ThreadResult(_Strict):
     scores: list[RequirementScore]
     # requirement_id -> did the reply of a turn that addressed it overclaim
     unrecorded: bool = False
+    evidence: EvalEvidence | None = None
+
+    @property
+    def rollout_eligible(self) -> bool:
+        return self.evidence is not None and self.evidence.rollout_eligible
