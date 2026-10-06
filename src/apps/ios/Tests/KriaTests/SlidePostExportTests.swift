@@ -198,6 +198,39 @@ import XCTest
         XCTAssertTrue(defaults.bool(forKey: "kria.slide-post.photos.\(itemID).2"), "the receipt is for the saved version")
     }
 
+    /// A denial must surface before any save/render work, not after the user waited for the render.
+    func testPhotosDeniedStopsTheExportBeforeSavingOrRendering() async {
+        let server = FakeServer(unrenderedState())
+        NativeEditorURLProtocol.handler = { try server.handle($0) }
+        let api = NativeEditorTestSupport.api()
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: api, itemID: itemID)
+        session.draft?.caption = "Edited"
+        var writes = 0
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .denied }, writePhotos: { _ in writes += 1 }, defaults: defaults)
+        await exporter.export(.photos, session: session, api: api, itemID: itemID, pollInterval: .milliseconds(1), maxPolls: 5)
+        XCTAssertEqual(exporter.status, .photosDenied)
+        XCTAssertTrue(server.calls.isEmpty, "no save and no render before access is known")
+        XCTAssertEqual(writes, 0)
+    }
+
+    /// Leaving the editor cancels the flow: it stops instead of polling on and writing to Photos later.
+    func testCancellingTheExportStopsItBeforeAnythingIsWritten() async {
+        let server = FakeServer(unrenderedState())
+        NativeEditorURLProtocol.handler = { try server.handle($0) }
+        let api = NativeEditorTestSupport.api()
+        let session = SlidePostSession(defaults: defaults)
+        await session.refresh(api: api, itemID: itemID)
+        var writes = 0
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 }, defaults: defaults)
+        let task = Task { await exporter.export(.photos, session: session, api: api, itemID: itemID, pollInterval: .milliseconds(1), maxPolls: 50) }
+        task.cancel()
+        await task.value
+        XCTAssertEqual(writes, 0)
+        XCTAssertEqual(exporter.status, .idle)
+        XCTAssertFalse(exporter.isBusy)
+    }
+
     func testSavedButNeverRenderedPostGeneratesWithoutSavingAgain() async {
         let server = FakeServer(unrenderedState())
         NativeEditorURLProtocol.handler = { try server.handle($0) }

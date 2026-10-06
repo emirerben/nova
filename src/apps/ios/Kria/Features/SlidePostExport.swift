@@ -116,9 +116,17 @@ import UIKit
         guard !isBusy else { return }
         isFlowActive = true; defer { isFlowActive = false }
         session.error = nil
+        // Ask for Photos access BEFORE the (possibly long) render so a first-time prompt or a denial
+        // never comes after the user has already waited for it.
+        if destination == .photos {
+            let permission = await authorizePhotos()
+            guard permission == .authorized || permission == .limited else { set(.photosDenied); return }
+        }
         var generated = 0
         var polls = 0
         while !session.canExport {
+            // The caller cancels this task when the editor goes away; stop instead of finishing in the background.
+            if Task.isCancelled { set(.idle); return }
             if session.hasUnsavedChanges || (!session.isRendering && generated < 2) {
                 // `create` saves a dirty draft first, then dispatches the render.
                 set(session.hasUnsavedChanges ? .saving : .rendering)

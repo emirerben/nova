@@ -20,6 +20,9 @@ struct SlidePostWorkspaceView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var session: SlidePostSession
     @StateObject private var exporter = SlidePostExporter.makeDefault()
+    /// The running Save to Photos / Share flow; cancelled when the editor goes away so it cannot keep polling
+    /// (and prompt for Photos) from a screen the user already left.
+    @State private var exportTask: Task<Void, Never>?
     @State private var showsConversation = false
     /// Chat-edit staging as decided when the AI sheet opened; it never flips while the sheet is up.
     @State private var aiChatEnabled = false
@@ -101,6 +104,7 @@ struct SlidePostWorkspaceView: View {
         // The workspace draws its own back circle; the system bar would add a second back button.
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .onDisappear { exportTask?.cancel() }
         .sheet(isPresented: $showsCaption) { captionSheet }
         .sheet(isPresented: $showsConversation) {
             SlidePostAISheet(
@@ -260,8 +264,8 @@ struct SlidePostWorkspaceView: View {
             isExporting: session.isBusy || exporter.isBusy,
             onBack: { if let onBack { onBack() } else { dismiss() } },
             onSave: { Task { await save() } },
-            onSaveToPhotos: { Task { await export(.photos) } },
-            onShare: { Task { await export(.share) } }
+            onSaveToPhotos: { exportTask = Task { await export(.photos) } },
+            onShare: { exportTask = Task { await export(.share) } }
         )
     }
 
