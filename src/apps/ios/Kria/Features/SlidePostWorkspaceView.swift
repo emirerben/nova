@@ -92,7 +92,9 @@ struct SlidePostWorkspaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            richHeader
+            // Above the opaque stage so the header buttons' shadow fades out like the video editor's,
+            // instead of being cut off into a grey band at the header's bottom edge.
+            richHeader.zIndex(1)
             if let draft = session.draft {
                 richWorkspace(draft)
             } else {

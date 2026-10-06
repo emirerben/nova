@@ -72,7 +72,19 @@ def changed_ui_tests(base, head, paths):
     return focused
 
 
+# Swift files whose server-mirrored constants are parsed by the API drift guards
+# test_ios_text_row_look_parity.py and test_slide_post_font_parity.py, so a
+# Swift-only change to them runs the API suite too. Not an exhaustive list of
+# iOS paths that API tests read.
+SWIFT_SERVER_MIRRORS = (
+    "src/apps/ios/Kria/Core/NativeEditorDocument.swift",
+    "src/apps/ios/Kria/Core/SlidePost.swift",
+)
+
+
 def affected(path):
+    if path in SWIFT_SERVER_MIRRORS:
+        return {"api", "ios", "ios_ui"}
     # These web resources are also bundled by the native Xcode project.
     if path.startswith(
         (

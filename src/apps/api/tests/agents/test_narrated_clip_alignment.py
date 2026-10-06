@@ -56,10 +56,33 @@ def test_valid_placements_round_trip() -> None:
     assert output.placements[0].reason == "r"
 
 
-def test_first_clip_may_start_after_the_first_word() -> None:
+def test_first_clip_may_start_after_the_first_word_when_order_is_free() -> None:
     # The worker pins the first step to 0.0 so the intro stays with the first clip.
-    output = _parse(_raw(("a", "w000001"), ("b", "w000003"), ("c", "w000006")))
+    output = _parse(_raw(("b", "w000001"), ("a", "w000003"), ("c", "w000006")), order_locked=False)
     assert output.placements[0].start_word_id == "w000001"
+
+
+def test_locked_order_pins_the_first_clip_to_the_first_word() -> None:
+    # A model that put the first clip's subject later (its words are not increasing in
+    # list order) must still parse: placement 0 is the first word, its reason is kept.
+    output = _parse(_raw(("a", "w000004"), ("b", "w000002"), ("c", "w000006")))
+
+    assert [(p.clip_id, p.start_word_id) for p in output.placements] == [
+        ("a", "w000000"),
+        ("b", "w000002"),
+        ("c", "w000006"),
+    ]
+    assert output.placements[0].reason == "r"
+
+
+def test_locked_order_still_rejects_other_non_increasing_starts() -> None:
+    with pytest.raises(SchemaError, match="strictly increasing"):
+        _parse(_raw(("a", "w000004"), ("b", "w000005"), ("c", "w000002")))
+    # Pinning the first clip to w000000 does not excuse a second clip on word 0.
+    with pytest.raises(SchemaError, match="strictly increasing"):
+        _parse(_raw(("a", "w000004"), ("b", "w000000"), ("c", "w000006")))
+    with pytest.raises(SchemaError, match="unknown start word"):
+        _parse(_raw(("a", "w000099"), ("b", "w000002"), ("c", "w000006")))
 
 
 @pytest.mark.parametrize(
@@ -123,3 +146,4 @@ def test_prompt_states_the_order_mode_and_carries_labels() -> None:
     assert "CLIP ORDER: FREE" in free
     assert '"creator_label": "boiling"' in locked
     assert "w000006" in locked
+    assert "first listed clip always starts at the very first word" in locked

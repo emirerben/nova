@@ -1966,9 +1966,8 @@ extension DraftSnapshot {
         let text = textValues.compactMap { value -> TextLayer? in
             guard let object = Self.object(value), let content = (object["text"] ?? object["content"])?.stringValue else { return nil }
             let id = Self.uuid(object["id"]) ?? UUID()
-            let x = Self.number(object["x_frac"] ?? object["x"]) ?? 0.5; let y = Self.number(object["y_frac"] ?? object["y"]) ?? 0.5
-            let style = (object["font_family"] ?? object["style"])?.stringValue ?? "Fraunces"
-            return TextLayer(id: id, content: content, position: CGPoint(x: x, y: y), style: style, canonicalID: object["id"]?.stringValue)
+            return TextLayer(id: id, content: content, position: TextLayer.position(of: object),
+                             style: TextLayer.style(of: object), canonicalID: object["id"]?.stringValue)
         }
         let music: MusicSelection?
         if let object = Self.object(legacy["music"]), let trackID = Self.uuid(object["track_id"]) {

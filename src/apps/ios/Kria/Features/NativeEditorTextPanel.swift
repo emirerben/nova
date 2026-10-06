@@ -236,8 +236,8 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
             colorControl
             propertyRow("Outline", key: "stroke_width", range: 0...20, unit: "px", colorKey: "stroke_color")
             propertyRow("Shadow", key: "shadow_opacity", range: 0...1, unit: "%", colorKey: "shadow_color")
-            positionControl("Horizontal position", key: "x_frac", fallback: 0.5)
-            positionControl("Vertical position", key: "y_frac", fallback: defaultVerticalPosition)
+            positionControl("Horizontal position", key: "x_frac")
+            positionControl("Vertical position", key: "y_frac")
             Stepper(value: Binding(
                 get: { item?.raw["rotation_deg"]?.numberValue ?? 0 },
                 set: { session.updateTextRaw(id: id, key: "rotation_deg", value: .number($0)) }
@@ -253,7 +253,7 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
 
     private func fontMenu(expanded: Bool) -> some View {
         NativeFontPicker(
-            selection: string("font_family", "Inter"),
+            selection: item?.fontFamily ?? EditorTextElement.defaultFontFamily,
             accessibilityID: "native-editor-text-font"
         ) { if let family = $0 { session.setTextStyle(id: id, style: family) } }
         .frame(maxWidth: expanded ? .infinity : nil)
@@ -339,23 +339,18 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
         }
     }
 
-    private var defaultVerticalPosition: Double {
-        switch string("position", "center") {
-        case "top": 0.2
-        case "bottom": 0.8
-        default: 0.5
-        }
-    }
+    /// Where the surface draws the text: a named preset ignores stored fracs.
+    private var anchor: CGPoint { session.textAnchor(id: id) ?? CGPoint(x: 0.5, y: 0.5) }
 
-    private func positionControl(_ title: String, key: String, fallback: Double) -> some View {
-        let value: Double = item?.raw[key]?.numberValue ?? fallback
+    private func positionControl(_ title: String, key: String) -> some View {
+        let value: Double = key == "x_frac" ? anchor.x : anchor.y
         let percent: Int = Int((value * 100).rounded())
         let label: String = "\(title) \(percent)%"
         let axis: String = key == "x_frac" ? "x" : "y"
         let position: Binding<Double> = Binding<Double>(
-            get: { item?.raw[key]?.numberValue ?? fallback },
+            get: { key == "x_frac" ? anchor.x : anchor.y },
             set: { (next: Double) in
-                setPositionCoordinate(next, for: key)
+                session.moveText(id: id, x: key == "x_frac" ? next : nil, y: key == "y_frac" ? next : nil)
             }
         )
         return Stepper(value: position, in: 0.0...1.0, step: 0.05) {
@@ -365,12 +360,6 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
         .accessibilityLabel("Text \(title.lowercased())")
         .accessibilityValue("\(percent) percent")
         .accessibilityIdentifier("native-editor-text-position-" + axis)
-    }
-
-    private func setPositionCoordinate(_ next: Double, for key: String) {
-        let x: Double = key == "x_frac" ? next : (item?.raw["x_frac"]?.numberValue ?? 0.5)
-        let y: Double = key == "y_frac" ? next : (item?.raw["y_frac"]?.numberValue ?? defaultVerticalPosition)
-        session.setTextPosition(id: id, x: x, y: y)
     }
 
     private var animationControls: some View {

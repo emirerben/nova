@@ -301,6 +301,103 @@ def blocks_from_guided_plan(plan: dict[str, Any]) -> list[dict[str, Any]]:
     return [decided_block(plan, section) for section in SECTION_ORDER]
 
 
+def _track_clips(recipe: Any, *, kind: str | None = None, track_id: str | None = None) -> list[Any]:
+    clips: list[Any] = []
+    for track in getattr(recipe, "tracks", None) or []:
+        if kind is not None and getattr(track, "kind", None) != kind:
+            continue
+        if track_id is not None and getattr(track, "id", None) != track_id:
+            continue
+        clips.extend(getattr(track, "clips", None) or [])
+    return clips
+
+
+def blocks_from_phone_recipe(
+    recipe: Any,
+    *,
+    title: str | None = None,
+    clip_count: int | None = None,
+    captions: int = 0,
+    music: str | None = None,
+    music_detail: str | None = None,
+    look: str | None = None,
+) -> list[dict[str, Any]]:
+    """All seven sections `decided` for a phone recipe pinned by the narrated,
+    voiceover-montage or subtitled writers (the render happens on the device, so
+    these decisions are the whole story).
+
+    The recipe supplies what it truly carries: clip count (distinct sources on the
+    video track unless `clip_count` overrides it) and duration, sound-effect clips
+    (the `sfx` track) and overlay clips (overlay-kind tracks other than the Talking
+    cutaways, which count as clips). `title`, `captions`, `music` and `look` come from
+    the caller's own decision; a falsy value means that section was not used.
+    """
+    cutaway_track_id = "talking-head-cutaways"
+    if clip_count is None:
+        clip_count = len(
+            {getattr(clip, "source_asset_id", None) for clip in _track_clips(recipe, kind="video")}
+            - {None}
+        )
+    duration = getattr(recipe, "duration", None)
+    by_section: dict[str, dict[str, Any]] = {}
+    clean_title = " ".join(str(title or "").split())
+    by_section["title"] = (
+        block("title", "decided", clean_title) if clean_title else _skipped("title")
+    )
+    if clip_count > 0:
+        summary = _count_label(clip_count, "clip")
+        if isinstance(duration, int | float) and duration > 0:
+            summary += f" \u00b7 {round(float(duration))}s"
+        by_section["clips"] = block("clips", "decided", summary)
+    else:
+        by_section["clips"] = _skipped("clips")
+    by_section["captions"] = (
+        block("captions", "decided", _count_label(captions, "caption"))
+        if captions > 0
+        else _skipped("captions")
+    )
+    by_section["music"] = (
+        block("music", "decided", music, music_detail) if music else _skipped("music")
+    )
+    sfx = len(_track_clips(recipe, track_id="sfx"))
+    by_section["sfx"] = (
+        block("sfx", "decided", _count_label(sfx, "sound effect")) if sfx else _skipped("sfx")
+    )
+    overlays = [
+        clip
+        for track in getattr(recipe, "tracks", None) or []
+        if getattr(track, "kind", None) == "overlay"
+        and getattr(track, "id", None) != cutaway_track_id
+        for clip in getattr(track, "clips", None) or []
+    ]
+    by_section["overlays"] = (
+        block("overlays", "decided", _count_label(len(overlays), "overlay"))
+        if overlays
+        else _skipped("overlays")
+    )
+    clean_look = str(look or "").strip()
+    by_section["look"] = (
+        block("look", "decided", clean_look.replace("_", " ").capitalize())
+        if clean_look
+        else _skipped("look")
+    )
+    return [by_section[section] for section in SECTION_ORDER]
+
+
+def emit_phone_recipe_blocks(job_id: str | uuid.UUID, recipe: Any, **facts: Any) -> None:
+    """Build `blocks_from_phone_recipe` and emit them. Best-effort; never raises.
+
+    Call it from the render thread AFTER the device request is pinned and committed,
+    with no Job/PlanItem/Plan lock held (same discipline as the guided path).
+    """
+    if not enabled():
+        return
+    try:
+        emit_plan_blocks(job_id, blocks_from_phone_recipe(recipe, **facts))
+    except Exception as exc:  # noqa: BLE001 - the feed must never fail a render
+        log.warning("plan_blocks_phone_failed", job_id=str(job_id), error=str(exc)[:200])
+
+
 def deciding_blocks(sections: tuple[str, ...] | list[str]) -> list[dict[str, Any]]:
     return [block(section, "deciding") for section in sections]
 

@@ -600,6 +600,18 @@ restart (restores the bucket split for unbound jobs; bound requests ask for reco
 `tests/evals/test_narrated_clip_alignment_evals.py` (goldens recorded from the
 cacio e pepe job).
 
+Clip ORDER for native (phone) edits is set at dispatch, not by the model's
+`selected_media_ids` order: `content_plan_build._creator_intent_clip_order`
+(pure core `order_paths_by_resolved_intents`) re-seats `clip_paths` from the
+server-resolved `order` intents: `first` intents lead, null-position intents
+follow in listed order, clips no intent names keep their relative order, `last`
+intents close; `order_by` (capture-time) / unresolved intents are ignored. A
+preserved-order revision fence (`creator_clip_order`) skips it; a filming-guide
+order (`_narrative_clip_order`) still leads and the pool keeps this order. The
+dispatch logs `plan_item_render.intent_order` and stamps
+`all_candidates.clip_order_source = "resolved_order_intents"`. In LOCKED order
+the alignment agent's first clip always starts at the first word (`parse` pins it).
+
 Supersession discipline: every caption dispatch mints a `render_generation_id`
 and commits BEFORE enqueue (R1-1) — the reburn's start write is token-checked,
 so an enqueue that outran the commit would read the old generation and strand

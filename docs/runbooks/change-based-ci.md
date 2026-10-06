@@ -15,6 +15,7 @@ Other specialized workflows and deployment triggers retain their existing rules.
 | Native app, media engine, resources, UI tests, `scripts/ios/**`, iOS workflow | iOS build/unit on PRs; full iOS coverage on main and manual dispatch; shell tests and mobile contracts |
 | Native unit tests/fixture or `Kria/Generated/**` only | iOS build, unit tests and mobile contracts; no PR UI execution |
 | Web public fonts and type-posters bundled in Xcode | Web and iOS build/unit on PRs; full iOS coverage on main |
+| `src/apps/ios/Kria/Core/NativeEditorDocument.swift`, `src/apps/ios/Kria/Core/SlidePost.swift` (Swift constants read by API drift guards) | API tests and API lint, plus iOS build/unit on PRs; full iOS coverage on main |
 | API internal implementation, prompts, tests | API tests and API lint |
 | API routes/schemas, Kria contracts, models/config/main/worker, mobile identity, API dependency definitions | Web, API and native build/unit contracts; fixture-driven UI tests are not selected |
 | Shared packages, assets, root dependencies/build config, selector, general CI workflows or unknown paths | All suites |
