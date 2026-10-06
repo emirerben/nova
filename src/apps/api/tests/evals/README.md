@@ -222,7 +222,7 @@ python -m tests.evals.request_following.report --phase P0 \
   turns; use the same paid-run guards as the rest of this directory. Running it live is optional
   (paid); use it when investigating a suspected regression.
 - **Provenance.** `east_run` is a read-only prod capture (KRI-185, regenerate with
-  `python -m tests.evals.request_following.capture_east_run`). The other 29 are authored briefs
+  `python -m tests.evals.request_following.capture_east_run`). The other 30 are authored briefs
   (`author_fixtures.py`, five synthetic footage sets incl. `harbor_run`, invented places only)
   with a hand-built reference edit: they prove each checker can be passed and can fail, and
   stay out of the KPI (`awaiting recording`) until their turns carry recorded outcomes. Nine

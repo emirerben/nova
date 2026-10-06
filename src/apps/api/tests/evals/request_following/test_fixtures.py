@@ -29,11 +29,11 @@ IDS = [p.stem for p in PATHS]
 
 
 def test_the_p6b_golden_set_is_present():
-    """East Run + 29 authored briefs (12 wave-1 + 17 P6b) over 5 synthetic footage sets."""
+    """East Run + 30 authored briefs (12 wave-1 + 18 P6b) over 5 synthetic footage sets."""
     fixtures = [load_fixture(p) for p in PATHS]
     assert [f.fixture_id for f in fixtures if f.provenance == "prod_capture"] == ["east_run"]
-    assert len([f for f in fixtures if f.provenance == "authored"]) == 29
-    assert len(fixtures) == 30
+    assert len([f for f in fixtures if f.provenance == "authored"]) == 30
+    assert len(fixtures) == 31
     assert {f.footage for f in fixtures} == {
         "east_run",
         "food_day",
