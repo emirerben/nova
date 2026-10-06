@@ -165,26 +165,74 @@ def test_extract_streams_exact_window_to_bounded_16khz_mono_pcm(
     assert duration == pytest.approx(work.duration_s)
 
 
+def _write_tone_wav(path: Path, duration_s: float) -> bytes:
+    """A mono 16 kHz WAV of a non-zero sawtooth; returns its PCM bytes."""
+    import wave
+
+    rate = task_module.SPEECH_CLEANUP_SAMPLE_RATE_HZ
+    frame_count = int(round(duration_s * rate))
+    pcm = b"".join(
+        ((i * 37) % 20000 - 10000).to_bytes(2, "little", signed=True) for i in range(frame_count)
+    )
+    with wave.open(str(path), "wb") as output:
+        output.setnchannels(task_module.SPEECH_CLEANUP_CHANNELS)
+        output.setsampwidth(task_module.SPEECH_CLEANUP_SAMPLE_WIDTH_BYTES)
+        output.setframerate(rate)
+        output.writeframes(pcm)
+    return pcm
+
+
 def test_audio_that_ends_before_the_picture_is_padded_to_the_window(tmp_path: Path) -> None:
     """Items 50004c29 / cc5f9715 (2026-10-06): a 68.0 s take whose AAC track runs
     66.13 s failed `snapshot_mismatch` and was never retried, so the creator's
     "cut out the long pauses" rendered uncut. The picture's window stands; the
-    missing tail is silence."""
+    missing tail is silence, the decoded head is untouched."""
     import wave
 
     output_path = tmp_path / "short.wav"
-    _write_pcm_wav(output_path, 1.0)
+    head = _write_tone_wav(output_path, 1.0)
 
     duration = task_module._read_pcm_duration(output_path, requested_duration_s=2.0)
 
     assert duration == pytest.approx(2.0)
+    rate = task_module.SPEECH_CLEANUP_SAMPLE_RATE_HZ
     with wave.open(str(output_path), "rb") as artifact:
-        assert artifact.getnframes() == 2 * task_module.SPEECH_CLEANUP_SAMPLE_RATE_HZ
+        assert artifact.getnframes() == 2 * rate
         assert artifact.getnchannels() == task_module.SPEECH_CLEANUP_CHANNELS
-        assert artifact.getframerate() == task_module.SPEECH_CLEANUP_SAMPLE_RATE_HZ
-        artifact.readframes(task_module.SPEECH_CLEANUP_SAMPLE_RATE_HZ)
-        tail = artifact.readframes(task_module.SPEECH_CLEANUP_SAMPLE_RATE_HZ)
+        assert artifact.getframerate() == rate
+        assert artifact.readframes(rate) == head
+        tail = artifact.readframes(rate)
+    assert len(tail) == rate * task_module.SPEECH_CLEANUP_SAMPLE_WIDTH_BYTES
     assert tail == b"\0" * len(tail)
+    assert output_path.stat().st_size <= task_module._maximum_pcm_artifact_bytes(2.0)
+
+
+@pytest.mark.parametrize(
+    ("decoded_s", "requested_s"),
+    [(1.0, 5.0), (60.0, 68.0)],
+    ids=["more-than-3s-on-a-short-window", "more-than-10pct-on-a-long-window"],
+)
+def test_audio_far_shorter_than_the_picture_is_still_a_source_mismatch(
+    tmp_path: Path, decoded_s: float, requested_s: float
+) -> None:
+    output_path = tmp_path / "far-short.wav"
+    _write_pcm_wav(output_path, decoded_s)
+
+    with pytest.raises(SpeechCleanupOperationalError) as raised:
+        task_module._read_pcm_duration(output_path, requested_duration_s=requested_s)
+
+    assert raised.value.code == "snapshot_mismatch"
+    assert raised.value.private_detail == "source_duration"
+
+
+def test_extraction_anchors_a_late_audio_track_to_the_window_start(tmp_path: Path) -> None:
+    """A track whose stream starts after the picture must not be padded at the
+    tail: ffmpeg inserts the leading silence so words stay in picture time."""
+    command = task_module._ffmpeg_command(
+        signed_url="https://storage.invalid/object", output_path=tmp_path / "a.wav", work=_work()
+    )
+    assert command[command.index("-af") + 1] == "aresample=async=1:first_pts=0"
+    assert command.index("-af") < command.index("-ac")
 
 
 def test_audio_within_tolerance_is_left_exactly_as_decoded(tmp_path: Path) -> None:

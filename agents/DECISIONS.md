@@ -2889,8 +2889,11 @@ picture. `_read_pcm_duration` compared the decoded audio (66.13 s) with the pict
 
 Decision: audio that ends before the picture is the clip, not a changed source. The window
 stays the picture's (the render-time `require_source` fence keeps comparing it to the clip
-duration) and the decoded PCM is padded with silence to the window, which the engine may cut
-like any other pause. Audio LONGER than the window is still `snapshot_mismatch`. The failure
+duration); ffmpeg anchors the track to the window's first instant (`aresample=async=1:first_pts=0`,
+so a track that STARTS late gets leading silence and words stay in picture time) and a tail
+shortfall is padded with silence after decoding, which the engine may cut like any other pause.
+The shortfall is capped (the larger of 3 s and 10% of the window); beyond it, and for audio
+LONGER than the window, it is still `snapshot_mismatch`. The failure
 log now carries the private detail code (`detail=source_duration`), which was neither logged
 nor persisted before. Guards: `tests/tasks/test_speech_cleanup_analysis.py::test_audio_that_ends_before_the_picture_is_padded_to_the_window`
 and siblings. Not changed: the iOS card still offers a dead "Retry speech check" for a
