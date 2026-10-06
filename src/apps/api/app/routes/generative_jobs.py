@@ -9838,6 +9838,7 @@ def prepare_editor_commit(
     visual_assets: dict[str, dict] | None = None,
     speech_cut_owner: tuple[str, str] | None = None,
     phone_sfx_catalog_paths: dict[str, str] | None = None,
+    creator_brief_binding: dict | None = None,
 ) -> dict:
     """Stage native saves through the same validators, then pin a complete recipe.
 
@@ -9886,6 +9887,7 @@ def prepare_editor_commit(
             variant_id,
             prepare=lambda staged: _prepare_editor_commit(staged, variant_id, payload, **arguments),
             sfx_catalog_paths=phone_sfx_catalog_paths,
+            creator_brief_binding=creator_brief_binding,
         )
     return _prepare_editor_commit(job, variant_id, payload, **arguments)
 

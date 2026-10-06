@@ -2290,6 +2290,11 @@ def _fallback_strategy(manifest: Any, *, user_message: str = "") -> CreativeStra
         media_scope=media_scope,
         pacing="balanced",
         target_duration_s=target_duration_s,
+        # The conservative fallback's 24s is a local default, not an
+        # approved duration requirement.  A duration recovered from the
+        # creator's request or pinned narration is explicit and retains its
+        # provenance through later policy normalization.
+        target_duration_requested=True if requested_duration_s is not None else None,
         render_program=render_program,
         mixed_media_timing=mixed_media_timing,
         selected_media_ids=(

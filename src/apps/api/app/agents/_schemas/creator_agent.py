@@ -457,6 +457,12 @@ class CreativeStrategy(_CreatorModel):
     def _omit_unused_clip_intents(self, handler):  # noqa: ANN001, ANN202
         # Stored strategies stay byte-identical to pre-KRI-127 when unused.
         data = handler(self)
+        # Pydantic omits the default 24-second value for legacy strategy
+        # serialization. When the server recorded that 24 seconds was
+        # explicitly approved, retain both the value and its provenance so a
+        # later normalization or job factory cannot confuse it with a default.
+        if self.target_duration_requested is True:
+            data["target_duration_s"] = self.target_duration_s
         for key in (
             "clip_intents",
             "resolved_clip_intents",
@@ -479,6 +485,18 @@ class CreativeStrategy(_CreatorModel):
     )
     pacing: CreativePace = "balanced"
     target_duration_s: ProposalDuration = Field(default=24, exclude_if=lambda value: value == 24)
+    # Server-owned provenance for the duration field.  The public/default 24s
+    # value is deliberately omitted from stored strategies, but a creator may
+    # explicitly approve 24 seconds.  Consumers must use this marker rather
+    # than infer intent from the normalized value alone.
+    #
+    # ``SkipJsonSchema`` keeps it out of the model-facing strategy schema;
+    # `MainCreatorAgent.parse` sets it from the raw model payload before any
+    # policy normalization.  It is optional so pre-KRI-470 strategies remain
+    # byte-identical when serialized.
+    target_duration_requested: SkipJsonSchema[bool | None] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     render_program: RenderProgram = "guided"
     selected_media_ids: list[str] = Field(default_factory=list, max_length=MAX_CREATOR_MEDIA_REFS)
     optional_treatments: list[OptionalTreatment] = Field(default_factory=list, max_length=4)

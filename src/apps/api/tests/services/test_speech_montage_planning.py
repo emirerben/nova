@@ -84,6 +84,49 @@ def _run(candidates, plan, words_by_id=None, request="Play my lines over the cli
     return result, stub
 
 
+def test_confirmed_audio_source_limits_transcription_and_planner_choices():
+    wrong, wrong_words = _speaker("wrong")
+    approved, approved_words = _speaker("approved", to_camera=False)
+    result, stub = _run(
+        [wrong, approved, *_others(2)],
+        _plan({"kind": "speech", "clip_ref": "c1", "quote": "never rush a good espresso"}),
+        {"wrong": wrong_words, "approved": approved_words},
+        required_source_ids=("approved",),
+        speech_required=True,
+    )
+    assert result.status == "ready"
+    assert result.sections[0].media_id == "approved"
+    assert len(stub.seen[0].speech_clips) == 1
+    assert not wrong.words
+
+
+def test_confirmed_speech_cannot_be_overruled_by_planner_or_empty_raw_request():
+    speaker, words = _speaker()
+    result, stub = _run(
+        [speaker, *_others(2)],
+        SpeechMontagePlan(wants_speech_excerpts=False),
+        {"talk": words},
+        request="",
+        required_source_ids=("talk",),
+        speech_required=True,
+    )
+    assert len(stub.seen) == 1
+    assert result.status == "needs_creator"
+
+
+def test_missing_confirmed_source_declines_before_planner():
+    speaker, words = _speaker()
+    result, stub = _run(
+        [speaker],
+        SpeechMontagePlan(wants_speech_excerpts=False),
+        {"talk": words},
+        required_source_ids=("absent",),
+        speech_required=True,
+    )
+    assert result.status == "needs_creator"
+    assert not stub.seen
+
+
 def test_fifty_assets_and_a_long_prompt_yield_multiple_grounded_excerpts() -> None:
     speaker, words = _speaker()
     candidates = [speaker, *_others(49)]

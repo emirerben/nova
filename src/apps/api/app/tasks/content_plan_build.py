@@ -2331,9 +2331,14 @@ def _dispatch_item_render(
         # the worker is queued.  Native variants historically received no
         # generation token until a later editor rerender, which made a ready
         # first cut impossible for the Creator session to reconcile exactly.
+        # Creator jobs already mint their immutable generation alongside the
+        # first typed requirement contract in `build_generative_job`.  Keep
+        # that identity when the dispatch layer attaches its pinned brief;
+        # legacy content-plan jobs retain their historical generation token.
         job.assembly_plan = {
             **(job.assembly_plan or {}),
-            "creator_generation_id": uuid.uuid4().hex,
+            "creator_generation_id": (job.assembly_plan or {}).get("creator_generation_id")
+            or uuid.uuid4().hex,
         }
         if creator_brief_binding is not None:
             from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
@@ -2350,11 +2355,36 @@ def _dispatch_item_render(
             ).scalar_one_or_none()
             if thread is None:
                 raise ValueError("Approved request does not belong to this project")
-            binding.resolve(thread.id)
+            brief = binding.resolve(thread.id)
             job.assembly_plan = {
                 **job.assembly_plan,
                 "creator_brief_binding": binding.model_dump(mode="json"),
             }
+            # Rebuild the factory-pinned projection against the approved
+            # BriefBinding rather than a live thread.  The binding carries the
+            # immutable brief and media snapshot that authorization covered.
+            # The generation remains the same token the factory assigned.
+            strategy_payload = (job.all_candidates or {}).get("creator_strategy")
+            if isinstance(strategy_payload, dict) or brief is not None:
+                from app.services.creator_render_contract import (  # noqa: PLC0415
+                    CONTRACT_FIELD,
+                    REQUIREMENT_VERSION_FIELD,
+                    build_render_contract,
+                )
+
+                contract = build_render_contract(
+                    strategy_payload,
+                    generation_id=job.assembly_plan["creator_generation_id"],
+                    brief=brief,
+                    media_snapshot=binding.media_snapshot,
+                    has_voiceover=bool(getattr(item, "voiceover_gcs_path", None)),
+                )
+                if contract is not None:
+                    job.all_candidates = {**job.all_candidates, REQUIREMENT_VERSION_FIELD: 1}
+                    job.assembly_plan = {
+                        **job.assembly_plan,
+                        CONTRACT_FIELD: contract.model_dump(mode="json"),
+                    }
         from app.services.creator_direction_snapshot import ensure_job_snapshot  # noqa: PLC0415
 
         ensure_job_snapshot(

@@ -35,6 +35,11 @@ import structlog
 
 from app.config import settings
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
+from app.services.creator_render_contract import (
+    CONTRACT_FIELD,
+    read_render_contract,
+    verify_phone_recipe,
+)
 from app.services.speech_montage_planning import (
     SpeechCandidate,
     plan_speech_montage,
@@ -74,7 +79,15 @@ def run_phone_speech_montage_job(
     load_words: Any = None,
 ) -> bool:
     """See the module docstring. ``run_planner`` / ``load_words`` are test seams."""
+    contract = read_render_contract(snapshot)
+    speech_required = bool(
+        contract and contract.audio_source_ids and contract.original_audio != "forbid"
+    )
+    if contract is not None and not speech_required:
+        return False
     if not settings.speech_excerpt_montage_enabled:
+        if speech_required:
+            raise SpeechMontageClarification("The confirmed camera-audio renderer is unavailable.")
         return False
 
     from app.kria.device_render import make_device_request  # noqa: PLC0415
@@ -132,8 +145,14 @@ def run_phone_speech_montage_job(
         )
         path_by_media[binding.media_id] = path
 
-    request = _request_text(job_id, brief, gb._first_user_message(job_id))
-    if not speech_montage_possible(
+    # Contracted jobs use the approved instruction snapshot. A live thread or
+    # the original message can no longer change whether this lane was requested.
+    request = (
+        str(all_candidates.get("creator_request") or "Use the confirmed camera-audio sources.")
+        if contract is not None
+        else _request_text(job_id, brief, gb._first_user_message(job_id))
+    )
+    if not speech_required and not speech_montage_possible(
         request, any_clip_has_speech=any(c.has_speech for c in candidates)
     ):
         return False
@@ -159,8 +178,8 @@ def run_phone_speech_montage_job(
                 ),
             )
 
-    target = None
-    if brief is not None:
+    target = contract.duration_s if contract else None
+    if contract is None and brief is not None:
         from app.pipeline.unified_montage import brief_view  # noqa: PLC0415
 
         target = brief_view(brief).target_duration_s
@@ -172,6 +191,8 @@ def run_phone_speech_montage_job(
             run_planner=run_planner,
             load_words=load_words,
             target_duration_s=target,
+            required_source_ids=contract.audio_source_ids if contract else (),
+            speech_required=speech_required,
         )
         # Counts and reasons only: quotes are the creator's private words.
         record_pipeline_event(
@@ -185,6 +206,8 @@ def run_phone_speech_montage_job(
         )
 
     if resolution.status == "not_requested":
+        if speech_required:
+            raise SpeechMontageClarification("I couldn't build the confirmed camera-audio edit.")
         return False
     if resolution.status == "needs_creator":
         raise SpeechMontageClarification(
@@ -217,12 +240,25 @@ def run_phone_speech_montage_job(
         for c in candidates
         if c.kind == "video" and c.media_id not in speaker_candidates
     )
+    if contract and contract.order_required:
+        by_media = {binding.media_id: binding for binding in broll}
+        if not contract.order_ids or any(
+            media_id not in by_media for media_id in contract.order_ids
+        ):
+            raise SpeechMontageClarification(
+                "I can't prove the confirmed picture order for this audio edit."
+            )
+        broll = tuple(by_media[media_id] for media_id in contract.order_ids)
     recipe, receipt = compile_phone_speech_montage_plan(
         tuple(sections),
         broll,
         target_lufs=settings.output_target_lufs,
     )
     validate_phone_pilot_recipe(recipe)
+    if contract:
+        verify_phone_recipe(
+            contract, recipe, source_audio={b.media_id: b.original.has_audio for b in bindings}
+        )
     if not gb._phone_rendering_globally_available():
         raise ValueError(
             "Phone rendering is currently unavailable; originals remain on the device."
@@ -262,9 +298,11 @@ def run_phone_speech_montage_job(
         if not settings.phone_rendering_for(job.user_id):
             raise ValueError("Phone rendering is unavailable for this account")
         current = copy.deepcopy(job.assembly_plan or {})
-        if current.get("creator_generation_id") != generation or current.get(
-            PHONE_SOURCES_FIELD
-        ) != snapshot.get(PHONE_SOURCES_FIELD):
+        if (
+            current.get("creator_generation_id") != generation
+            or current.get(PHONE_SOURCES_FIELD) != snapshot.get(PHONE_SOURCES_FIELD)
+            or current.get(CONTRACT_FIELD) != snapshot.get(CONTRACT_FIELD)
+        ):
             return True
         if any(
             isinstance(rec, dict) and rec.get("base_generation") == generation

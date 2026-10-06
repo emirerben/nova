@@ -2285,12 +2285,43 @@ def _run_generative_job_impl(
                 # mid-flight). Explicit branches on purpose, so an unrecognized snapshot
                 # shape fails loudly instead of silently entering the wrong (or a cloud)
                 # renderer.
+                from app.services.creator_render_contract import (  # noqa: PLC0415
+                    REQUIREMENT_VERSION_FIELD,
+                    CreatorRenderContractError,
+                    read_render_contract,
+                )
                 from app.services.phone_rollout import (  # noqa: PLC0415
                     phone_render_supported_formats,
                 )
 
                 declared_format = coerce_edit_format(candidates.get("edit_format"))
                 has_voiceover_candidate = bool(candidates.get("voiceover_gcs_path"))
+                contract = read_render_contract(phone_snapshot)
+                if candidates.get(REQUIREMENT_VERSION_FIELD) == 1 and contract is None:
+                    raise CreatorRenderContractError(
+                        "This edit lost its approved requirements; please try again."
+                    )
+                required_speech = bool(contract and contract.audio_source_ids)
+                if contract is not None:
+                    if contract.generation_id != phone_snapshot.get("creator_generation_id"):
+                        raise CreatorRenderContractError(
+                            "This edit belongs to a different approved revision."
+                        )
+                    if contract.unresolved:
+                        raise CreatorRenderContractError(contract.unresolved[0])
+                    if contract.require_voiceover and not has_voiceover_candidate:
+                        raise CreatorRenderContractError(
+                            "This edit needs your confirmed recorded voice."
+                        )
+                    # A recording's mere presence cannot override the approved
+                    # soundtrack. Historical jobs retain their original dispatch.
+                    has_voiceover_candidate = contract.require_voiceover
+                    if required_speech and (
+                        contract.require_voiceover or candidates.get("user_song")
+                    ):
+                        raise CreatorRenderContractError(
+                            "This renderer can't combine the confirmed soundtracks."
+                        )
                 if isinstance(phone_snapshot.get("guided_edit"), dict):
                     _run_phone_guided_job(
                         job_id,
@@ -2325,9 +2356,18 @@ def _run_generative_job_impl(
 
                         # KRI-374: a creator song is the whole soundtrack (camera audio
                         # is muted), so a spoken-excerpt montage never applies to it.
-                        if candidates.get("user_song") or not run_phone_speech_montage_job(
-                            job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
+                        handled_speech = False
+                        if required_speech or (
+                            contract is None and not candidates.get("user_song")
                         ):
+                            handled_speech = run_phone_speech_montage_job(
+                                job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
+                            )
+                        if required_speech and not handled_speech:
+                            raise CreatorRenderContractError(
+                                "I couldn't build the confirmed camera-audio edit."
+                            )
+                        if not handled_speech:
                             # KRI-190/KRI-220: one montage plan, always. The guided plan
                             # format renders per-clip text, honours reading time and has
                             # a phone editor. No flag: every non-voiceover montage.
@@ -2428,6 +2468,23 @@ def _run_generative_job_impl(
 
         ensure_job_snapshot(db, job, source="generative_worker")
         assembly = dict(job.assembly_plan or {})
+        # Current cloud compilers can provide receipt evidence for duration,
+        # narration, and source-audio presence, but not literal text, source
+        # identities, or exact clip order. Decline those confirmed requirements
+        # before any ingest/model/render spend; publication rechecks too.
+        from app.services.cloud_render_contract import (  # noqa: PLC0415
+            CloudRenderContractError,
+            preflight_cloud_contract,
+        )
+
+        try:
+            preflight_cloud_contract(assembly, candidates=candidates)
+        except CloudRenderContractError as exc:
+            job.status = "processing_failed"
+            job.error_detail = str(exc)[:MAX_ERROR_DETAIL_LEN]
+            job.failure_reason = "creator_render_contract_unsupported"
+            db.commit()
+            return
         creator_direction_typed_overrides = _pinned_creator_direction_typed_overrides(assembly)
         creator_direction_prompt = str(
             (assembly.get("_creator_direction_snapshot_v1") or {}).get("prompt_block") or ""
@@ -2505,7 +2562,11 @@ def _run_generative_job_impl(
         raw_target_duration_s = raw_creator_strategy.get("target_duration_s")
         creator_target_duration_s = (
             float(raw_target_duration_s)
-            if raw_target_duration_s is not None and float(raw_target_duration_s) != 24
+            if raw_target_duration_s is not None
+            and (
+                raw_creator_strategy.get("target_duration_requested") is True
+                or float(raw_target_duration_s) != 24
+            )
             else None
         )
         creator_video_reuse_policy = raw_creator_strategy.get("video_reuse_policy")
@@ -17081,6 +17142,45 @@ def _stage_required_speech_result(
     ).accepted
 
 
+def _reject_unverified_cloud_variant(
+    assembly: dict[str, Any], result: dict[str, Any], *, candidates: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Turn an unproven new playable output into a visible failed result.
+
+    This is called while the Job row is locked at every cloud publication
+    boundary.  Existing fields are left to the caller's merge policy, so an
+    editor's last-good playable artifact is never overwritten by a rejected
+    replacement.
+    """
+
+    if not (
+        result.get("render_status") == "ready"
+        and (result.get("video_path") or result.get("output_url"))
+    ):
+        return result
+    from app.services.cloud_render_contract import (  # noqa: PLC0415
+        CloudRenderContractError,
+        verify_cloud_variant,
+    )
+
+    try:
+        verify_cloud_variant(assembly, result, candidates=candidates)
+    except CloudRenderContractError as exc:
+        blocked = {
+            key: value
+            for key, value in result.items()
+            if key not in set(_PENDING_VARIANT_ASSET_FIELDS)
+        }
+        return {
+            **blocked,
+            "ok": False,
+            "render_status": "failed",
+            "error": str(exc),
+            "error_class": "creator_render_contract_unverified",
+        }
+    return result
+
+
 def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> bool:
     """Insert or replace `result` in Job.assembly_plan['variants'] by variant_id.
 
@@ -17116,6 +17216,9 @@ def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> bool:
             )
             return False
         plan = copy.deepcopy(job.assembly_plan or {})
+        result = _reject_unverified_cloud_variant(
+            plan, result, candidates=getattr(job, "all_candidates", None) or {}
+        )
         variants = list(plan.get("variants") or [])
         for i, v in enumerate(variants):
             if v.get("variant_id") == variant_id:
@@ -17132,6 +17235,10 @@ def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> bool:
                         },
                         **result,
                     }
+                if result.get("error_class") == "creator_render_contract_unverified":
+                    for field in _PENDING_VARIANT_ASSET_FIELDS:
+                        if field in previous_variant:
+                            result.setdefault(field, previous_variant[field])
                 variants[i] = result
                 break
         else:
@@ -17343,6 +17450,39 @@ def _update_variant_entry(
                     **v,
                     **{k: val for k, val in patch.items() if k != "variant_id"},
                 }
+                # A replacement output may be a minimal patch: inherit its
+                # status/ok from the live row only after verifying the merged
+                # candidate. Never let an old receipt or duration prove a new
+                # artifact; fresh output needs fresh evidence in this patch.
+                is_new_playable = (
+                    bool(patch.get("video_path") or patch.get("output_url"))
+                    and updated_variant.get("render_status") == "ready"
+                )
+                from app.services.creator_render_contract import (  # noqa: PLC0415
+                    CONTRACT_FIELD,
+                    REQUIREMENT_VERSION_FIELD,
+                )
+
+                contract_bound = bool(
+                    plan.get(CONTRACT_FIELD)
+                    or (getattr(job, "all_candidates", None) or {}).get(REQUIREMENT_VERSION_FIELD)
+                    == 1
+                )
+                if is_new_playable and contract_bound:
+                    if "render_receipt" not in patch:
+                        updated_variant.pop("render_receipt", None)
+                    if "duration_s" not in patch:
+                        updated_variant.pop("duration_s", None)
+                    rejected = _reject_unverified_cloud_variant(
+                        plan, updated_variant, candidates=getattr(job, "all_candidates", None) or {}
+                    )
+                    if rejected.get("error_class") == "creator_render_contract_unverified":
+                        # Keep the last accepted artifact reachable while the
+                        # failed replacement remains visible and retryable.
+                        for field in _PENDING_VARIANT_ASSET_FIELDS:
+                            if field in v:
+                                rejected.setdefault(field, v[field])
+                    updated_variant = rejected
                 variants[i] = updated_variant
                 accepted_variant = updated_variant
                 # Editor saves replace one already-published variant in place.
@@ -30229,6 +30369,38 @@ def _set_status(
                 if _decision_sink is None:
                     raise
                 return _finish(decision)
+        # `_finalize_job` supplies a complete result list directly to this
+        # boundary, bypassing per-variant upsert/update. Reject unverified new
+        # playable artifacts here before the final merge can publish them.
+        if (
+            merge_finalized_variants
+            and isinstance(extra_plan, dict)
+            and isinstance(extra_plan.get("variants"), list)
+        ):
+            checked_variants = [
+                _reject_unverified_cloud_variant(
+                    existing, row, candidates=getattr(job, "all_candidates", None) or {}
+                )
+                if isinstance(row, dict)
+                else row
+                for row in extra_plan["variants"]
+            ]
+            if checked_variants != extra_plan["variants"]:
+                extra_plan = {**extra_plan, "variants": checked_variants}
+                successful = [
+                    row
+                    for row in checked_variants
+                    if isinstance(row, dict) and row.get("ok") is True
+                ]
+                failures = [
+                    row
+                    for row in checked_variants
+                    if isinstance(row, dict) and row.get("ok") is not True
+                ]
+                if successful and failures:
+                    status = "variants_ready_partial"
+                elif failures:
+                    status = "variants_failed"
         job.status = status
         if failure_reason:
             job.failure_reason = failure_reason

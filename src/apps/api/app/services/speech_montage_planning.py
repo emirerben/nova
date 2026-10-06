@@ -170,12 +170,27 @@ def plan_speech_montage(
     run_planner: PlannerRunner,
     load_words: WordLoader,
     target_duration_s: float | None = None,
+    required_source_ids: Sequence[str] = (),
+    speech_required: bool = False,
 ) -> SpeechMontageResolution:
     """See the module docstring. Never raises for planner/transcription trouble."""
     request = (creator_request or "").strip()
+    if speech_required and not request:
+        request = "Use the confirmed camera-audio sources."
     videos = [c for c in candidates if c.kind == "video"]
     claimed = [c for c in videos if c.has_speech]
-    if not speech_montage_possible(request, any_clip_has_speech=bool(claimed)):
+    if required_source_ids:
+        required = set(required_source_ids)
+        # A confirmed source is authoritative even when coarse analysis missed
+        # its speech. Transcription proves it; a different speaker cannot win.
+        claimed = [c for c in videos if c.media_id in required]
+        if {c.media_id for c in claimed} != required or len(claimed) > _MAX_SPEECH_CLIPS:
+            return SpeechMontageResolution(
+                "needs_creator", question="I can't use all of your confirmed audio sources."
+            )
+    if not speech_required and not speech_montage_possible(
+        request, any_clip_has_speech=bool(claimed)
+    ):
         return SpeechMontageResolution("not_requested")
 
     # Word timings for each clip that claims speech. A clip whose transcript is
@@ -195,6 +210,8 @@ def plan_speech_montage(
     speech.sort(key=lambda c: (not c.to_camera, -spoken_word_count(c.words)))
     speech = speech[:_MAX_SPEECH_CLIPS]
     speech_ids = {c.media_id for c in speech}
+    if required_source_ids and not set(required_source_ids).issubset(speech_ids):
+        return SpeechMontageResolution("needs_creator", question=NO_SPEECH_QUESTION)
     others = [c for c in videos if c.media_id not in speech_ids]
 
     speech_refs = {f"c{i + 1}": c for i, c in enumerate(speech)}
@@ -229,7 +246,7 @@ def plan_speech_montage(
     except Exception as exc:  # noqa: BLE001 - planner trouble is never a render failure by itself
         _reraise_if_timeout(exc)
         log.warning("speech_montage_planner_failed", error=type(exc).__name__)
-        if mentions_speech(request):
+        if speech_required or mentions_speech(request):
             # The creator very likely asked for it; quietly rendering a plain montage
             # would be a silent override.
             return SpeechMontageResolution(
@@ -243,6 +260,13 @@ def plan_speech_montage(
         return SpeechMontageResolution("not_requested")
 
     if not plan.wants_speech_excerpts:
+        if speech_required:
+            return SpeechMontageResolution(
+                "needs_creator",
+                question=(
+                    "I couldn't build the confirmed camera-audio edit. Which passage should play?"
+                ),
+            )
         return SpeechMontageResolution("not_requested")
     if plan.question:
         return SpeechMontageResolution("needs_creator", question=plan.question)
