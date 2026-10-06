@@ -69,6 +69,20 @@ def _request_text(job_id: str, brief: Any, first_message: str) -> str:
     return "\n".join(unique)[:_MAX_REQUEST_CHARS]
 
 
+def _strategy_voice_ids(strategy: Any) -> tuple[str, ...]:
+    """The clips the Creator strategy named as the voice (``montage_audio``)."""
+    audio = strategy.get("montage_audio") if isinstance(strategy, dict) else None
+    if not isinstance(audio, dict) or not audio.get("preserve_source_audio"):
+        return ()
+    return tuple(str(m) for m in audio.get("source_media_ids") or [] if m)
+
+
+def _strategy_target_s(strategy: Any) -> float | None:
+    raw = strategy.get("target_duration_s") if isinstance(strategy, dict) else None
+    ok = isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0
+    return float(raw) if ok else None
+
+
 def run_phone_speech_montage_job(
     job_id: str,
     snapshot: dict,
@@ -178,11 +192,20 @@ def run_phone_speech_montage_job(
                 ),
             )
 
+    strategy = all_candidates.get("creator_strategy")
+    voice_ids = contract.audio_source_ids if contract else _strategy_voice_ids(strategy)
     target = contract.duration_s if contract else None
+    order_by_capture = False
     if contract is None and brief is not None:
         from app.pipeline.unified_montage import brief_view  # noqa: PLC0415
 
-        target = brief_view(brief).target_duration_s
+        view = brief_view(brief)
+        target = view.target_duration_s
+        order_by_capture = view.order_by_capture
+    # Legacy jobs retain the strategy fallback. Contracted jobs only use the
+    # explicit duration bound at approval, never the schema's implicit default.
+    if contract is None:
+        target = target or _strategy_target_s(strategy)
 
     with pipeline_trace_for(job_id):
         resolution = plan_speech_montage(
@@ -193,6 +216,7 @@ def run_phone_speech_montage_job(
             target_duration_s=target,
             required_source_ids=contract.audio_source_ids if contract else (),
             speech_required=speech_required,
+            voice_media_ids=voice_ids,
         )
         # Counts and reasons only: quotes are the creator's private words.
         record_pipeline_event(
@@ -234,21 +258,36 @@ def run_phone_speech_montage_job(
                     quote=section.quote,
                 )
             )
-    speaker_candidates = {c.media_id for c in candidates if c.words and c.to_camera}
-    broll = tuple(
-        binding_by_media[c.media_id]
-        for c in candidates
-        if c.kind == "video" and c.media_id not in speaker_candidates
-    )
+    speaker_candidates = {c.media_id for c in candidates if c.words and (c.to_camera or voice_ids)}
+    broll_ids = [
+        c.media_id for c in candidates if c.kind == "video" and c.media_id not in speaker_candidates
+    ]
+    ordering_basis = None
     if contract and contract.order_required:
-        by_media = {binding.media_id: binding for binding in broll}
         if not contract.order_ids or any(
-            media_id not in by_media for media_id in contract.order_ids
+            media_id not in broll_ids for media_id in contract.order_ids
         ):
             raise SpeechMontageClarification(
                 "I can't prove the confirmed picture order for this audio edit."
             )
-        broll = tuple(by_media[media_id] for media_id in contract.order_ids)
+        broll_ids = list(contract.order_ids)
+        ordering_basis = contract.order_basis
+    elif order_by_capture:
+        from app.services.clip_facts import (  # noqa: PLC0415
+            assignment_facts,
+            capture_time_from_facts,
+            facts_for_prompt,
+            order_by_capture_time,
+        )
+
+        times = {}
+        for path, media_id in ((path_by_media[m], m) for m in broll_ids):
+            moment = capture_time_from_facts(facts_for_prompt(assignment_facts(by_path[path])))
+            if moment is not None:
+                times[media_id] = moment
+        ordered = order_by_capture_time(broll_ids, times)
+        broll_ids, ordering_basis = ordered.ordered_ids, ordered.basis
+    broll = tuple(binding_by_media[m] for m in broll_ids)
     recipe, receipt = compile_phone_speech_montage_plan(
         tuple(sections),
         broll,
@@ -269,6 +308,8 @@ def run_phone_speech_montage_job(
         "planned": resolution.planned_record(),
         "adjustments": [*resolution.adjustments, *receipt.adjustments],
     }
+    if ordering_basis:
+        record["ordering_basis"] = ordering_basis
     if brief is not None and brief.live():
         from app.kria.brief_checks import (  # noqa: PLC0415
             build_receipts,

@@ -708,11 +708,13 @@ def phone_narrated_title_preview_supported() -> bool:
     """Can the requesting app build show a phone `narrated` edit's opening
     title in its editor preview (KRI-455)?
 
-    The title is read-only there (the narrated editor has no text lane), so
-    only builds whose `X-Kria-Client-Protocol` is at least
+    The title may be read-only there (KRI-455, or whenever
+    `phone_narrated_title_edits_supported` is False), so only builds whose
+    `X-Kria-Client-Protocol` is at least
     `phone_narrated_title_preview_min_client_protocol` get it: they keep a
-    `read_only` element out of every editing control. Outside an HTTP request
-    there is no app build to qualify, so the answer is False.
+    `read_only` element out of every editing control and edit an unmarked one.
+    Outside an HTTP request there is no app build to qualify, so the answer is
+    False.
     """
     from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
 
@@ -721,6 +723,37 @@ def phone_narrated_title_preview_supported() -> bool:
         protocol is not None
         and protocol >= settings.phone_narrated_title_preview_min_client_protocol
     )
+
+
+def phone_narrated_title_edits_supported(*, require_client: bool = True) -> bool:
+    """Can a phone-rendered `narrated` edit's opening title be edited and
+    deleted in the editor right now (KRI-465)?
+
+    Consulted by `generative_jobs._with_phone_narrated_title` (whether the title
+    comes out `read_only`), `_clamp_phone_editor_capabilities` (whether
+    `text_elements` opens) and `phone_editor._compile_narrated_editor_commit`
+    (whether a `text_elements` Save recompiles the title or 422s), so the map
+    never advertises an edit Save would refuse.
+
+    True iff ALL of:
+      - `phone_narrated_title_edits_enabled` (this feature's own flag). Not
+        `phone_narrated_title_enabled`: that is the planner's gate, and a title
+        that was already rendered stays editable.
+      - every feature in `PHONE_NARRATED_CAPTION_FEATURES` is verified (the
+        title compiles to the same positioned, animated text layers).
+      - the app-build gate, when ``require_client`` (the default): the request
+        declares a protocol of at least
+        `phone_narrated_title_preview_min_client_protocol`, a build that
+        understands an editable title element. Save and other worker-side
+        callers pass ``False`` and are judged on the server gates alone.
+    """
+    verified = set(settings.phone_render_verified_features)
+    if not (
+        settings.phone_narrated_title_edits_enabled
+        and all(feature in verified for feature in PHONE_NARRATED_CAPTION_FEATURES)
+    ):
+        return False
+    return phone_narrated_title_preview_supported() if require_client else True
 
 
 # Device feature the video-PiP lane needs on top of the overlay lane: the

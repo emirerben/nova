@@ -432,10 +432,12 @@ def plan_facts_from_speech_montage(record: Mapping[str, Any] | None) -> PlanFact
         if isinstance(row, Mapping) and row.get("quote")
     )
     duration = record.get("duration_s")
+    basis = record.get("ordering_basis")
     return PlanFacts(
         duration_s=float(duration) if isinstance(duration, (int, float)) else None,
         speech_sections=sections,
         speech_dropped_quotes=dropped,
+        ordering_basis=str(basis) if basis else None,
     )
 
 

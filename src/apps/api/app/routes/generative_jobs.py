@@ -1453,8 +1453,13 @@ def normalize_editor_deletion_request(
     # generated text and stable IDs synthesized for legacy caption rows.
     baseline_sections = {
         "timeline_slots": baseline_timeline,
-        "text_elements": merge_projected_text_elements_for_variant(
-            variant, include_lyric_projection=_LYRICS_EDITOR_ENABLED
+        # A phone Narrated opening title (KRI-465) is shown by the status route
+        # only, so the baseline adds it like `_variants_for_response` does.
+        "text_elements": _with_phone_narrated_title(
+            variant,
+            merge_projected_text_elements_for_variant(
+                variant, include_lyric_projection=_LYRICS_EDITOR_ENABLED
+            ),
         )
         or [],
         "caption_cues": canonical_caption_rows(variant.get("caption_cues")),
@@ -4870,9 +4875,15 @@ def validate_text_elements_payload(
 
     # Guided stories include generated word captions and labels in this lane.
     # Their read projection and Save must accept the same bounded element set.
+    # A phone Narrated document (KRI-465) sends every text element it shows: the
+    # title, added text and one caption-cue mirror per cue, so a word-style
+    # voiceover alone can pass `_TEXT_ELEMENTS_MAX`.
+    from app.services.phone_editor import is_phone_narrated_editor_variant  # noqa: PLC0415
+
     element_limit = (
         MAX_GUIDED_EDITOR_TEXT_ELEMENTS
         if variant.get("resolved_archetype") == "guided_story"
+        or is_phone_narrated_editor_variant(variant)
         else _TEXT_ELEMENTS_MAX
     )
     if len(elements) > element_limit:
@@ -6716,19 +6727,42 @@ def _phone_narrated_caption_edits_available(variant: dict) -> bool:
     return is_phone_narrated_editor_variant(variant) and phone_narrated_caption_edits_supported()
 
 
+def _phone_narrated_title_edits_available(variant: dict) -> bool:
+    """True when a phone Narrated variant's opening title / added text can be
+    edited and Saved (KRI-465): the variant shape (a `narrated` device render)
+    AND the rollout gate (`phone_narrated_title_edits_supported`, which judges
+    the requesting app build too). The capability clamp and the title's
+    `read_only` marker both read the same gate, so the editor never offers an
+    edit that Save would 422 on.
+    """
+    from app.services.phone_editor import is_phone_narrated_editor_variant  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_narrated_title_edits_supported,
+    )
+
+    return is_phone_narrated_editor_variant(variant) and phone_narrated_title_edits_supported()
+
+
 def _with_phone_narrated_title(
     variant: dict, text_elements: list[dict] | None
 ) -> list[dict] | None:
     """``text_elements`` plus a phone Narrated variant's opening title (KRI-455).
 
     The title lives in the pinned recipe, which the editor preview never reads,
-    so the worker keeps its element in ``narrated_title_text_elements``. It is
-    shown read-only (``source_params.read_only``) and only to app builds that
-    honour that marker (`phone_narrated_title_preview_supported`): the narrated
-    editor has no text lane, so any Save that carried it would 422.
+    so the worker keeps its element in ``narrated_title_text_elements`` (the
+    one store a text Save rewrites too, KRI-465). Only app builds that honour
+    the `read_only` marker (`phone_narrated_title_preview_supported`) get it.
+
+    The read path decides whether it is editable: every row is normalized on
+    the way out, so rows persisted by the KRI-455 worker (they carry
+    ``read_only``) and later ones (they don't) come out alike. Editable
+    (`phone_narrated_title_edits_supported`) drops the marker; otherwise the
+    row is ``read_only``, since no Save lane would carry it. The stored row is
+    never mutated.
     """
     from app.services.phone_editor import is_phone_narrated_editor_variant  # noqa: PLC0415
     from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_narrated_title_edits_supported,
         phone_narrated_title_preview_supported,
     )
 
@@ -6739,12 +6773,22 @@ def _with_phone_narrated_title(
         or not phone_narrated_title_preview_supported()
     ):
         return text_elements
+    editable = phone_narrated_title_edits_supported()
     current = list(text_elements or [])
     ids = {row.get("id") for row in current if isinstance(row, dict)}
-    return [
-        *(row for row in titles if isinstance(row, dict) and row.get("id") not in ids),
-        *current,
-    ] or None
+    shown: list[dict] = []
+    for row in titles:
+        if not isinstance(row, dict) or row.get("id") in ids:
+            continue
+        params = {
+            key: value
+            for key, value in (row.get("source_params") or {}).items()
+            if key != "read_only"
+        }
+        if not editable:
+            params["read_only"] = True
+        shown.append({**row, "source_params": params})
+    return [*shown, *current] or None
 
 
 # The editor sections a phone Talking Save persists onto the variant.
@@ -6775,6 +6819,7 @@ def _clamp_phone_editor_capabilities(
     source_crop: bool = False,
     narrated: bool = False,
     narrated_captions: bool = False,
+    narrated_text: bool = False,
     voiceover_lanes: bool = False,
     voiceover_media: bool = False,
     shape: Any = None,
@@ -6803,6 +6848,11 @@ def _clamp_phone_editor_capabilities(
     ``narrated_captions`` (KRI-280): a narrated device variant with the
     caption-edit rollout on keeps `caption_cues`/`caption_meta`/
     `caption_editor_style` open, exactly like a phone Talking variant.
+
+    ``narrated_text`` (KRI-465): a narrated device variant with the title-edit
+    rollout on keeps `text_elements` open (the opening title and text the creator
+    adds; `replace_narrated_title`), unless the base map already closed it
+    (the global `TEXT_ELEMENTS_ENABLED` kill switch).
     """
     clamped = dict(capabilities)
     # KRI-182 step 1: a subtitled device variant with the editor-lanes rollout
@@ -6857,15 +6907,21 @@ def _clamp_phone_editor_capabilities(
         if "visual_blocks_reason" in clamped:
             clamped["visual_blocks_reason"] = None
     if (subtitled_lanes or narrated) and "text_elements" in clamped:
-        # Neither compiler has an editor text lane: the subtitled one keeps
-        # captions in a separate `caption_cues` section, and the narrated one
-        # (KRI-142) has no guided plan for `prepare_phone_editor_commit` to
-        # swap text into — advertising it open only buys a failed Save. Same
-        # key-preservation rule as the loop above: only touch the `*_reason`
-        # sibling if one exists.
-        clamped["text_elements"] = False
-        if "text_elements_reason" in clamped:
-            clamped["text_elements_reason"] = _PHONE_EDIT_UNSUPPORTED_REASON
+        # The subtitled compiler keeps captions in a separate `caption_cues`
+        # section and has no text lane of its own. The narrated one has no
+        # guided plan to swap text into either (KRI-142), but since KRI-465 it
+        # recompiles the opening title / added text into the pinned recipe's
+        # `title-` layers (`replace_narrated_title`) behind
+        # `phone_narrated_title_edits_supported`; with that off, advertising it
+        # open only buys a failed Save. Same key-preservation rule as the loop
+        # above: only touch the `*_reason` sibling if one exists.
+        if narrated_text and clamped["text_elements"] is True:
+            if "text_elements_reason" in clamped:
+                clamped["text_elements_reason"] = None
+        else:
+            clamped["text_elements"] = False
+            if "text_elements_reason" in clamped:
+                clamped["text_elements_reason"] = _PHONE_EDIT_UNSUPPORTED_REASON
     if "visual_editor_style" in clamped:
         clamped["visual_editor_style"] = False
     # KRI-216: a subtitled device variant with the editor-lanes rollout on can
@@ -6967,6 +7023,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             guided_story=variant.get("resolved_archetype") == "guided_story",
             narrated=variant.get("resolved_archetype") == "narrated",
             narrated_captions=_phone_narrated_caption_edits_available(variant),
+            narrated_text=_phone_narrated_title_edits_available(variant),
             voiceover_lanes=voiceover_lanes,
             voiceover_media=voiceover_media,
             shape=shape,

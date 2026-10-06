@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.117.0] - 2026-10-06
+
+### Changed
+- fix(speech-montage): honour the strategy's voice clip, target length and capture order (#1435) <!-- release-pr: 1435 -->
+
+## [0.78.116.0] - 2026-10-06
+
+### Changed
+- feat(kria): let the creator edit a phone Voiceover edit's title in the iPhone editor (KRI-465) (#1432) <!-- release-pr: 1432 -->
+
+## [0.78.115.0] - 2026-10-06
+
+### Changed
+- fix(song): lip-sync places takes by lyrics, keeps unmatched clips, never fails on no-match (KRI-466) (#1434) <!-- release-pr: 1434 -->
+
 ## [0.78.114.0] - 2026-10-06
 
 ### Changed

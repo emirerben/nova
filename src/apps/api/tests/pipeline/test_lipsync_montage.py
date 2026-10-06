@@ -12,17 +12,21 @@ from app.pipeline.lipsync_montage import (
     plan_lipsync_montage,
     refuse_lipsync_rate_change,
     resync_lipsync_moments,
+    resync_moment_rows,
 )
+from app.pipeline.phone_guided_plan import compile_phone_guided_plan
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
-from app.schemas.user_song import UserSongPlan, UserSongTake
+from app.schemas.user_song import TakeAlignment, UserSongPlan, UserSongTake
 from tests.pipeline.user_song_helpers import (
     SONG_ITEM_ID,
     alignment,
     ambiguous,
     analysis,
+    bindings_for,
     compiled_plan,
     confident,
     photo,
+    song_bed,
     take,
     unmatched,
 )
@@ -185,7 +189,11 @@ def test_ambiguous_and_unmatched_takes_are_never_placed_by_song_time():
     assert set(result.user_song.takes) == {"A"}
     assert [b["media_id"] for b in blocks(result)] == ["A"]
     reasons = {row["media_id"]: row["reason"] for row in result.song_receipt["dropped"]}
-    assert reasons == {"X": "ambiguous_unconfirmed", "U": "unmatched"}
+    assert reasons == {"X": "kept_as_broll", "U": "kept_as_broll"}
+    # Kept as muted B-roll after the sung take, in creator order, never pinned.
+    assert result.song_receipt["kept_broll_ids"] == ["X", "U"]
+    assert [c.media_id for c in result.snapshot.fast_cuts] == ["A", "X", "U"]
+    assert {ref.media_id for ref in result.snapshot.media} == {"A", "X", "U"}
 
 
 def test_uncertain_take_may_serve_as_broll_but_is_not_pinned():
@@ -223,6 +231,9 @@ def test_confirmed_order_does_not_place_an_unmatched_take():
     rows = [confident("A", 10), unmatched("U"), confident("B", 50)]
     result = plan(clips, rows, order=["A", "U", "B"])
     assert "U" not in result.user_song.takes
+    # U is never pinned to song time, but it still plays (muted) in the A->B gap.
+    assert "U" in result.song_receipt["broll_ids"]
+    assert "U" in {ref.media_id for ref in result.snapshot.media}
 
 
 def test_a_take_missing_from_the_confirmed_order_stays_unplaced():
@@ -443,3 +454,162 @@ def test_a_matched_catalog_track_never_lands_beside_a_lipsync_song():
     assert compiled["user_song"]["mode"] == "lipsync"
     assert compiled.get("song_reference") is None
     assert compiled.get("music") is None
+
+
+# ── KRI-466: trimmed takes, kept B-roll, editable unused takes ───────────────
+
+
+def lyric_row(media_id, delta_s, start_s, end_s, method="lyrics"):
+    return TakeAlignment(
+        media_id=media_id,
+        status="confident",
+        delta_s=delta_s,
+        confidence=0.7,
+        method=method,
+        match_start_s=start_s,
+        match_end_s=end_s,
+    )
+
+
+def test_take_is_trimmed_to_its_match_but_the_full_source_is_kept():
+    result = plan([take("A", 30)], [lyric_row("A", 10, 8, 20)])
+    (cut,) = result.snapshot.fast_cuts
+    # song 18-30 -> source 8-20 (block - delta), not the whole 0.3-29.7.
+    assert (cut.source_start_s, cut.source_end_s) == (8.0, 20.0)
+    assert result.user_song.window_start_s == pytest.approx(18.0)
+    assert result.user_song.window_end_s == pytest.approx(30.0)
+    (ref,) = result.snapshot.media
+    assert ref.duration_s == 30  # full clip, so the editor can extend it
+    assert result.snapshot.media_scope == "all"
+
+
+def test_match_range_keeps_the_cover_margins():
+    # Match starts 0.1 s into the take and ends 0.1 s before its end.
+    result = plan([take("A", 20)], [lyric_row("A", 10, 0.1, 19.9)])
+    (cut,) = result.snapshot.fast_cuts
+    assert cut.source_start_s == pytest.approx(0.3)
+    assert cut.source_end_s == pytest.approx(19.7)
+
+
+def test_trimmed_tail_extended_in_the_editor_stays_in_sync():
+    result = plan([take("A", 30)], [lyric_row("A", 10, 8, 20)])
+    footage, visuals = bindings_for(result)
+    guided = compiled_plan(result)
+    recipe = compile_phone_guided_plan(guided, footage, visuals, song=song_bed())
+    assert recipe.duration == pytest.approx(12.0)
+    # The editor drags the tail out by 6 s into the take's own unmatched footage.
+    rows = [m.model_dump() for m in guided.story_timeline]
+    rows[0]["duration_s"] += 6
+    rows[0]["output_end_s"] += 6
+    fixed = resync_moment_rows(rows, result.user_song, source_durations={"A": 30})
+    assert fixed[0]["source_start_s"] == pytest.approx(8.0)
+    assert fixed[0]["source_end_s"] == pytest.approx(26.0)
+    # Past the take's real end it is refused instead of silently desyncing.
+    rows[0]["duration_s"] += 10
+    with pytest.raises(LipsyncSyncError, match="past its end"):
+        resync_moment_rows(rows, result.user_song, source_durations={"A": 30})
+
+
+def test_a_gap_is_closed_with_the_takes_own_footage_before_any_broll():
+    # A is matched 0-12 s of a 25 s take (song 10.3-22), B matched from 3 s into its
+    # take (song 33-45): a 11 s gap, but A has 12.7 s and B 2.7 s of spare footage.
+    clips = [take("A", 25), take("B", 20), take("U", 10)]
+    rows = [lyric_row("A", 10, 0, 12), lyric_row("B", 30, 3, 15), unmatched("U")]
+    result = plan(clips, rows)
+    assert result.song_receipt["bridged_gaps"] == 1
+    assert [c.media_id for c in result.snapshot.fast_cuts[:2]] == ["A", "B"]
+    first, second = result.snapshot.fast_cuts[:2]
+    assert first.source_end_s <= 25 - 0.3 + 1e-6 and second.source_start_s >= 0.3 - 1e-6
+    # No muted B-roll sits between them; U is only kept after the last take.
+    assert result.song_receipt["kept_broll_ids"] == ["U"]
+    assert [c.media_id for c in result.snapshot.fast_cuts] == ["A", "B", "U"]
+    assert_in_sync(result, compiled_plan(result))
+
+
+def test_unplaced_takes_become_short_muted_broll_after_the_last_sung_take():
+    clips = [take("A", 30), take("U1", 20), take("U2", 2.0), take("U3", 20)]
+    rows = [confident("A", 10), unmatched("U1"), unmatched("U2"), unmatched("U3")]
+    result = plan(clips, rows)
+    assert result.song_receipt["kept_broll_ids"] == ["U1", "U2", "U3"]
+    cuts = result.snapshot.fast_cuts
+    assert [c.media_id for c in cuts] == ["A", "U1", "U2", "U3"]
+    assert cuts[1].output_duration_s == pytest.approx(3.0)  # BROLL_HOLD
+    assert cuts[2].output_duration_s == pytest.approx(2.0)  # shorter than the hold
+    assert result.user_song.window_end_s == pytest.approx(39.7 + 3.0 + 2.0 + 3.0)
+    assert set(result.user_song.takes) == {"A"}
+    assert_in_sync(result, compiled_plan(result))
+
+
+def test_kept_broll_never_runs_past_the_song_end():
+    song = analysis(duration_s=40.0)
+    result = plan(
+        [take("A", 30), take("U1", 20), take("U2", 20)],
+        [confident("A", 10), unmatched("U1"), unmatched("U2")],
+        song=song,
+    )
+    # A covers 10.3-39.7: only 0.3 s of song is left, below a B-roll piece.
+    assert result.song_receipt["kept_broll_ids"] == []
+    assert result.user_song.window_end_s <= 40.0
+    # The leftover takes are still editable media.
+    assert {"U1", "U2"} <= {ref.media_id for ref in result.snapshot.media}
+    reasons = {r["media_id"]: r["reason"] for r in result.song_receipt["dropped"]}
+    assert reasons == {"U1": "unmatched", "U2": "unmatched"}
+
+
+def test_kept_broll_stays_inside_the_120_second_cap():
+    song = analysis(duration_s=300.0)
+    clips = [take("A", 119.0), take("U", 20)]
+    result = plan(clips, [confident("A", 10), unmatched("U")], song=song)
+    window = result.user_song.window_end_s - result.user_song.window_start_s
+    assert window <= MAX_PROPOSAL_DURATION_S + 1e-6
+    assert result.snapshot.duration_s <= MAX_PROPOSAL_DURATION_S + 1e-6
+
+
+def test_every_unplaced_take_is_editable_unused_media_and_compiles():
+    clips = [
+        take("A", 30),
+        take("B", 20),
+        take(
+            "C",
+            5,
+        ),
+        take("X", 20),
+    ]
+    # C is contained in A (overlapped); X is ambiguous; both end up in no cut
+    # only if B-roll is not kept, so give the song no room after A.
+    song = analysis(duration_s=40.0)
+    result = plan(
+        clips,
+        [confident("A", 10), confident("B", 16), confident("C", 15), ambiguous("X", 20, 30)],
+        song=song,
+    )
+    cut_ids = {c.media_id for c in result.snapshot.fast_cuts}
+    media_ids = {ref.media_id for ref in result.snapshot.media}
+    assert media_ids == {"A", "B", "C", "X"}
+    unused = media_ids - cut_ids
+    assert "C" in unused
+    assert set(result.clip_ids) == cut_ids  # used media only
+    assert set(result.snapshot.selected_media_ids) == cut_ids
+    assert result.snapshot.media_scope == "selected"
+    # The strict compiler still accepts the plan.
+    compiled = compiled_plan(result)
+    assert {m.media_id for m in compiled.story_timeline} == cut_ids
+
+
+def test_lyric_placed_take_compiles_on_the_song_clock():
+    clips = [take("A", 30), take("B", 30)]
+    rows = [lyric_row("A", 10.0, 2, 14), lyric_row("B", 21.0, 5, 20, method="audio")]
+    result = plan(clips, rows)
+    assert set(result.user_song.takes) == {"A", "B"}
+    compiled = compiled_plan(result)
+    assert_in_sync(result, compiled)
+    footage, visuals = bindings_for(result)
+    recipe = compile_phone_guided_plan(compiled, footage, visuals, song=song_bed())
+    video = next(t for t in recipe.tracks if t.kind == "video")
+    song_plan = result.user_song
+    cut_media = {cut.cut_id: cut.media_id for cut in result.snapshot.fast_cuts}
+    for clip in video.clips:
+        pinned = song_plan.takes[cut_media[clip.id]]
+        assert clip.source_start - clip.timeline_start == pytest.approx(
+            song_plan.window_start_s - pinned.delta_s, abs=0.001
+        )

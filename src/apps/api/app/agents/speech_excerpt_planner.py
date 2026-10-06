@@ -52,6 +52,8 @@ class OtherClipView(BaseModel):
 class SpeechExcerptPlannerInput(BaseModel):
     creator_request: str = Field(min_length=1, max_length=CREATOR_REQUEST_MAX_CHARS)
     target_duration_s: float | None = Field(default=None, gt=0)
+    # The creator's strategy already chose this clip (by ref) as THE voice.
+    voice_clip_ref: str | None = Field(default=None, max_length=20)
     speech_clips: list[SpeechClipView] = Field(default_factory=list, max_length=_MAX_SPEECH_CLIPS)
     other_clips: list[OtherClipView] = Field(default_factory=list, max_length=_MAX_OTHER_CLIPS)
 
@@ -60,7 +62,7 @@ class SpeechExcerptPlannerAgent(Agent[SpeechExcerptPlannerInput, SpeechMontagePl
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.speech_excerpt_planner",
         prompt_id="speech_excerpt_planner",
-        prompt_version="2026-10-03.1",
+        prompt_version="2026-10-06.1",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -101,6 +103,7 @@ class SpeechExcerptPlannerAgent(Agent[SpeechExcerptPlannerInput, SpeechMontagePl
             target_duration_s=(
                 "null" if input.target_duration_s is None else f"{input.target_duration_s:g}"
             ),
+            voice_clip=input.voice_clip_ref or "none",
             speech_clips=json.dumps(
                 [clip.model_dump() for clip in input.speech_clips], ensure_ascii=False
             ),

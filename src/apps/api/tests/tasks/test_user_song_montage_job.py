@@ -9,6 +9,7 @@ analysis / alignment (no network, no aligner).
 from __future__ import annotations
 
 import copy
+import sys
 import uuid
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -20,7 +21,7 @@ from app.kria.media_sources import OriginalMediaDescriptor
 from app.kria.render_assets import RenderFingerprint, SongRenderAsset
 from app.pipeline.guided_story import compile_execution_plan
 from app.pipeline.lipsync_montage import lipsync_sync_error_s
-from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
+from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, UserSongPlanDeclined
 from app.schemas.user_song import SongAlignment
 from app.services.device_render import device_status
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
@@ -314,27 +315,76 @@ def _plan_error(harness, **kwargs):
     return str(caught.value), caught.value
 
 
-def test_no_matched_takes_says_how_to_film_them(harness):
-    message, error = _plan_error(
-        harness, sync="lipsync", rows=[unmatched("clip-a"), unmatched("clip-b")]
+def _fallback_plan(job):
+    record = job.assembly_plan["unified_montage"]
+    return record["user_song"], job.assembly_plan["guided_story_execution_plan"]
+
+
+def test_no_matched_takes_falls_back_to_the_song_as_background(harness):
+    job, _snapshot, _bindings = harness(
+        sync="lipsync", rows=[unmatched("clip-a"), unmatched("clip-b"), unmatched("clip-c")]
     )
-    assert "film each take with the song playing" in message.lower()
-    assert error.capability == "musicBed"
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    receipt, plan = _fallback_plan(job)
+    assert receipt["mode"] == "background"
+    assert receipt["requested_mode"] == "lipsync"
+    assert receipt["fallback_reason"] == "no_synced_takes"
+    assert set(receipt["unmatched_ids"]) == set(CLIPS)
+    assert plan["user_song"]["mode"] == "background"
+    assert {m["media_id"] for m in plan["story_timeline"]} == set(CLIPS)
+    recipe, _clip = _song_clip(job)  # song bed binds, compile + validator accept it
+    assert recipe.audio.original_volume == 0.0
 
 
-def test_a_stale_take_alignment_is_not_trusted(harness):
+def test_a_stale_take_alignment_falls_back_to_background(harness):
     # The alignment was computed for clip proxies that have since been replaced.
     stale = alignment(confident("clip-a", 10), confident("clip-b", 28))
     for row in stale.takes.values():
         row.proxy_generation = 99
-    message, _error = _plan_error(harness, sync="lipsync", song_alignment=stale)
-    assert "couldn't find where any of your clips" in message
+    job, _snapshot, _bindings = harness(sync="lipsync", song_alignment=stale)
+    gb._run_generative_job(str(job.id))
+    assert job.status == "awaiting_device"
+    assert _fallback_plan(job)[0]["fallback_reason"] == "no_synced_takes"
 
 
-def test_alignment_for_another_song_generation_is_refused(harness):
+def test_alignment_for_another_song_generation_falls_back_to_background(harness):
     other = SongAlignment(song_generation=SONG_GENERATION + 1, takes={})
-    message, _error = _plan_error(harness, sync="lipsync", song_alignment=other)
-    assert "couldn't find where any of your clips" in message
+    job, _snapshot, _bindings = harness(sync="lipsync", song_alignment=other)
+    gb._run_generative_job(str(job.id))
+    assert job.status == "awaiting_device"
+    assert _fallback_plan(job)[0]["mode"] == "background"
+
+
+def test_kri466_eight_unmatched_takes_with_a_confirmed_order_still_render(harness, monkeypatch):
+    """Prod replay: 8 takes, none matched, creator confirmed the (empty) order."""
+    ids = tuple(f"clip-{i}" for i in range(8))
+    monkeypatch.setattr(sys.modules[__name__], "CLIPS", ids)
+    job, _snapshot, _bindings = harness(
+        sync="lipsync",
+        rows=[unmatched(m) for m in ids],
+        strategy_extra={
+            "resolved_song_takes": [
+                {
+                    "media_id": m,
+                    "delta_s": None,
+                    "status": "unmatched",
+                    "confirmed_by_creator": True,
+                }
+                for m in ids
+            ]
+        },
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    receipt, plan = _fallback_plan(job)
+    assert receipt["mode"] == "background"
+    assert receipt["fallback_reason"] == "no_synced_takes"
+    assert {m["media_id"] for m in plan["story_timeline"]} == set(ids)
 
 
 def test_a_replaced_song_fails_closed_before_planning(harness):
@@ -349,16 +399,30 @@ def test_an_unreadable_song_names_the_problem(harness):
     assert "couldn't read your song" in message
 
 
-def test_the_dispatcher_maps_a_lipsync_decline_to_phone_plan_unsupported(harness, monkeypatch):
-    job, _snapshot, _bindings = harness(sync="lipsync", rows=[unmatched("clip-a")])
+def test_the_dispatcher_maps_a_song_decline_to_user_song_plan_declined(harness, monkeypatch):
+    stale = analysis().model_copy(update={"generation": SONG_GENERATION + 1})
+    job, _snapshot, _bindings = harness(sync="background", song_analysis=stale)
     fail = Mock(return_value=True)
     monkeypatch.setattr(gb, "_fail_job", fail)
     monkeypatch.setattr(gb, "mark_failed_phase", Mock())
     gb._run_generative_job(str(job.id))
     fail.assert_called_once()
     args, kwargs = fail.call_args
-    assert kwargs["failure_reason"] == "phone_plan_unsupported"
-    assert "couldn't find where any of your clips" in args[1]
+    assert kwargs["failure_reason"] == "user_song_plan_declined"
+    assert "replaced" in args[1]
+
+
+def test_a_failed_background_fallback_declines_with_the_no_synced_takes_copy(harness, monkeypatch):
+    job, snapshot, _bindings = harness(sync="lipsync", rows=[unmatched("clip-a")])
+    monkeypatch.setattr(
+        "app.pipeline.unified_montage.plan_unified_montage",
+        Mock(side_effect=ValueError("boom")),
+    )
+    with pytest.raises(UserSongPlanDeclined) as caught:
+        gb._run_phone_unified_montage_job(
+            str(job.id), snapshot, job.all_candidates, ownership_epoch=3
+        )
+    assert "sing along clearly" in str(caught.value)
 
 
 def test_flag_off_after_dispatch_fails_closed_at_compile(harness, monkeypatch):

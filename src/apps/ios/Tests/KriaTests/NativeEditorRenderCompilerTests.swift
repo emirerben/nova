@@ -294,16 +294,29 @@ import KriaMediaEngine
     }
 
     /// The read-only opening title of a phone Voiceover edit, exactly as the
-    /// status route sends it (`phone_narrated_plan.narrated_title_element`).
+    /// status route sends it while `PHONE_NARRATED_TITLE_EDITS_ENABLED=false`
+    /// (KRI-465: the kill-switch shape) (`phone_narrated_plan.narrated_title_element`).
     /// A long title arrives fitted into the top band: smaller, its centre lower
     /// (`narrated_title.narrated_title_placement`).
     static func readOnlyTitle(_ text: String, yFrac: Double = 0.15, size: Double = 120) -> EditorTextElement {
-        EditorTextElement(id: "narrated-title", text: text, startS: 0, endS: 1.6, role: "generative_intro", raw: [
+        narratedTitle(text, yFrac: yFrac, size: size, readOnly: true)
+    }
+
+    /// The same title as the status route sends it once KRI-465 made it
+    /// editable: identical raw, minus `source_params.read_only`.
+    static func editableTitle(_ text: String, yFrac: Double = 0.15, size: Double = 120) -> EditorTextElement {
+        narratedTitle(text, yFrac: yFrac, size: size, readOnly: false)
+    }
+
+    private static func narratedTitle(_ text: String, yFrac: Double, size: Double, readOnly: Bool) -> EditorTextElement {
+        var params: [String: JSONValue] = ["narrated_storyboard": .string("intro")]
+        if readOnly { params["read_only"] = .bool(true) }
+        return EditorTextElement(id: "narrated-title", text: text, startS: 0, endS: 1.6, role: "generative_intro", raw: [
             "id": .string("narrated-title"), "text": .string(text), "start_s": .number(0), "end_s": .number(1.6),
             "role": .string("generative_intro"), "position": .string("custom"), "x_frac": .number(0.5), "y_frac": .number(yFrac),
             "font_family": .string("Playfair Display"), "size_px": .number(size), "size_class": .string("large"),
             "alignment": .string("center"), "effect": .string("fade-in"), "removed": .bool(false), "behind_subject": .bool(false),
-            "source_params": .object(["narrated_storyboard": .string("intro"), "read_only": .bool(true)]),
+            "source_params": .object(params),
         ])
     }
 

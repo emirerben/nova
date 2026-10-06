@@ -181,10 +181,14 @@ struct EditorTextElement: Codable, Equatable, Sendable {
         return params["source"] == .string("caption_cue")
     }
     /// Drawn by the preview, never offered for editing: the server marks text
-    /// it shows but cannot Save back with `source_params.read_only` (KRI-455:
-    /// a phone Voiceover edit's opening title, whose editor has no text lane).
-    /// It stays off the timeline, out of the Text list and out of every
-    /// mutation, so the `text_elements` section never goes dirty because of it.
+    /// it shows but cannot Save back with `source_params.read_only`. Since
+    /// KRI-465 that is the server's kill-switch shape for a phone Voiceover
+    /// edit's opening title (`PHONE_NARRATED_TITLE_EDITS_ENABLED=false`, and
+    /// what builds below client protocol 4 never see). With the switch on the
+    /// title carries no `read_only` and rides the ordinary text paths like any
+    /// other `text_elements` row. A read-only element stays off the timeline,
+    /// out of the Text list and out of every mutation, so the `text_elements`
+    /// section never goes dirty because of it.
     var isReadOnly: Bool {
         guard case .object(let params) = raw["source_params"] else { return false }
         return params["read_only"] == .bool(true)

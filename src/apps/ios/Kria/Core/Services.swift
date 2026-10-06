@@ -848,6 +848,9 @@ struct RecipeClip: Codable, Sendable, Identifiable { let id: String; let sourceA
 private enum KriaClientProtocolContract {
     /// 4 (KRI-455): keeps a `read_only` text element out of every editing control,
     /// so the server may show a phone Voiceover edit's title in the preview.
+    /// KRI-465 needed no bump: the server sends that title without `read_only`
+    /// (editable through the ordinary text paths) to the same protocol-4 builds,
+    /// and `read_only` remains its kill-switch shape.
     static let version = 4
     static let header = "X-Kria-Client-Protocol"
 }

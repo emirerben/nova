@@ -413,3 +413,67 @@ def test_parse_not_wanted_and_question_shapes() -> None:
     assert _parse({"wants_speech_excerpts": False, "sections": []}).wants_speech_excerpts is False
     ask = _parse({"wants_speech_excerpts": True, "sections": [], "question": "Whose words?"})
     assert ask.question == "Whose words?" and not ask.sections
+
+
+# ── The strategy's chosen voice clip is the only speaker ──────────────
+
+
+def test_designated_voice_clip_is_the_only_speech_source_the_planner_sees() -> None:
+    long_talk, long_words = _speaker("talk")
+    short_talk, _ = _speaker("hook", text="Can you still afford to have a girlfriend maybe")
+    words = {"talk": long_words, "hook": _words("Can you still afford to have a girlfriend maybe")}
+    stub = _Stub(_plan({"kind": "speech", "clip_ref": "c1", "quote": "never rush a good espresso"}))
+    resolution = plan_speech_montage(
+        creator_request="Use the voice from the talk to camera video",
+        candidates=[short_talk, long_talk, *_others(2)],
+        run_planner=stub,
+        load_words=lambda c: (words[c.media_id], "en"),
+        target_duration_s=30,
+        voice_media_ids=["talk"],
+    )
+    assert resolution.status == "ready"
+    seen = stub.seen[0]
+    assert [c.ref for c in seen.speech_clips] == ["c1"] and seen.voice_clip_ref == "c1"
+    assert [s.media_id for s in resolution.sections if s.kind == "speech"] == ["talk"]
+    # The other speaker is plain footage now.
+    assert len(seen.other_clips) == 3
+
+
+def test_unusable_designated_voice_falls_back_to_the_normal_choice() -> None:
+    thin, _ = _speaker("talk")
+    real, real_words = _speaker("hook")
+    stub = _Stub(_plan({"kind": "speech", "clip_ref": "c1", "quote": "never rush a good espresso"}))
+    resolution = plan_speech_montage(
+        creator_request="Use the voice from the talk to camera video",
+        candidates=[thin, real, *_others(1)],
+        run_planner=stub,
+        load_words=lambda c: ([], "en") if c.media_id == "talk" else (real_words, "en"),
+        voice_media_ids=["talk"],
+    )
+    assert resolution.status == "ready" and stub.seen[0].voice_clip_ref is None
+
+
+def test_voice_pinned_plan_far_under_the_target_is_reported() -> None:
+    talk, words = _speaker("talk")
+    stub = _Stub(_plan({"kind": "speech", "clip_ref": "c1", "quote": "never rush a good espresso"}))
+    resolution = plan_speech_montage(
+        creator_request="Use my voice over the clips",
+        candidates=[talk, *_others(2)],
+        run_planner=stub,
+        load_words=lambda _c: (words, "en"),
+        target_duration_s=30,
+        voice_media_ids=["talk"],
+    )
+    assert any("shorter than the ~30s" in a for a in resolution.adjustments)
+
+
+def test_no_voice_ids_keeps_the_old_input_shape() -> None:
+    talk, words = _speaker("talk")
+    stub = _Stub(_plan({"kind": "speech", "clip_ref": "c1", "quote": "never rush a good espresso"}))
+    plan_speech_montage(
+        creator_request="Play my espresso line",
+        candidates=[talk, *_others(1)],
+        run_planner=stub,
+        load_words=lambda _c: (words, "en"),
+    )
+    assert stub.seen[0].voice_clip_ref is None

@@ -807,6 +807,12 @@ PHONE_GATE_MESSAGES: dict[str, tuple[str, str]] = {
 # `guided_story_*` from `_classify_error`) still gets a real sentence instead
 # of silently falling through to nothing.
 JOB_FAILURE_MESSAGES: dict[str, str] = {
+    # KRI-466: the creator's song could not be lined up; `error_detail` carries the
+    # specific, actionable copy (see CREATOR_FACING_DETAIL_CODES).
+    "user_song_plan_declined": (
+        "I couldn't line your clips up with your song. Film with the song playing out "
+        "loud, or sing along clearly, then try again."
+    ),
     "phone_plan_unsupported": (
         "This edit uses something your iPhone can't render yet. Start a new edit "
         "with a different clip or format."
@@ -869,6 +875,22 @@ _DEFAULT_JOB_FAILURE_MESSAGE = (
     "Something went wrong and this render didn't finish. Your direction and "
     "footage are still saved — try again."
 )
+
+
+# Failure codes whose `Job.error_detail` is written for the creator (not a stack
+# trace), so chat/route surfaces show it instead of the generic sentence.
+CREATOR_FACING_DETAIL_CODES = {"user_song_plan_declined"}
+_CREATOR_DETAIL_MAX_CHARS = 500
+
+
+def job_failure_message(failure_reason: str | None, detail: str | None = None) -> str | None:
+    """`humanize_job_failure_reason`, preferring creator-facing `error_detail` for the
+    codes in `CREATOR_FACING_DETAIL_CODES`."""
+    if failure_reason in CREATOR_FACING_DETAIL_CODES and isinstance(detail, str):
+        trimmed = detail.strip()[:_CREATOR_DETAIL_MAX_CHARS].strip()
+        if trimmed:
+            return trimmed
+    return humanize_job_failure_reason(failure_reason)
 
 
 def humanize_job_failure_reason(failure_reason: str | None) -> str | None:
