@@ -39,9 +39,9 @@ requirement-breaking fallback. This does not prove that an exported video fulfil
 the request. Model replay, local database tests and simulator checks are reported
 separately from paid live-model and physical-device export evidence.
 
-The source fixes from PR #1404 (`bcd96657`) and #1405 (`36223175`) were still open
-on 2026-10-06. Their code is integrated here without merging either PR. Unlike the
-source alignment PR, this stack defaults `NARRATED_CLIP_ALIGNMENT_ENABLED` to false
+PR #1405 merged as `cf0d99cca` during implementation and is included through
+current main. PR #1404 (`bcd96657`) remains open; its alignment code is integrated
+without merging that PR. Unlike the source alignment PR, this stack defaults `NARRATED_CLIP_ALIGNMENT_ENABLED` to false
 for the reader-first rollout. Enable it separately before testing bound narrated
 requests; while unavailable they request recovery rather than silently bucket clips.
 
