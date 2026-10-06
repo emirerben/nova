@@ -90,9 +90,11 @@ def _brief_digest_for_generation(assembly: dict, generation: str) -> str | None:
 
 
 def _recipe_digest(recipe: Any) -> str:
-    payload = json.dumps(
-        recipe.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
-    ).encode()
+    data = recipe.model_dump(mode="json")
+    # Capabilities are a set: iteration order can change after persistence or
+    # on a different worker. All timeline/track lists remain ordered evidence.
+    data["required_capabilities"] = sorted(recipe.required_capabilities)
+    payload = json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(payload).hexdigest()
 
 

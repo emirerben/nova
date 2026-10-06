@@ -145,3 +145,24 @@ def test_required_camera_audio_rejects_a_source_known_to_have_no_audio() -> None
     )
     with pytest.raises(CreatorRenderContractError, match="camera audio"):
         verify_phone_recipe(contract, recipe, source_audio={"talk": False})
+
+
+def test_recipe_digest_is_stable_across_worker_hash_seeds() -> None:
+    import os
+    import subprocess
+    import sys
+
+    code = (
+        "from tests.services.test_creator_render_contract import _speech_recipe; "
+        "from app.services.device_render import _recipe_digest; "
+        "print(_recipe_digest(_speech_recipe()))"
+    )
+    digests = {
+        subprocess.check_output(
+            [sys.executable, "-c", code],
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            text=True,
+        ).strip()
+        for seed in ("0", "1", "2")
+    }
+    assert len(digests) == 1, "The same approved recipe must survive a different worker process"
