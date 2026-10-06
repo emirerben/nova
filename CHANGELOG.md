@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.116.0] - 2026-10-06
+
+### Changed
+- feat(kria): let the creator edit a phone Voiceover edit's title in the iPhone editor (KRI-465) (#1432) <!-- release-pr: 1432 -->
+
 ## [0.78.115.0] - 2026-10-06
 
 ### Changed
