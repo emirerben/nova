@@ -567,9 +567,11 @@ freezes that look against later preset or default-face changes. Text patches
 that set a named position (Kria chat `patch_text_style`/`patch_text`, the web
 copilot) drop stale `x_frac`/`y_frac` on any row, since the burn ignores them
 for a named position. Known gap: stored Kria draft documents are served as
-stored: a chat draft compiled before this change, and any empty-editor draft
-(its Save copies the variant's stored rows unless it carried the text lane),
-can still hand an editor preset rows until the next render or text Save.
+stored, so a chat draft compiled before this change, or an empty-editor draft
+saved before it, can still hand an editor preset rows until the next render or
+Save. An empty-editor Save re-derives its text through
+`merge_projected_text_elements_for_variant` (`editor_sections`), so drafts saved
+since carry the spelled-out look whether or not the Save carried the text lane.
 Editor round trip, every reader and reburn:
 `tests/routes/test_narrated_storyboard_editor.py`.
 
