@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -223,11 +223,49 @@ async def test_uncertain_take_with_no_fitting_alternate_becomes_broll(monkeypatc
     assert broll["delta_s"] is None and broll["status"] == "unmatched"
 
 
-async def test_failed_song_analysis_asks_instead_of_waiting() -> None:
+async def test_failed_song_analysis_proceeds_without_asking() -> None:
+    # Every take is unmatched: an order question could not place anything.
     db = _Db(_item(None, analysis={"status": "failed"}))
     result = await _gate(db, _manifest("a", "b"), _strategy())
-    assert result.plan is not None and result.plan.song_order_question is not None
-    assert {i.status for i in result.plan.song_order_question.items} == {"unmatched"}
+    assert result.plan is None and result.resolved_takes is None
+
+
+async def test_only_unmatched_takes_ask_nothing_and_proceed() -> None:
+    unmatched = [TakeAlignment(media_id=m, status="unmatched") for m in ("a", "b", "c")]
+    result = await _gate(_Db(_item(_alignment(*unmatched))), _manifest("a", "b", "c"), _strategy())
+    assert result.plan is None and result.resolved_takes is None
+
+
+async def test_confident_plus_unmatched_asks_nothing() -> None:
+    rows = [_conf("a", 5.0), TakeAlignment(media_id="b", status="unmatched")]
+    result = await _gate(_Db(_item(_alignment(*rows))), _manifest("a", "b"), _strategy())
+    assert result.plan is None
+
+
+async def test_mixed_ambiguous_and_unmatched_asks_with_every_take_listed() -> None:
+    rows = [
+        _conf("a", 5.0),
+        _amb("b", 30.0, [(30.0, 0.9), (80.0, 0.8)]),
+        TakeAlignment(media_id="c", status="unmatched"),
+    ]
+    result = await _gate(_Db(_item(_alignment(*rows))), _manifest("a", "b", "c"), _strategy())
+    q = result.plan.song_order_question
+    assert set(q.proposed_order) == {"a", "b", "c"}
+    assert "one of your takes" in result.plan.response
+
+
+async def test_stale_alignment_version_enqueues_one_realignment(monkeypatch) -> None:
+    from app.tasks import user_song
+
+    enqueue = Mock()
+    monkeypatch.setattr(user_song, "enqueue_user_song_alignment", enqueue)
+    monkeypatch.setattr(settings, "song_alignment_turn_deadline_s", 0.05)
+    stale = {**_alignment(_conf("a", 1.0)), "version": 1}
+    db = _Db(_item(stale, analysis={"status": "ready"}))
+    result = await _gate(db, _manifest("a"), _strategy())
+    assert result.plan is not None and result.plan.turn_value == "recovery"
+    assert db.gets >= 2  # polled repeatedly, yet enqueued once
+    enqueue.assert_called_once_with(ITEM)
 
 
 async def test_selected_media_ids_narrow_the_takes_and_assets_are_not_takes() -> None:

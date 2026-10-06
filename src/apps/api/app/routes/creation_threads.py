@@ -2024,7 +2024,7 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
         render_notes_from_beat_receipt,
         render_notes_from_overlay_receipt,
     )
-    from app.tasks.content_plan_build import humanize_job_failure_reason
+    from app.tasks.content_plan_build import job_failure_message
 
     # Re-signing is authoritative. A storage/signing outage must be visible to
     # the client instead of returning an expired or stale playback URL.
@@ -2063,7 +2063,9 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
         # A sentence, never the raw taxonomy code -- the failure card used to
         # print `failure_reason` itself verbatim (KRI-163). `failure_reason`
         # stays above for admin/debug consumers that still want the code.
-        "failure_message": humanize_job_failure_reason(job.failure_reason),
+        "failure_message": job_failure_message(
+            job.failure_reason, getattr(job, "error_detail", None)
+        ),
         "variants": variants,
         "render_notes": render_notes,
     }
