@@ -1002,9 +1002,9 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.buttons["native-editor-tool-sounds"].tap()
         let row = app.descendants(matching: .any)["native-editor-your-song"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 4))
-        XCTAssertEqual(row.label, "Midnight Drive, Plays 1:48 – 2:03, Background")
+        XCTAssertEqual(row.label, "Midnight Drive, Plays 1:48 – 1:53, Background")
         XCTAssertTrue(app.staticTexts["Midnight Drive"].exists)
-        XCTAssertTrue(app.staticTexts["Plays 1:48 – 2:03"].exists)
+        XCTAssertTrue(app.staticTexts["Plays 1:48 – 1:53"].exists)
         XCTAssertTrue(app.staticTexts["Background"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song-note"].firstMatch.exists)
         XCTAssertGreaterThanOrEqual(row.frame.height, 44)
@@ -1073,7 +1073,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.buttons["native-editor-tool-sounds"].tap()
         let row = app.descendants(matching: .any)["native-editor-your-song"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 4))
-        XCTAssertEqual(row.label, "Midnight Drive, Plays 1:48 – 2:03, Lip-sync · master audio")
+        XCTAssertEqual(row.label, "Midnight Drive, Plays 1:48 – 1:53, Lip-sync · master audio")
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song-volume"].firstMatch.exists)
         XCTAssertTrue(app.buttons["native-editor-your-song-remove"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-your-song-start-locked"].firstMatch.exists)

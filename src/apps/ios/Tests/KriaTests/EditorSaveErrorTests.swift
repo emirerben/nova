@@ -33,8 +33,10 @@ final class EditorSaveErrorTests: XCTestCase {
         let cases: [(String, EditorSaveError, String)] = [
             (#"{"detail":{"code":"user_song_lipsync_locked","reason":"secret internals"}}"#, .userSongLipsyncLocked,
              "Lip-sync keeps the song where you filmed it."),
-            (#"{"detail":{"code":"user_song_window_out_of_range","reason":"That edit runs past the end of your song."}}"#, .userSongWindowOutOfRange,
-             "That start point runs past the end of your song. Slide it earlier."),
+            (#"{"detail":{"code":"user_song_window_out_of_range"}}"#, .userSongWindowOutOfRange(reason: nil),
+             "That start point leaves less than a second of your song. Slide it earlier."),
+            (#"{"detail":{"code":"user_song_window_out_of_range","reason":"Less than a second of song would remain."}}"#,
+             .userSongWindowOutOfRange(reason: "Less than a second of song would remain."), "Less than a second of song would remain."),
             (#"{"detail":{"code":"user_song_unavailable"}}"#, .userSongUnavailable(reason: nil),
              "This edit no longer has a song. Reopen the editor to continue."),
             (#"{"detail":{"code":"user_song_unavailable","reason":"The song was removed."}}"#, .userSongUnavailable(reason: "The song was removed."),

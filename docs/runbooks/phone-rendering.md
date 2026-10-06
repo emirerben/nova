@@ -2218,10 +2218,20 @@ unset so older revisions keep their state hash) and are replayed by
 `_pinned_song_bed`, so no Save resets it.
 
 - **Volume.** 0-1 in both modes (the song track's clip volume).
-- **Start point.** Background only. The window keeps the video's length and slides
-  over the song; a start that puts the end past the song (including a
-  later duration change that pushes an already-set start past it) is `422
-  user_song_window_out_of_range` ("That edit runs past the end of your song."). Cuts are
+- **Start point.** Background only. The song follows the video (KRI-457): the window
+  is always recomputed from the START and the NEW video length
+  (`window_end = min(start + video, song end)`), never from the previous end, so
+  shortening shrinks it and extending grows it again. A background song plays while
+  it has time left and simply STOPS at its end (no start shift, no loop, no error;
+  the phone lane fades out at the clip's real end). `UserSongPlan.window` may
+  therefore be shorter than the video, and the plan validator allows that only for a
+  background song whose window ends at the song's end (everything else keeps
+  window == video). Only a start leaving under `MIN_PLAYABLE_SONG_S` (1.0 s; max
+  start = song duration - 1.0, shared with iOS) is `422 user_song_window_out_of_range`
+  ("That start point leaves less than a second of your song. Slide it earlier.").
+  `variants[].user_song.window_end_s` reports the REAL window. Lip-sync is unchanged:
+  its window is defined by the takes, and a video that outruns it is still refused
+  ("That edit runs past the end of your song."). Cuts are
   KEPT: they are not re-snapped to the new window's beats, so a moved start can
   land cuts off the beat (quality loss only, no re-plan). Lip-sync is locked (each
   take's source offset depends on the start): a moved start is `422

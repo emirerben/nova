@@ -46,18 +46,25 @@ struct NativeUserSong: Equatable, Sendable {
         self.volume = raw["volume"]?.numberValue.flatMap { $0.isFinite && $0 >= 0 && $0 <= 1 ? $0 : nil } ?? 1
     }
 
-    /// Length of the played window; it equals the video length the server last rendered.
+    /// Length of the played window as the server last saved it.
     var windowLengthS: Double { windowEndS - windowStartS }
 
-    /// The song as the editor currently shows it: the server's values with the
-    /// user's unsaved volume / start applied. Nil once the user removed it.
-    func applying(_ edit: EditorUserSongState?) -> NativeUserSong? {
-        guard let edit else { return self }
-        if edit.removed { return nil }
-        let start = edit.windowStartS ?? windowStartS
+    /// Fewest seconds of song a start may leave (KRI-457). The song plays while it has time left, so a
+    /// start can sit anywhere up to `durationS - minPlayableS`.
+    static let minPlayableS = 1.0
+
+    /// The song as the editor currently shows it: the server's values with the user's unsaved volume /
+    /// start applied. Nil once the user removed it. With `videoLength` the window follows the video as it
+    /// is NOW (extended, trimmed): it ends where the video ends or the song does, whichever comes first.
+    func applying(_ edit: EditorUserSongState?, videoLength: Double? = nil) -> NativeUserSong? {
+        if edit?.removed == true { return nil }
+        guard edit != nil || videoLength != nil else { return self }
+        let start = edit?.windowStartS ?? windowStartS
+        var end = start + (videoLength ?? windowLengthS)
+        if let durationS { end = min(end, durationS) }
         return NativeUserSong(title: title, mode: mode, durationS: durationS,
-                              windowStartS: start, windowEndS: start + windowLengthS,
-                              volume: edit.volume ?? volume)
+                              windowStartS: start, windowEndS: max(end, start),
+                              volume: edit?.volume ?? volume)
     }
 }
 
@@ -105,6 +112,7 @@ struct NativeEditorYourSong: Equatable, Sendable {
 
     static let fallbackTitle = "Your song"
     static let helperCopy = "This is the song you added. Camera audio is muted so it plays alone."
+    static let songEndsEarlyCopy = "Song ends before the video does."
     static let lipSyncLockCopy = "Lip-sync keeps the song where you filmed it."
     static let removedHelperCopy = "Song removed. Your camera audio plays instead."
 
@@ -146,11 +154,13 @@ struct NativeEditorYourSongControls: Equatable, Sendable {
     let volume: Double
     /// Seconds into the song file where playback starts.
     let startS: Double
-    /// How much of the song plays: the current video length.
+    /// How much of the song plays: the video length, or what is left of the song when that is shorter.
     let windowLengthS: Double
     let songDurationS: Double?
-    /// The latest start that still lets the song cover the video; nil when the song length is unknown.
+    /// The latest start that still leaves `NativeUserSong.minPlayableS` of song; nil when the song length is unknown.
     let maxStartS: Double?
+    /// The video is longer than what is left of the song, so the song stops first.
+    var songEndsBeforeVideo = false
     let canEditVolume: Bool
     let canEditStart: Bool
     let canRemove: Bool

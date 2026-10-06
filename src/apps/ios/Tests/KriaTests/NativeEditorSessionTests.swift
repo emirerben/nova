@@ -165,7 +165,7 @@ final class NativeEditorSessionTests: XCTestCase {
             "duration_s": .number(214), "window_start_s": .number(108), "window_end_s": .number(123)])
         let (current, _) = await session(variant: authoritative)
         await current.prepareFixtureSourcePreview(url: sourceURL)
-        XCTAssertEqual(current.yourSong, NativeEditorYourSong(title: "Midnight Drive", window: "Plays 1:48 – 2:03",
+        XCTAssertEqual(current.yourSong, NativeEditorYourSong(title: "Midnight Drive", window: "Plays 1:48 – 1:50",
                                                               mode: "Lip-sync · master audio"))
     }
 
@@ -199,9 +199,9 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(edited.sourceStart, 1.5, accuracy: 0.001, "preview plays from the new start")
         XCTAssertEqual(try cameraLevels(session), [0], "camera stays muted while the song plays")
 
-        // The start never runs the song short of the video: it is clamped to song length - video length.
+        // The start may go anywhere that leaves a second of song (the song stops early rather than the start being held back).
         session.setUserSongStart(10_000)
-        XCTAssertEqual(session.document.userSong?.windowStartS ?? 0, 200 - session.duration - NativeEditorSession.userSongStartMargin, accuracy: 0.001)
+        XCTAssertEqual(session.document.userSong?.windowStartS ?? 0, 200 - NativeUserSong.minPlayableS, accuracy: 0.001)
         session.setUserSongStart(1.5)
         // Dragging back to the saved values is no change.
         session.setUserSongVolume(1)
@@ -270,38 +270,77 @@ final class NativeEditorSessionTests: XCTestCase {
             revisionNumber: 2, revisionHash: "h", expectedDuration: nil)
     }
 
-    /// The server bounds the start by the video length it re-times onto a 1/30s clock, so a start dragged to the far
-    /// right of a song with non-round lengths must still leave at least that margin.
-    func testStartDraggedToTheFarRightStaysInsideTheServersBound() async throws {
+    /// KRI-457: the start may go up to songDuration - 1s, whatever the video length; the window shrinks to what is left.
+    func testStartBoundLeavesOneSecondOfSongNotTheVideoLength() async throws {
         let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps,
                                                             songDuration: 214, videoDuration: 14.347)
         XCTAssertEqual(session.duration, 14.347, accuracy: 0.001)
-        for far in [10_000.0, 214 - 14.347, 214 - 14.347 - 0.0451, 199.6549999] {
+        for far in [10_000.0, 214, 213.4] {
             session.setUserSongStart(far)
             let start = try XCTUnwrap(session.document.userSong?.windowStartS)
-            XCTAssertLessThanOrEqual(start, 214 - 14.347 - 0.033, "\(far)")
-            XCTAssertGreaterThanOrEqual(start, 0)
+            XCTAssertLessThanOrEqual(start, 214 - 1.0 + 0.0001, "\(far)")
         }
+        session.setUserSongStart(10_000)
+        XCTAssertEqual(session.document.userSong?.windowStartS ?? 0, 213, accuracy: 0.001)
+        XCTAssertEqual(session.yourSongControls?.maxStartS ?? 0, 213, accuracy: 0.001)
+        let controls = try XCTUnwrap(session.yourSongControls)
+        XCTAssertEqual(controls.windowLengthS, 1, accuracy: 0.001, "the window shrinks to the song that is left")
+        XCTAssertTrue(controls.songEndsBeforeVideo)
+        XCTAssertEqual(session.yourSong?.window, "Plays 3:33 – 3:34", "the label ends where the song ends, not where the video would")
         fake.commitResponse = okResponse("generation-2")
         await session.save()
-        let sent = try XCTUnwrap(fake.lastRequest?.userSong?.windowStartS)
-        XCTAssertLessThanOrEqual(sent, 214 - 14.347)
-        let retimed = (14.347 * 30).rounded(.up) / 30   // the server's 1/30s frame clock
-        XCTAssertLessThanOrEqual(sent + retimed, 214 + 0.001, "even after the server re-times the video up to the next frame")
+        XCTAssertEqual(try XCTUnwrap(fake.lastRequest?.userSong?.windowStartS), 213, accuracy: 0.001)
+
+        // A start that leaves room for the whole video keeps a full-length window and no note.
+        session.setUserSongStart(100)
+        let roomy = try XCTUnwrap(session.yourSongControls)
+        XCTAssertEqual(roomy.windowLengthS, 14.347, accuracy: 0.001)
+        XCTAssertFalse(roomy.songEndsBeforeVideo)
+        XCTAssertEqual(session.yourSong?.window, "Plays 1:40 – 1:54")
     }
 
-    /// A start set earlier is re-clamped when the video later grows, so Save never sends one the server rejects.
-    func testPendingStartIsReclampedWhenTheVideoGrows() async throws {
+    /// The song follows the video as it changes, with no Save: the label's end tracks the video, and a pending
+    /// start is held to the same one-second bound (it no longer moves with the video length).
+    func testSongWindowFollowsTheVideoAndPendingStartKeepsTheSameBound() async throws {
         let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
         session.setUserSongStart(10_000)
-        XCTAssertEqual(session.document.userSong?.windowStartS ?? 0, 200 - 2 - NativeEditorSession.userSongStartMargin, accuracy: 0.001)
+        XCTAssertEqual(session.document.userSong?.windowStartS ?? 0, 200 - NativeUserSong.minPlayableS, accuracy: 0.001)
+        session.setUserSongStart(50)
+        XCTAssertEqual(session.yourSongControls?.windowLengthS ?? 0, 2, accuracy: 0.001)
         session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 3.5)
         XCTAssertEqual(session.duration, 3.5, accuracy: 0.001)
-        XCTAssertEqual(session.yourSongControls?.startS ?? 0, 200 - 3.5 - NativeEditorSession.userSongStartMargin, accuracy: 0.001,
-                       "the controls show the clamped start")
+        XCTAssertEqual(session.yourSongControls?.windowLengthS ?? 0, 3.5, accuracy: 0.001, "extending the video extends the window")
+        XCTAssertEqual(session.yourSongControls?.startS ?? 0, 50, accuracy: 0.001, "and never moves the start")
+        XCTAssertEqual(session.yourSong?.window, "Plays 0:50 – 0:54")
         fake.commitResponse = okResponse("generation-2")
         await session.save()
-        XCTAssertLessThanOrEqual(try XCTUnwrap(fake.lastRequest?.userSong?.windowStartS), 200 - 3.5 - NativeEditorSession.userSongStartMargin + 0.001)
+        XCTAssertEqual(try XCTUnwrap(fake.lastRequest?.userSong?.windowStartS), 50, accuracy: 0.001)
+    }
+
+    /// KRI-457: extending the video recompiles the preview (the in-place volume path needs an identical timeline) and the
+    /// song clip follows the new length with no Save, up to the end of the song file (here 4s, from second 1).
+    func testExtendingTheVideoExtendsThePreviewSongWithoutASave() async throws {
+        let (session, _, sourceURL) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        func songLength() -> Double? { session.displayedSourcePreviewRecipe?.tracks.first { $0.id == "song" }?.clips.first?.sourceDuration }
+        XCTAssertEqual(try XCTUnwrap(songLength()), 2, accuracy: 0.001)
+        let compiles = session.sourcePreviewCompileCount
+        session.setClipTiming(clipID: try XCTUnwrap(session.timelineClips.first?.id), durationS: 3.5)
+        for _ in 0..<100 where session.sourcePreviewCompileCount == compiles { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertGreaterThan(session.sourcePreviewCompileCount, compiles, "a timeline change rebuilds, it is not absorbed as a volume change")
+        XCTAssertEqual(try XCTUnwrap(songLength()), 3, accuracy: 0.001, "the song is as long as the video allows: 4s file from second 1")
+        XCTAssertFalse(session.hasUnsavedChanges && session.document.userSong != nil, "no song edit was needed")
+    }
+
+    /// A video extended near the end of the song plays the song to its end only, and the audition follows.
+    func testAuditionLengthIsWhatIsLeftOfTheSong() async throws {
+        let (session, _, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps, songDuration: 20, videoDuration: 8)
+        session.setUserSongStart(15)
+        let song = try XCTUnwrap(session.effectiveUserSong)
+        XCTAssertEqual(song.windowLengthS, 5, accuracy: 0.001, "min(video 8s, song 20s - start 15s)")
+        session.setUserSongStart(5)
+        XCTAssertEqual(try XCTUnwrap(session.effectiveUserSong).windowLengthS, 8, accuracy: 0.001)
     }
 
     /// An acknowledged removal is never sent again: not by a render retry, and not after a conflict rebase.
@@ -374,9 +413,9 @@ final class NativeEditorSessionTests: XCTestCase {
     func testRejectedSongEditStaysPending() async throws {
         let (session, fake, _) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
         session.setUserSongStart(50)
-        fake.commitThrow = EditorSaveError.userSongWindowOutOfRange
+        fake.commitThrow = EditorSaveError.userSongWindowOutOfRange(reason: nil)
         await session.save()
-        XCTAssertEqual(session.saveState, .failed("That start point runs past the end of your song. Slide it earlier."))
+        XCTAssertEqual(session.saveState, .failed("That start point leaves less than a second of your song. Slide it earlier."))
         XCTAssertTrue(session.hasUnsavedChanges)
         XCTAssertEqual(session.document.userSong, EditorUserSongState(windowStartS: 50))
         // Unavailable on a start edit (not a removal) is not treated as applied either.

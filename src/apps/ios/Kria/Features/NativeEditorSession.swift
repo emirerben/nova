@@ -379,14 +379,14 @@ struct NativeEditorTemporaryVideo {
     /// variant loaded (a refresh of the variant resets the acknowledged edits, see `configureCapabilities`).
     /// The unsaved edits in `document.userSong` are relative to this. Nil once a removal was saved.
     private var savedUserSong: NativeUserSong? { baseUserSong?.applying(acknowledgedUserSong) }
-    /// The latest start that still lets the song cover the video. One frame (1/30s) of margin: every
-    /// server Save re-times the video onto a 1/30s clock, and the server bounds the start with that length.
+    /// The latest start: it must leave `NativeUserSong.minPlayableS` of song. The video no longer bounds it;
+    /// a song that runs out before the video does simply stops.
     private func maxUserSongStart(for song: NativeUserSong) -> Double? {
         guard let songDuration = song.durationS else { return nil }
-        let videoLength = duration > 0 ? duration : song.windowLengthS
-        return max(0, songDuration - videoLength - Self.userSongStartMargin)
+        return max(0, songDuration - NativeUserSong.minPlayableS)
     }
-    static let userSongStartMargin = 0.05
+    /// The video length the song follows right now.
+    private func currentVideoLength(for song: NativeUserSong) -> Double { duration > 0 ? duration : song.windowLengthS }
     /// Acknowledged plus unsaved edits, with a pending start re-clamped to the CURRENT video length
     /// (the video may have grown since the start was set).
     private var effectiveUserSongState: EditorUserSongState? {
@@ -397,7 +397,10 @@ struct NativeEditorTemporaryVideo {
         return state
     }
     /// The song as the editor currently shows it: saved values plus unsaved volume / start edits.
-    var effectiveUserSong: NativeUserSong? { baseUserSong?.applying(effectiveUserSongState) }
+    var effectiveUserSong: NativeUserSong? {
+        guard let base = baseUserSong else { return nil }
+        return base.applying(effectiveUserSongState, videoLength: currentVideoLength(for: base))
+    }
     /// The creator removed the song, saved or not.
     var userSongRemoved: Bool {
         (acknowledgedUserSong?.removed == true || document.userSong?.removed == true)
@@ -458,11 +461,12 @@ struct NativeEditorTemporaryVideo {
     /// The Sounds-tab controls for the song, nil for a server that sends no `user_song`.
     var yourSongControls: NativeEditorYourSongControls? {
         guard !userSongRemoved, let song = effectiveUserSong else { return nil }
-        let videoLength = duration > 0 ? duration : song.windowLengthS
+        let videoLength = currentVideoLength(for: song)
         return NativeEditorYourSongControls(
-            mode: song.mode, volume: song.volume, startS: song.windowStartS, windowLengthS: videoLength,
+            mode: song.mode, volume: song.volume, startS: song.windowStartS, windowLengthS: song.windowLengthS,
             songDurationS: song.durationS,
             maxStartS: baseUserSong.flatMap(maxUserSongStart(for:)),
+            songEndsBeforeVideo: song.windowLengthS < videoLength - 0.001,
             canEditVolume: canEditOperation(["user_song.volume"], section: .userSong),
             canEditStart: song.mode == .background && canEditOperation(["user_song.window"], section: .userSong),
             canRemove: canEditOperation(["user_song.remove"], section: .userSong))
@@ -503,8 +507,8 @@ struct NativeEditorTemporaryVideo {
     func moveSongStart(_ value: Double) {
         setUserSongStart(value)
         guard songAudition.isActive, let song = effectiveUserSong, let url = userSongAudioURL else { return }
-        let length = duration > 0 ? duration : song.windowLengthS
-        songAudition.update(SongAuditionRequest(url: url, start: song.windowStartS, length: length, volume: Float(song.volume)))
+        // The window is what plays: the video length, or what is left of the song when that is shorter.
+        songAudition.update(SongAuditionRequest(url: url, start: song.windowStartS, length: song.windowLengthS, volume: Float(song.volume)))
     }
 
     /// The drag ended: close the undo step, rebuild the preview ONCE at the new start, and let the audition
