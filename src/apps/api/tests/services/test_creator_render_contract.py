@@ -156,11 +156,415 @@ def test_recording_inventory_does_not_override_approved_soundtrack():
     assert contract.require_voiceover is False
 
 
-def test_every_strategy_field_has_an_explicit_accounting_note():
-    from app.agents._schemas.creator_agent import CreativeStrategy
-    from app.services.creator_render_contract import FIELD_ACCOUNTING
+# --- KRI-470 PR-A: field matrix -------------------------------------------------
+#
+# Failure modes the guard must catch (written before the code):
+#   1. a new top-level CreativeStrategy field with no matrix entry;
+#   2. a new NESTED field (inside a list/optional/union-typed sub-model) with no entry;
+#   3. a stale entry for a path the schema no longer has;
+#   4. an entry with an unknown disposition or an empty owner;
+#   5. the schema walk silently skipping nested models behind Optional/list/Annotated.
 
-    assert set(FIELD_ACCOUNTING) == set(CreativeStrategy.model_fields)
+
+def test_every_strategy_path_is_assigned():
+    from app.agents._schemas.creator_agent import CreativeStrategy
+    from app.services.creator_render_contract import FIELD_MATRIX, schema_field_paths
+
+    required = schema_field_paths(CreativeStrategy)
+    assert set(FIELD_MATRIX) == required, (
+        f"unassigned: {sorted(required - set(FIELD_MATRIX))}; "
+        f"stale: {sorted(set(FIELD_MATRIX) - required)}"
+    )
+
+
+def test_schema_walk_reaches_nested_models_behind_optional_list_and_annotated():
+    from app.services.creator_render_contract import schema_field_paths
+
+    paths = schema_field_paths()
+    for expected in (
+        "target_duration_s",
+        "shot_labels[]",
+        "clip_intents[].op",
+        "resolved_clip_intents[].assignments[].media_id",
+        "reaction_beats[].trigger",
+        "closing_media.visual_id",
+        "montage_audio.source_media_ids[]",
+        "mixed_media_timing.image_hold_s",
+        "licensed_sfx.effect_id",
+    ):
+        assert expected in paths
+
+
+def test_a_new_nested_field_would_fail_the_guard():
+    from pydantic import BaseModel, Field
+
+    from app.services.creator_render_contract import FIELD_MATRIX, schema_field_paths
+
+    class Child(BaseModel):
+        old: int = 0
+        brand_new: int = 0
+
+    class Parent(BaseModel):
+        children: list[Child] | None = Field(default=None)
+
+    assert schema_field_paths(Parent) == {"children[]", "children[].old", "children[].brand_new"}
+    assert not set(schema_field_paths(Parent)) <= set(FIELD_MATRIX)
+
+
+def test_matrix_dispositions_are_valid_and_owned():
+    from typing import get_args
+
+    from app.services.creator_render_contract import FIELD_MATRIX, Disposition
+
+    valid = set(get_args(Disposition))
+    for path, rule in FIELD_MATRIX.items():
+        assert rule.disposition in valid, path
+        assert rule.owner.strip(), path
+
+
+def test_only_projected_requirements_are_marked_supported():
+    """`supported` means build_render_contract pins it; accounting is not enforcement."""
+    from app.services.creator_render_contract import FIELD_MATRIX
+
+    assert {p for p, r in FIELD_MATRIX.items() if r.disposition == "supported"} == {
+        "target_duration_s",
+        "target_duration_requested",
+        "audio_strategy",
+        "montage_audio",
+        "montage_audio.preserve_source_audio",
+        "montage_audio.source_media_ids[]",
+        "opening_title",
+        "opening_title_duration_s",
+        "shot_labels[]",
+        "closing_title",
+        "ordering_choice",
+        "selected_media_ids[]",
+    }
+
+
+# --- KRI-470 PR-A: stored-v1 digest compatibility ---------------------------------
+
+# A real stored v1 contract, captured from build_render_contract before any
+# post-v1 field existed. It must keep reading no matter what fields are added.
+STORED_V1_CONTRACT = {
+    "version": 1,
+    "generation_id": "gen-golden",
+    "strategy_digest": "71b386b74b1177a7d3ce243f32c04d4109d64cbd1485481964f3cefd24d8261c",
+    "brief_digest": None,
+    "duration_s": 30.0,
+    "audio_source_ids": ["talk"],
+    "original_audio": "require",
+    "require_voiceover": False,
+    "exact_texts": [
+        {
+            "role": "opening",
+            "text": "Exact title",
+            "media_id": None,
+            "shot_index": None,
+            "duration_s": None,
+        },
+        {
+            "role": "closing",
+            "text": "The end",
+            "media_id": None,
+            "shot_index": None,
+            "duration_s": None,
+        },
+        {"role": "clip", "text": "One", "media_id": None, "shot_index": 0, "duration_s": None},
+        {"role": "clip", "text": "Two", "media_id": None, "shot_index": 1, "duration_s": None},
+    ],
+    "order_ids": ["b", "a"],
+    "order_required": True,
+    "order_basis": "capture_time",
+    "unresolved": [],
+    "digest": "d4873da9b130cd602146440cbc93c52b9c539feddf0ea2111d1638bdcdf8a6e3",
+}
+
+
+def test_stored_v1_contract_still_reads():
+    contract = read_render_contract({CONTRACT_FIELD: dict(STORED_V1_CONTRACT)})
+    assert contract is not None
+    assert contract.digest == STORED_V1_CONTRACT["digest"]
+    assert contract.order_ids == ("b", "a")
+
+
+def test_a_post_v1_defaulted_field_does_not_change_a_stored_v1_digest(monkeypatch):
+    """Throwaway added field: the skip mechanism keeps stored contracts readable."""
+    from app.services import creator_render_contract as module
+
+    class WithNewField(CreatorRenderContract):
+        plan_marker: str | None = None
+
+    monkeypatch.setattr(module, "CreatorRenderContract", WithNewField)
+    monkeypatch.setitem(module._POST_V1_FIELD_DEFAULTS, "plan_marker", None)
+
+    contract = read_render_contract({CONTRACT_FIELD: dict(STORED_V1_CONTRACT)})
+    assert isinstance(contract, WithNewField)
+    assert contract.digest == STORED_V1_CONTRACT["digest"]
+    # A contract written after the field exists and left at its default keeps the
+    # v1 digest; setting it is covered by the integrity digest.
+    assert contract.rebind().digest == STORED_V1_CONTRACT["digest"]
+    marked = contract.rebind(plan_marker="authority-1")
+    assert marked.digest != STORED_V1_CONTRACT["digest"]
+    assert read_render_contract({CONTRACT_FIELD: marked.model_dump(mode="json")}) == marked
+    tampered = {**marked.model_dump(mode="json"), "plan_marker": "other"}
+    with pytest.raises(CreatorRenderContractError, match="changed"):
+        read_render_contract({CONTRACT_FIELD: tampered})
+
+
+def test_without_the_skip_registration_a_new_field_would_break_stored_contracts(monkeypatch):
+    """Guards the guard: an unregistered added field is exactly the in-flight-job break."""
+    from app.services import creator_render_contract as module
+
+    class WithNewField(CreatorRenderContract):
+        plan_marker: str | None = None
+
+    monkeypatch.setattr(module, "CreatorRenderContract", WithNewField)
+    with pytest.raises(CreatorRenderContractError, match="changed"):
+        read_render_contract({CONTRACT_FIELD: dict(STORED_V1_CONTRACT)})
+
+
+# --- KRI-470 PR-A: typed declines through the real entry points ---------------------
+#
+# Failure modes: (a) a verifier refusal loses its reason/field path; (b) the declared
+# adapter table says one reason while the real entry point raises another; (c) an
+# adapter leaves a contract requirement unaccounted for; (d) an untyped error is
+# mistaken for a typed one.
+
+
+def _typed(exc):
+    return exc.value.decline_reason, exc.value.field_path
+
+
+def _phone_cases():
+    """requirement -> (contract changes, recipe mutator or None, expected field path)."""
+
+    def no_text(_recipe):
+        return None
+
+    return {
+        "duration_s": ({"duration_s": 30}, "target_duration_s"),
+        "require_voiceover": ({"require_voiceover": True}, "audio_strategy"),
+        "audio_source_ids": ({"audio_source_ids": ("b0",)}, "montage_audio.source_media_ids[]"),
+        "original_audio": ({"original_audio": "forbid"}, "montage_audio.preserve_source_audio"),
+        "exact_texts": (
+            {"exact_texts": (TextRequirement(role="opening", text="Not on screen"),)},
+            "opening_title",
+        ),
+        "order_required": (
+            {"order_required": True, "order_ids": ("b2", "b1", "b0")},
+            "ordering_choice",
+        ),
+    }
+
+
+@pytest.mark.parametrize("requirement", sorted(_phone_cases()))
+def test_phone_verifier_raises_the_declared_typed_decline(requirement):
+    from app.services.creator_render_contract import PHONE_VERIFIER_DECLINES
+
+    changes, path = _phone_cases()[requirement]
+    contract = CreatorRenderContract(generation_id="g").rebind(**changes)
+    with pytest.raises(CreatorRenderContractError) as exc:
+        verify_phone_recipe(contract, _speech_recipe(), source_audio={"talk": True})
+    assert _typed(exc) == (PHONE_VERIFIER_DECLINES[requirement].reason, path)
+    assert exc.value.alternative
+
+
+@pytest.mark.parametrize(
+    "role,path",
+    [
+        ("opening", "opening_title"),
+        ("closing", "closing_title"),
+        ("clip", "shot_labels[]"),
+        ("any", "brief:text"),
+    ],
+)
+def test_text_declines_name_the_field_the_text_came_from(role, path):
+    contract = CreatorRenderContract(generation_id="g").rebind(
+        exact_texts=(TextRequirement(role=role, text="Not on screen"),)
+    )
+    with pytest.raises(CreatorRenderContractError) as exc:
+        verify_phone_recipe(contract, _speech_recipe())
+    assert _typed(exc) == ("evidence_missing", path)
+
+
+def test_unresolved_requirements_decline_as_a_choice():
+    contract = CreatorRenderContract(generation_id="g").rebind(unresolved=("Pick an order.",))
+    with pytest.raises(CreatorRenderContractError) as exc:
+        verify_phone_recipe(contract, _speech_recipe())
+    assert exc.value.decline_reason == "needs_choice"
+    assert str(exc.value) == "Pick an order."
+
+
+def test_conflicting_confirmed_durations_are_a_requirement_conflict():
+    from app.kria.brief import BriefRequirement, CreativeBrief
+
+    brief = CreativeBrief(
+        requirements=[
+            BriefRequirement(
+                id="r1",
+                kind="timing",
+                scope="whole_video",
+                facts={"duration_s": 15},
+                description="15 seconds",
+            )
+        ]
+    )
+    with pytest.raises(CreatorRenderContractError) as exc:
+        build_render_contract(
+            {"target_duration_s": 30, "target_duration_requested": True},
+            generation_id="g",
+            brief=brief,
+        )
+    assert _typed(exc) == ("requirement_conflict", "target_duration_s")
+
+
+def test_dispatch_gates_are_typed_and_return_the_contract_voice_route():
+    from app.services.creator_render_contract import check_phone_dispatch_contract
+
+    base = CreatorRenderContract(generation_id="g").rebind()
+    assert (
+        check_phone_dispatch_contract(
+            base, snapshot_generation_id="g", has_voiceover_candidate=True
+        )
+        is False
+    ), "a recording's presence never overrides the approved soundtrack"
+    voice = base.rebind(require_voiceover=True)
+    assert check_phone_dispatch_contract(
+        voice, snapshot_generation_id="g", has_voiceover_candidate=True
+    )
+    cases = [
+        (base, {"snapshot_generation_id": "other"}, "requirement_conflict", None),
+        (
+            base.rebind(unresolved=("Pick one.",)),
+            {"snapshot_generation_id": "g"},
+            "needs_choice",
+            None,
+        ),
+        (voice, {"snapshot_generation_id": "g"}, "needs_choice", "audio_strategy"),
+        (
+            voice.rebind(audio_source_ids=("talk",)),
+            {"snapshot_generation_id": "g", "has_voiceover_candidate": True},
+            "requirement_conflict",
+            "montage_audio.source_media_ids[]",
+        ),
+        (
+            base.rebind(audio_source_ids=("talk",)),
+            {"snapshot_generation_id": "g", "user_song": {"gcs_path": "x"}},
+            "requirement_conflict",
+            "montage_audio.source_media_ids[]",
+        ),
+    ]
+    for contract, kwargs, reason, path in cases:
+        kwargs = {"has_voiceover_candidate": False, **kwargs}
+        with pytest.raises(CreatorRenderContractError) as exc:
+            check_phone_dispatch_contract(contract, **kwargs)
+        assert _typed(exc) == (reason, path)
+
+
+def test_untyped_errors_carry_no_decline_payload():
+    from app.services.creator_render_contract import decline_payload
+
+    assert decline_payload(CreatorRenderContractError("plain")) == {}
+    assert decline_payload(ValueError("plain")) == {}
+    assert decline_payload(
+        CreatorRenderContractError("x", decline_reason="needs_choice", field_path="a.b")
+    ) == {"decline_reason": "needs_choice", "field_path": "a.b"}
+
+
+# --- KRI-470 PR-A: adapter declarations --------------------------------------------
+
+
+def test_every_adapter_accounts_for_every_requirement_exactly_once():
+    from app.services.cloud_render_contract import CLOUD_ADAPTER_DECLARATIONS
+    from app.services.creator_render_contract import (
+        ADAPTER_DECLARATIONS,
+        CONTRACT_REQUIREMENTS,
+        AdapterDeclaration,
+        Decline,
+    )
+
+    names = set(ADAPTER_DECLARATIONS) | set(CLOUD_ADAPTER_DECLARATIONS)
+    assert names == {
+        "phone_speech_montage",
+        "phone_guided_unified_montage",
+        "phone_voiceover_montage",
+        "phone_subtitled",
+        "phone_narrated",
+        "cloud_guided_story",
+        "cloud_classic",
+        "cloud_slides",
+    }
+    for declaration in {**ADAPTER_DECLARATIONS, **CLOUD_ADAPTER_DECLARATIONS}.values():
+        assert set(declaration.consumes) | set(declaration.declines) == set(CONTRACT_REQUIREMENTS)
+        assert not set(declaration.consumes) & set(declaration.declines)
+    with pytest.raises(ValueError, match="consumed or declined"):
+        AdapterDeclaration(
+            "partial", frozenset({"duration_s"}), {"unresolved": Decline("needs_choice")}
+        )
+
+
+def test_speech_montage_is_the_adapter_that_consumes_the_audio_contract():
+    from app.services.creator_render_contract import ADAPTER_DECLARATIONS
+
+    speech = ADAPTER_DECLARATIONS["phone_speech_montage"]
+    assert {"duration_s", "audio_source_ids", "original_audio", "order_required"} <= set(
+        speech.consumes
+    )
+    for other in ("phone_guided_unified_montage", "phone_subtitled"):
+        assert "audio_source_ids" not in ADAPTER_DECLARATIONS[other].consumes
+
+
+@pytest.mark.parametrize(
+    "adapter",
+    [
+        "phone_speech_montage",
+        "phone_guided_unified_montage",
+        "phone_voiceover_montage",
+        "phone_subtitled",
+        "phone_narrated",
+    ],
+)
+def test_declared_phone_declines_match_the_real_entry_points(adapter):
+    """Each declared decline fires through verify_phone_recipe or the dispatch gate."""
+    from app.services.creator_render_contract import (
+        ADAPTER_DECLARATIONS,
+        PHONE_VERIFIER_DECLINES,
+        check_phone_dispatch_contract,
+    )
+
+    declaration = ADAPTER_DECLARATIONS[adapter]
+    cases = _phone_cases()
+    for requirement, decline in declaration.declines.items():
+        if requirement == "unresolved":
+            contract = CreatorRenderContract(generation_id="g").rebind(unresolved=("Pick.",))
+            with pytest.raises(CreatorRenderContractError) as exc:
+                verify_phone_recipe(contract, _speech_recipe())
+            assert exc.value.decline_reason == decline.reason
+        elif decline == PHONE_VERIFIER_DECLINES[requirement]:
+            changes, _path = cases[requirement]
+            contract = CreatorRenderContract(generation_id="g").rebind(**changes)
+            with pytest.raises(CreatorRenderContractError) as exc:
+                verify_phone_recipe(contract, _speech_recipe(), source_audio={"talk": True})
+            assert exc.value.decline_reason == decline.reason
+        elif decline.reason == "requirement_conflict":
+            # The voice <-> camera-audio soundtrack conflict is a dispatcher gate.
+            contract = CreatorRenderContract(generation_id="g").rebind(
+                require_voiceover=True, audio_source_ids=("talk",)
+            )
+            with pytest.raises(CreatorRenderContractError) as exc:
+                check_phone_dispatch_contract(
+                    contract, snapshot_generation_id="g", has_voiceover_candidate=True
+                )
+            assert exc.value.decline_reason == decline.reason
+        else:
+            # capability_unavailable (unified montage cannot carry camera-audio
+            # sources) fires in the worker dispatcher: test_unified_montage_dispatch.
+            assert (adapter, requirement, decline.reason) == (
+                "phone_guided_unified_montage",
+                "audio_source_ids",
+                "capability_unavailable",
+            )
 
 
 def test_absent_strategy_and_brief_preserves_legacy() -> None:
