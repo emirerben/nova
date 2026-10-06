@@ -189,16 +189,13 @@ def apply_text_case(text: str, case: str | None) -> str:
 
 # Map from legacy burn-dict effects (which may include richer Skia effects)
 # to the TextElement effect enum.  Anything not listed falls back to "static".
-_BURN_EFFECT_TO_TEXT_ELEMENT: dict[str, str] = {
-    "static": "static",
-    "fade-in": "fade-in",
-    "slide-up": "slide-up",
-    "karaoke-line": "karaoke-line",
-    "staggered-slice": "staggered-slice",
-    "ink-reveal": "ink-reveal",
-    "handwriting": "handwriting",
-    "smooth-type": "smooth-type",
-}
+# Every TextElement effect projects as itself: the Skia renderer draws each one
+# (slide-in and none settle, as in the CSS + iOS previews). Derived rather than
+# hand-listed because the hand-listed map predated pop-in, typewriter,
+# stream-in, bounce, slide-in, ... joining the allowlist, so the read adapter
+# flattened those curated-set intros to static and the next text Save burned
+# them without their entrance. Guard: tests/tasks/test_intro_look_parity.py.
+_BURN_EFFECT_TO_TEXT_ELEMENT: dict[str, str] = {effect: effect for effect in _ALLOWED_EFFECTS}
 
 # Map from burn-dict text_anchor value → TextElement alignment.
 _ANCHOR_TO_ALIGNMENT: dict[str, str] = {
