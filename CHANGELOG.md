@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.111.0] - 2026-10-06
+
+### Changed
+- feat(slides): on-device full-resolution slide export (KRI-463) (#1427) <!-- release-pr: 1427 -->
+
 ## [0.78.110.0] - 2026-10-06
 
 ### Changed
