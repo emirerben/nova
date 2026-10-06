@@ -38,6 +38,13 @@ lock. A retry receives a fresh attempt identity but retains the approved
 authority. An editor revision is a per-variant contract; sibling variants and
 retries must not inherit another variant's edits.
 
+Replacement renders are staged and generation-fenced before they can replace a
+published artifact. A rejected or stale replacement returns `False` to its
+caller and leaves the last-good video and poster reachable. When cloud policy
+blocks an in-place rerender, the terminal write is status-only: it reports
+`ready` only when a last-good artifact still exists (otherwise it reports
+`failed`) and never manufactures a playable state from a failed first render.
+
 The contract marker in `all_candidates` is mandatory for new contracted work.
 If the marker is present but the assembly contract is missing or invalid, the
 job fails closed. Historical jobs without the marker keep the legacy behavior
@@ -84,6 +91,12 @@ checks, publication uses measured duration or renderer-produced narration receip
 Contracts with no objective requirements do not require receipts. A replacement
 cannot reuse its predecessor's receipt or duration as proof of the new file.
 
+The same fail-closed rule applies to fast in-place media passes. Overlay and
+sound-effect mutations decline before overwriting a variant when its contract
+contains objective requirements that the cloud path cannot re-verify. A staged
+output must pass its own generation and receipt checks before publication; stale
+workers return without touching newer work or the last-good artifact.
+
 The final guard is therefore two-dimensional: native export checks still prove
 the file and recipe are internally valid, while the creator contract proves
 that the recipe was the approved one. Either side can refuse publication.
@@ -117,6 +130,17 @@ recipe compiler. It does not claim production replay, iPhone export, native
 pixel inspection, or listening to a rendered artifact. Cloud receipt limits are
 intentional: exact text, camera-audio source identity/preservation, and order
 are declined until the cloud path emits proof that can establish them.
+
+Required speech cleanup also has a private winner stage. The accepted speech
+snapshot and its upload generation are verified before the staged result is
+swapped into the public variant; a missing, stale, or losing attempt cannot
+publish an ordinary montage or overwrite the last-good result.
+
+Text proof is based on rendered layers, not a flat string list. Multiline text
+joins runs by baseline, karaoke lines join word runs with spaces, and every
+required non-whitespace run must be visibly painted. An invisible required word
+is rejected unless an active karaoke highlight supplies the visible proof for
+that word.
 
 The existing `EditRecipeV2` already represents separate voice and picture
 tracks, so a whole-track composer rewrite is deferred. Future fields must be
