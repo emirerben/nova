@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.90.0] - 2026-10-06
+
+### Changed
+- fix(kria): honor a revised ordering request after a denied plan (KRI-458) (#1405) <!-- release-pr: 1405 -->
+
 ## [0.78.89.0] - 2026-10-06
 
 ### Changed
