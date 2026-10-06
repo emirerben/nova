@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.115.0] - 2026-10-06
+
+### Changed
+- fix(song): lip-sync places takes by lyrics, keeps unmatched clips, never fails on no-match (KRI-466) (#1434) <!-- release-pr: 1434 -->
+
 ## [0.78.114.0] - 2026-10-06
 
 ### Changed
