@@ -1671,6 +1671,51 @@ def measure_text_overlay_box(
     }
 
 
+def static_block_height_px(
+    overlay: dict,
+    *,
+    render_canvas: Canvas = PORTRAIT,
+) -> int:
+    """Height of the block a static draw of ``overlay`` lays out, in px.
+
+    Same fit as `_draw_centered_text` (authored lines when ``wrap_lines`` is
+    False, fixed size under ``preserve_font_size``, shrink-to-fit otherwise) and
+    the same `_measure_block` math. A [reveal, hold] intro pair shares it:
+    pop-in/bounce/scale-up only transform the static layout and
+    typewriter/stream-in lay out the full text. The TextElement read adapter
+    and compiler use it to move a top-anchored left intro between the burn's
+    top y and the element's block-center y; see
+    `text_element._top_anchored_block_center`.
+    """
+    text = _overlay_text(overlay)
+    if not text:
+        return 0
+    typeface = _typeface_for_overlay(overlay)
+    initial_size = _resolve_font_size_px(overlay)
+    letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
+    shape_text = bool(overlay.get("shape_text"))
+    if overlay.get("wrap_lines") is False:
+        font, size, lines = _authored_lines(text, typeface, initial_size)
+    else:
+        fit = _wrap_at_fixed_size if overlay.get("preserve_font_size") else _shrink_to_fit
+        font, size, lines = fit(
+            text,
+            typeface,
+            initial_size,
+            _overlay_max_width_px(overlay, render_canvas),
+            letter_spacing_em,
+            shape_text=shape_text,
+        )
+    block = _measure_block(
+        font,
+        lines,
+        line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
+        letter_spacing_px=letter_spacing_em * size,
+        shape_text=shape_text,
+    )
+    return int(block["block_h"])
+
+
 # -- Per-frame drawing -------------------------------------------------------
 
 

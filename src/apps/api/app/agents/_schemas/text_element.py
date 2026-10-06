@@ -43,7 +43,7 @@ from app.agents._schemas.text_animation_phases import TextAnimationPhases
 
 # Dependency-free (dataclasses only), so it is safe at module scope unlike the
 # heavier `app.pipeline.*` builders this module imports lazily inside functions.
-from app.pipeline.canvas import PORTRAIT, canvas_for_orientation
+from app.pipeline.canvas import PORTRAIT, Canvas, canvas_for_orientation
 from app.pipeline.font_aliases import LEGACY_FONT_ALIASES
 
 log = logging.getLogger(__name__)
@@ -189,17 +189,13 @@ def apply_text_case(text: str, case: str | None) -> str:
 
 # Map from legacy burn-dict effects (which may include richer Skia effects)
 # to the TextElement effect enum.  Anything not listed falls back to "static".
-_BURN_EFFECT_TO_TEXT_ELEMENT: dict[str, str] = {
-    "static": "static",
-    "fade-in": "fade-in",
-    "slide-up": "slide-up",
-    "slide-down": "slide-down",
-    "karaoke-line": "karaoke-line",
-    "staggered-slice": "staggered-slice",
-    "ink-reveal": "ink-reveal",
-    "handwriting": "handwriting",
-    "smooth-type": "smooth-type",
-}
+# Every TextElement effect projects as itself: the Skia renderer draws each one
+# (slide-in and none settle, as in the CSS + iOS previews). Derived rather than
+# hand-listed because the hand-listed map predated pop-in, typewriter,
+# stream-in, bounce, slide-in, ... joining the allowlist, so the read adapter
+# flattened those curated-set intros to static and the next text Save burned
+# them without their entrance. Guard: tests/tasks/test_intro_look_parity.py.
+_BURN_EFFECT_TO_TEXT_ELEMENT: dict[str, str] = {effect: effect for effect in _ALLOWED_EFFECTS}
 
 # Map from burn-dict text_anchor value → TextElement alignment.
 _ANCHOR_TO_ALIGNMENT: dict[str, str] = {
@@ -756,12 +752,48 @@ def _burn_dict_position(
     return "middle", None, None
 
 
+# source_params marker: the burn this element was projected from TOP-anchored its
+# block. The element's y_frac is still the block center; the compiler turns it
+# back into that top anchoring (see `build_overlays_from_text_elements`).
+TOP_ANCHORED_BURN_PARAM = "top_anchored_burn"
+
+
+def _top_anchored_block_center(burn_dict: dict, canvas: Canvas) -> tuple[float, float] | None:
+    """(x_frac, y_frac) of the block CENTER for a burn the renderer top-anchors.
+
+    `_resolve_vertical_anchor` top-anchors a left-anchored burn with no
+    `vertical_anchor` at its y (legacy cumulative reveals grow down from it):
+    the curated `word_reveal`/`typewriter`/`ai_answer` intros and any knob or
+    agent `text_anchor="left"` intro. A TextElement's y_frac is the block center
+    (the CSS editor and every authoritative Save compile `vertical_anchor=center`),
+    so projecting the burn's y as-is lifted a saved intro by half its height
+    (~130-150 px at 1080x1920 for a two-line 96 px hook).
+
+    Returns None for any other burn (projection unchanged) and when the block
+    can't be measured (fail-open to the burn's own y).
+    """
+    if burn_dict.get("vertical_anchor") != "top" and burn_dict.get("text_anchor") != "left":
+        return None
+    try:
+        from app.pipeline import text_overlay_skia as skia_text  # noqa: PLC0415
+
+        if skia_text._resolve_vertical_anchor(burn_dict) != "top":
+            return None
+        x_px, top_px = skia_text._resolve_anchor(burn_dict, canvas)
+        block_h = skia_text.static_block_height_px(burn_dict, render_canvas=canvas)
+    except Exception as exc:  # noqa: BLE001 — a read must never fail on measurement
+        log.warning("text_element_adapter_block_measure_failed: %s", exc)
+        return None
+    return x_px / canvas.width, (top_px + block_h / 2.0) / canvas.height
+
+
 def _burn_dict_to_text_element(
     burn_dict: dict,
     *,
     intro_mode: str | None = None,
     intro_layout: str | None = None,
     intro_text_size_px: int | None = None,
+    canvas: Canvas = PORTRAIT,
 ) -> TextElement | None:
     """Convert a single burn dict to a TextElement.
 
@@ -792,6 +824,10 @@ def _burn_dict_to_text_element(
 
     # position
     position, x_frac, y_frac = _burn_dict_position(burn_dict)
+    block_center = _top_anchored_block_center({**burn_dict, "text": text}, canvas)
+    if block_center is not None:
+        position = "custom"
+        x_frac, y_frac = block_center
 
     # font_family: validate against allowlist; use None if unsupported.
     raw_font = burn_dict.get("font_family")
@@ -885,6 +921,8 @@ def _burn_dict_to_text_element(
         "size_class": burn_dict.get("text_size"),
         "text_size_px": intro_text_size_px,
     }
+    if block_center is not None:
+        source_params[TOP_ANCHORED_BURN_PARAM] = True
 
     try:
         return TextElement(
@@ -1167,6 +1205,7 @@ def _element_from_burn_group(
     intro_mode: str | None,
     intro_layout: str | None,
     intro_text_size_px: int | None,
+    canvas: Canvas = PORTRAIT,
 ) -> TextElement | None:
     if not burn_dicts:
         return None
@@ -1181,6 +1220,7 @@ def _element_from_burn_group(
         intro_mode=intro_mode,
         intro_layout=intro_layout,
         intro_text_size_px=intro_text_size_px,
+        canvas=canvas,
     )
     if elem is None:
         return None
@@ -1534,6 +1574,7 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
                     intro_mode="sequence",
                     intro_layout=intro_layout,
                     intro_text_size_px=intro_text_size_px,
+                    canvas=intro_canvas,
                 )
                 if elem is not None:
                     elem.role = "generative_sequence"
@@ -1641,6 +1682,7 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
                 intro_mode=intro_mode or layout,
                 intro_layout=intro_layout,
                 intro_text_size_px=intro_text_size_px,
+                canvas=intro_canvas,
             )
             if elem is not None:
                 grouped.append(elem)
@@ -1656,5 +1698,6 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
         intro_mode=intro_mode or layout,
         intro_layout=intro_layout,
         intro_text_size_px=intro_text_size_px,
+        canvas=intro_canvas,
     )
     return [elem] if elem is not None else []
