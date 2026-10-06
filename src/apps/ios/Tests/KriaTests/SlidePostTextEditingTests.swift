@@ -188,6 +188,30 @@ import XCTest
         XCTAssertNil(editor.textElement(id: "nope"))
     }
 
+    /// The shared Text panel's position steppers read this: a slide text sits
+    /// where the slide draws it (its own presets and edge x), not at the video's.
+    func testPanelAnchorIsWhereTheSlideDrawsTheText() {
+        let session = makeSession()
+        let editor = SlidePostTextEditor(session: session, slideID: slideID)
+        XCTAssertEqual(editor.textAnchor(id: "t1"), CGPoint(x: 0.5, y: 0.82))
+        editor.setTextAlignment(id: "t1", alignment: "left")
+        XCTAssertEqual(editor.textAnchor(id: "t1"), CGPoint(x: 0.08, y: 0.82))
+        XCTAssertNil(editor.textAnchor(id: "nope"))
+    }
+
+    func testMovingOneAxisKeepsTheOtherWhereTheSlideDrawsIt() throws {
+        let session = makeSession()
+        let editor = SlidePostTextEditor(session: session, slideID: slideID)
+        editor.setTextAlignment(id: "t1", alignment: "left")
+
+        editor.moveText(id: "t1", y: 0.5)
+
+        let text = try XCTUnwrap(texts(session).first)
+        XCTAssertEqual(text.position, "custom")
+        XCTAssertEqual(text.xFrac, 0.08)
+        XCTAssertEqual(text.yFrac, 0.5)
+    }
+
     func testTextContentCapsAtOneHundredTwentyUnicodeScalars() {
         let session = makeSession()
         let editor = SlidePostTextEditor(session: session, slideID: slideID)

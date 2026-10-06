@@ -273,6 +273,21 @@ struct EditorClip: Codable, Equatable, Identifiable, Sendable {
 }
 
 struct TextLayer: Codable, Equatable, Identifiable, Sendable { let id: UUID; var content: String; var position: CGPoint; var style: String; var canonicalID: String? = nil }
+
+extension TextLayer {
+    /// A stored text row's placement and face as this projection shows them.
+    /// `persistedSnapshot` writes them back only when a layer differs, so a row
+    /// keeps exactly what the server sent.
+    static func position(of row: [String: JSONValue]) -> CGPoint {
+        var row = row  // legacy `ios_editor.text` rows store "x"/"y"
+        if row["x_frac"] == nil { row["x_frac"] = row["x"] }
+        if row["y_frac"] == nil { row["y_frac"] = row["y"] }
+        return EditorTextElement.anchor(of: row)
+    }
+    static func style(of row: [String: JSONValue]) -> String {
+        EditorTextElement.fontFamily(of: ["font_family": row["font_family"] ?? row["style"] ?? .null])
+    }
+}
 struct CaptionStyle: Codable, Equatable, Sendable { var enabled: Bool; var style: String }
 struct MusicSelection: Codable, Equatable, Sendable {
     var trackID: UUID; var title: String; var start: TimeInterval; var volume: Double
@@ -342,7 +357,17 @@ extension EditorDraft {
         sections["text_elements"] = .array(text.map { layer in
             var value = Self.object(Self.array(sections["text_elements"]).first { (layer.canonicalID != nil && Self.object($0)?["id"]?.stringValue == layer.canonicalID) || Self.uuid(Self.object($0)?["id"]) == layer.id }) ?? [:]
             let totalDuration = clips.map(\.end).max() ?? 0
-            value["id"] = .string(layer.canonicalID ?? layer.id.uuidString); value["text"] = .string(layer.content); value["start_s"] = value["start_s"] ?? .number(0); value["end_s"] = value["end_s"] ?? .number(max(0.1, totalDuration)); value["role"] = value["role"] ?? .string("generative_intro"); value["position"] = value["position"] ?? .string("custom"); value["x_frac"] = .number(layer.position.x); value["y_frac"] = .number(layer.position.y); value["font_family"] = .string(layer.style)
+            // Write placement and face only when the layer changed them. A row
+            // sent without `y_frac`/`font_family` burns at its named preset in
+            // the renderer's default face; inventing either here moved the
+            // preview, and a text Save then changed the burned face.
+            let isNew = value.isEmpty
+            let moved = isNew || TextLayer.position(of: value) != layer.position
+            let restyled = isNew || TextLayer.style(of: value) != layer.style
+            value["id"] = .string(layer.canonicalID ?? layer.id.uuidString); value["text"] = .string(layer.content); value["start_s"] = value["start_s"] ?? .number(0); value["end_s"] = value["end_s"] ?? .number(max(0.1, totalDuration)); value["role"] = value["role"] ?? .string("generative_intro")
+            if moved { value["position"] = .string("custom"); value["x_frac"] = .number(layer.position.x); value["y_frac"] = .number(layer.position.y) }
+            else if value["position"] == nil { value["position"] = .string("custom") }
+            if restyled { value["font_family"] = .string(layer.style) }
             return .object(value)
         })
         sections["captions_enabled"] = .bool(captions.enabled); sections["caption_style"] = .string(captions.style)

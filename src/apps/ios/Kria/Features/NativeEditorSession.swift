@@ -94,7 +94,6 @@ struct NativeEditorTemporaryVideo {
             timelineItemsCache = nil
             timelineClipsCache = nil
             timelineProjectionCache = nil
-            previewTextCache = nil
             // KRI-432: a song volume change on a settled preview is applied to the player, not rebuilt.
             if liveSongVolumeActive, sourcePreviewSettled, let built = previewBuiltDocument,
                Self.differsOnlyBySongVolume(document, built) {
@@ -823,7 +822,6 @@ struct NativeEditorTemporaryVideo {
     private var timelineItemsCache: [NativeEditorTimelineItem]?
     private var timelineClipsCache: [EditorClip]?
     private var timelineProjectionCache: NativeEditorTimelineProjection?
-    private var previewTextCache: [TextLayer]?
     /// The local timeline is optimistic while the rendered variant and its
     /// AVPlayerItem arrive asynchronously. Keep those duration sources
     /// separate so a stale projection cannot hide the rendered tail.
@@ -1343,20 +1341,6 @@ struct NativeEditorTemporaryVideo {
         }
         timelineClipsCache = clips
         return clips
-    }
-
-    /// Text projection used by the preview without serializing the document.
-    var previewTextLayers: [TextLayer] {
-        if let previewTextCache { return previewTextCache }
-        let layers = document.textElements.compactMap { item -> TextLayer? in
-            guard let id = UUID(uuidString: item.id) else { return nil }
-            let x = Self.number(item.raw["x_frac"] ?? item.raw["x"]) ?? 0.5
-            let y = Self.number(item.raw["y_frac"] ?? item.raw["y"]) ?? 0.5
-            let style = item.raw["font_family"]?.stringValue ?? item.raw["style"]?.stringValue ?? "Fraunces"
-            return TextLayer(id: id, content: item.text, position: CGPoint(x: x, y: y), style: style)
-        }
-        previewTextCache = layers
-        return layers
     }
 
     func load(api: any KriaAPIClient, threadID: UUID, variantID: String? = nil, allowPlaybackFallback: Bool = true) async {

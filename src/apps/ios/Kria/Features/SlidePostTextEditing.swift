@@ -143,6 +143,9 @@ extension SlidePostTextElement {
 
     // MARK: NativeTextEditing
     func textElement(id: String) -> EditorTextElement? { texts.first { $0.id == id }?.editorElement }
+    func textAnchor(id: String) -> CGPoint? {
+        texts.first { $0.id == id }.map { SlidePostTextLayout.anchor(for: $0) }.map { CGPoint(x: $0.x, y: $0.y) }
+    }
     func canEdit(_ section: EditorSection) -> Bool { !session.isBusy && session.draft != nil }
     /// Slides have no timeline; the panel hides its timing fields for slides.
     var timelineProjection: NativeEditorTimelineProjection {
