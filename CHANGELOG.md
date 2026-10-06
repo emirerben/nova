@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.89.0] - 2026-10-06
+
+### Changed
+- fix(api): stop 429s on big clip picks (upload-urls/media 30/min -> 240/min) (#1407) <!-- release-pr: 1407 -->
+
 ## [0.78.88.0] - 2026-10-05
 
 ### Changed
