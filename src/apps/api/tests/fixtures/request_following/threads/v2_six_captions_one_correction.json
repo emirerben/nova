@@ -1,0 +1,391 @@
+{
+  "fixture_id": "v2_six_captions_one_correction",
+  "provenance": "authored",
+  "footage": "food_day",
+  "description": "Deterministic v2 cassette: create six distinct captions, then correct one without changing the other five. Compile-only evidence only.",
+  "turns": [
+    {
+      "turn_id": "seed-rendered-edit",
+      "user_message": "Existing editor state",
+      "engine": "recorded",
+      "recorded": {
+        "plan_after": {
+          "clips": [
+            {
+              "clip_id": "F1",
+              "start_s": 0,
+              "end_s": 2
+            },
+            {
+              "clip_id": "F2",
+              "start_s": 2,
+              "end_s": 4
+            },
+            {
+              "clip_id": "F3",
+              "start_s": 4,
+              "end_s": 6
+            },
+            {
+              "clip_id": "F4",
+              "start_s": 6,
+              "end_s": 8
+            },
+            {
+              "clip_id": "F5",
+              "start_s": 8,
+              "end_s": 10
+            },
+            {
+              "clip_id": "F6",
+              "start_s": 10,
+              "end_s": 12
+            }
+          ],
+          "texts": [
+            {
+              "id": "c1",
+              "role": "label",
+              "text": "one",
+              "start_s": 0,
+              "end_s": 2,
+              "clip_id": "F1"
+            },
+            {
+              "id": "c2",
+              "role": "label",
+              "text": "two",
+              "start_s": 2,
+              "end_s": 4,
+              "clip_id": "F2"
+            },
+            {
+              "id": "c3",
+              "role": "label",
+              "text": "three",
+              "start_s": 4,
+              "end_s": 6,
+              "clip_id": "F3"
+            },
+            {
+              "id": "c4",
+              "role": "label",
+              "text": "four",
+              "start_s": 6,
+              "end_s": 8,
+              "clip_id": "F4"
+            },
+            {
+              "id": "c5",
+              "role": "label",
+              "text": "five",
+              "start_s": 8,
+              "end_s": 10,
+              "clip_id": "F5"
+            },
+            {
+              "id": "c6",
+              "role": "label",
+              "text": "six",
+              "start_s": 10,
+              "end_s": 12,
+              "clip_id": "F6"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "turn_id": "six-captions",
+      "user_message": "Caption all six clips with the foods shown.",
+      "engine": "v2_kria",
+      "kria": {
+        "cassette": {
+          "agent_input": {
+            "utterance": "Caption all six clips with the foods shown.",
+            "variant_snapshot": {
+              "slots": [],
+              "text_bars": [
+                {
+                  "id": "c1",
+                  "role": "label",
+                  "text": "one",
+                  "start_s": 0,
+                  "end_s": 2
+                },
+                {
+                  "id": "c2",
+                  "role": "label",
+                  "text": "two",
+                  "start_s": 2,
+                  "end_s": 4
+                },
+                {
+                  "id": "c3",
+                  "role": "label",
+                  "text": "three",
+                  "start_s": 4,
+                  "end_s": 6
+                },
+                {
+                  "id": "c4",
+                  "role": "label",
+                  "text": "four",
+                  "start_s": 6,
+                  "end_s": 8
+                },
+                {
+                  "id": "c5",
+                  "role": "label",
+                  "text": "five",
+                  "start_s": 8,
+                  "end_s": 10
+                },
+                {
+                  "id": "c6",
+                  "role": "label",
+                  "text": "six",
+                  "start_s": 10,
+                  "end_s": 12
+                }
+              ]
+            }
+          },
+          "model_output": {
+            "intent": "edit",
+            "ops": [
+              {
+                "op": "edit_text",
+                "bar_index": 0,
+                "text": "Simit and tea"
+              },
+              {
+                "op": "edit_text",
+                "bar_index": 1,
+                "text": "Turkish coffee"
+              },
+              {
+                "op": "edit_text",
+                "bar_index": 2,
+                "text": "Spice bazaar"
+              },
+              {
+                "op": "edit_text",
+                "bar_index": 3,
+                "text": "Lahmacun"
+              },
+              {
+                "op": "edit_text",
+                "bar_index": 4,
+                "text": "Baklava"
+              },
+              {
+                "op": "edit_text",
+                "bar_index": 5,
+                "text": "Ferry snack"
+              }
+            ],
+            "confidence": 0.99,
+            "reply": "Prepared six food captions.",
+            "suggestions": [],
+            "needs_clarification": false
+          }
+        }
+      }
+    },
+    {
+      "turn_id": "one-correction",
+      "user_message": "The third one is a spice market, not a bazaar. Change only that caption.",
+      "engine": "v2_kria",
+      "kria": {
+        "cassette": {
+          "agent_input": {
+            "utterance": "The third one is a spice market, not a bazaar. Change only that caption.",
+            "variant_snapshot": {
+              "slots": [],
+              "text_bars": [
+                {
+                  "id": "c1",
+                  "role": "label",
+                  "text": "Simit and tea",
+                  "start_s": 0,
+                  "end_s": 2
+                },
+                {
+                  "id": "c2",
+                  "role": "label",
+                  "text": "Turkish coffee",
+                  "start_s": 2,
+                  "end_s": 4
+                },
+                {
+                  "id": "c3",
+                  "role": "label",
+                  "text": "Spice bazaar",
+                  "start_s": 4,
+                  "end_s": 6
+                },
+                {
+                  "id": "c4",
+                  "role": "label",
+                  "text": "Lahmacun",
+                  "start_s": 6,
+                  "end_s": 8
+                },
+                {
+                  "id": "c5",
+                  "role": "label",
+                  "text": "Baklava",
+                  "start_s": 8,
+                  "end_s": 10
+                },
+                {
+                  "id": "c6",
+                  "role": "label",
+                  "text": "Ferry snack",
+                  "start_s": 10,
+                  "end_s": 12
+                }
+              ]
+            }
+          },
+          "model_output": {
+            "intent": "edit",
+            "ops": [
+              {
+                "op": "edit_text",
+                "bar_index": 2,
+                "text": "Spice market"
+              }
+            ],
+            "confidence": 0.99,
+            "reply": "Prepared the third caption correction only.",
+            "suggestions": [],
+            "needs_clarification": false
+          }
+        }
+      }
+    }
+  ],
+  "requirements": [
+    {
+      "id": "six-captions",
+      "kind": "text",
+      "scope": "per_clip",
+      "request_type": "label_exact",
+      "checker": "text_contains",
+      "params": {
+        "scope": "labels",
+        "terms": [
+          "Simit",
+          "coffee",
+          "Spice market",
+          "Lahmacun",
+          "Baklava",
+          "Ferry"
+        ]
+      },
+      "source": "Caption all six clips with the foods shown.",
+      "introduced_in_turn": 1
+    },
+    {
+      "id": "only-third-changed",
+      "kind": "text",
+      "scope": "clip:F3",
+      "request_type": "label_exact",
+      "checker": "label_single_change",
+      "params": {
+        "clip_id": "F3",
+        "text": "Spice market"
+      },
+      "source": "Change only that caption.",
+      "introduced_in_turn": 2
+    }
+  ],
+  "reference": {
+    "plan_after": {
+      "clips": [
+        {
+          "clip_id": "F1",
+          "start_s": 0,
+          "end_s": 2
+        },
+        {
+          "clip_id": "F2",
+          "start_s": 2,
+          "end_s": 4
+        },
+        {
+          "clip_id": "F3",
+          "start_s": 4,
+          "end_s": 6
+        },
+        {
+          "clip_id": "F4",
+          "start_s": 6,
+          "end_s": 8
+        },
+        {
+          "clip_id": "F5",
+          "start_s": 8,
+          "end_s": 10
+        },
+        {
+          "clip_id": "F6",
+          "start_s": 10,
+          "end_s": 12
+        }
+      ],
+      "texts": [
+        {
+          "id": "c1",
+          "role": "label",
+          "text": "Simit and tea",
+          "start_s": 0,
+          "end_s": 2,
+          "clip_id": "F1"
+        },
+        {
+          "id": "c2",
+          "role": "label",
+          "text": "Turkish coffee",
+          "start_s": 2,
+          "end_s": 4,
+          "clip_id": "F2"
+        },
+        {
+          "id": "c3",
+          "role": "label",
+          "text": "Spice market",
+          "start_s": 4,
+          "end_s": 6,
+          "clip_id": "F3"
+        },
+        {
+          "id": "c4",
+          "role": "label",
+          "text": "Lahmacun",
+          "start_s": 6,
+          "end_s": 8,
+          "clip_id": "F4"
+        },
+        {
+          "id": "c5",
+          "role": "label",
+          "text": "Baklava",
+          "start_s": 8,
+          "end_s": 10,
+          "clip_id": "F5"
+        },
+        {
+          "id": "c6",
+          "role": "label",
+          "text": "Ferry snack",
+          "start_s": 10,
+          "end_s": 12,
+          "clip_id": "F6"
+        }
+      ]
+    }
+  }
+}

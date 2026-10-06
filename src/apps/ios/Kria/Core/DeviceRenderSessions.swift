@@ -249,21 +249,23 @@ enum DeviceRenderButtonTitle {
     }
 
     private func observe(_ key: DeviceRenderKey, coordinator: DeviceRenderCoordinator) async {
-        if let saved = await coordinator.snapshot() {
+        let initial = await coordinator.observationSnapshot()
+        guard !Task.isCancelled, requests[key] == initial.receipt?.request else { return }
+        if let saved = initial.receipt {
             var presentation = Self.presentation(saved)
-            presentation.exportProgress = await coordinator.exportProgress()
+            presentation.exportProgress = initial.exportProgress
             presentations[key] = presentation
         }
         guard observations[key] == nil else { return }
         observations[key] = Task { [weak self] in
             while !Task.isCancelled {
-                guard let saved = await coordinator.snapshot(), !Task.isCancelled, let self,
+                let state = await coordinator.observationSnapshot()
+                guard let saved = state.receipt, !Task.isCancelled, let self,
                       self.requests[key] == saved.request else { return }
                 var presentation = Self.presentation(saved)
-                presentation.exportProgress = await coordinator.exportProgress()
+                presentation.exportProgress = state.exportProgress
                 if self.presentations[key] != presentation { self.presentations[key] = presentation }
-                if ![.preparing, .rendering, .syncing].contains(saved.phase), !(await coordinator.isBusy()) {
-                    guard !Task.isCancelled else { return }
+                if ![.preparing, .rendering, .syncing].contains(saved.phase), !state.isBusy {
                     self.observations[key] = nil
                     return
                 }

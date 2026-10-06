@@ -39,7 +39,7 @@ class NarratedClipAlignmentInput(BaseModel):
     words: list[dict] = Field(min_length=1, max_length=600)
     # Current clip order. When ``order_locked`` it is the creator's order.
     clips: list[NarratedAlignmentClip] = Field(min_length=2, max_length=50)
-    creator_request: str = Field(default="", max_length=1000)
+    creator_request: str = Field(default="", max_length=12_000)
     order_locked: bool = False
     language: str = Field(default="", max_length=20)
 
@@ -58,7 +58,7 @@ class NarratedClipAlignmentAgent(Agent[NarratedClipAlignmentInput, NarratedClipA
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.narrated_clip_alignment",
         prompt_id="narrated_clip_alignment",
-        prompt_version="2026-10-05.1",
+        prompt_version="2026-10-06.1",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         timeout_s=45.0,

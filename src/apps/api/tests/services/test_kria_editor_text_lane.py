@@ -14,6 +14,7 @@ import pytest
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_checks import (
     build_receipts,
+    is_judged,
     plan_facts_from_editor_payload,
     reply_from_receipts,
 )
@@ -205,9 +206,27 @@ def test_per_clip_receipt_without_structure_and_missed_literal_is_partial() -> N
     # With no literal there is nothing to judge: no receipt, no failure notice.
     vague = BriefRequirement(id="r2", kind="text", scope="per_clip", description="label clips")
     assert build_receipts([vague], facts) == []
-    # A literal that IS on screen stays met on the structure-less path.
-    ok = plan_facts_from_editor_payload({"text_elements": [{"text": "Zeta"}]})
-    assert build_receipts([requirement], ok)[0].status == "met"
+
+
+def test_per_clip_receipt_without_clip_ownership_stays_unchecked() -> None:
+    requirement = BriefRequirement(
+        id="r1", kind="text", scope="per_clip", literal="Zeta", description="label each clip"
+    )
+    # Seeing the words somewhere cannot prove they label each requested clip.
+    facts = plan_facts_from_editor_payload({"text_elements": [{"text": "Zeta"}]})
+    assert build_receipts([requirement], facts) == []
+    [receipt] = build_receipts([requirement], facts, include_unchecked=True)
+    assert receipt.status == "partial"
+    assert receipt.verification == "unchecked"
+    assert receipt.stage == "understood"
+    assert not is_judged(requirement, receipt)
+    reply = reply_from_receipts(
+        CreativeBrief(version=1, requirements=[requirement]),
+        [receipt],
+        summary="Labeled every clip.",
+    )
+    assert "couldn't verify" in reply.lower()
+    assert "Labeled every clip." not in reply
 
 
 def test_rewrite_replace_edits_inside_matches_and_ignores_the_rest() -> None:

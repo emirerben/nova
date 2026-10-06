@@ -27,7 +27,11 @@ from app.pipeline.talking_head_assembler import (
 
 
 def _meta(clip_id: str, content_type: str = "broll", audio_type: str = "ambient"):
-    return SimpleNamespace(clip_id=clip_id, content_type=content_type, audio_type=audio_type)
+    return SimpleNamespace(
+        clip_id=clip_id,
+        clip_content_type=content_type,
+        clip_audio_type=audio_type,
+    )
 
 
 # ── select_spine ────────────────────────────────────────────────────────────
@@ -67,15 +71,13 @@ def test_select_spine_ignores_metas_without_paths():
     assert sel.broll_clip_ids == []
 
 
-def test_analyzed_clip_meta_content_type_getattr_stays_default(monkeypatch):
-    """KRI-127 guard: ClipMeta now carries the REAL Lane A labels under
-    `clip_content_type`/`clip_audio_type` (analyze_clip threads them from the
-    agent output). This assembler's `_content_type`/`_audio_type` helpers
-    deliberately still getattr the OLD names ("content_type"/"audio_type"),
-    which ClipMeta has never had -- so an analyzed clip must keep resolving to
-    the neutral defaults here, unchanged by the KRI-127 field additions. This
-    pin exists so a future rename/alignment of these attribute names is a
-    conscious decision, not an accidental behavior change to spine selection."""
+def test_analyzed_clip_meta_shared_labels_influence_spine_selection(monkeypatch):
+    """KRI-459: prefixed ClipMeta labels reach the assembler via the shared record.
+
+    ClipMeta uses prefixed names because bare names have dormant readers. The
+    assembler must consume the canonical shared projection rather than silently
+    treating every analyzed clip as neutral b-roll/ambient footage.
+    """
     from types import SimpleNamespace as _NS
 
     from app.pipeline.agents.gemini_analyzer import analyze_clip
@@ -105,10 +107,18 @@ def test_analyzed_clip_meta_content_type_getattr_stays_default(monkeypatch):
     # The real labels landed under the renamed attributes...
     assert meta.clip_content_type == "talking_head"
     assert meta.clip_audio_type == "dialogue"
-    # ...but the assembler's spine-selection helpers still see the defaults,
-    # so select_spine's scoring is byte-identical to before this PR.
-    assert tha._content_type(meta) == "broll"
-    assert tha._audio_type(meta) == "ambient"
+    assert tha._content_type(meta) == "talking_head"
+    assert tha._audio_type(meta) == "dialogue"
+
+    # The labels make this lower-coverage clip win the same near-tie used by
+    # the unit contract above, proving the values affect the real selection.
+    other = _meta("other", "broll", "ambient")
+    selected = select_spine(
+        [meta, other],
+        {meta.clip_id: "spine.mp4", "other": "other.mp4"},
+        coverage_fn=lambda path: {"spine.mp4": 0.4, "other.mp4": 0.6}[path],
+    )
+    assert selected.spine_clip_id == meta.clip_id
 
 
 # ── schedule_broll ──────────────────────────────────────────────────────────

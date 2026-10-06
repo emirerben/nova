@@ -15,7 +15,6 @@ closing shot on a phone Talking edit.
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -479,29 +478,48 @@ def plan_facts_from_editor_payload(
     """
     if not payload:
         return PlanFacts()
+    # Do not walk every payload value: source requests, paths, operation names,
+    # and arbitrary metadata may repeat the creator's literal without placing it
+    # on screen. Only explicit output text lanes count as visible evidence.
     strings: list[str] = []
-
-    def walk(value: Any) -> None:
-        if isinstance(value, str):
-            strings.append(value)
-        elif isinstance(value, Mapping):
-            for item in value.values():
-                walk(item)
-        elif isinstance(value, list):
-            for item in value:
-                walk(item)
-
-    walk(json.loads(json.dumps(payload, default=str)))
     per_clip: dict[str, str] = {}
     title: str | None = None
+
+    def take_text(value: object) -> str | None:
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    raw_title = payload.get("title") if isinstance(payload, Mapping) else None
+    if isinstance(raw_title, Mapping):
+        title = take_text(raw_title.get("text"))
+    else:
+        title = take_text(raw_title)
+    if title:
+        strings.append(title)
+
+    for lane_name in ("text_elements", "bars"):
+        rows = payload.get(lane_name) if isinstance(payload, Mapping) else None
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            text = take_text(row.get("text"))
+            if text is None:
+                continue
+            strings.append(text)
+            clip = row.get("clip_id")
+            if isinstance(clip, str) and clip:
+                per_clip[clip] = text
     for entry in text_diff or ():
         if not isinstance(entry, Mapping) or not isinstance(entry.get("after"), str):
             continue
         clip = entry.get("clip_id")
         if isinstance(clip, str) and clip:
             per_clip[clip] = entry["after"]
+            strings.append(entry["after"])
         elif entry.get("role") == "title":
             title = entry["after"]
+            strings.append(title)
     # The compiler's own change list says the timeline was re-sorted by filming time.
     ordered_by_capture = any(
         str(change).startswith("Order clips by filming time") for change in changes or ()
@@ -529,10 +547,17 @@ def _receipt(
     reason: str | None,
     inferred: Iterable[str] = (),
     labels: Iterable[InferredLabel] = (),
+    *,
+    verification: str | None = None,
+    stage: str | None = None,
 ) -> RequirementReceipt:
+    target_media_ids = [req.scope.split(":", 1)[1]] if req.scope.startswith("clip:") else []
     return RequirementReceipt(
         requirement_id=req.id,
         status=status,  # type: ignore[arg-type]
+        verification=verification,  # type: ignore[arg-type]
+        stage=stage,  # type: ignore[arg-type]
+        target_media_ids=target_media_ids,
         reason=reason[:300] if reason else None,
         inferred=list(dict.fromkeys(str(x) for x in inferred))[:24],
         inferred_labels=list(labels)[:24],
@@ -556,6 +581,7 @@ def _guess_labels(facts: PlanFacts, only: str | None = None) -> list[InferredLab
 
 
 _CANT_CHECK_EDITOR_CLIP_TEXT = "I can't verify per-clip text on an editor edit."
+_CANT_CHECK_TARGET_CLIP_TEXT = "I can't verify text for that target clip in this draft."
 
 
 def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -582,11 +608,13 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
         printed = any(_fold(t) == stand_in for t in facts.per_clip_text.values())
         wanted = stand_in if printed else core
     if facts.editor and not facts.has_clip_structure:
-        # No per-clip diff for this edit: judge the literal if the creator wrote one
-        # (it holds every on-screen text, so a missing literal is a real miss),
-        # otherwise nothing was judged. Never "couldn't".
-        if wanted and any(_contains_text(t, wanted) for t in facts.texts):
-            return _receipt(req, "met", None)
+        # An editor payload's loose text list cannot prove which clip owns a
+        # caption. In particular it must never fulfill `clip:<id>` because an
+        # unrelated label contains the same literal.
+        if req.scope.startswith("clip:") or (
+            wanted and any(_contains_text(t, wanted) for t in facts.texts)
+        ):
+            return _receipt(req, "partial", _CANT_CHECK_EDITOR_CLIP_TEXT)
         if wanted:
             return _receipt(req, "partial", "That exact text isn't in this edit.")
         return _receipt(req, "partial", _CANT_CHECK_EDITOR_CLIP_TEXT)
@@ -620,10 +648,10 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
 
     if req.scope.startswith("clip:"):
         clip = req.scope.split(":", 1)[1]
+        if clip not in ids:
+            return _receipt(req, "partial", _CANT_CHECK_TARGET_CLIP_TEXT)
         index = ids.index(clip) if clip in ids else len(ids)
         value = text_for(index, clip)
-        if value is None and clip not in ids and wanted:
-            value = next((t for t in facts.texts if _contains_text(t, wanted)), None)
         if value is None and clip in facts.repeat_label_clip_ids:
             return _receipt(
                 req,
@@ -981,6 +1009,7 @@ _NEUTRAL_REASONS = frozenset(
         _CANT_CHECK_TAKE,
         _CANT_CHECK_TITLE,
         _CANT_CHECK_EDITOR_CLIP_TEXT,
+        _CANT_CHECK_TARGET_CLIP_TEXT,
         _CANT_CONFIRM_ORDER,
         _CANT_CHECK_ORDER_RULE,
         _CANT_CONFIRM_LENGTH,
@@ -1320,15 +1349,43 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
     stored before these stopped being written still exist, so every reader of
     stored receipts filters through this too.
     """
-    return req is not None and _has_checker(req) and receipt.reason not in _NEUTRAL_REASONS
+    return (
+        req is not None
+        and receipt.verification != "unchecked"
+        and _has_checker(req)
+        and receipt.reason not in _NEUTRAL_REASONS
+    )
 
 
 def build_receipts(
-    requirements: Iterable[BriefRequirement], facts: PlanFacts
+    requirements: Iterable[BriefRequirement], facts: PlanFacts, *, include_unchecked: bool = False
 ) -> list[RequirementReceipt]:
-    """Receipts for the live requirements a checker judged; the rest stay ``open``."""
+    """Build receipts without changing legacy omission or serialization by default.
+
+    Bound writers opt in with ``include_unchecked=True``. That emits every
+    live requirement: determinate receipts are ``checked`` at the ``checked``
+    stage, while unavailable evidence is ``unchecked`` at ``understood`` (or
+    ``matched`` when a clip target is known).
+    """
     checked = ((req, check_requirement(req, facts)) for req in requirements if req.live)
-    return [receipt for req, receipt in checked if is_judged(req, receipt)]
+    receipts: list[RequirementReceipt] = []
+    for req, receipt in checked:
+        if is_judged(req, receipt):
+            receipts.append(
+                receipt.model_copy(update={"verification": "checked", "stage": "checked"})
+                if include_unchecked
+                else receipt
+            )
+        elif include_unchecked:
+            receipts.append(
+                receipt.model_copy(
+                    update={
+                        "verification": "unchecked",
+                        "stage": "matched" if receipt.target_media_ids else "understood",
+                    }
+                )
+            )
+    return receipts
 
 
 # ------------------------------------------------------------------------ reply
@@ -1361,6 +1418,11 @@ def reply_from_receipts(
     """
     by_id = {req.id: req for req in brief.requirements}
     judged = [r for r in receipts if is_judged(by_id.get(r.requirement_id), r)]
+    unchecked = [
+        r
+        for r in receipts
+        if r.verification == "unchecked" and by_id.get(r.requirement_id) is not None
+    ]
     lines: list[str] = []
     guesses: list[str] = []
     # KRI-282: what the render did for each requested group / label / chapter text,
@@ -1388,7 +1450,19 @@ def reply_from_receipts(
             "(text I took from the footage, not from your words)"
         )
     body = "\n".join(f"- {line}" for line in lines)
-    if failed or any(r.status != "met" for r in judged):
+    if unchecked:
+        unchecked_lines = []
+        for receipt in unchecked:
+            line = f"Couldn't verify: {by_id[receipt.requirement_id].text()}"
+            if receipt.reason:
+                line += f" ({receipt.reason.rstrip('.')})"
+            unchecked_lines.append(f"- {line}")
+        text = "I couldn't verify every requested change:\n" + "\n".join(
+            [*unchecked_lines, *([body] if body else [])]
+        )
+        if notices:
+            text += "\n" + " ".join(notices)
+    elif failed or any(r.status != "met" for r in judged):
         text = "Not everything you asked for made it in:\n" + body
         if notices:
             text += "\n" + " ".join(notices)

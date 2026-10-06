@@ -788,8 +788,9 @@ class Settings(BaseSettings):
     # KRI-456 kill switch. Phone narrated edits with no filming guide let the
     # `nova.compose.narrated_clip_alignment` agent choose the voiceover word at
     # which each clip comes on screen, so a clip plays when the voice describes
-    # it. Fail-open: any agent/validation failure falls back to the legacy
-    # equal-duration bucket split. False is byte-identical to that split.
+    # it. Legacy unbound jobs retain their bucket fallback. Bound requests
+    # require an explicit choice before losing alignment. Keep the existing
+    # KRI-456 rollout default; request-binding writers are gated separately.
     narrated_clip_alignment_enabled: bool = True
 
     # Kill switch for the terminal-job stuck-variant watchdog

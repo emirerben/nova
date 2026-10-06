@@ -120,6 +120,7 @@ export default function SlidePostPanel({ item, variant, onRefetch }: SlidePostPa
         slides: next.slides,
         cover_index: next.coverIndex,
         caption: next.caption,
+        brief_binding: draft?.brief_binding ?? null,
       });
       await onRefetch();
     } catch {

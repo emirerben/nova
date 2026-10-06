@@ -381,6 +381,38 @@ def test_observer_fails_a_device_render_the_phone_gave_up_on() -> None:
     assert events[-1]["event_type"] == "assistant_render_failed"
 
 
+def test_observer_keeps_bound_recovery_message_without_extracted_requirements(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pinned raw request can require a recovery before it has ledger rows."""
+    job = _device_job(status="processing_failed")
+    job.failure_reason = "phone_plan_unsupported"
+    job.assembly_plan.pop("_device_render_v1", None)
+    job.assembly_plan.update(
+        {
+            "creator_generation_id": "edit-gen-2",
+            "creator_brief_binding": {"saved": "binding"},
+            "request_recovery": {
+                "message": "I couldn't match the narration. Try a simpler clip sequence?",
+                "requirement_receipts": [],
+                "brief_version": None,
+                "generation_id": "edit-gen-2",
+                "binding_digest": "pinned-digest",
+            },
+        }
+    )
+
+    binding = SimpleNamespace(digest="pinned-digest", resolve=lambda _thread_id: None)
+    monkeypatch.setattr("app.kria.brief_binding.BriefBinding.model_validate", lambda _raw: binding)
+    outcome, _execution, events = _observe(job, {})
+
+    assert outcome == "failed"
+    failed = events[-1]
+    assert failed["event_type"] == "assistant_render_failed"
+    assert failed["content"] == "I couldn't match the narration. Try a simpler clip sequence?"
+    assert "requirement_receipts" not in failed["payload"]
+
+
 # ---------------------------------------------------------------- dispatch
 
 
