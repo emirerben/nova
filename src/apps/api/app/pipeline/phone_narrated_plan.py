@@ -115,6 +115,11 @@ rather than the pinned recipe and has no cloud defaults of its own:
 `narrated_title_text_elements` is what the worker persists, and the status
 route shows it read-only to app builds that know the marker.
 
+Both the cloud and the phone element take that look from
+`narrated_title.narrated_title_placement`, which also fits a long title into
+the top band of the frame (smaller font, top below the safe margin) instead of
+letting its centred block run off the top.
+
 Audio mix approximation (documented divergence, accepted for v1)
 ------------------------------------------------------------------
 
@@ -188,12 +193,6 @@ _TITLE_MAX_S = 3.0
 _TITLE_AFTER_FIRST_WORD_S = 1.0
 _TITLE_MAX_CHARS = 80
 NARRATED_TITLE_ELEMENT_ID = "narrated-title"
-# The cloud intro's "top" / "large" / default face, resolved
-# (`text_overlay._POSITION_Y`, `_FONT_SIZE_MAP`, the intro role's typeface).
-# The iOS preview has no cloud defaults: a bare "top" lands lower and in Inter.
-_TITLE_Y_FRAC = 0.15
-_TITLE_SIZE_PX = 120
-_TITLE_FONT_FAMILY = "Playfair Display"
 
 # Mirrors `app.pipeline.narrated_assembler._MIN_USABLE_S` / `_EOF_GUARD_S` --
 # see the module docstring for why they're reimplemented here rather than
@@ -297,16 +296,17 @@ def narrated_title_end_s(first_word_end_s: float | None) -> float:
 
 
 def narrated_title_element(
-    opening_title: str | None, *, end_s: float | None, timeline_duration_s: float
+    opening_title: str | None, *, end_s: float | None, timeline_duration_s: float, canvas: Canvas
 ) -> TextElement | None:
     """The opening title as one TextElement, or ``None`` when there is none.
 
     The cloud narrated intro element with its look spelled out (see "Opening
-    title"): the recipe compiles it, and the variant row carries it for the
-    editor preview, so the two can't drift. ``end_s`` ``None`` holds the title
-    the full 3 s (`narrated_title_end_s`).
+    title"), fitted to ``canvas`` like the cloud's: the recipe compiles it, and
+    the variant row carries it for the editor preview, so the two can't drift.
+    ``end_s`` ``None`` holds the title the full 3 s (`narrated_title_end_s`).
     """
     from app.agents._schemas.text_element import TextElement
+    from app.pipeline.narrated_title import narrated_title_placement
 
     text = " ".join((opening_title or "").split())[:_TITLE_MAX_CHARS]
     end_s = min(
@@ -320,12 +320,7 @@ def narrated_title_element(
         start_s=0.0,
         end_s=end_s,
         role="generative_intro",
-        position="custom",
-        x_frac=0.5,
-        y_frac=_TITLE_Y_FRAC,
-        size_class="large",
-        size_px=_TITLE_SIZE_PX,
-        font_family=_TITLE_FONT_FAMILY,
+        **narrated_title_placement(text, canvas=canvas, explicit=True),
         effect="fade-in",
         # `read_only`: the editor draws it but offers no control for it; the
         # narrated editor has no text lane to Save it through.
@@ -347,7 +342,10 @@ def narrated_title_text_elements(
     if video is None or not any(_is_title_layer(layer) for layer in recipe.text_layers):
         return []
     element = narrated_title_element(
-        opening_title, end_s=end_s, timeline_duration_s=timeline_end_s(video.clips)
+        opening_title,
+        end_s=end_s,
+        timeline_duration_s=timeline_end_s(video.clips),
+        canvas=recipe.canvas,
     )
     return [element.model_dump(mode="json", exclude_none=True)] if element is not None else []
 
@@ -660,7 +658,10 @@ def compile_phone_narrated_plan(
         required_capabilities=required_capabilities,
     )
     title = narrated_title_element(
-        opening_title, end_s=opening_title_end_s, timeline_duration_s=timeline_end_s(clips)
+        opening_title,
+        end_s=opening_title_end_s,
+        timeline_duration_s=timeline_end_s(clips),
+        canvas=story_canvas,
     )
     if title is not None:
         recipe = _with_text_layers(

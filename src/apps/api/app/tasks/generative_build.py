@@ -21201,6 +21201,7 @@ def _narrated_storyboard_text_elements(
 ) -> list[dict[str, Any]]:
     """Build editable intro/player/score bars on the canonical voiceover time."""
     from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+    from app.pipeline.narrated_title import narrated_title_placement  # noqa: PLC0415
 
     words, index_by_id = _narrated_word_rows(transcript)
     if not words or not step_timings:
@@ -21238,8 +21239,11 @@ def _narrated_storyboard_text_elements(
                     start_s=0.0,
                     end_s=max(0.5, min(3.0, float(first["end_s"]) + 1.0)),
                     role="generative_intro",
-                    position="top",
-                    size_class="large",
+                    # The cloud preset (top, large), fitted into the top band
+                    # when a long title would run off the frame. Shared with the
+                    # phone title so both renders draw it identically. Narrated
+                    # text burns on the portrait canvas (`_compose_subtitled_final`).
+                    **narrated_title_placement(intro_text, canvas=PORTRAIT, explicit=False),
                     effect="fade-in",
                     source_params={"narrated_storyboard": "intro"},
                 ).model_dump(mode="json", exclude_none=True)

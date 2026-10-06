@@ -2159,6 +2159,23 @@ narrated storyboard titles (`text_elements_materialized_from ==
 `NativeEditorRenderCompilerTests.testReadOnlyTitle*`,
 `NativeEditorSessionTests.testReadOnlyTitle*`.
 
+**Long titles fit the top band.** The renderer only shrinks a line wider than
+the frame, so on the 120 px preset a title over ~40 characters wrapped to four
+or more lines and its centred block ran off the top (a 44-character title's
+first line started at y -31). `narrated_title.narrated_title_placement` is the
+one rule both builders use (cloud `_narrated_storyboard_text_elements`, phone
+`narrated_title_element`): a title the preset keeps between the 6% top safe
+margin and 30% of the frame, on at most three lines, is unchanged; otherwise
+the font steps down from 120 px until it fits, and the block's top sits on the
+margin when its centre on y 0.15 would cross it. It is measured with the Skia
+renderer's own wrap (`_shrink_to_fit` / `_measure_block`) and expressed only in
+`size_px` / `y_frac`, so the cloud burn, the phone export and the iOS preview
+agree. Guards: `tests/pipeline/test_narrated_title.py`,
+`test_a_long_title_burns_exactly_like_the_phone_title`, the long-title cases of
+`test_title_element_spells_out_exactly_the_cloud_intro` and
+`testReadOnlyTitleCompilesLikeTheExportedPhoneTitle`, overlay fixture
+`narrated_title_fit.json`.
+
 ## Your song montages (KRI-374)
 
 A creator attaches their own song to a phone montage ("Add your song" in the
