@@ -163,20 +163,25 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("github.event.workflow_run.head_sha", self.text)
         self.assertRegex(self.text, r"(?s)checkout@[^\n]+.*?ref:\s*\$\{\{\s*github\.event\.workflow_run\.head_sha")
         self.assertRegex(self.text, r"(?is)(stale|head_sha|rev-parse|merge-base|ancestor).*(?:exit|fail|error)|(?:exit|fail|error).*(?:stale|head_sha|rev-parse|merge-base|ancestor)")
-        self.assertRegex(self.text, r'git diff --quiet "\$HEAD_SHA" "FETCH_HEAD" --')
-        self.assertIn("Main advanced only outside release inputs", self.text)
+        # Serialized, in-order releases: refuse only a SHA that left main, and diff
+        # release inputs from the last uploaded commit (not just HEAD^).
+        self.assertRegex(self.text, r'git merge-base --is-ancestor "\$HEAD_SHA" FETCH_HEAD')
+        self.assertIn("Upload and distribute to external TestFlight", self.text)
+        self.assertRegex(self.text, r'git diff --quiet "\$base" "\$HEAD_SHA" --')
+        self.assertNotIn("Main advanced only outside release inputs", self.text)
 
     def test_backend_route_changes_wait_for_matching_api_deploy(self):
         """A native release that calls a new API route cannot outrun Fly."""
         gate = re.search(
-            r'if git diff --quiet "\$HEAD_SHA\^" "\$HEAD_SHA" -- \\\n+(?P<paths>[^;]*)\; then\n\s*echo "requires_api_deploy=false".*?\n\s*else\n\s*echo "requires_api_deploy=true"',
+            r'if git diff --quiet "\$base" "\$HEAD_SHA" -- \\\n+(?P<paths>[^;]*)\; then\n\s*echo "requires_api_deploy=false".*?\n\s*else\n\s*echo "requires_api_deploy=true"',
             self.text,
             re.DOTALL,
         )
         self.assertIsNotNone(gate, "missing requires-api-deploy diff guard")
         assert gate is not None
         self.assertRegex(gate.group("paths"), r"(?m)^\s*src/apps/api\s*\\$")
-        self.assertIn("Wait for the matching production API deploy", self.text)
+        self.assertIn("Wait for a production API deploy that contains this commit", self.text)
+        self.assertRegex(self.text, r"compare/\$HEAD_SHA\.\.\.\$deployed_sha")
         self.assertRegex(
             self.text,
             r"if: steps\.gate\.outputs\.eligible == 'true' && steps\.gate\.outputs\.requires_api_deploy == 'true'",

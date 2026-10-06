@@ -2268,8 +2268,14 @@ The cluster-style snapshot PR closed the `cluster_style` desync between the
 render and `_base_text_elements_for_variant`, and closed the adjacent `canvas`
 gap found in the same review (landscape variants used to project on the portrait
 canvas; pinned by `test_landscape_variant_projects_on_the_landscape_canvas`).
-The gaps below remain (the last two were found 2026-10-06 while threading the
-intro face).
+The gaps below remain. The intro-effect gap (curated pop-in, typewriter,
+stream-in, bounce and slide-in intros projected as `static`, so a text Save
+dropped the entrance) closed 2026-10-06; guard
+`tests/tasks/test_intro_look_parity.py`. So did the left-anchored intro jump
+(`word_reveal`/`typewriter`/`ai_answer` and knob `text_anchor=left` intros rose
+half a block on a text Save): the adapter projects the burned block's center
+and marks the element (`TOP_ANCHORED_BURN_PARAM`), and the compiler restores
+the burn's top anchoring; guard: the left-anchored section of the same file.
 
 - **P3 Adapter never threads `language` for the LEGACY profile.** The intro
   face/effect/colors/stroke are now resolved the way
@@ -2280,14 +2286,11 @@ intro face).
   the job language is not persisted on the variant, so a Turkish legacy
   cluster projects the English pairing. Fix: persist the render's `language`
   on the variant and pass it.
-- **P3 Projected intro/sequence elements lose pop-in, typewriter, stream-in,
-  bounce and slide-in.** `_BURN_EFFECT_TO_TEXT_ELEMENT` (text_element.py)
-  predates those effects joining `_ALLOWED_EFFECTS`, so a burn dict with one
-  projects as `effect="static"`. Nine of the 18 generative style sets use one
-  for the intro: after any text Save the settled frame is pixel-identical but
-  the entrance animation is gone. Fix: extend the map, and prove each effect
-  round-trips (element → `build_overlays_from_text_elements`) to the render's
-  burn dict (pop-in `pop_animated_suffix`, typewriter `reveal_schedule_s`).
+- **P3 Cloud intros burn "Slide down" as static.** `slide-down` is missing
+  from `generative_overlays._SKIA_EFFECTS`, so `build_intro_overlay` coerces it
+  to `static` on both the first render and a Save, although Skia, the CSS
+  preview and iOS all animate it and the instant-editor picker offers it.
+  Fix: add it to `_SKIA_EFFECTS` (render-affecting: `make verify-overlays`).
 - **P3 `_text_element_burn_dicts` has no caption-cue guard.** Rows with
   `source_params.source == "caption_cue"` burn through Skia like any row; on
   narrated/subtitled the libass captions burn the same cues. Not reachable

@@ -2,6 +2,7 @@ import { describe, expect, it } from "@jest/globals";
 import {
   AI_SEQUENCE_BADGE_LABEL,
   barsToCaptionCues,
+  barsToPreviewTextElements,
   barsToTextElements,
   buildCaptionTextReplacement,
   captionMetaPatchFromCaptionBarPatch,
@@ -27,6 +28,8 @@ import {
   undoSnapshot,
   type EditorDocument,
 } from "@/app/plan/items/[id]/_editor/useEditorHistory";
+import { resolveCssFont } from "@/lib/overlay-constants";
+import { resolveTextElementsLayout } from "@/lib/overlay-layout";
 import type {
   CaptionCue,
   MediaOverlay,
@@ -272,6 +275,93 @@ describe("seedBarsFromVariant", () => {
       "caption-0",
       "smart-title",
     ]);
+  });
+});
+
+describe("cloud narrated storyboard text", () => {
+  // The rows the status route serves for a cloud Voiceover edit's storyboard
+  // (`resolve_narrated_storyboard_look`): the opening title and a PLAYER label,
+  // with the look the cloud burns spelled out. Their captions ride caption_cues.
+  const storyboardRows: TextElement[] = [
+    {
+      id: "title",
+      text: "Match Day",
+      start_s: 0,
+      end_s: 1.4,
+      role: "generative_intro",
+      position: "custom",
+      x_frac: 0.5,
+      y_frac: 0.15,
+      size_class: "large",
+      size_px: 120,
+      font_family: "Playfair Display",
+      effect: "fade-in",
+      source_params: { narrated_storyboard: "intro" },
+    },
+    {
+      id: "player-1",
+      text: "PLAYER 1",
+      start_s: 0,
+      end_s: 2,
+      role: "generative_sequence",
+      position: "custom",
+      x_frac: 0.5,
+      y_frac: 0.85,
+      size_class: "small",
+      size_px: 36,
+      font_family: "Playfair Display",
+      effect: "fade-in",
+      source_params: {
+        narrated_storyboard: "narrated_storyboard:placeholder:1",
+        editable_placeholder: true,
+      },
+    },
+  ] as TextElement[];
+  const variant = {
+    variant_id: "narrated",
+    resolved_archetype: "narrated",
+    text_elements_user_edited: false,
+    text_elements_materialized_from: "narrated_storyboard",
+    caption_cues: [{ text: "Intro to the final", start_s: 0, end_s: 1 }],
+    text_elements: storyboardRows,
+  } as unknown as PlanItemVariant;
+  const originals = new Map(storyboardRows.map((row) => [row.id, row]));
+
+  it("seeds the storyboard as text bars beside the voiceover captions", () => {
+    const bars = seedBarsFromVariant(variant);
+
+    expect(bars.map((bar) => [bar.id, isCaptionBar(bar)])).toEqual([
+      ["caption-0", true],
+      ["title", false],
+      ["player-1", false],
+    ]);
+  });
+
+  it("previews the storyboard where the cloud burns it", () => {
+    const layouts = resolveTextElementsLayout(
+      barsToPreviewTextElements(seedBarsFromVariant(variant), originals),
+    );
+    const byId = new Map(layouts.map((layout) => [layout.id, layout]));
+
+    expect(byId.get("title")).toMatchObject({ yPx: 0.15 * 1920, xPx: 540, sizePx: 120 });
+    expect(byId.get("player-1")).toMatchObject({ yPx: 0.85 * 1920, sizePx: 36 });
+    expect(resolveCssFont(byId.get("title")?.fontFamily)).toEqual(
+      resolveCssFont("PlayfairDisplay-Bold"),
+    );
+  });
+
+  it("saves the storyboard bars unchanged and never mirrors captions into text", () => {
+    const saved = barsToTextElements(seedBarsFromVariant(variant), originals);
+
+    expect(saved.map((row) => row.id)).toEqual(["title", "player-1"]);
+    expect(saved[0]).toMatchObject({
+      position: "custom",
+      y_frac: 0.15,
+      size_px: 120,
+      font_family: "Playfair Display",
+      source_params: { narrated_storyboard: "intro" },
+    });
+    expect(saved[1]).toMatchObject({ y_frac: 0.85, size_px: 36 });
   });
 });
 

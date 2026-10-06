@@ -445,3 +445,64 @@ def test_workspace_receipt_requires_one_epoch_and_distinct_item_session_pins() -
             ownership_epoch=3,
             deliverables=[child, child.model_copy(update={"plan_item_id": "item-2"})],
         )
+
+
+def test_brief_updates_nested_under_the_action_are_hoisted_before_strict_parse() -> None:
+    """KRI-456 (2026-10-06): Flash put `brief_updates` inside `propose_strategy`;
+    the strict adapter rejected it as an extra field and the turn failed."""
+    from app.agents.main_creator import _hoist_misplaced_brief_updates
+
+    updates = [{"operation": "add", "kind": "order", "text": "eating shot at the very end"}]
+    data = _hoist_misplaced_brief_updates(
+        {
+            "action": {
+                "kind": "propose_strategy",
+                "strategy": {"edit_format": "montage"},
+                "summary": "A recipe edit",
+                "brief_updates": updates,
+            }
+        }
+    )
+
+    assert data["brief_updates"] == updates
+    assert "brief_updates" not in data["action"]
+    assert "brief_updates" not in data["action"]["strategy"]
+    parsed = CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(data["action"])
+    assert isinstance(parsed, ProposeStrategy)
+
+
+def test_brief_updates_nested_under_the_strategy_are_hoisted() -> None:
+    from app.agents.main_creator import _hoist_misplaced_brief_updates
+
+    updates = [{"operation": "add", "kind": "title", "text": "Cacio e pepe"}]
+    data = _hoist_misplaced_brief_updates(
+        {
+            "action": {
+                "kind": "propose_strategy",
+                "strategy": {"edit_format": "montage", "brief_updates": updates},
+            }
+        }
+    )
+
+    assert data["brief_updates"] == updates
+    assert "brief_updates" not in data["action"]["strategy"]
+
+
+def test_top_level_brief_updates_win_over_a_nested_copy() -> None:
+    from app.agents.main_creator import _hoist_misplaced_brief_updates
+
+    data = {
+        "action": {"kind": "propose_strategy", "strategy": {}, "brief_updates": [{"x": 1}]},
+        "brief_updates": [{"operation": "add", "kind": "order", "text": "keep"}],
+    }
+
+    assert _hoist_misplaced_brief_updates(data) is data
+
+
+def test_hoist_leaves_other_actions_and_non_list_values_alone() -> None:
+    from app.agents.main_creator import _hoist_misplaced_brief_updates
+
+    ask = {"action": {"kind": "ask_user", "question": "Which clips?", "brief_updates": [{}]}}
+    assert _hoist_misplaced_brief_updates(ask) is ask
+    bad = {"action": {"kind": "propose_strategy", "strategy": {}, "brief_updates": "nope"}}
+    assert _hoist_misplaced_brief_updates(bad) is bad

@@ -21,6 +21,7 @@ import pytest
 
 from app.agents._schemas.text_element import (
     _ADAPTER_REVEAL_WINDOW_S,
+    _ALLOWED_EFFECTS,
     TextElement,
     _burn_dict_to_text_element,
     append_ai_text_tombstones,
@@ -262,19 +263,8 @@ class TestLinearRoundTrip:
         assert elements[0].max_width_frac == 0.64
         assert elements[0].rotation_deg == 90.0
 
-    @pytest.mark.xfail(
-        reason=(
-            "Known limitation: 'pop-in' is in generative_overlays._SKIA_EFFECTS (the renderer "
-            "can draw it) but NOT in TextElement._ALLOWED_EFFECTS. The adapter's _burn_dict_to_"
-            "text_element() coerces unknown effects to 'static' via _BURN_EFFECT_TO_TEXT_ELEMENT, "
-            "so the reveal overlay loses its pop-in effect. The Skia-effects set and the "
-            "TextElement allowlist are intentionally decoupled (the editor surface only exposes "
-            "4 effects); this test documents the mismatch rather than hiding it."
-        ),
-        strict=True,
-    )
     def test_pop_in_roundtrip_byte_identical(self):
-        """Known mismatch: pop-in is in _SKIA_EFFECTS but not _ALLOWED_EFFECTS → coerced to static."""  # noqa: E501
+        """pop-in survives the adapter: the reveal keeps its entrance, the hold settles."""
         v = {
             "intro_text": "You need to see this",
             "intro_effect": "pop-in",
@@ -283,8 +273,7 @@ class TestLinearRoundTrip:
         }
         legacy = self._direct("You need to see this", effect="pop-in", text_color="#FFDDCC")
         roundtrip = self._roundtrip(v)
-        # This MUST fail (strict xfail): reveal has effect='pop-in' in legacy,
-        # but effect='static' in roundtrip (adapter coerces pop-in → static).
+        assert [o["effect"] for o in legacy] == ["pop-in", "static"], "render sanity check"
         assert _normalize(roundtrip) == _normalize(legacy)
 
     def test_static_roundtrip_byte_identical(self):
@@ -910,6 +899,33 @@ class TestSequenceRoundTrip:
             "sequence_base_size_px=90 must be forwarded; round-trip must match"
         )
 
+    @pytest.mark.parametrize("mode", ["synced", "rhythm"])
+    def test_sequence_roundtrip_byte_identical_with_the_real_engine(self, mode):
+        """Unstubbed editorial engine: every block's effect projects as itself.
+
+        Each block reaches the editor through `_element_from_burn_group`, i.e. the
+        same `_BURN_EFFECT_TO_TEXT_ELEMENT` lookup the intro uses, so an effect the
+        map lacked would flatten here too.
+        """
+        from app.pipeline.phrase_sequence import rhythm_scenes
+
+        scenes = (
+            _make_seq_scenes()
+            if mode == "synced"
+            else rhythm_scenes(
+                "the best days are the ones you never planned", video_duration_s=12.0
+            )
+        )
+        legacy = build_sequence_overlays(scenes, base_size_px=60, text_color="#FFFFFF")
+        assert legacy, "real engine declined every scene — test would pass vacuously"
+
+        v = {"intro_mode": "sequence", "text_mode": "agent_text", "scenes": scenes}
+        elements = text_elements_for_variant(v)
+        roundtrip = build_overlays_from_text_elements(elements, video_duration_s=12.0)
+
+        assert [e.effect for e in elements] == [o["effect"] for o in legacy]
+        assert _normalize(roundtrip) == _normalize(legacy)
+
     @pytest.mark.xfail(
         reason=(
             "Known limitation: round-trip is NOT byte-identical when the cluster engine "
@@ -988,6 +1004,20 @@ class TestSecurityGuards:
 
         with pytest.raises(ValidationError):
             TextElement(text="test", start_s=0, end_s=1, effect="shell_inject")
+
+    def test_every_allowed_effect_projects_from_a_burn_dict_as_itself(self):
+        """The burn → element map must cover the whole editor allowlist.
+
+        A hand-listed map once lagged `_ALLOWED_EFFECTS` by eight effects, so
+        curated pop-in/typewriter/bounce intros reached the editor as `static`
+        and a text Save burned them without their entrance.
+        """
+        for effect in sorted(_ALLOWED_EFFECTS):
+            elem = _burn_dict_to_text_element(
+                {"text": "SHOW ME", "start_s": 0.0, "end_s": 3.0, "effect": effect}
+            )
+            assert elem is not None
+            assert elem.effect == effect
 
     def test_allowed_effects_accepted(self):
         """Representative editor effects are accepted without error."""

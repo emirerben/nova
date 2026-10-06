@@ -34,6 +34,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    ValidationError,
     field_validator,
     model_serializer,
     model_validator,
@@ -43,7 +44,7 @@ from app.agents._schemas.text_animation_phases import TextAnimationPhases
 
 # Dependency-free (dataclasses only), so it is safe at module scope unlike the
 # heavier `app.pipeline.*` builders this module imports lazily inside functions.
-from app.pipeline.canvas import PORTRAIT, canvas_for_orientation
+from app.pipeline.canvas import PORTRAIT, Canvas, canvas_for_orientation
 from app.pipeline.font_aliases import LEGACY_FONT_ALIASES
 
 log = logging.getLogger(__name__)
@@ -189,17 +190,13 @@ def apply_text_case(text: str, case: str | None) -> str:
 
 # Map from legacy burn-dict effects (which may include richer Skia effects)
 # to the TextElement effect enum.  Anything not listed falls back to "static".
-_BURN_EFFECT_TO_TEXT_ELEMENT: dict[str, str] = {
-    "static": "static",
-    "fade-in": "fade-in",
-    "slide-up": "slide-up",
-    "slide-down": "slide-down",
-    "karaoke-line": "karaoke-line",
-    "staggered-slice": "staggered-slice",
-    "ink-reveal": "ink-reveal",
-    "handwriting": "handwriting",
-    "smooth-type": "smooth-type",
-}
+# Every TextElement effect projects as itself: the Skia renderer draws each one
+# (slide-in and none settle, as in the CSS + iOS previews). Derived rather than
+# hand-listed because the hand-listed map predated pop-in, typewriter,
+# stream-in, bounce, slide-in, ... joining the allowlist, so the read adapter
+# flattened those curated-set intros to static and the next text Save burned
+# them without their entrance. Guard: tests/tasks/test_intro_look_parity.py.
+_BURN_EFFECT_TO_TEXT_ELEMENT: dict[str, str] = {effect: effect for effect in _ALLOWED_EFFECTS}
 
 # Map from burn-dict text_anchor value → TextElement alignment.
 _ANCHOR_TO_ALIGNMENT: dict[str, str] = {
@@ -756,12 +753,48 @@ def _burn_dict_position(
     return "middle", None, None
 
 
+# source_params marker: the burn this element was projected from TOP-anchored its
+# block. The element's y_frac is still the block center; the compiler turns it
+# back into that top anchoring (see `build_overlays_from_text_elements`).
+TOP_ANCHORED_BURN_PARAM = "top_anchored_burn"
+
+
+def _top_anchored_block_center(burn_dict: dict, canvas: Canvas) -> tuple[float, float] | None:
+    """(x_frac, y_frac) of the block CENTER for a burn the renderer top-anchors.
+
+    `_resolve_vertical_anchor` top-anchors a left-anchored burn with no
+    `vertical_anchor` at its y (legacy cumulative reveals grow down from it):
+    the curated `word_reveal`/`typewriter`/`ai_answer` intros and any knob or
+    agent `text_anchor="left"` intro. A TextElement's y_frac is the block center
+    (the CSS editor and every authoritative Save compile `vertical_anchor=center`),
+    so projecting the burn's y as-is lifted a saved intro by half its height
+    (~130-150 px at 1080x1920 for a two-line 96 px hook).
+
+    Returns None for any other burn (projection unchanged) and when the block
+    can't be measured (fail-open to the burn's own y).
+    """
+    if burn_dict.get("vertical_anchor") != "top" and burn_dict.get("text_anchor") != "left":
+        return None
+    try:
+        from app.pipeline import text_overlay_skia as skia_text  # noqa: PLC0415
+
+        if skia_text._resolve_vertical_anchor(burn_dict) != "top":
+            return None
+        x_px, top_px = skia_text._resolve_anchor(burn_dict, canvas)
+        block_h = skia_text.static_block_height_px(burn_dict, render_canvas=canvas)
+    except Exception as exc:  # noqa: BLE001 — a read must never fail on measurement
+        log.warning("text_element_adapter_block_measure_failed: %s", exc)
+        return None
+    return x_px / canvas.width, (top_px + block_h / 2.0) / canvas.height
+
+
 def _burn_dict_to_text_element(
     burn_dict: dict,
     *,
     intro_mode: str | None = None,
     intro_layout: str | None = None,
     intro_text_size_px: int | None = None,
+    canvas: Canvas = PORTRAIT,
 ) -> TextElement | None:
     """Convert a single burn dict to a TextElement.
 
@@ -792,6 +825,10 @@ def _burn_dict_to_text_element(
 
     # position
     position, x_frac, y_frac = _burn_dict_position(burn_dict)
+    block_center = _top_anchored_block_center({**burn_dict, "text": text}, canvas)
+    if block_center is not None:
+        position = "custom"
+        x_frac, y_frac = block_center
 
     # font_family: validate against allowlist; use None if unsupported.
     raw_font = burn_dict.get("font_family")
@@ -885,6 +922,8 @@ def _burn_dict_to_text_element(
         "size_class": burn_dict.get("text_size"),
         "text_size_px": intro_text_size_px,
     }
+    if block_center is not None:
+        source_params[TOP_ANCHORED_BURN_PARAM] = True
 
     try:
         return TextElement(
@@ -1092,6 +1131,103 @@ def append_ai_text_tombstones(
     return out
 
 
+NARRATED_STORYBOARD_SOURCE = "narrated_storyboard"
+
+
+def is_narrated_storyboard_element(raw: TextElement | dict) -> bool:
+    """True for a narrated storyboard bar.
+
+    `_narrated_storyboard_text_elements` marks its cloud bars with a
+    ``source_params["narrated_storyboard"]`` key (no ``source``/``identity``, so
+    they have no projection identity: they live only in the saved list). The
+    phone Narrated title row carries the same marker and is already explicit.
+    """
+    params = raw.source_params if isinstance(raw, TextElement) else raw.get("source_params")
+    return isinstance(params, dict) and NARRATED_STORYBOARD_SOURCE in params
+
+
+def _narrated_storyboard_look_updates(elem: TextElement) -> dict:
+    """The look fields the cloud burn resolves a storyboard bar's presets to.
+
+    Storyboard bars are stored with presets: a named ``position``, a
+    ``size_class`` and no face. The Skia burn resolves those through
+    `text_overlay._POSITION_Y` ("top" 0.15, "bottom" 0.85, "middle" via
+    "center" 0.45, ignoring any x/y fracs), `_FONT_SIZE_MAP` and the
+    registry's "display" face (Playfair Display). Empty when nothing is left
+    to spell out (a bar the creator moved, resized or restyled keeps it).
+    """
+    from app.pipeline.generative_overlays import _DEFAULT_SIZE_CLASS  # noqa: PLC0415
+    from app.pipeline.text_overlay import (  # noqa: PLC0415
+        _FONT_REGISTRY,
+        _FONT_SIZE_MAP,
+        _POSITION_Y,
+    )
+
+    updates: dict = {}
+    if elem.position != "custom":
+        burn_position = "center" if elem.position == "middle" else elem.position
+        updates.update(position="custom", x_frac=0.5, y_frac=_POSITION_Y[burn_position])
+    if elem.size_px is None:
+        updates["size_px"] = float(_FONT_SIZE_MAP[elem.size_class or _DEFAULT_SIZE_CLASS])
+    if elem.font_family is None:
+        display_face = (_FONT_REGISTRY.get("style_defaults") or {}).get("display")
+        if display_face in _ALLOWED_FONTS:
+            updates["font_family"] = display_face
+    return updates
+
+
+def resolve_narrated_storyboard_look(elem: TextElement) -> TextElement:
+    """A storyboard bar with the look the cloud burn gives it spelled out.
+
+    iOS builds before #1424 have none of the cloud's preset defaults: they load
+    a row without ``y_frac``/``font_family`` at y 0.5 in Fraunces, and their Save
+    writes that face back, so the next burn changed font. Editors therefore get the
+    resolved values (`_narrated_storyboard_look_updates`): centred custom
+    position, explicit px size, explicit face. The burn is pixel-identical
+    either way (`test_storyboard_resolved_look_burns_identically`), so a Save
+    that persists the resolved bar changes nothing on video, and a later drag
+    is honoured (a named position ignores ``y_frac``). Stored rows keep their
+    presets until such a Save; only editor-facing reads resolve them.
+    """
+    updates = _narrated_storyboard_look_updates(elem)
+    return elem.model_copy(update=updates) if updates else elem
+
+
+def _editor_saved_element(elem: TextElement) -> TextElement:
+    return resolve_narrated_storyboard_look(elem) if is_narrated_storyboard_element(elem) else elem
+
+
+def narrated_storyboard_row_updates(row: object) -> dict:
+    """Look fields to spell out on one stored row; ``{}`` for any other row.
+
+    A storyboard row that does not validate is left alone (``{}``): it is
+    served as stored rather than failing the whole read.
+    """
+    if not isinstance(row, dict) or not is_narrated_storyboard_element(row):
+        return {}
+    try:
+        elem = TextElement.model_validate(row)
+    except ValidationError:
+        return {}
+    return _narrated_storyboard_look_updates(elem)
+
+
+def resolve_narrated_storyboard_rows(rows: list | None) -> list:
+    """Stored ``text_elements`` rows with each storyboard bar's look spelled out.
+
+    The row-level twin of `resolve_narrated_storyboard_look`, for every
+    editor-facing reader that hands stored rows over without
+    `merge_projected_text_elements_for_variant`: the status route's authored
+    timelines, the Kria chat snapshot and compile, and the Kria draft
+    bootstrap. Only the look fields that change are written; every other row
+    and key is returned as stored.
+    """
+    return [
+        {**row, **updates} if (updates := narrated_storyboard_row_updates(row)) else row
+        for row in rows or []
+    ]
+
+
 def merge_projected_text_elements_for_variant(
     variant: dict, *, include_lyric_projection: bool = False
 ) -> list[dict] | None:
@@ -1100,12 +1236,30 @@ def merge_projected_text_elements_for_variant(
     This is the read-side single source of truth. It fixes legacy user-edited rows
     that only stored hand-created bars by appending any generated AI bar whose
     source identity has no saved counterpart. Saved tombstones suppress projection.
+
+    Saved narrated storyboard bars are served with their resolved cloud look
+    (`resolve_narrated_storyboard_look`), so the output can differ from the
+    stored rows, and a storyboard render takes the identity merge before the
+    first manual edit (see ``storyboard_render`` below).
     """
     projected = text_elements_for_variant(
         variant, include_lyric_projection=include_lyric_projection
     )
-    saved = coerce_text_elements(variant.get("text_elements") or []) or []
-    if not variant.get("text_elements_user_edited"):
+    saved = [
+        _editor_saved_element(elem)
+        for elem in coerce_text_elements(variant.get("text_elements") or []) or []
+    ]
+    # A narrated storyboard render saves its authored bars (title, PLAYER n,
+    # scores); nothing re-projects them. Its rows project no text today
+    # (text_mode "none": captions ride the ``caption_cues`` lane), but any
+    # projection that did appear (caption mirrors, context labels, lyrics)
+    # would replace the saved bars in the branch below. So these rows take
+    # the identity merge even before the first manual edit: saved bars
+    # first, then every projected bar the saved list does not carry.
+    storyboard_render = variant.get(
+        "text_elements_materialized_from"
+    ) == NARRATED_STORYBOARD_SOURCE and bool(saved)
+    if not variant.get("text_elements_user_edited") and not storyboard_render:
         # Guided-story text is compiled from the approved proposal and persisted
         # with exact beat windows.  The legacy intro projection only understands
         # ``intro_text`` and would collapse that authoritative title + thought
@@ -1167,6 +1321,7 @@ def _element_from_burn_group(
     intro_mode: str | None,
     intro_layout: str | None,
     intro_text_size_px: int | None,
+    canvas: Canvas = PORTRAIT,
 ) -> TextElement | None:
     if not burn_dicts:
         return None
@@ -1181,6 +1336,7 @@ def _element_from_burn_group(
         intro_mode=intro_mode,
         intro_layout=intro_layout,
         intro_text_size_px=intro_text_size_px,
+        canvas=canvas,
     )
     if elem is None:
         return None
@@ -1534,6 +1690,7 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
                     intro_mode="sequence",
                     intro_layout=intro_layout,
                     intro_text_size_px=intro_text_size_px,
+                    canvas=intro_canvas,
                 )
                 if elem is not None:
                     elem.role = "generative_sequence"
@@ -1641,6 +1798,7 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
                 intro_mode=intro_mode or layout,
                 intro_layout=intro_layout,
                 intro_text_size_px=intro_text_size_px,
+                canvas=intro_canvas,
             )
             if elem is not None:
                 grouped.append(elem)
@@ -1656,5 +1814,6 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
         intro_mode=intro_mode or layout,
         intro_layout=intro_layout,
         intro_text_size_px=intro_text_size_px,
+        canvas=intro_canvas,
     )
     return [elem] if elem is not None else []

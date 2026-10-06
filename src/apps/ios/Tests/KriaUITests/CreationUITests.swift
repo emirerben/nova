@@ -1343,7 +1343,13 @@ final class CreationUITests: XCTestCase {
         var sawPartial = false
         let finished = eventually(timeout: 90) {
             XCTAssertTrue(feed.exists, "the feed never leaves during the device build")
-            let decided = order.map { self.planBlockValue(app, $0).hasPrefix("decided") }
+            // One query = one consistent snapshot; per-row reads race the advancing build.
+            let snapshot = (feed.value as? String ?? "").split(separator: ",").reduce(into: [String: String]()) { result, pair in
+                let parts = pair.split(separator: "=")
+                if parts.count == 2 { result[String(parts[0])] = String(parts[1]) }
+            }
+            guard snapshot.count == 7 else { return false }
+            let decided = order.map { snapshot[$0] == "decided" }
             if let firstOpen = decided.firstIndex(of: false) {
                 XCTAssertFalse(decided[firstOpen...].contains(true), "sections advance in order: \(decided)")
                 if firstOpen > 0 { sawPartial = true }

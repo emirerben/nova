@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.114.0] - 2026-10-06
+
+### Changed
+- fix(editor): preview cloud voiceover storyboard text where the cloud burns it (#1430) <!-- release-pr: 1430 -->
+
+## [0.78.113.0] - 2026-10-06
+
+### Changed
+- fix(kria): hoist a brief_updates list the Main Creator nested under its action (KRI-456) (#1429) <!-- release-pr: 1429 -->
+
+## [0.78.112.0] - 2026-10-06
+
+### Changed
+- perf(queue-state): one inspect reply window per lookup (drop unused ping, concurrent broadcasts) (#1428) <!-- release-pr: 1428 -->
+
+## [0.78.111.0] - 2026-10-06
+
+### Changed
+- feat(slides): on-device full-resolution slide export (KRI-463) (#1427) <!-- release-pr: 1427 -->
+
+## [0.78.110.0] - 2026-10-06
+
+### Changed
+- fix(text): left-anchored intros stay put through a text Save (+ re-land #1419) (#1426) <!-- release-pr: 1426 -->
+
+## [0.78.109.0] - 2026-10-06
+
+### Fixed
+- fix(admin): run Celery inspect off the event loop on job debug + queue-state (#1425) <!-- release-pr: 1425 -->
+
+## [0.78.108.0] - 2026-10-06
+
+### Changed
+- fix(ios): unblock TestFlight releases (flaky device-feed test + starving gate) (#1431) <!-- release-pr: 1431 -->
+
 ## [0.78.107.0] - 2026-10-06
 
 ### Changed

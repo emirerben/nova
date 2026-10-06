@@ -45,6 +45,7 @@ from app import storage
 from app.agents._schemas.text_element import (
     append_ai_text_tombstones,
     merge_projected_text_elements_for_variant,
+    resolve_narrated_storyboard_rows,
 )
 from app.agents._schemas.visual_block import VisualBlock
 from app.auth import CurrentUser, CurrentUserOrSynthetic, ensure_job_owner
@@ -2657,6 +2658,10 @@ def _variants_for_response(job: Job) -> list[dict]:
                     "geometry_materialized_at_version": v.get("geometry_materialized_at_version"),
                     "text_elements_materialized_from": v.get("text_elements_materialized_from"),
                 }
+        elif _TEXT_ELEMENTS_ENABLED and v.get("text_elements"):
+            # An authored timeline is served as stored, but its storyboard bars
+            # still get their resolved look.
+            v = {**v, "text_elements": resolve_narrated_storyboard_rows(v["text_elements"])}
         # Server-side copy of the phone Narrated title; clients read it (if
         # their build can) from `text_elements` above.
         v.pop("narrated_title_text_elements", None)

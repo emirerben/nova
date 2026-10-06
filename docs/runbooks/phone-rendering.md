@@ -2151,9 +2151,12 @@ persists the element it compiled (`narrated_title_text_elements`, from
 (default 4) get it; older builds would offer Delete on a title they don't know.
 The element spells out the cloud's "top"/"large"/default face (custom y 0.15,
 120 px, Playfair Display), pinned to the cloud layers by
-`test_title_element_spells_out_exactly_the_cloud_intro`. Not covered: cloud
-narrated storyboard titles (`text_elements_materialized_from ==
-"narrated_storyboard"`), which the read path still drops.
+`test_title_element_spells_out_exactly_the_cloud_intro`. Cloud narrated
+storyboard bars (`text_elements_materialized_from == "narrated_storyboard"`) are
+editable and get the same spelled-out look on every editor read; see "Editor
+read path" in `docs/pipelines/generative.md`. They share this title's
+`source_params.narrated_storyboard` marker; the phone title is already explicit,
+so resolving it changes nothing.
 
 KRI-465 makes that title editable (and deletable), behind
 `PHONE_NARRATED_TITLE_EDITS_ENABLED` (default true; also needs
