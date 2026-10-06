@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.122.0] - 2026-10-06
+
+### Changed
+- fix(kria): a Talking edit's first draft is made, not refused over its length or speech cleanup (#1443) <!-- release-pr: 1443 -->
+
 ## [0.78.121.0] - 2026-10-06
 
 ### Changed
