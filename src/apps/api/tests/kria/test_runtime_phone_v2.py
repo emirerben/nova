@@ -718,6 +718,52 @@ def test_a_deterministic_phone_plan_reject_asks_the_user_instead_of_retrying() -
     assert events[-1]["content"] == humanize_job_failure_reason("phone_plan_unsupported")
 
 
+def test_a_song_plan_decline_shows_its_own_detail_and_asks_the_user() -> None:
+    job = _device_job(status="processing_failed")
+    job.assembly_plan = {"variants": [{"variant_id": VARIANT}]}
+    job.failure_reason = "user_song_plan_declined"
+    job.error_detail = "Your song was replaced after this edit was approved. Ask for it again."
+    _, execution, events = _observe(job, {})
+    assert execution.error["code"] == "user_song_plan_declined"
+    assert execution.error["recovery"] == "ask_user"
+    assert execution.error["retryable"] is False
+    assert events[-1]["content"] == job.error_detail
+    assert "iPhone" not in events[-1]["content"]
+
+
+def test_a_song_plan_decline_without_detail_uses_the_song_copy() -> None:
+    from app.tasks.content_plan_build import JOB_FAILURE_MESSAGES
+
+    job = _device_job(status="processing_failed")
+    job.assembly_plan = {"variants": [{"variant_id": VARIANT}]}
+    job.failure_reason = "user_song_plan_declined"
+    job.error_detail = None
+    _, _execution, events = _observe(job, {})
+    assert events[-1]["content"] == JOB_FAILURE_MESSAGES["user_song_plan_declined"]
+    assert "song" in events[-1]["content"]
+
+
+def test_observer_review_notes_a_background_fallback_and_kept_broll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _device_job()
+    job.assembly_plan["unified_montage"] = {
+        "user_song": {
+            "mode": "background",
+            "requested_mode": "lipsync",
+            "fallback_reason": "no_synced_takes",
+            "kept_broll_ids": ["a", "b"],
+            "placed": [{"media_id": "c", "method": "lyrics"}],
+        }
+    }
+    events = _observe_unified(job, monkeypatch, _unified_brief())
+    review = next(e for e in events if e["event_type"] == "assistant_review")
+    assert review["content"].startswith(_LEGACY_REVIEW)
+    assert "used it as background music cut to the beat" in review["content"]
+    assert "2 takes didn't match the song" in review["content"]
+    assert "I matched 1 take by your singing." in review["content"]
+
+
 def test_a_phone_capability_reject_stays_retryable() -> None:
     """KRI-286: a capability the device has not verified yet is a rollout decision,
     not a plan defect -- the same edit works after the flag flips, so retry stays open."""

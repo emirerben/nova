@@ -67,6 +67,7 @@ from app.models import (
 from app.routes._copilot import CopilotTurnBody, is_overlay_display_ask, run_copilot_turn
 from app.routes.generative_jobs import variant_render_baseline
 from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
+from app.schemas.user_song import SONG_ALIGNMENT_VERSION
 from app.services.choice_questions import (
     CONFLICT_ORDER_VS_GROUP,
     ORDER_VS_GROUP_OPTIONS,
@@ -104,6 +105,7 @@ from app.services.song_order import (
     resolve_uncertain_takes,
     resolved_song_takes_payload,
     song_order_question_text,
+    takes_needing_order,
     thread_keeps_lipsync,
     uncertain_media_ids,
 )
@@ -411,6 +413,7 @@ async def _song_order_gate(
     loop = asyncio.get_running_loop()
     deadline = loop.time() + max(0.0, float(settings.song_alignment_turn_deadline_s))
     song_generation: int | None = None
+    realign_enqueued = False
     while True:
         item = await db.get(PlanItem, item_id, populate_existing=True)
         if item is None:
@@ -422,9 +425,28 @@ async def _song_order_gate(
             song_generation=song_generation,
             raw_analysis=getattr(item, "song_analysis", None),
         )
+        raw_alignment = getattr(item, "song_alignment", None)
+        stale_version = (
+            isinstance(raw_alignment, dict)
+            and raw_alignment.get("version", 1) != SONG_ALIGNMENT_VERSION
+        )
+        raw_analysis = getattr(item, "song_analysis", None)
+        analysis_status = (
+            raw_analysis.get("status")
+            if isinstance(raw_analysis, dict)
+            else getattr(raw_analysis, "status", None)
+        )
         await db.rollback()  # never hold a read snapshot across the sleep
         if alignment is not None:
             break
+        if analysis_status == "ready" and stale_version and not realign_enqueued:
+            # Song analysis is done but the stored alignment was written by an older
+            # aligner version: nothing else will refresh it. A MISSING row is left
+            # alone (the attach-time task is still running); once per gate call.
+            realign_enqueued = True
+            from app.tasks.user_song import enqueue_user_song_alignment  # noqa: PLC0415
+
+            await asyncio.to_thread(enqueue_user_song_alignment, item_id)
         remaining = deadline - loop.time()
         if remaining <= 0:
             return _SongGateResult(plan=_song_pending_plan())
@@ -440,6 +462,11 @@ async def _song_order_gate(
     if events is None:
         events = await _load_thread_events(db, thread_id)
     folded = fold_song_orders(events, song_generation)
+    if not (folded and folded.covers(take_ids)) and not takes_needing_order(alignment, take_ids):
+        # Only confident/unmatched takes: an order question could not change any
+        # position. Proceed; unmatched takes render as muted B-roll or the
+        # background fallback.
+        return _SongGateResult(strategy=kept_strategy)
     if folded and folded.covers(take_ids):
         resolved = resolve_uncertain_takes(alignment, folded.ordered_media_ids)
         return _SongGateResult(

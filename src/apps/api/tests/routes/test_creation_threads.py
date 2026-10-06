@@ -4634,6 +4634,17 @@ def test_job_projection_carries_a_human_failure_message_not_the_raw_code() -> No
     assert projection["failure_message"]
     assert projection["failure_message"] != "phone_plan_unsupported"
 
+    # KRI-466: a creator-facing code shows its own error_detail.
+    declined = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="processing_failed",
+        current_phase=None,
+        failure_reason="user_song_plan_declined",
+        error_detail="  Film with the song out loud.  ",
+        assembly_plan={"variants": []},
+    )
+    assert _job_projection(declined)["failure_message"] == "Film with the song out loud."
+
     # A job with no failure carries no message either.
     ok_job = SimpleNamespace(
         id=uuid.uuid4(),

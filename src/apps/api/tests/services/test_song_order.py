@@ -22,6 +22,7 @@ from app.services.song_order import (
     load_ready_alignment,
     resolve_uncertain_takes,
     resolved_song_takes_payload,
+    takes_needing_order,
     thread_keeps_lipsync,
     uncertain_media_ids,
     validate_song_order_answer,
@@ -386,3 +387,47 @@ def test_thread_keeps_lipsync_while_a_question_is_open_or_being_answered() -> No
     assert not thread_keeps_lipsync(answered, 4)
     assert not thread_keeps_lipsync([], 3)
     assert not thread_keeps_lipsync([("user", None)], 3)
+
+
+# -- KRI-466: only ambiguous takes need an order -------------------------------
+
+
+def test_takes_needing_order_is_only_ambiguous_takes_with_candidates() -> None:
+    alignment = _alignment(
+        _confident("a", 1.0),
+        _ambiguous("b", 5.0, [(5.0, 0.9)]),
+        TakeAlignment(media_id="c", status="unmatched"),
+        _ambiguous("d", None, []),  # nothing to choose between
+    )
+    assert takes_needing_order(alignment, ["a", "b", "c", "d", "missing"]) == ["b"]
+
+
+def test_question_text_counts_only_ambiguous_takes() -> None:
+    alignment = _alignment(
+        _ambiguous("a", 5.0, [(5.0, 0.9)]),
+        _ambiguous("b", 9.0, [(9.0, 0.9)]),
+        TakeAlignment(media_id="c", status="unmatched"),
+    )
+    from app.services.song_order import song_order_question_text
+
+    question = build_song_order_question(alignment, ["a", "b", "c"])
+    assert "2 of your takes" in song_order_question_text(question)
+
+
+def test_apply_resolved_takes_keeps_the_match_range() -> None:
+    from app.services.song_order import apply_resolved_song_takes
+
+    row = TakeAlignment(
+        media_id="b",
+        status="ambiguous",
+        delta_s=70.0,
+        alternates=[AlignmentAlternate(delta_s=28.0, score=0.5)],
+        match_start_s=3.0,
+        match_end_s=9.0,
+    )
+    alignment = SongAlignment(song_generation=1, takes={"b": row})
+    patched, _order = apply_resolved_song_takes(
+        alignment,
+        [{"media_id": "b", "delta_s": 28.0, "status": "confident", "confirmed_by_creator": True}],
+    )
+    assert (patched.takes["b"].match_start_s, patched.takes["b"].match_end_s) == (3.0, 9.0)
