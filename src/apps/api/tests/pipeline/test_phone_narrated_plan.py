@@ -12,7 +12,9 @@ from app.pipeline.phone_narrated_plan import (
     TITLE_LAYER_PREFIX,
     NarratedPhoneStep,
     compile_phone_narrated_plan,
+    narrated_title_element,
     narrated_title_end_s,
+    narrated_title_text_elements,
     replace_narrated_captions,
 )
 from app.pipeline.phone_recipe_shared import PhoneNarrationBed
@@ -607,3 +609,157 @@ def test_turning_captions_off_keeps_the_title(swap):
     assert swapped.text_layers == _title_layers(pinned)
     assert {run.font_asset_id for run in swapped.text_layers[0].runs} == _font_ids(swapped)
     assert {"positionedText", "animatedText"} <= swapped.required_capabilities
+
+
+# --- title element for the editor preview (KRI-455 follow-up) ---------------------
+
+
+def _compile_elements(elements, canvas):
+    from app.pipeline.generative_overlays import build_overlays_from_text_elements
+    from app.pipeline.portable_text_layout import compile_text_overlay
+
+    overlays = build_overlays_from_text_elements(
+        elements, video_duration_s=12.0, independent_box_alignment=True
+    )
+    return [
+        compile_text_overlay(
+            overlay,
+            layer_id=f"{TITLE_LAYER_PREFIX}{index}",
+            canvas=canvas,
+            dissolve_seed=101 + index * 37,
+        )[0]
+        for index, overlay in enumerate(overlays)
+    ]
+
+
+# Four or more lines at the preset's 120 px: fitted into the top band (KRI-455
+# follow-up, `narrated_title.narrated_title_placement`).
+_LONG_TITLE = "Çılbır: the Turkish eggs everyone gets wrong"
+_LONGEST_TITLE = "Wait until you see what this tiny Kyoto café does with matcha, sesame and yuzu!!"
+
+
+def _canvas(orientation: str = "portrait"):
+    from app.kria.recipes import Canvas
+    from app.pipeline.canvas import canvas_for_orientation
+
+    pipeline_canvas = canvas_for_orientation(orientation)
+    return Canvas(width=pipeline_canvas.width, height=pipeline_canvas.height)
+
+
+@pytest.mark.parametrize("orientation", ["portrait", "landscape"])
+@pytest.mark.parametrize(
+    "title",
+    [
+        _TITLE,
+        "A much longer opening title that has to wrap over lines",
+        _LONG_TITLE,
+        _LONGEST_TITLE,
+    ],
+)
+def test_title_element_spells_out_exactly_the_cloud_intro(orientation, title):
+    """The explicit look (y 0.15, 120 px, Playfair Display, or the fitted size
+    and centre) is the cloud's intro, layer for layer. For a title that fits,
+    the cloud's is the bare `top`/`large`/default-face preset: if a cloud
+    default ever moves, this fails instead of the phone drifting from the cloud."""
+    from app.agents._schemas.text_element import TextElement
+    from app.pipeline.narrated_title import narrated_title_placement
+
+    canvas = _canvas(orientation)
+    cloud_intro = TextElement(
+        id="narrated-title",
+        text=title,
+        start_s=0.0,
+        end_s=1.6,
+        role="generative_intro",
+        **narrated_title_placement(title, canvas=canvas, explicit=False),
+        effect="fade-in",
+        source_params={"narrated_storyboard": "intro"},
+    )
+    element = narrated_title_element(title, end_s=1.6, timeline_duration_s=12.0, canvas=canvas)
+
+    if title == _TITLE:
+        assert (cloud_intro.position, cloud_intro.size_class) == ("top", "large")
+        assert cloud_intro.size_px is None
+    assert _compile_elements([element], canvas) == _compile_elements([cloud_intro], canvas)
+
+
+def test_persisted_title_element_is_the_one_behind_the_pinned_layers():
+    """The variant row's element (what the editor preview draws) compiles to
+    exactly the recipe's title layers (what the phone exports)."""
+    from app.agents._schemas.text_element import TextElement
+
+    recipe = _titled_recipe()
+
+    [row] = narrated_title_text_elements(recipe, _TITLE, end_s=1.6)
+
+    assert row["text"] == _TITLE
+    assert (row["start_s"], row["end_s"]) == (0.0, pytest.approx(1.6))
+    # Everything the iOS preview would otherwise default differently.
+    assert row["font_family"] == "Playfair Display"
+    assert (row["position"], row["x_frac"], row["y_frac"]) == ("custom", 0.5, 0.15)
+    assert row["size_px"] == 120
+    assert row["effect"] == "fade-in"
+    assert row["source_params"]["read_only"] is True
+    assert _compile_elements([TextElement.model_validate(row)], recipe.canvas) == _title_layers(
+        recipe
+    )
+
+
+def test_persisted_title_element_follows_the_clamp_to_a_short_voiceover():
+    recipe = compile_phone_narrated_plan(
+        [_step("s0", "c0", start_s=0.0, end_s=1.2)],
+        (_binding("c0"),),
+        _narration(duration_s=1.2),
+        voiceover_duration_s=1.2,
+        opening_title=_TITLE,
+        opening_title_end_s=3.0,
+    )
+
+    [row] = narrated_title_text_elements(recipe, _TITLE, end_s=3.0)
+    [title] = _title_layers(recipe)
+
+    assert row["end_s"] == pytest.approx(title.end)
+
+
+def test_a_long_title_is_fitted_into_the_top_band_clear_of_the_captions():
+    """The reported 44-character title: the preset's four lines put its top
+    line above the frame. Fitted, the exported title sits between the top
+    safe margin and 30% of the frame, far above the first caption, and the
+    persisted element (what the editor preview draws) is the same layer."""
+    import skia
+
+    from app.agents._schemas.text_element import TextElement
+    from app.pipeline import text_overlay_skia as cloud
+
+    recipe = _titled_recipe(title=_LONG_TITLE)
+    [title] = _title_layers(recipe)
+    captions = [layer for layer in recipe.text_layers if layer is not title]
+    metrics = skia.Font(
+        cloud._resolve_typeface_for_overlay({"font_family": "Playfair Display"}).typeface,
+        title.runs[0].font_size,
+    ).getMetrics()
+    height = recipe.canvas.height
+
+    assert title.runs[0].font_size < 120
+    assert len(title.runs) == 3
+    assert title.runs[0].baseline_y + metrics.fAscent >= 0.06 * height - 0.5
+    title_bottom = title.runs[-1].baseline_y + metrics.fDescent
+    assert title_bottom <= 0.30 * height + 0.5
+    assert captions, "the recipe carries captions"
+    assert title_bottom < min(
+        run.baseline_y - run.font_size for layer in captions for run in layer.runs
+    )
+
+    [row] = narrated_title_text_elements(recipe, _LONG_TITLE, end_s=1.6)
+    assert row["size_px"] == title.runs[0].font_size
+    assert row["y_frac"] > 0.15
+    assert _compile_elements([TextElement.model_validate(row)], recipe.canvas) == [title]
+
+
+@pytest.mark.parametrize("title", [None, "", "   "])
+def test_untitled_recipe_persists_no_title_element(title):
+    recipe = _titled_recipe(title=title)
+
+    assert narrated_title_text_elements(recipe, title, end_s=1.6) == []
+    # A recipe without title layers never gains an element, whatever the title.
+    assert narrated_title_text_elements(recipe, _TITLE, end_s=1.6) == []

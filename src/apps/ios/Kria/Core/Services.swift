@@ -846,7 +846,9 @@ struct RecipeTrack: Codable, Sendable, Identifiable { let id: String; let kind: 
 struct RecipeClip: Codable, Sendable, Identifiable { let id: String; let sourceAssetID: String; let sourceStart: Double; let sourceDuration: Double; let timelineStart: Double; let rate: Double; enum CodingKeys: String, CodingKey { case id, rate; case sourceAssetID = "source_asset_id"; case sourceStart = "source_start"; case sourceDuration = "source_duration"; case timelineStart = "timeline_start" } }
 
 private enum KriaClientProtocolContract {
-    static let version = 3
+    /// 4 (KRI-455): keeps a `read_only` text element out of every editing control,
+    /// so the server may show a phone Voiceover edit's title in the preview.
+    static let version = 4
     static let header = "X-Kria-Client-Protocol"
 }
 

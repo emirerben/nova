@@ -2573,7 +2573,7 @@ def _run_generative_job_impl(
         raw_creator_request = all_candidates.get("creator_request")
         if not raw_creator_request and isinstance(all_candidates.get("brief"), dict):
             raw_creator_request = (all_candidates.get("brief") or {}).get("creator_request")
-        creator_request = str(raw_creator_request or "")[:1000]
+        creator_request = str(raw_creator_request or "")
         # Per-user style (Creator Agent M1). Absent on legacy/public jobs →
         # all render branches fall through to today's byte-identical behavior.
         user_style = _effective_render_user_style(all_candidates)
@@ -4452,7 +4452,7 @@ def _run_phone_voiceover_montage_job(
     landscape_fit: str = all_candidates.get("landscape_fit") or "fill"
     variant_policy: str | None = all_candidates.get("variant_policy") or None
     montage_preset = coerce_montage_preset(all_candidates.get("montage_preset"))
-    creator_request = str(all_candidates.get("creator_request") or "")[:1000]
+    creator_request = str(all_candidates.get("creator_request") or "")
     user_style = _effective_render_user_style(all_candidates)
     raw_creator_strategy = all_candidates.get("creator_strategy") or {}
     creator_opening_title = raw_creator_strategy.get("opening_title")
@@ -5169,6 +5169,55 @@ def _resolve_phone_song_bed(job_id: str, user_song: Any) -> Any:
     )
 
 
+def _save_request_recovery(
+    job_id: str,
+    snapshot: dict,
+    *,
+    ownership_epoch: int | None,
+    message: str,
+    receipts: list[dict] | None = None,
+) -> bool:
+    """Persist the exact recovery choice under the same owner/generation fence."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.brief_checks import PlanFacts, build_receipts  # noqa: PLC0415
+
+    binding = BriefBinding.model_validate(snapshot["creator_brief_binding"])
+    brief = binding.resolve()
+    generation = snapshot.get("creator_generation_id")
+    if receipts is None:
+        receipts = [
+            receipt.model_dump(mode="json")
+            for receipt in build_receipts(
+                brief.live() if brief else [], PlanFacts(), include_unchecked=True
+            )
+        ]
+    stamped = [
+        {**row, "brief_version": brief.version if brief else None, "generation_id": generation}
+        for row in receipts
+    ]
+    with _sync_session() as db:
+        entry = _lock_owned_entry_job(db, job_id)
+        if entry is None or entry[1] != ownership_epoch or entry[0].status == _CANCELLED_JOB_STATUS:
+            return False
+        job = entry[0]
+        current = copy.deepcopy(job.assembly_plan or {})
+        if (
+            current.get("creator_generation_id") != generation
+            or (current.get("creator_brief_binding") or {}).get("digest") != binding.digest
+        ):
+            return False
+        current["request_recovery"] = {
+            "message": message,
+            "requirement_receipts": stamped,
+            "brief_version": brief.version if brief else None,
+            "generation_id": generation,
+            "binding_digest": binding.digest,
+        }
+        job.assembly_plan = current
+        db.commit()
+    return True
+
+
 def _run_phone_unified_montage_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> dict | None:
@@ -5331,14 +5380,58 @@ def _run_phone_unified_montage_job(
             plan_facts_from_unified_montage,
         )
 
+        record["generation_id"] = generation
         record["requirement_receipts"] = [
             {
                 **receipt.model_dump(mode="json"),
                 "brief_version": brief.version,
                 "generation_id": generation,
             }
-            for receipt in build_receipts(brief.live(), plan_facts_from_unified_montage(record))
+            for receipt in build_receipts(
+                brief.live(),
+                plan_facts_from_unified_montage(record),
+                include_unchecked=bool(snapshot.get("creator_brief_binding")),
+            )
         ]
+        if snapshot.get("creator_brief_binding") and any(
+            row.get("verification") == "checked" and row["status"] != "met"
+            for row in record["requirement_receipts"]
+        ):
+            from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+            failures = [
+                row
+                for row in record["requirement_receipts"]
+                if row.get("verification") == "checked" and row["status"] != "met"
+            ]
+            record_pipeline_event(
+                "montage",
+                "requirement_recovery",
+                {
+                    "stage": "compile",
+                    "decision": "ask_before_simplifying",
+                    "generation_id": generation,
+                    "requirement_receipts": failures,
+                },
+            )
+            reasons = " ".join(
+                dict.fromkeys(
+                    row.get("reason") or "A requested change is missing." for row in failures
+                )
+            )
+            recovery_message = (
+                f"{reasons} Your draft is saved. Should I try again or simplify this request?"
+            )
+            if not _save_request_recovery(
+                job_id,
+                snapshot,
+                ownership_epoch=ownership_epoch,
+                message=recovery_message,
+                receipts=record["requirement_receipts"],
+            ):
+                return None
+            raise UnsupportedPhonePlan(recovery_message)
 
     with _sync_session() as db:
         entry_row = _lock_owned_entry_job(db, job_id)
@@ -6732,6 +6825,7 @@ def _run_phone_narrated_job(
         NarratedPhoneStep,
         compile_phone_narrated_plan,
         narrated_title_end_s,
+        narrated_title_text_elements,
     )
     from app.pipeline.phrase_sequence import split_phrases  # noqa: PLC0415
     from app.pipeline.transcribe import Transcript, Word, transcribe_whisper  # noqa: PLC0415
@@ -6951,6 +7045,30 @@ def _run_phone_narrated_job(
                     ordered_ids, step_timings = aligned
                     step_clip_ids = list(ordered_ids)
                 else:
+                    if snapshot.get("creator_brief_binding") and len(ordered_ids) > 1:
+                        record_pipeline_event(
+                            "narrated",
+                            "requirement_recovery",
+                            {
+                                "stage": "alignment",
+                                "decision": "ask_before_simplifying",
+                                "reason": "spoken_word_alignment_unavailable",
+                                "generation_id": generation,
+                            },
+                        )
+                        recovery_message = (
+                            "I couldn't match the narration to the actions reliably. "
+                            "Your draft is saved. Should I try again "
+                            "or use a simpler clip sequence?"
+                        )
+                        if not _save_request_recovery(
+                            job_id,
+                            snapshot,
+                            ownership_epoch=ownership_epoch,
+                            message=recovery_message,
+                        ):
+                            return None
+                        raise UnsupportedPhonePlan(recovery_message)
                     n_clips = len(ordered_ids)
                     target_count = max(1, min(n_clips, len(phrases)))
                     if len(phrases) > target_count:
@@ -7057,6 +7175,9 @@ def _run_phone_narrated_job(
             bed_level = max(0.0, min(1.0, bed_level))
             mix = 1.0 - bed_level
 
+            opening_title_end_s = narrated_title_end_s(
+                transcript.words[0].end_s if transcript.words else None
+            )
             recipe = compile_phone_narrated_plan(
                 steps,
                 bindings,
@@ -7068,9 +7189,7 @@ def _run_phone_narrated_job(
                 target_lufs=settings.output_target_lufs,
                 duck_footage_bed="audioDucking" in settings.phone_render_verified_features,
                 opening_title=opening_title,
-                opening_title_end_s=narrated_title_end_s(
-                    transcript.words[0].end_s if transcript.words else None
-                ),
+                opening_title_end_s=opening_title_end_s,
             )
 
     validate_phone_pilot_recipe(recipe)
@@ -7115,6 +7234,13 @@ def _run_phone_narrated_job(
             "voiceover_bed_level": bed_level,
             "ok": False,
         }
+        # KRI-455: the editor preview draws text from the variant, not the
+        # pinned recipe, so keep the title element the recipe was compiled from.
+        title_elements = narrated_title_text_elements(
+            recipe, opening_title, end_s=opening_title_end_s
+        )
+        if title_elements:
+            new_entry["narrated_title_text_elements"] = title_elements
         # KRI-281: persist the cut the editor shows, derived from the very recipe
         # just pinned (same code the read-time projection uses for videos rendered
         # before this existed). Clip ids index the source pool the timeline lists.
@@ -8044,9 +8170,14 @@ def _build_slide_post_result(
             # a plain literal (not a hash) so the unedited path's key is
             # unchanged from before this feature existed.
             edits_digest = slide_build.edits_cache_digest(edits)
+            # Image slides carry the decode-recipe version so a normalizer
+            # fix rebuilds stale derivatives; videos keep their key.
+            norm_suffix = (
+                f"_n{slide_build.SLIDE_IMAGE_NORMALIZER_VERSION}" if kind == "image" else ""
+            )
             normalized_key = (
                 f"generative-jobs/{job_id}/slides/normalized/"
-                f"{fingerprint}_{canvas[0]}x{canvas[1]}_{edits_digest}.{ext}"
+                f"{fingerprint}_{canvas[0]}x{canvas[1]}_{edits_digest}{norm_suffix}.{ext}"
             )
             normalized_local = os.path.join(tmpdir, f"norm_{index:02d}.{ext}")
             if storage.object_exists(normalized_key):
@@ -21104,6 +21235,7 @@ def _narrated_storyboard_plan(
             NarratedStoryboardInput,
             NarratedStoryboardSegment,
         )
+        from app.services.clip_understanding import understanding_payload  # noqa: PLC0415
 
         clip_by_id = {str(getattr(meta, "clip_id", "")): meta for meta in clip_metas}
         clips = []
@@ -21111,13 +21243,18 @@ def _narrated_storyboard_plan(
             meta = clip_by_id.get(clip_id)
             if meta is None:
                 continue
+            understanding = understanding_payload(meta)
             clips.append(
                 NarratedStoryboardClip(
                     clip_id=clip_id,
-                    summary=str(getattr(meta, "hook_text", "") or "")[:500],
+                    # KRI-459: use the shared record's summary; hook_text is a
+                    # legacy fallback for older analysis rows without one.
+                    summary=str(
+                        understanding.get("summary") or getattr(meta, "hook_text", "") or ""
+                    )[:500],
                     subject=str(getattr(meta, "detected_subject", "") or "")[:240],
                     transcript=str(getattr(meta, "transcript", "") or "")[:500],
-                    content_type=str(getattr(meta, "content_type", "broll") or "broll"),
+                    content_type=str(understanding.get("content_type") or "broll"),
                     duration_s=float(clip_durations_s.get(clip_id, 0.0) or 0.0) or None,
                     best_moments=[
                         moment if isinstance(moment, Mapping) else moment.model_dump(mode="json")
@@ -21164,7 +21301,7 @@ def _narrated_storyboard_plan(
                 words=words,
                 segments=segments,
                 clips=clips,
-                creator_request=(creator_request or "")[:1000],
+                creator_request=creator_request or "",
                 language=str(getattr(transcript, "language", "") or ""),
             ),
             ctx=RunContext(job_id=job_id),
@@ -21319,7 +21456,7 @@ def _narrated_clip_alignment_steps(
                     )
                     for clip_id in clip_ids
                 ],
-                creator_request=(creator_request or "")[:1000],
+                creator_request=creator_request or "",
                 order_locked=order_locked,
                 language=str(getattr(transcript, "language", "") or ""),
             ),
@@ -21393,6 +21530,7 @@ def _narrated_storyboard_text_elements(
 ) -> list[dict[str, Any]]:
     """Build editable intro/player/score bars on the canonical voiceover time."""
     from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+    from app.pipeline.narrated_title import narrated_title_placement  # noqa: PLC0415
 
     words, index_by_id = _narrated_word_rows(transcript)
     if not words or not step_timings:
@@ -21430,8 +21568,11 @@ def _narrated_storyboard_text_elements(
                     start_s=0.0,
                     end_s=max(0.5, min(3.0, float(first["end_s"]) + 1.0)),
                     role="generative_intro",
-                    position="top",
-                    size_class="large",
+                    # The cloud preset (top, large), fitted into the top band
+                    # when a long title would run off the frame. Shared with the
+                    # phone title so both renders draw it identically. Narrated
+                    # text burns on the portrait canvas (`_compose_subtitled_final`).
+                    **narrated_title_placement(intro_text, canvas=PORTRAIT, explicit=False),
                     effect="fade-in",
                     source_params={"narrated_storyboard": "intro"},
                 ).model_dump(mode="json", exclude_none=True)
@@ -25622,15 +25763,33 @@ def _fresh_variant_snapshot(job_id: str, variant_id: str) -> dict | None:
 
 
 def _text_element_burn_dicts(variant: dict) -> list[dict]:
-    from app.agents._schemas.text_element import coerce_text_elements  # noqa: PLC0415
+    from app.agents._schemas.text_element import (  # noqa: PLC0415
+        CAPTION_CUE_SOURCE,
+        coerce_text_elements,
+    )
     from app.pipeline.generative_overlays import build_overlays_from_text_elements  # noqa: PLC0415
 
+    is_guided = variant.get("resolved_archetype") == "guided_story"
     text_elements = (
-        _guided_text_editor_elements(variant)
-        if variant.get("resolved_archetype") == "guided_story"
-        else variant.get("text_elements") or []
+        _guided_text_editor_elements(variant) if is_guided else variant.get("text_elements") or []
     )
     elements = coerce_text_elements(text_elements) or []
+    if not is_guided:
+        # Caption-cue mirrors: `_base_text_elements_for_variant` projects every
+        # narrated/subtitled `caption_cues` row as a caption_cue-tagged element
+        # for the editor's text lane, and a dirty iOS text save or an authored
+        # timeline snapshot can persist those projections into `text_elements`.
+        # The cue lane (libass `_burn_persisted_captions_onto_base`, phone
+        # `compile_caption_layers`) owns caption pixels, so burning mirrors here
+        # draws every sentence twice — the server twin of the iOS
+        # `isCaptionCueMirror` skip (KRI-172 render 1aff3f03). Guided-story
+        # captions are the exception: they exist ONLY as caption_cue elements
+        # and burn through this Skia path.
+        elements = [
+            elem
+            for elem in elements
+            if (elem.source_params or {}).get("source") != CAPTION_CUE_SOURCE
+        ]
     # Lyrics-as-optional-elements: on a `lyrics_baked=False` variant, saved
     # `role=lyric_line` elements are ordinary burnable elements (they were
     # accepted at write time by `validate_text_elements_payload`), so burn

@@ -50,6 +50,13 @@ def collect(
     references: list[tuple[RFFixture, ThreadResult]] = []
     for path in discover_fixture_paths():
         fixture = load_fixture(path)
+        # Executable cassettes are regression evidence, not part of the historical
+        # recorded KPI until a separately reviewed live/DB-backed capture exists.
+        if fixture.provenance == "authored" and any(
+            (turn.kria or {}).get("cassette") or (turn.kria or {}).get("strategy_cassette")
+            for turn in fixture.turns
+        ):
+            continue
         replayed.append((fixture, run_thread(fixture, mode=mode)))
         if fixture.reference is not None:
             references.append((fixture, score_reference(fixture)))

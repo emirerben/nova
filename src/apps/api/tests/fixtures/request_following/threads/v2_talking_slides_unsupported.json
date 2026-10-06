@@ -1,0 +1,16 @@
+{
+  "fixture_id": "v2_talking_slides_unsupported",
+  "provenance": "authored",
+  "footage": "vlog",
+  "description": "Deterministic v2 cassette: unsupported Talking and slides asks leave the draft untouched and state the limitation honestly. Compile-only/replay evidence, not device or render proof.",
+  "turns": [
+    {"turn_id":"seed-unsaved-editor","user_message":"Existing unsaved editor state","engine":"recorded","recorded":{"plan_after":{"clips":[{"clip_id":"V1","start_s":0,"end_s":3}],"texts":[{"id":"hook","role":"title","text":"Sunday reset","start_s":0,"end_s":2,"font_family":"Inter"}]}}},
+    {"turn_id":"talking-unsupported","user_message":"Turn this unsaved montage into a Talking edit with captions.","engine":"v2_kria","kria":{"cassette":{"agent_input":{"utterance":"Turn this unsaved montage into a Talking edit with captions.","variant_snapshot":{"slots":[],"text_bars":[{"id":"hook","role":"title","text":"Sunday reset","start_s":0,"end_s":2,"font_family":"Inter"}],"edit_format":"montage","unsaved_edits":true}},"model_output":{"intent":"reject","ops":[],"confidence":0.99,"reply":"Talking format is not available for this unsaved montage; save the current edit before choosing a supported format.","suggestions":[],"needs_clarification":false}}}},
+    {"turn_id":"slides-unsupported","user_message":"Add a slide deck to this edit.","engine":"v2_kria","kria":{"cassette":{"agent_input":{"utterance":"Add a slide deck to this edit.","variant_snapshot":{"slots":[],"text_bars":[{"id":"hook","role":"title","text":"Sunday reset","start_s":0,"end_s":2,"font_family":"Inter"}],"edit_format":"montage","unsaved_edits":true}},"model_output":{"intent":"reject","ops":[],"confidence":0.99,"reply":"Slides are not supported in this editor yet, so I left your unsaved edit unchanged.","suggestions":[],"needs_clarification":false}}}}
+  ],
+  "requirements": [
+    {"id":"talking-honest","kind":"style","scope":"global","request_type":"style","checker":"reply_states","params":{"all_of":["Talking","not available|save"],"none_of":["prepared|\\bchanged\\b"]},"source":"Turn this unsaved montage into a Talking edit with captions.","introduced_in_turn":1},
+    {"id":"slides-honest","kind":"style","scope":"global","request_type":"style","checker":"reply_states","params":{"all_of":["Slides","not supported|unchanged"],"none_of":["prepared|\\bchanged\\b"]},"source":"Add a slide deck to this edit.","introduced_in_turn":2}
+  ],
+  "reference":{"plan_after":{"clips":[{"clip_id":"V1","start_s":0,"end_s":3}],"texts":[{"id":"hook","role":"title","text":"Sunday reset","start_s":0,"end_s":2,"font_family":"Inter"}]},"reply":"Unsupported paths leave the draft unchanged."}
+}

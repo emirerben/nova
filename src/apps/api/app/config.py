@@ -290,6 +290,12 @@ class Settings(BaseSettings):
     # PHONE_NARRATED_TITLE_ENABLED=false --app nova-video` + `fly machine
     # restart <id>` (api).
     phone_narrated_title_enabled: bool = True
+    # Client protocol (`X-Kria-Client-Protocol`) an app build must declare to
+    # see that title in its editor preview: the status route adds the
+    # variant's `narrated_title_text_elements` to `text_elements` only for
+    # builds that keep a `read_only` element out of every editing control
+    # (older builds would let it be deleted, and that Save 422s).
+    phone_narrated_title_preview_min_client_protocol: int = 4
     # KRI-290 (free clip edits on phone Voiceover videos): a phone `narrated`
     # or montage `voiceover` variant's timeline opens (trim, extend, reorder,
     # split, delete) instead of being locked to the voiceover. A Save swaps the
@@ -782,8 +788,9 @@ class Settings(BaseSettings):
     # KRI-456 kill switch. Phone narrated edits with no filming guide let the
     # `nova.compose.narrated_clip_alignment` agent choose the voiceover word at
     # which each clip comes on screen, so a clip plays when the voice describes
-    # it. Fail-open: any agent/validation failure falls back to the legacy
-    # equal-duration bucket split. False is byte-identical to that split.
+    # it. Legacy unbound jobs retain their bucket fallback. Bound requests
+    # require an explicit choice before losing alignment. Keep the existing
+    # KRI-456 rollout default; request-binding writers are gated separately.
     narrated_clip_alignment_enabled: bool = True
 
     # Kill switch for the terminal-job stuck-variant watchdog

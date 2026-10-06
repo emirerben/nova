@@ -491,9 +491,25 @@ def test_copilot_accepts_full_roster_edit_bundle() -> None:
     assert out.ops == ops
 
 
-def test_copilot_input_rejects_a_request_over_the_shared_two_thousand_char_limit() -> None:
+@pytest.mark.parametrize("field", ["utterance", "original_request"])
+def test_copilot_input_rejects_a_request_over_the_shared_twelve_thousand_char_limit(
+    field: str,
+) -> None:
     with pytest.raises(ValidationError):
-        EditCopilotInput(utterance="x" * 2001, variant_snapshot=_snapshot())
+        EditCopilotInput(**{field: "x" * 12001}, variant_snapshot=_snapshot())
+
+
+def test_copilot_input_accepts_the_shared_twelve_thousand_char_limit() -> None:
+    request = "x" * 12000
+
+    out = EditCopilotInput(
+        utterance=request,
+        original_request=request,
+        variant_snapshot=_snapshot(),
+    )
+
+    assert out.utterance == request
+    assert out.original_request == request
 
 
 def test_copilot_utterance_cleaner_strips_prompt_markers_without_shortening_request() -> None:
@@ -3830,8 +3846,10 @@ def test_copilot_route_oversized_snapshot_422(client: TestClient) -> None:
     assert resp.status_code == 422
 
 
-def test_copilot_route_rejects_a_message_over_the_shared_two_thousand_char_limit(
+@pytest.mark.parametrize("field", ["message", "original_request"])
+def test_copilot_route_rejects_a_request_over_the_shared_twelve_thousand_char_limit(
     client: TestClient,
+    field: str,
 ) -> None:
     settings.edit_copilot_enabled = True
     user = _user()
@@ -3839,7 +3857,7 @@ def test_copilot_route_rejects_a_message_over_the_shared_two_thousand_char_limit
     _install_route_deps(user, item, plan)
 
     body = _payload()
-    body["message"] = "x" * 2001
+    body[field] = "x" * 12001
     resp = client.post(f"/plan-items/{item.id}/variants/v1/copilot/turn", json=body)
 
     assert resp.status_code == 422
@@ -3854,6 +3872,7 @@ def test_copilot_route_clarification_empties_ops(client: TestClient, monkeypatch
     from app.routes import _copilot as copilot_route
 
     received_utterances: list[str] = []
+    received_original_requests: list[str | None] = []
 
     class _FakeAgent:
         def __init__(self, client) -> None:  # noqa: ANN001
@@ -3863,6 +3882,7 @@ def test_copilot_route_clarification_empties_ops(client: TestClient, monkeypatch
             from app.agents.edit_copilot import EditCopilotOutput
 
             received_utterances.append(inp.utterance)
+            received_original_requests.append(inp.original_request)
             return EditCopilotOutput(
                 intent="clarify",
                 ops=[{"op": "remove_text", "bar_index": 0}],
@@ -3874,12 +3894,14 @@ def test_copilot_route_clarification_empties_ops(client: TestClient, monkeypatch
 
     monkeypatch.setattr(copilot_route, "EditCopilotAgent", _FakeAgent)
     body = _payload()
-    body["message"] = "x" * 2000
+    body["message"] = "x" * 12000
+    body["original_request"] = "y" * 12000
     resp = client.post(f"/plan-items/{item.id}/variants/v1/copilot/turn", json=body)
     assert resp.status_code == 200
     assert resp.json()["ops"] == []
     assert resp.json()["needs_clarification"] is True
-    assert received_utterances == ["x" * 2000]
+    assert received_utterances == ["x" * 12000]
+    assert received_original_requests == ["y" * 12000]
 
 
 def test_copilot_route_allows_guided_story_text_drafts(client: TestClient, monkeypatch) -> None:

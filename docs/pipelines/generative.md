@@ -562,14 +562,15 @@ creator request. `order_locked` (a filming-guide order or any `order` clip
 intent) pins the clip order; otherwise the agent may reorder. The agent never
 owns timestamps: `app.pipeline.narrated_alignment.resolve_aligned_steps` turns
 the chosen words into contiguous windows (first step starts at 0.0, minimum step
-1.5 s by pulling boundaries earlier). Any precondition miss (<2 clips, no/too
+1.5 s by pulling boundaries earlier). For legacy unbound jobs, a precondition miss (<2 clips, no/too
 many words, missing clip metadata), agent error or unresolvable result falls
 back to the equal-bucket split and records a `narrated`/`narrated_clip_alignment`
 pipeline event (`status` `aligned` / `fallback` + `reason`) for the admin
-job-debug view. The scripted filming-guide branch and the cloud
+job-debug view. Bound multi-clip requests instead preserve the draft and ask
+before using a simpler sequence when alignment is unavailable. The scripted filming-guide branch and the cloud
 `_render_narrated_variant` path are untouched. Kill switch:
 `fly secrets set NARRATED_CLIP_ALIGNMENT_ENABLED=false --app nova-video` + worker
-restart (byte-identical to the bucket split). Eval:
+restart (restores the bucket split for unbound jobs; bound requests ask for recovery). Eval:
 `tests/evals/test_narrated_clip_alignment_evals.py` (goldens recorded from the
 cacio e pepe job).
 

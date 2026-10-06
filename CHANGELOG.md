@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.102.0] - 2026-10-06
+
+### Changed
+- fix(text): burn legacy font aliases in their face; project the intro's resolved look (#1418) <!-- release-pr: 1418 -->
+
+## [0.78.101.0] - 2026-10-06
+
+### Changed
+- fix(captions): never Skia-burn caption-cue mirrors on caption variants (#1417) <!-- release-pr: 1417 -->
+
+## [0.78.100.0] - 2026-10-06
+
+### Changed
+- fix(kria): land remaining request-preservation stack on main (KRI-459) (#1413) <!-- release-pr: 1413 -->
+
+## [0.78.99.0] - 2026-10-06
+
+### Changed
+- fix(planner): a caption style ask or Title line is never a clip intent (KRI-456) (#1416) <!-- release-pr: 1416 -->
+
+## [0.78.98.0] - 2026-10-06
+
+### Changed
+- fix(slides): one-tap save to Photos + HEIC decode fix (KRI-462) (#1414) <!-- release-pr: 1414 -->
+
+## [0.78.97.0] - 2026-10-06
+
+### Changed
+- fix(kria): show the voiceover title in the iPhone editor preview (KRI-455) (#1415) <!-- release-pr: 1415 -->
+
 ## [0.78.96.0] - 2026-10-06
 
 ### Changed

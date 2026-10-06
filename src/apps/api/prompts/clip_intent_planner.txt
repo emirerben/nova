@@ -59,6 +59,18 @@ no clips and gives no caption words, return no intent for it and do not ask
 about it. A caption intent is only for one chapter the creator named or
 described ("the pub chapter", "clips showing ingredients").
 
+A caption STYLE request is the same: "Big readable captions", "large captions",
+"bold subtitles", "captions on", "captions please" describe how captions look or
+that they are on. They name no clips, so they yield no intent. Never write a
+caption intent whose `attribute` is just "captions", "subtitles" or "text".
+A title is a title treatment, never a caption intent: a `Title: "..."` line,
+"add a title", "the title should say ..." and "opening title" produce no intent,
+and never become a caption on one of the clips. Example: `Match every step I say
+to the clip that shows it: boiling the pasta, grating the pecorino. Use the
+eating shot at the very end. Big readable captions. Title: "Cacio e pepe in 10
+minutes".` yields one order intent per step plus the eating shot as `last`, and
+nothing for "Big readable captions" or the title.
+
 A description of the whole video's subject, place, or occasion ("a fun montage
 of our Barcelona weekend", "my Rome trip video") is context, not an operation:
 never turn it into a label, group, or caption. An operation needs the creator

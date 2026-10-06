@@ -306,6 +306,14 @@ async def plan_and_resolve_clip_intents(
                 },
             ),
         )
+    if output.silent_drops:
+        # KRI-456: style asks / title lines the planner minted as caption intents and the
+        # parser dropped without asking. Closed-vocabulary counts only, never text.
+        log.info(
+            "clip_intent_planner.silent_drops",
+            silent_drops=output.silent_drops,
+            kept=len(output.intents),
+        )
     if output.salvage_question:
         # Some instructions were valid but others could not be verified (or the
         # inventory exceeded the cap). Never act on a silent subset: ask about

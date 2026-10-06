@@ -261,7 +261,7 @@ struct SlidePostWorkspaceView: View {
             title: project.workspaceTitle,
             saveState: NativeEditorSaveControl(isSaving: session.isBusy, hasUnsavedChanges: session.hasUnsavedChanges),
             exportBlockReason: exportBlockReason,
-            isExporting: session.isBusy || exporter.isBusy,
+            isExporting: exporter.isBusy,
             onBack: { if let onBack { onBack() } else { dismiss() } },
             onSave: { Task { await save() } },
             onSaveToPhotos: { exportTask = Task { await export(.photos) } },
@@ -456,13 +456,6 @@ struct SlidePostWorkspaceView: View {
                 .padding(.horizontal, 12).padding(.vertical, 6).background(KriaColor.mutedInk.opacity(0.85), in: Capsule()).padding(12)
                 .allowsHitTesting(false)
         }
-        .overlay(alignment: .topLeading) {
-            if isRendering && !session.isBusy {
-                Text("Rendering…").font(KriaFont.body(12).weight(.semibold)).foregroundStyle(.white)
-                    .padding(.horizontal, 10).padding(.vertical, 5).background(.black.opacity(0.5), in: Capsule()).padding(12)
-            }
-        }
-        .overlay { if session.isBusy { SlidePostVeil(message: session.operationMessage ?? "Saving your post…").clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous)) } }
         .excludesDrawerGestureWhen(mode == .text || (mode == .browse && session.selectedTextID != nil))
     }
 
@@ -499,7 +492,6 @@ struct SlidePostWorkspaceView: View {
         }
         .padding(.bottom, 6)
         .disabled(session.isBusy)
-        .opacity(session.isBusy ? 0.5 : 1)
     }
 
     /// A tap on a text in the preview selects it and opens the Edit text tab with the keyboard up.

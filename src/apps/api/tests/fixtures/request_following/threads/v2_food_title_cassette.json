@@ -1,0 +1,31 @@
+{
+  "fixture_id": "v2_food_title_cassette",
+  "provenance": "authored",
+  "footage": "food_day",
+  "description": "Deterministic v2 editor cassette. It executes only the adapter and compiler; staging, render, and export remain unexecuted.",
+  "turns": [
+    {
+      "turn_id": "title-edit",
+      "user_message": "Call this exactly Kadıköy'de Pazar.",
+      "engine": "v2_kria",
+      "kria": {
+        "cassette": {
+          "agent_input": {
+            "utterance": "Call this exactly Kadıköy'de Pazar.",
+            "prior_turns": [],
+            "variant_snapshot": {
+              "slots": [],
+              "text_bars": [{"id": "title", "role": "title", "text": "Sunday food day", "start_s": 0.0, "end_s": 2.0, "font_family": "Inter"}],
+              "base_generation": "generation-v2-fixture"
+            }
+          },
+          "model_output": {"intent": "edit", "ops": [{"op": "edit_text", "bar_index": 0, "text": "Kadıköy'de Pazar"}], "confidence": 0.99, "reply": "I prepared the exact title.", "suggestions": [], "needs_clarification": false, "clarification_context": null, "pending_actions": []}
+        }
+      },
+      "expected_outcome": {"plan_after": {"clips": [], "texts": [{"id": "title", "role": "title", "text": "Kadıköy'de Pazar", "start_s": 0.0, "end_s": 2.0, "font_family": "Inter"}]}, "reply": null},
+      "recorded": {"plan_after": {"clips": [], "texts": []}, "reply": "recorded value must never become the actual result"}
+    }
+  ],
+  "requirements": [{"id": "exact-title", "kind": "text", "scope": "title", "request_type": "title_exact", "checker": "title_exact", "params": {"literal": "Kadıköy'de Pazar"}, "source": "Call this exactly Kadıköy'de Pazar.", "introduced_in_turn": 0, "claim_terms": ["title"]}],
+  "reference": {"plan_after": {"clips": [], "texts": [{"id": "title", "role": "title", "text": "Kadıköy'de Pazar", "start_s": 0.0, "end_s": 2.0, "font_family": "Inter"}]}, "reply": "I prepared the exact title."}
+}

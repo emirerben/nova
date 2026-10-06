@@ -2207,6 +2207,26 @@ def test_narrated_burns_the_confirmed_title_like_the_cloud_intro(monkeypatch):
     assert [layer.id for layer in recipe.text_layers[1:]] and all(
         layer.id.startswith("caption") for layer in recipe.text_layers[1:]
     )
+    # The editor preview reads text from the variant, not the recipe: the row
+    # keeps the very element the title layer was compiled from.
+    from app.agents._schemas.text_element import TextElement
+    from app.pipeline.generative_overlays import build_overlays_from_text_elements
+    from app.pipeline.portable_text_layout import compile_text_overlay
+
+    [variant] = job.assembly_plan["variants"]
+    [row] = variant["narrated_title_text_elements"]
+    assert row["text"] == "Cacio e pepe in 10 minutes"
+    assert (row["start_s"], row["end_s"]) == (0.0, pytest.approx(1.5))
+    assert row["source_params"]["read_only"] is True
+    [overlay] = build_overlays_from_text_elements(
+        [TextElement.model_validate(row)],
+        video_duration_s=recipe.duration,
+        independent_box_alignment=True,
+    )
+    layer, _font = compile_text_overlay(
+        overlay, layer_id="title-0", canvas=recipe.canvas, dissolve_seed=101
+    )
+    assert layer == title
 
 
 def test_narrated_without_a_title_has_only_captions(monkeypatch):
@@ -2217,6 +2237,8 @@ def test_narrated_without_a_title_has_only_captions(monkeypatch):
     recipe = device_status(job, "narrated").request.recipe
     assert recipe.text_layers
     assert all(layer.id.startswith("caption") for layer in recipe.text_layers)
+    [variant] = job.assembly_plan["variants"]
+    assert "narrated_title_text_elements" not in variant
 
 
 def test_narrated_worker_rejects_format_it_does_not_own(monkeypatch):
@@ -2529,6 +2551,67 @@ def test_narrated_alignment_is_not_used_for_scripted_filming_guides(monkeypatch)
     assert job.status == "awaiting_device"
 
 
+@pytest.mark.parametrize("failure_mode", ["agent", "flag_off", "missing_metadata"])
+def test_bound_narrated_alignment_never_silently_uses_bucket_fallback(monkeypatch, failure_mode):
+    """KRI-459: a bound multi-clip request must recover when alignment is unavailable.
+
+    The old path silently emitted equal buckets after an alignment failure. A
+    bound request must ask for a retry/simpler sequence and leave no device
+    recipe behind, including when the alignment flag is disabled or metadata is
+    missing before the agent call.
+    """
+    from app.kria.brief_binding import BriefBinding
+
+    job, snapshot, _session, _bindings = _setup_cacio(monkeypatch)
+    snapshot["creator_brief_binding"] = BriefBinding.create(uuid.uuid4(), None).model_dump(
+        mode="json"
+    )
+    job.assembly_plan["creator_brief_binding"] = snapshot["creator_brief_binding"]
+    if failure_mode == "agent":
+        from app.agents import _model_client
+        from app.agents.narrated_clip_alignment import NarratedClipAlignmentAgent
+
+        def _alignment_boom(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+            raise RuntimeError("unavailable")
+
+        monkeypatch.setattr(NarratedClipAlignmentAgent, "run", _alignment_boom)
+        monkeypatch.setattr(_model_client, "default_client", lambda: None)
+    elif failure_mode == "flag_off":
+        monkeypatch.setattr(gb.settings, "narrated_clip_alignment_enabled", False)
+    else:
+        monkeypatch.setattr(
+            gb,
+            "_ingest_clips",
+            lambda *a, **k: {
+                "clip_metas": [],
+                "clip_id_to_gcs": {f"c{i}": f"analysis/c{i}.mp4" for i in range(7)},
+                "clip_id_to_local": {f"c{i}": f"/tmp/c{i}.mp4" for i in range(7)},
+                "probe_map": {},
+                "hero": None,
+            },
+        )
+
+    with pytest.raises(UnsupportedPhonePlan, match="try again or use a simpler clip sequence"):
+        gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+    assert "_device_render_v1" not in job.assembly_plan
+    recovery = job.assembly_plan["request_recovery"]
+    assert "try again or use a simpler clip sequence" in recovery["message"]
+    assert recovery["binding_digest"] == snapshot["creator_brief_binding"]["digest"]
+
+
+def test_narrated_alignment_preserves_long_creator_request(monkeypatch):
+    """The alignment input keeps the full bounded creator request for grounding."""
+    job, snapshot, _session, _bindings = _setup_cacio(monkeypatch)
+    long_request = "Please match every narrated action to the footage. " + ("Keep detail. " * 100)
+    job.all_candidates["creator_request"] = long_request
+    seen = []
+    _mock_alignment_agent(monkeypatch, [f"c{i}" for i in range(7)], _CACIO_STARTS, seen=seen)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert seen and seen[0].creator_request == long_request
+
+
 @pytest.mark.parametrize("duck_enabled", [False, True])
 def test_subtitled_sfx_speech_duck_follows_the_setting(monkeypatch, duck_enabled):
     """KRI-181 follow-up: the runner forwards `phone_sfx_speech_duck_enabled`
@@ -2670,3 +2753,24 @@ def test_overlay_display_fullscreen_kill_switch_falls_back_to_pip(monkeypatch):
     )
     gb._run_generative_job(str(job.id))
     assert "layout" not in grounding_mock.call_args.kwargs
+
+
+@pytest.mark.parametrize("stale_field", ["creator_generation_id", "creator_brief_binding"])
+def test_request_recovery_never_overwrites_a_newer_approved_job(monkeypatch, stale_field):
+    from app.kria.brief_binding import BriefBinding
+
+    job, snapshot, _session, _bindings = _setup_cacio(monkeypatch)
+    pinned = BriefBinding.create(uuid.uuid4(), None, latest_message="Keep the actions aligned")
+    snapshot["creator_brief_binding"] = pinned.model_dump(mode="json")
+    job.assembly_plan["creator_brief_binding"] = pinned.model_dump(mode="json")
+    if stale_field == "creator_generation_id":
+        job.assembly_plan[stale_field] = "new-generation"
+    else:
+        job.assembly_plan[stale_field] = BriefBinding.create(
+            uuid.uuid4(), None, latest_message="A different accepted request"
+        ).model_dump(mode="json")
+
+    assert not gb._save_request_recovery(
+        str(job.id), snapshot, ownership_epoch=3, message="Should I try again?"
+    )
+    assert "request_recovery" not in job.assembly_plan

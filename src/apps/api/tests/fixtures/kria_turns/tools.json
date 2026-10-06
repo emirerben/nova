@@ -333,7 +333,7 @@
         },
         "RequirementReceipt": {
           "additionalProperties": false,
-          "description": "One deterministic outcome per Creative Brief requirement (KRI-188).\n\n``inferred`` lists values the server guessed rather than read from the\ncreator or the footage (for example a landmark name), so the client can show\nthem and let the creator correct one. ``inferred_labels`` is the same list with\nthe clip each guess belongs to (additive, KRI-207); ``inferred`` stays for\nclients that only read strings.",
+          "description": "One deterministic outcome per Creative Brief requirement (KRI-188).\n\n``verification`` is ``checked`` only after a deterministic comparison.\n``unchecked`` means the request was understood (or its target was matched)\nbut no conclusive output evidence was available; it never means the\nrequirement was fulfilled. ``stage`` records the furthest lifecycle point:\nunderstood, matched, applied, or checked. ``target_media_ids`` names known\nclip targets.\n\n``inferred`` lists values the server guessed rather than read from the\ncreator or the footage (for example a landmark name), so the client can show\nthem and let the creator correct one. ``inferred_labels`` is the same list with\nthe clip each guess belongs to (additive, KRI-207); ``inferred`` stays for\nclients that only read strings.",
           "properties": {
             "brief_version": {
               "anyOf": [
@@ -395,6 +395,24 @@
               "title": "Requirement Id",
               "type": "string"
             },
+            "stage": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "understood",
+                    "matched",
+                    "applied",
+                    "checked"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Stage"
+            },
             "status": {
               "enum": [
                 "met",
@@ -403,6 +421,30 @@
               ],
               "title": "Status",
               "type": "string"
+            },
+            "target_media_ids": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 50,
+              "title": "Target Media Ids",
+              "type": "array"
+            },
+            "verification": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "checked",
+                    "unchecked"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Verification"
             }
           },
           "required": [

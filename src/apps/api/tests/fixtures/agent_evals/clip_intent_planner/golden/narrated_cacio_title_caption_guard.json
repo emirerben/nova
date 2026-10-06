@@ -1,0 +1,189 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-04.1",
+  "input": {
+    "creator_request": "Recipe video with my voiceover. Match every step I say to the clip that shows it: boiling the pasta, grating the pecorino, toasting the pepper, adding pasta water, tossing with the cheese, plating with pepper. Use the eating shot at the very end. Big readable captions. Title: \"Cacio e pepe in 10 minutes\".",
+    "latest_user_message": null,
+    "candidate_intents": [
+      {
+        "intent_id": "match_steps_boiling",
+        "op": "order",
+        "attribute": "boiling the pasta",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null
+      },
+      {
+        "intent_id": "match_steps_grating",
+        "op": "order",
+        "attribute": "grating the pecorino",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null
+      },
+      {
+        "intent_id": "match_steps_toasting",
+        "op": "order",
+        "attribute": "toasting the pepper",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null
+      },
+      {
+        "intent_id": "match_steps_adding_water",
+        "op": "order",
+        "attribute": "adding pasta water",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null
+      },
+      {
+        "intent_id": "match_steps_tossing",
+        "op": "order",
+        "attribute": "tossing with the cheese",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null
+      },
+      {
+        "intent_id": "match_steps_plating",
+        "op": "order",
+        "attribute": "plating with pepper",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null
+      },
+      {
+        "intent_id": "eating_shot_last",
+        "op": "order",
+        "attribute": "the eating shot",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": "last"
+      }
+    ]
+  },
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"order_boiling_pasta\",\n      \"op\": \"order\",\n      \"attribute\": \"boiling the pasta\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"boiling the pasta\"\n    },\n    {\n      \"intent_id\": \"order_grating_pecorino\",\n      \"op\": \"order\",\n      \"attribute\": \"grating the pecorino\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"grating the pecorino\"\n    },\n    {\n      \"intent_id\": \"order_toasting_pepper\",\n      \"op\": \"order\",\n      \"attribute\": \"toasting the pepper\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"toasting the pepper\"\n    },\n    {\n      \"intent_id\": \"order_adding_pasta_water\",\n      \"op\": \"order\",\n      \"attribute\": \"adding pasta water\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"adding pasta water\"\n    },\n    {\n      \"intent_id\": \"order_tossing_cheese\",\n      \"op\": \"order\",\n      \"attribute\": \"tossing with the cheese\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"tossing with the cheese\"\n    },\n    {\n      \"intent_id\": \"order_plating_pepper\",\n      \"op\": \"order\",\n      \"attribute\": \"plating with pepper\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"plating with pepper\"\n    },\n    {\n      \"intent_id\": \"order_eating_shot_last\",\n      \"op\": \"order\",\n      \"attribute\": \"the eating shot\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": \"last\",\n      \"placeholder\": false,\n      \"source_quote\": \"Use the eating shot at the very end\"\n    },\n    {\n      \"intent_id\": \"title_cacio_e_pepe\",\n      \"op\": \"caption\",\n      \"attribute\": \"video\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": \"Cacio e pepe in 10 minutes\",\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"source_quote\": \"Title: \\\"Cacio e pepe in 10 minutes\\\"\"\n    }\n  ],\n  \"question\": null\n}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "order_boiling_pasta",
+        "op": "order",
+        "attribute": "boiling the pasta",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "boiling the pasta"
+      },
+      {
+        "intent_id": "order_grating_pecorino",
+        "op": "order",
+        "attribute": "grating the pecorino",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "grating the pecorino"
+      },
+      {
+        "intent_id": "order_toasting_pepper",
+        "op": "order",
+        "attribute": "toasting the pepper",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "toasting the pepper"
+      },
+      {
+        "intent_id": "order_adding_pasta_water",
+        "op": "order",
+        "attribute": "adding pasta water",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "adding pasta water"
+      },
+      {
+        "intent_id": "order_tossing_cheese",
+        "op": "order",
+        "attribute": "tossing with the cheese",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "tossing with the cheese"
+      },
+      {
+        "intent_id": "order_plating_pepper",
+        "op": "order",
+        "attribute": "plating with pepper",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "plating with pepper"
+      },
+      {
+        "intent_id": "order_eating_shot_last",
+        "op": "order",
+        "attribute": "the eating shot",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": "last",
+        "source_quote": "Use the eating shot at the very end."
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "live_capture_gemini_2_5_flash_old_prompt",
+    "case": "KRI-456 parser-guard regression: REAL output of the 2026-10-04.1 prompt (kept verbatim, including the caption intent it minted for 'Title: ...', attribute 'video'). The parser must drop that caption silently; the expected result is the seven order intents and no question.",
+    "expect_intents": [
+      {
+        "op": "order",
+        "source_quote_keywords": [
+          "boiling the"
+        ]
+      },
+      {
+        "op": "order",
+        "source_quote_keywords": [
+          "grating the"
+        ]
+      },
+      {
+        "op": "order",
+        "source_quote_keywords": [
+          "toasting the"
+        ]
+      },
+      {
+        "op": "order",
+        "source_quote_keywords": [
+          "adding pasta"
+        ]
+      },
+      {
+        "op": "order",
+        "source_quote_keywords": [
+          "tossing with"
+        ]
+      },
+      {
+        "op": "order",
+        "source_quote_keywords": [
+          "plating with"
+        ]
+      },
+      {
+        "op": "order",
+        "source_quote_keywords": [
+          "eating shot"
+        ],
+        "position": "last"
+      }
+    ],
+    "expect_absent_ops": [
+      "caption"
+    ],
+    "expect_any": true,
+    "expect_question": false
+  }
+}

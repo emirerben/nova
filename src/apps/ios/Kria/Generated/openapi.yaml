@@ -543,6 +543,121 @@
         "title": "BlurPreviousBackground",
         "type": "object"
       },
+      "BriefBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "brief": {
+            "$ref": "#/components/schemas/CreativeBrief",
+            "default": null,
+            "nullable": true
+          },
+          "creator_request": {
+            "default": "",
+            "title": "Creator Request",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "media_snapshot": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Media Snapshot",
+            "type": "object"
+          },
+          "state": {
+            "enum": [
+              "pinned",
+              "none"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "thread_id": {
+            "title": "Thread Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "thread_id",
+          "state",
+          "digest"
+        ],
+        "title": "BriefBinding",
+        "type": "object"
+      },
+      "BriefRequirement": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "default": null,
+            "maxLength": 300,
+            "nullable": true,
+            "title": "Description",
+            "type": "string"
+          },
+          "facts": {
+            "additionalProperties": true,
+            "title": "Facts",
+            "type": "object"
+          },
+          "id": {
+            "maxLength": 24,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "text",
+              "order",
+              "select",
+              "timing",
+              "audio",
+              "style"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "literal": {
+            "default": null,
+            "maxLength": 200,
+            "nullable": true,
+            "title": "Literal",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "source_turn_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Source Turn Id",
+            "type": "string"
+          },
+          "status": {
+            "default": "open",
+            "enum": [
+              "open",
+              "met",
+              "partial",
+              "not_possible",
+              "superseded"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "scope"
+        ],
+        "title": "BriefRequirement",
+        "type": "object"
+      },
       "CameraPulse": {
         "additionalProperties": false,
         "properties": {
@@ -1268,6 +1383,26 @@
           "content_types"
         ],
         "title": "CreationVoiceoverCapabilitiesOut",
+        "type": "object"
+      },
+      "CreativeBrief": {
+        "additionalProperties": false,
+        "properties": {
+          "requirements": {
+            "items": {
+              "$ref": "#/components/schemas/BriefRequirement"
+            },
+            "title": "Requirements",
+            "type": "array"
+          },
+          "version": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "title": "CreativeBrief",
         "type": "object"
       },
       "CreativeBriefOut": {
@@ -6421,7 +6556,7 @@
       },
       "RequirementReceipt": {
         "additionalProperties": false,
-        "description": "One deterministic outcome per Creative Brief requirement (KRI-188).\n\n``inferred`` lists values the server guessed rather than read from the\ncreator or the footage (for example a landmark name), so the client can show\nthem and let the creator correct one. ``inferred_labels`` is the same list with\nthe clip each guess belongs to (additive, KRI-207); ``inferred`` stays for\nclients that only read strings.",
+        "description": "One deterministic outcome per Creative Brief requirement (KRI-188).\n\n``verification`` is ``checked`` only after a deterministic comparison.\n``unchecked`` means the request was understood (or its target was matched)\nbut no conclusive output evidence was available; it never means the\nrequirement was fulfilled. ``stage`` records the furthest lifecycle point:\nunderstood, matched, applied, or checked. ``target_media_ids`` names known\nclip targets.\n\n``inferred`` lists values the server guessed rather than read from the\ncreator or the footage (for example a landmark name), so the client can show\nthem and let the creator correct one. ``inferred_labels`` is the same list with\nthe clip each guess belongs to (additive, KRI-207); ``inferred`` stays for\nclients that only read strings.",
         "properties": {
           "brief_version": {
             "default": null,
@@ -6465,6 +6600,18 @@
             "title": "Requirement Id",
             "type": "string"
           },
+          "stage": {
+            "default": null,
+            "enum": [
+              "understood",
+              "matched",
+              "applied",
+              "checked"
+            ],
+            "nullable": true,
+            "title": "Stage",
+            "type": "string"
+          },
           "status": {
             "enum": [
               "met",
@@ -6472,6 +6619,24 @@
               "not_possible"
             ],
             "title": "Status",
+            "type": "string"
+          },
+          "target_media_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Target Media Ids",
+            "type": "array"
+          },
+          "verification": {
+            "default": null,
+            "enum": [
+              "checked",
+              "unchecked"
+            ],
+            "nullable": true,
+            "title": "Verification",
             "type": "string"
           }
         },
@@ -6662,7 +6827,7 @@
             "type": "integer"
           },
           "message": {
-            "maxLength": 2000,
+            "maxLength": 12000,
             "minLength": 1,
             "title": "Message",
             "type": "string"
@@ -6775,6 +6940,11 @@
       "SlidePostDraft": {
         "description": "The persisted draft document (`PlanItem.slide_post`).",
         "properties": {
+          "brief_binding": {
+            "$ref": "#/components/schemas/BriefBinding",
+            "default": null,
+            "nullable": true
+          },
           "caption": {
             "default": "",
             "maxLength": 2200,
@@ -6835,6 +7005,11 @@
       "SlidePostDraftBody": {
         "description": "PUT /{item_id}/slide-post request \u2014 a full replacement of the draft's\nuser-editable fields. `version`/`rendered_version`/`user_edited` are\nserver-owned and never accepted from the client.",
         "properties": {
+          "brief_binding": {
+            "$ref": "#/components/schemas/BriefBinding",
+            "default": null,
+            "nullable": true
+          },
           "caption": {
             "default": "",
             "title": "Caption",
