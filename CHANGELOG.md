@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.91.0] - 2026-10-06
+
+### Changed
+- fix(ios): retry uploads on 429 and stop calling them unreadable (#1408) <!-- release-pr: 1408 -->
+
 ## [0.78.90.0] - 2026-10-06
 
 ### Changed
