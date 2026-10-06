@@ -2475,10 +2475,11 @@ def _run_generative_job_impl(
 
         ensure_job_snapshot(db, job, source="generative_worker")
         assembly = dict(job.assembly_plan or {})
-        # Current cloud compilers can provide receipt evidence for duration,
-        # narration, and source-audio presence, but not literal text, source
-        # identities, or exact clip order. Decline those confirmed requirements
-        # before any ingest/model/render spend; publication rechecks too.
+        # Current cloud compilers can provide receipt evidence for duration and
+        # narration. Camera-audio preservation/muting, literal text, source
+        # identities, and exact clip order lack trustworthy evidence. Decline
+        # those confirmed requirements before any ingest/model/render spend;
+        # publication rechecks too.
         from app.services.cloud_render_contract import (  # noqa: PLC0415
             CloudRenderContractError,
             preflight_cloud_contract,
@@ -10534,6 +10535,8 @@ def _run_media_overlay_pass(
         persisted = (job.assembly_plan or {}).get("variants") or []
         found = next((v for v in persisted if v.get("variant_id") == variant_id), None)
         existing = dict(found) if found is not None else None
+        assembly = copy.deepcopy(job.assembly_plan or {})
+        candidates = getattr(job, "all_candidates", None) or {}
     if existing is None:
         log.error("media_overlay_variant_not_found", job_id=job_id, variant_id=variant_id)
         return
@@ -10543,6 +10546,12 @@ def _run_media_overlay_pass(
         raise GuidedStoryError(
             "guided_story_edit_unsupported",
             "This guided story edit must be changed in Plan edit, then generated again.",
+        )
+    if _cloud_contract_has_objective_requirements(assembly, candidates):
+        from app.services.cloud_render_contract import CloudRenderContractError  # noqa: PLC0415
+
+        raise CloudRenderContractError(
+            "This cloud renderer can't safely replace a confirmed output in place yet."
         )
 
     current_video_path = existing.get("video_path")
@@ -11365,6 +11374,8 @@ def _run_sfx_pass(
         persisted = (job.assembly_plan or {}).get("variants") or []
         found = next((v for v in persisted if v.get("variant_id") == variant_id), None)
         existing = dict(found) if found is not None else None
+        assembly = copy.deepcopy(job.assembly_plan or {})
+        candidates = getattr(job, "all_candidates", None) or {}
     if existing is None:
         log.error("sfx_variant_not_found", job_id=job_id, variant_id=variant_id)
         return
@@ -11374,6 +11385,12 @@ def _run_sfx_pass(
         raise GuidedStoryError(
             "guided_story_edit_unsupported",
             "This guided story edit must be changed in Plan edit, then generated again.",
+        )
+    if _cloud_contract_has_objective_requirements(assembly, candidates):
+        from app.services.cloud_render_contract import CloudRenderContractError  # noqa: PLC0415
+
+        raise CloudRenderContractError(
+            "This cloud renderer can't safely replace a confirmed output in place yet."
         )
 
     current_video_path = existing.get("video_path")
@@ -17225,6 +17242,62 @@ def _reject_unverified_cloud_variant(
     return result
 
 
+def _cloud_contract_is_bound(plan: dict[str, Any], candidates: dict[str, Any]) -> bool:
+    from app.services.creator_render_contract import (  # noqa: PLC0415
+        CONTRACT_FIELD,
+        REQUIREMENT_VERSION_FIELD,
+    )
+
+    return bool(plan.get(CONTRACT_FIELD) or candidates.get(REQUIREMENT_VERSION_FIELD) == 1)
+
+
+def _cloud_contract_has_objective_requirements(
+    plan: dict[str, Any], candidates: dict[str, Any]
+) -> bool:
+    """Whether an in-place lane would need fresh, artifact-bound proof.
+
+    A version marker without its pinned root is also treated as objective: it
+    must fail closed instead of falling through a legacy publication path.
+    """
+    if not _cloud_contract_is_bound(plan, candidates):
+        return False
+    from app.services.creator_render_contract import (  # noqa: PLC0415
+        CreatorRenderContractError,
+        read_render_contract,
+    )
+
+    try:
+        contract = read_render_contract(plan)
+    except CreatorRenderContractError:
+        return True
+    if contract is None:
+        return True
+    return any(
+        (
+            contract.duration_s is not None,
+            contract.require_voiceover,
+            contract.original_audio is not None,
+            bool(contract.audio_source_ids),
+            bool(contract.exact_texts),
+            contract.order_required,
+            bool(contract.unresolved),
+        )
+    )
+
+
+def _cloud_contract_failure(result: dict[str, Any], error: str) -> dict[str, Any]:
+    blocked = {
+        key: value for key, value in result.items() if key not in set(_PENDING_VARIANT_ASSET_FIELDS)
+    }
+    return {
+        **blocked,
+        "ok": False,
+        "render_status": "failed",
+        "error": error,
+        "error_class": "creator_render_contract_unverified",
+    }
+
+
 def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> bool:
     """Insert or replace `result` in Job.assembly_plan['variants'] by variant_id.
 
@@ -17249,6 +17322,7 @@ def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> bool:
     variant_id = result.get("variant_id")
     journaled_poster_paths: list[str] = []
     previous_variant: dict[str, Any] | None = None
+    rejected = False
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
@@ -17263,6 +17337,7 @@ def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> bool:
         result = _reject_unverified_cloud_variant(
             plan, result, candidates=getattr(job, "all_candidates", None) or {}
         )
+        rejected = result.get("error_class") == "creator_render_contract_unverified"
         variants = list(plan.get("variants") or [])
         for i, v in enumerate(variants):
             if v.get("variant_id") == variant_id:
@@ -17297,7 +17372,7 @@ def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> bool:
         job.assembly_plan = plan
         db.commit()
     _reconcile_retired_variant_posters(job_id, journaled_poster_paths)
-    return True
+    return not rejected
 
 
 def _clear_user_timeline(
@@ -17494,31 +17569,36 @@ def _update_variant_entry(
                     **v,
                     **{k: val for k, val in patch.items() if k != "variant_id"},
                 }
-                # A replacement output may be a minimal patch: inherit its
-                # status/ok from the live row only after verifying the merged
-                # candidate. Never let an old receipt or duration prove a new
-                # artifact; fresh output needs fresh evidence in this patch.
-                is_new_playable = (
-                    bool(patch.get("video_path") or patch.get("output_url"))
-                    and updated_variant.get("render_status") == "ready"
+                # A replacement output may be staged as ``rendering`` before a
+                # later status-only ready transition. Validate its fresh
+                # evidence now, while the old output is still available. A
+                # prior receipt/duration must never prove a new artifact.
+                candidates = getattr(job, "all_candidates", None) or {}
+                contract_bound = _cloud_contract_is_bound(plan, candidates)
+                has_objective_contract = _cloud_contract_has_objective_requirements(
+                    plan, candidates
                 )
-                from app.services.creator_render_contract import (  # noqa: PLC0415
-                    CONTRACT_FIELD,
-                    REQUIREMENT_VERSION_FIELD,
-                )
-
-                contract_bound = bool(
-                    plan.get(CONTRACT_FIELD)
-                    or (getattr(job, "all_candidates", None) or {}).get(REQUIREMENT_VERSION_FIELD)
-                    == 1
-                )
-                if is_new_playable and contract_bound:
+                is_new_artifact = bool(patch.get("video_path") or patch.get("output_url"))
+                rejection = False
+                if contract_bound and has_objective_contract and is_new_artifact:
+                    # A retry replaces the failed candidate, so its fresh
+                    # proof must not inherit the old contract-failure label.
+                    # Explicit errors in this patch remain authoritative.
+                    if (
+                        "error_class" not in patch
+                        and updated_variant.get("error_class")
+                        == "creator_render_contract_unverified"
+                    ):
+                        updated_variant.pop("error_class", None)
+                        if "error" not in patch:
+                            updated_variant.pop("error", None)
                     if "render_receipt" not in patch:
                         updated_variant.pop("render_receipt", None)
                     if "duration_s" not in patch:
                         updated_variant.pop("duration_s", None)
+                    verification_candidate = {**updated_variant, "render_status": "ready"}
                     rejected = _reject_unverified_cloud_variant(
-                        plan, updated_variant, candidates=getattr(job, "all_candidates", None) or {}
+                        plan, verification_candidate, candidates=candidates
                     )
                     if rejected.get("error_class") == "creator_render_contract_unverified":
                         # Keep the last accepted artifact reachable while the
@@ -17526,7 +17606,38 @@ def _update_variant_entry(
                         for field in _PENDING_VARIANT_ASSET_FIELDS:
                             if field in v:
                                 rejected.setdefault(field, v[field])
-                    updated_variant = rejected
+                        updated_variant = rejected
+                        rejection = True
+                    elif updated_variant.get("render_status") == "ready" or (
+                        v.get("error_class") == "creator_render_contract_unverified"
+                        and "ok" not in patch
+                    ):
+                        # A verified retry may still be composing. Remove the
+                        # prior failure's success flag along with its error so
+                        # the later ready-only transition can finish normally.
+                        updated_variant["ok"] = True
+                elif (
+                    contract_bound
+                    and has_objective_contract
+                    and updated_variant.get("render_status") == "ready"
+                ):
+                    if updated_variant.get("error_class") == "creator_render_contract_unverified":
+                        rejected = _cloud_contract_failure(
+                            updated_variant,
+                            "This edit has no fresh verified render evidence for the replacement.",
+                        )
+                    else:
+                        rejected = _reject_unverified_cloud_variant(
+                            plan,
+                            updated_variant,
+                            candidates=candidates,
+                        )
+                    if rejected.get("error_class") == "creator_render_contract_unverified":
+                        for field in _PENDING_VARIANT_ASSET_FIELDS:
+                            if field in v:
+                                rejected.setdefault(field, v[field])
+                        updated_variant = rejected
+                        rejection = True
                 variants[i] = updated_variant
                 accepted_variant = updated_variant
                 # Editor saves replace one already-published variant in place.
@@ -17579,7 +17690,7 @@ def _update_variant_entry(
         job.assembly_plan = plan
         try:
             db.commit()
-            if accepted_state is not None:
+            if accepted_state is not None and not rejection:
                 accepted_state["accepted"] = True
         except SoftTimeLimitExceeded as exc:
             # A soft-limit signal can land after PostgreSQL accepted COMMIT but
@@ -17595,7 +17706,7 @@ def _update_variant_entry(
             patch,
             expected_render_gen_id=expected_render_gen_id,
         )
-        if accepted_state is not None and persisted is not False:
+        if accepted_state is not None and persisted is not False and not rejection:
             # ``None`` means the fresh read itself failed. Fail closed: a
             # potentially committed partial render must never be republished as
             # ready merely because confirmation was unavailable.
@@ -17634,7 +17745,7 @@ def _update_variant_entry(
                 job_id=job_id,
                 variant_id=variant_id,
             )
-    return True
+    return not rejection
 
 
 def _variant_patch_persisted_after_ambiguous_commit(
@@ -29003,6 +29114,23 @@ def _publish_speech_cut_rerender(
             ):
                 raise RuntimeError("speech cut publication generation was superseded")
 
+        candidates = getattr(job, "all_candidates", None) or {}
+        if _cloud_contract_has_objective_requirements(plan, candidates):
+            checked = _reject_unverified_cloud_variant(
+                plan,
+                {**winning_variant, "render_status": "ready"},
+                candidates=candidates,
+            )
+            if checked.get("error_class") == "creator_render_contract_unverified":
+                from app.services.cloud_render_contract import (
+                    CloudRenderContractError,  # noqa: PLC0415
+                )
+
+                # Do not consume private ownership or retire the public output
+                # until its private candidate has independently satisfied the
+                # pinned requirements.
+                raise CloudRenderContractError(str(checked.get("error") or "unverified output"))
+
         _validate_speech_cut_publication(control, winning_variant)
         operation = dict(control.get("operation") or {})
         if operation.get("operation") == "apply_speech_cut_candidate":
@@ -29212,6 +29340,20 @@ def _update_required_speech_staged_variant(
             **current,
             **{key: value for key, value in enriched_patch.items() if key != "variant_id"},
         }
+        candidates = getattr(job, "all_candidates", None) or {}
+        if _cloud_contract_has_objective_requirements(plan, candidates) and (
+            enriched_patch.get("video_path") or enriched_patch.get("output_url")
+        ):
+            # Private composition is allowed to stage work, but a newly staged
+            # artifact cannot carry the previous artifact's proof into the
+            # public swap. ``None`` is intentional: this merge-only helper has
+            # no deletion primitive.
+            if "render_receipt" not in enriched_patch:
+                enriched_patch["render_receipt"] = None
+                merged["render_receipt"] = None
+            if "duration_s" not in enriched_patch:
+                enriched_patch["duration_s"] = None
+                merged["duration_s"] = None
         current_for_retirement = {
             key: value for key, value in current.items() if key != "_retired_storage_paths"
         }

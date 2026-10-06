@@ -198,6 +198,123 @@ def test_tampered_persisted_contract_is_refused() -> None:
         read_render_contract(assembly)
 
 
+def test_multiline_and_karaoke_runs_reconstruct_confirmed_words() -> None:
+    from app.kria.recipes_v2 import EditRecipeV2
+    from tests.kria.test_portable_text import text_document
+
+    contract = CreatorRenderContract(generation_id="g").rebind(
+        exact_texts=(TextRequirement(role="any", text="Hello world"),)
+    )
+    multiline = text_document()
+    run = multiline["text_layers"][0]["runs"][0]
+    multiline["text_layers"][0]["runs"] = [
+        {**run, "text": "Hello", "baseline_y": 900},
+        {**run, "text": "world", "baseline_y": 980},
+    ]
+    assert verify_phone_recipe(contract, EditRecipeV2.model_validate(multiline))
+
+    karaoke = text_document()
+    run = karaoke["text_layers"][0]["runs"][0]
+    karaoke["text_layers"][0].update(
+        effect="karaoke-line",
+        karaoke={"starts": [0.2, 0.5], "highlight": run["fill"], "active_only": True},
+        runs=[{**run, "text": "Hello"}, {**run, "text": "world", "x": 500}],
+    )
+    assert verify_phone_recipe(contract, EditRecipeV2.model_validate(karaoke))
+
+
+def test_same_line_styled_spans_do_not_gain_an_invented_space() -> None:
+    from app.kria.recipes_v2 import EditRecipeV2
+    from tests.kria.test_portable_text import text_document
+
+    doc = text_document()
+    run = doc["text_layers"][0]["runs"][0]
+    doc["text_layers"][0]["runs"] = [{**run, "text": "Hello"}, {**run, "text": "world", "x": 500}]
+    contract = CreatorRenderContract(generation_id="g").rebind(
+        exact_texts=(TextRequirement(role="any", text="Helloworld"),)
+    )
+    assert verify_phone_recipe(contract, EditRecipeV2.model_validate(doc))
+
+
+@pytest.mark.parametrize("effect", ["static", "karaoke-line"])
+def test_actual_text_compiler_preserves_exact_words_across_run_boundaries(effect):
+    from app.kria.recipes_v2 import EditRecipeV2
+    from app.pipeline.canvas import Canvas
+    from app.pipeline.portable_text_layout import compile_text_overlay
+    from tests.kria.test_portable_text import text_document
+
+    layer, _font = compile_text_overlay(
+        {
+            "text": "Hello\nworld",
+            "effect": effect,
+            "start_s": 0.2,
+            "end_s": 1,
+            "font_family": "Inter",
+            "text_size_px": 36,
+            "text_color": "#FFFFFF",
+            "word_timings": [
+                {"text": "Hello", "start_s": 0, "end_s": 0.3},
+                {"text": "world", "start_s": 0.3, "end_s": 0.7},
+            ]
+            if effect == "karaoke-line"
+            else [],
+        },
+        layer_id="caption",
+        canvas=Canvas(1080, 1920),
+    )
+    assert len(layer.runs) == 2
+    doc = text_document()
+    # Bind the real layout's font references to the fixture's admitted font.
+    rendered = layer.model_dump(mode="json")
+    for run in rendered["runs"]:
+        run["font_asset_id"] = "font"
+    doc["text_layers"] = [rendered]
+    contract = CreatorRenderContract(generation_id="g").rebind(
+        exact_texts=(TextRequirement(role="any", text="Hello world"),)
+    )
+    assert verify_phone_recipe(contract, EditRecipeV2.model_validate(doc))
+
+
+def test_one_visible_word_cannot_prove_a_hidden_word():
+    from app.kria.recipes_v2 import EditRecipeV2
+    from tests.kria.test_portable_text import text_document
+
+    doc = text_document()
+    run = doc["text_layers"][0]["runs"][0]
+    transparent = {**run["fill"], "alpha": 0}
+    doc["text_layers"][0]["runs"] = [
+        {**run, "text": "Hello", "baseline_y": 900},
+        {
+            **run,
+            "text": "world",
+            "baseline_y": 980,
+            "fill": transparent,
+            "stroke": transparent,
+            "stroke_width": 0,
+        },
+    ]
+    contract = CreatorRenderContract(generation_id="g").rebind(
+        exact_texts=(TextRequirement(role="any", text="Hello world"),)
+    )
+    with pytest.raises(CreatorRenderContractError, match="missing"):
+        verify_phone_recipe(contract, EditRecipeV2.model_validate(doc))
+
+
+def test_fully_transparent_text_cannot_satisfy_exact_requirement() -> None:
+    from app.kria.recipes_v2 import EditRecipeV2
+    from tests.kria.test_portable_text import text_document
+
+    doc = text_document()
+    run = doc["text_layers"][0]["runs"][0]
+    transparent = {**run["fill"], "alpha": 0}
+    run.update(fill=transparent, stroke=transparent, stroke_width=0)
+    contract = CreatorRenderContract(generation_id="g").rebind(
+        exact_texts=(TextRequirement(role="any", text="Hello world"),)
+    )
+    with pytest.raises(CreatorRenderContractError, match="missing"):
+        verify_phone_recipe(contract, EditRecipeV2.model_validate(doc))
+
+
 def test_rebind_is_the_only_supported_integrity_preserving_change() -> None:
     contract = build_render_contract({"opening_title": "Hello"}, generation_id="gen-1")
     assert contract is not None

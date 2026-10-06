@@ -383,14 +383,47 @@ def verify_phone_recipe(
     )
     frame = 1 / recipe.frame_rate
 
+    def _run_can_be_visible(run) -> bool:  # noqa: ANN001
+        """Reject only layers the portable paint contract proves invisible."""
+
+        if run.fill.alpha > 0 or (run.stroke_width > 0 and run.stroke.alpha > 0):
+            return True
+        if run.gradient is not None and any(stop.color.alpha > 0 for stop in run.gradient.stops):
+            return True
+        return any(blur.color.alpha > 0 for blur in run.blur_layers)
+
+    def _layer_text(layer) -> str:  # noqa: ANN001
+        runs = [unicodedata.normalize("NFC", run.text) for run in layer.runs]
+        # Karaoke compilation emits one word per run on a shared baseline, so
+        # its visual word boundaries are spaces. Ordinary runs on one baseline
+        # may instead be styled spans of a single word and must stay adjacent.
+        if layer.effect == "karaoke-line":
+            return " ".join(runs)
+        lines: list[list[str]] = []
+        baseline: float | None = None
+        for run, text in zip(layer.runs, runs, strict=True):
+            if baseline is None or abs(run.baseline_y - baseline) > 0.001:
+                lines.append([text])
+                baseline = run.baseline_y
+            else:
+                lines[-1].append(text)
+        return "\n".join("".join(line) for line in lines)
+
     def text_layers() -> list[tuple[str, float, float]]:
         return [
-            (
-                _normal("".join(unicodedata.normalize("NFC", run.text) for run in layer.runs)),
-                layer.start,
-                layer.end,
-            )
+            (_normal(_layer_text(layer)), layer.start, layer.end)
             for layer in recipe.text_layers
+            if layer.runs
+            and all(
+                _run_can_be_visible(run)
+                or (
+                    layer.karaoke is not None
+                    and layer.karaoke.highlight.alpha > 0
+                    and layer.karaoke.starts[index] < layer.end - layer.start
+                )
+                for index, run in enumerate(layer.runs)
+                if run.text.strip()
+            )
         ]
 
     rendered = text_layers()
