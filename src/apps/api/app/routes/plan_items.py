@@ -4954,6 +4954,10 @@ def _slide_post_export_is_current(draft: SlidePostDraft | None, variant: dict | 
         return False
     if not isinstance(validation, dict) or validation.get("errors"):
         return False
+    from app.pipeline.slide_post.build import SLIDE_IMAGE_NORMALIZER_VERSION  # noqa: PLC0415
+
+    if slide_post.get("normalizer_version") != SLIDE_IMAGE_NORMALIZER_VERSION:
+        return False  # rendered before the current image decode recipe: re-render
     expected_ids = [str(ref.asset_id) for ref in draft.slides]
     rendered_ids = [str(row.get("asset_id")) for row in rendered if isinstance(row, dict)]
     if len(rendered) != len(expected_ids) or len(rendered_ids) != len(expected_ids):
