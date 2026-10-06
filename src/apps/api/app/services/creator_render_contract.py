@@ -16,6 +16,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agents._schemas.creator_agent import CreativeStrategy
+from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.kria.brief import CreativeBrief
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
@@ -23,6 +24,13 @@ from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 
 CONTRACT_FIELD = "creator_render_requirements"
 REQUIREMENT_VERSION_FIELD = "creator_render_requirements_version"
+# Edit formats whose length is set by the footage, not by a target: a Talking
+# edit keeps the whole take (minus speech-cleanup pauses) and a voiceover edit
+# runs as long as the voiceover. `brief_checks._check_timing` reports the same
+# rule to the creator (KRI-142).
+TAKE_LENGTH_EDIT_FORMATS: frozenset[str] = frozenset(
+    {"subtitled", "talking_head", *NARRATED_EDIT_FORMATS}
+)
 
 # Every CreativeStrategy field has an explicit ownership note.  This is not a
 # capability claim: only the small core projected by build_render_contract is
@@ -53,7 +61,7 @@ FIELD_ACCOUNTING: dict[str, str] = {
     "resolved_song_takes": "deferred capability policy",
     "image_layout": "deferred capability policy",
     "pacing": "deferred capability policy",
-    "target_duration_s": "duration requirement",
+    "target_duration_s": "duration requirement (not on take-length formats)",
     "render_program": "deferred capability policy",
     "selected_media_ids": "deferred capability policy",
     "optional_treatments": "deferred capability policy",
@@ -173,7 +181,18 @@ def build_render_contract(
         for index, text in enumerate(typed.shot_labels or ()):
             texts.append(TextRequirement(role="clip", text=text, shot_index=index))
     durations: list[float] = []
-    if raw.get("target_duration_requested") is True and "target_duration_s" in raw:
+    # A Talking (subtitled / talking_head) or voiceover edit runs as long as the
+    # take or the voiceover: no compiler trims it to a named length, so a length
+    # the creator asked for is not a fact the recipe can prove (the brief receipt
+    # already says the length follows the take). Pinning it would refuse every
+    # such edit at the pin step (job e1c5f89e, 2026-10-06: a 68 s Talking take
+    # approved with "keep it under 45 seconds").
+    length_is_pinnable = typed is None or typed.edit_format not in TAKE_LENGTH_EDIT_FORMATS
+    if (
+        length_is_pinnable
+        and raw.get("target_duration_requested") is True
+        and "target_duration_s" in raw
+    ):
         durations.append(float(raw["target_duration_s"]))
     order_required = bool(typed and typed.ordering_choice == "chronological")
     order_ids = tuple(str(item) for item in clip_order if str(item).strip())
@@ -181,7 +200,11 @@ def build_render_contract(
     unresolved: list[str] = []
     if brief:
         for requirement in brief.live():
-            if requirement.kind == "timing" and requirement.facts.get("duration_s") is not None:
+            if (
+                length_is_pinnable
+                and requirement.kind == "timing"
+                and requirement.facts.get("duration_s") is not None
+            ):
                 durations.append(float(requirement.facts["duration_s"]))
             if requirement.kind == "text" and requirement.literal:
                 shot_index = None

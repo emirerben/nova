@@ -60,7 +60,7 @@ every renderer.
 
 | Requirement | Phone evidence | Cloud evidence | Current rule |
 | --- | --- | --- | --- |
-| Duration | Compiled recipe duration within the accepted tolerance | Renderer measured duration (`actual_duration_s` or measured `duration_s`) | Compare actual output; never compare desired metadata |
+| Duration | Compiled recipe duration within the accepted tolerance | Renderer measured duration (`actual_duration_s` or measured `duration_s`) | Compare actual output; never compare desired metadata. Not pinned on take-length formats (`TAKE_LENGTH_EDIT_FORMATS`: Talking `subtitled`/`talking_head` keep the take minus speech-cleanup pauses, the narrated family runs as long as the voiceover) -- no compiler trims those to a named length, and the brief receipt tells the creator so (job e1c5f89e, 2026-10-06). |
 | Recorded voice | Audible `VoiceoverRenderAsset` on an audio track | Verified receipt with `narration_applied` | Missing evidence declines |
 | Camera audio | Audible original assets, source IDs, and complete mute-window coverage | Not provable by current cloud receipts | Preserve/mute requests decline before cloud work |
 | Chronological order | Every selected clip has capture evidence; recipe picture sequence matches resolved IDs | No current standardized evidence; preflight declines | Missing chronology evidence declines |
