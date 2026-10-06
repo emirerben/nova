@@ -14,9 +14,12 @@ Auth: X-Admin-Token header (same gate as the rest of admin.py).
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -711,7 +714,16 @@ async def get_job_debug(
         celery_task_id=job.celery_task_id,
     )
 
-    runtime = _resolve_runtime(job)
+    try:
+        runtime = await _run_inspect(("runtime", job.id), _resolve_runtime, job)
+    except TimeoutError:
+        log.warning("admin_job_runtime_inspect_timeout", job_id=str(job.id))
+        runtime = JobRuntimePayload(
+            state="unknown",
+            worker=None,
+            task_id=job.celery_task_id or str(job.id),
+            queue_position=None,
+        )
     kria_execution = None
     if getattr(job, "content_plan_item_id", None) is not None:
         kria_execution = (
@@ -782,6 +794,53 @@ async def get_job_debug(
 
 # ── runtime helpers ──────────────────────────────────────────────────────────
 
+# Celery inspect() blocks for its whole broadcast reply window (5 s per call in
+# queue_state.py, and every call waits it out), so the debug page's runtime
+# lookup costs ~15 s and took 17-20 s in prod (2026-10-06). Run it off the event
+# loop so it can't stall every other request on this uvicorn worker. It gets a
+# small pool of its own instead of asyncio.to_thread's default executor: the
+# api VM has 1 CPU, so that executor is 5 threads shared with user-facing
+# routes (Kria planner, creator agent), and an admin tab polling the debug page
+# every few seconds would fill it.
+_INSPECT_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="admin-inspect")
+
+# Route-side cap on one inspect round trip. Above the normal ~15-20 s cost so
+# the panel still shows real state; a hung broker or a full pool degrades to
+# "unknown" instead of holding the request. A timed-out call that already
+# started finishes in the background (threads can't be cancelled); one still
+# queued behind the pool is dropped.
+_INSPECT_DEADLINE_S = 25.0
+
+# In-flight lookups by key. The admin pages poll faster than a lookup finishes
+# (job detail every 3-5 s, queue summary every 10 s, neither always waiting for
+# the previous reply), so overlapping polls share one lookup instead of each
+# taking a pool thread and timing out behind the others.
+_inspect_inflight: dict[object, asyncio.Future[Any]] = {}
+
+_T = TypeVar("_T")
+
+
+async def _run_inspect(key: object, fn: Callable[..., _T], *args: Any) -> _T:
+    """Run a blocking Celery-inspect helper on ``_INSPECT_POOL``.
+
+    Callers with the same ``key`` while a lookup is in flight await that
+    lookup. Raises ``TimeoutError`` after ``_INSPECT_DEADLINE_S``; callers
+    map that to their "unknown" / ``ok=False`` shape.
+    """
+    lookup = _inspect_inflight.get(key)
+    if lookup is None:
+        loop = asyncio.get_running_loop()
+        lookup = asyncio.ensure_future(
+            asyncio.wait_for(
+                loop.run_in_executor(_INSPECT_POOL, fn, *args),
+                timeout=_INSPECT_DEADLINE_S,
+            )
+        )
+        _inspect_inflight[key] = lookup
+        lookup.add_done_callback(lambda _done: _inspect_inflight.pop(key, None))
+    # shield: one poller disconnecting must not cancel the shared lookup.
+    return await asyncio.shield(lookup)
+
 
 def _resolve_runtime(job: Job) -> JobRuntimePayload:
     """One Celery inspect() call → JobRuntimePayload for the admin detail view.
@@ -816,13 +875,19 @@ async def get_queue_state(
 ) -> QueueSnapshotResponse:
     """Broker-level queue depth + active workers.
 
-    Powers the admin queue-summary panel. Single inspect() + LLEN calls;
-    safe to poll every 10s. Returns ok=False when the broker is
-    unreachable (UI renders "broker unreachable" instead of "0 queued").
+    Powers the admin queue-summary panel. Single inspect() + LLEN calls,
+    run off the event loop (see ``_run_inspect``); safe to poll every 10s.
+    Returns ok=False when the broker is unreachable or the lookup exceeds
+    ``_INSPECT_DEADLINE_S`` (UI renders "broker unreachable" instead of
+    "0 queued").
     """
     from app.worker import celery_app  # noqa: PLC0415
 
-    snapshot = get_queue_snapshot(celery_app)
+    try:
+        snapshot = await _run_inspect("queue-state", get_queue_snapshot, celery_app)
+    except TimeoutError:
+        log.warning("admin_queue_state_inspect_timeout")
+        return QueueSnapshotResponse(queues=[], active_workers=[], ok=False)
     return QueueSnapshotResponse(
         queues=[
             QueueInfoPayload(

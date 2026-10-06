@@ -10,6 +10,8 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -17,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from app.database import get_db
 from app.main import app
@@ -696,6 +699,228 @@ class TestJobDebug:
             "nova.audio.song_classifier",
             "nova.audio.music_matcher",
         ]
+
+
+# ── Celery inspect stays off the event loop ──────────────────────────────────
+
+
+def _legacy_job_debug_db(job):
+    """get_db override serving `job` with no clips, track, agent runs or
+    thread link (execute order: see test_legacy_job_returns_empty_agent_runs)."""
+
+    async def _gen():
+        db = AsyncMock()
+        job_res = MagicMock()
+        job_res.scalar_one_or_none.return_value = job
+        empty_rows = MagicMock()
+        empty_rows.scalars.return_value.all.return_value = []
+        no_track = MagicMock()
+        no_track.scalar_one_or_none.return_value = None
+        no_thread = MagicMock()
+        no_thread.first.return_value = None
+        db.execute = AsyncMock(
+            side_effect=[job_res, empty_rows, no_track, empty_rows, empty_rows, no_thread]
+        )
+        yield db
+
+    return _gen
+
+
+class TestInspectOffEventLoop:
+    """Celery inspect() blocks for its whole reply window (17-20 s seen in prod
+    on 2026-10-06). The admin routes must run it on a worker thread, so every
+    other request on the same uvicorn worker keeps flowing, and must report
+    "unknown" / ok=False once it runs past the route deadline."""
+
+    @pytest.fixture(autouse=True)
+    def _admin_token(self):
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+            yield
+
+    async def test_debug_runtime_lookup_does_not_block_the_event_loop(self):
+        from app.routes.admin_jobs import JobRuntimePayload  # noqa: PLC0415
+
+        j = _job_row(celery_task_id="task-123")
+        started = threading.Event()
+        release = threading.Event()
+
+        def _blocking_runtime(job):
+            started.set()
+            # Holds until the test's event loop sets `release`. Run on the
+            # loop thread, the loop could never get there and this times out.
+            released = release.wait(timeout=5)
+            return JobRuntimePayload(
+                state="active" if released else "unknown",
+                worker="celery@worker-1",
+                task_id=job.celery_task_id,
+                queue_position=None,
+            )
+
+        app.dependency_overrides[get_db] = _legacy_job_debug_db(j)
+        try:
+            with patch("app.routes.admin_jobs._resolve_runtime", side_effect=_blocking_runtime):
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as ac:
+                    request = asyncio.create_task(
+                        ac.get(
+                            f"/admin/jobs/{j.id}/debug",
+                            headers={"X-Admin-Token": VALID_TOKEN},
+                        )
+                    )
+                    while not (started.is_set() or request.done()):
+                        await asyncio.sleep(0.01)
+                    # The inspect call is in flight and the loop is still free.
+                    release.set()
+                    res = await request
+        finally:
+            release.set()
+            app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        assert res.json()["runtime"] == {
+            "state": "active",
+            "worker": "celery@worker-1",
+            "task_id": "task-123",
+            "queue_position": None,
+        }
+
+    async def test_overlapping_debug_polls_share_one_runtime_lookup(self):
+        from app.routes import admin_jobs  # noqa: PLC0415
+        from app.routes.admin_jobs import JobRuntimePayload  # noqa: PLC0415
+
+        j = _job_row(celery_task_id="task-123")
+        release = threading.Event()
+        lookups: list[uuid.UUID] = []
+        entered = 0
+        real_run_inspect = admin_jobs._run_inspect
+
+        async def _counting_run_inspect(*args):
+            nonlocal entered
+            entered += 1
+            return await real_run_inspect(*args)
+
+        def _blocking_runtime(job):
+            lookups.append(job.id)
+            release.wait(timeout=5)
+            return JobRuntimePayload(
+                state="active", worker="celery@worker-1", task_id="task-123", queue_position=None
+            )
+
+        app.dependency_overrides[get_db] = _legacy_job_debug_db(j)
+        try:
+            with (
+                patch("app.routes.admin_jobs._resolve_runtime", side_effect=_blocking_runtime),
+                patch("app.routes.admin_jobs._run_inspect", side_effect=_counting_run_inspect),
+            ):
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as ac:
+                    polls = [
+                        asyncio.create_task(
+                            ac.get(
+                                f"/admin/jobs/{j.id}/debug",
+                                headers={"X-Admin-Token": VALID_TOKEN},
+                            )
+                        )
+                        for _ in range(3)
+                    ]
+                    # _run_inspect attaches to (or starts) the lookup before it
+                    # first yields, so once all three entered they share it.
+                    while entered < 3 and not any(p.done() for p in polls):
+                        await asyncio.sleep(0.01)
+                    release.set()
+                    results = await asyncio.gather(*polls)
+        finally:
+            release.set()
+            app.dependency_overrides.pop(get_db, None)
+
+        assert [r.status_code for r in results] == [200, 200, 200]
+        assert {r.json()["runtime"]["state"] for r in results} == {"active"}
+        assert lookups == [j.id]
+        assert admin_jobs._inspect_inflight == {}
+
+    async def test_debug_runtime_lookup_past_deadline_reports_unknown(self):
+        from app.routes.admin_jobs import JobRuntimePayload  # noqa: PLC0415
+
+        j = _job_row(celery_task_id=None)
+        release = threading.Event()
+
+        def _hung_runtime(job):
+            release.wait(timeout=5)
+            return JobRuntimePayload(
+                state="active", worker="celery@late", task_id="late", queue_position=0
+            )
+
+        app.dependency_overrides[get_db] = _legacy_job_debug_db(j)
+        try:
+            with (
+                patch("app.routes.admin_jobs._resolve_runtime", side_effect=_hung_runtime),
+                patch("app.routes.admin_jobs._INSPECT_DEADLINE_S", 0.05),
+            ):
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as ac:
+                    res = await ac.get(
+                        f"/admin/jobs/{j.id}/debug",
+                        headers={"X-Admin-Token": VALID_TOKEN},
+                    )
+        finally:
+            release.set()
+            app.dependency_overrides.pop(get_db, None)
+
+        # Same shape as a broker failure; task_id falls back to the job id
+        # exactly like get_job_runtime_state does for legacy rows.
+        assert res.status_code == 200
+        assert res.json()["runtime"] == {
+            "state": "unknown",
+            "worker": None,
+            "task_id": str(j.id),
+            "queue_position": None,
+        }
+
+    def test_queue_state_snapshot_runs_on_the_inspect_pool(self, client):
+        from app.services.queue_state import QueueSnapshot  # noqa: PLC0415
+
+        threads: list[str] = []
+
+        def _snapshot(_celery_app):
+            threads.append(threading.current_thread().name)
+            return QueueSnapshot(queues=[], active_workers=["celery@worker-1"], ok=True)
+
+        with patch("app.routes.admin_jobs.get_queue_snapshot", side_effect=_snapshot):
+            res = client.get("/admin/jobs/queue-state", headers={"X-Admin-Token": VALID_TOKEN})
+
+        assert res.status_code == 200
+        assert res.json()["active_workers"] == ["celery@worker-1"]
+        assert len(threads) == 1
+        assert threads[0].startswith("admin-inspect")
+
+    def test_queue_state_past_deadline_reports_not_ok(self, client):
+        from app.services.queue_state import QueueInfo, QueueSnapshot  # noqa: PLC0415
+
+        release = threading.Event()
+
+        def _hung_snapshot(_celery_app):
+            release.wait(timeout=5)
+            return QueueSnapshot(
+                queues=[QueueInfo(name="celery", depth=9, oldest_pending_job_id=None)],
+                active_workers=["celery@late"],
+                ok=True,
+            )
+
+        try:
+            with (
+                patch("app.routes.admin_jobs.get_queue_snapshot", side_effect=_hung_snapshot),
+                patch("app.routes.admin_jobs._INSPECT_DEADLINE_S", 0.05),
+            ):
+                res = client.get("/admin/jobs/queue-state", headers={"X-Admin-Token": VALID_TOKEN})
+        finally:
+            release.set()
+
+        assert res.status_code == 200
+        assert res.json() == {"queues": [], "active_workers": [], "ok": False}
 
 
 # ── Cancel endpoint ──────────────────────────────────────────────────────────
