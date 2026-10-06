@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.92.0] - 2026-10-06
+
+### Changed
+- fix(song): the creator's song follows the video length and stops at its own end (KRI-457) (#1406) <!-- release-pr: 1406 -->
+
 ## [0.78.91.0] - 2026-10-06
 
 ### Changed
