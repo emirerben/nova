@@ -628,8 +628,9 @@ private struct SlidePostItemResponse: Decodable {
             // Saved content is what the user was looking at; keep any later undo history but
             // swap in the server's stamps (version, rendered_version).
             draft = saved
-            // Clear old output immediately, even if the follow-up GET fails.
-            state?.draft = saved; state?.slides = []; state?.bundleURL = nil
+            // Keep the old render in place (no flash); `canExport` compares versions, so it reads
+            // stale until the follow-up render lands.
+            state?.draft = saved
             state?.renderedVersion = saved.renderedVersion
             if state?.jobID != nil { state?.renderStatus = "rendering" }
             let result = try await api.slidePost(itemID: itemID)

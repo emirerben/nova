@@ -24,7 +24,6 @@ import UIKit
         case rendering
         case preparing(done: Int, total: Int)
         case savedToPhotos(Int)
-        case alreadySaved
         case photosDenied
         case notice(String)
         case failed(String)
@@ -43,7 +42,6 @@ import UIKit
         case .idle, .saving, .rendering: nil
         case .preparing(let done, let total): "Preparing \(done)/\(total)"
         case .savedToPhotos(let count): "Saved \(count) slides to Photos."
-        case .alreadySaved: "This version is already saved to Photos."
         case .photosDenied: SlidePostExportError.photosDenied.errorDescription
         case .notice(let text), .failed(let text): text
         }
@@ -51,7 +49,6 @@ import UIKit
     private let downloadFile: Download
     private let authorizePhotos: PhotosAuthorization
     private let writePhotos: AtomicPhotoWrite
-    private let defaults: UserDefaults
     private let now: () -> Date
     private var dismissTask: Task<Void, Never>?
 
@@ -66,8 +63,7 @@ import UIKit
                 return (file, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
             },
             authorizePhotos: { .authorized },
-            writePhotos: { _ in },
-            defaults: UserDefaults(suiteName: "kria.slide-post.fixture-photos") ?? .standard
+            writePhotos: { _ in }
         )
     }
 
@@ -83,11 +79,10 @@ import UIKit
                 }
             }
         },
-        defaults: UserDefaults = .standard,
         now: @escaping () -> Date = Date.init
     ) {
         self.downloadFile = downloadFile; self.authorizePhotos = authorizePhotos
-        self.writePhotos = writePhotos; self.defaults = defaults; self.now = now
+        self.writePhotos = writePhotos; self.now = now
     }
 
     /// Ascending, one second apart, ending at `now` so nothing is dated in the future.
@@ -160,10 +155,6 @@ import UIKit
             set(.preparing(done: 0, total: session.state?.draft?.slides.count ?? 0))
             try await revalidate()
             guard let snapshot = snapshot(from: session) else { return }
-            if receiptExists(itemID: snapshot.itemID, version: snapshot.version) {
-                set(.alreadySaved, autoDismiss: true)
-                return
-            }
             let files = try await download(snapshot)
             defer { try? FileManager.default.removeItem(at: files.directory) }
             try await revalidate()
@@ -175,7 +166,6 @@ import UIKit
             }
             let dates = Self.creationDates(count: files.ordered.count, now: now())
             try await writePhotos(zip(files.ordered, dates).map { PhotoResource(url: $0.url, kind: $0.kind, creationDate: $1) })
-            saveReceipt(itemID: snapshot.itemID, version: snapshot.version)
             set(.savedToPhotos(files.ordered.count), autoDismiss: true)
         } catch let error as SlidePostExportError where error == .photosDenied {
             set(.photosDenied)
@@ -251,8 +241,6 @@ import UIKit
         }
     }
 
-    private func receiptExists(itemID: String, version: Int) -> Bool { defaults.bool(forKey: "kria.slide-post.photos.\(itemID).\(version)") }
-    private func saveReceipt(itemID: String, version: Int) { defaults.set(true, forKey: "kria.slide-post.photos.\(itemID).\(version)") }
     private struct Snapshot { let itemID: String; let version: Int; let caption: String; let items: [Item] }
     private struct Item { let url: URL; let kind: String; let index: Int }
     private struct Downloaded { let url: URL; let kind: String }
@@ -271,22 +259,18 @@ struct SlidePostExportBanner: View {
         switch exporter.status {
         case .idle:
             EmptyView()
-        case .saving:
-            row("Saving your post", "Then it is exported.", "arrow.down.circle", KriaColor.ink)
-        case .rendering:
-            row("Creating your post", "Rendering the slides to export.", "arrow.down.circle", KriaColor.ink)
+        case .saving, .rendering:
+            row("Preparing your slides…", "Saving and rendering your post.", "arrow.down.circle", KriaColor.ink)
         case .preparing(let done, let total):
-            row("Preparing slides", total > 0 ? "Preparing \(min(done + 1, total))/\(total)" : "Getting your slides ready.", "arrow.down.circle", KriaColor.ink)
+            row("Preparing your slides…", total > 0 ? "\(min(done + 1, total))/\(total)" : "Getting your slides ready.", "arrow.down.circle", KriaColor.ink)
         case .savedToPhotos(let count):
             row("Saved to Photos", "Saved \(count) slides to Photos.", "checkmark.circle", KriaColor.ink)
-        case .alreadySaved:
-            row("Already in Photos", "This version is already saved to Photos.", "checkmark.circle", KriaColor.ink)
         case .photosDenied:
-            dismissable("Photos access is off", exporter.message ?? "", .red)
+            dismissable("Photos access is off", exporter.message ?? "", KriaColor.ink)
         case .notice(let text):
-            dismissable("Not exported yet", text, .red)
+            dismissable("Couldn’t save yet", text, KriaColor.ink)
         case .failed(let text):
-            dismissable("Couldn’t export this post", text, .red)
+            dismissable("Couldn’t export this post", text, KriaColor.ink)
         }
     }
 

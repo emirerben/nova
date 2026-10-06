@@ -63,13 +63,17 @@ struct SlidePostHeader: View {
 
     var body: some View {
         WorkspaceTopRow(title: title) {
-            Button(action: onBack) {
-                Image(systemName: "chevron.left")
-                    .frame(width: 44, height: 44)
-                    .kriaFloatingSurface(Circle())
+            HStack(spacing: 8) {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left")
+                        .frame(width: 44, height: 44)
+                        .kriaFloatingSurface(Circle())
+                }
+                .accessibilityLabel("Back to creation")
+                .accessibilityIdentifier("slidepost-back")
+                // Balances the two trailing actions so the title stays centered (as in the video editor).
+                Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
             }
-            .accessibilityLabel("Back to creation")
-            .accessibilityIdentifier("slidepost-back")
         } trailing: {
             HStack(spacing: 8) {
                 exportMenu
@@ -100,7 +104,7 @@ struct SlidePostHeader: View {
                     ProgressView().tint(KriaColor.ink)
                 } else {
                     Image(systemName: "square.and.arrow.up")
-                        .foregroundStyle(exportBlockReason == nil ? KriaColor.ink : KriaColor.zinc)
+                        .foregroundStyle(KriaColor.ink)
                 }
             }
             .frame(width: 44, height: 44)
@@ -583,21 +587,5 @@ struct SlidePostNotice: View {
         .padding(14).frame(maxWidth: .infinity, alignment: .leading)
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(KriaColor.line, lineWidth: 1))
         .padding(.horizontal, 16).accessibilityElement(children: .combine)
-    }
-}
-
-/// Dims the preview while a save/render is in flight; the caller disables the rest of the workspace.
-struct SlidePostVeil: View {
-    let message: String
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.38)
-            VStack(spacing: 12) {
-                ProgressView().controlSize(.large).tint(.white)
-                Text(message).font(KriaFont.body(16).weight(.bold)).foregroundStyle(.white).multilineTextAlignment(.center)
-            }
-            .padding(20)
-        }
-        .accessibilityElement(children: .combine).accessibilityIdentifier("slidepost-veil")
     }
 }

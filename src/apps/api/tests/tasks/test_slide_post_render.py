@@ -299,7 +299,9 @@ def test_run_slide_post_job_reuses_already_normalized_slide(monkeypatch) -> None
         ),
     ]
     monkeypatch.setattr(gb, "_sync_session", lambda: _FakeSession(job, item, assets))
-    existing_key = f"generative-jobs/{job_id}/slides/normalized/{fingerprint}_1080x1920_noedits.jpg"
+    existing_key = (
+        f"generative-jobs/{job_id}/slides/normalized/{fingerprint}_1080x1920_noedits_n2.jpg"
+    )
     _patch_storage_and_ffmpeg(monkeypatch, existing_normalized={existing_key})
 
     normalize_calls: list[str] = []
@@ -353,7 +355,7 @@ def test_run_slide_post_job_edits_bust_the_normalized_cache_key(monkeypatch) -> 
     # Only the UNEDITED key exists in storage — simulating "this asset was
     # rendered once before, with no edits, and the user just added one."
     stale_unedited_key = (
-        f"generative-jobs/{job_id}/slides/normalized/{fingerprint}_1080x1920_noedits.jpg"
+        f"generative-jobs/{job_id}/slides/normalized/{fingerprint}_1080x1920_noedits_n2.jpg"
     )
     _patch_storage_and_ffmpeg(monkeypatch, existing_normalized={stale_unedited_key})
 

@@ -1,0 +1,66 @@
+{
+  "overlays": [
+    {
+      "role": "generative_intro",
+      "text": "Cacio e pepe in 10 minutes",
+      "effect": "fade-in",
+      "start_s": 0.0,
+      "end_s": 1.6,
+      "position": "top",
+      "text_size": "large",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "subject_substitute": false,
+      "vertical_anchor": "center"
+    },
+    {
+      "role": "generative_intro",
+      "text": "Çılbır: the Turkish eggs everyone gets wrong",
+      "effect": "fade-in",
+      "start_s": 0.0,
+      "end_s": 1.6,
+      "position": "center",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "subject_substitute": false,
+      "text_size_px": 105,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.1796,
+      "vertical_anchor": "center"
+    },
+    {
+      "role": "generative_intro",
+      "text": "Everything I ate in 48 hours in Barcelona, ranked from worst to best ever",
+      "effect": "fade-in",
+      "start_s": 0.0,
+      "end_s": 1.6,
+      "position": "center",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "subject_substitute": false,
+      "text_size_px": 77,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.15,
+      "vertical_anchor": "center"
+    },
+    {
+      "role": "generative_intro",
+      "text": "Wait until you see what this tiny Kyoto café does with matcha, sesame and yuzu!!",
+      "effect": "fade-in",
+      "start_s": 0.0,
+      "end_s": 1.6,
+      "position": "center",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "subject_substitute": false,
+      "text_size_px": 76,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.15,
+      "vertical_anchor": "center"
+    }
+  ]
+}

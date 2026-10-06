@@ -725,3 +725,64 @@ def test_storyboard_failure_renders_without_generated_text(monkeypatch, tmp_path
     assert result["ok"] is True
     assert result["text_elements"] == []
     assert result["caption_cues"]
+
+
+def _intro_element(title: str) -> dict:
+    elements = gb._narrated_storyboard_text_elements(
+        transcript=Transcript(words=[Word("Today", 0.0, 0.6, 1.0)], language="en"),
+        step_timings=[SimpleNamespace(step_id="step_0", start_s=0.0, end_s=2.0)],
+        clip_assignments=[],
+        clip_id_by_path={},
+        creator_request="",
+        explicit_opening_title=title,
+        storyboard={"overlays": []},
+    )
+    [intro] = [item for item in elements if item["source_params"]["narrated_storyboard"] == "intro"]
+    return intro
+
+
+def test_a_title_that_fits_keeps_the_top_large_preset() -> None:
+    intro = _intro_element("Cacio e pepe in 10 minutes")
+
+    assert (intro["position"], intro["size_class"]) == ("top", "large")
+    assert "size_px" not in intro and "y_frac" not in intro
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Çılbır: the Turkish eggs everyone gets wrong",
+        "Wait until you see what this tiny Kyoto café does with matcha, sesame and yuzu!!",
+    ],
+)
+def test_a_long_title_burns_exactly_like_the_phone_title(title: str) -> None:
+    """KRI-455 follow-up: a long title is fitted into the top band (smaller
+    font, top below the safe margin) and the cloud burn compiles to exactly the
+    layers the phone exports for the same title."""
+    from app.agents._schemas.text_element import TextElement
+    from app.kria.recipes import Canvas
+    from app.pipeline.generative_overlays import build_overlays_from_text_elements
+    from app.pipeline.narrated_title import fit_narrated_title
+    from app.pipeline.phone_narrated_plan import narrated_title_element
+    from app.pipeline.portable_text_layout import compile_text_overlay
+
+    canvas = Canvas(width=1080, height=1920)
+    intro = _intro_element(title)
+    fit = fit_narrated_title(title, canvas=canvas)
+    phone = narrated_title_element(
+        title, end_s=intro["end_s"], timeline_duration_s=12.0, canvas=canvas
+    )
+
+    def layers(element: TextElement) -> list:
+        overlays = build_overlays_from_text_elements(
+            [element], video_duration_s=12.0, independent_box_alignment=True
+        )
+        return [
+            compile_text_overlay(overlay, layer_id="title-0", canvas=canvas)[0]
+            for overlay in overlays
+        ]
+
+    assert fit is not None
+    assert intro["position"] == "custom"
+    assert (intro["x_frac"], intro["y_frac"], intro["size_px"]) == (0.5, fit.y_frac, fit.size_px)
+    assert layers(TextElement.model_validate(intro)) == layers(phone)

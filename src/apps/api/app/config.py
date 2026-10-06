@@ -290,6 +290,12 @@ class Settings(BaseSettings):
     # PHONE_NARRATED_TITLE_ENABLED=false --app nova-video` + `fly machine
     # restart <id>` (api).
     phone_narrated_title_enabled: bool = True
+    # Client protocol (`X-Kria-Client-Protocol`) an app build must declare to
+    # see that title in its editor preview: the status route adds the
+    # variant's `narrated_title_text_elements` to `text_elements` only for
+    # builds that keep a `read_only` element out of every editing control
+    # (older builds would let it be deleted, and that Save 422s).
+    phone_narrated_title_preview_min_client_protocol: int = 4
     # KRI-290 (free clip edits on phone Voiceover videos): a phone `narrated`
     # or montage `voiceover` variant's timeline opens (trim, extend, reorder,
     # split, delete) instead of being locked to the voiceover. A Save swaps the

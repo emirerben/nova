@@ -6825,6 +6825,7 @@ def _run_phone_narrated_job(
         NarratedPhoneStep,
         compile_phone_narrated_plan,
         narrated_title_end_s,
+        narrated_title_text_elements,
     )
     from app.pipeline.phrase_sequence import split_phrases  # noqa: PLC0415
     from app.pipeline.transcribe import Transcript, Word, transcribe_whisper  # noqa: PLC0415
@@ -7174,6 +7175,9 @@ def _run_phone_narrated_job(
             bed_level = max(0.0, min(1.0, bed_level))
             mix = 1.0 - bed_level
 
+            opening_title_end_s = narrated_title_end_s(
+                transcript.words[0].end_s if transcript.words else None
+            )
             recipe = compile_phone_narrated_plan(
                 steps,
                 bindings,
@@ -7185,9 +7189,7 @@ def _run_phone_narrated_job(
                 target_lufs=settings.output_target_lufs,
                 duck_footage_bed="audioDucking" in settings.phone_render_verified_features,
                 opening_title=opening_title,
-                opening_title_end_s=narrated_title_end_s(
-                    transcript.words[0].end_s if transcript.words else None
-                ),
+                opening_title_end_s=opening_title_end_s,
             )
 
     validate_phone_pilot_recipe(recipe)
@@ -7232,6 +7234,13 @@ def _run_phone_narrated_job(
             "voiceover_bed_level": bed_level,
             "ok": False,
         }
+        # KRI-455: the editor preview draws text from the variant, not the
+        # pinned recipe, so keep the title element the recipe was compiled from.
+        title_elements = narrated_title_text_elements(
+            recipe, opening_title, end_s=opening_title_end_s
+        )
+        if title_elements:
+            new_entry["narrated_title_text_elements"] = title_elements
         # KRI-281: persist the cut the editor shows, derived from the very recipe
         # just pinned (same code the read-time projection uses for videos rendered
         # before this existed). Clip ids index the source pool the timeline lists.
@@ -8161,9 +8170,14 @@ def _build_slide_post_result(
             # a plain literal (not a hash) so the unedited path's key is
             # unchanged from before this feature existed.
             edits_digest = slide_build.edits_cache_digest(edits)
+            # Image slides carry the decode-recipe version so a normalizer
+            # fix rebuilds stale derivatives; videos keep their key.
+            norm_suffix = (
+                f"_n{slide_build.SLIDE_IMAGE_NORMALIZER_VERSION}" if kind == "image" else ""
+            )
             normalized_key = (
                 f"generative-jobs/{job_id}/slides/normalized/"
-                f"{fingerprint}_{canvas[0]}x{canvas[1]}_{edits_digest}.{ext}"
+                f"{fingerprint}_{canvas[0]}x{canvas[1]}_{edits_digest}{norm_suffix}.{ext}"
             )
             normalized_local = os.path.join(tmpdir, f"norm_{index:02d}.{ext}")
             if storage.object_exists(normalized_key):
@@ -21516,6 +21530,7 @@ def _narrated_storyboard_text_elements(
 ) -> list[dict[str, Any]]:
     """Build editable intro/player/score bars on the canonical voiceover time."""
     from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+    from app.pipeline.narrated_title import narrated_title_placement  # noqa: PLC0415
 
     words, index_by_id = _narrated_word_rows(transcript)
     if not words or not step_timings:
@@ -21553,8 +21568,11 @@ def _narrated_storyboard_text_elements(
                     start_s=0.0,
                     end_s=max(0.5, min(3.0, float(first["end_s"]) + 1.0)),
                     role="generative_intro",
-                    position="top",
-                    size_class="large",
+                    # The cloud preset (top, large), fitted into the top band
+                    # when a long title would run off the frame. Shared with the
+                    # phone title so both renders draw it identically. Narrated
+                    # text burns on the portrait canvas (`_compose_subtitled_final`).
+                    **narrated_title_placement(intro_text, canvas=PORTRAIT, explicit=False),
                     effect="fade-in",
                     source_params={"narrated_storyboard": "intro"},
                 ).model_dump(mode="json", exclude_none=True)
