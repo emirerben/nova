@@ -704,6 +704,19 @@ def phone_narrated_title_supported() -> bool:
     )
 
 
+def phone_subtitled_title_supported() -> bool:
+    """Can a phone-rendered `subtitled` (Talking) edit carry an opening title
+    and a text lane (KRI-467)? The title is one fade-in positioned text layer,
+    like the narrated one, so it needs the same device features as captions.
+    """
+
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        settings.phone_subtitled_title_enabled
+        and all(feature in verified for feature in PHONE_NARRATED_CAPTION_FEATURES)
+    )
+
+
 def phone_narrated_title_preview_supported() -> bool:
     """Can the requesting app build show a phone `narrated` edit's opening
     title in its editor preview (KRI-455)?

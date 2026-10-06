@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,9 +14,20 @@ from app.kria.device_render import (
     DeviceRenderStatus,
     make_device_request,
 )
-from app.kria.render_assets import VoiceoverRenderAsset
+from app.kria.recipes_v2 import EditRecipeV2
+from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
+from app.services.creator_render_contract import (
+    CONTRACT_FIELD,
+    REQUIREMENT_VERSION_FIELD,
+    CreatorRenderContractError,
+    read_render_contract,
+    verify_phone_recipe,
+)
+from app.services.phone_editor_sources import editor_source_bindings
+from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
 
 DEVICE_RENDER_FIELD = "_device_render_v1"
+CONTRACT_REVISIONS_FIELD = "creator_render_revisions"
 
 # Human-readable fallback when the reporter (phone client or reaper) sends an
 # empty detail string. Keyed by reason_code; "timed_out" is the reaper's own
@@ -61,6 +74,146 @@ def save_device_record(job: Any, variant_id: str, record: dict) -> None:
     job.assembly_plan = assembly
 
 
+def _brief_digest_for_generation(assembly: dict, generation: str) -> str | None:
+    """Return the contract-format digest of the authority pinned for this revision."""
+    raw = (assembly.get("creator_brief_bindings") or {}).get(generation)
+    if raw is None:
+        raw = assembly.get("creator_brief_binding")
+    if not isinstance(raw, dict):
+        return None
+    brief = raw.get("brief")
+    if brief is None:
+        return None
+    return hashlib.sha256(
+        json.dumps(brief, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+
+
+def _recipe_digest(recipe: Any) -> str:
+    data = recipe.model_dump(mode="json")
+    # Capabilities are a set: iteration order can change after persistence or
+    # on a different worker. All timeline/track lists remain ordered evidence.
+    data["required_capabilities"] = sorted(recipe.required_capabilities)
+    payload = json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _contract_for_variant(assembly: dict, variant_id: str):
+    """Select immutable root authority or that variant's editor-approved revision."""
+    revisions = assembly.get(CONTRACT_REVISIONS_FIELD)
+    if revisions is not None:
+        if not isinstance(revisions, dict):
+            raise CreatorRenderContractError("I couldn't read this edit's confirmed requirements.")
+        if variant_id in revisions:
+            # Presence is authority: a null/tampered entry must fail closed,
+            # never silently downgrade to the initial root contract.
+            raw = revisions[variant_id]
+            if not isinstance(raw, dict):
+                raise CreatorRenderContractError(
+                    "I couldn't read this edit's confirmed requirements."
+                )
+            return read_render_contract({CONTRACT_FIELD: raw})
+    return read_render_contract(assembly)
+
+
+def _require_marked_root_authority(job: Any) -> None:
+    if (getattr(job, "all_candidates", None) or {}).get(REQUIREMENT_VERSION_FIELD) != 1:
+        return
+    if read_render_contract(job.assembly_plan or {}) is None:
+        raise CreatorRenderContractError(
+            "This edit's confirmed requirements are unavailable; please re-approve it."
+        )
+
+
+def _approved_source_bindings(assembly: dict, variant_id: str) -> dict[str, PhoneSourceBinding]:
+    variant = next(
+        (
+            row
+            for row in assembly.get("variants", [])
+            if isinstance(row, dict) and row.get("variant_id") == variant_id
+        ),
+        {},
+    )
+    try:
+        bindings = tuple(
+            PhoneSourceBinding.model_validate(row)
+            for row in (assembly.get(PHONE_SOURCES_FIELD) or [])
+        ) + editor_source_bindings(variant)
+    except (TypeError, ValueError) as exc:
+        raise CreatorRenderContractError(
+            "I couldn't verify this edit's approved source files."
+        ) from exc
+    result = {binding.media_id: binding for binding in bindings}
+    if len(result) != len(bindings):
+        raise CreatorRenderContractError("This edit has conflicting approved source files.")
+    return result
+
+
+def _verify_recipe_source_identity(
+    assembly: dict, variant_id: str, recipe: EditRecipeV2
+) -> dict[str, bool]:
+    """Make originals in the portable recipe prove the server-pinned receipts."""
+    bindings = _approved_source_bindings(assembly, variant_id)
+    for asset in recipe.asset_manifest.assets:
+        if not isinstance(asset, OriginalRenderAsset):
+            continue
+        binding = bindings.get(asset.media_id)
+        if binding is None or (
+            asset.fingerprint.sha256 != binding.original.sha256
+            or asset.fingerprint.byte_count != binding.original.byte_count
+        ):
+            raise CreatorRenderContractError(
+                "This edit no longer matches its approved source files."
+            )
+    return {media_id: binding.original.has_audio for media_id, binding in bindings.items()}
+
+
+def _verify_contract_pin(
+    job: Any, request: DeviceRenderRequest, base_generation: str
+) -> tuple[str, list[dict]] | None:
+    """Validate a new v2 request against its immutable creator requirements."""
+    assembly = job.assembly_plan or {}
+    _require_marked_root_authority(job)
+    contract = _contract_for_variant(assembly, request.identity.variant_id)
+    if contract is None:
+        return None
+    if contract.generation_id != base_generation:
+        raise CreatorRenderContractError("This edit belongs to a different approved revision.")
+    if not isinstance(request.recipe, EditRecipeV2):
+        raise CreatorRenderContractError("This approved edit requires the current phone renderer.")
+    if contract.brief_digest is not None:
+        actual = _brief_digest_for_generation(assembly, base_generation)
+        if actual != contract.brief_digest:
+            raise CreatorRenderContractError("This edit no longer matches its approved brief.")
+    source_audio = _verify_recipe_source_identity(
+        assembly, request.identity.variant_id, request.recipe
+    )
+    return contract.digest, verify_phone_recipe(contract, request.recipe, source_audio=source_audio)
+
+
+def verify_device_record_contract(job: Any, record: dict, status: DeviceRenderStatus) -> None:
+    """Recheck the receipt authority before publishing a device export."""
+    _require_marked_root_authority(job)
+    contract = _contract_for_variant(job.assembly_plan or {}, status.request.identity.variant_id)
+    expected = record.get("contract_digest")
+    if expected is None:
+        if contract is not None:
+            raise CreatorRenderContractError(
+                "This approved edit must be pinned again before publishing."
+            )
+        return
+    if contract is None or contract.digest != expected:
+        raise CreatorRenderContractError(
+            "This edit's confirmed requirements changed; please try again."
+        )
+    generation = record.get("requirement_generation", record.get("base_generation"))
+    if contract.generation_id != generation:
+        raise CreatorRenderContractError("This edit belongs to a different approved revision.")
+    if record.get("recipe_digest") != _recipe_digest(status.request.recipe):
+        raise CreatorRenderContractError("This approved recipe changed; please try again.")
+    _verify_contract_pin(job, status.request, generation)
+
+
 def pin_device_request(
     job: Any,
     request: DeviceRenderRequest,
@@ -71,12 +224,19 @@ def pin_device_request(
     """Pin one approved recipe once. A redelivery cannot rewrite that revision's decisions."""
     if request.identity.job_id != job.id:
         raise ValueError("recipe job identity mismatch")
+    contract_receipt = _verify_contract_pin(job, request, base_generation)
     try:
         previous = device_status(job, request.identity.variant_id).request
     except KeyError:
         previous = None
     previous_record: dict | None = None
     if previous is not None:
+        if previous_record is None:
+            previous_record = device_record(job, request.identity.variant_id)
+        if previous_record.get("contract_digest") and contract_receipt is None:
+            raise CreatorRenderContractError(
+                "This edit's confirmed requirements are unavailable; please re-approve it."
+            )
         if previous == request:
             return False
         if request.identity.recipe_revision <= previous.identity.recipe_revision:
@@ -116,6 +276,17 @@ def pin_device_request(
         # app/tasks/device_render_reaper.py.
         "pinned_at": datetime.now(UTC).isoformat(),
     }
+    if contract_receipt is not None:
+        contract_digest, receipts = contract_receipt
+        record.update(
+            requirement_generation=base_generation,
+            contract_digest=contract_digest,
+            recipe_digest=_recipe_digest(request.recipe),
+            contract_receipts=copy.deepcopy(receipts),
+            contract_snapshot=_contract_for_variant(
+                job.assembly_plan or {}, request.identity.variant_id
+            ).model_dump(mode="json"),
+        )
     if narration_binding is not None:
         record["narration_binding"] = copy.deepcopy(narration_binding)
     save_device_record(

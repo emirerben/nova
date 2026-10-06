@@ -513,6 +513,13 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 )
                 strategy = action.strategy.model_copy(
                     update={
+                        # Server-owned approval provenance.  Read this from
+                        # the raw payload before the normalizer copies the
+                        # default 24s onto every strategy; a model-provided
+                        # marker is never trusted.
+                        "target_duration_requested": (
+                            True if "target_duration_s" in raw_strategy else None
+                        ),
                         # KRI-374: server-owned, like `resolved_clip_intents`: a
                         # model-authored per-take song placement is never trusted.
                         "resolved_song_takes": None,

@@ -502,15 +502,35 @@ def build_generative_job(
         }
         if notes_ctx:
             all_candidates["clip_notes"] = notes_ctx
+    creator_contract: dict | None = None
+    creator_generation_id: str | None = None
     # Main Creator Agent: a user-confirmed, schema-bounded creative strategy.
     # This is context, never an executable capability. Omitted for every legacy
     # and non-creator render so the baseline remains byte-identical.
     if creator_strategy:
         from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+        from app.services.creator_render_contract import (  # noqa: PLC0415
+            CONTRACT_FIELD,
+            REQUIREMENT_VERSION_FIELD,
+            build_render_contract,
+        )
 
-        all_candidates["creator_strategy"] = CreativeStrategy.model_validate(
-            creator_strategy
-        ).model_dump(mode="json", exclude_none=True)
+        persisted_strategy = CreativeStrategy.model_validate(creator_strategy).model_dump(
+            mode="json", exclude_none=True
+        )
+        all_candidates["creator_strategy"] = persisted_strategy
+        # Bind the first typed requirement projection to the same immutable
+        # generation that content-plan dispatch later enriches with its pinned
+        # BriefBinding.  Do this before any downstream serialization can erase
+        # provenance such as an explicit 24-second duration.
+        creator_generation_id = uuid.uuid4().hex
+        contract = build_render_contract(
+            persisted_strategy,
+            generation_id=creator_generation_id,
+        )
+        if contract is not None:
+            creator_contract = {CONTRACT_FIELD: contract.model_dump(mode="json")}
+            all_candidates[REQUIREMENT_VERSION_FIELD] = 1
         all_candidates["creator_render_contract_version"] = CREATOR_RENDER_CONTRACT_VERSION
         # KRI-297: the confirmed strategy's full-screen Visuals choice, surfaced
         # as a flat key for the phone worker (read like `landscape_fit`). Omitted
@@ -585,6 +605,11 @@ def build_generative_job(
         # Key presence, not content, routes the worker to the phone planner
         # and keeps the job out of every cloud re-renderer.
         phone_assembly_plan = {PHONE_SOURCES_FIELD: []}
+    assembly_plan = dict(phone_assembly_plan or {})
+    if creator_generation_id is not None:
+        assembly_plan["creator_generation_id"] = creator_generation_id
+    if creator_contract is not None:
+        assembly_plan.update(creator_contract)
     return Job(
         user_id=user_id,
         job_type="generative",
@@ -595,5 +620,5 @@ def build_generative_job(
         content_plan_item_id=content_plan_item_id,
         content_plan_ownership_epoch=content_plan_ownership_epoch,
         status="queued",
-        **({"assembly_plan": phone_assembly_plan} if phone_assembly_plan is not None else {}),
+        **({"assembly_plan": assembly_plan} if assembly_plan else {}),
     )

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -52,7 +54,13 @@ from app.pipeline.phone_subtitled_plan import (
     speaker_binding_from_recipe,
 )
 from app.pipeline.phone_voiceover_cut import replace_voiceover_cut
-from app.services.device_render import device_status, pin_device_request
+from app.services.creator_render_contract import (
+    CONTRACT_FIELD,
+    CreatorRenderContractError,
+    TextRequirement,
+    read_render_contract,
+)
+from app.services.device_render import CONTRACT_REVISIONS_FIELD, device_status, pin_device_request
 from app.services.phone_editor_sources import (
     editor_source_bindings,
     editor_sources_for_variant,
@@ -62,6 +70,7 @@ from app.services.phone_rollout import (
     phone_narrated_caption_edits_supported,
     phone_narrated_title_edits_supported,
     phone_subtitled_editor_lanes_supported,
+    phone_subtitled_title_supported,
     phone_voiceover_editor_lanes_supported,
     phone_voiceover_editor_media_supported,
     validate_phone_pilot_recipe,
@@ -105,6 +114,11 @@ PHONE_EDITOR_SAVED_PLAN_FIELD = "_phone_editor_saved_plan_v1"
 _SUBTITLED_EDITOR_SECTIONS = frozenset(
     {"sound_effects", "media_overlays", "caption_cues", "caption_meta", "landscape_fit"}
 )
+# KRI-467: ...plus its text lane (the opening title and any creator text),
+# only while `phone_subtitled_title_supported`. Every Save compiles the
+# variant's persisted text rows, whichever sections it carries, so a caption,
+# lane or framing Save never drops the title.
+_SUBTITLED_TEXT_SECTIONS = frozenset({"text_elements"})
 
 # The native-editor sections a phone `narrated` (recorded voiceover) variant
 # always honours (KRI-280): the caption lines and their look. Every other
@@ -181,12 +195,93 @@ class _StagedJob:
         return getattr(self._job, name)
 
 
+def _rebind_editor_render_contract(
+    staged: _StagedJob,
+    variant_id: str,
+    prep: dict,
+    *,
+    brief_binding: dict | None = None,
+) -> None:
+    """Carry creator requirements into the editor's next approved generation.
+
+    This operates only on the canonical staged editor projection, before any
+    compiler runs.  It intentionally changes only the lanes the save declared:
+    a colour/motion save retains every requirement, while a text or timeline
+    save refreshes only the corresponding objective constraints.
+    """
+    assembly = staged.assembly_plan
+    revisions = assembly.get(CONTRACT_REVISIONS_FIELD)
+    if revisions is not None:
+        if not isinstance(revisions, dict):
+            raise CreatorRenderContractError("I couldn't read this edit's confirmed requirements.")
+        if variant_id in revisions and not isinstance(revisions[variant_id], dict):
+            raise CreatorRenderContractError("I couldn't read this edit's confirmed requirements.")
+        contract = read_render_contract(
+            {CONTRACT_FIELD: revisions[variant_id]} if variant_id in revisions else assembly
+        )
+    else:
+        contract = read_render_contract(assembly)
+    if contract is None:
+        return
+    generation = str(prep.get("generation") or "")
+    if not generation:
+        raise CreatorRenderContractError("I couldn't verify this edit's approved revision.")
+    variant = next(v for v in assembly.get("variants", []) if v.get("variant_id") == variant_id)
+    sections = prep.get("sections") or {}
+    changes: dict[str, Any] = {"generation_id": generation}
+    if brief_binding is not None:
+        brief = brief_binding.get("brief")
+        if not isinstance(brief, dict):
+            raise CreatorRenderContractError("I couldn't verify this edit's approved brief.")
+        changes["brief_digest"] = hashlib.sha256(
+            json.dumps(brief, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        ).hexdigest()
+        bindings = dict(assembly.get("creator_brief_bindings") or {})
+        bindings[generation] = copy.deepcopy(brief_binding)
+        assembly["creator_brief_bindings"] = bindings
+    if sections.get("text_elements"):
+        # The staged variant is the accepted editor state.  Do not inspect the
+        # generated recipe here: compiler output is proof, not edit authority.
+        texts = []
+        canonical_text = (prep.get("guided_revision") or {}).get(
+            "text_elements", variant.get("text_elements") or []
+        )
+        for row in canonical_text:
+            if isinstance(row, dict) and isinstance(row.get("text"), str) and row["text"].strip():
+                texts.append(TextRequirement(role="any", text=row["text"]))
+        changes["exact_texts"] = tuple(texts)
+    if sections.get("timeline"):
+        # `_prepare_editor_commit` has already validated and projected this
+        # number from the submitted slots (or guided revision); the prior
+        # variant duration is deliberately not authority for a trim.
+        duration = prep.get("expected_duration_s")
+        if isinstance(duration, (int, float)) and duration > 0:
+            changes["duration_s"] = float(duration)
+        slots = (prep.get("guided_revision") or {}).get("segments") or []
+        order = tuple(
+            str(row["media_id"]) for row in slots if isinstance(row, dict) and row.get("media_id")
+        )
+        if order:
+            changes.update(order_ids=order, order_required=True, order_basis="editor")
+        elif contract.order_required:
+            # The legacy slot form uses clip indices.  Mapping those indices
+            # back to source ids here would re-create routing logic and could
+            # approve a reordered cut against the wrong source pool.
+            raise CreatorRenderContractError(
+                "This timeline edit needs a source-identified editor revision before it can render."
+            )
+    revisions = dict(revisions or {})
+    revisions[variant_id] = contract.rebind(**changes).model_dump(mode="json")
+    assembly[CONTRACT_REVISIONS_FIELD] = revisions
+
+
 def prepare_phone_editor_commit(
     job: Any,
     variant_id: str,
     *,
     prepare: Callable[[Any], dict],
     sfx_catalog_paths: Mapping[str, str] | None = None,
+    creator_brief_binding: dict | None = None,
 ) -> dict:
     """``sfx_catalog_paths`` maps a sound-effect catalog id to its
     `SoundEffect.audio_gcs_path` for the phone Talking effects a Save carries
@@ -199,6 +294,9 @@ def prepare_phone_editor_commit(
     if not settings.phone_rendering_for(job.user_id):
         raise HTTPException(422, detail={"code": "phone_rendering_unavailable"})
     try:
+        _rebind_editor_render_contract(
+            staged, variant_id, prep, brief_binding=creator_brief_binding
+        )
         previous = device_status(job, variant_id).request
         assembly = staged.assembly_plan
         variant = next(v for v in assembly["variants"] if v.get("variant_id") == variant_id)
@@ -561,7 +659,10 @@ def _compile_subtitled_editor_commit(
         raise ValueError("phone Talking edits aren't editable yet")
 
     active_sections = {key for key, value in prep["sections"].items() if value}
-    unsupported_sections = active_sections - _SUBTITLED_EDITOR_SECTIONS
+    allowed_sections = _SUBTITLED_EDITOR_SECTIONS | (
+        _SUBTITLED_TEXT_SECTIONS if phone_subtitled_title_supported() else frozenset()
+    )
+    unsupported_sections = active_sections - allowed_sections
     if unsupported_sections:
         name = sorted(unsupported_sections)[0]
         raise ValueError(f"{name} isn't supported on phone Talking edits yet")
@@ -626,6 +727,10 @@ def _compile_subtitled_editor_commit(
         caption_look=caption_look,
         cutaways=cutaways,
         landscape_fit=landscape_fit,
+        # KRI-467: the staged row's text (already this Save's, when it carries
+        # a text section), in the cut-timeline seconds the cues use.
+        text_elements=variant.get("text_elements") or [],
+        text_elements_user_edited=bool(variant.get("text_elements_user_edited")),
     )
     duck_receipt = sfx_duck_receipt(lanes, recipe)
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(lanes.overlays or cutaways))

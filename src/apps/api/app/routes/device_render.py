@@ -55,6 +55,7 @@ from app.routes.generative_jobs import PLAYBACK_URL_TTL_MIN
 from app.schemas.edit_proposal import NarrationTrack
 from app.services.content_plan_persona import PlanPersonaOwnershipError, load_owned_plan_persona
 from app.services.creator_execution_contract import narration_matches_item
+from app.services.creator_render_contract import CreatorRenderContractError
 from app.services.device_narration_binding import authorized_device_narration
 from app.services.device_render import (
     apply_device_failure_variant_update,
@@ -65,6 +66,7 @@ from app.services.device_render import (
     retry_device_render,
     save_device_record,
     touch_device_poll,
+    verify_device_record_contract,
 )
 from app.services.guided_speech_cleanup import (
     narration_speech_cleanup,
@@ -140,10 +142,16 @@ def _record(job: Job, identity: DeviceRenderIdentity) -> tuple[dict, DeviceRende
         require_current_request(status, identity)
     except KeyError as exc:
         raise HTTPException(404, "Device recipe unavailable") from exc
-    except ValueError as exc:
+    except (ValueError, CreatorRenderContractError) as exc:
         raise HTTPException(409, "Device recipe changed") from exc
     if identity.job_id != job.id:
         raise HTTPException(409, "Device recipe changed")
+    try:
+        # A record that was pinned with creator authority cannot become a
+        # legacy record merely because that root authority disappeared.
+        verify_device_record_contract(job, record, status)
+    except CreatorRenderContractError as exc:
+        raise HTTPException(409, "Device recipe changed") from exc
     variant = next(
         (
             v
@@ -840,6 +848,13 @@ async def complete_device_export(
         return DeviceExportCompleteOut(identity=body.identity)
     if status.phase != "syncing":
         raise HTTPException(409, "Render no longer accepts completion")
+    try:
+        # This is deliberately inside the reacquired owner/row fence.  The
+        # byte probe above only proves the file against the recipe; publication
+        # must also prove that recipe still has its approved creator authority.
+        verify_device_record_contract(job, record, status)
+    except ValueError as exc:
+        raise HTTPException(422, "Export does not match the approved recipe") from exc
     cleanup = (
         await db.execute(
             select(TemporaryMediaUpload)

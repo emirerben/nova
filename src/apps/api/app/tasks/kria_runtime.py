@@ -2112,6 +2112,14 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                         music_track=music_track,
                         plan_item_id=str(item.id),
                         phone_sfx_catalog_paths=phone_sfx_catalog_paths,
+                        # The validated approval binding is staged with the
+                        # native editor save before its phone recipe is pinned.
+                        # Never substitute current thread state here.
+                        creator_brief_binding=(
+                            document.brief_binding.model_dump(mode="json")
+                            if document.brief_binding is not None
+                            else None
+                        ),
                     )
                 except (HTTPException, ValueError, KeyError) as exc:
                     if not device_variant:

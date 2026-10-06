@@ -47,7 +47,8 @@ cloud's b-roll reframe); only the speaker clip is letterboxed. With
 
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Mapping, Sequence
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -73,6 +74,7 @@ from app.pipeline.phone_recipe_shared import (
     display_dims,
     fit_transform,
     landscape_fit_from_recipe,  # noqa: F401 - re-export, moved to phone_recipe_shared (KRI-285)
+    snap_text_overshoot,
 )
 from app.pipeline.phone_subtitled_lanes import (
     CAPTION_BAND_TOP_FRAC,
@@ -129,6 +131,14 @@ _SFX_SPEECH_MIN_OVERLAP_S = 0.05
 # re-save the creator's own volume instead of ducking an effect twice.
 SFX_DUCK_RECEIPT_FIELD = "phone_sfx_duck_receipt"
 
+# KRI-467: layers compiled from the variant's text elements (the opening
+# title, and any text the creator adds in the editor). Captions keep their own
+# ``caption-`` ids and draw after (on top of) these, like the cloud's
+# styled-text lane, which burns text before the captions.
+TEXT_LAYER_PREFIX = "text-"
+# One 30 fps frame: a text layer that would show for less is not drawn.
+_MIN_TEXT_LAYER_S = 1 / 30
+
 # KRI-136: the overlay track that carries multi-clip Talking-head cutaways.
 # Listed right after the main track so a sticker/photo/video card on
 # ``subtitled-overlays`` (same ``order`` range, later track) always draws on
@@ -172,6 +182,8 @@ def compile_phone_subtitled_plan(
     caption_look: PhoneCaptionLook | None = None,
     cutaways: tuple[PhoneCutaway, ...] = (),
     landscape_fit: Literal["fill", "fit"] = "fill",
+    text_elements: Sequence[Mapping[str, Any]] = (),
+    text_elements_user_edited: bool = False,
 ) -> EditRecipeV2:
     """Compile the subtitled edit format's phone recipe.
 
@@ -276,6 +288,16 @@ def compile_phone_subtitled_plan(
     never transformed. ``"fill"``, square and portrait sources keep the
     identity transform, so those recipes are byte-identical to the pre-KRI-283
     shape.
+
+    ``text_elements`` (KRI-467, optional) is the variant's text lane: the
+    persisted ``TextElement`` rows (the opening title, and any text added in
+    the editor), in CUT-timeline seconds like the cues. They compile through
+    the cloud styled-text lane's own burn dicts
+    (`generative_build._text_element_burn_dicts`: caption-cue mirrors and
+    removed rows are skipped) and `compile_text_overlay`, as ``text-<n>``
+    layers drawn UNDER the captions. ``text_elements_user_edited`` is the
+    variant flag that picks the karaoke settle color. Empty (the default) is
+    byte-identical to the pre-KRI-467 recipe.
 
     Rejects (all `UnsupportedPhonePlan`, fail-closed):
       - zero or more than one binding.
@@ -406,6 +428,32 @@ def compile_phone_subtitled_plan(
         timeline_end = speaker_end + ending_duration
         required_capabilities |= {"visualVideos", "audioMix"}
 
+    if text_elements:
+        text_layers = _compile_text_lane(
+            text_elements,
+            user_edited=text_elements_user_edited,
+            timeline_duration_s=timeline_end,
+        )
+        if text_layers:
+            for font_id, font_asset in caption_font_assets(text_layers).items():
+                if font_id in manifest:
+                    continue
+                manifest[font_id] = font_asset
+                assets[font_id] = MediaAsset(
+                    id=font_id,
+                    relative_path=font_id,
+                    fingerprint=AssetFingerprint(
+                        hex=font_asset.fingerprint.sha256,
+                        byte_count=font_asset.fingerprint.byte_count,
+                    ),
+                )
+            # Text first: the device composites layers in order, so captions
+            # stay on top of a title they share a moment with.
+            layers = [*text_layers, *layers]
+            required_capabilities |= {"positionedText"}
+            if any(layer.effect not in {"static", "none"} for layer in text_layers):
+                required_capabilities |= {"animatedText"}
+
     tracks = [TimelineTrack(id="subtitled", kind="video", clips=main_clips)]
 
     if cutaways:
@@ -506,6 +554,55 @@ def compile_phone_subtitled_plan(
         audio=AudioMixRecipe(original_volume=1.0),
         required_capabilities=required_capabilities,
     )
+
+
+def _compile_text_lane(
+    text_elements: Sequence[Mapping[str, Any]],
+    *,
+    user_edited: bool,
+    timeline_duration_s: float,
+) -> list[Any]:
+    """The variant's text elements as positioned text layers (KRI-467)."""
+    from app.pipeline.portable_text_layout import compile_text_overlay  # noqa: PLC0415
+    from app.tasks.generative_build import _text_element_burn_dicts  # noqa: PLC0415
+
+    try:
+        overlays = _text_element_burn_dicts(
+            {
+                "resolved_archetype": "subtitled",
+                "text_elements": [dict(row) for row in text_elements],
+                "duration_s": timeline_duration_s,
+                "text_elements_user_edited": user_edited,
+            }
+        )
+        layers = [
+            compile_text_overlay(
+                overlay,
+                layer_id=f"{TEXT_LAYER_PREFIX}{index}",
+                canvas=_STORY_CANVAS,
+                dissolve_seed=101 + index * 37,
+            )[0]
+            for index, overlay in enumerate(overlays)
+        ]
+    except UnsupportedPhonePlan:
+        raise
+    except Exception as exc:  # noqa: BLE001 - untrusted editor text
+        raise UnsupportedPhonePlan(f"unable to compile text: {exc}") from exc
+    # A row held to the end can overshoot the recipe's own float end
+    # (`EditRecipeV2` compares strictly, KRI-190).
+    snap_text_overshoot(layers, timeline_duration_s)
+    # A row timed past the clip (an edited row, or a title held to the end of a
+    # clip the phone measured a hair shorter than its proxy) ends with the
+    # clip instead of failing the whole recipe; one that would start after it
+    # is not drawn at all.
+    kept = []
+    for layer in layers:
+        if layer.start >= timeline_duration_s - _MIN_TEXT_LAYER_S:
+            continue
+        if layer.end > timeline_duration_s:
+            layer.end = timeline_duration_s
+        kept.append(layer)
+    return kept
 
 
 def _compile_ending_clip(
