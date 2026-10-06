@@ -574,3 +574,239 @@ def test_direct_finalization_rechecks_actual_duration_before_publication(
         assert "length" in stored["error"]
     else:
         assert stored["video_path"] == result["video_path"]
+
+
+# --- KRI-470 PR-A: typed cloud declines ------------------------------------------
+#
+# Failure modes: the reason/field path is lost between the cloud contract and the
+# persisted failure (preflight job, published variant, finalized variant); the
+# declared adapter table disagrees with what preflight/publication really raise;
+# a retry of a rejected variant keeps the stale decline of its predecessor.
+
+_UNEVIDENCED_STRATEGIES = {
+    "exact_texts": ({"opening_title": "Exact words"}, "opening_title"),
+    "audio_source_ids": (
+        {
+            "audio_strategy": "original_audio",
+            "montage_audio": {"preserve_source_audio": True, "source_media_ids": ["talk"]},
+        },
+        "montage_audio.source_media_ids[]",
+    ),
+    "original_audio": ({"audio_strategy": "original_audio"}, "montage_audio.preserve_source_audio"),
+    "order_required": ({"ordering_choice": "chronological"}, None),
+}
+
+
+@pytest.mark.parametrize("requirement", sorted(_UNEVIDENCED_STRATEGIES))
+def test_preflight_declines_unevidenced_requirements_as_capability_unavailable(requirement):
+    strategy, path = _UNEVIDENCED_STRATEGIES[requirement]
+    contract = build_render_contract(strategy, generation_id="generation-1")
+    assert contract is not None
+    if requirement == "order_required":
+        # Chronology needs capture times; with none the contract is unresolved.
+        assert contract.unresolved
+        expected = ("needs_choice", None)
+    else:
+        expected = ("capability_unavailable", path)
+    with pytest.raises(CloudRenderContractError) as exc:
+        preflight_cloud_contract({CONTRACT_FIELD: contract.model_dump(mode="json")})
+    assert (exc.value.decline_reason, exc.value.field_path) == expected
+    assert exc.value.alternative
+
+
+def test_resolved_order_requirement_is_a_capability_decline_with_its_field():
+    contract = build_render_contract(
+        {"ordering_choice": "chronological"},
+        generation_id="generation-1",
+        media_snapshot={
+            "clip_assignments": [
+                {"media_id": "a", "capture": {"capture_time": "2026-10-06T10:00:00Z"}}
+            ]
+        },
+    )
+    assert contract is not None and not contract.unresolved
+    with pytest.raises(CloudRenderContractError) as exc:
+        preflight_cloud_contract({CONTRACT_FIELD: contract.model_dump(mode="json")})
+    assert (exc.value.decline_reason, exc.value.field_path) == (
+        "capability_unavailable",
+        "ordering_choice",
+    )
+
+
+def test_publication_gaps_are_evidence_missing_with_the_field_path():
+    duration = _assembly({"target_duration_s": 24, "target_duration_requested": True})
+    ready = {"ok": True, "render_status": "ready", "video_path": "jobs/x/output.mp4"}
+    with pytest.raises(CloudRenderContractError) as exc:
+        verify_cloud_variant(duration, {**ready, "duration_s": 5})
+    assert (exc.value.decline_reason, exc.value.field_path) == (
+        "evidence_missing",
+        "target_duration_s",
+    )
+
+    voice = _assembly({"audio_strategy": "voiceover"})
+    for variant in (
+        ready,  # no receipt at all
+        {**ready, "render_receipt": {"verified": True, "narration_applied": False}},
+    ):
+        with pytest.raises(CloudRenderContractError) as exc:
+            verify_cloud_variant(voice, variant)
+        assert exc.value.decline_reason == "evidence_missing"
+    assert verify_cloud_variant(
+        voice, {**ready, "render_receipt": {"verified": True, "narration_applied": True}}
+    )
+
+
+def test_publication_cannot_prove_text_so_it_stays_a_capability_decline():
+    with pytest.raises(CloudRenderContractError) as exc:
+        verify_cloud_variant(
+            _assembly({"closing_title": "The end"}),
+            {"ok": True, "render_status": "ready", "video_path": "jobs/x/o.mp4"},
+        )
+    assert (exc.value.decline_reason, exc.value.field_path) == (
+        "capability_unavailable",
+        "closing_title",
+    )
+
+
+@pytest.mark.parametrize("adapter", ["cloud_guided_story", "cloud_classic", "cloud_slides"])
+def test_declared_cloud_declines_match_preflight_and_publication(adapter):
+    from app.services.cloud_render_contract import CLOUD_ADAPTER_DECLARATIONS
+
+    declaration = CLOUD_ADAPTER_DECLARATIONS[adapter]
+    ready = {"ok": True, "render_status": "ready", "video_path": "jobs/x/output.mp4"}
+    for requirement, decline in declaration.declines.items():
+        if requirement in _UNEVIDENCED_STRATEGIES and requirement != "order_required":
+            strategy, _path = _UNEVIDENCED_STRATEGIES[requirement]
+            with pytest.raises(CloudRenderContractError) as exc:
+                preflight_cloud_contract(_assembly(strategy))
+        elif requirement == "order_required":
+            continue  # resolved-order case asserted above
+        elif requirement == "unresolved":
+            contract = build_render_contract(
+                {"ordering_choice": "chronological"}, generation_id="generation-1"
+            )
+            with pytest.raises(CloudRenderContractError) as exc:
+                preflight_cloud_contract({CONTRACT_FIELD: contract.model_dump(mode="json")})
+        elif requirement == "duration_s":
+            with pytest.raises(CloudRenderContractError) as exc:
+                verify_cloud_variant(
+                    _assembly({"target_duration_s": 24, "target_duration_requested": True}),
+                    ready,  # no measured duration at all
+                )
+        else:
+            assert requirement == "require_voiceover"
+            with pytest.raises(CloudRenderContractError) as exc:
+                verify_cloud_variant(_assembly({"audio_strategy": "voiceover"}), ready)
+        assert exc.value.decline_reason == decline.reason, (adapter, requirement)
+    # What each adapter consumes, the real verifier accepts when the receipt proves it.
+    if "duration_s" in declaration.consumes:
+        assert verify_cloud_variant(
+            _assembly({"target_duration_s": 24, "target_duration_requested": True}),
+            {**ready, "duration_s": 24},
+        )
+    if "require_voiceover" in declaration.consumes:
+        assert verify_cloud_variant(
+            _assembly({"audio_strategy": "voiceover"}),
+            {**ready, "render_receipt": {"verified": True, "narration_applied": True}},
+        )
+
+
+def test_worker_preflight_persists_the_typed_decline_beside_the_unchanged_failure_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_id = "11111111-1111-1111-1111-111111111111"
+    assembly = _assembly({"opening_title": "Exact approved title"})
+    job = FakeJob(
+        job_id=job_id,
+        assembly_plan=assembly,
+        all_candidates={"clip_paths": ["slot-uploads/clip.mp4"]},
+        status="queued",
+    )
+    patch_job_session(monkeypatch, job)
+
+    generative_build._run_generative_job(job_id)
+
+    assert job.failure_reason == "creator_render_contract_unsupported"
+    assert job.assembly_plan["creator_decline"]["decline_reason"] == "capability_unavailable"
+    assert job.assembly_plan["creator_decline"]["field_path"] == "opening_title"
+    assert job.assembly_plan[CONTRACT_FIELD] == assembly[CONTRACT_FIELD]
+
+
+def test_published_rejection_and_finalization_carry_the_typed_decline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = FakeJob(
+        assembly_plan=_assembly({"target_duration_s": 24, "target_duration_requested": True})
+    )
+    patch_job_session(monkeypatch, job)
+    result = {
+        "variant_id": "v",
+        "rank": 1,
+        "text_mode": "none",
+        "ok": True,
+        "render_status": "ready",
+        "video_path": "jobs/x/new.mp4",
+        "duration_s": 5,
+    }
+    generative_build._finalize_job("11111111-1111-1111-1111-111111111111", [result])
+    stored = job.assembly_plan["variants"][0]
+    assert stored["error_class"] == "creator_render_contract_unverified"
+    assert stored["decline_reason"] == "evidence_missing"
+    assert stored["field_path"] == "target_duration_s"
+
+
+def test_a_fresh_retry_drops_its_predecessors_typed_decline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = FakeJob(
+        assembly_plan={
+            **_assembly({"target_duration_s": 24, "target_duration_requested": True}),
+            "variants": [
+                {
+                    "variant_id": "original_text",
+                    "ok": False,
+                    "render_status": "failed",
+                    "error": "This edit couldn't keep the confirmed length.",
+                    "error_class": "creator_render_contract_unverified",
+                    "decline_reason": "evidence_missing",
+                    "field_path": "target_duration_s",
+                    "alternative": "retry",
+                }
+            ],
+        }
+    )
+    patch_job_session(monkeypatch, job)
+    monkeypatch.setattr(
+        generative_build,
+        "_attach_variant_posters",
+        lambda result, **_kwargs: (dict(result), []),
+    )
+    assert generative_build._update_variant_entry(
+        "11111111-1111-1111-1111-111111111111",
+        "original_text",
+        {"video_path": "jobs/x/new.mp4", "render_status": "ready", "duration_s": 24},
+    )
+    stored = job.assembly_plan["variants"][0]
+    assert stored["render_status"] == "ready"
+    assert not {"decline_reason", "field_path", "alternative", "error_class"} & set(stored)
+
+
+def test_fail_job_persists_a_typed_decline_without_touching_the_failure_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = FakeJob(assembly_plan={"variants": []}, status="processing")
+    patch_job_session(monkeypatch, job)
+    assert generative_build._fail_job(
+        "11111111-1111-1111-1111-111111111111",
+        "I need capture times.",
+        failure_reason="phone_plan_unsupported",
+        decline={"decline_reason": "needs_choice"},
+    )
+    assert job.failure_reason == "phone_plan_unsupported"
+    assert job.assembly_plan["creator_decline"] == {"decline_reason": "needs_choice"}
+    plain = FakeJob(assembly_plan={"variants": []}, status="processing")
+    patch_job_session(monkeypatch, plain)
+    assert generative_build._fail_job(
+        "11111111-1111-1111-1111-111111111111", "x", failure_reason="phone_plan_unsupported"
+    )
+    assert "creator_decline" not in plain.assembly_plan

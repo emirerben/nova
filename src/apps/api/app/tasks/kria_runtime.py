@@ -2381,6 +2381,61 @@ def _device_render_state(job: Job, execution: CreatorAgentExecution) -> str | No
 _DETERMINISTIC_JOB_FAILURE_CODES = {"phone_plan_unsupported", "user_song_plan_declined"}
 
 
+_VARIANT_DECLINE_FAILURE_CODES = {"variant_render_failed", "creator_render_contract_unverified"}
+
+
+def _typed_creator_decline(
+    job: Job, variant_id: str | None, failure_code: str | None = None
+) -> dict[str, str] | None:
+    """The typed creator-contract decline a failed job persisted, if any.
+
+    Phone/cloud-preflight declines live in ``assembly_plan["creator_decline"]``;
+    a cloud publication decline lives on the failed variant beside its
+    ``error_class``.  The failure code itself is never changed by this (the typed
+    reason rides beside it), so untyped failures keep their exact recovery.
+    """
+    from app.services.creator_render_contract import (  # noqa: PLC0415
+        CREATOR_DECLINE_FIELD,
+        DECLINE_REASONS,
+    )
+
+    plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
+    raw = plan.get(CREATOR_DECLINE_FIELD)
+    message = getattr(job, "error_detail", None)
+    if not (isinstance(raw, dict) and raw.get("decline_reason") in DECLINE_REASONS):
+        raw = None
+        if failure_code not in _VARIANT_DECLINE_FAILURE_CODES:
+            return None
+        variants = [row for row in plan.get("variants") or [] if isinstance(row, dict)]
+        ordered = sorted(variants, key=lambda row: row.get("variant_id") != variant_id)
+        for row in ordered:
+            if (
+                row.get("render_status") == "failed"
+                and row.get("decline_reason") in DECLINE_REASONS
+            ):
+                raw = row
+                message = row.get("error")
+                break
+    if raw is None:
+        return None
+    decline = {"decline_reason": str(raw["decline_reason"])}
+    for key in ("field_path", "alternative"):
+        if isinstance(raw.get(key), str) and raw[key]:
+            decline[key] = raw[key]
+    if isinstance(message, str) and message.strip():
+        decline["message"] = message.strip()[:500]
+    return decline
+
+
+def _capability_refusal_copy(decline: dict[str, str]) -> str:
+    """A refusal that names the limit and the supported way forward."""
+    limit = decline.get("message") or "This render path can't keep that requirement."
+    alternative = decline.get("alternative") or (
+        "Tell me what you'd like to change and I'll try a different approach."
+    )
+    return f"{limit} {alternative}"
+
+
 def _phone_gate_refusal_copy(reason: str) -> str:
     from app.tasks.content_plan_build import PHONE_GATE_MESSAGES  # noqa: PLC0415
 
@@ -3225,11 +3280,36 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         # Deterministic compiler rejects fail identically on every retry: ask
         # the creator for a change instead of offering a dead retry loop.
         deterministic = not device_failed and failure_code in _DETERMINISTIC_JOB_FAILURE_CODES
+        # Typed creator-contract decline (additive; the failure code is unchanged):
+        # missing evidence is a repair/retry; an unavailable capability is a refusal
+        # that asks for a different request; conflicts and choices keep the existing
+        # behaviour until the clarification gate wires real questions.
+        typed_decline = (
+            None
+            if device_failed
+            else _typed_creator_decline(
+                job, str(execution.target_variant_id or "") or None, failure_code
+            )
+        )
+        if typed_decline is not None and not device_failed:
+            if typed_decline["decline_reason"] == "evidence_missing":
+                deterministic = False
+            elif typed_decline["decline_reason"] == "capability_unavailable":
+                deterministic = True
         recovery = "manual" if device_failed else ("ask_user" if deterministic else "retry")
         execution.error = {
             "code": failure_code,
             "retryable": not device_failed and not deterministic,
             "recovery": recovery,
+            **(
+                {
+                    key: typed_decline[key]
+                    for key in ("decline_reason", "field_path")
+                    if key in typed_decline
+                }
+                if typed_decline
+                else {}
+            ),
         }
         turn.status = "failed"
         turn.completed_at = now
@@ -3302,6 +3382,11 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             )
         elif recovery_message is not None:
             failure_content = recovery_message
+        elif (
+            typed_decline is not None
+            and typed_decline["decline_reason"] == "capability_unavailable"
+        ):
+            failure_content = _capability_refusal_copy(typed_decline)
         elif deterministic or failure_code in {
             "phone_capability_unavailable",
             *CREATOR_FACING_DETAIL_CODES,
@@ -3328,6 +3413,15 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 "code": failure_code,
                 "recovery": recovery,
                 "receipt_ids": [str(execution.id)],
+                **(
+                    {
+                        key: typed_decline[key]
+                        for key in ("decline_reason", "field_path")
+                        if key in typed_decline
+                    }
+                    if typed_decline
+                    else {}
+                ),
                 **({"requirement_receipts": recovery_receipts} if recovery_receipts else {}),
             },
         )
