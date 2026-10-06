@@ -6,6 +6,8 @@ mandatory per CLAUDE.md's #296-class history.
 
 from __future__ import annotations
 
+import pytest
+
 from app.agents._schemas.text_element import TextElement
 from app.pipeline.generative_overlays import (
     _HOLD_TO_END_S,
@@ -16,6 +18,7 @@ from app.pipeline.generative_overlays import (
     inject_intro_overlay,
     inject_persistent_intro,
 )
+from app.pipeline.style_sets import _INTRO_ANIMATION_EFFECTS
 
 
 def test_karaoke_overlay_has_word_timings_matching_skia_schema():
@@ -167,6 +170,15 @@ def test_style_set_effect_survives_when_renderer_known():
     # flattened to static the way a genuinely unknown effect is.
     ov = build_intro_overlay("ai answer", effect="stream-in", start_s=0.0, end_s=2.0)
     assert ov["effect"] == "stream-in"
+
+
+@pytest.mark.parametrize("effect", sorted(_INTRO_ANIMATION_EFFECTS))
+def test_every_picker_animation_survives_the_intro_builder(effect):
+    # The instant-editor picker's effects must reach the renderer as picked
+    # ("none" is the picker's spelling of static). slide-down used to be missing
+    # from _SKIA_EFFECTS, so a "Slide down" intro burned static.
+    ov = build_intro_overlay("hello world", effect=effect, start_s=0.0, end_s=2.0)
+    assert ov["effect"] == ("static" if effect == "none" else effect)
 
 
 def test_no_style_fields_omits_keys():
