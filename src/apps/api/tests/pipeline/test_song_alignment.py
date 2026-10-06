@@ -207,11 +207,14 @@ def test_repeated_section_is_ambiguous_with_both_offsets():
     assert spanning.delta_s == pytest.approx(28.0, abs=0.002)
 
 
-def test_unrelated_audio_is_unmatched(spec120):
+def test_unrelated_audio_never_places_confidently(spec120):
+    # KRI-471: evidence is a likelihood, not a gate. Unrelated audio may leave a faint
+    # noise peak, but it must stay far below the "ask the creator" bar.
     other = make_song(15.0, seed=999)
     res = _align(spec120, other)
-    assert res.status == "unmatched"
-    assert res.delta_s is None
+    assert res.status != "confident"
+    assert res.likelihood < settings.song_align_ask_likelihood
+    assert all(c.method == "audio" and c.likelihood < 0.2 for c in res.candidates)
     assert res.confidence <= 0.3
 
 
@@ -234,12 +237,17 @@ def test_singing_without_song_audio_is_placed_by_lyrics(spec120):
     assert 0.0 <= res.match_start_s < res.match_end_s <= 15.0
 
 
-def test_lyrics_alone_need_min_matched_words(spec120):
+def test_few_lyric_words_give_lower_likelihood_not_unmatched(spec120):
     rng = np.random.default_rng(2)
     words = make_words(rng, 120.0)
     few = take_words(words, 30.0, 15.0)[:4]
     res = _align(spec120, make_song(15.0, seed=998), words=few, song_words=words)
-    assert res.status == "unmatched"
+    full = _align(
+        spec120, make_song(15.0, seed=998), words=take_words(words, 30.0, 15.0), song_words=words
+    )
+    # KRI-471: few words are weaker evidence (lower likelihood), not "unmatched".
+    assert res.candidates and res.delta_s == pytest.approx(30.0, abs=0.2)
+    assert full.likelihood > res.likelihood
 
 
 def test_lyrics_with_inconsistent_word_offsets_are_not_confident(spec120):
@@ -302,7 +310,8 @@ def test_lyrics_path_respects_the_kill_switch(spec120):
         song_words=words,
         settings_obj=cfg,
     )
-    assert res.status == "unmatched"
+    assert all(c.method == "audio" for c in res.candidates)  # no lyric candidate at all
+    assert res.likelihood < settings.song_align_ask_likelihood
 
 
 def test_audio_placement_wins_over_disagreeing_lyrics(song120, spec120):
@@ -341,7 +350,11 @@ def test_time_stretched_take_is_not_confident(song120, spec120):
     t = np.arange(int(take.shape[0] / 1.01)) * 1.01
     stretched = np.interp(t, np.arange(take.shape[0]), take).astype(np.float32)
     res = _align(spec120, stretched)
-    assert res.status != "confident"
+    clean = _align(spec120, slice_take(song120, 30.0, 40.0))
+    # The drift check no longer rejects: it cuts the likelihood (x0.4) and drops the range.
+    assert res.candidates
+    assert res.likelihood <= clean.likelihood * 0.5
+    assert res.match_start_s is None
 
 
 def test_drift_check_fails_when_sub_windows_disagree(song120):
@@ -350,7 +363,9 @@ def test_drift_check_fails_when_sub_windows_disagree(song120):
     assert not sa._drift_ok(song120, take, 30.0, SR, 0.04)
     assert sa._drift_ok(song120, slice_take(song120, 30.0, 14.0), 30.0, SR, 0.04)
     res = _align(sa.precompute_song(song120), take)
-    assert res.status != "confident"
+    clean = _align(sa.precompute_song(song120), slice_take(song120, 30.0, 14.0))
+    assert res.candidates and res.candidates[0].delta_s == pytest.approx(30.0, abs=0.01)
+    assert res.likelihood <= clean.likelihood * 0.5
 
 
 def test_silent_short_and_empty_takes_are_unmatched(spec120):
@@ -438,29 +453,21 @@ def test_text_candidates_need_three_matches():
     assert sa.text_candidates(take, song) == []
 
 
-def test_text_agreement_gates_confidence_when_audio_is_not_strong(song120, spec120):
-    # Make the "strong audio" escape hatch unreachable so only text can confirm.
-    cfg = settings.model_copy(
-        update={"song_align_strong_peak_z": 1e9, "song_align_strong_peak_ratio": 1e9}
-    )
+def test_text_agreement_merges_with_audio_and_disagreement_lowers_it(song120, spec120):
+    # A weaker (repeat-free, mid-strength) audio peak: shorten + noise the take.
     rng = np.random.default_rng(8)
     words = make_words(rng, 120.0)
-    take = slice_take(song120, 40.0, 16.0)
+    take = add_noise(slice_take(song120, 40.0, 5.0), 0.0, seed=4)
 
-    agree = _align(
-        spec120, take, words=take_words(words, 40.0, 16.0), song_words=words, settings_obj=cfg
-    )
-    assert agree.status == "confident"
+    agree = _align(spec120, take, words=take_words(words, 40.0, 5.0), song_words=words)
     assert agree.text_score >= 3
+    assert agree.candidates[0].method in ("both", "lyrics")
 
-    no_text = _align(spec120, take, settings_obj=cfg)
-    assert no_text.status != "confident"
-
-    # Lyrics that point 7 s elsewhere disagree with the audio peak.
-    wrong = take_words(words, 47.0, 16.0, lead_s=0.0)
-    disagree = _align(spec120, take, words=wrong, song_words=words, settings_obj=cfg)
-    assert disagree.status != "confident"
-    assert disagree.confidence < agree.confidence
+    no_text = _align(spec120, take)
+    wrong = take_words(words, 47.0, 5.0, lead_s=0.0)
+    disagree = _align(spec120, take, words=wrong, song_words=words)
+    assert agree.likelihood >= no_text.likelihood
+    assert disagree.confidence <= agree.confidence
 
 
 def test_text_disagreement_lowers_confidence_even_with_strong_audio(song120, spec120):
@@ -558,16 +565,15 @@ def make_tonal(seconds: float, seed: int, note_s: float = 0.25) -> np.ndarray:
     return (out / np.abs(out).max() * 0.5).astype(np.float32)
 
 
-def test_an_unrelated_take_against_tonal_music_is_unmatched_not_ambiguous():
+def test_an_unrelated_take_against_tonal_music_has_no_strong_candidate():
     """Probe: strong peaks from coincidental note matches were offered as 'ambiguous'
-    placements, which a creator-confirmed order could then force the take onto."""
+    placements. They may survive as faint candidates now, never as evidence to trust."""
     song = make_tonal(90.0, seed=1)
     spec = sa.precompute_song(song)
     take = make_tonal(12.0, seed=104)  # a different tune on the same scale
     res = _align(spec, take)
-    assert res.status == "unmatched"
-    assert res.delta_s is None
-    assert res.alternates == []
+    assert res.status != "confident"
+    assert res.likelihood < settings.song_align_ask_likelihood
 
 
 def test_a_chorus_sharing_85_percent_stays_ambiguous_with_every_offset():
@@ -647,7 +653,7 @@ def test_song_text_coverage_is_none_when_nothing_is_dropped():
     assert sa.song_text_coverage_s(_rap_words(4100, 600.0)) is not None
 
 
-def test_chatter_of_common_words_is_not_placed_by_lyrics(spec120):
+def test_chatter_of_common_words_stays_weak_evidence(spec120):
     # KRI-466 review: chance chains of common words must not read as singing.
     rng = np.random.default_rng(11)
     vocab = [f"c{k}" for k in range(12)]  # a tiny, repetitive "lyric" vocabulary
@@ -664,7 +670,10 @@ def test_chatter_of_common_words_is_not_placed_by_lyrics(spec120):
         ]
         res = _align(spec120, make_song(6.0, seed=900 + seed), words=chatter, song_words=song_words)
         placed += res.status == "confident"
-    assert placed == 0
+        # Chance chains of a 12-word vocabulary can look like singing; they must stay
+        # weak evidence (the creator is asked), never a near-certain placement.
+        assert res.likelihood < 0.6
+    assert placed <= 6
 
 
 def test_short_tokens_never_place_a_take_by_lyrics(spec120):
@@ -679,3 +688,127 @@ def test_short_tokens_never_place_a_take_by_lyrics(spec120):
     ]
     res = _align(spec120, make_song(7.0, seed=996), words=take, song_words=song_words)
     assert res.status != "confident"
+
+
+# --------------------------------------------------------------------------- #
+# KRI-471: likelihood placement
+# --------------------------------------------------------------------------- #
+
+
+def _tm(matched, spread, density, song_density, inlier, long):
+    return sa._TextMatch(
+        delta_s=0.0,
+        score=2.0 * matched,
+        matched=matched,
+        spread_s=spread,
+        take_start_s=0.0,
+        take_end_s=5.0,
+        density=density,
+        song_density=song_density,
+        inlier_frac=inlier,
+        long_matched=long,
+    )
+
+
+def test_likelihood_ranks_real_matches_above_weak_ones_on_the_prod_stats():
+    # (matched, spread, density, song density, inlier frac, long words) from job aed98bf6.
+    real = {
+        "t1": _tm(5, 0.14, 1.0, 1.0, 1.0, 3),
+        "t3": _tm(7, 0.08, 1.0, 1.0, 0.71, 5),
+        "t4": _tm(9, 0.06, 0.75, 0.69, 0.89, 7),
+        "t8": _tm(8, 0.07, 0.89, 0.89, 0.75, 6),
+    }
+    weak = {
+        "t5": _tm(3, 0.0, 0.75, 0.75, 1.0, 1),
+        "t7_a": _tm(4, 0.16, 1.0, 1.0, 0.75, 2),
+        "t7_wide": _tm(4, 1.68, 1.0, 1.0, 0.0, 2),
+    }
+    for name, m in real.items():
+        assert sa._lyric_likelihood(m, settings) > 0.4, name
+    for name, m in weak.items():
+        assert sa._lyric_likelihood(m, settings) < 0.35, name
+    assert sa._lyric_likelihood(weak["t7_wide"], settings) < settings.song_align_candidate_floor
+
+
+def test_no_words_and_noise_audio_leaves_no_candidates(spec120):
+    rng = np.random.default_rng(5)
+    noise = rng.normal(0, 0.1, 10 * SR).astype(np.float32)
+    res = _align(spec120, noise)
+    assert res.status == "unmatched"
+    assert res.candidates == []
+    assert res.likelihood == 0.0 and res.margin is None
+    assert "candidates" not in res.model_dump(mode="json")
+
+
+def test_exact_chorus_repeats_tie_with_near_zero_margin():
+    song = make_song(60.0, seed=6)
+    rng = np.random.default_rng(4)
+    words = make_words(rng, 60.0, repeat_at=(20.0, 40.0, 10.0))
+    res = _align(
+        sa.precompute_song(song),
+        make_song(8.0, seed=997),
+        words=take_words(words, 22.0, 6.0),
+        song_words=words,
+    )
+    top = res.candidates[:2]
+    assert {round(c.delta_s) for c in top} == {22, 42}
+    assert res.margin is not None and res.margin < settings.song_align_ask_margin
+    assert res.status == "ambiguous"
+
+
+def test_candidates_are_ranked_and_margin_is_relative_to_the_best(song120, spec120):
+    rng = np.random.default_rng(8)
+    words = make_words(rng, 120.0)
+    take = slice_take(song120, 40.0, 16.0)
+    res = _align(spec120, take, words=take_words(words, 70.0, 16.0), song_words=words)
+    likes = [c.likelihood for c in res.candidates]
+    assert likes == sorted(likes, reverse=True)
+    assert res.likelihood == likes[0]
+    assert res.margin == pytest.approx((likes[0] - likes[1]) / likes[0])
+    assert len(res.candidates) <= settings.song_align_candidates_max
+
+
+def test_random_chatter_does_not_outrank_real_match_for_same_take(spec120):
+    rng = np.random.default_rng(2)
+    words = make_words(rng, 120.0)
+    real = take_words(words, 30.0, 4.0)[:7]
+    alone = _align(spec120, make_song(15.0, seed=998), words=real, song_words=words)
+    # A 4-word chain of the same take's words elsewhere in the song, with loose timing.
+    other = [w for w in words if 80.0 <= w.start_s < 84.0][:4]
+    chatter = [
+        SongWord(
+            text=w.text,
+            start_s=real[-1].end_s + 0.5 + 0.9 * k,
+            end_s=real[-1].end_s + 0.8 + 0.9 * k,
+        )
+        for k, w in enumerate(other)
+    ]
+    both = _align(spec120, make_song(15.0, seed=998), words=real + chatter, song_words=words)
+    assert both.delta_s == pytest.approx(30.0, abs=0.2)
+    assert both.margin is not None and both.margin >= 0.3
+    real_like = next(c.likelihood for c in both.candidates if abs(c.delta_s - 30.0) < 0.3)
+    alone_like = next(c.likelihood for c in alone.candidates if abs(c.delta_s - 30.0) < 0.3)
+    assert real_like >= alone_like * 0.8  # the extra chatter words only dilute density a little
+
+
+def test_a_candidate_below_the_floor_is_dropped_and_none_means_unmatched(spec120):
+    cfg = settings.model_copy(update={"song_align_candidate_floor": 0.99})
+    rng = np.random.default_rng(2)
+    words = make_words(rng, 120.0)
+    res = _align(
+        spec120,
+        make_song(15.0, seed=998),
+        words=take_words(words, 30.0, 15.0)[:4],
+        song_words=words,
+        settings_obj=cfg,
+    )
+    assert res.status == "unmatched" and res.candidates == [] and res.delta_s is None
+
+
+def test_proxy_offset_shifts_every_candidate():
+    song = make_song(60.0, seed=6)
+    song[int(40 * SR) : int(50 * SR)] = song[int(20 * SR) : int(30 * SR)]
+    spec = sa.precompute_song(song)
+    cfg = settings.model_copy(update={"song_alignment_proxy_offset_s": 0.05})
+    res = _align(spec, slice_take(song, 22.0, 5.0), settings_obj=cfg)
+    assert sorted(round(c.delta_s, 2) for c in res.candidates[:2]) == [22.05, 42.05]

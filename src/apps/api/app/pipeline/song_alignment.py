@@ -39,6 +39,7 @@ import structlog
 from app.config import settings
 from app.schemas.user_song import (
     AlignmentAlternate,
+    PlacementCandidate,
     SongAlignment,
     TakeAlignment,
 )
@@ -54,8 +55,15 @@ _MIN_TAKE_S = 1.0
 _MIN_RMS = 1e-4
 _PEAK_SUPPRESS_S = 0.25  # peaks closer than this are "the same" peak
 _REFINE_S = 0.25  # text candidates are re-measured on audio within this window
+_MERGE_S = 0.75  # an audio and a lyric candidate this close are one placement
+_AUDIO_DELTA_MIN_Z = 6.0  # an audio peak must clear this to move a lyric delta
+_DRIFT_FAIL_FACTOR = 0.4  # likelihood factor for a candidate the take does not support
+_STRONG_AUDIO_FLOOR = 0.9
+_TEXT_DISAGREE_FACTOR = 0.7
+_LYRIC_OFF_AUDIO_FACTOR = 0.5  # lyric-only echo elsewhere when strong audio places the take
+_DEDUP_S = 0.25
 _N_AUDIO_PEAKS = 5
-_MAX_ALTERNATES = 4
+_MAX_ALTERNATES = 4  # legacy ``alternates`` cap
 _MAD_TO_SIGMA = 1.4826
 _RATIO_CAP = 50.0
 _DEFAULT_MAX_TAKE_S = 120.0  # song spectrum is precomputed for takes up to this long
@@ -65,7 +73,7 @@ _SW_MATCH = 2
 _SW_MISMATCH = -1
 _SW_GAP = -1
 _TEXT_MIN_MATCHED = 3
-_TEXT_REL_BEST = 0.85
+_TEXT_REL_BEST = 0.6  # KRI-471: weak lyric echoes are candidates too; likelihood ranks them
 # A 10-minute rap song carries ~2400 words; the take side stays small (a take
 # is <= 2 minutes). The Smith-Waterman rows are vectorized, so 4000 song words
 # cost ~O(take_words) numpy passes (measured: a 10-take x 10-min run is ~seconds).
@@ -73,8 +81,6 @@ _TEXT_MAX_SONG_WORDS = 4000
 _TEXT_MAX_TAKE_WORDS = 1500
 _TEXT_MAX_CANDIDATES = 6
 _TEXT_INLIER_TOL_S = 0.35  # a matched word is an inlier within this of the median offset
-_TEXT_MIN_INLIER_FRAC = 0.75
-_TEXT_MIN_LONG_WORDS = 4  # matched words of 3+ chars needed for a lyrics-only placement
 _TEXT_POOL_MIN_MATCHED = 8  # start+end offsets are pooled from this many matched words
 
 # Drift check.
@@ -574,71 +580,114 @@ def _confidence(z: float, ratio: float, cfg: Any) -> float:
     return float(np.sqrt(cz * cr))
 
 
-def _lyrics_alignment(
+def _lyric_likelihood(m: _TextMatch, cfg: Any) -> float:
+    """0..1 evidence that a take's words sit at ``m.delta_s`` (KRI-471).
+
+    Long matched words (stopword / CJK-char guard) saturate; density on both the
+    take and the song side, the share of consistent offsets and a tight spread
+    each scale the score. Nothing here is a gate: a weak chain scores low and
+    simply ranks below real singing.
+    """
+    words = 1.0 - float(np.exp(-m.long_matched / float(cfg.song_align_lyrics_words_scale)))
+    dens = float(np.sqrt(max(m.density, 0.0) * max(m.song_density, 0.0)))
+    tight = 1.0 / (1.0 + (m.spread_s / float(cfg.song_align_lyrics_spread_scale_s)) ** 2)
+    return float(np.clip(words * dens * m.inlier_frac * tight, 0.0, 1.0))
+
+
+@dataclass
+class _Cand:
+    """A placement hypothesis while the audio and lyric evidence is being merged."""
+
+    delta: float  # before the proxy offset
+    likelihood: float
+    method: str  # audio | lyrics | both
+    matched: int = 0
+    peak_z: float = 0.0
+    start: float | None = None
+    end: float | None = None
+    drift_ok: bool = False  # the whole take supports this audio peak
+
+
+def _noisy_or(a: float, b: float) -> float:
+    return 1.0 - (1.0 - a) * (1.0 - b)
+
+
+def _finalize(
     media_id: str,
     proxy_generation: int | None,
-    matches: list[_TextMatch],
-    take_len_s: float,
+    cands: list[_Cand],
     *,
     offset: float,
     text_score: float,
+    peak_z: float,
+    peak_ratio: float,
     cfg: Any,
-) -> TakeAlignment | None:
-    """Place a take by its words alone (KRI-466), or ``None`` when they do not suffice.
-
-    A creator who sings along over earbuds leaves no song in the recording, so there
-    is no audio peak to find. The take's words must then match the song's words
-    closely: enough of them, tightly consistent per-word offsets, and most of the
-    take's words inside the matched span. One such placement is ``confident``;
-    several (a chorus) are ``ambiguous`` and go through the song-order question.
-    """
-    if not getattr(cfg, "song_align_lyrics_enabled", True):
-        return None
-    strong = [
-        m
-        for m in matches
-        if m.matched >= cfg.song_align_lyrics_min_words
-        and m.spread_s <= cfg.song_align_lyrics_max_spread_s
-        and m.density >= cfg.song_align_lyrics_min_density
-        # Chance chains of common words ("i/you/the/and") scatter across the song and
-        # across take time; real singing is dense on both sides and consistent in offset.
-        and m.song_density >= cfg.song_align_lyrics_min_density
-        and m.inlier_frac >= _TEXT_MIN_INLIER_FRAC
-        and m.long_matched >= _TEXT_MIN_LONG_WORDS
-    ]
-    if not strong:
-        return None
-    best = strong[0]
-    pad = float(cfg.song_align_match_pad_s)
-    start = max(0.0, best.take_start_s - pad)
-    end = min(take_len_s, best.take_end_s + pad)
-    if end <= start:
-        return None
-    common = {
-        "media_id": media_id,
-        "proxy_generation": proxy_generation,
-        "text_score": text_score,
-        "method": "lyrics",
-        "match_start_s": start,
-        "match_end_s": end,
-    }
-    confidence = float(cfg.song_align_lyrics_confidence)
-    if len(strong) == 1:
-        return TakeAlignment(
-            status="confident",
-            delta_s=best.delta_s + offset,
-            confidence=confidence,
-            **common,
+) -> TakeAlignment:
+    """Rank candidates and derive the legacy ``status`` / ``delta_s`` / ``alternates``."""
+    floor = float(cfg.song_align_candidate_floor)
+    kept = sorted((c for c in cands if c.likelihood >= floor), key=lambda c: -c.likelihood)
+    ranked: list[_Cand] = []
+    for c in kept:
+        if all(abs(c.delta - r.delta) > _DEDUP_S for r in ranked):
+            ranked.append(c)
+    ranked = ranked[: int(cfg.song_align_candidates_max)]
+    if not ranked:
+        top = max((c.likelihood for c in cands), default=0.0)
+        return _unmatched(
+            media_id,
+            proxy_generation,
+            peak_z=peak_z,
+            peak_ratio=peak_ratio,
+            text_score=text_score,
+            confidence=min(top, 0.3),
         )
+    best = ranked[0]
+    margin = (
+        1.0
+        if len(ranked) == 1
+        else float((best.likelihood - ranked[1].likelihood) / best.likelihood)
+    )
+    margin = float(np.clip(margin, 0.0, 1.0))
+    uncertain = margin < float(cfg.song_align_ask_margin) or best.likelihood < float(
+        cfg.song_align_ask_likelihood
+    )
+    out = [
+        PlacementCandidate(
+            delta_s=c.delta + offset,
+            likelihood=float(np.clip(c.likelihood, 0.0, 1.0)),
+            method=c.method,  # type: ignore[arg-type]
+            matched_words=c.matched,
+            peak_z=float(c.peak_z),
+            match_start_s=c.start,
+            match_end_s=c.end,
+        )
+        for c in ranked
+    ]
+    extra: dict[str, Any] = {}
+    if best.start is not None and best.end is not None and best.end > best.start:
+        extra = {"match_start_s": best.start, "match_end_s": best.end}
     return TakeAlignment(
-        status="ambiguous",
-        delta_s=best.delta_s + offset,
-        confidence=min(confidence, 0.4),
-        alternates=[
-            AlignmentAlternate(delta_s=m.delta_s + offset, score=float(m.score))
-            for m in strong[:_MAX_ALTERNATES]
-        ],
-        **common,
+        media_id=media_id,
+        proxy_generation=proxy_generation,
+        status="ambiguous" if uncertain else "confident",
+        delta_s=best.delta + offset,
+        confidence=float(np.clip(best.likelihood, 0.0, 1.0)),
+        text_score=text_score,
+        peak_z=float(best.peak_z if best.method != "lyrics" else peak_z),
+        peak_ratio=float(peak_ratio),
+        alternates=(
+            [
+                AlignmentAlternate(delta_s=c.delta_s, score=float(c.likelihood))
+                for c in out[:_MAX_ALTERNATES]
+            ]
+            if uncertain
+            else []
+        ),
+        method="lyrics" if best.method == "lyrics" else "audio",
+        likelihood=float(np.clip(best.likelihood, 0.0, 1.0)),
+        margin=margin,
+        candidates=out,
+        **extra,
     )
 
 
@@ -688,25 +737,31 @@ def _align_take(
         return _unmatched(media_id, proxy_generation)
 
     offset = float(cfg.song_alignment_proxy_offset_s)
-
-    # --- text anchors ---------------------------------------------------
-    t_matches = _text_matches(take_words, song_words)
-    t_cands = [(m.delta_s, m.score, m.matched) for m in t_matches]
-    text_score = float(t_cands[0][2]) if t_cands else 0.0
     take_len_s = tl / sr
+    pad = float(cfg.song_align_match_pad_s)
 
-    def by_lyrics() -> TakeAlignment | None:
-        return _lyrics_alignment(
-            media_id,
-            proxy_generation,
-            t_matches,
-            take_len_s,
-            offset=offset,
-            text_score=text_score,
-            cfg=cfg,
-        )
+    # --- lyric candidates -------------------------------------------------
+    t_matches = _text_matches(take_words, song_words)
+    text_score = float(t_matches[0].matched) if t_matches else 0.0
+    lyric: list[_Cand] = []
+    if getattr(cfg, "song_align_lyrics_enabled", True):
+        for m in t_matches:
+            if m.matched < cfg.song_align_lyrics_min_words:
+                continue
+            start = max(0.0, m.take_start_s - pad)
+            end = min(take_len_s, m.take_end_s + pad)
+            lyric.append(
+                _Cand(
+                    delta=m.delta_s,
+                    likelihood=_lyric_likelihood(m, cfg),
+                    method="lyrics",
+                    matched=m.matched,
+                    start=start if end > start else None,
+                    end=end if end > start else None,
+                )
+            )
 
-    # --- audio: full-song GCC-PHAT --------------------------------------
+    # --- audio: full-song GCC-PHAT ----------------------------------------
     nfft = spec.fft_size_for(tl)
     c, _ = _phat_cross(spec.spectrum(nfft), take, nfft, sr)
     lag0 = -tl
@@ -715,22 +770,31 @@ def _align_take(
     suppress = int(_PEAK_SUPPRESS_S * sr)
     peaks = _top_peaks(corr, _N_AUDIO_PEAKS, suppress)
     if not peaks:
-        return by_lyrics() or _unmatched(media_id, proxy_generation, text_score=text_score)
+        return _finalize(
+            media_id,
+            proxy_generation,
+            lyric,
+            offset=offset,
+            text_score=text_score,
+            peak_z=0.0,
+            peak_ratio=0.0,
+            cfg=cfg,
+        )
 
-    # Union audio peaks with audio-refined text candidates.
+    # Union the top audio peaks with audio-refined lyric candidates.
     pool: list[tuple[int, float]] = list(peaks)
     refine = int(_REFINE_S * sr)
-    for delta, _score, _k in t_cands:
-        centre = int(round(delta * sr)) - lag0
+    for m in t_matches:
+        centre = int(round(m.delta_s * sr)) - lag0
         lo, hi = max(0, centre - refine), min(corr.shape[0], centre + refine + 1)
         if hi > lo:
             j = lo + int(np.argmax(corr[lo:hi]))
             pool.append((j, float(corr[j])))
     pool.sort(key=lambda p: p[1], reverse=True)
-    cands: list[tuple[int, float]] = []
+    audio_peaks: list[tuple[int, float]] = []
     for i, v in pool:
-        if all(abs(i - ci) > suppress for ci, _ in cands):
-            cands.append((i, v))
+        if all(abs(i - ci) > suppress for ci, _ in audio_peaks):
+            audio_peaks.append((i, v))
 
     def delta_of(i: int) -> float:
         return (lag0 + i + _subsample(corr, i)) / sr
@@ -738,106 +802,141 @@ def _align_take(
     def z_of(v: float) -> float:
         return (v - med) / sigma
 
-    top_i, top_v = cands[0]
-
     def ratio_of(i: int, v: float) -> float:
         p2 = max((pv for pi, pv in peaks if abs(pi - i) > suppress), default=0.0)
         return _RATIO_CAP if p2 <= 0.0 else float(min(_RATIO_CAP, v / p2))
 
-    # A candidate is only a real placement if it is a strong peak AND the whole
-    # take supports it (window consistency / drift check).
-    valid: list[tuple[int, float]] = []
-    spans: dict[int, tuple[float, float] | None] = {}
-    for i, v in cands:
-        if z_of(v) < cfg.song_align_confident_peak_z:
-            continue
-        ok, span = _drift_check(spec.pcm, take, delta_of(i), sr, cfg.song_align_drift_tolerance_s)
-        if ok:
-            valid.append((i, v))
-            spans[i] = span
+    top_i, top_v = audio_peaks[0]
+    top_z, top_ratio = z_of(top_v), ratio_of(top_i, top_v)
 
-    if not valid:
-        lyrics = by_lyrics()
-        if lyrics is not None:
-            return lyrics
-        z = z_of(top_v)
-        ratio = ratio_of(top_i, top_v)
-        return _unmatched(
-            media_id,
-            proxy_generation,
-            peak_z=z,
-            peak_ratio=ratio,
-            text_score=text_score,
-            confidence=min(_confidence(z, ratio, cfg), 0.3),
-        )
-
-    best_i, p1 = valid[0]
-    best_delta = delta_of(best_i)
-    peak_z = z_of(p1)
-    peak_ratio = ratio_of(best_i, p1)
-
-    text_agree = any(abs(d - best_delta) <= cfg.song_align_text_agree_s for d, _s, _k in t_cands)
-    confidence = _confidence(peak_z, peak_ratio, cfg)
-    # Lyrics beyond the aligner's word cap were never seen by the text pass, so a
-    # take whose audio peak sits there cannot "disagree" with them.
+    # Lyrics beyond the aligner's word cap were never seen by the text pass, so an
+    # audio peak there cannot "disagree" with them.
     text_reach_s = song_text_coverage_s(song_words)
-    text_blind = text_reach_s is not None and best_delta >= text_reach_s
-    if t_cands and not text_agree and not text_blind:
-        confidence *= 0.7
-    # Text can only confirm a placement that is unique. A second valid audio peak or
-    # a second text candidate means the song repeats (a chorus, a loop) and the lyrics
-    # agree with every repetition equally, so only the audio may decide.
-    text_decides = text_agree and len(valid) == 1 and len(t_cands) <= 1
+    floor = float(cfg.song_align_candidate_floor)
 
-    strong = (
-        peak_z >= cfg.song_align_strong_peak_z and peak_ratio >= cfg.song_align_strong_peak_ratio
-    )
-    is_confident = peak_ratio >= cfg.song_align_confident_peak_ratio and (text_decides or strong)
-    common = {
-        "media_id": media_id,
-        "proxy_generation": proxy_generation,
-        "text_score": text_score,
-        "peak_z": float(peak_z),
-        "peak_ratio": float(peak_ratio),
-        "method": "audio",
-    }
-    span = spans.get(best_i)
-    if span is not None and span[1] > span[0]:
-        common["match_start_s"], common["match_end_s"] = span
-    if is_confident:
-        return TakeAlignment(
-            status="confident",
-            delta_s=best_delta + offset,
-            confidence=float(np.clip(confidence, 0.0, 1.0)),
-            **common,
+    def agrees_with_text(d: float) -> bool:
+        blind = text_reach_s is not None and d >= text_reach_s
+        return (
+            not t_matches
+            or blind
+            or any(abs(m.delta_s - d) <= cfg.song_align_text_agree_s for m in t_matches)
         )
-    # Ambiguous only when the competing placements are genuine song self-repeats:
-    # the song must sound alike at the best placement and at the alternate. A strong
-    # peak somewhere unrelated is a coincidence, not a repeat, and must not be offered
-    # to the planner as a place the take could be.
-    repeats = [valid[0]] + [
-        (i, v)
-        for i, v in valid[1:]
-        if _repeat_similarity(spec.pcm, best_delta, delta_of(i), tl, sr)
-        >= cfg.song_align_repeat_similarity_min
+
+    # Peaks worth a drift check: above the noise floor, or strong enough that an exact
+    # song repeat could be hiding their ratio (two equal peaks have ratio ~1).
+    info: list[tuple[int, float, float, float, float]] = []  # (i, v, z, ratio, delta)
+    drift: dict[int, tuple[bool, tuple[float, float] | None]] = {}
+    for i, v in audio_peaks:
+        z, ratio, d = z_of(v), ratio_of(i, v), delta_of(i)
+        info.append((i, v, z, ratio, d))
+        if _confidence(z, ratio, cfg) >= floor or z >= cfg.song_align_confident_peak_z:
+            drift[i] = _drift_check(spec.pcm, take, d, sr, cfg.song_align_drift_tolerance_s)
+
+    # Genuine song self-repeats (the song sounds alike at both placements) form one
+    # group with the best drift-passing peak: they are tied, and the group's ratio is
+    # measured against peaks *outside* it. Coincidental peaks keep their own ratio.
+    group: dict[int, float] = {}  # peak index -> similarity to the lead
+    leads = [
+        r
+        for r in info
+        if r[0] in drift and drift[r[0]][0] and r[2] >= cfg.song_align_confident_peak_z
     ]
-    if len(repeats) >= 2:
-        alternates = [
-            AlignmentAlternate(delta_s=delta_of(i) + offset, score=float(z_of(v)))
-            for i, v in repeats[:_MAX_ALTERNATES]
-        ]
-        return TakeAlignment(
-            status="ambiguous",
-            delta_s=best_delta + offset,
-            confidence=float(np.clip(min(confidence, 0.6), 0.0, 1.0)),
-            alternates=alternates,
-            **common,
+    lead = max(leads, key=lambda r: r[1], default=None)
+    lead_ratio = 0.0
+    if lead is not None:
+        group[lead[0]] = 1.0
+        for r in leads:
+            if r[0] == lead[0]:
+                continue
+            sim = _repeat_similarity(spec.pcm, lead[4], r[4], tl, sr)
+            if sim >= cfg.song_align_repeat_similarity_min:
+                group[r[0]] = sim
+        outside = max(
+            (pv for pi, pv in peaks if all(abs(pi - gi) > suppress for gi in group)), default=0.0
         )
-    return TakeAlignment(
-        status="unmatched",
-        delta_s=None,
-        confidence=float(np.clip(min(confidence, 0.3), 0.0, 1.0)),
-        **common,
+        lead_ratio = _RATIO_CAP if outside <= 0.0 else float(min(_RATIO_CAP, lead[1] / outside))
+
+    audio: list[_Cand] = []
+    for i, v, z, ratio, d in info:
+        ok, span = drift.get(i, (False, None))
+        if i in group and lead is not None:
+            lead_like = _confidence(lead[2], lead_ratio, cfg)
+            if not agrees_with_text(lead[4]):
+                lead_like *= _TEXT_DISAGREE_FACTOR
+            if (
+                lead[2] >= cfg.song_align_strong_peak_z
+                and lead_ratio >= cfg.song_align_strong_peak_ratio
+            ):
+                lead_like = max(lead_like, _STRONG_AUDIO_FLOOR)
+            like = lead_like * group[i]
+        else:
+            like = _confidence(z, ratio, cfg)
+            if like < floor:
+                continue  # noise level: not evidence
+            if ok:
+                if not agrees_with_text(d):
+                    like *= _TEXT_DISAGREE_FACTOR
+                if z >= cfg.song_align_strong_peak_z and ratio >= cfg.song_align_strong_peak_ratio:
+                    like = max(like, _STRONG_AUDIO_FLOOR)
+            else:
+                like *= _DRIFT_FAIL_FACTOR
+                span = None
+        audio.append(
+            _Cand(
+                delta=d,
+                likelihood=like,
+                method="audio",
+                peak_z=z,
+                drift_ok=ok,
+                start=span[0] if span and span[1] > span[0] else None,
+                end=span[1] if span and span[1] > span[0] else None,
+            )
+        )
+
+    # --- merge lyric + audio within _MERGE_S -------------------------------
+    merged: list[_Cand] = []
+    used: set[int] = set()
+    for ly in lyric:
+        near = [
+            (k, a)
+            for k, a in enumerate(audio)
+            if k not in used and abs(a.delta - ly.delta) <= _MERGE_S
+        ]
+        if not near:
+            merged.append(ly)
+            continue
+        k, a = max(near, key=lambda ka: ka[1].likelihood)
+        used.add(k)
+        delta = ly.delta
+        if a.peak_z >= _AUDIO_DELTA_MIN_Z and abs(a.delta - ly.delta) <= _REFINE_S and a.drift_ok:
+            delta = a.delta
+        merged.append(
+            _Cand(
+                delta=delta,
+                likelihood=_noisy_or(a.likelihood, ly.likelihood),
+                method="both",
+                matched=ly.matched,
+                peak_z=a.peak_z,
+                start=a.start if a.start is not None else ly.start,
+                end=a.end if a.end is not None else ly.end,
+            )
+        )
+    merged.extend(a for k, a in enumerate(audio) if k not in used)
+    # A take that carries the song's own audio (strong, drift-passing peak) is not an
+    # earbud take, so a lyric-only echo elsewhere (a repeated chorus) is weak rivalry.
+    if any(a.drift_ok and a.likelihood >= _STRONG_AUDIO_FLOOR for a in audio):
+        for cand in merged:
+            if cand.method == "lyrics":
+                cand.likelihood *= _LYRIC_OFF_AUDIO_FACTOR
+    return _finalize(
+        media_id,
+        proxy_generation,
+        merged,
+        offset=offset,
+        text_score=text_score,
+        peak_z=float(top_z),
+        peak_ratio=float(top_ratio),
+        cfg=cfg,
     )
 
 

@@ -590,10 +590,29 @@ class Settings(BaseSettings):
     # match the song's words closely: enough words, tightly consistent per-word offsets,
     # and most of the take's words inside the matched span. Kill switch = false.
     song_align_lyrics_enabled: bool = True
-    song_align_lyrics_min_words: int = Field(default=6, ge=3)
+    # KRI-471: lyric matches are *likelihood* evidence, never a gate. min_words is only
+    # the least matched words that emit a candidate; the scales below shape the score
+    # in song_alignment._lyric_likelihood.
+    song_align_lyrics_min_words: int = Field(default=3, ge=3)
+    song_align_lyrics_words_scale: float = Field(default=3.0, gt=0)
+    song_align_lyrics_spread_scale_s: float = Field(default=0.35, gt=0)
+    # DEPRECATED no-ops (hard gates before KRI-471); kept one release so old env
+    # overrides still load. Remove after the next release.
     song_align_lyrics_min_density: float = Field(default=0.6, ge=0, le=1)
     song_align_lyrics_max_spread_s: float = Field(default=0.35, gt=0)
     song_align_lyrics_confidence: float = Field(default=0.5, ge=0, le=1)
+    # KRI-471 likelihood placement. Candidates scoring below the floor are dropped
+    # ("evidence exists"), nothing else is a hard cut. A take asks the creator when
+    # its margin over the runner-up is below ask_margin or its likelihood below
+    # ask_likelihood; candidates within tie_ratio of the best are interchangeable.
+    song_align_candidate_floor: float = Field(default=0.05, ge=0, le=1)
+    song_align_ask_likelihood: float = Field(default=0.35, ge=0, le=1)
+    song_align_ask_margin: float = Field(default=0.15, ge=0, le=1)
+    song_align_tie_ratio: float = Field(default=0.85, ge=0, le=1)
+    song_align_max_overlap_s: float = Field(default=1.0, ge=0)
+    song_align_assign_enabled: bool = True
+    song_align_stack_unasked: bool = False
+    song_align_candidates_max: int = Field(default=6, ge=1)
     # Padding (seconds) around the matched words when trimming a take to its match.
     song_align_match_pad_s: float = Field(default=0.5, ge=0)
     # Fixed offset (seconds) added to every aligned delta to absorb a measured
