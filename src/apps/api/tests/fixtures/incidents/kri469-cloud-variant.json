@@ -56,8 +56,8 @@
         }
       ]
     },
-    "creator_request": "Use the voice from the talk to camera video and split around the video behind a fast page montage of the reamining videos. Show them chronologically",
-    "provenance": "all_candidates.creator_strategy + assembly_plan.creator_brief_binding of the prod job, via scripts/admin.py --prod GET jobs/<id>/debug (read-only, 2026-10-06). Strategy rationale/story text redacted; media ids hashed."
+    "creator_request": "Use the voice from the talk-to-camera video, cut away from it to a fast-paced montage of the remaining clips, and show them in chronological order.",
+    "provenance": "all_candidates.creator_strategy + assembly_plan.creator_brief_binding of the prod job, via scripts/admin.py --prod GET jobs/<id>/debug (read-only, 2026-10-06). Strategy rationale/story text redacted; media ids hashed. The creator's typed request is paraphrased (cleaned, facts kept), not quoted."
   },
   "inputs": {
     "media": [
@@ -526,19 +526,28 @@
     ],
     "cloud_preflight": true,
     "notes": [
-      "Same approval as kri469-voice-clip-ignored sent to a cloud renderer: camera-audio sources cannot be proven there, so the preflight must decline before any work."
+      "Same approval as kri469-voice-clip-ignored sent to a cloud renderer: camera-audio sources cannot be proven there, so the preflight must decline before any work.",
+      "Typed refusal expectation is staged for KRI-476 / PR-A (reason/field_path are best guesses; PR-A's worker corrects them when it flips this xfail)."
     ]
   },
   "expect": {
     "refusal": {
-      "message_contains": "camera-audio sources"
+      "reason": "capability_unavailable",
+      "field_path": "montage_audio.source_media_ids",
+      "message_advisory": "camera-audio sources"
     }
   },
   "repro": {
-    "command": "pytest tests/incidents/test_incident_corpus.py -k kri469",
+    "command": "pytest tests/incidents/test_incident_corpus.py -k kri469-cloud-variant",
     "status": "available"
   },
   "sources": [
     "prod job debug (not committed)"
+  ],
+  "xfail": [
+    {
+      "reason": "KRI-476 / PR-A",
+      "scope": "refusal"
+    }
   ]
 }

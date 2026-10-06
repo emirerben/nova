@@ -56,8 +56,8 @@
         }
       ]
     },
-    "creator_request": "Use the voice from the talk to camera video and split around the video behind a fast page montage of the reamining videos. Show them chronologically",
-    "provenance": "all_candidates.creator_strategy + assembly_plan.creator_brief_binding of the prod job, via scripts/admin.py --prod GET jobs/<id>/debug (read-only, 2026-10-06). Strategy rationale/story text redacted; media ids hashed."
+    "creator_request": "Use the voice from the talk-to-camera video, cut away from it to a fast-paced montage of the remaining clips, and show them in chronological order.",
+    "provenance": "all_candidates.creator_strategy + assembly_plan.creator_brief_binding of the prod job, via scripts/admin.py --prod GET jobs/<id>/debug (read-only, 2026-10-06). Strategy rationale/story text redacted; media ids hashed. The creator's typed request is paraphrased (cleaned, facts kept), not quoted."
   },
   "inputs": {
     "media": [
@@ -550,7 +550,9 @@
       "Capture times rebased to a synthetic epoch (order and gaps preserved).",
       "Speech facts only; transcripts, places and captions dropped.",
       "The prod job carried no creator_render_requirements object: it predates the contract, so the contract here is rebuilt from the persisted approval the way dispatch rebuilds it.",
-      "target_duration_s=30 was the strategy's choice; the creator never asked for a length and target_duration_requested was not persisted, so the contract carries no duration. The output expectation still holds the lane to the approved plan."
+      "expect.output_facts.duration_s=30 is the STRATEGY's chosen length (duration_basis=strategy_choice), not a creator ask: the creator never requested a length and target_duration_requested was not persisted, so the contract carries no duration. KRI-469's fix is the lane honouring the approved strategy.",
+      "Typed refusal expectation (reason/field_path) is staged for KRI-476 / PR-A; reason and path are best guesses from the PR-A plan and PR-A's worker should correct them when it flips this xfail.",
+      "Output-level repro is the lane fix's own check (KRI-477 / PR-F); the repro command here only re-runs what the corpus proves (contract, decline)."
     ]
   },
   "expect": {
@@ -565,20 +567,22 @@
       "resolved": true
     },
     "refusal": {
-      "message_contains": "confirmed camera-audio sources"
+      "reason": "evidence_missing",
+      "field_path": "montage_audio.source_media_ids",
+      "message_advisory": "confirmed camera-audio sources"
     },
     "output_facts": {
       "duration_s": 30,
       "voice_source_ids": [
         "m-1fb3444b"
-      ]
+      ],
+      "duration_basis": "strategy_choice"
     }
   },
   "observations": [
     {
       "label": "incident",
       "source": "prod job debug assembly_plan.speech_montage + variants[0]",
-      "route": "speech_montage",
       "facts": {
         "duration_s": 7.64,
         "voice_source_ids": [
@@ -593,12 +597,16 @@
   ],
   "xfail": [
     {
-      "reason": "KRI-477",
+      "reason": "KRI-477 / PR-F",
       "scope": "output"
+    },
+    {
+      "reason": "KRI-476 / PR-A",
+      "scope": "refusal"
     }
   ],
   "repro": {
-    "command": "pytest tests/incidents/test_incident_corpus.py -k kri469",
+    "command": "pytest tests/incidents/test_incident_corpus.py -k kri469-voice-clip-ignored",
     "status": "available"
   },
   "sources": [

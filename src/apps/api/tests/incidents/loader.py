@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import shlex
 import uuid
 from pathlib import Path
 
@@ -12,6 +14,7 @@ from tests.incidents.models import IncidentRecord
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "incidents"
 API_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = API_ROOT.parents[2]
 
 
 def load_records() -> list[IncidentRecord]:
@@ -50,7 +53,8 @@ def validate_against_current_schemas(record: IncidentRecord) -> None:
     """Fail loudly when a record no longer matches the real approval models."""
     if record.approved.strategy is not None:
         CreativeStrategy.model_validate(record.approved.strategy)
-    binding_for(record)  # BriefBinding re-verifies its own digest
+    # Building the binding runs BriefBinding's own validators (state/brief agreement).
+    binding_for(record)
 
 
 def build_contract(record: IncidentRecord) -> CreatorRenderContract | None:
@@ -70,3 +74,53 @@ def capture_sorted_ids(record: IncidentRecord) -> list[str]:
     selected = set((record.approved.strategy or {}).get("selected_media_ids") or ())
     rows = [m for m in record.inputs.media if m.capture_time and (not selected or m.id in selected)]
     return [m.id for m in sorted(rows, key=lambda m: m.capture_time)]
+
+
+def unresolved_reference(command: str) -> str | None:
+    """Why ``command`` does not resolve to something real in the repo, or None if it does.
+
+    Used for ``repro`` commands and for post-fix observation ``proof``: free text is not
+    proof. Recognised: a pytest node id (file and ``::test`` must exist, ``-k`` must match a
+    record), ``make kria-replay FIXTURE=x``, any other ``make <target>`` defined in the
+    Makefile, ``swift test --filter X`` (X must appear in a Swift source), or a command
+    naming an existing ``.py`` / ``.sh`` / ``.swift`` file.
+    """
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return "unparseable command"
+    if not tokens:
+        return "empty command"
+    if tokens[0] == "pytest" and len(tokens) > 1:
+        file, _, node = tokens[1].partition("::")
+        path = API_ROOT / file
+        if not path.is_file():
+            return f"missing test file {file}"
+        if node:
+            name = node.split("[")[0].split("::")[-1]
+            if not re.search(rf"def {re.escape(name)}\b", path.read_text(encoding="utf-8")):
+                return f"{file} has no test {name}"
+        if "-k" in tokens:
+            expr = tokens[tokens.index("-k") + 1]
+            if not any(expr in record.id for record in load_records()):
+                return f"-k {expr} matches no record id"
+        return None
+    if tokens[0] == "make" and len(tokens) > 1:
+        if tokens[1] == "kria-replay":
+            fixture = next((t.split("=", 1)[1] for t in tokens if t.startswith("FIXTURE=")), "")
+            found = list((API_ROOT / "tests").rglob(f"{fixture}.json")) if fixture else []
+            return None if found else f"no replay fixture {fixture!r}"
+        makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+        ok = re.search(rf"^{re.escape(tokens[1])}\s*:", makefile, re.MULTILINE)
+        return None if ok else f"Makefile has no target {tokens[1]}"
+    if tokens[:2] == ["swift", "test"] and "--filter" in tokens:
+        name = tokens[tokens.index("--filter") + 1].split("/")[0]
+        swift = (REPO_ROOT / "src/apps/ios").rglob("*.swift")
+        found = any(name in path.read_text(encoding="utf-8", errors="ignore") for path in swift)
+        return None if found else f"no Swift source mentions {name}"
+    for token in tokens:
+        if token.endswith((".py", ".sh", ".swift")) and any(
+            (root / token).is_file() for root in (REPO_ROOT, API_ROOT)
+        ):
+            return None
+    return "does not name a pytest id, make target, swift filter or existing script"

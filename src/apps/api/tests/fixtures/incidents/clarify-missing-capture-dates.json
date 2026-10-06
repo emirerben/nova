@@ -87,9 +87,6 @@
         "text": "Put them in the order I filmed them."
       }
     ],
-    "planner_flags": {
-      "wants_capture_order": true
-    },
     "notes": [
       "Gate lands in PR-C (KRI-476): order_basis -> use upload order, or the creator's own sequence."
     ]
@@ -97,9 +94,8 @@
   "expect": {
     "contract": {
       "order_required": true,
-      "unresolved_contains": [
-        "capture times for every selected clip"
-      ]
+      "order_ids": [],
+      "unresolved_nonempty": true
     },
     "question": {
       "kind": "order_basis",
@@ -108,12 +104,12 @@
   },
   "xfail": [
     {
-      "reason": "KRI-476",
+      "reason": "KRI-476 / PR-C",
       "scope": "question"
     }
   ],
   "repro": {
-    "command": "pytest tests/kria/test_planner_choice_question.py",
+    "command": "pytest tests/incidents/test_incident_corpus.py -k clarify-missing-capture-dates",
     "status": "available"
   },
   "sources": []

@@ -207,12 +207,12 @@
   },
   "xfail": [
     {
-      "reason": "KRI-476",
+      "reason": "KRI-476 / PR-C",
       "scope": "question"
     }
   ],
   "repro": {
-    "command": "pytest tests/kria/test_planner_choice_question.py",
+    "command": "pytest tests/incidents/test_incident_corpus.py -k clarify-thirty-clips-in-fifteen-seconds",
     "status": "available"
   },
   "sources": [

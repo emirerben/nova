@@ -19,9 +19,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.kria.brief import CreativeBrief
 
-Kind = Literal["output", "clarification", "routing"]
-# One dimension per kind of claim the pytest corpus can check.
-Scope = Literal["contract", "question", "output"]
+# ``contract_pin`` is NOT incident replay: it pins what the contract builder does for a
+# plan shaped like a past incident, so a later change to it is noticed.
+Kind = Literal["output", "clarification", "routing", "contract_pin"]
+# One dimension per kind of claim the pytest corpus can check. A record's xfail must name
+# a scope it actually asserts (validated below), so a scope can never be silently ignored.
+Scope = Literal["contract", "refusal", "question", "output"]
 
 
 class _Strict(BaseModel):
@@ -104,7 +107,6 @@ class Inputs(_Strict):
     song: SongFact | None = None
     turns: list[Turn] = []
     clip_groups: list[ClipGroup] = []
-    planner_flags: dict[str, bool] = {}
     synthetic: list[SyntheticClip] = []
     phone_recipe: PhoneRecipeSpec | None = None
     cloud_preflight: bool = False
@@ -136,16 +138,22 @@ class ContractExpect(_Strict):
     order_basis: str | None = None
     order_ids: list[str] | Literal["capture_time"] = []
     exact_texts: list[TextExpect] = []
-    unresolved_contains: list[str] = []
     resolved: bool = False
+    unresolved_nonempty: bool = False
 
 
 class RefusalExpect(_Strict):
-    """A verifier (cloud preflight / phone pin) must decline."""
+    """A verifier (cloud preflight / phone pin) must decline.
 
-    message_contains: str
-    reason: str | None = Field(default=None, description="DeclineReason once typed (KRI-476)")
+    The decline itself is always asserted. ``reason`` / ``field_path`` are the TYPED
+    decline (KRI-476 / PR-A): when set, the exception MUST expose ``decline_reason`` /
+    ``field_path`` and match. ``message_advisory`` documents today's creator-facing copy
+    and is never asserted.
+    """
+
+    reason: str | None = Field(default=None, description="DeclineReason")
     field_path: str | None = None
+    message_advisory: str | None = None
 
 
 class QuestionExpect(_Strict):
@@ -167,6 +175,9 @@ class OutputFacts(_Strict):
     """Output-level facts. Pytest compares recorded evidence; it renders nothing."""
 
     duration_s: float | None = None
+    duration_basis: Literal["creator_request", "strategy_choice"] | None = Field(
+        default=None, description="Who set duration_s: the creator, or the strategy's own choice"
+    )
     duration_tol_frac: float = 0.1
     voice_present: bool | None = None
     voice_source_ids: list[str] | None = None
@@ -176,7 +187,7 @@ class OutputFacts(_Strict):
 
 
 class Expect(_Strict):
-    route: str | None = None
+    # No route expectation yet: route assertions arrive with PR-D's resolver.
     failure_reason: str | None = Field(
         default=None,
         description="Typed job failure_reason a replay-backed record stands for; the assertion "
@@ -198,8 +209,9 @@ class Observation(_Strict):
 
     label: Literal["incident", "post-fix"]
     source: str
-    proof: str | None = None
-    route: str | None = None
+    proof: str | None = Field(
+        default=None, description="Repro that resolves to a real test/script (loader checks)"
+    )
     facts: OutputFacts
     evidence: dict[str, str] = {}
 
@@ -211,7 +223,9 @@ class Observation(_Strict):
 
 
 class XFail(_Strict):
-    reason: str = Field(pattern=r"^KRI-\d+")
+    reason: str = Field(
+        pattern=r"^KRI-\d+ / PR-[A-H]$", description="Owning ticket / PR letter that flips it"
+    )
     scope: Scope
 
 
@@ -262,6 +276,20 @@ class IncidentRecord(_Strict):
         scopes = [item.scope for item in self.xfail]
         if len(scopes) != len(set(scopes)):
             raise ValueError("at most one xfail per scope")
+        asserted = {
+            "contract": self.expect.contract is not None,
+            "refusal": bool(
+                self.expect.refusal
+                and (self.expect.refusal.reason or self.expect.refusal.field_path)
+            ),
+            "question": self.expect.question is not None,
+            "output": self.expect.output_facts is not None,
+        }
+        for scope in scopes:
+            if not asserted[scope]:
+                raise ValueError(
+                    f"xfail scope {scope!r} names an expectation the record never asserts"
+                )
         if self.expect.output_facts and not self.observations:
             raise ValueError("output expectations need at least the incident observation")
         if self.kind == "clarification" and not self.inputs.turns:

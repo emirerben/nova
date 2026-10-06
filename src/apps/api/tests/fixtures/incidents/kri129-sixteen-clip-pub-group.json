@@ -2,9 +2,9 @@
   "id": "kri129-sixteen-clip-pub-group",
   "incident": {
     "ticket": "KRI-129",
-    "summary": "The creator's prompt lost to the planner: a 60s, use-every-clip redo of a 16-clip pub-group story left clips out and repaired the plan away from what was asked."
+    "summary": "Contract-construction pin, not incident replay. Shape of: The creator's prompt lost to the planner: a 60s, use-every-clip redo of a 16-clip pub-group story left clips out and repaired the plan away from what was asked."
   },
-  "kind": "routing",
+  "kind": "contract_pin",
   "approved": {
     "strategy": {
       "direction": "guided_story",
@@ -131,7 +131,8 @@
       }
     ],
     "notes": [
-      "Existing redacted fixture."
+      "Existing redacted fixture.",
+      "The expected values are read off the record's own approved plan: this pins what the contract builder does for a plan of this shape. It does not replay or prove anything about the original failure."
     ]
   },
   "expect": {

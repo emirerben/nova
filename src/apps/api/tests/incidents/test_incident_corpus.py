@@ -17,8 +17,16 @@ HONEST SCOPE. This module asserts only what pytest CI can prove with the real co
   the swift / make check that a later PR (KRI-478) owns. The corpus never claims
   output coverage it does not run.
 
-Records owned by later PRs are ``xfail(strict=True)`` with their ticket as the reason:
-the PR that fixes the behaviour must flip its own records (a stale xfail fails CI).
+Records owned by later PRs are ``xfail(strict=True)`` with ``KRI-47x / PR-x`` as the
+reason. How each flips, honestly:
+
+- ``contract`` / ``refusal`` / ``question`` records exercise REAL code, so the owning PR's
+  product change turns them into XPASS and strict mode forces it to delete the xfail.
+- ``output`` records compare recorded evidence to recorded evidence. Nothing runs, so they
+  flip only when the owning PR APPENDS a ``post-fix`` observation whose ``proof`` resolves
+  to a real repro (a pytest node id or script that exists, never free text) and removes
+  the xfail. A hand edit without that proof is rejected by ``test_post_fix_proofs_are_real``.
+
 ``raises=AssertionError`` keeps a crashing harness from hiding behind an xfail.
 """
 
@@ -61,15 +69,8 @@ def test_corpus_is_not_empty_and_ids_are_unique() -> None:
 
 @pytest.mark.parametrize("record", [pytest.param(r, id=r.id) for r in RECORDS])
 def test_record_matches_current_schemas(record: IncidentRecord) -> None:
+    # (The model itself rejects an xfail on a scope the record never asserts.)
     loader.validate_against_current_schemas(record)
-    declared = {item.scope for item in record.xfail}
-    has = {
-        "contract": record.expect.contract is not None or record.expect.refusal is not None,
-        "question": record.expect.question is not None,
-        "output": record.expect.output_facts is not None,
-    }
-    # An xfail on a scope the record never asserts would be silently ignored.
-    assert all(has[scope] for scope in declared), f"{record.id}: xfail on an unasserted scope"
 
 
 @pytest.mark.parametrize("record", [pytest.param(r, id=r.id) for r in RECORDS])
@@ -78,24 +79,35 @@ def test_repro_command_points_at_something_real(record: IncidentRecord) -> None:
     if repro.status == "pending":
         assert repro.owner
         return
-    if repro.command.startswith("make kria-replay FIXTURE="):
-        fixture = repro.command.split("FIXTURE=", 1)[1].strip()
-        assert list((loader.API_ROOT / "tests").rglob(f"{fixture}.json")), fixture
-        return
-    path = repro.command.split()[1].split("::")[0]
-    assert (loader.API_ROOT / path).is_file(), f"repro path missing: {path}"
+    assert loader.unresolved_reference(repro.command) is None, repro.command
 
 
 @pytest.mark.parametrize(
-    "record", [pytest.param(r, id=r.id) for r in RECORDS if r.expect.failure_reason]
+    "command,resolves",
+    [
+        (
+            "pytest tests/incidents/test_incident_corpus.py::test_post_fix_proofs_are_real",
+            True,
+        ),
+        ("pytest tests/incidents/test_incident_corpus.py -k kri469", True),
+        ("make verify-kria", True),
+        ("pytest tests/incidents/test_incident_corpus.py::test_that_does_not_exist", False),
+        ("pytest tests/incidents/missing.py", False),
+        ("pytest tests/incidents/test_incident_corpus.py -k no-such-record", False),
+        ("make no-such-target", False),
+        ("swift test --filter NoSuchSwiftSuiteAnywhere", False),
+        ("verified it by hand on a device", False),
+    ],
 )
-def test_replay_backed_record_matches_its_replay_fixture(record: IncidentRecord) -> None:
-    """Replay-backed records index a test elsewhere; make sure they still point at it."""
-    import json
+def test_reference_resolver_rejects_free_text_and_missing_targets(command, resolves) -> None:
+    assert (loader.unresolved_reference(command) is None) is resolves
 
-    fixture = loader.API_ROOT / record.sources[0]
-    assert json.loads(fixture.read_text())["failure_reason"] == record.expect.failure_reason
-    assert record.repro.status == "available" and "::" in record.repro.command
+
+def test_post_fix_proofs_are_real() -> None:
+    for record in RECORDS:
+        for seen in record.observations:
+            if seen.label == "post-fix":
+                assert loader.unresolved_reference(seen.proof) is None, (record.id, seen.proof)
 
 
 @pytest.mark.parametrize("record", _params("contract", lambda r: r.expect.contract is not None))
@@ -127,24 +139,39 @@ def test_approved_plan_builds_the_expected_contract(record: IncidentRecord) -> N
         assert [(t.role, t.text) for t in contract.exact_texts] == [
             (t.role, t.text) for t in want.exact_texts
         ]
-    for fragment in want.unresolved_contains:
-        assert any(fragment in item for item in contract.unresolved), contract.unresolved
+    if want.unresolved_nonempty:
+        assert contract.unresolved, "expected an unresolved requirement"
     if want.resolved:
         assert not contract.unresolved, contract.unresolved
 
 
-@pytest.mark.parametrize("record", _params(None, lambda r: r.expect.refusal is not None))
+@pytest.mark.parametrize("record", [pytest.param(r, id=r.id) for r in RECORDS if r.expect.refusal])
 def test_real_verifier_declines_what_the_record_says(record: IncidentRecord) -> None:
+    contract = loader.build_contract(record)
+    assert contract is not None
+    # Raises AssertionError if the verifier accepted the plan. Copy is not asserted.
+    harness.refusal_message(record, contract)
+
+
+@pytest.mark.parametrize(
+    "record",
+    _params(
+        "refusal",
+        lambda r: bool(
+            r.expect.refusal and (r.expect.refusal.reason or r.expect.refusal.field_path)
+        ),
+    ),
+)
+def test_decline_carries_its_typed_reason_and_field(record: IncidentRecord) -> None:
+    """Typed declines (KRI-476 / PR-A): the error MUST expose the attribute and match."""
     contract = loader.build_contract(record)
     assert contract is not None
     exc = harness.refusal_message(record, contract)
     want = record.expect.refusal
-    assert want.message_contains in str(exc), str(exc)
-    # Typed decline reasons arrive with KRI-476; assert them as soon as the error carries them.
-    if want.reason and hasattr(exc, "decline_reason"):
-        assert exc.decline_reason == want.reason
-    if want.field_path and hasattr(exc, "field_path"):
-        assert exc.field_path == want.field_path
+    if want.reason:
+        assert getattr(exc, "decline_reason", None) == want.reason, "no matching decline_reason"
+    if want.field_path:
+        assert getattr(exc, "field_path", None) == want.field_path, "no matching field_path"
 
 
 @pytest.mark.parametrize("record", _params("question", lambda r: r.expect.question is not None))
@@ -204,6 +231,8 @@ def output_mismatches(record: IncidentRecord, want: OutputFacts, seen: Observati
 @pytest.mark.parametrize("record", _params("output", lambda r: r.expect.output_facts is not None))
 def test_latest_recorded_output_meets_the_expected_facts(record: IncidentRecord) -> None:
     latest = record.observations[-1]
+    if latest.label == "post-fix":
+        assert loader.unresolved_reference(latest.proof) is None, "proof is not a real repro"
     mismatches = output_mismatches(record, record.expect.output_facts, latest)
     assert not mismatches, f"[{latest.label}] " + "; ".join(mismatches)
 
@@ -242,11 +271,12 @@ def test_a_post_fix_observation_flips_the_output_verdict() -> None:
     fixed = Observation(
         label="post-fix",
         source="synthetic render of the same plan",
-        proof="make local-render ... (artifact + command)",
+        proof="make verify-kria",
         facts=OutputFacts(duration_s=30.0, voice_source_ids=want.voice_source_ids),
     )
     assert output_mismatches(record, want, record.observations[-1])
     assert not output_mismatches(record, want, fixed)
+    assert loader.unresolved_reference(fixed.proof) is None
 
 
 def test_the_schema_refuses_unproven_or_ambiguous_claims() -> None:

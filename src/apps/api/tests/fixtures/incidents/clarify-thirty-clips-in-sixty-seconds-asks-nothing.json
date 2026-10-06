@@ -1,26 +1,36 @@
 {
-  "id": "kri126-thirty-clip-guided-story",
+  "id": "clarify-thirty-clips-in-sixty-seconds-asks-nothing",
   "incident": {
-    "ticket": "KRI-126",
-    "summary": "Contract-construction pin, not incident replay. Shape of: A 30-clip guided story ignored the creator's prompt: the planner silently fell back to deterministic beats and random captions."
+    "ticket": "KRI-476",
+    "summary": "Must not ask: 30 clips (140s of footage) in a 60s edit read fine, so a duration_vs_count question here is a regression."
   },
-  "kind": "contract_pin",
+  "kind": "clarification",
   "approved": {
     "strategy": {
       "direction": "guided_story",
       "edit_format": "montage",
       "render_program": "guided",
-      "pacing": "balanced",
-      "opening_title": "Emir Olympics London Edition",
-      "closing_title": "post match pub",
-      "montage_audio": {
-        "source_media_ids": [],
-        "preview_source_beds": false,
-        "preserve_source_audio": true
-      }
+      "pacing": "fast",
+      "target_duration_s": 60,
+      "target_duration_requested": true
     },
-    "creator_request": "Continue with 30 clips Group content by sports. Add the name of each sport to the screen. Group the pub videos together in the add and say “post match pub”. Add an intro title saying “Emir Olympics London Edition”. Group the videos from the park with individuals not playing sports the first, that is from everyone playing. Include some parts from the video where I talk to the camera and give a speech",
-    "provenance": "Projected from tests/fixtures/kri126_thirty_clip_guided_story.json (redacted prod input: title, closing title, source-audio plan). The fixture holds planner input, not the persisted strategy, so no duration is asserted."
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "timing",
+          "scope": "global",
+          "description": "Keep 60 seconds",
+          "facts": {
+            "duration_s": 60
+          },
+          "source_turn_id": "turn-1"
+        }
+      ]
+    },
+    "creator_request": "Keep 60 seconds and use all of the videos.",
+    "provenance": "Synthetic twin of clarify-thirty-clips-in-fifteen-seconds: same 30-clip KRI-126 media set, a 60s length."
   },
   "inputs": {
     "media": [
@@ -175,30 +185,27 @@
         "duration_s": 2.167
       }
     ],
+    "turns": [
+      {
+        "role": "user",
+        "text": "Keep 60 seconds and use all of the videos."
+      }
+    ],
     "notes": [
-      "Existing redacted fixture; transcripts and brand strings were already removed upstream.",
-      "The expected values are read off the record's own approved plan: this pins what the contract builder does for a plan of this shape. It does not replay or prove anything about the original failure."
+      "Passes today (no gate exists) and must keep passing once PR-C adds one: the must-not-ask half of duration_vs_count."
     ]
   },
   "expect": {
     "contract": {
-      "audio_source_ids": [],
-      "original_audio": "require",
-      "exact_texts": [
-        {
-          "role": "opening",
-          "text": "Emir Olympics London Edition"
-        },
-        {
-          "role": "closing",
-          "text": "post match pub"
-        }
-      ],
+      "duration_s": 60,
       "resolved": true
+    },
+    "question": {
+      "no_question": true
     }
   },
   "repro": {
-    "command": "pytest tests/services/test_kri126_clip_intents_acceptance.py",
+    "command": "pytest tests/incidents/test_incident_corpus.py -k clarify-thirty-clips-in-sixty-seconds-asks-nothing",
     "status": "available"
   },
   "sources": [

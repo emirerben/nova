@@ -592,14 +592,14 @@
       "duration_s": 45,
       "voice_present": true,
       "audio_plays_once": true,
-      "order_ids": "chronological"
+      "order_ids": "chronological",
+      "duration_basis": "strategy_choice"
     }
   },
   "observations": [
     {
       "label": "incident",
       "source": "prod job debug (unified_montage, variants[0]) + creator report",
-      "route": "unified_montage",
       "facts": {
         "duration_s": 45.012,
         "voice_present": false,
@@ -659,7 +659,7 @@
   ],
   "xfail": [
     {
-      "reason": "KRI-481",
+      "reason": "KRI-481 / PR-G",
       "scope": "output"
     }
   ],

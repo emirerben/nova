@@ -33,6 +33,7 @@ from app.services.creator_render_contract import (
     verify_phone_recipe,
 )
 from app.services.phone_sources import PhoneSourceBinding
+from tests.incidents.loader import binding_for
 from tests.incidents.models import IncidentRecord, MediaFact
 
 
@@ -157,6 +158,11 @@ async def planner_turn(record: IncidentRecord, monkeypatch: pytest.MonkeyPatch):
         "check_strategy_for_runtime_v2",
         lambda _manifest, strategy, **_kw: CheckedStrategy(strategy=strategy, notices=()),
     )
+    # As the real caller does (plan_live_turn): the capture-order flag is read off the live
+    # brief and the brief's rendered request rides along. The target length / clip count
+    # reach the planner only through the strategy. NOTE: PR-C (KRI-476) moves the gate into
+    # plan_live_turn AFTER the media snapshot is attached, so it must adapt this harness.
+    binding = binding_for(record)
     return await planner._plan_from_creator_output(
         SimpleNamespace(),
         thread_id=uuid.uuid4(),
@@ -170,5 +176,6 @@ async def planner_turn(record: IncidentRecord, monkeypatch: pytest.MonkeyPatch):
             creator_request=request,
         ),
         output=SimpleNamespace(action=action),
-        wants_capture_order=record.inputs.planner_flags.get("wants_capture_order", False),
+        brief_request=binding.creator_request,
+        wants_capture_order=planner._brief_wants_capture_order(binding.resolve()),
     )

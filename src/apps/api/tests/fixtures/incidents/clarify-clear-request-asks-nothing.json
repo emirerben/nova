@@ -93,9 +93,6 @@
         "text": "Make a 20 second montage of my day in the order I filmed them."
       }
     ],
-    "planner_flags": {
-      "wants_capture_order": true
-    },
     "notes": [
       "Passes today (no gate exists) and must keep passing once PR-C adds one: it is the must-not-ask half of the gate."
     ]
@@ -113,7 +110,7 @@
     }
   },
   "repro": {
-    "command": "pytest tests/kria/test_planner_choice_question.py",
+    "command": "pytest tests/incidents/test_incident_corpus.py -k clarify-clear-request-asks-nothing",
     "status": "available"
   },
   "sources": []
