@@ -61,6 +61,7 @@ from app.services.phone_rollout import (
     phone_render_supported_formats,
     phone_subtitled_overlays_supported,
     phone_subtitled_reaction_beats_supported,
+    phone_subtitled_title_supported,
     phone_subtitled_video_overlays_supported,
     phone_talking_head_supported,
     phone_user_song_supported,
@@ -1060,15 +1061,25 @@ def compile_strategy_to_plan(
                     )
                 }
             )
-    if strategy.opening_title and strategy.edit_format == "subtitled":
-        # Caption-owned subtitled edits still do not render a hero intro. Fail
-        # at the plan boundary rather than silently dropping confirmed copy.
+    phone_capability = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    # KRI-467: a phone Talking edit draws the title through its text lane
+    # (`phone_subtitled_title`); `PHONE_SUBTITLED_TITLE_ENABLED=false` restores
+    # the refusal below.
+    phone_talking_title = bool(
+        strategy.opening_title
+        and strategy.edit_format == "subtitled"
+        and phone_capability is not None
+        and phone_capability.available
+        and phone_subtitled_title_supported()
+    )
+    if strategy.opening_title and strategy.edit_format == "subtitled" and not phone_talking_title:
+        # Caption-owned cloud subtitled edits still do not render a hero intro.
+        # Fail at the plan boundary rather than silently dropping confirmed copy.
         raise CreatorStrategyError(
             f"opening_title is not supported by the {strategy.edit_format} renderer",
             code="unsupported_treatment",
             edit_format=strategy.edit_format,
         )
-    phone_capability = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
     if (
         strategy.opening_title
         and strategy.edit_format in NARRATED_EDIT_FORMATS
@@ -1108,9 +1119,14 @@ def compile_strategy_to_plan(
             # Fast-cut plans carry no per-shot text lane; a label per shot is
             # a story-beat structure.
             strategy = strategy.model_copy(update={"direction": "guided_story"})
-    elif strategy.opening_title_duration_s is not None and strategy.render_program != "guided":
+    elif (
+        strategy.opening_title_duration_s is not None
+        and strategy.render_program != "guided"
+        and not phone_talking_title
+    ):
         # The native intro owns its own timing; a hold preference it cannot
         # honor must not turn an otherwise renderable title into a failure.
+        # The phone Talking title holds for exactly the confirmed seconds.
         strategy = strategy.model_copy(update={"opening_title_duration_s": None})
     strategy_format = coerce_edit_format(strategy.edit_format)
     if strategy.overlay_display == "fullscreen":

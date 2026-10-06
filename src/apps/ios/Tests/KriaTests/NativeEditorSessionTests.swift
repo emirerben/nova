@@ -854,7 +854,51 @@ final class NativeEditorSessionTests: XCTestCase {
         return (session, fake, uploads)
     }
 
-    private static func phoneTalkingSession(lanesEditable: Bool, card: Bool = false, bindOriginal: Bool = true) async throws -> (NativeEditorSession, EditorCommitSpy) {
+    /// KRI-467: a phone Talking edit's hook title is an ordinary text row. It
+    /// shows on the timeline and in the Text list, every edit previews and
+    /// rides the Save as `text_elements` (caption mirrors untouched), and it
+    /// can be deleted.
+    func testPhoneTalkingTitleIsAnEditableTextRowThatReachesTheSave() async throws {
+        let (session, fake) = try await Self.phoneTalkingSession(lanesEditable: true, title: true)
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
+            sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false, captionCues: false),
+            revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
+        XCTAssertTrue(session.timelineItems.contains { $0.id == "opening-title" }, "on the timeline")
+        let block = try XCTUnwrap(session.document.textBlocks.first)
+        XCTAssertEqual(block.id, "opening-title")
+        XCTAssertEqual(block.kind, .title)
+        XCTAssertEqual(session.document.textBlocks.count, 1, "the caption mirror is not a text block")
+        XCTAssertTrue(session.textDeletion(id: "opening-title").isAllowed)
+
+        let recipe = try XCTUnwrap(session.displayedSourcePreviewRecipe)
+        let title = try XCTUnwrap(recipe.textLayers.first { $0.runs.contains { $0.text.contains("sourdough") } })
+        XCTAssertEqual(title.runs.first?.fontAssetID, "font-PlayfairDisplay-Bold.ttf")
+
+        session.beginTransaction()
+        session.updateTextContent(id: "opening-title", content: "Stop making these 3 mistakes")
+        session.updateTextTiming(id: "opening-title", startS: 0, endS: 0.6)
+        session.setTextPosition(id: "opening-title", x: 0.5, y: 0.5)
+        session.endTransaction()
+        XCTAssertTrue(session.hasUnsavedChanges)
+        let edited = try XCTUnwrap(session.displayedSourcePreviewRecipe)
+        XCTAssertTrue(edited.textLayers.contains { $0.runs.contains { $0.text.contains("mistakes") } }, "previews live")
+        await session.save()
+
+        let request = try XCTUnwrap(fake.lastRequest)
+        let rows = try XCTUnwrap(request.textElements).compactMap(\.objectValue)
+        let saved = try XCTUnwrap(rows.first { $0["id"]?.stringValue == "opening-title" })
+        XCTAssertEqual(saved["text"]?.stringValue, "Stop making these 3 mistakes")
+        XCTAssertEqual(saved["end_s"]?.numberValue ?? -1, 0.6, accuracy: 0.001)
+        XCTAssertEqual(saved["y_frac"]?.numberValue ?? -1, 0.5, accuracy: 0.001)
+        XCTAssertTrue(rows.contains { $0["id"]?.stringValue == "caption-mirror-0" }, "mirrors ride along untouched")
+        XCTAssertNil(request.captionCues)
+
+        XCTAssertTrue(session.deleteText(id: "opening-title"))
+        XCTAssertTrue(session.document.textBlocks.isEmpty)
+        XCTAssertFalse(session.timelineItems.contains { $0.id == "opening-title" })
+    }
+
+    private static func phoneTalkingSession(lanesEditable: Bool, card: Bool = false, bindOriginal: Bool = true, title: Bool = false) async throws -> (NativeEditorSession, EditorCommitSpy) {
         let threadID = UUID(), jobID = UUID()
         let project = BackgroundUploadCoordinator.projectDirectory(threadID)
         let input = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
@@ -889,10 +933,23 @@ final class NativeEditorSessionTests: XCTestCase {
             "render_destination": .string("device"),
             "resolved_archetype": .string("subtitled"),
             "output_url": .string("file:///tmp/kria-editor-test.mp4"),
-            "editor_capabilities": .object(["timeline": .bool(false), "text_elements": .bool(false), "mix": .bool(false),
+            "editor_capabilities": .object(["timeline": .bool(false), "text_elements": .bool(title), "mix": .bool(false),
                 "overlays": .bool(lanesEditable), "sfx": .bool(lanesEditable)]),
             "caption_cues": .array([.object(["text": .string("Number three"), "start_s": .number(0.2), "end_s": .number(0.9)])]),
         ]
+        if title {
+            // As the status route serves it: the title row, then the caption mirrors.
+            variant["text_elements"] = .array([
+                .object(["id": .string("opening-title"), "text": .string("3 sourdough mistakes"), "start_s": .number(0),
+                    "end_s": .number(0.8), "role": .string("generative_intro"), "position": .string("custom"),
+                    "x_frac": .number(0.5), "y_frac": .number(0.15), "size_px": .number(120), "size_class": .string("large"),
+                    "font_family": .string("Playfair Display"), "alignment": .string("center"), "effect": .string("fade-in"),
+                    "source_params": .object(["source": .string("opening_title")])]),
+                .object(["id": .string("caption-mirror-0"), "text": .string("Number three"), "start_s": .number(0.2),
+                    "end_s": .number(0.9), "role": .string("generative_sequence"), "position": .string("bottom"),
+                    "source_params": .object(["source": .string("caption_cue"), "key": .string("0")])]),
+            ])
+        }
         if card {
             variant["media_overlays"] = .array([.object(["id": .string("card"), "kind": .string("image"), "start_s": .number(0.2),
                 "end_s": .number(0.8), "x_frac": .number(0.5), "y_frac": .number(0.3), "scale": .number(0.35), "z": .number(1)])])

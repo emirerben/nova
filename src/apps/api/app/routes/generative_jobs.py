@@ -3446,6 +3446,10 @@ def _text_elements_allowed(variant: dict) -> bool:
     """
     if variant.get("resolved_archetype") != "subtitled":
         return True
+    if _phone_subtitled_text_lane_available(variant):
+        # KRI-467: a phone Talking variant compiles its text rows into the
+        # device recipe (no cloud reburn needed).
+        return True
     from app.config import settings  # noqa: PLC0415
 
     return settings.subtitled_text_lane_enabled
@@ -4852,7 +4856,11 @@ def validate_text_elements_payload(
                     detail={"code": "lyric_timing_locked", "message": "Lyric timing is locked."},
                 )
 
-    if variant.get("resolved_archetype") == "subtitled":
+    if variant.get("resolved_archetype") == "subtitled" and not (
+        _phone_subtitled_text_lane_available(variant)
+    ):
+        # KRI-467: a phone Talking variant has no cached base video and needs
+        # none -- Save recompiles its text rows into the device recipe.
         from app.config import settings as _settings  # noqa: PLC0415
 
         if not _settings.subtitled_text_lane_enabled:
@@ -6701,6 +6709,38 @@ def _phone_subtitled_editor_lanes_available(job: Job, variant: dict) -> bool:
     return is_phone_subtitled_editor_variant(variant) and phone_subtitled_editor_lanes_supported()
 
 
+def phone_subtitled_title_supported() -> bool:
+    """Re-export of `app.services.phone_rollout.phone_subtitled_title_supported`
+    (KRI-467), bound at module scope like the two wrappers above."""
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_subtitled_title_supported as _impl,
+    )
+
+    return _impl()
+
+
+def _phone_subtitled_text_lane_available(variant: dict) -> bool:
+    """True when a phone Talking variant's text lane is open (KRI-467): its
+    opening title and any text the creator adds are ordinary `text_elements`
+    rows that Save compiles into the phone recipe
+    (`phone_editor._compile_subtitled_editor_commit`). Needs the editor-lanes
+    rollout (Save exists at all) and `PHONE_SUBTITLED_TITLE_ENABLED`; either
+    off keeps the lane closed, exactly as before."""
+    return (
+        is_phone_subtitled_editor_variant(variant)
+        and phone_subtitled_editor_lanes_supported()
+        and phone_subtitled_title_supported()
+    )
+
+
+def _is_caption_cue_row(row: object) -> bool:
+    """A caption-cue mirror (`_base_text_elements_for_variant`'s caption path)."""
+    from app.agents._schemas.text_element import CAPTION_CUE_SOURCE  # noqa: PLC0415
+
+    params = row.get("source_params") if isinstance(row, dict) else None
+    return isinstance(params, dict) and params.get("source") == CAPTION_CUE_SOURCE
+
+
 def _phone_narrated_caption_edits_available(variant: dict) -> bool:
     """True when a phone Narrated variant's `caption_cues`/`caption_meta`
     can be Saved (KRI-280): the variant shape (a `narrated` device render)
@@ -6778,6 +6818,7 @@ def _clamp_phone_editor_capabilities(
     voiceover_lanes: bool = False,
     voiceover_media: bool = False,
     shape: Any = None,
+    subtitled_text: bool = False,
 ) -> dict:
     """Close every control a device-rendered variant cannot save, shape-preserving.
 
@@ -6803,6 +6844,10 @@ def _clamp_phone_editor_capabilities(
     ``narrated_captions`` (KRI-280): a narrated device variant with the
     caption-edit rollout on keeps `caption_cues`/`caption_meta`/
     `caption_editor_style` open, exactly like a phone Talking variant.
+
+    ``subtitled_text`` (KRI-467): a subtitled device variant whose text lane is
+    open (`_phone_subtitled_text_lane_available`) keeps `text_elements` open --
+    its opening title and creator text compile into the phone recipe.
     """
     clamped = dict(capabilities)
     # KRI-182 step 1: a subtitled device variant with the editor-lanes rollout
@@ -6856,13 +6901,19 @@ def _clamp_phone_editor_capabilities(
         clamped["visual_blocks"] = True
         if "visual_blocks_reason" in clamped:
             clamped["visual_blocks_reason"] = None
-    if (subtitled_lanes or narrated) and "text_elements" in clamped:
+    if subtitled_text:
+        # KRI-467: the phone Talking compiler has a text lane (the opening
+        # title and creator text, drawn under the captions): keep what
+        # `_base_editor_capabilities` derived (`_text_elements_allowed` opens it).
+        pass
+    elif (subtitled_lanes or narrated) and "text_elements" in clamped:
         # Neither compiler has an editor text lane: the subtitled one keeps
-        # captions in a separate `caption_cues` section, and the narrated one
-        # (KRI-142) has no guided plan for `prepare_phone_editor_commit` to
-        # swap text into — advertising it open only buys a failed Save. Same
-        # key-preservation rule as the loop above: only touch the `*_reason`
-        # sibling if one exists.
+        # captions in a separate `caption_cues` section (unless its KRI-467
+        # text lane is open, above), and the narrated one (KRI-142) has no
+        # guided plan for `prepare_phone_editor_commit` to swap text into —
+        # advertising it open only buys a failed Save. Same key-preservation
+        # rule as the loop above: only touch the `*_reason` sibling if one
+        # exists.
         clamped["text_elements"] = False
         if "text_elements_reason" in clamped:
             clamped["text_elements_reason"] = _PHONE_EDIT_UNSUPPORTED_REASON
@@ -6970,6 +7021,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             voiceover_lanes=voiceover_lanes,
             voiceover_media=voiceover_media,
             shape=shape,
+            subtitled_text=subtitled_lanes and _phone_subtitled_text_lane_available(variant),
             source_crop=(
                 variant.get("resolved_archetype") == "guided_story"
                 and "sourceCrop" in settings.phone_render_verified_features
@@ -10167,6 +10219,17 @@ def _prepare_editor_commit(
             not bool(variant.get("base_video_path"))
             or (_LYRICS_EDITOR_ENABLED and _variant_lyrics_enabled(variant))
         )
+        # KRI-467: a phone Talking edit saves its captions through
+        # `caption_cues`; the caption-cue mirrors the app echoes back in the text
+        # lane are a read projection only. Dropping them keeps the row cap about
+        # real text (a long talk has more cues than it) and never persists a
+        # mirror (or a tombstone for one) that would outlive a later caption edit.
+        phone_talking_text = _phone_subtitled_text_lane_available(variant)
+        text_rows = (
+            [row for row in payload.text_elements if not _is_caption_cue_row(row)]
+            if phone_talking_text
+            else payload.text_elements
+        )
         if lyric_deletion_only:
             # A line removal is a server-derived tombstone, not an editable
             # text write. Keep it durable during a flag rollback without
@@ -10176,7 +10239,7 @@ def _prepare_editor_commit(
         else:
             validated_elements, materialized_from_sequence = validate_text_elements_payload(
                 variant,
-                payload.text_elements,
+                text_rows,
                 require_base=payload.timeline_slots is None and not text_requires_full_render,
                 strict_drop=True,
                 # Guided v2 owns text identity and deletions in the canonical
@@ -10184,7 +10247,7 @@ def _prepare_editor_commit(
                 # synthesize a second intro identity for the same guided title,
                 # which makes an unchanged full-lane Save fail the revision's
                 # exact-ID guard.
-                append_projection_tombstones=not guided_v2,
+                append_projection_tombstones=not guided_v2 and not phone_talking_text,
             )
         if not guided_v2:
             _require_guided_story_text_ids(variant, validated_elements)

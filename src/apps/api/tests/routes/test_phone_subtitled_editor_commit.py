@@ -263,8 +263,11 @@ def test_text_elements_section_is_a_named_422_reason(monkeypatch):
     its_reason` -- a hand-built `prep` dict marking `text_elements` active
     bypasses `_prepare_editor_commit`'s own (differently-shaped) generic
     caption-archetype rejection, isolating just this branch's own
-    unsupported-section check and its exact reason text."""
+    unsupported-section check and its exact reason text. KRI-467 opened the
+    text lane; `PHONE_SUBTITLED_TITLE_ENABLED=false` closes it again
+    (`tests/routes/test_phone_subtitled_title_editor.py` covers it open)."""
     job = phone_job(monkeypatch)
+    monkeypatch.setattr(gj.settings, "phone_subtitled_title_enabled", False)
     with pytest.raises(HTTPException) as error:
         prepare_phone_editor_commit(
             job,

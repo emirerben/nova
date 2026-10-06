@@ -17,6 +17,16 @@ final class NativeEditorTextBlocksTests: XCTestCase {
         XCTAssertEqual(blocks.map(\.text), ["20K Run · Arnavutkoy → Eminonu", "Galata Tower", "My note", "Dolmabahçe Palace"])
     }
 
+    func testAPhoneTalkingHookTitleIsListedAsTheTitle() {
+        // KRI-467: the Talking title's row id is "opening-title".
+        var doc = document
+        let index = doc.textElements.firstIndex { $0.id == "guided-title" }!
+        doc.textElements[index].id = "opening-title"
+        XCTAssertEqual(doc.textBlocks.first?.id, "opening-title")
+        XCTAssertEqual(doc.textBlocks.first?.kind, .title)
+        XCTAssertEqual(doc.textBlocks.first?.kindLabel, "Title")
+    }
+
     func testCaptionsAndRemovedBlocksAreLeftOut() {
         let ids = document.textBlocks.map(\.id)
         XCTAssertFalse(ids.contains("caption-1"), "captions have their own tab")
