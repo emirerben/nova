@@ -424,6 +424,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             data = json.loads(raw_text)
             if not isinstance(data, dict):
                 raise ValueError("response is not an object")
+            data = _hoist_misplaced_brief_updates(data)
             raw_action = _repair_action_envelope(data.get("action"))
             if isinstance(raw_action, dict) and raw_action.get("kind") == "propose_strategy":
                 raw_strategy = raw_action.get("strategy")
@@ -625,6 +626,36 @@ def _repair_action_envelope(action: object) -> object:
         return action
     repaired_strategy = {key: value for key, value in strategy.items() if key not in moved}
     return {**action, "strategy": repaired_strategy, **moved}
+
+
+def _hoist_misplaced_brief_updates(data: dict) -> dict:
+    """Move a `brief_updates` list the model nested under the action to the top level.
+
+    The documented envelope puts `brief_updates` BESIDE `action`; a Flash reply
+    on a phone narrated turn (KRI-456, 2026-10-06) put the whole list inside
+    `action` (``propose_strategy.brief_updates``), which the strict adapter
+    rejects as an extra field and the turn then fails terminally. The list is
+    moved only when the top level has none (and only out of `action` or its
+    `strategy`); its entries still go through `parse_brief_updates` unchanged.
+    """
+
+    if data.get("brief_updates"):
+        return data
+    action = data.get("action")
+    if not isinstance(action, dict) or action.get("kind") != "propose_strategy":
+        return data
+    updates = action.get("brief_updates")
+    repaired_action = {key: value for key, value in action.items() if key != "brief_updates"}
+    strategy = action.get("strategy")
+    if not isinstance(updates, list) and isinstance(strategy, dict):
+        updates = strategy.get("brief_updates")
+        if isinstance(updates, list):
+            repaired_action["strategy"] = {
+                key: value for key, value in strategy.items() if key != "brief_updates"
+            }
+    if not isinstance(updates, list):
+        return data
+    return {**data, "action": repaired_action, "brief_updates": updates}
 
 
 __all__ = [
