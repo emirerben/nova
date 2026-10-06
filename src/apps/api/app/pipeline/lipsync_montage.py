@@ -24,6 +24,13 @@ Rules (all times are integer milliseconds of *song* time until the cuts are buil
   B-roll (unmatched takes first, then the Visuals pool). A gap nothing can fill
   splits the montage; the largest covered stretch wins and the receipt names
   everything that was left out.
+* A take is trimmed to the part that matches the song (``match_start_s`` /
+  ``match_end_s`` on its alignment row) but the full source stays on its
+  ``MediaRef`` so the editor can extend it. A gap between trimmed takes is first
+  closed with the neighbours' own unmatched footage (same delta, still in sync).
+* Takes that cannot be placed are kept: short (``BROLL_HOLD_MS``), muted B-roll
+  after the last sung take, within the song and the window cap. Takes in no cut
+  at all ride along as unused media so the editor can still bring them in.
 * The window is capped at ``MAX_PROPOSAL_DURATION_S``, keeping the densest-
   coverage stretch.
 * ``source_start = output_start + window_start - delta`` for every take cut.
@@ -240,6 +247,12 @@ class _Placed:
     cover_start: int = 0
     cover_end: int = 0
     true_end: int = 0  # delta + duration: the take's real end in song time
+    # Take-time (ms) range that actually matches the song; None = whole take.
+    match_ms: tuple[int, int] | None = None
+    # Untrimmed coverage (margins kept): how far the take can be extended into
+    # its own unmatched footage while staying on the song clock.
+    full_start: int = 0
+    full_end: int = 0
 
 
 @dataclass
@@ -268,12 +281,30 @@ def _candidate_deltas_ms(row: TakeAlignment) -> list[int]:
     return found
 
 
-def _coverage(clip: UnifiedClip, delta_ms: int, song_ms: int) -> tuple[int, int, int]:
+def _match_ms(row: TakeAlignment | None) -> tuple[int, int] | None:
+    if row is None or row.match_start_s is None or row.match_end_s is None:
+        return None
+    return _ms(row.match_start_s), _ms(row.match_end_s)
+
+
+def _coverage(
+    clip: UnifiedClip, delta_ms: int, song_ms: int, match: tuple[int, int] | None = None
+) -> tuple[int, int, int, int, int]:
+    """``(start, end, true_end, full_start, full_end)`` of a take in song time.
+
+    ``start``/``end`` are clamped to the take's matched range (keeping the cover
+    margins); ``full_*`` are the untrimmed coverage.
+    """
     duration_ms = int(math.floor(clip.duration_s * 1000))
     true_end = delta_ms + duration_ms
-    start = max(0, delta_ms + COVER_MARGIN_MS)
-    end = min(song_ms, true_end - COVER_MARGIN_MS)
-    return start, end, true_end
+    full_start = max(0, delta_ms + COVER_MARGIN_MS)
+    full_end = min(song_ms, true_end - COVER_MARGIN_MS)
+    if match is None:
+        return full_start, full_end, true_end, full_start, full_end
+    m0, m1 = match
+    start = max(0, delta_ms + max(COVER_MARGIN_MS, m0))
+    end = min(song_ms, delta_ms + min(duration_ms - COVER_MARGIN_MS, m1))
+    return start, end, true_end, full_start, full_end
 
 
 def _place_takes(
@@ -291,13 +322,15 @@ def _place_takes(
         if row is None or row.status == "unmatched":
             reasons[clip.media_id] = "unmatched"
         elif row.status == "confident" and row.delta_s is not None:
-            placed[clip.media_id] = _Placed(clip, _ms(row.delta_s), "confident", False)
+            placed[clip.media_id] = _Placed(
+                clip, _ms(row.delta_s), "confident", False, match_ms=_match_ms(row)
+            )
         else:
             uncertain[clip.media_id] = row
             reasons[clip.media_id] = "ambiguous_unconfirmed"
 
-    def covered(clip: UnifiedClip, delta_ms: int) -> bool:
-        start, end, _ = _coverage(clip, delta_ms, song_ms)
+    def covered(clip: UnifiedClip, delta_ms: int, match: tuple[int, int] | None) -> bool:
+        start, end, *_ = _coverage(clip, delta_ms, song_ms, match)
         return end - start >= MIN_SEGMENT_MS
 
     order = [
@@ -323,19 +356,23 @@ def _place_takes(
                 continue
             if after is not None and start > after.delta_ms + COVER_MARGIN_MS:
                 continue
-            if covered(clip, candidate):
+            if covered(clip, candidate, _match_ms(row)):
                 chosen = candidate
                 break
         if chosen is None:
             reasons[media_id] = "no_fitting_position"
             continue
-        placed[media_id] = _Placed(clip, chosen, row.status, True)
+        placed[media_id] = _Placed(clip, chosen, row.status, True, match_ms=_match_ms(row))
         reasons.pop(media_id, None)
 
     for media_id, item in list(placed.items()):
-        item.cover_start, item.cover_end, item.true_end = _coverage(
-            item.clip, item.delta_ms, song_ms
-        )
+        (
+            item.cover_start,
+            item.cover_end,
+            item.true_end,
+            item.full_start,
+            item.full_end,
+        ) = _coverage(item.clip, item.delta_ms, song_ms, item.match_ms)
         if item.cover_end - item.cover_start < MIN_SEGMENT_MS:
             del placed[media_id]
             reasons[media_id] = "too_short"
@@ -468,6 +505,26 @@ def _broll_capacity_ms(clip: UnifiedClip) -> int:
     return int(math.floor(clip.duration_s * 1000))
 
 
+def _media_ref(clip: UnifiedClip) -> MediaRef:
+    aspect = clip.aspect
+    if clip.width and clip.height:
+        swapped = clip.orientation_degrees in (90, 270)
+        aspect = (clip.height / clip.width) if swapped else (clip.width / clip.height)
+    return MediaRef(
+        lane=clip.lane,  # type: ignore[arg-type]
+        media_id=clip.media_id,
+        gcs_path=clip.proxy_path,
+        generation=clip.generation,
+        kind=clip.kind,  # type: ignore[arg-type]
+        duration_s=clip.duration_s if clip.kind == "video" else None,
+        aspect=aspect,
+        analysis=dict(clip.analysis) if isinstance(clip.analysis, Mapping) else {},
+        source_filename=clip.source_filename,
+        user_context=clip.user_context,
+        content_hash=clip.content_hash,
+    )
+
+
 def _covered_ms(blocks: Sequence[_Block]) -> int:
     return sum(b.end - b.start for b in blocks if b.placed is not None)
 
@@ -570,6 +627,21 @@ def plan_lipsync_montage(
             bridged += 1
             spans[-1].extend(island)
             continue
+        # A trimmed take still has footage past its matched range: close the gap
+        # with the neighbours' own footage (same delta, so still in sync).
+        avail_prev = previous.placed.full_end - previous.end
+        avail_next = island[0].start - island[0].placed.full_start
+        if gap <= max(0, avail_prev) + max(0, avail_next):
+            ext_prev = min(max(0, avail_prev), gap - gap // 2)
+            ext_next = gap - ext_prev
+            if ext_next > avail_next:
+                ext_next = max(0, avail_next)
+                ext_prev = gap - ext_next
+            previous.end += ext_prev
+            island[0].start -= ext_next
+            bridged += 1
+            spans[-1].extend(island)
+            continue
         pieces = pool.fill(gap)
         if pieces is None:
             spans.append(list(island))
@@ -589,11 +661,33 @@ def plan_lipsync_montage(
         raise LipsyncPlanError(
             "span_too_short", "The matched takes cover less than three seconds of the song."
         )
+
+    # ── unplaced takes stay in the edit: short, muted, after the last sung take ──
+    # (the song keeps playing; camera audio is muted for every B-roll cut).
+    in_blocks = {b.clip.media_id for b in blocks}
+    keepable = {"unmatched", "ambiguous_unconfirmed", "no_fitting_position", "too_short"}
+    kept_ids: list[str] = []
+    cursor = blocks[-1].end
+    for clip in takes:  # creator (input) order
+        if clip.media_id in in_blocks or reasons.get(clip.media_id) not in keepable:
+            continue
+        room = min(song_ms, blocks[0].start + MAX_WINDOW_MS) - cursor
+        length = min(BROLL_HOLD_MS, _broll_capacity_ms(clip), room)
+        if length < MIN_BROLL_PIECE_MS:
+            continue
+        blocks.append(_Block(clip, cursor, cursor + length))
+        cursor += length
+        kept_ids.append(clip.media_id)
     window_start, window_end = blocks[0].start, blocks[-1].end
 
     # ── cuts, media refs ─────────────────────────────────────────────────────
     cuts: list[FastMontageCut] = []
     refs: list[MediaRef] = []
+    # Source windows are ``block - delta`` and ``MediaRef.duration_s`` stays the
+    # FULL clip length, so the editor can extend a trimmed tail through
+    # ``resync_moment_rows``. Known limit: the first cut's head cannot be
+    # extended earlier, because the lip-sync ``window_start_s`` is locked
+    # (USER_SONG_LIPSYNC_LOCKED in guided_story).
     pinned: dict[str, UserSongTake] = {}
     for index, block in enumerate(blocks):
         clip, length = block.clip, block.end - block.start
@@ -625,25 +719,7 @@ def plan_lipsync_montage(
                 beat_align=False,
             )
         )
-        aspect = clip.aspect
-        if clip.width and clip.height:
-            swapped = clip.orientation_degrees in (90, 270)
-            aspect = (clip.height / clip.width) if swapped else (clip.width / clip.height)
-        refs.append(
-            MediaRef(
-                lane=clip.lane,  # type: ignore[arg-type]
-                media_id=clip.media_id,
-                gcs_path=clip.proxy_path,
-                generation=clip.generation,
-                kind=clip.kind,  # type: ignore[arg-type]
-                duration_s=clip.duration_s if clip.kind == "video" else None,
-                aspect=aspect,
-                analysis=dict(clip.analysis) if isinstance(clip.analysis, Mapping) else {},
-                source_filename=clip.source_filename,
-                user_context=clip.user_context,
-                content_hash=clip.content_hash,
-            )
-        )
+        refs.append(_media_ref(clip))
     total_ms = window_end - window_start
     total_s = round(sum(cut.output_duration_s for cut in cuts), 3)
     song_plan = UserSongPlan(
@@ -683,6 +759,18 @@ def plan_lipsync_montage(
     if isinstance(strategy.get("text_color"), str) and strategy.get("text_color"):
         style["text_color"] = strategy["text_color"]
 
+    used_ids = [ref.media_id for ref in refs]
+    # Every take stays editable: takes in no cut ride along as unused media.
+    unused_refs = [_media_ref(c) for c in takes if c.media_id not in set(used_ids)]
+    if unused_refs:
+        media_kwargs: dict[str, Any] = {
+            "media": refs + unused_refs,
+            "media_scope": "selected",
+            "selected_media_ids": used_ids,
+        }
+    else:
+        media_kwargs = {"media": refs, "media_scope": "all", "selected_media_ids": used_ids}
+
     def build(extra: Mapping[str, Any]) -> EditProposalSnapshot:
         return EditProposalSnapshot(
             direction="fast_montage",
@@ -691,11 +779,9 @@ def plan_lipsync_montage(
             duration_s=total_s,
             title=(title or SNAPSHOT_FALLBACK_TITLE)[:100],
             opening_title=title,
-            media=refs,
             story_beats=_story_beats(cuts),
             fast_cuts=cuts,
-            media_scope="all",
-            selected_media_ids=[ref.media_id for ref in refs],
+            **media_kwargs,
             video_reuse_policy="once",
             user_song=song_plan,
             **snapshot_kwargs,
@@ -711,6 +797,9 @@ def plan_lipsync_montage(
     broll_ids = [b.clip.media_id for b in blocks if b.placed is None]
     dropped: list[dict[str, str]] = []
     for clip in clips:
+        if clip.media_id in kept_ids:
+            dropped.append({"media_id": clip.media_id, "reason": "kept_as_broll"})
+            continue
         if clip.media_id in used:
             continue
         if reasons.get(clip.media_id) == "overlapped":
@@ -739,6 +828,7 @@ def plan_lipsync_montage(
             if b.placed is not None
         ],
         "broll_ids": broll_ids,
+        "kept_broll_ids": kept_ids,
         "bridged_gaps": bridged,
         "switches": [s for s in switches if window_start <= s["at_s"] * 1000 <= window_end],
         "dropped": dropped,
