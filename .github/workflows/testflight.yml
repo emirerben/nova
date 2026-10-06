@@ -28,41 +28,38 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
-          fetch-depth: 2
+          fetch-depth: 1
           persist-credentials: false
 
-      - name: Release only the current, iOS-relevant main commit
+      - name: Release the tested main commit when iOS inputs changed since the last upload
         id: gate
         env:
+          GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          git fetch origin main --depth=1
-          if [ "$(git rev-parse HEAD)" != "$(git rev-parse FETCH_HEAD)" ]; then
-            # The release-metadata workflow can append a [skip ci] commit after
-            # the tested merge.  It is safe to release the tested SHA only when
-            # every intervening change is outside the release inputs below.
-            if ! git diff --quiet "$HEAD_SHA" "FETCH_HEAD" -- \
-              src/apps/ios \
-              scripts/ios \
-              .github/workflows/ios.yml \
-              .github/workflows/testflight.yml \
-              .claude/worktrees \
-              src/apps/api \
-              src/packages/motion-runtime \
-              Dockerfile \
-              .dockerignore \
-              fly.toml \
-              scripts/fly-deploy-with-retry.sh; then
-              echo "eligible=false" >> "$GITHUB_OUTPUT"
-              echo "Skipping stale iOS result: main advanced with a release input."
-              exit 0
-            fi
-            echo "Main advanced only outside release inputs; releasing the tested SHA."
+          git fetch origin main --unshallow 2>/dev/null || git fetch origin main
+          # iOS and TestFlight runs are serialized, so green results arrive in commit
+          # order and releasing the exact tested SHA is monotonic even when main has
+          # since moved on.  Only refuse a SHA that is no longer on main (force-push).
+          if ! git merge-base --is-ancestor "$HEAD_SHA" FETCH_HEAD; then
+            echo "::error::stale head_sha $HEAD_SHA is not an ancestor of origin/main"
+            exit 1
           fi
-          # Git metadata is a release input: checkout must complete before
-          # the archive or signing steps can run.
-          if git diff --quiet "$HEAD_SHA^" "$HEAD_SHA" -- \
+          # Compare against the last commit that actually uploaded, so an iOS change in
+          # a commit whose own iOS run was cancelled or red still ships with the next
+          # green commit.  Falls back to the parent commit when none is found.
+          base=""
+          for run_id in $(gh run list --workflow TestFlight --branch main --status success --limit 30 --json databaseId,headSha --jq '.[] | "\(.databaseId):\(.headSha)"'); do
+            id="${run_id%%:*}"; sha="${run_id##*:}"
+            uploaded="$(gh run view "$id" --json jobs --jq '[.jobs[].steps[] | select(.name == "Upload and distribute to external TestFlight" and .conclusion == "success")] | length')"
+            if [ "$uploaded" != "0" ] && git cat-file -e "$sha^{commit}" 2>/dev/null && git merge-base --is-ancestor "$sha" "$HEAD_SHA"; then
+              base="$sha"; break
+            fi
+          done
+          [ -n "$base" ] || base="$HEAD_SHA^"
+          echo "Comparing release inputs since ${base}"
+          if git diff --quiet "$base" "$HEAD_SHA" -- \
             src/apps/ios \
             scripts/ios \
             .github/workflows/ios.yml \
@@ -71,11 +68,11 @@ jobs:
             src/apps/api/app/config.py \
             src/apps/api/app/services/mobile_auth.py; then
             echo "eligible=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping: this main commit does not change an iOS release input."
+            echo "Skipping: no iOS release input changed since the last upload."
           else
             echo "eligible=true" >> "$GITHUB_OUTPUT"
           fi
-          if git diff --quiet "$HEAD_SHA^" "$HEAD_SHA" -- \
+          if git diff --quiet "$base" "$HEAD_SHA" -- \
             src/apps/api \
             src/packages/motion-runtime \
             Dockerfile \
@@ -87,21 +84,27 @@ jobs:
             echo "requires_api_deploy=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Wait for the matching production API deploy
+      - name: Wait for a production API deploy that contains this commit
         if: steps.gate.outputs.eligible == 'true' && steps.gate.outputs.requires_api_deploy == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          # A superseded Fly deploy can be cancelled, so accept any successful deploy
+          # of this commit or a later one on main.
           for attempt in $(seq 1 120); do
-            deployed_sha="$(gh run list --workflow 'Fly Deploy' --branch main --commit "$HEAD_SHA" --status success --limit 1 --json headSha --jq '.[0].headSha // empty')"
-            if [ "$deployed_sha" = "$HEAD_SHA" ]; then
-              exit 0
-            fi
+            for deployed_sha in $(gh run list --workflow 'Fly Deploy' --branch main --status success --limit 30 --json headSha --jq '.[].headSha'); do
+              status="$(gh api "repos/$REPO/compare/$HEAD_SHA...$deployed_sha" --jq .status 2>/dev/null || true)"
+              if [ "$status" = "identical" ] || [ "$status" = "ahead" ]; then
+                echo "Production API deploy $deployed_sha contains $HEAD_SHA"
+                exit 0
+              fi
+            done
             sleep 30
           done
-          echo "::error::the matching Fly Deploy did not complete before TestFlight distribution"
+          echo "::error::no Fly Deploy containing $HEAD_SHA completed before TestFlight distribution"
           exit 1
 
       - name: Validate release configuration

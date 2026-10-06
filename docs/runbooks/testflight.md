@@ -1,8 +1,13 @@
 # Kria external TestFlight release
 
 The `TestFlight` workflow releases the exact `main` commit whose native `iOS`
-workflow passed. It creates an IPA only for an iOS-relevant commit, rejects a
-stale test result, and skips a build number that App Store Connect already has.
+workflow passed. It creates an IPA only when an iOS release input changed since the last
+successful upload (so a cancelled or red intermediate commit's change still
+ships with the next green one), rejects a SHA that is no longer on `main`, waits
+for a Fly deploy that contains the commit when API files changed, and skips a
+build number that App Store Connect already has. A green iOS result is released
+even if `main` has since moved on: iOS and TestFlight runs are serialized, so
+releases stay in commit order.
 
 ## One-time account setup
 
