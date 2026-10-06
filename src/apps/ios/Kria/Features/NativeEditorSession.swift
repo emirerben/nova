@@ -1264,8 +1264,10 @@ struct NativeEditorTemporaryVideo {
         }
         // A mirrored caption is its cue's sentence again (`isCaptionCueMirror`).
         // Listing both stacked every caption into a second CAPTIONS row and
-        // left an unrendered tap target over the burned caption.
-        items += document.textElements.enumerated().filter { !document.isCaptionCueMirror($0.element) }.map { index, item in projected(EditorSelection(kind: .text, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 300 + index), sourceIndex: index) }
+        // left an unrendered tap target over the burned caption. Read-only text
+        // (`isReadOnly`) gets no item: the preview still draws it, but nothing
+        // can select, drag or reorder it into a text Save the server refuses.
+        items += document.textElements.enumerated().filter { !document.isCaptionCueMirror($0.element) && !$0.element.isReadOnly }.map { index, item in projected(EditorSelection(kind: .text, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 300 + index), sourceIndex: index) }
         items += document.captionCues.enumerated().map { index, item in projected(EditorSelection(kind: .captionCue, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 400 + index), sourceIndex: index) }
         items += document.soundEffects.enumerated().map { index, item in projected(EditorSelection(kind: .soundEffect, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 100 + index), sourceIndex: index) }
         items += document.mediaOverlays.enumerated().map { index, item in projected(EditorSelection(kind: .mediaOverlay, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 200 + index), sourceIndex: index) }
@@ -3309,7 +3311,8 @@ struct NativeEditorTemporaryVideo {
     func setTextTiming(id: UUID, startS: Double? = nil, endS: Double? = nil) { updateTextTiming(id: id.uuidString, startS: startS, endS: endS) }
 
     private func mutateText(id: String, _ body: (inout EditorTextElement) -> Void) {
-        guard let index = document.textElements.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = document.textElements.firstIndex(where: { $0.id == id }),
+              !document.textElements[index].isReadOnly else { return }
         transactDocument(section: .text) { doc in var item = doc.textElements[index]; body(&item); doc.textElements[index] = item }
     }
 
@@ -3956,7 +3959,8 @@ struct NativeEditorTemporaryVideo {
     }
 
     func textDeletion(id: String) -> TextDeletion {
-        guard document.textElements.contains(where: { $0.id == id }) else { return .blocked("This text no longer exists.") }
+        guard let element = document.textElements.first(where: { $0.id == id }) else { return .blocked("This text no longer exists.") }
+        if element.isReadOnly { return .blocked("This title can't be edited here yet.") }
         return .allowed
     }
 
@@ -4005,7 +4009,8 @@ struct NativeEditorTemporaryVideo {
                 }
             }
         case .text:
-            guard let element = document.textElements.first(where: { $0.id == selected.id }) else { return false }
+            guard let element = document.textElements.first(where: { $0.id == selected.id }),
+                  !element.isReadOnly else { return false }
             let lyricID = lyricDeletionID(for: element)
             let deletion = EditorDeletion(kind: element.isCaption ? "caption_cue" : (lyricID == nil ? "text" : "lyric_line"), id: lyricID ?? element.id)
             let sections: Set<EditorSection> = element.isCaption ? [.text, .captions] : [.text]
@@ -4909,7 +4914,7 @@ struct NativeEditorTemporaryVideo {
 
     private func orderedLayers() -> [(selection: EditorSelection, z: Double)] {
         var layers: [(EditorSelection, Double, Int)] = []
-        for (index, item) in document.textElements.enumerated() { layers.append((EditorSelection(kind: .text, id: item.id), Self.number(item.raw["z"] ?? item.raw["z_index"]) ?? 300 + Double(index), 0)) }
+        for (index, item) in document.textElements.enumerated() where !item.isReadOnly { layers.append((EditorSelection(kind: .text, id: item.id), Self.number(item.raw["z"] ?? item.raw["z_index"]) ?? 300 + Double(index), 0)) }
         for (index, item) in document.visualBlocks.enumerated() { layers.append((EditorSelection(kind: .visualBlock, id: item.id), Self.number(item.raw["z"] ?? item.raw["z_index"]) ?? 150 + Double(index), 1)) }
         for (index, item) in document.mediaOverlays.enumerated() { layers.append((EditorSelection(kind: .mediaOverlay, id: item.id), Self.number(item.raw["z"] ?? item.raw["z_index"]) ?? 200 + Double(index), 2)) }
         return layers.sorted { lhs, rhs in lhs.1 == rhs.1 ? lhs.2 < rhs.2 : lhs.1 < rhs.1 }.map { ($0.0, $0.1) }
@@ -5033,7 +5038,8 @@ struct NativeEditorTemporaryVideo {
     private func setTimedBounds(_ selection: EditorSelection, start: Double, end: Double, in document: inout EditorDocument) {
         switch selection.kind {
         case .text:
-            guard let index = document.textElements.firstIndex(where: { $0.id == selection.id }) else { return }
+            guard let index = document.textElements.firstIndex(where: { $0.id == selection.id }),
+                  !document.textElements[index].isReadOnly else { return }
             document.textElements[index].startS = start; document.textElements[index].endS = end
         case .captionCue:
             guard let index = document.captionCues.firstIndex(where: { $0.id == selection.id }) else { return }

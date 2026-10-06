@@ -707,7 +707,43 @@ final class NativeEditorSessionTests: XCTestCase {
     static let voiceoverPhotoPath = "users/owner/plan/item/pool/photo.png"
     static let voiceoverVideoPath = "users/owner/plan/item/pool/clip.mp4"
 
-    private static func phoneVoiceoverSession(mediaOpen: Bool, savedPhoto: Bool = false) async throws -> (NativeEditorSession, EditorCommitSpy, BackgroundUploadCoordinator) {
+    /// KRI-455: a phone Voiceover edit's opening title arrives read-only beside
+    /// the caption mirrors. The live preview draws it, but nothing in the editor
+    /// can select, delete, retime or edit it, so a caption Save never sends
+    /// `text_elements` (the narrated editor has no text lane: that Save 422s).
+    func testReadOnlyTitleShowsInThePreviewButNeverReachesASave() async throws {
+        let (session, fake, uploads) = try await Self.phoneVoiceoverSession(mediaOpen: false, title: true)
+        defer { _ = uploads }
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
+            sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: false, mix: false, captionCues: true),
+            revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        let recipe = try XCTUnwrap(session.displayedSourcePreviewRecipe)
+        let title = try XCTUnwrap(recipe.textLayers.first { $0.id == "narrated-title" })
+        XCTAssertEqual(title.runs.map(\.text), ["Cacio e pepe in", "10 minutes"])
+        XCTAssertEqual(title.runs.first?.fontAssetID, "font-PlayfairDisplay-Bold.ttf")
+        XCTAssertEqual(title.anchorY, 288, accuracy: 0.001)
+        XCTAssertEqual(recipe.textLayers.filter { $0.runs.contains { $0.text.contains("First we pack") } }.count, 1,
+                       "the caption still shows once")
+
+        XCTAssertFalse(session.timelineItems.contains { $0.id == "narrated-title" }, "nothing to select or drag")
+        XCTAssertTrue(session.document.textBlocks.isEmpty, "not in the Text list")
+        XCTAssertFalse(session.textDeletion(id: "narrated-title").isAllowed)
+        XCTAssertFalse(session.deleteText(id: "narrated-title"))
+        session.setTextAlignment(id: "narrated-title", alignment: "left")
+        XCTAssertFalse(session.hasUnsavedChanges)
+
+        let cue = try XCTUnwrap(session.document.captionCues.first)
+        session.updateCaptionCue(id: cue.id, text: "First we pack light")
+        XCTAssertTrue(session.hasUnsavedChanges)
+        await session.save()
+
+        let request = try XCTUnwrap(fake.lastRequest)
+        XCTAssertNil(request.textElements, "the title must never ride a narrated Save")
+        XCTAssertEqual(request.captionCues?.count, 1)
+    }
+
+    private static func phoneVoiceoverSession(mediaOpen: Bool, savedPhoto: Bool = false, title: Bool = false) async throws -> (NativeEditorSession, EditorCommitSpy, BackgroundUploadCoordinator) {
         let threadID = UUID(), jobID = UUID()
         let project = BackgroundUploadCoordinator.projectDirectory(threadID)
         let montage = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
@@ -758,6 +794,22 @@ final class NativeEditorSessionTests: XCTestCase {
             variant["editor_revision_number"] = .number(1)
         }
         variant["editor_capabilities"] = .object(capabilities)
+        if title {
+            // What the status route sends a protocol-4 build: the read-only
+            // title first, then the caption mirror of each cue.
+            capabilities["caption_cues"] = .object(["editable": .bool(true), "reason": .null])
+            capabilities["caption_meta"] = .object(["editable": .bool(true), "reason": .null])
+            variant["editor_capabilities"] = .object(capabilities)
+            variant["caption_cues"] = .array([.object([
+                "text": .string("First we pack"), "start_s": .number(0), "end_s": .number(2),
+            ])])
+            variant["text_elements"] = .array([
+                .object(NativeEditorRenderCompilerTests.readOnlyTitle("Cacio e pepe in 10 minutes").raw),
+                .object(["id": .string("mirror-0"), "text": .string("First we pack"), "start_s": .number(0), "end_s": .number(2),
+                         "role": .string("generative_sequence"), "position": .string("bottom"),
+                         "source_params": .object(["source": .string("caption_cue"), "key": .string("0")])]),
+            ])
+        }
         var nativeAssets: [NativeEditorAsset] = []
         if savedPhoto {
             variant["visual_blocks"] = .array([.object([

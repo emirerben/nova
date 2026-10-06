@@ -29,6 +29,12 @@ never clips text; face-avoidance placement logic is unit-tested separately in
 `generic_context_labels.json` compiles short and long combined location/activity
 labels through the same right-aligned burn-dict contract used by guided edits.
 
+`narrated_title_fit.json` (KRI-455 follow-up) is the narrated opening title as the
+cloud burns it: one short title on the `top`/`large` preset and three long ones
+fitted into the top band by `narrated_title.narrated_title_placement` (smaller
+font, block top on the 6% safe margin). On the preset alone the long ones wrapped
+to 4-6 lines and ran off the top of the frame.
+
 `legacy_font_aliases.json` burns the four legacy file-root names TextElement
 still accepts ("Inter-Bold" guided narration captions + v<3 titles,
 "Inter-Regular"/"PlayfairDisplay-Regular" web presets, "PlayfairDisplay-Bold"
