@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.99.0] - 2026-10-06
+
+### Changed
+- fix(planner): a caption style ask or Title line is never a clip intent (KRI-456) (#1416) <!-- release-pr: 1416 -->
+
 ## [0.78.98.0] - 2026-10-06
 
 ### Changed
