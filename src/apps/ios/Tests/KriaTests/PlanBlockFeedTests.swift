@@ -1,4 +1,5 @@
 import XCTest
+import KriaMediaEngine
 @testable import Kria
 
 /// KRI-443: the live plan feed reducer and its wire decoding. The contract is frozen in
@@ -213,5 +214,90 @@ final class PlanBlockFeedTests: XCTestCase {
         XCTAssertEqual(feed.blocksBySection[.music]?.summary, "Song")
         XCTAssertNil(feed.turnID)
         XCTAssertNotNil(feed.blocksBySection[.music]?.decidedAt)
+    }
+
+    // MARK: Device-build pacing (KRI-443 follow-up)
+
+    /// What the server sends an iPhone account: everything decided at once, overlays skipped.
+    private var serverAllDecided: PlanBlockFeedState {
+        PlanBlockFeedState.reduce(events: [event(1, allWaiting), event(2, PlanSectionID.allCases.map {
+            $0 == .overlays ? block($0.rawValue, "decided", skipped: true) : block($0.rawValue, "decided", summary: "\($0.label) value")
+        })])
+    }
+
+    private func states(_ feed: PlanBlockFeedState) -> [PlanSectionID: PlanBlockState] {
+        Dictionary(uniqueKeysWithValues: feed.blocks.map { ($0.section, $0.state) })
+    }
+
+    func testNoDeviceStageLeavesTheServerFeedUntouched() {
+        let feed = serverAllDecided
+        XCTAssertEqual(feed.paced(by: nil), feed)
+        XCTAssertTrue(feed.paced(by: nil).isComplete)
+    }
+
+    func testPreparingShowsOnlyClipsDecidingEvenWhenServerDecidedEverything() {
+        let paced = serverAllDecided.paced(by: .preparing)
+        XCTAssertEqual(paced.decidedCount, 0)
+        XCTAssertEqual(states(paced)[.clips], .deciding)
+        XCTAssertEqual(states(paced)[.title], .waiting)
+        XCTAssertEqual(states(paced)[.overlays], .waiting, "a skipped section waits for the compose stage")
+        XCTAssertNil(paced.blocksBySection[.clips]?.decidedAt)
+    }
+
+    func testRenderingAdvancesSectionsInDeviceWorkOrderAsTheExporterProgresses() {
+        // 6 active sections (overlays skipped): clips, music, title, captions, look, sfx.
+        let early = serverAllDecided.paced(by: .rendering(fraction: 0))
+        XCTAssertEqual(states(early)[.overlays], .decided, "skipped resolves at the compose boundary")
+        XCTAssertEqual(states(early)[.clips], .deciding)
+        XCTAssertEqual(states(early)[.music], .waiting)
+
+        let mid = serverAllDecided.paced(by: .rendering(fraction: 0.5))  // 3 of 6 done
+        XCTAssertEqual(states(mid)[.clips], .decided)
+        XCTAssertEqual(states(mid)[.music], .decided)
+        XCTAssertEqual(states(mid)[.title], .decided)
+        XCTAssertEqual(states(mid)[.captions], .deciding)
+        XCTAssertEqual(states(mid)[.look], .waiting)
+        XCTAssertEqual(mid.newestDecided, .title)
+        XCTAssertEqual(mid.blocksBySection[.clips]?.summary, "Clips value", "values still come from the server")
+
+        let late = serverAllDecided.paced(by: .rendering(fraction: 1))
+        XCTAssertTrue(late.isComplete)
+    }
+
+    func testRenderingWithoutProgressStaysOnTheFirstSection() {
+        let paced = serverAllDecided.paced(by: .rendering(fraction: nil))
+        XCTAssertEqual(states(paced)[.clips], .deciding)
+        XCTAssertEqual(states(paced)[.sfx], .waiting)
+    }
+
+    func testFinishedBuildDecidesEverything() {
+        let paced = serverAllDecided.paced(by: .finished)
+        XCTAssertTrue(paced.isComplete)
+        XCTAssertEqual(paced.newestDecided, .sfx)
+    }
+
+    func testDisplayedStateIsNeverAheadOfTheServer() {
+        // Server has only decided title; the device is already done composing. min() keeps the others where the server is.
+        let server = PlanBlockFeedState.reduce(events: [event(1, allWaiting), event(2, [block("title", "decided", summary: "T"), block("clips", "deciding")])])
+        let paced = server.paced(by: .finished)
+        XCTAssertEqual(states(paced)[.title], .decided)
+        XCTAssertEqual(states(paced)[.clips], .deciding)
+        XCTAssertEqual(states(paced)[.music], .waiting)
+        XCTAssertFalse(paced.isComplete)
+    }
+
+    func testStageMappingFromDevicePhase() {
+        XCTAssertEqual(DeviceBuildStage(phase: .preparing, exportProgress: 0.4), .preparing)
+        XCTAssertEqual(DeviceBuildStage(phase: .rendering, exportProgress: 0.4), .rendering(fraction: 0.4))
+        for phase in [DeviceRenderPhase.localReady, .syncing, .synced] {
+            XCTAssertEqual(DeviceBuildStage(phase: phase, exportProgress: nil), .finished)
+        }
+        for phase in [DeviceRenderPhase.cancelled, .needsAttention, .superseded] {
+            XCTAssertNil(DeviceBuildStage(phase: phase, exportProgress: nil), "fails closed to the server states")
+        }
+    }
+
+    func testEmptyFeedStaysEmptyWhenPaced() {
+        XCTAssertTrue(PlanBlockFeedState.empty.paced(by: .preparing).isEmpty)
     }
 }

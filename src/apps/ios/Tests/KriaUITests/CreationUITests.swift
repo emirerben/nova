@@ -1250,13 +1250,18 @@ final class CreationUITests: XCTestCase {
     /// Launches the v2 creation flow with the staged `plan_block` fixture and taps Create, leaving the app
     /// on the live feed.
     private func launchLivePlanFeed(
-        reduceMotion: Bool, reduceTransparency: Bool = false, cancel: String? = nil, capability: Bool = true
+        reduceMotion: Bool, reduceTransparency: Bool = false, cancel: String? = nil, capability: Bool = true,
+        device: Bool = false
     ) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         if capability { app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS"] = "1" }
+        if device {
+            app.launchEnvironment["KRIA_CHAT_DEVICE_RENDER"] = "ready"
+            app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_DEVICE"] = "1"
+        }
         if reduceMotion { app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1" }
         if reduceTransparency { app.launchEnvironment["UI_TEST_REDUCE_TRANSPARENCY"] = "1" }
         if let cancel { app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_CANCEL"] = cancel }
@@ -1320,6 +1325,47 @@ final class CreationUITests: XCTestCase {
         // ReadyStage is unchanged once the render finishes.
         XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 60))
         XCTAssertFalse(feed.exists)
+    }
+
+    /// iPhone accounts: the server plans in ~1s (all decided) and the phone builds the video. The feed must stay
+    /// on screen for the whole device build, advance with the phone's real stages, and Stop must cancel the
+    /// device render (the server cancel route 409s for those).
+    func testLivePlanFeedStaysLiveAcrossTheDeviceBuild() {
+        let app = launchLivePlanFeed(reduceMotion: true, device: true)
+        let feed = app.otherElements["plan-feed"]
+        XCTAssertTrue(feed.waitForExistence(timeout: 30))
+        XCTAssertFalse(app.descendants(matching: .any)["device-render-status"].firstMatch.exists, "the feed hosts the device build")
+        let title = app.staticTexts["plan-feed.title"]
+        attach(app, "plan-feed-device-start")
+
+        // Work order the device follows. A section may only show decided once every earlier one has.
+        let order = ["clips", "music", "title", "captions", "look", "sfx"]
+        var sawPartial = false
+        let finished = eventually(timeout: 90) {
+            XCTAssertTrue(feed.exists, "the feed never leaves during the device build")
+            let decided = order.map { self.planBlockValue(app, $0).hasPrefix("decided") }
+            if let firstOpen = decided.firstIndex(of: false) {
+                XCTAssertFalse(decided[firstOpen...].contains(true), "sections advance in order: \(decided)")
+                if firstOpen > 0 { sawPartial = true }
+            }
+            return title.label == "Plan ready · 7 of 7 decided"
+        }
+        XCTAssertTrue(finished, "all sections are decided once the device build completes")
+        XCTAssertTrue(sawPartial, "sections decided progressively, not all at once")
+        XCTAssertTrue(planBlockValue(app, "overlays").contains("Not used"))
+        attach(app, "plan-feed-device-done")
+    }
+
+    func testLivePlanFeedStopCancelsTheDeviceRender() {
+        let app = launchLivePlanFeed(reduceMotion: true, device: true)
+        let stop = app.buttons["plan-feed.stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 30))
+        XCTAssertFalse(app.staticTexts["This render can’t be stopped any more."].exists)
+        stop.tap()
+        // A stopped device render hands over to the status card (retry / find originals), not a server 409 message.
+        XCTAssertTrue(app.descendants(matching: .any)["device-render-status"].firstMatch.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.otherElements["plan-feed"].exists)
+        attach(app, "plan-feed-device-stopped")
     }
 
     func testLivePlanFeedStaysOffWithoutTheCapability() {

@@ -1,4 +1,5 @@
 import Foundation
+import KriaMediaEngine
 
 /// KRI-443: the live plan feed shown after Create. Pure value types and a reducer over the thread's
 /// `plan_block` events, so the rules (display order, forward-only state, new job resets) are unit-testable
@@ -162,6 +163,73 @@ struct PlanBlockFeedState: Equatable, Sendable {
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let date = fractional.date(from: value) { return date }
         return ISO8601DateFormatter().date(from: value)
+    }
+}
+
+/// Where the iPhone's own build of the video has got to. On an iPhone account the server only plans (the
+/// cloud decisions arrive at once); the video is built on the device, so the feed paces itself to these real
+/// stages instead of showing every section decided up front. Mapped from `DeviceRenderPhase` and the
+/// exporter's own progress callback; nothing here is timed.
+enum DeviceBuildStage: Equatable, Sendable {
+    /// Resolving and preparing the source clips on this iPhone.
+    case preparing
+    /// The one AVFoundation compose pass. `fraction` is the exporter's real 0...1 progress (nil = none reported).
+    case rendering(fraction: Double?)
+    /// The video exists on this iPhone (finished, syncing or synced).
+    case finished
+
+    /// nil for phases that are not an in-flight or finished build (cancelled, needs attention, superseded):
+    /// the feed then falls back to the server's states and the status card takes over.
+    init?(phase: DeviceRenderPhase, exportProgress: Double?) {
+        switch phase {
+        case .preparing: self = .preparing
+        case .rendering: self = .rendering(fraction: exportProgress)
+        case .localReady, .syncing, .synced: self = .finished
+        case .cancelled, .needsAttention, .superseded: return nil
+        }
+    }
+}
+
+/// The order the device works through the sections while it builds, which is the order the cloud reports
+/// them in (`render_execution_plan`): clips, music bed, overlays, text (title + captions + look), sound effects.
+private let deviceWorkOrder: [PlanSectionID] = [.clips, .music, .overlays, .title, .captions, .look, .sfx]
+
+extension PlanBlockFeedState {
+    /// Displayed state of each section = min(server state, what the device has reached). The server stays the
+    /// source of truth for summaries and values; the device only decides WHEN a section may show as decided, so
+    /// nothing reads decided before the phone got there. `nil` (no device info) returns the server feed
+    /// unchanged. Sections the server marked skipped resolve as soon as the device starts composing.
+    func paced(by stage: DeviceBuildStage?) -> PlanBlockFeedState {
+        guard let stage, !isEmpty else { return self }
+        let active = deviceWorkOrder.filter { blocksBySection[$0].map { !$0.skipped } ?? false }
+        func ceiling(_ block: PlanBlock) -> PlanBlockState {
+            switch stage {
+            case .finished: return .decided
+            case .preparing:
+                return !block.skipped && active.first == block.section ? .deciding : .waiting
+            case .rendering(let fraction):
+                if block.skipped { return .decided }
+                guard let index = active.firstIndex(of: block.section) else { return .waiting }
+                let position = min(1, max(0, fraction ?? 0)) * Double(active.count)
+                if position >= Double(index + 1) { return .decided }
+                return position >= Double(index) ? .deciding : .waiting
+            }
+        }
+        var result = self
+        for (section, block) in blocksBySection {
+            var next = block
+            let capped = min(block.state, ceiling(block))
+            if capped != block.state {
+                next.state = capped
+                next.decidedAt = nil
+            }
+            result.blocksBySection[section] = next
+        }
+        result.newestDecided = deviceWorkOrder.last { section in
+            guard let block = result.blocksBySection[section] else { return false }
+            return block.state == .decided && !block.skipped
+        }
+        return result
     }
 }
 

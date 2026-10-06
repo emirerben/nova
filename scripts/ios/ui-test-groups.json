@@ -95,6 +95,8 @@
       "KriaUITests/CreationUITests/testChoiceQuestionFallsBackToTextWhenServerLacksCapability",
       "KriaUITests/CreationUITests/testLivePlanFeedFullSequence",
       "KriaUITests/CreationUITests/testLivePlanFeedStaysOffWithoutTheCapability",
+      "KriaUITests/CreationUITests/testLivePlanFeedStaysLiveAcrossTheDeviceBuild",
+      "KriaUITests/CreationUITests/testLivePlanFeedStopCancelsTheDeviceRender",
       "KriaUITests/CreationUITests/testLivePlanFeedStopCancelsTheRender",
       "KriaUITests/CreationUITests/testLivePlanFeedStopHidesWhenTheRenderCannotBeCancelled",
       "KriaUITests/CreationUITests/testLivePlanFeedUnderReduceMotionAndReduceTransparency"

@@ -1,4 +1,5 @@
 import SwiftUI
+import KriaMediaEngine
 
 struct ChatWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
@@ -452,11 +453,34 @@ private struct CreationWorkspaceView: View {
         )
     }
 
+    /// Where this iPhone's own build of the video has got to, when the render runs on the device. With no
+    /// presentation yet the device is about to prepare, so it reads as `.preparing` (the server's up-front
+    /// "all decided" must not show first). Cloud renders return nil and the feed shows the server's states.
+    private var deviceBuildStage: DeviceBuildStage? {
+        guard let key = deviceRenderKey else { return nil }
+        guard let presentation = model.deviceRenders.presentations[key] else { return .preparing }
+        return DeviceBuildStage(phase: presentation.phase, exportProgress: presentation.exportProgress)
+    }
+
+    /// The feed hosts the device build (instead of the status card) while the phone is preparing, rendering
+    /// or finished cleanly. Anything that needs the creator (stopped, needs attention, a failed sync with a
+    /// message, superseded) hands over to `DeviceRenderPanel`, which owns retry and recovery.
+    private var feedHostsDeviceBuild: Bool {
+        guard let key = deviceRenderKey, showsPlanFeed else { return false }
+        guard let presentation = model.deviceRenders.presentations[key] else { return true }
+        guard deviceBuildStage != nil else { return false }
+        return presentation.message == nil && !presentation.requiresServerRetry
+    }
+
     @ViewBuilder private var planFeedView: some View {
-        let feed = planFeed
+        let feed = planFeed.paced(by: deviceBuildStage)
+        let device = deviceRenderKey
+        let devicePhase = device.flatMap { model.deviceRenders.presentations[$0]?.phase } ?? .preparing
         PlanBlockFeed(
             feed: feed,
-            canStop: feed.turnID != nil && stopUnavailableJobID != feed.jobID,
+            canStop: device != nil
+                ? [.preparing, .rendering].contains(devicePhase)
+                : feed.turnID != nil && stopUnavailableJobID != feed.jobID,
             isStopping: isStoppingRender,
             stopMessage: stopMessage,
             stop: stopRender
@@ -467,6 +491,17 @@ private struct CreationWorkspaceView: View {
     /// Cancels the render behind the feed. Always sends the newest thread revision: every `plan_block`
     /// event bumps it, so the revision the feed was drawn with is usually stale.
     private func stopRender() {
+        if let key = deviceRenderKey {
+            // A device render is not a server job: the server cancel route answers 409 for it. Stop it the
+            // way the status card does, which also tells the server the creator stopped it.
+            guard !isStoppingRender else { return }
+            isStoppingRender = true
+            Task {
+                await model.deviceRenders.cancel(key)
+                isStoppingRender = false
+            }
+            return
+        }
         let feed = planFeed
         guard let turnID = feed.turnID, !isStoppingRender else { return }
         isStoppingRender = true
@@ -508,7 +543,7 @@ private struct CreationWorkspaceView: View {
     }
 
     private var timelineUpdateToken: String {
-        let feed = planFeed
+        let feed = planFeed.paced(by: deviceBuildStage)
         return timeline.map(\.id).joined(separator: "|") + "|\(isThinking)|\(isSending)|\(failure?.message ?? "")"
             + "|feed\(feed.decidedCount)/\(feed.totalCount)"
     }
@@ -1071,7 +1106,9 @@ private struct CreationWorkspaceView: View {
                     .accessibilityIdentifier("open-current-cut")
             }
         case .rendering:
-            if let deviceRenderKey {
+            if feedHostsDeviceBuild {
+                planFeedView
+            } else if let deviceRenderKey {
                 DeviceRenderPanel(key: deviceRenderKey, sessions: model.deviceRenders) {
                     await refreshCapabilities()
                     await refreshDeviceRender(retry: true)

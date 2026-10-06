@@ -362,8 +362,13 @@ final class CreationChatFixture: @unchecked Sendable {
                 let approved = events.last(where: { $0["event_type"] as? String == "approval_requested" })?["payload"] as? [String: Any]
                 append("approval_approved")
                 thread["active_job_id"] = id
-                thread["job"] = ["id": id, "status": "processing", "variants": []]
-                renders[id] = 0
+                if DeviceRenderUITestFixture.scenario != nil {
+                    // KRIA_CHAT_PLAN_BLOCKS_DEVICE: the server only plans; the variant is handed to this iPhone.
+                    thread["job"] = ["id": id, "status": "processing", "variants": [["variant_id": DeviceRenderUITestFixture.variantID, "render_status": "awaiting_device", "render_destination": "device"]]]
+                } else {
+                    thread["job"] = ["id": id, "status": "processing", "variants": []]
+                    renders[id] = 0
+                }
                 if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1" {
                     planStages[id] = 0; planTicks[id] = 0
                     planTurnIDs[id] = approved?["turn_id"] as? String ?? id
@@ -423,6 +428,17 @@ final class CreationChatFixture: @unchecked Sendable {
             return value
         }
         let sections = ["title", "clips", "captions", "music", "sfx", "overlays", "look"]
+        if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_DEVICE"] == "1" {
+            // What an iPhone account gets in production: every section waiting, then every section decided
+            // almost at once, because the server only plans and the video is built on the device.
+            return [
+                sections.map { block($0, "waiting") },
+                [block("title", "decided", "Sunday reset, slowed down"), block("clips", "decided", "30 clips · 30s"),
+                 block("captions", "decided", "Bold captions, lower third"), block("music", "decided", "Your song"),
+                 block("sfx", "decided", "4 sound effects"), block("overlays", "decided", nil, skipped: true),
+                 block("look", "decided", "Warm film grain")],
+            ]
+        }
         return [
             sections.map { block($0, "waiting") },
             [block("title", "deciding")],
@@ -700,8 +716,16 @@ enum DeviceRenderUITestFixture {
 
     private struct Exporter: LocalExporting {
         func export(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String, progress: (@Sendable (Double) -> Void)?) async throws -> ExportCheckpoint {
-            // Long enough for a UI test to see the rendering state and its Stop button.
-            try await Task.sleep(for: .seconds(3))
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_DEVICE"] == "1" {
+                // Real, steady progress so a UI test can watch the live feed advance with the build.
+                for step in 1...8 {
+                    try await Task.sleep(for: .milliseconds(700))
+                    progress?(Double(step) / 8)
+                }
+            } else {
+                // Long enough for a UI test to see the rendering state and its Stop button.
+                try await Task.sleep(for: .seconds(3))
+            }
             try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data("kria ui-test device export".utf8).write(to: outputURL)
             return ExportCheckpoint(exportID: exportID, status: .completed, progress: 1, outputURL: outputURL)
@@ -709,7 +733,11 @@ enum DeviceRenderUITestFixture {
     }
 
     private struct Sources: DeviceSourceResolving {
-        func resolve(for recipe: KriaMediaEngine.EditRecipe) async throws -> [String: URL] { [:] }
+        func resolve(for recipe: KriaMediaEngine.EditRecipe) async throws -> [String: URL] {
+            // KRIA_CHAT_PLAN_BLOCKS_DEVICE: a visible "preparing sources" stage before the compose pass.
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_DEVICE"] == "1" { try await Task.sleep(for: .seconds(2)) }
+            return [:]
+        }
     }
 
     private struct Publisher: DeviceRenderPublishing {
