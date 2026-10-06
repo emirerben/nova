@@ -1228,12 +1228,27 @@ _TALKING_STRATEGY = {
 @pytest.mark.parametrize("kind", ["style", "text"])
 def test_an_unchecked_ask_gets_no_receipt_and_no_partly_line(kind: str) -> None:
     brief = apply_updates(
-        None, [_upd(kind, "global", description="add captions")], source_turn_id="t"
+        None, [_upd(kind, "global", description="warm, filmic tones")], source_turn_id="t"
     )
     summary = "I'll keep the original audio and add editorial-style captions over your footage."
     receipts = build_receipts(brief.live(), plan_facts_from_strategy(_TALKING_STRATEGY))
     assert receipts == []
     assert reply_from_receipts(brief, receipts, summary=summary) == summary
+
+
+@pytest.mark.parametrize("kind", ["style", "text"])
+def test_a_captions_ask_on_a_talking_draft_is_done(kind: str) -> None:
+    """Thread 17f666cb: captions asks used to be "can't verify"; the strategy's
+    caption style now answers them."""
+    brief = apply_updates(
+        None, [_upd(kind, "global", description="add captions")], source_turn_id="t"
+    )
+    summary = "I'll keep the original audio and add editorial-style captions over your footage."
+    [receipt] = build_receipts(brief.live(), plan_facts_from_strategy(_TALKING_STRATEGY))
+    assert receipt.status == "met"
+    assert reply_from_receipts(brief, [receipt], summary=summary) == (
+        f"{summary}\n- Done: add captions"
+    )
 
 
 def test_a_persisted_cant_verify_receipt_gets_no_line() -> None:

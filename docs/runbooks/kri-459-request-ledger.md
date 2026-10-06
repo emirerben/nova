@@ -30,3 +30,19 @@ visible, while legacy callers retain their existing omission behavior.
 | A generic editor text element contains a clip-scoped caption | Do not credit the caption unless the exact target clip has evidence. |
 | A reply has unchecked receipts | Omit a generic success summary and name the unverified requirement. |
 | A checker makes a determinate factual comparison | Mark it `verification: "checked"` and include the furthest evidence stage (`understood`, `matched`, `applied`, or `checked`). |
+| A checked receipt only describes what the chosen format does (a Talking edit's length follows the take; speech cleanup is chosen at approval and cuts pauses, never a named line) | Keep it an honest `partial`, but never turn the draft into the "simpler version?" question: `brief_checks.is_format_limit` / `needs_creator_choice` (reason prefixes in `_FORMAT_LIMIT_REASON_PREFIXES`). |
+| The gate fires on a thread with no draft | Say "I haven't started a draft yet", never "Your current draft is unchanged". |
+
+Draft-time checkers added for Talking / voiceover asks (thread 17f666cb, 2026-10-06):
+`_check_speech_cleanup` (a removal verb plus pauses/filler/a named retake, never a
+"keep my pauses" ask or a pop-in trigger; only on a speech-spined format, elsewhere
+the sentence takes its kind's usual path; met once `speech_cleanup_enabled`, else
+"choose Clean up speech when you approve" only when the cohort check says it will
+be offered, hedged when unknown; a named line or retake is editor work; a length in
+the same sentence follows the cut take) and `_check_captions` (on / off /
+word-by-word against the strategy's `caption_style`; karaoke and kinetic are
+word-by-word; `auto`, or an ask about a caption's look, place or language, stays
+"can't check"). Patterns match `fold_text` output (ı folded to i). Both read `PlanFacts.caption_style` /
+`speech_cleanup_offered`, filled by `plan_facts_from_strategy` and
+`kria_runtime._speech_cleanup_offered`. Tests: `tests/kria/test_brief_talking_receipts.py`,
+`tests/kria/test_runtime_talking_first_draft.py`.

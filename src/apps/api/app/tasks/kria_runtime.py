@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -32,6 +33,7 @@ from app.kria.brief import (
 from app.kria.brief_checks import (
     build_receipts,
     is_judged,
+    needs_creator_choice,
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
     reply_from_receipts,
@@ -583,6 +585,7 @@ def _complete_draft_turn(
                         clip_ids=planned.brief_clip_ids,
                         manifest=planned.brief_manifest,
                         speech_cleanup_enabled=bool(getattr(item, "speech_cleanup_enabled", False)),
+                        speech_cleanup_offered=_speech_cleanup_offered(item, document.strategy),
                     )
                     checked = brief.live()
                     # KRI-190: the unified montage planner writes the per-clip text,
@@ -634,18 +637,24 @@ def _complete_draft_turn(
                 if req.id not in checked_ids
             )
         if settings.brief_binding_for(thread.creator_id) and any(
-            receipt.get("verification") == "checked" and receipt.get("status") != "met"
-            for receipt in requirement_receipts
+            needs_creator_choice(receipt) for receipt in requirement_receipts
         ):
             # Do not replace a creator's current draft with a known partial edit.
             # Roll back the speculative draft/brief work, then persist the request
-            # and the specific choice in the normal response transaction.
+            # and the specific choice in the normal response transaction. A limit
+            # of the chosen format (a Talking edit's length, speech cleanup chosen
+            # at approval) is reported in the receipt instead and never asks.
             db.rollback()
+            draft_state = (
+                "Your current draft is unchanged."
+                if head is not None
+                else "I haven't started a draft yet."
+            )
             recovery = KriaTurnPlan(
                 mode="respond",
                 turn_value="question",
                 response=(
-                    f"{reply_text}\nYour current draft is unchanged. "
+                    f"{reply_text}\n{draft_state} "
                     "Should I try a different approach, or make this simpler version?"
                 ),
             )
@@ -1374,6 +1383,57 @@ def _failure_detail(exc: BaseException) -> dict[str, str]:
     """Bounded, single-line error summary safe to persist on a turn/event."""
     message = " ".join(str(exc).split())[:_FAILURE_MESSAGE_CHARS]
     return {"error_class": type(exc).__name__, "error_message": message}
+
+
+class _DraftItemView:
+    """``item`` as approval will shape it: the draft strategy's edit format and audio
+    mode instead of the item's current ones (`_apply_strategy_approval_media`)."""
+
+    def __init__(self, item: Any, *, edit_format: str, audio_mode: str) -> None:
+        self._item = item
+        self.edit_format = edit_format
+        self.audio_mode = audio_mode
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._item, name)
+
+
+def _speech_cleanup_offered(item: Any, strategy: Mapping[str, Any] | None) -> bool | None:
+    """Whether approving this draft of ``item`` offers "Clean up speech" (KRI-205):
+    the preflight check is enforced and the draft's speech source is in its
+    cohort. None when that cannot be told, so a receipt promises nothing."""
+    try:
+        if settings.speech_cleanup_preflight_mode != "enforce":
+            return False
+        from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+        from app.services.plan_item_media import (  # noqa: PLC0415
+            current_detector_policy,
+            resolve_item_narration,
+        )
+        from app.services.speech_cleanup_decision import resolve_next_audio_mode  # noqa: PLC0415
+        from app.services.speech_cleanup_preflight import (  # noqa: PLC0415
+            preflight_enabled_for_source,
+        )
+
+        edit_format = str(getattr(item, "edit_format", "") or "")
+        audio_mode = str(getattr(item, "audio_mode", "") or "")
+        if strategy:
+            parsed = CreativeStrategy.model_validate(strategy)
+            edit_format = str(parsed.edit_format or edit_format)
+            audio_mode = resolve_next_audio_mode(parsed, item) or audio_mode
+        view = _DraftItemView(item, edit_format=edit_format, audio_mode=audio_mode)
+        resolution = resolve_item_narration(view, detector_policy=current_detector_policy())
+        if resolution.source is None:
+            return None
+        return bool(
+            preflight_enabled_for_source(
+                resolution.source.source_policy_fingerprint,
+                mode=settings.speech_cleanup_preflight_mode,
+                rollout_percent=settings.speech_cleanup_preflight_rollout_percent,
+            )
+        )
+    except Exception:  # noqa: BLE001 - a receipt nicety never fails a turn
+        return None
 
 
 def _fail_turn(
