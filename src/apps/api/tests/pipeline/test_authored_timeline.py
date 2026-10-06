@@ -134,6 +134,42 @@ def test_phone_restore_uses_saved_captions_and_keeps_their_authoritative_snapsho
     assert variant["caption_cues"][0]["end_s"] == 6
 
 
+@pytest.mark.parametrize("archetype", ["narrated", "subtitled"])
+def test_phone_restore_never_compiles_caption_cue_mirrors_as_text(archetype):
+    """The authored commit snapshots the merged editor lane, caption-cue mirrors
+    included; only `compile_caption_layers` may draw those sentences."""
+    from app.agents._schemas.text_element import (
+        CAPTION_CUE_SOURCE,
+        merge_projected_text_elements_for_variant,
+    )
+
+    job, variant, previous = fixture()
+    variant["resolved_archetype"] = archetype
+    variant["text_mode"] = "agent_text"
+    variant["caption_cues"] = [
+        {"text": "First sentence", "start_s": 0.0, "end_s": 1.2},
+        {"text": "Second sentence", "start_s": 1.2, "end_s": 2.5},
+    ]
+    mirrors = merge_projected_text_elements_for_variant(variant) or []
+    assert [row["source_params"]["source"] for row in mirrors] == [CAPTION_CUE_SOURCE] * 2
+    title = {
+        "id": "title",
+        "text": "TITLE",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "role": "generative_intro",
+    }
+    variant["text_elements"] = [title, *mirrors]
+
+    recipe = compile_phone_authored_timeline(job, variant, previous)
+
+    ids = [layer.id for layer in recipe.text_layers]
+    authored = [layer_id for layer_id in ids if layer_id.startswith("authored-text-")]
+    captions = [layer_id for layer_id in ids if not layer_id.startswith("authored-text-")]
+    assert authored == ["authored-text-0"]
+    assert len(captions) == 2
+
+
 def test_phone_restore_keeps_saved_captions_disabled():
     job, variant, previous = fixture()
     variant["caption_cues"] = [{"text": "Saved words", "start_s": 0, "end_s": 3}]
