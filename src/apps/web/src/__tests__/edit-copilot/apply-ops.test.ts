@@ -889,6 +889,21 @@ describe("applyCopilotOps", () => {
       .toEqual([{ type: "DELETE_BAR", id: "bar-2" }]);
   });
 
+  it("clears stale fractions when a style patch picks a named position", () => {
+    // A resolved narrated storyboard bar: custom, at the burned bottom spot.
+    const placed = bar({ position: "custom", x_frac: 0.5, y_frac: 0.85 });
+    const result = applyCopilotOps(
+      [{ op: "patch_text_style", bar_index: 0, patch: { position: "top" } }],
+      ctx({ bars: [placed] }),
+    );
+
+    // The burn ignores fractions for a named position; the preview must too.
+    expect(result.textActions).toEqual([
+      { type: "PATCH_BAR", id: "bar-1", patch: { position: "top", x_frac: null, y_frac: null } },
+    ]);
+    expect(result.applied).toEqual([expect.objectContaining({ label: "position", to: "top" })]);
+  });
+
   it("does not mark a timeline-only turn text-dirty on the elements model", () => {
     const bars = [bar({ id: "canonical" })];
     expect(textActionsChangeTextSection([], bars, true)).toBe(false);

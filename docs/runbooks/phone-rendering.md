@@ -2154,9 +2154,12 @@ deletion is a 409). Only builds declaring `X-Kria-Client-Protocol` >=
 every mutation (`EditorTextElement.isReadOnly`); older builds would offer
 Delete and 422. The element spells out the cloud's "top"/"large"/default face
 (custom y 0.15, 120 px, Playfair Display), pinned to the cloud layers by
-`test_title_element_spells_out_exactly_the_cloud_intro`. Not covered: cloud
-narrated storyboard titles (`text_elements_materialized_from ==
-"narrated_storyboard"`), which the read path still drops. Tests:
+`test_title_element_spells_out_exactly_the_cloud_intro`. Cloud narrated
+storyboard bars (`text_elements_materialized_from == "narrated_storyboard"`) are
+editable and get the same spelled-out look on every editor read; see "Editor
+read path" in `docs/pipelines/generative.md`. They share this title's
+`source_params.narrated_storyboard` marker; the phone title is already explicit,
+so resolving it changes nothing. Tests:
 `tests/routes/test_phone_narrated_title_preview.py`; iOS
 `NativeEditorRenderCompilerTests.testReadOnlyTitle*`,
 `NativeEditorSessionTests.testReadOnlyTitle*`.

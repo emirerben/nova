@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.114.0] - 2026-10-06
+
+### Changed
+- fix(editor): preview cloud voiceover storyboard text where the cloud burns it (#1430) <!-- release-pr: 1430 -->
+
 ## [0.78.113.0] - 2026-10-06
 
 ### Changed

@@ -549,6 +549,33 @@ order is caption-free base → TextElements → narrated captions. If analysis o
 agent fails, phrase segmentation/upload order remains the deterministic fallback.
 The backend-only flag defaults false and must be set on API and worker together.
 
+Editor read path: the variant stores these bars as presets ("top"/"bottom", a
+size class, no face; `text_elements_materialized_from == "narrated_storyboard"`;
+a long title fitted by `narrated_title_placement` is custom y + px, no face)
+and nothing re-projects them, so the saved list is their only copy and a Save
+that omits one deletes it. Every editor-facing read spells out the look the
+Skia burn resolves the presets to (centred custom position, px size, display
+face): `merge_projected_text_elements_for_variant` via
+`resolve_narrated_storyboard_look`, and `resolve_narrated_storyboard_rows` for
+the status route's authored timelines, the Kria chat snapshot and compile
+(re-applied after its ops, so a chat move to a named spot drops the old
+`y_frac`) and the Kria draft bootstrap. iOS builds before #1424 load a
+missing `y_frac`/`font_family` as 0.5 / Fraunces and save that face back; this
+keeps those builds right, and current builds resolve presets themselves. The
+burn is pixel-identical (`tests/pipeline/test_narrated_storyboard_look.py`),
+so a Save that persists the spelled-out look changes nothing on video, but it
+freezes that look against later preset or default-face changes. Text patches
+that set a named position (Kria chat `patch_text_style`/`patch_text`, the web
+copilot) drop stale `x_frac`/`y_frac` on any row, since the burn ignores them
+for a named position. Known gap: stored Kria draft documents are served as
+stored, so a chat draft compiled before this change, or an empty-editor draft
+saved before it, can still hand an editor preset rows until the next render or
+Save. An empty-editor Save re-derives its text through
+`merge_projected_text_elements_for_variant` (`editor_sections`), so drafts saved
+since carry the spelled-out look whether or not the Save carried the text lane.
+Editor round trip, every reader and reburn:
+`tests/routes/test_narrated_storyboard_editor.py`.
+
 ### Narrated clip alignment (KRI-456)
 
 Phone narrated edits without a filming guide (`_run_phone_narrated_job`'s
