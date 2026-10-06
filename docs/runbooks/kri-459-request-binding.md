@@ -2,7 +2,7 @@
 
 Parent: https://linear.app/kria/issue/KRI-459
 
-This first delivery preserves complete request entries and binds new drafts to a
+This delivery preserves complete request entries and binds new drafts to a
 request version and the server's media snapshot. Later chat messages cannot change
 an approved request. Source replacement invalidates a pending approval; enriching
 analysis for the same source does not. The dispatch transaction checks again so a
@@ -34,7 +34,21 @@ pause. The downstream clip planner accepts a complete request up to 12,000
 characters; exceeding its limit preserves the full ledger/chat and asks the creator
 which part to work on first. No prefix is silently treated as the complete request.
 
-This PR does not prove that an exported video fulfills the request. Shared analysis
-connections, truthful checks and rendered journey verification follow in the next
-stacked deliveries. Model replay, local database tests and simulator checks are
-reported separately from paid live-model and physical-device export evidence.
+The connected paths preserve unchecked requirements and ask before a known
+requirement-breaking fallback. This does not prove that an exported video fulfills
+the request. Model replay, local database tests and simulator checks are reported
+separately from paid live-model and physical-device export evidence.
+
+PR #1405 merged as `cf0d99cca` during implementation and is included through
+current main. PR #1404 merged as `45d333978`; its alignment code and existing
+`NARRATED_CLIP_ALIGNMENT_ENABLED=true` default are inherited from main.
+Request-binding writers remain gated separately for the reader-first rollout.
+When alignment is unavailable, bound narrated requests ask for recovery rather
+than silently assigning clips to equal-duration buckets.
+
+Capabilities continue to come from `services/creator_capabilities.py` and the
+existing editor tool registry. Montage supports resolved clip ordering and labels;
+Voiceover adds word-timed alignment when enabled; Talking uses its speech/text
+operations; Slides uses its slide-specific text/reorder operations. Each operation
+is checked against the actual format, renderer and flags, rather than claiming
+all four formats support every operation.

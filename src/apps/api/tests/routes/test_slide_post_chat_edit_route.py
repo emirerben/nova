@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from app.auth import get_current_user
 from app.config import settings
 from app.database import get_db
+from app.kria.brief_binding import BriefBinding
 from app.main import app
 from app.routes import plan_items
 from app.routes.creation_threads import CreationCapabilitiesOut
@@ -34,6 +35,8 @@ def _reset(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "slide_post_chat_edit_enabled", True)
     monkeypatch.setattr(settings, "slide_post_rich_text_enabled", True)
     monkeypatch.setattr(settings, "slide_posts_enabled", True)
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", False)
+    monkeypatch.setattr(settings, "kria_brief_binding_user_ids", [])
     yield
     app.dependency_overrides.clear()
 
@@ -147,6 +150,7 @@ def test_request_schema_rejects_an_empty_message_and_long_history(
     ids = [uuid.uuid4()]
     item, _ = _install(monkeypatch, _draft(ids, version=2), ids)
     assert _post(client, item, message="").status_code == 422
+    assert _post(client, item, message="x" * 12_001).status_code == 422
     assert _post(client, item, turns=[{"role": "user"}] * 13).status_code == 422
 
 
@@ -232,3 +236,115 @@ def test_rich_elements_roundtrip_through_the_client_draft(
     assert _post(client, item, draft=draft.model_dump(mode="json")).status_code == 200
     sent = run.await_args.kwargs["draft"]
     assert sent.slides[0].edits.texts[0].label_source == "place"
+
+
+def test_writer_mints_binding_from_prior_request_and_unsaved_draft(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asset_id = uuid.uuid4()
+    stored = _draft([asset_id], version=4, caption="saved")
+    item, run = _install(monkeypatch, stored, [asset_id])
+    thread = SimpleNamespace(id=uuid.uuid4())
+    assets = [
+        SimpleNamespace(id=asset_id, kind="image", gcs_generation=None, content_fingerprint=None)
+    ]
+    prior = BriefBinding.create(
+        thread.id,
+        None,
+        latest_message="Keep the first caption.",
+        media_snapshot=plan_items._slide_post_media_snapshot(item, stored, assets),
+    )
+    stored = stored.model_copy(update={"brief_binding": prior})
+    item.slide_post = stored.model_dump(mode="json")
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    monkeypatch.setattr(plan_items, "_slide_post_thread_for_item", AsyncMock(return_value=thread))
+    unsaved = _draft([asset_id], version=1, caption="editor-only caption")
+
+    response = _post(
+        client,
+        item,
+        message="Change only the first caption.",
+        draft=unsaved.model_dump(mode="json"),
+    )
+
+    assert response.status_code == 200, response.text
+    binding = run.await_args.kwargs["brief_binding"]
+    assert binding is not None
+    assert binding.creator_request == (
+        "Keep the first caption.\n\nLatest message: Change only the first caption."
+    )
+    assert binding.media_snapshot["item_id"] == str(item.id)
+    assert binding.media_snapshot["draft"]["caption"] == "editor-only caption"
+
+
+def test_old_client_draft_keeps_stored_binding_when_writers_are_disabled(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asset_id = uuid.uuid4()
+    stored = _draft([asset_id], version=2)
+    item, run = _install(monkeypatch, stored, [asset_id])
+    binding = BriefBinding.create(uuid.uuid4(), None, latest_message="original request")
+    stored = stored.model_copy(update={"brief_binding": binding})
+    item.slide_post = stored.model_dump(mode="json")
+
+    response = _post(client, item, draft=_draft([asset_id], version=1).model_dump(mode="json"))
+
+    assert response.status_code == 200, response.text
+    assert run.await_args.kwargs["draft"].brief_binding == binding
+    assert run.await_args.kwargs["brief_binding"] is None
+
+
+def test_writer_rejects_context_over_12k_without_running_agent(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asset_id = uuid.uuid4()
+    stored = _draft([asset_id], version=2)
+    item, run = _install(monkeypatch, stored, [asset_id])
+    thread = SimpleNamespace(id=uuid.uuid4())
+    assets = [
+        SimpleNamespace(id=asset_id, kind="image", gcs_generation=None, content_fingerprint=None)
+    ]
+    prior = BriefBinding.create(
+        thread.id,
+        None,
+        latest_message="x" * 11_999,
+        media_snapshot=plan_items._slide_post_media_snapshot(item, stored, assets),
+    )
+    item.slide_post = stored.model_copy(update={"brief_binding": prior}).model_dump(mode="json")
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    monkeypatch.setattr(plan_items, "_slide_post_thread_for_item", AsyncMock(return_value=thread))
+
+    response = _post(client, item, message="small")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["outcome"] == "unsupported"
+    assert run.await_count == 0
+
+
+def test_writer_keeps_prior_request_when_assets_changed(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old_asset, new_asset = uuid.uuid4(), uuid.uuid4()
+    stored = _draft([new_asset], version=2)
+    item, run = _install(monkeypatch, stored, [new_asset])
+    thread = SimpleNamespace(id=uuid.uuid4())
+    old_assets = [
+        SimpleNamespace(id=old_asset, kind="image", gcs_generation=None, content_fingerprint=None)
+    ]
+    old_draft = _draft([old_asset], version=1)
+    prior = BriefBinding.create(
+        thread.id,
+        None,
+        latest_message="Keep my original title.",
+        media_snapshot=plan_items._slide_post_media_snapshot(item, old_draft, old_assets),
+    )
+    item.slide_post = stored.model_copy(update={"brief_binding": prior}).model_dump(mode="json")
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    monkeypatch.setattr(plan_items, "_slide_post_thread_for_item", AsyncMock(return_value=thread))
+
+    response = _post(client, item, message="Add a label to the new photo.")
+
+    assert response.status_code == 200, response.text
+    assert run.await_args.kwargs["brief_binding"].creator_request == (
+        "Keep my original title.\n\nLatest message: Add a label to the new photo."
+    )

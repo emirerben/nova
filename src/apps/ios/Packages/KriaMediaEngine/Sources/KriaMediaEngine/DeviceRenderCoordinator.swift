@@ -156,6 +156,11 @@ public actor DeviceRenderCoordinator {
     }
     public func snapshot() -> DeviceRenderReceipt? { receipt }
     public func isBusy() -> Bool { running != nil }
+    /// Capture presentation and liveness together. Separate actor calls can pair
+    /// a transient localReady receipt with an idle task that has already synced.
+    public func observationSnapshot() -> (receipt: DeviceRenderReceipt?, exportProgress: Double?, isBusy: Bool) {
+        (receipt, running == nil ? nil : exportFraction, running != nil)
+    }
     /// Export progress of the running attempt, or nil when no encode is running or the exporter reports none.
     public func exportProgress() -> Double? { running == nil ? nil : exportFraction }
     private func recordExport(_ fraction: Double, attempt: UUID) {

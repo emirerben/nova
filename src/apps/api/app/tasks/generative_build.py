@@ -2573,7 +2573,7 @@ def _run_generative_job_impl(
         raw_creator_request = all_candidates.get("creator_request")
         if not raw_creator_request and isinstance(all_candidates.get("brief"), dict):
             raw_creator_request = (all_candidates.get("brief") or {}).get("creator_request")
-        creator_request = str(raw_creator_request or "")[:1000]
+        creator_request = str(raw_creator_request or "")
         # Per-user style (Creator Agent M1). Absent on legacy/public jobs →
         # all render branches fall through to today's byte-identical behavior.
         user_style = _effective_render_user_style(all_candidates)
@@ -4452,7 +4452,7 @@ def _run_phone_voiceover_montage_job(
     landscape_fit: str = all_candidates.get("landscape_fit") or "fill"
     variant_policy: str | None = all_candidates.get("variant_policy") or None
     montage_preset = coerce_montage_preset(all_candidates.get("montage_preset"))
-    creator_request = str(all_candidates.get("creator_request") or "")[:1000]
+    creator_request = str(all_candidates.get("creator_request") or "")
     user_style = _effective_render_user_style(all_candidates)
     raw_creator_strategy = all_candidates.get("creator_strategy") or {}
     creator_opening_title = raw_creator_strategy.get("opening_title")
@@ -5169,6 +5169,55 @@ def _resolve_phone_song_bed(job_id: str, user_song: Any) -> Any:
     )
 
 
+def _save_request_recovery(
+    job_id: str,
+    snapshot: dict,
+    *,
+    ownership_epoch: int | None,
+    message: str,
+    receipts: list[dict] | None = None,
+) -> bool:
+    """Persist the exact recovery choice under the same owner/generation fence."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.brief_checks import PlanFacts, build_receipts  # noqa: PLC0415
+
+    binding = BriefBinding.model_validate(snapshot["creator_brief_binding"])
+    brief = binding.resolve()
+    generation = snapshot.get("creator_generation_id")
+    if receipts is None:
+        receipts = [
+            receipt.model_dump(mode="json")
+            for receipt in build_receipts(
+                brief.live() if brief else [], PlanFacts(), include_unchecked=True
+            )
+        ]
+    stamped = [
+        {**row, "brief_version": brief.version if brief else None, "generation_id": generation}
+        for row in receipts
+    ]
+    with _sync_session() as db:
+        entry = _lock_owned_entry_job(db, job_id)
+        if entry is None or entry[1] != ownership_epoch or entry[0].status == _CANCELLED_JOB_STATUS:
+            return False
+        job = entry[0]
+        current = copy.deepcopy(job.assembly_plan or {})
+        if (
+            current.get("creator_generation_id") != generation
+            or (current.get("creator_brief_binding") or {}).get("digest") != binding.digest
+        ):
+            return False
+        current["request_recovery"] = {
+            "message": message,
+            "requirement_receipts": stamped,
+            "brief_version": brief.version if brief else None,
+            "generation_id": generation,
+            "binding_digest": binding.digest,
+        }
+        job.assembly_plan = current
+        db.commit()
+    return True
+
+
 def _run_phone_unified_montage_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> dict | None:
@@ -5331,14 +5380,58 @@ def _run_phone_unified_montage_job(
             plan_facts_from_unified_montage,
         )
 
+        record["generation_id"] = generation
         record["requirement_receipts"] = [
             {
                 **receipt.model_dump(mode="json"),
                 "brief_version": brief.version,
                 "generation_id": generation,
             }
-            for receipt in build_receipts(brief.live(), plan_facts_from_unified_montage(record))
+            for receipt in build_receipts(
+                brief.live(),
+                plan_facts_from_unified_montage(record),
+                include_unchecked=bool(snapshot.get("creator_brief_binding")),
+            )
         ]
+        if snapshot.get("creator_brief_binding") and any(
+            row.get("verification") == "checked" and row["status"] != "met"
+            for row in record["requirement_receipts"]
+        ):
+            from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+            failures = [
+                row
+                for row in record["requirement_receipts"]
+                if row.get("verification") == "checked" and row["status"] != "met"
+            ]
+            record_pipeline_event(
+                "montage",
+                "requirement_recovery",
+                {
+                    "stage": "compile",
+                    "decision": "ask_before_simplifying",
+                    "generation_id": generation,
+                    "requirement_receipts": failures,
+                },
+            )
+            reasons = " ".join(
+                dict.fromkeys(
+                    row.get("reason") or "A requested change is missing." for row in failures
+                )
+            )
+            recovery_message = (
+                f"{reasons} Your draft is saved. Should I try again or simplify this request?"
+            )
+            if not _save_request_recovery(
+                job_id,
+                snapshot,
+                ownership_epoch=ownership_epoch,
+                message=recovery_message,
+                receipts=record["requirement_receipts"],
+            ):
+                return None
+            raise UnsupportedPhonePlan(recovery_message)
 
     with _sync_session() as db:
         entry_row = _lock_owned_entry_job(db, job_id)
@@ -6952,6 +7045,30 @@ def _run_phone_narrated_job(
                     ordered_ids, step_timings = aligned
                     step_clip_ids = list(ordered_ids)
                 else:
+                    if snapshot.get("creator_brief_binding") and len(ordered_ids) > 1:
+                        record_pipeline_event(
+                            "narrated",
+                            "requirement_recovery",
+                            {
+                                "stage": "alignment",
+                                "decision": "ask_before_simplifying",
+                                "reason": "spoken_word_alignment_unavailable",
+                                "generation_id": generation,
+                            },
+                        )
+                        recovery_message = (
+                            "I couldn't match the narration to the actions reliably. "
+                            "Your draft is saved. Should I try again "
+                            "or use a simpler clip sequence?"
+                        )
+                        if not _save_request_recovery(
+                            job_id,
+                            snapshot,
+                            ownership_epoch=ownership_epoch,
+                            message=recovery_message,
+                        ):
+                            return None
+                        raise UnsupportedPhonePlan(recovery_message)
                     n_clips = len(ordered_ids)
                     target_count = max(1, min(n_clips, len(phrases)))
                     if len(phrases) > target_count:
@@ -21118,6 +21235,7 @@ def _narrated_storyboard_plan(
             NarratedStoryboardInput,
             NarratedStoryboardSegment,
         )
+        from app.services.clip_understanding import understanding_payload  # noqa: PLC0415
 
         clip_by_id = {str(getattr(meta, "clip_id", "")): meta for meta in clip_metas}
         clips = []
@@ -21125,13 +21243,18 @@ def _narrated_storyboard_plan(
             meta = clip_by_id.get(clip_id)
             if meta is None:
                 continue
+            understanding = understanding_payload(meta)
             clips.append(
                 NarratedStoryboardClip(
                     clip_id=clip_id,
-                    summary=str(getattr(meta, "hook_text", "") or "")[:500],
+                    # KRI-459: use the shared record's summary; hook_text is a
+                    # legacy fallback for older analysis rows without one.
+                    summary=str(
+                        understanding.get("summary") or getattr(meta, "hook_text", "") or ""
+                    )[:500],
                     subject=str(getattr(meta, "detected_subject", "") or "")[:240],
                     transcript=str(getattr(meta, "transcript", "") or "")[:500],
-                    content_type=str(getattr(meta, "content_type", "broll") or "broll"),
+                    content_type=str(understanding.get("content_type") or "broll"),
                     duration_s=float(clip_durations_s.get(clip_id, 0.0) or 0.0) or None,
                     best_moments=[
                         moment if isinstance(moment, Mapping) else moment.model_dump(mode="json")
@@ -21178,7 +21301,7 @@ def _narrated_storyboard_plan(
                 words=words,
                 segments=segments,
                 clips=clips,
-                creator_request=(creator_request or "")[:1000],
+                creator_request=creator_request or "",
                 language=str(getattr(transcript, "language", "") or ""),
             ),
             ctx=RunContext(job_id=job_id),
@@ -21333,7 +21456,7 @@ def _narrated_clip_alignment_steps(
                     )
                     for clip_id in clip_ids
                 ],
-                creator_request=(creator_request or "")[:1000],
+                creator_request=creator_request or "",
                 order_locked=order_locked,
                 language=str(getattr(transcript, "language", "") or ""),
             ),

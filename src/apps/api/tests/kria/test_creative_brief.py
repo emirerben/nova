@@ -669,7 +669,10 @@ def test_an_exact_per_clip_text_missing_from_an_editor_edit_is_still_reported() 
         ("partial", "That exact text isn't in this edit.")
     ]
     found = plan_facts_from_editor_payload({"bars": [{"text": "Day 1"}]})
-    assert [r.status for r in build_receipts(brief.live(), found)] == ["met"]
+    # A loose editor text list cannot establish that every clip got this text.
+    assert build_receipts(brief.live(), found) == []
+    [unchecked] = build_receipts(brief.live(), found, include_unchecked=True)
+    assert unchecked.status == "partial" and unchecked.verification == "unchecked"
 
 
 def test_reply_keeps_summary_only_when_everything_is_met() -> None:
@@ -1160,7 +1163,8 @@ def test_clip_scoped_text_checks_only_that_clip() -> None:
 
 def test_editor_payload_facts_never_report_per_clip_text_as_not_possible() -> None:
     facts = plan_facts_from_editor_payload({"text_elements": [{"text": "Galata"}]})
-    assert check_requirement(_req("text", "clip:c1", literal="Galata"), facts).status == "met"
+    scoped = check_requirement(_req("text", "clip:c1", literal="Galata"), facts)
+    assert scoped.status == "partial" and not is_judged(_req("text", "clip:c1"), scoped)
     req = _req("text", "per_clip")
     assert not is_judged(req, check_requirement(req, facts))
 

@@ -2079,6 +2079,14 @@ async def read_creative_brief(
         .scalars()
         .all()
     )
+    session = (
+        await db.get(CreatorAgentSession, thread.active_creator_agent_session_id)
+        if thread.active_creator_agent_session_id is not None
+        else None
+    )
+    generation = (
+        str(session.target_generation_id) if session and session.target_generation_id else None
+    )
     live = {req.id: req for req in brief.live()}
     newest: dict[str, RequirementReceipt] = {}
     for event in events:
@@ -2087,13 +2095,28 @@ async def read_creative_brief(
                 receipt = RequirementReceipt.model_validate(raw)
             except ValueError:
                 continue
+            if receipt.brief_version is not None and receipt.brief_version != brief.version:
+                continue
+            if receipt.generation_id is not None and receipt.generation_id != generation:
+                continue
+            # A changed stable ID cannot inherit success from an old unversioned receipt.
+            # Version 1 is the only legacy shape with no earlier wording to
+            # confuse it; from version 2 onward, require a durable version pin
+            # even if the rollout flag is later disabled.
+            if receipt.brief_version is None and brief.version > 1:
+                continue
             # Older events can hold a "can't verify" receipt that judged nothing;
             # it is never a requirement's outcome, so the requirement stays open.
             rid = receipt.requirement_id
-            if rid not in newest and is_judged(live.get(rid), receipt):
+            if rid not in newest and (
+                is_judged(live.get(rid), receipt) or receipt.verification == "unchecked"
+            ):
                 newest[rid] = receipt
     receipts = list(newest.values())
-    shown = apply_receipt_statuses(brief, [r.model_dump(mode="json") for r in receipts])
+    shown = apply_receipt_statuses(
+        brief,
+        [r.model_dump(mode="json") for r in receipts if is_judged(live.get(r.requirement_id), r)],
+    )
     return CreativeBriefOut(
         thread_id=str(thread.id),
         version=shown.version,
