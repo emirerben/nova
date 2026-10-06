@@ -293,6 +293,76 @@ import KriaMediaEngine
         XCTAssertGreaterThan(cloudNarrated.anchorY, phoneNarrated.anchorY, "cloud Narrated burns lower than the phone")
     }
 
+    /// The read-only opening title of a phone Voiceover edit, exactly as the
+    /// status route sends it (`phone_narrated_plan.narrated_title_element`).
+    /// A long title arrives fitted into the top band: smaller, its centre lower
+    /// (`narrated_title.narrated_title_placement`).
+    static func readOnlyTitle(_ text: String, yFrac: Double = 0.15, size: Double = 120) -> EditorTextElement {
+        EditorTextElement(id: "narrated-title", text: text, startS: 0, endS: 1.6, role: "generative_intro", raw: [
+            "id": .string("narrated-title"), "text": .string(text), "start_s": .number(0), "end_s": .number(1.6),
+            "role": .string("generative_intro"), "position": .string("custom"), "x_frac": .number(0.5), "y_frac": .number(yFrac),
+            "font_family": .string("Playfair Display"), "size_px": .number(size), "size_class": .string("large"),
+            "alignment": .string("center"), "effect": .string("fade-in"), "removed": .bool(false), "behind_subject": .bool(false),
+            "source_params": .object(["narrated_storyboard": .string("intro"), "read_only": .bool(true)]),
+        ])
+    }
+
+    // KRI-455: the preview draws a phone Voiceover edit's read-only title where
+    // the phone exports it. Expected runs are the server's compiled `title-0`
+    // layer for the same element (`phone_narrated_plan._compile_title_layers`,
+    // portrait): same font file and size, same anchor, same line breaks and
+    // line x, same shadow, same fade-in. The long title is the fitted one:
+    // 105 px on three lines, its block's top on the 6% safe margin, where the
+    // 120 px preset put its first line above the frame. Baselines differ by
+    // under a pixel per line away from the block's centre: the server
+    // truncates the line step to whole pixels (`text_overlay_skia._measure_block`),
+    // the native layout doesn't. The title has no timeline item (nothing may select it), draws
+    // beneath the captions like the export, and its caption mirror is still
+    // skipped.
+    func testReadOnlyTitleCompilesLikeTheExportedPhoneTitle() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 6,
+            trimIn: 0, trimOut: 6, sourceDuration: 6, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let mirror = EditorTextElement(id: "mirror", text: "First we pack", startS: 0, endS: 2,
+            role: "generative_sequence", raw: ["source_params": .object(["source": .string("caption_cue")])])
+        let cueItem = NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: "cue"), start: 0, end: 2)
+        let shadow = TextBlurLayer(color: TextInk(red: 0, green: 0, blue: 0, alpha: 160.0 / 255), sigma: 12, dx: 0, dy: 6)
+        let exported: [(String, Double, Double, Double, [(String, Double, Double)])] = [
+            ("Cacio e pepe in 10 minutes", 0.15, 120, 288,
+             [("Cacio e pepe in", 123.66, 246.84), ("10 minutes", 238.86, 429.84)]),
+            ("Çılbır: the Turkish eggs everyone gets wrong", 0.1796, 105, 344.832,
+             [("Çılbır: the Turkish", 86.92, 228.94), ("eggs everyone gets", 88.81, 388.94), ("wrong", 383.24, 548.94)]),
+        ]
+        for (text, yFrac, size, anchorY, lines) in exported {
+            let document = EditorDocument(editFormat: "narrated_planned",
+                textElements: [Self.readOnlyTitle(text, yFrac: yFrac, size: size), mirror],
+                captionCues: [.init(id: "cue", startS: 0, endS: 2, text: "First we pack")])
+            let recipe = try compiler.compile(document: document, clips: [clip], items: [cueItem], sources: [0: source],
+                                              deviceCaptions: true).recipe
+            XCTAssertEqual(recipe.textLayers.map(\.id).first, "narrated-title", "the title draws beneath the captions")
+            XCTAssertEqual(recipe.textLayers.count, 2, "title + the cue; the caption mirror is skipped")
+            let title = try XCTUnwrap(recipe.textLayers.first)
+            XCTAssertEqual(title.start, 0)
+            XCTAssertEqual(title.end, 1.6, accuracy: 0.0001)
+            XCTAssertEqual(title.effect, .fadeIn)
+            XCTAssertNil(title.motion)
+            XCTAssertEqual(title.anchorX, 540, accuracy: 0.001)
+            XCTAssertEqual(title.anchorY, anchorY, accuracy: 0.001)
+            XCTAssertEqual(title.runs.map(\.text), lines.map(\.0), text)
+            for (run, line) in zip(title.runs, lines) {
+                XCTAssertEqual(run.fontAssetID, "font-PlayfairDisplay-Bold.ttf")
+                XCTAssertEqual(run.fontSize, size)
+                XCTAssertEqual(run.x, line.1, accuracy: 0.01, line.0)
+                XCTAssertEqual(run.baselineY, line.2, accuracy: 2, line.0)
+                XCTAssertEqual(run.fill, TextInk(red: 1, green: 1, blue: 1, alpha: 1))
+                XCTAssertEqual(run.strokeWidth, 0)
+                XCTAssertEqual(run.blurLayers, [shadow])
+            }
+        }
+    }
+
     // KRI-110: guided-story captions are caption_cue-tagged TextElements, not
     // caption_cues rows, so the block above never sees them. The generic
     // per-element pass must apply the same caption_meta styling via

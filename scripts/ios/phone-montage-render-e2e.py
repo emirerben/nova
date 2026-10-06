@@ -55,10 +55,14 @@ goes through `compile_phone_voiceover_montage_plan` at all:
                      .compile_phone_narrated_plan`: two clips tiled onto
                      narration step windows; the second clip is SHORTER than
                      its step, so its `TimelineClip.rate` is exercised < 1
-                     (slow-down, never freeze-hold) -- plus captions and an
-                     audible footage bed under the voice (basicComposition/
-                     local1080Export/narrationAudio/audioMix/variableSpeed/
-                     positionedText/animatedText).
+                     (slow-down, never freeze-hold) -- plus captions, an
+                     opening title (KRI-455) and an audible footage bed under
+                     the voice (basicComposition/local1080Export/
+                     narrationAudio/audioMix/variableSpeed/positionedText/
+                     animatedText). The case also carries the title element
+                     the editor preview draws (`title_element`), so
+                     `DeviceMontageRenderE2ETests` can render the preview's
+                     own compile of it and compare it with the export.
 
 The captioned cases additionally write `caption_samples` into `e2e.json`
 (`{name, t, region, expect_text}`): a region derived from the compiled
@@ -120,7 +124,11 @@ from app.pipeline.generative_decision import (
     GenerativeVariantDecision,
 )
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
-from app.pipeline.phone_narrated_plan import NarratedPhoneStep, compile_phone_narrated_plan
+from app.pipeline.phone_narrated_plan import (
+    NarratedPhoneStep,
+    compile_phone_narrated_plan,
+    narrated_title_text_elements,
+)
 from app.pipeline.phone_recipe_shared import PhoneMusicBed, PhoneNarrationBed
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, SubtitledOverlayCard
 from app.pipeline.phone_subtitled_plan import PhoneCutaway, compile_phone_subtitled_plan
@@ -668,6 +676,8 @@ def main() -> None:
         {"text": "Look at this view", "start_s": 0.5, "end_s": 2.0},
         {"text": "Now check this out", "start_s": 5.0, "end_s": 6.5},
     ]
+    narrated_title = "Cacio e pepe in 10 minutes"
+    narrated_title_end_s = 1.6
     try:
         recipes["narrated"] = compile_phone_narrated_plan(
             narrated_steps,
@@ -679,6 +689,8 @@ def main() -> None:
             # replaces source audio entirely).
             mix=0.6,
             caption_cues=narrated_cues,
+            opening_title=narrated_title,
+            opening_title_end_s=narrated_title_end_s,
         )
     except (UnsupportedPhonePlan, ValueError) as exc:
         compile_errors["narrated"] = f"{type(exc).__name__}: {exc}"
@@ -765,13 +777,19 @@ def main() -> None:
         canvas_width=CANVAS["width"],
         canvas_height=CANVAS["height"],
     )
+    narrated_title_layer, *narrated_captions = recipes["narrated"].text_layers
+    narrated_title_region = _caption_region(
+        narrated_title_layer,
+        canvas_width=CANVAS["width"],
+        canvas_height=CANVAS["height"],
+    )
     narrated_region0 = _caption_region(
-        recipes["narrated"].text_layers[0],
+        narrated_captions[0],
         canvas_width=CANVAS["width"],
         canvas_height=CANVAS["height"],
     )
     narrated_region1 = _caption_region(
-        recipes["narrated"].text_layers[1],
+        narrated_captions[1],
         canvas_width=CANVAS["width"],
         canvas_height=CANVAS["height"],
     )
@@ -1081,7 +1099,26 @@ def main() -> None:
                     {"name": "c0", "t": 1.5, "x": 540, "y": 200, "rgb": [255, 215, 0]},
                     {"name": "c1", "t": 7.0, "x": 540, "y": 200, "rgb": [250, 128, 114]},
                 ],
+                # KRI-455: what the status route shows the editor, and where
+                # its preview must match the export.
+                "title_element": narrated_title_text_elements(
+                    recipes["narrated"], narrated_title, end_s=narrated_title_end_s
+                )[0],
+                "title_region": narrated_title_region,
+                "title_preview_samples": [0.3, 1.0, 1.4],
                 "caption_samples": [
+                    {
+                        "name": "title_on",
+                        "t": 1.0,
+                        "region": narrated_title_region,
+                        "expect_text": True,
+                    },
+                    {
+                        "name": "title_off",
+                        "t": 3.0,
+                        "region": narrated_title_region,
+                        "expect_text": False,
+                    },
                     {"name": "cue0_on", "t": 0.9, "region": narrated_region0, "expect_text": True},
                     {
                         "name": "cue0_gap",
