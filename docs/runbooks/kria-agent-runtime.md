@@ -122,6 +122,74 @@ cases for each canonical token. Regenerate it only through
 then run the focused gate. These cases freeze requested intent and recovery
 coverage; they do not substitute for the consented live or real-media gates.
 
+## Incident corpus
+
+Every production request-following failure becomes a permanent, redacted fixture
+that CI re-checks (KRI-470 / KRI-480). Records live in
+`src/apps/api/tests/fixtures/incidents/*.json`; the schema and loader are in
+`src/apps/api/tests/incidents/`; the runner is `test_incident_corpus.py`:
+
+```bash
+cd src/apps/api && .venv/bin/python -m pytest tests/incidents -q
+```
+
+It runs in the normal test-api CI shards (every `tests/**/test_*.py` is picked up).
+
+**What the corpus proves, and what it does not.** pytest can prove contract
+construction (real `build_render_contract` over a real `BriefBinding`), what the
+real verifiers decline (`verify_phone_recipe` on a recipe from the real speech
+compiler, `preflight_cloud_contract`), and whether the planner asks a question.
+It cannot hear or watch a render. Output facts (voice present, audio playing once,
+order on screen) are judged against recorded *observations*: the incident's own
+(plan fields, creator report) and, after a fix, a post-fix observation that must
+name its `proof` (artifact + command). Real output proof belongs to the `repro`
+command (swift export proof / `make local-render`); a record whose repro is
+`pending` names the ticket that owns it. Never describe the corpus as output
+coverage it does not run.
+
+**Record format** (`tests/incidents/models.py`): `id`, `incident` (Linear id +
+one line), `kind` (`output` | `clarification` | `routing`), `approved` (strategy +
+brief exactly as persisted, validated against `CreativeStrategy`/`CreativeBrief`),
+`inputs` (redacted media: opaque id, duration, capture time, speech facts; the
+conversation `turns` for clarification records; optional `phone_recipe`,
+`cloud_preflight`, `synthetic` clips), `expect` (`contract`, `refusal`, `question`
+or `no_question`, `output_facts`), `observations`, `xfail`, and `repro`.
+`synthetic` clips are deterministic ffmpeg colour/tone substitutes regenerated on
+demand (`tests/incidents/synthetic.py`); generated media is never committed.
+
+**Capture-fail-first workflow.**
+
+1. Capture the failing case read-only and add the record first. For prod:
+   `python scripts/admin.py --prod GET /admin/jobs?limit=200`, then
+   `jobs/<id>/debug` and `creation-threads/<thread>/turns` (GET only; see
+   [agent navigation](agent-navigation.md)).
+2. Assert the creator's *request* (the expectation), not the bad behaviour. It must
+   fail for the intended reason: run it with `--runxfail` and read the message.
+   Mark it `xfail(strict=True)` with the owning ticket, scoped to `contract`,
+   `question` or `output`.
+3. The fixing PR makes it pass and flips its own records: remove the `xfail`, add
+   the post-fix observation with its proof. A stale xfail fails CI (strict).
+4. Keep a passing control next to the failing assertion (the same incident through a
+   path that already works) and cover phone and cloud variants where both exist:
+   `kri469-voice-clip-ignored` (phone) and `kri469-cloud-variant` (cloud) are the pattern.
+
+**Redaction rules.** Public fixtures never carry private media, credentials or
+identity: no signed URLs, GCS paths, emails, user/job/thread ids, creator names,
+captions or transcripts that identify a person, places, or tokens. Media ids are
+opaque hashes, capture times are rebased to a synthetic epoch (order and gaps kept),
+speech is reduced to `has_speech`/`to_camera`. Quote a creator request only when it
+contains no identifying detail. Raw prod payloads stay out of git and out of
+tickets; summarize decision names and outcomes.
+
+**Owner and cadence.** Owner: Emir Erben. Review weekly, 15 minutes. Checklist:
+
+- [ ] Contract-decline reasons seen this week (which `unresolved`/refusal messages fired, and for which creator ask)
+- [ ] Escaped failures: bad outputs that shipped without a decline (new records, written failing first)
+- [ ] New capability gaps (asks the product cannot yet honour, with an alternative offered)
+- [ ] Unnecessary questions (asked when the request was already clear)
+- [ ] Refusal dead ends (a refusal with no next step for the creator)
+- [ ] Whether final outputs obeyed the creator's answers to questions
+
 ## Deployment order
 
 1. Deploy additive migrations and queue/task support with runtime v2 disabled.
