@@ -62,6 +62,7 @@ from app.services.phone_rollout import (
     phone_narrated_caption_edits_supported,
     phone_narrated_title_edits_supported,
     phone_subtitled_editor_lanes_supported,
+    phone_subtitled_title_supported,
     phone_voiceover_editor_lanes_supported,
     phone_voiceover_editor_media_supported,
     validate_phone_pilot_recipe,
@@ -105,6 +106,11 @@ PHONE_EDITOR_SAVED_PLAN_FIELD = "_phone_editor_saved_plan_v1"
 _SUBTITLED_EDITOR_SECTIONS = frozenset(
     {"sound_effects", "media_overlays", "caption_cues", "caption_meta", "landscape_fit"}
 )
+# KRI-467: ...plus its text lane (the opening title and any creator text),
+# only while `phone_subtitled_title_supported`. Every Save compiles the
+# variant's persisted text rows, whichever sections it carries, so a caption,
+# lane or framing Save never drops the title.
+_SUBTITLED_TEXT_SECTIONS = frozenset({"text_elements"})
 
 # The native-editor sections a phone `narrated` (recorded voiceover) variant
 # always honours (KRI-280): the caption lines and their look. Every other
@@ -561,7 +567,10 @@ def _compile_subtitled_editor_commit(
         raise ValueError("phone Talking edits aren't editable yet")
 
     active_sections = {key for key, value in prep["sections"].items() if value}
-    unsupported_sections = active_sections - _SUBTITLED_EDITOR_SECTIONS
+    allowed_sections = _SUBTITLED_EDITOR_SECTIONS | (
+        _SUBTITLED_TEXT_SECTIONS if phone_subtitled_title_supported() else frozenset()
+    )
+    unsupported_sections = active_sections - allowed_sections
     if unsupported_sections:
         name = sorted(unsupported_sections)[0]
         raise ValueError(f"{name} isn't supported on phone Talking edits yet")
@@ -626,6 +635,10 @@ def _compile_subtitled_editor_commit(
         caption_look=caption_look,
         cutaways=cutaways,
         landscape_fit=landscape_fit,
+        # KRI-467: the staged row's text (already this Save's, when it carries
+        # a text section), in the cut-timeline seconds the cues use.
+        text_elements=variant.get("text_elements") or [],
+        text_elements_user_edited=bool(variant.get("text_elements_user_edited")),
     )
     duck_receipt = sfx_duck_receipt(lanes, recipe)
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(lanes.overlays or cutaways))

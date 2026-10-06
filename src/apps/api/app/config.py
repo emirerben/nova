@@ -296,6 +296,22 @@ class Settings(BaseSettings):
     # builds that keep a `read_only` element out of every editing control
     # (older builds would let it be deleted, and that Save 422s).
     phone_narrated_title_preview_min_client_protocol: int = 4
+    # KRI-467 (titles on phone Talking edits): a confirmed `opening_title` on a
+    # phone-rendered `subtitled` edit (one clip, or the multi-clip Talking head)
+    # renders as an editable text row instead of the planner asking to drop it
+    # (`app.pipeline.phone_subtitled_title`): the worker writes it to the
+    # variant's `text_elements`, the recipe draws it under the captions, and
+    # the editor opens a text lane (`text_elements` capability + Save section)
+    # for phone Talking edits. Also requires "positionedText" + "animatedText"
+    # in `phone_render_verified_features` -- see
+    # `app.services.phone_rollout.phone_subtitled_title_supported`. False: the
+    # planner asks to make the edit without the title again and the editor's
+    # text lane closes, as before; a title already on a variant keeps
+    # rendering and survives Saves. No app build needed (the iOS editor follows
+    # the capability map). Rollback: `fly secrets set
+    # PHONE_SUBTITLED_TITLE_ENABLED=false --app nova-video` + `fly machine
+    # restart <id>` (api + worker).
+    phone_subtitled_title_enabled: bool = True
     # KRI-465 (editable title on phone Voiceover edits): the opening title the
     # status route shows (`narrated_title_text_elements`) opens as an ordinary
     # editable text element: the capability map opens `text_elements` and a
