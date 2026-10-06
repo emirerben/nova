@@ -183,7 +183,7 @@ def test_explicit_opening_title_is_a_pinned_requirement() -> None:
 
 
 @pytest.mark.parametrize(
-    "edit_format", ["subtitled", "talking_head", "narrated", "narrated_planned"]
+    "edit_format", ["subtitled", "narrated", "narrated_planned", "narrated_ready"]
 )
 def test_a_take_length_format_never_pins_a_requested_length(edit_format: str) -> None:
     """Job e1c5f89e (2026-10-06): a 68 s Talking take approved with "keep it under
@@ -216,6 +216,31 @@ def test_a_take_length_format_never_pins_a_requested_length(edit_format: str) ->
     assert contract is not None
     assert contract.duration_s is None
     assert [item.text for item in contract.exact_texts] == ["3 sourdough mistakes"]
+
+
+def test_a_voiceover_montage_runs_as_long_as_its_voiceover() -> None:
+    contract = build_render_contract(
+        {
+            "edit_format": "montage",
+            "audio_strategy": "voiceover",
+            "target_duration_s": 30,
+            "target_duration_requested": True,
+        },
+        generation_id="gen-1",
+    )
+    assert contract is not None
+    assert contract.duration_s is None
+    assert contract.require_voiceover is True
+
+
+def test_a_declared_talking_head_still_pins_its_requested_length() -> None:
+    """The cloud talking-head assembler caps the cut at the target."""
+    contract = build_render_contract(
+        {"edit_format": "talking_head", "target_duration_s": 30, "target_duration_requested": True},
+        generation_id="gen-1",
+    )
+    assert contract is not None
+    assert contract.duration_s == 30
 
 
 def test_a_montage_still_pins_its_requested_length() -> None:

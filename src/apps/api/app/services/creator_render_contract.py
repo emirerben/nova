@@ -27,10 +27,10 @@ REQUIREMENT_VERSION_FIELD = "creator_render_requirements_version"
 # Edit formats whose length is set by the footage, not by a target: a Talking
 # edit keeps the whole take (minus speech-cleanup pauses) and a voiceover edit
 # runs as long as the voiceover. `brief_checks._check_timing` reports the same
-# rule to the creator (KRI-142).
-TAKE_LENGTH_EDIT_FORMATS: frozenset[str] = frozenset(
-    {"subtitled", "talking_head", *NARRATED_EDIT_FORMATS}
-)
+# rule to the creator (KRI-142). A declared `talking_head` is not here: its
+# cloud assembler caps the output at the target, and the phone only reaches a
+# multi-clip Talking head through the narrated family.
+TAKE_LENGTH_EDIT_FORMATS: frozenset[str] = frozenset({"subtitled", *NARRATED_EDIT_FORMATS})
 
 # Every CreativeStrategy field has an explicit ownership note.  This is not a
 # capability claim: only the small core projected by build_render_contract is
@@ -181,13 +181,17 @@ def build_render_contract(
         for index, text in enumerate(typed.shot_labels or ()):
             texts.append(TextRequirement(role="clip", text=text, shot_index=index))
     durations: list[float] = []
-    # A Talking (subtitled / talking_head) or voiceover edit runs as long as the
-    # take or the voiceover: no compiler trims it to a named length, so a length
-    # the creator asked for is not a fact the recipe can prove (the brief receipt
-    # already says the length follows the take). Pinning it would refuse every
-    # such edit at the pin step (job e1c5f89e, 2026-10-06: a 68 s Talking take
-    # approved with "keep it under 45 seconds").
-    length_is_pinnable = typed is None or typed.edit_format not in TAKE_LENGTH_EDIT_FORMATS
+    # A Talking (subtitled / talking_head) edit runs as long as the take and a
+    # voiceover edit (the narrated family, or a montage spined by a recorded
+    # voiceover) as long as the voiceover: no compiler trims those to a named
+    # length, so a length the creator asked for is not a fact the recipe can
+    # prove (the brief receipt already says the length follows the take or the
+    # voiceover). Pinning it would refuse every such edit at the pin step (job
+    # e1c5f89e, 2026-10-06: a 68 s Talking take approved with "keep it under 45
+    # seconds").
+    length_is_pinnable = typed is None or not (
+        typed.edit_format in TAKE_LENGTH_EDIT_FORMATS or typed.audio_strategy == "voiceover"
+    )
     if (
         length_is_pinnable
         and raw.get("target_duration_requested") is True
