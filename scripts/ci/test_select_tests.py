@@ -62,7 +62,6 @@ class ClassificationTests(unittest.TestCase):
             self.assertEqual(ci.affected(path), {"ios"})
         for path in (
             "src/apps/ios/Kria/Features/NativeEditorView.swift",
-            "src/apps/ios/Kria/Core/NativeEditorDocument.swift",
             "src/apps/ios/Tests/KriaUITests/KriaUITests.swift",
             "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/Composition.swift",
             "scripts/ios/cache-inputs.py",
@@ -73,6 +72,14 @@ class ClassificationTests(unittest.TestCase):
             "src/apps/web/public/plan/type-posters/montage.mp4",
         ):
             self.assertEqual(ci.affected(path), {"web", "ios", "ios_ui"})
+
+    def test_swift_server_mirrors_also_run_api_parity_tests(self):
+        for path in (
+            "src/apps/ios/Kria/Core/NativeEditorDocument.swift",
+            "src/apps/ios/Kria/Core/SlidePost.swift",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(ci.affected(path), {"api", "ios", "ios_ui"})
 
     def test_xcode_bundled_web_resources_select_native_coverage(self):
         project = SCRIPT.parents[2] / "src/apps/ios/project.yml"
