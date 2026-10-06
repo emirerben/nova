@@ -260,6 +260,8 @@ def test_unmarked_legacy_variant_projects_byte_identically():
         start_s=start_s,
         end_s=end_s,
         text_size_px=64,
+        # The intro resolver always burns shadow-free; the adapter mirrors it.
+        shadow_enabled=False,
     )
     legacy = build_persistent_intro_overlays(cluster_style=None, **builder_kwargs)
     assert len(legacy) > 2, "fixture must build a real multi-block cluster"

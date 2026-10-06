@@ -191,6 +191,9 @@ class TestLinearRoundTrip:
             reveal_window_s=_ADAPTER_REVEAL_WINDOW_S,
             text_color=text_color,
             layout="linear",
+            # `_resolve_intro_overlay_params` always burns the intro shadow-free;
+            # the adapter mirrors it.
+            shadow_enabled=False,
             **kwargs,
         )
 
@@ -299,6 +302,7 @@ class TestLinearRoundTrip:
                 "highlight_color": "#FFD24A",
                 "position": "center",
                 "role": "generative_intro",
+                "shadow_enabled": False,
                 "start_s": 0.0,
                 "subject_substitute": False,
                 "text": "Open with this",
@@ -632,6 +636,7 @@ class TestClusterRoundTrip:
             layout="cluster",
             text_size_px=60,
             hook_window_s=_HOLD_TO_END_S,
+            shadow_enabled=False,
         )
         assert len(legacy) >= 2, "Cluster should produce at least [reveal, hold] per block"
 
@@ -782,6 +787,7 @@ class TestClusterRoundTrip:
             reveal_window_s=_ADAPTER_REVEAL_WINDOW_S,
             text_color="#FFFFFF",
             layout="linear",
+            shadow_enabled=False,
         )
         roundtrip = build_overlays_from_text_elements(
             text_elements_for_variant(v), video_duration_s=12.0

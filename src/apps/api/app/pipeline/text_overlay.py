@@ -25,6 +25,7 @@ import numpy as np
 import structlog
 
 from app.pipeline.ass_utils import format_ass_time, sanitize_ass_text
+from app.pipeline.font_aliases import registry_font_name
 from app.pipeline.generative_overlays import resolve_line_spacing, resolve_max_width_frac
 from app.pipeline.text_animation_math import (
     HANDWRITING_NOMINAL_SETTLE_S as _HANDWRITING_NOMINAL_SETTLE_S,
@@ -166,9 +167,18 @@ except Exception as _exc:
     _FONT_REGISTRY = {"fonts": {}, "style_defaults": {}}
 
 
+def _registry_entry(font_name: str) -> dict | None:
+    """Registry entry for a font name, resolving legacy aliases ("Inter-Bold").
+
+    The single lookup behind every Pillow/libass font resolution, so an alias
+    burns the same face as the Skia path (`_registry_typeface`).
+    """
+    return _FONT_REGISTRY.get("fonts", {}).get(registry_font_name(font_name))
+
+
 def _registry_font_path(font_name: str) -> str | None:
     """Look up the .ttf file path for a font name in the registry."""
-    entry = _FONT_REGISTRY.get("fonts", {}).get(font_name)
+    entry = _registry_entry(font_name)
     if not entry:
         return None
     path = os.path.join(FONTS_DIR, entry["file"])
@@ -177,15 +187,15 @@ def _registry_font_path(font_name: str) -> str | None:
 
 def _registry_ass_name(font_name: str) -> str:
     """Look up the ASS font name for a font_family from the registry."""
-    entry = _FONT_REGISTRY.get("fonts", {}).get(font_name)
+    entry = _registry_entry(font_name)
     if entry:
-        return entry.get("ass_name", font_name)
+        return entry.get("ass_name", registry_font_name(font_name))
     return font_name
 
 
 def _registry_ass_bold(font_name: str) -> int:
     """Look up the ASS Bold flag for a registry font."""
-    entry = _FONT_REGISTRY.get("fonts", {}).get(font_name)
+    entry = _registry_entry(font_name)
     if entry and "ass_bold" in entry:
         return int(entry["ass_bold"])
     if entry and int(entry.get("weight", 400)) >= 700:
@@ -2318,7 +2328,7 @@ def _resolve_font_family(font_family: str, size: int):
     """
     from PIL import ImageFont  # noqa: PLC0415
 
-    entry = _FONT_REGISTRY.get("fonts", {}).get(font_family)
+    entry = _registry_entry(font_family)
     if not entry:
         return None
     path = os.path.join(FONTS_DIR, entry["file"])
