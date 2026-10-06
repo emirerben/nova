@@ -17,9 +17,11 @@ the worker's own wiring is exercised here with that function mocked --
 from __future__ import annotations
 
 import copy
+import json
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -1923,7 +1925,7 @@ def test_resolve_phone_sound_effect_rejects_wrong_prefix(monkeypatch):
 # --- narrated (WITH a recorded voiceover) -----------------------------------
 
 
-def _fake_narration_bed(_job_id, voiceover_gcs_path, *, narration=None):
+def _fake_narration_bed(_job_id, voiceover_gcs_path, *, narration=None, _default_duration_s=12.0):
     if not voiceover_gcs_path:
         return None
     from app.pipeline.phone_recipe_shared import PhoneNarrationBed
@@ -1932,47 +1934,70 @@ def _fake_narration_bed(_job_id, voiceover_gcs_path, *, narration=None):
         plan_item_id="item-1",
         generation="9",
         fingerprint=RenderFingerprint(sha256="d" * 64, byte_count=999),
-        duration_s=narration.duration_s if narration is not None else 12.0,
+        duration_s=narration.duration_s if narration is not None else _default_duration_s,
     )
 
 
-def _setup_narrated(monkeypatch, *, edit_format="narrated_ready", filming_guide=None):
-    bindings = tuple(_binding(f"c{i}", duration_s=10.0) for i in range(3))
+def _setup_narrated(
+    monkeypatch,
+    *,
+    edit_format="narrated_ready",
+    filming_guide=None,
+    n_clips=3,
+    spoken_words=None,
+    voiceover_s=12.0,
+    metas=None,
+    extra_candidates=None,
+    real_phrases=False,
+    alignment=False,
+    clip_duration_s=10.0,
+):
+    """`alignment=False` pins KRI-456's clip-alignment kill switch off so these
+    tests keep exercising the legacy bucket split without ever building a model
+    client; the alignment tests below opt back in and mock the agent."""
+    bindings = tuple(_binding(f"c{i}", duration_s=clip_duration_s) for i in range(n_clips))
     snapshot = {
         PHONE_SOURCES_FIELD: [b.model_dump(mode="json") for b in bindings],
         "creator_generation_id": "generation",
     }
     all_candidates = {
-        "clip_paths": [f"phone-proxies/c{i}.mp4" for i in range(3)],
+        "clip_paths": [f"phone-proxies/c{i}.mp4" for i in range(n_clips)],
         "edit_format": edit_format,
         "voiceover_gcs_path": "voiceover-uploads/direct/u/i/voice.m4a",
         "filming_guide": filming_guide or [],
         "language": "en",
+        **(extra_candidates or {}),
     }
     job, session = _job_and_session(
         monkeypatch, assembly_plan=snapshot, all_candidates=all_candidates
     )
+    monkeypatch.setattr(gb.settings, "narrated_clip_alignment_enabled", alignment)
 
     monkeypatch.setattr(
         gb,
         "_ingest_clips",
         lambda *a, **k: {
-            "clip_metas": [_Meta(f"c{i}", 5.0) for i in range(3)],
-            "clip_id_to_gcs": {f"c{i}": bindings[i].proxy_path for i in range(3)},
-            "clip_id_to_local": {f"c{i}": f"/tmp/c{i}.mp4" for i in range(3)},
+            "clip_metas": metas or [_Meta(f"c{i}", 5.0) for i in range(n_clips)],
+            "clip_id_to_gcs": {f"c{i}": bindings[i].proxy_path for i in range(n_clips)},
+            "clip_id_to_local": {f"c{i}": f"/tmp/c{i}.mp4" for i in range(n_clips)},
             "probe_map": {},
             "hero": _Meta("c0", 5.0),
         },
         raising=False,
     )
-    monkeypatch.setattr(gb, "_resolve_phone_voiceover_bed", _fake_narration_bed, raising=False)
+    monkeypatch.setattr(
+        gb,
+        "_resolve_phone_voiceover_bed",
+        lambda *a, **k: _fake_narration_bed(*a, _default_duration_s=voiceover_s, **k),
+        raising=False,
+    )
 
     import app.pipeline.phrase_sequence as phrase_mod
     import app.pipeline.transcribe as transcribe_mod
     import app.storage as storage_mod
     import app.tasks.template_orchestrate as to
 
-    words = _words(
+    words = spoken_words or _words(
         ("First", 0.0, 0.5),
         ("clip.", 0.5, 1.0),
         ("Second", 4.0, 4.5),
@@ -1987,17 +2012,18 @@ def _setup_narrated(monkeypatch, *, edit_format="narrated_ready", filming_guide=
         raising=False,
     )
     monkeypatch.setattr(storage_mod, "download_to_file", lambda *a, **k: None, raising=False)
-    monkeypatch.setattr(to, "_probe_duration", lambda *a, **k: 12.0, raising=False)
-    monkeypatch.setattr(
-        phrase_mod,
-        "split_phrases",
-        lambda *a, **k: [
-            {"speech_start_s": 0.0, "speech_end_s": 4.0},
-            {"speech_start_s": 4.0, "speech_end_s": 8.0},
-            {"speech_start_s": 8.0, "speech_end_s": 12.0},
-        ],
-        raising=False,
-    )
+    monkeypatch.setattr(to, "_probe_duration", lambda *a, **k: voiceover_s, raising=False)
+    if not real_phrases:
+        monkeypatch.setattr(
+            phrase_mod,
+            "split_phrases",
+            lambda *a, **k: [
+                {"speech_start_s": 0.0, "speech_end_s": 4.0},
+                {"speech_start_s": 4.0, "speech_end_s": 8.0},
+                {"speech_start_s": 8.0, "speech_end_s": 12.0},
+            ],
+            raising=False,
+        )
     return job, snapshot, session, bindings
 
 
@@ -2197,6 +2223,310 @@ def test_narrated_worker_rejects_format_it_does_not_own(monkeypatch):
     job, snapshot, _session, _bindings = _setup_narrated(monkeypatch, edit_format="montage")
     with pytest.raises(ValueError, match="No phone renderer is registered"):
         gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+
+# --- narrated clip alignment (KRI-456) ---------------------------------------
+#
+# Shaped like prod job 781e23b5 (cacio e pepe, 7 clips in the creator's order,
+# no filming guide): real Whisper word timings, real clip descriptions. The
+# alignment agent is mocked; `tests/agents/test_narrated_clip_alignment.py`
+# covers its parse contract and the live eval covers the model itself.
+
+_CACIO = json.loads(
+    (Path(__file__).parent.parent / "fixtures/narrated_alignment/cacio_e_pepe.json").read_text()
+)
+_CACIO_WORDS = _words(*[(t, s, e) for t, s, e in _CACIO["words"]])
+# Word id (index) of the first word of each sentence the voice uses for a step.
+_CACIO_START_WORD = {
+    "grate": 22,  # "While it cooks, grate a big pile of pecorino."
+    "pepper": 33,  # "Then, toast cracked black pepper ..."
+    "water": 46,  # "Add a ladle of pasta water ..."
+    "toss": 60,  # "Now, take it off the heat and add the cheese ..."
+    "plate": 86,  # "Plate it, more pepper on top, done."
+    "eat": 91,  # "top," -- too close to the end, so the resolver pulls it earlier
+}
+
+
+def _cacio_metas():
+    return [
+        SimpleNamespace(
+            clip_id=f"c{i}",
+            hook_score=5.0,
+            hook_text="",
+            transcript="ご視聴ありがとうございました" if i == 4 else "",
+            clip_summary=clip["summary"],
+            activity=clip["activity"],
+            detected_subject=clip["subject"],
+            setting=clip["setting"],
+            best_moments=[],
+        )
+        for i, clip in enumerate(_CACIO["clips"])
+    ]
+
+
+def _cacio_candidates(*, order_intents: bool = True):
+    intents = [
+        {
+            "op": "order" if order_intents else "include",
+            "status": "resolved",
+            "attribute": clip["label"],
+            "assignments": [{"media_id": f"analysis-proxy-c{i}.mp4", "confidence": 1.0}],
+        }
+        for i, clip in enumerate(_CACIO["clips"])
+    ]
+    return {
+        "creator_request": _CACIO["creator_request"],
+        "creator_strategy": {"resolved_clip_intents": intents},
+    }
+
+
+def _setup_cacio(monkeypatch, *, alignment=True, order_intents=True):
+    return _setup_narrated(
+        monkeypatch,
+        n_clips=7,
+        spoken_words=_CACIO_WORDS,
+        voiceover_s=_CACIO["voiceover_s"],
+        metas=_cacio_metas(),
+        extra_candidates=_cacio_candidates(order_intents=order_intents),
+        real_phrases=True,
+        alignment=alignment,
+        clip_duration_s=20.0,  # long enough that no step needs a speed change
+    )
+
+
+def _mock_alignment_agent(monkeypatch, order, start_words, *, seen=None):
+    from app.agents import _model_client
+    from app.agents.narrated_clip_alignment import (
+        NarratedClipAlignmentAgent,
+        NarratedClipAlignmentOutput,
+        NarratedClipPlacement,
+    )
+
+    def _run(self, input, ctx=None):  # noqa: A002, ARG001
+        if seen is not None:
+            seen.append(input)
+        return NarratedClipAlignmentOutput(
+            placements=[
+                NarratedClipPlacement(clip_id=clip_id, start_word_id=f"w{start_words[i]:06d}")
+                for i, clip_id in enumerate(order)
+            ]
+        )
+
+    monkeypatch.setattr(NarratedClipAlignmentAgent, "run", _run)
+    monkeypatch.setattr(_model_client, "default_client", lambda: None)
+
+
+_CACIO_STARTS = [
+    0,
+    _CACIO_START_WORD["grate"],
+    _CACIO_START_WORD["pepper"],
+    _CACIO_START_WORD["water"],
+    _CACIO_START_WORD["toss"],
+    _CACIO_START_WORD["plate"],
+    _CACIO_START_WORD["eat"],
+]
+
+
+def _windows(job):
+    variant = job.assembly_plan["variants"][0]
+    clip_by_step = {a["step_id"]: a["clip_id"] for a in variant["narrated_clip_assignments"]}
+    return [
+        (clip_by_step[t["step_id"]], t["start_s"], t["end_s"]) for t in variant["narrated_timings"]
+    ]
+
+
+def _capture_pipeline_events(monkeypatch):
+    import app.services.pipeline_trace as pipeline_trace_mod
+
+    events = []
+    monkeypatch.setattr(
+        pipeline_trace_mod,
+        "record_pipeline_event",
+        lambda stage, event, data=None: events.append((stage, event, data)),
+    )
+    return events
+
+
+def test_narrated_without_alignment_reproduces_the_early_clip_bug(monkeypatch):
+    """Today's bucket split: the grating clip is on screen while the voice is
+    still boiling the pasta (the KRI-456 report)."""
+    job, snapshot, _session, _bindings = _setup_cacio(monkeypatch, alignment=False)
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    windows = _windows(job)
+    assert [w[0] for w in windows] == [f"clip_{i}" for i in range(7)]
+    # clip_1 (grating) starts at 3.95, but "grate a big pile of pecorino" is at 10.07+.
+    assert windows[1][1] == pytest.approx(3.95)
+
+
+def test_narrated_alignment_puts_each_clip_where_the_voice_describes_it(monkeypatch):
+    job, snapshot, _session, _bindings = _setup_cacio(monkeypatch)
+    events = _capture_pipeline_events(monkeypatch)
+    seen = []
+    _mock_alignment_agent(monkeypatch, [f"c{i}" for i in range(7)], _CACIO_STARTS, seen=seen)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    windows = _windows(job)
+    assert [w[0] for w in windows] == [f"clip_{i}" for i in range(7)]
+    starts = [w[1] for w in windows]
+    # boil 0 -> "While it cooks, grate" (10.07) -> "Then, toast" (14.7) -> "Add a ladle"
+    # (20.11) -> "Now, take it off the heat" (24.44) -> "Plate it" (32.708) -> eat last.
+    assert starts[:6] == pytest.approx([0.0, 10.07, 14.7, 20.11, 24.44, 32.708])
+    # "top," (34.468) leaves <1.5 s, so the eating shot is pulled back to a 1.5 s floor
+    # (voiceover end 35.768 - 1.5) and the plating step keeps the rest.
+    assert starts[6] == pytest.approx(34.268)
+    assert windows[-1][2] == pytest.approx(_CACIO["voiceover_s"])
+    assert all(end - start >= 1.5 - 1e-6 for _clip, start, end in windows)
+    for (_c, _s, end), (_c2, nxt, _e2) in zip(windows, windows[1:]):
+        assert end == pytest.approx(nxt)
+
+    # The agent saw the creator's labels, visual descriptions and a locked order,
+    # and never the clip's hallucinated transcript.
+    (agent_input,) = seen
+    assert agent_input.order_locked is True
+    assert [c.clip_id for c in agent_input.clips] == [f"c{i}" for i in range(7)]
+    assert agent_input.clips[1].creator_label == "grating the pecorino"
+    assert "hand grating cheese" in agent_input.clips[1].description
+    assert "ご視聴" not in json.dumps(
+        [c.model_dump() for c in agent_input.clips], ensure_ascii=False
+    )
+    assert agent_input.words[22]["word_id"] == "w000022"
+
+    (event,) = [e for e in events if e[1] == "narrated_clip_alignment"]
+    assert event[0] == "narrated"
+    assert event[2]["status"] == "aligned"
+    assert event[2]["order_locked"] is True
+    assert [c["clip_id"] for c in event[2]["clips"]] == [f"c{i}" for i in range(7)]
+    assert event[2]["clips"][1]["start_s"] == pytest.approx(10.07)
+
+
+def test_narrated_alignment_may_reorder_when_the_brief_did_not_fix_the_order(monkeypatch):
+    job, snapshot, _session, _bindings = _setup_cacio(monkeypatch, order_intents=False)
+    seen = []
+    # Swap the first two clips: the model is allowed to follow the narration.
+    order = ["c1", "c0", "c2", "c3", "c4", "c5", "c6"]
+    _mock_alignment_agent(monkeypatch, order, _CACIO_STARTS, seen=seen)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert seen[0].order_locked is False
+    assert [w[0] for w in _windows(job)][:3] == ["clip_1", "clip_0", "clip_2"]
+
+
+def test_narrated_alignment_is_locked_by_a_filming_guide_order(monkeypatch):
+    job, snapshot, _session, _bindings = _setup_cacio(monkeypatch, order_intents=False)
+    candidates = {**job.all_candidates, "narrative_shot_count": 7}
+    seen = []
+    _mock_alignment_agent(monkeypatch, [f"c{i}" for i in range(7)], _CACIO_STARTS, seen=seen)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+
+    assert seen[0].order_locked is True
+
+
+def test_narrated_alignment_failure_falls_back_to_the_bucket_split(monkeypatch):
+    baseline_job, baseline_snapshot, _s, _b = _setup_cacio(monkeypatch, alignment=False)
+    gb._run_phone_narrated_job(
+        str(baseline_job.id), baseline_snapshot, baseline_job.all_candidates, ownership_epoch=3
+    )
+    baseline = _windows(baseline_job)
+
+    job, snapshot, _session, _bindings = _setup_cacio(monkeypatch)
+    events = _capture_pipeline_events(monkeypatch)
+    from app.agents import _model_client
+    from app.agents.narrated_clip_alignment import NarratedClipAlignmentAgent
+
+    def _boom(self, input, ctx=None):  # noqa: A002, ARG001
+        raise RuntimeError("gemini unavailable")
+
+    monkeypatch.setattr(NarratedClipAlignmentAgent, "run", _boom)
+    monkeypatch.setattr(_model_client, "default_client", lambda: None)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    assert _windows(job) == baseline
+    (event,) = [e for e in events if e[1] == "narrated_clip_alignment"]
+    assert event[2]["status"] == "fallback"
+    assert event[2]["reason"] == "agent_error"
+
+
+def test_narrated_alignment_unresolvable_result_falls_back_to_the_bucket_split(monkeypatch):
+    baseline_job, baseline_snapshot, _s, _b = _setup_cacio(monkeypatch, alignment=False)
+    gb._run_phone_narrated_job(
+        str(baseline_job.id), baseline_snapshot, baseline_job.all_candidates, ownership_epoch=3
+    )
+    baseline = _windows(baseline_job)
+
+    job, snapshot, _session, _bindings = _setup_cacio(monkeypatch)
+    events = _capture_pipeline_events(monkeypatch)
+    # A (mocked, parse-bypassing) answer whose start words run backwards.
+    _mock_alignment_agent(monkeypatch, [f"c{i}" for i in range(7)], [0, 40, 30, 50, 60, 70, 80])
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert _windows(job) == baseline
+    (event,) = [e for e in events if e[1] == "narrated_clip_alignment"]
+    assert event[2]["status"] == "fallback"
+    assert event[2]["reason"] == "invalid_result"
+
+
+def test_narrated_alignment_skips_without_clip_metadata(monkeypatch):
+    job, snapshot, _session, _bindings = _setup_cacio(monkeypatch)
+    # Gemini was down: ingest degraded to no clip metas.
+    monkeypatch.setattr(
+        gb,
+        "_ingest_clips",
+        lambda *a, **k: {
+            "clip_metas": [],
+            "clip_id_to_gcs": {f"c{i}": f"user/analysis-proxy-c{i}.mp4" for i in range(7)},
+            "clip_id_to_local": {f"c{i}": f"/tmp/c{i}.mp4" for i in range(7)},
+            "probe_map": {},
+            "hero": None,
+        },
+    )
+    events = _capture_pipeline_events(monkeypatch)
+    calls = []
+    _mock_alignment_agent(monkeypatch, [], [], seen=calls)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert calls == []
+    assert job.status == "awaiting_device"
+    (event,) = [e for e in events if e[1] == "narrated_clip_alignment"]
+    assert event[2] == {"status": "fallback", "reason": "missing_clip_meta", "order_locked": True}
+
+
+def test_narrated_alignment_flag_off_never_calls_the_agent(monkeypatch):
+    job, snapshot, _session, _bindings = _setup_cacio(monkeypatch, alignment=False)
+    events = _capture_pipeline_events(monkeypatch)
+    calls = []
+    _mock_alignment_agent(monkeypatch, [f"c{i}" for i in range(7)], _CACIO_STARTS, seen=calls)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert calls == []
+    assert not [e for e in events if e[1] == "narrated_clip_alignment"]
+
+
+def test_narrated_alignment_is_not_used_for_scripted_filming_guides(monkeypatch):
+    filming_guide = [
+        {"shot_id": "s0", "what": "First clip narration"},
+        {"shot_id": "s1", "what": "Second clip narration"},
+        {"shot_id": "s2", "what": "Third clip narration"},
+    ]
+    job, snapshot, _session, _bindings = _setup_narrated(
+        monkeypatch, edit_format="narrated_planned", filming_guide=filming_guide, alignment=True
+    )
+    calls = []
+    _mock_alignment_agent(monkeypatch, ["c0", "c1", "c2"], [0, 2, 4], seen=calls)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert calls == []
+    assert job.status == "awaiting_device"
 
 
 @pytest.mark.parametrize("duck_enabled", [False, True])
