@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.97.0] - 2026-10-06
+
+### Changed
+- fix(kria): show the voiceover title in the iPhone editor preview (KRI-455) (#1415) <!-- release-pr: 1415 -->
+
 ## [0.78.96.0] - 2026-10-06
 
 ### Changed
