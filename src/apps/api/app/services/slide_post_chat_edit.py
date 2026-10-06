@@ -109,24 +109,11 @@ class CompiledSlideDraft:
 
 
 def _slide_facts(asset: Any) -> list[dict[str, Any]]:
-    """Path-free capture/understanding facts for one slide asset, [] when none exist.
-
-    Lane B (KRI-300) adds ``clip_facts.slide_asset_facts(asset)``; swapping it in is a
-    one-line change here (``return _prompt_facts(slide_asset_facts(asset))``).
-    """
-    from app.services.clip_facts import assignment_facts  # noqa: PLC0415
+    """Path-free capture/understanding facts for one slide asset, [] when none exist."""
+    from app.services.clip_facts import slide_asset_facts  # noqa: PLC0415
 
     try:
-        capture = getattr(asset, "capture", None)
-        analysis = getattr(asset, "analysis", None)
-        return _prompt_facts(
-            assignment_facts(
-                {
-                    "capture": capture if isinstance(capture, dict) else None,
-                    "analysis": analysis if isinstance(analysis, dict) else None,
-                }
-            )
-        )
+        return _prompt_facts(slide_asset_facts(asset))
     except Exception:  # noqa: BLE001 - facts are best-effort context, never a failure
         return []
 
