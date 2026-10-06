@@ -72,6 +72,9 @@ _TEXT_REL_BEST = 0.85
 _TEXT_MAX_SONG_WORDS = 4000
 _TEXT_MAX_TAKE_WORDS = 1500
 _TEXT_MAX_CANDIDATES = 6
+_TEXT_INLIER_TOL_S = 0.35  # a matched word is an inlier within this of the median offset
+_TEXT_MIN_INLIER_FRAC = 0.75
+_TEXT_MIN_LONG_WORDS = 4  # matched words of 3+ chars needed for a lyrics-only placement
 _TEXT_POOL_MIN_MATCHED = 8  # start+end offsets are pooled from this many matched words
 
 # Drift check.
@@ -295,6 +298,9 @@ class _TextMatch:
     take_start_s: float  # first matched take word start
     take_end_s: float  # last matched take word end
     density: float  # matched words / take words inside the matched span
+    song_density: float = 1.0  # matched words / song words inside the matched span
+    inlier_frac: float = 1.0  # share of matched words whose offset is within tolerance
+    long_matched: int = 0  # matched words of 3+ characters (stopword/CJK-char guard)
 
 
 def text_candidates(take_words: Any, song_words: Any) -> list[tuple[float, float, int]]:
@@ -353,6 +359,7 @@ def _text_matches(take_words: Any, song_words: Any) -> list[_TextMatch]:
         diffs: list[float] = []
         end_diffs: list[float] = []
         took: list[int] = []
+        song_took: list[int] = []
         while i > 0 and j > 0 and h[i, j] > 0:
             cur = h[i, j]
             if cur == h[i - 1, j - 1] + sub[i - 1, j - 1]:
@@ -360,6 +367,7 @@ def _text_matches(take_words: Any, song_words: Any) -> list[_TextMatch]:
                     diffs.append(s_start[j - 1] - t_start[i - 1])
                     end_diffs.append(s_end[j - 1] - t_end[i - 1])
                     took.append(i - 1)
+                    song_took.append(j - 1)
                 i, j = i - 1, j - 1
             elif cur == h[i - 1, j] + _SW_GAP:
                 i -= 1
@@ -374,6 +382,9 @@ def _text_matches(take_words: Any, song_words: Any) -> list[_TextMatch]:
             continue
         spread = float(np.median(np.abs(np.asarray(diffs) - np.median(diffs))))
         first, last = min(took), max(took)
+        med_diff = float(np.median(diffs))
+        inliers = sum(1 for d in diffs if abs(d - med_diff) <= _TEXT_INLIER_TOL_S)
+        song_span = max(song_took) - min(song_took) + 1
         cands.append(
             _TextMatch(
                 delta_s=delta,
@@ -383,6 +394,9 @@ def _text_matches(take_words: Any, song_words: Any) -> list[_TextMatch]:
                 take_start_s=float(t_start[first]),
                 take_end_s=float(t_end[last]),
                 density=len(diffs) / float(last - first + 1),
+                song_density=len(diffs) / float(song_span),
+                inlier_frac=inliers / float(len(diffs)),
+                long_matched=sum(1 for k in took if len(tw[k]) >= 3),
             )
         )
         if len(cands) >= _TEXT_MAX_CANDIDATES:
@@ -486,7 +500,10 @@ def _drift_check(
         return False, None
     if agree_first is None or agree_last is None:
         return True, None
-    return True, (agree_first / sr, agree_last / sr)
+    # Quiet or uninformative edge windows are skipped above, so pad by one window
+    # rather than trimming footage that never disagreed with ``delta_s``.
+    pad = _WINDOW_TARGET_S
+    return True, (max(0.0, agree_first / sr - pad), min(n_samples / sr, agree_last / sr + pad))
 
 
 # --------------------------------------------------------------------------- #
@@ -583,6 +600,11 @@ def _lyrics_alignment(
         if m.matched >= cfg.song_align_lyrics_min_words
         and m.spread_s <= cfg.song_align_lyrics_max_spread_s
         and m.density >= cfg.song_align_lyrics_min_density
+        # Chance chains of common words ("i/you/the/and") scatter across the song and
+        # across take time; real singing is dense on both sides and consistent in offset.
+        and m.song_density >= cfg.song_align_lyrics_min_density
+        and m.inlier_frac >= _TEXT_MIN_INLIER_FRAC
+        and m.long_matched >= _TEXT_MIN_LONG_WORDS
     ]
     if not strong:
         return None

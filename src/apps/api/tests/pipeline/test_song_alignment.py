@@ -322,7 +322,8 @@ def test_audio_match_range_spans_only_agreeing_windows(song120, spec120):
     assert res.method == "audio"
     assert res.status == "confident"
     assert res.delta_s == pytest.approx(44.0, abs=0.01)
-    assert res.match_start_s == pytest.approx(6.0, abs=3.1)
+    # Padded by one window so a quiet edge window never costs footage; never past the lead-in.
+    assert res.match_start_s is not None and 0.0 <= res.match_start_s <= 6.0
     assert res.match_end_s == pytest.approx(18.0, abs=0.1)
 
 
@@ -644,3 +645,37 @@ def test_a_take_beyond_the_truncated_lyrics_is_not_penalised_for_disagreeing(
 def test_song_text_coverage_is_none_when_nothing_is_dropped():
     assert sa.song_text_coverage_s(_rap_words(2400, 600.0)) is None
     assert sa.song_text_coverage_s(_rap_words(4100, 600.0)) is not None
+
+
+def test_chatter_of_common_words_is_not_placed_by_lyrics(spec120):
+    # KRI-466 review: chance chains of common words must not read as singing.
+    rng = np.random.default_rng(11)
+    vocab = [f"c{k}" for k in range(12)]  # a tiny, repetitive "lyric" vocabulary
+    song_words = [
+        SongWord(text=vocab[int(rng.integers(12))], start_s=0.5 + 0.45 * k, end_s=0.8 + 0.45 * k)
+        for k in range(250)
+    ]
+    placed = 0
+    for seed in range(40):
+        r = np.random.default_rng(100 + seed)
+        chatter = [
+            SongWord(text=vocab[int(r.integers(12))], start_s=0.4 * k, end_s=0.4 * k + 0.2)
+            for k in range(14)
+        ]
+        res = _align(spec120, make_song(6.0, seed=900 + seed), words=chatter, song_words=song_words)
+        placed += res.status == "confident"
+    assert placed == 0
+
+
+def test_short_tokens_never_place_a_take_by_lyrics(spec120):
+    # Single-character tokens (CJK per-character output) carry no placement evidence.
+    song_words = [
+        SongWord(text=ch, start_s=0.5 + 0.4 * k, end_s=0.8 + 0.4 * k)
+        for k, ch in enumerate("天地玄黄宇宙洪荒日月盈昃辰宿列张" * 6)
+    ]
+    take = [
+        SongWord(text=w.text, start_s=w.start_s - 2.0, end_s=w.end_s - 2.0)
+        for w in song_words[5:21]
+    ]
+    res = _align(spec120, make_song(7.0, seed=996), words=take, song_words=song_words)
+    assert res.status != "confident"

@@ -67,6 +67,7 @@ from app.models import (
 from app.routes._copilot import CopilotTurnBody, is_overlay_display_ask, run_copilot_turn
 from app.routes.generative_jobs import variant_render_baseline
 from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
+from app.schemas.user_song import SONG_ALIGNMENT_VERSION
 from app.services.choice_questions import (
     CONFLICT_ORDER_VS_GROUP,
     ORDER_VS_GROUP_OPTIONS,
@@ -424,6 +425,11 @@ async def _song_order_gate(
             song_generation=song_generation,
             raw_analysis=getattr(item, "song_analysis", None),
         )
+        raw_alignment = getattr(item, "song_alignment", None)
+        stale_version = (
+            isinstance(raw_alignment, dict)
+            and raw_alignment.get("version", 1) != SONG_ALIGNMENT_VERSION
+        )
         raw_analysis = getattr(item, "song_analysis", None)
         analysis_status = (
             raw_analysis.get("status")
@@ -433,10 +439,10 @@ async def _song_order_gate(
         await db.rollback()  # never hold a read snapshot across the sleep
         if alignment is not None:
             break
-        if analysis_status == "ready" and not realign_enqueued:
-            # Song analysis is done but the alignment row is missing/stale/incomplete
-            # (e.g. written by an older aligner version): nothing else will refresh it.
-            # The task is idempotent; once per gate call.
+        if analysis_status == "ready" and stale_version and not realign_enqueued:
+            # Song analysis is done but the stored alignment was written by an older
+            # aligner version: nothing else will refresh it. A MISSING row is left
+            # alone (the attach-time task is still running); once per gate call.
             realign_enqueued = True
             from app.tasks.user_song import enqueue_user_song_alignment  # noqa: PLC0415
 
