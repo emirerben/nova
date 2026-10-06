@@ -154,6 +154,12 @@ class PlanFacts:
     # The item's opt-in Speech cleanup toggle (None = unknown): when on, a render
     # may cut pauses and retakes out of the take.
     speech_cleanup_enabled: bool | None = None
+    # Whether approving this draft offers "Clean up speech" (the preflight check is
+    # enforced and this project is in its cohort). None = unknown, never assumed.
+    speech_cleanup_offered: bool | None = None
+    # The strategy's caption style ("none", "clean", "kinetic", "karaoke",
+    # "editorial", "auto"); None when the draft carries no strategy.
+    caption_style: str | None = None
     # Reaction beats (KRI-178) as approval will keep them: resolved against the
     # creator's owned images by the same repair the compiler runs. None = not
     # checked (no manifest was supplied), so nothing about beats is claimed.
@@ -240,11 +246,14 @@ def plan_facts_from_strategy(
     clip_ids: Iterable[str] = (),
     manifest: ResolvedCreatorManifest | None = None,
     speech_cleanup_enabled: bool | None = None,
+    speech_cleanup_offered: bool | None = None,
 ) -> PlanFacts:
     """Read verifiable facts off a serialized ``CreativeStrategy``.
 
     ``manifest`` is the turn's resolved creator manifest. Without it the beat,
     closing-shot and clip-count facts stay unknown (never guessed).
+    ``speech_cleanup_offered`` is whether approval will offer "Clean up speech"
+    (the caller's cohort check); None keeps the cleanup receipt from promising it.
     """
     strategy = strategy or {}
     per_clip: dict[str, str] = {}
@@ -291,6 +300,7 @@ def plan_facts_from_strategy(
         extra = _beat_facts(strategy, manifest)
         extra["video_clip_count"] = _video_clip_count(strategy, manifest)
     edit_format = strategy.get("edit_format")
+    caption_style = strategy.get("caption_style")
     return PlanFacts(
         clip_ids=tuple(str(c) for c in clip_ids),
         title=str(title) if title else None,
@@ -305,6 +315,8 @@ def plan_facts_from_strategy(
         texts=tuple(texts),
         edit_format=str(edit_format) if edit_format else None,
         speech_cleanup_enabled=speech_cleanup_enabled,
+        speech_cleanup_offered=speech_cleanup_offered,
+        caption_style=str(caption_style) if caption_style else None,
         **extra,
     )
 
@@ -895,6 +907,57 @@ _VISUAL_RE = re.compile(
     r"\b(sticker|stamp|badge|photo|picture|image|pic|flag|logo|emoji)s?\b"
     r"|fotoğraf|resim|görsel|çikartma|bayrak"
 )
+# "Cut out the long pauses / the retake / the ums": a speech-cleanup ask is a removal
+# verb plus something speech cleanup removes (or a named retake). The brief extractor
+# files it as `timing` (often with the length the creator also named), `audio`,
+# `style` or `select`; the ask itself is read from the creator's words. Patterns are
+# written against `_fold` output: lower case, every Turkish ı folded to i.
+_CLEANUP_NOUN_RE = re.compile(
+    r"\b(pauses?|silences?|dead air|dead space|retakes?|fillers?|filler words?|stumbles?"
+    r"|false starts?)\b|\b(um+s?|uh+s?|er+s?|hmm+s?)\b"
+    r"|\bduraklama|\bsessizlik|\bdolgu|\btak[iı]lma"
+)
+_CLEANUP_VERB_RE = re.compile(
+    r"\b(cut|remove|trim|take out|get rid of|drop|delete|skip|lose|edit out|without|no)\b"
+    r"|\bkes|\bçikar|\bsil\b|\bolmasin|\bolmadan"
+)
+# A specific stretch of speech named for removal ("the part where I say ...", a retake,
+# a quoted line): speech cleanup cuts pauses and non-word sounds, never spoken words.
+_NAMED_CUT_RE = re.compile(
+    r"\bretakes?\b|\bfalse starts?\b|\b(the )?(part|bit|place|section|moment) where\b"
+    r"|\bwhere i (say|said|start|stumble)|\blet me (start|try|say|do) (that|it|this|again|over|one)"
+    r"|\bstart (that|it|this|one) (again|over)\b|\bstart (again|over)\b"
+    r"|\btry (that|it|this) again\b"
+    r"|\bscratch that\b|\bwhere was i\b"
+    r"|\btekrar(dan)? (baştan|söyle)|\bnerede kalmistim|\bdediğim (yer|kisim)|\bbaştan (al|başla)"
+)
+# The opposite ask: the pauses are wanted. Never read as cleanup.
+_KEEP_PAUSES_RE = re.compile(
+    r"\b(don'?t|do not|never|without) (remove|cut|cutting|trim|touch|take out|delete|skip"
+    r"|tighten|clean)\b.{0,40}\b(pauses?|silences?|ums?|breaths?|gaps?)\b"
+    r"|\b(keep|leave|preserve|maintain) (my |the |all |all the |some |natural |those |a )*"
+    r"(pauses?|silences?|ums?|breaths?|rhythm|dramatic pause)\b"
+    r"|\bduraklamalar[iı]? kalsin|\bdokunma"
+)
+_CAPTION_RE = re.compile(r"\b(captions?|subtitles?|karaoke)\b|\baltyazi")
+_WORD_CAPTION_RE = re.compile(
+    r"\bkaraoke\b|\bword[- ]by[- ]word\b|\b(one )?word at a time\b"
+    r"|\bhighlight(ed|ing|s)? (the |each |every )?(key |spoken |current |said )?words?\b"
+    r"|\bwords? (highlighted|light(s|ing)? up|lit up)\b|\bkelime kelime\b|\bvurgula"
+)
+_NO_CAPTION_RE = re.compile(
+    r"\b(no|without|remove|drop|turn off|hide|skip) (the )?(captions?|subtitles?)\b"
+    r"|\b(captions?|subtitles?) off\b|\baltyazisiz\b|\baltyazi (olmasin|istemiyorum|yok)"
+)
+# A captions ask about look, place or language is not judged by the style alone.
+_CAPTION_DETAIL_RE = re.compile(
+    r"\b(colou?rs?|yellow|white|red|blue|green|black|pink|orange|purple|lime|font|bold|italic"
+    r"|sizes?|bigger|big|small|smaller|larger|huge|tiny|top|bottom|middle|cent(er|re)|left|right"
+    r"|higher|lower|outline|shadow|stroke|uppercase|lowercase|caps|language|translat\w*"
+    r"|turkish|english|german|spanish|french|italian|arabic|dutch|portuguese)\b"
+    r"|\brenk|\bsari\b|\bbeyaz\b|\bbüyük|\bküçük|\büst|\balt(ta|a)\b|\btürkçe|\bingilizce"
+    r"|\byazi tipi|\bkalin"
+)
 _TRIGGER_FACT_KEYS = (
     "triggers",
     "trigger",
@@ -908,6 +971,10 @@ _TRIGGER_FACT_KEYS = (
     "keywords",
 )
 _BEAT_KINDS = frozenset({"style", "audio", "select"})
+_CLEANUP_KINDS = frozenset({"timing", "style", "audio", "select"})
+# Edits spined by the creator's own speech: captions come from it, and speech
+# cleanup (pauses, filler sounds) is how it gets tightened.
+_SPEECH_FORMATS = frozenset({"subtitled", "talking_head", *NARRATED_EDIT_FORMATS})
 _QUOTES = '"\u201c\u201d\u00ab\u00bb'
 _QUOTED_RE = re.compile(rf"[{_QUOTES}]([^{_QUOTES}]{{1,80}})[{_QUOTES}]")
 _MAX_NAMED_IN_REASON = 6
@@ -973,6 +1040,48 @@ def _wants_closing(req: BriefRequirement) -> bool:
     return bool(closing_fact or _CLOSING_RE.search(_req_text(req)))
 
 
+def _wants_cleanup(req: BriefRequirement) -> bool:
+    """A speech-cleanup ask (pauses, retakes, filler) in the creator's own words."""
+    if req.kind not in _CLEANUP_KINDS or _wants_whole_take(req):
+        return False
+    if _wants_beats(req) or _wants_closing(req) or _wants_speech(req):
+        return False
+    text = _req_text(req)
+    if _KEEP_PAUSES_RE.search(text) or not _CLEANUP_VERB_RE.search(text):
+        return False
+    return bool(_CLEANUP_NOUN_RE.search(text) or _NAMED_CUT_RE.search(text))
+
+
+def _wants_named_cuts(req: BriefRequirement) -> bool:
+    """The ask names a stretch of speech to remove, not just pauses and sounds."""
+    text = _req_text(req)
+    if _NAMED_CUT_RE.search(text):
+        return True
+    # A quoted line is a spoken stretch; a quoted "um" is a filler sound.
+    return any(
+        not _CLEANUP_NOUN_RE.search(_fold(quoted))
+        for quoted in _QUOTED_RE.findall(req.description or "")
+    )
+
+
+def _wants_captions(req: BriefRequirement) -> bool:
+    """A captions ask ("add captions", "karaoke captions", "no captions")."""
+    if req.kind in _BEAT_KINDS:
+        if _wants_beats(req) or _wants_closing(req) or _wants_speech(req):
+            return False
+    elif not (req.kind == "text" and req.scope == "global" and not req.literal):
+        return False
+    return bool(_CAPTION_RE.search(_req_text(req)))
+
+
+def _wants_no_captions(req: BriefRequirement) -> bool:
+    return bool(_NO_CAPTION_RE.search(_req_text(req)))
+
+
+def _wants_word_captions(req: BriefRequirement) -> bool:
+    return bool(_WORD_CAPTION_RE.search(_req_text(req)))
+
+
 def _has_duration_target(req: BriefRequirement) -> bool:
     target = req.facts.get("duration_s")
     return isinstance(target, (int, float)) and not isinstance(target, bool) and target > 0
@@ -1003,7 +1112,20 @@ _CANT_CONFIRM_LENGTH = "I can't confirm this draft's length yet."
 _TALKING_KEEPS_WHOLE_TAKE = "A Talking edit keeps your whole take, so its length follows your clip"
 _VOICEOVER_SETS_LENGTH = "A voiceover edit runs as long as your voiceover"
 _CANT_CHECK_TIMING = "I can't verify this timing automatically."
+_CANT_CHECK_CLEANUP = "I can't check the speech cleanup on this draft yet."
+_CANT_CHECK_CAPTIONS = "I can't check the captions on this draft yet."
 _NO_CHECKER = "I can't verify this one automatically yet."
+# Speech cleanup (KRI-467 follow-up): what the chosen format does with the ask.
+_CLEANUP_PLANNED = "Speech cleanup cuts the long pauses"
+_CLEANUP_AT_APPROVAL = "Choose Clean up speech when you approve and the long pauses are cut"
+_CLEANUP_IF_OFFERED = (
+    "If Clean up speech is offered when you approve, choose it to cut the long pauses"
+)
+_CLEANUP_UNAVAILABLE = "Speech cleanup isn't available for this project yet, so the pauses stay"
+_NAMED_CUTS_NEED_EDITOR = (
+    "a retake or a specific line isn't cut automatically yet, so trim that in the editor"
+)
+_CAPTIONS_WORD_BY_WORD = "words light up as you say them"
 _NEUTRAL_REASONS = frozenset(
     {
         _CANT_CHECK_BEATS,
@@ -1016,9 +1138,45 @@ _NEUTRAL_REASONS = frozenset(
         _CANT_CHECK_ORDER_RULE,
         _CANT_CONFIRM_LENGTH,
         _CANT_CHECK_TIMING,
+        _CANT_CHECK_CLEANUP,
+        _CANT_CHECK_CAPTIONS,
         _NO_CHECKER,
     }
 )
+
+# Reasons that describe what the format the creator chose does with an ask, not a
+# simplification Kria made instead of it: a Talking edit's length follows the take,
+# speech cleanup is chosen at approval and cuts pauses, never a named line. The
+# receipt stays an honest "Partly"; it never turns a first draft into the "should I
+# make a simpler version?" question (`needs_creator_choice`), which only makes sense
+# when there is a different, simpler plan to choose.
+_FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
+    _TALKING_KEEPS_WHOLE_TAKE,
+    _VOICEOVER_SETS_LENGTH,
+    _CLEANUP_PLANNED,
+    _CLEANUP_AT_APPROVAL,
+    _CLEANUP_IF_OFFERED,
+    _CLEANUP_UNAVAILABLE,
+)
+
+
+def is_format_limit(reason: str | None) -> bool:
+    """True for a receipt reason the creator cannot plan around (see above)."""
+    return bool(reason) and any(
+        str(reason).startswith(prefix) for prefix in _FORMAT_LIMIT_REASON_PREFIXES
+    )
+
+
+def needs_creator_choice(receipt: RequirementReceipt | Mapping[str, Any]) -> bool:
+    """A checked receipt the draft fell short on, that the creator should rule on
+    before it replaces their work: not met, and not a limit of the chosen format."""
+    row = receipt.model_dump() if isinstance(receipt, RequirementReceipt) else receipt
+    return (
+        row.get("verification") == "checked"
+        and row.get("status") != "met"
+        and not is_format_limit(row.get("reason"))
+    )
+
 
 # "labels just say X" / "X only" / "sadece X": the creator wants the text to BE the literal,
 # not merely contain it.
@@ -1173,6 +1331,74 @@ _TEXT_STYLE_RE = re.compile(
 )
 
 
+def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """Pauses, retakes and filler the creator asked to cut, against the draft.
+
+    Speech cleanup (the preflight check the creator confirms at approval) cuts long
+    pauses and non-word sounds out of a Talking or voiceover edit; it never cuts a
+    spoken line, so a retake or "the bit where I say X" is reported as editor work.
+    A length the same sentence names ("keep it under 45 s") follows the cut take.
+    Every honest outcome here is a limit of the format, not a simplification.
+    """
+    fmt = facts.edit_format
+    if fmt is None or facts.editor or fmt not in _SPEECH_FORMATS:
+        # Only a speech-spined edit is judged here; a montage's cut is its own
+        # planner's to report, so the ask stays "can't verify" there, as before.
+        return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
+    if facts.speech_cleanup_enabled:
+        lead, status = _CLEANUP_PLANNED, "met"
+    elif facts.speech_cleanup_offered is True:
+        lead, status = _CLEANUP_AT_APPROVAL, "partial"
+    elif facts.speech_cleanup_offered is False:
+        lead, status = _CLEANUP_UNAVAILABLE, "partial"
+    else:
+        # Unknown whether approval offers the choice: never promise it.
+        lead, status = _CLEANUP_IF_OFFERED, "partial"
+    notes = [lead]
+    if _wants_named_cuts(req):
+        notes.append(_NAMED_CUTS_NEED_EDITOR)
+        status = "partial"
+    if _has_duration_target(req):
+        target = float(req.facts["duration_s"])
+        notes.append(f"the length follows what's left of your take, so I can't promise {target:g}s")
+        status = "partial"
+    return _receipt(req, status, "; ".join(notes) if status == "partial" else None)
+
+
+def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """Captions on / off / word-by-word, against the strategy's caption style.
+
+    Only what the style settles is judged: an ask about a caption's look, place or
+    language stays "can't check", and so does ``"auto"`` (the item's own style,
+    unknown here) for an on/off or word-by-word ask.
+    """
+    fmt = facts.edit_format
+    text = _req_text(req)
+    if (
+        facts.caption_style is None
+        or facts.editor
+        or fmt not in _SPEECH_FORMATS
+        or _CAPTION_DETAIL_RE.search(text)
+    ):
+        return _receipt(req, "partial", _CANT_CHECK_CAPTIONS)
+    style = facts.caption_style
+    if _wants_no_captions(req):
+        if style == "none":
+            return _receipt(req, "met", None)
+        if style == "auto":
+            return _receipt(req, "partial", _CANT_CHECK_CAPTIONS)
+        return _receipt(req, "partial", "Captions are still on in this draft.")
+    if style == "none":
+        return _receipt(req, "partial", "Captions are off in this draft.")
+    if _wants_word_captions(req):
+        if style in {"karaoke", "kinetic"}:
+            return _receipt(req, "met", _CAPTIONS_WORD_BY_WORD)
+        if style == "auto":
+            return _receipt(req, "partial", _CANT_CHECK_CAPTIONS)
+        return _receipt(req, "partial", "Captions are on as full sentences, not word by word.")
+    return _receipt(req, "met", None)
+
+
 def _check_style(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     # Compiled editor ops only exist when they changed a text element, so a text-style
     # ask with edited elements in the payload is proven; anything else goes unjudged.
@@ -1241,6 +1467,8 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
 
 def _has_checker(req: BriefRequirement) -> bool:
     """True when ``check_requirement`` can actually verify this requirement."""
+    if _wants_cleanup(req) or _wants_captions(req):
+        return True
     if req.kind == "text":
         return bool(
             req.scope in ("per_clip", "title") or req.scope.startswith("clip:") or req.literal
@@ -1256,6 +1484,11 @@ def _has_checker(req: BriefRequirement) -> bool:
 
 
 def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if _wants_cleanup(req) and facts.edit_format in _SPEECH_FORMATS and not facts.editor:
+        # "Cut out the long pauses ... keep it under 45 s" on a Talking or voiceover
+        # edit: the cleanup ask owns the sentence; the length it names is judged
+        # inside it. Elsewhere the sentence takes its kind's usual path.
+        return _check_speech_cleanup(req, facts)
     if req.kind == "text":
         if req.scope == "per_clip" or req.scope.startswith("clip:"):
             return _check_per_clip_text(req, facts)
@@ -1273,6 +1506,8 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_speech_excerpts(req, facts)
     elif req.kind in _BEAT_KINDS and (_wants_beats(req) or _wants_closing(req)):
         return _check_reaction_beats(req, facts)
+    if _wants_captions(req):
+        return _check_captions(req, facts)
     return _receipt(req, "partial", _NO_CHECKER)
 
 
@@ -1483,7 +1718,9 @@ __all__ = [
     "PlanFacts",
     "build_receipts",
     "check_requirement",
+    "is_format_limit",
     "is_judged",
+    "needs_creator_choice",
     "SpeechSectionFact",
     "plan_facts_from_editor_payload",
     "plan_facts_from_speech_montage",

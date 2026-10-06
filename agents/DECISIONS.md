@@ -2827,3 +2827,32 @@ Guards. `tests/test_deploy_shutdown_policy.py` pins:
 Revisit if a deploy shows a task executed twice around a worker stop (check for "Soft shutdown:"
 log lines before restoring), if Celery's soft-shutdown wait stops blocking the event loop (then
 `active_requests` polling is enough), or if prefork concurrency exceeds 32.
+
+## [2026-10-06] A format's limits are receipts, not a reason to refuse the first draft (thread 17f666cb)
+
+A phone Talking chat ("Cut out the long pauses, the part where I say 'let me start that one
+again' ... Karaoke captions ... hook title ... Keep it under 45 seconds") produced no draft at
+all: the brief filed the cut sentence as `timing` with `duration_s: 45`, `_check_timing` judged
+it "Partly: a Talking edit keeps your whole take" (KRI-142), and the KRI-459 binding gate rolled
+the draft back with "Your current draft is unchanged. Should I try a different approach, or
+make this simpler version?" on a thread that had no draft. Every Talking or voiceover chat
+that names a length dead-ended the same way, and "simpler version" could never satisfy it.
+
+Decision: a checked receipt whose reason only describes what the chosen format does
+(`_FORMAT_LIMIT_REASON_PREFIXES`: the take sets a Talking edit's length, the voiceover sets a
+voiceover edit's, speech cleanup is chosen at approval and cuts pauses, never a named line) is
+reported as an honest "Partly" and the draft is made; the question is reserved for a real
+simplification Kria made instead of the ask (`needs_creator_choice`). When the gate does fire
+on a thread with no draft, it says so. New checkers: `_check_speech_cleanup` (a cleanup ask in
+any of timing/audio/style/select; met once `speech_cleanup_enabled`, else "choose Clean up
+speech when you approve"; a quoted line or retake is editor work; a length in the same
+sentence follows the cut take) and `_check_captions` (karaoke/kinetic are word-by-word; on/off
+against `caption_style`). Karaoke captions were always honored (`karaoke` -> word captions,
+spoken word lit); they only lacked a checker. Retakes are still not cut by the preflight
+cleanup on any path (the retake detector is wired only into the legacy cloud `legacy_auto`
+analysis behind `RETAKE_CUT_ENABLED`) -- a follow-up, not a receipt bug.
+
+Guards: `tests/kria/test_brief_talking_receipts.py` (the exact sourdough requirement, the
+helper, both checkers), `tests/kria/test_runtime_talking_first_draft.py` (first draft made;
+a dropped karaoke ask still asks, with "I haven't started a draft yet").
+
