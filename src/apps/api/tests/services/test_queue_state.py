@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import threading
 import uuid
 from unittest.mock import MagicMock
 
@@ -66,7 +67,6 @@ def test_live_job_index_separates_active_and_reserved() -> None:
     celery_app = _fake_celery(
         active={"celery@worker-1": [{"args": [job_a]}]},
         reserved={"celery@worker-1": [{"args": [job_b]}]},
-        ping={"celery@worker-1": {"ok": "pong"}},
     )
 
     index = get_live_job_index(celery_app)
@@ -74,8 +74,78 @@ def test_live_job_index_separates_active_and_reserved() -> None:
     assert index.ok is True
     assert index.active == {job_a: "celery@worker-1"}
     assert index.reserved == {job_b: "celery@worker-1"}
-    assert index.workers == ["celery@worker-1"]
     assert index.all_job_ids() == {job_a, job_b}
+
+
+def test_live_job_index_issues_exactly_active_and_reserved_broadcasts() -> None:
+    """Every un-limited broadcast waits out the full _INSPECT_TIMEOUT_S window,
+    so each extra call adds ~5s to the reaper sweep and the admin Worker state
+    panel. Only active() + reserved() feed the index; ping() was dropped
+    because nothing read the worker list it filled (2026-10-06)."""
+    celery_app = _fake_celery(active={}, reserved={})
+    inspector = celery_app.control.inspect.return_value
+
+    get_live_job_index(celery_app)
+
+    assert sorted(name for name, _args, _kwargs in inspector.method_calls) == [
+        "active",
+        "reserved",
+    ]
+
+
+def test_live_job_index_runs_each_broadcast_on_its_own_connection() -> None:
+    """kombu connections are not thread-safe: the two concurrent broadcasts
+    must never share one, and each must be closed."""
+    from app.services import queue_state
+
+    celery_app = _fake_celery(active={}, reserved={})
+    conns = [MagicMock(name="conn-a"), MagicMock(name="conn-b")]
+    celery_app.connection_for_write.side_effect = conns
+
+    get_live_job_index(celery_app)
+
+    assert celery_app.connection_for_write.call_count == 2
+    for call in celery_app.connection_for_write.call_args_list:
+        assert call.kwargs == {"transport_options": {"polling_interval": 1}}
+    used = [call.kwargs["connection"] for call in celery_app.control.inspect.call_args_list]
+    assert sorted(used, key=id) == sorted(conns, key=id)
+    for call in celery_app.control.inspect.call_args_list:
+        assert call.kwargs["timeout"] == queue_state._INSPECT_TIMEOUT_S
+    for conn in conns:
+        conn.__exit__.assert_called_once()
+
+
+def test_live_job_index_waits_one_reply_window_not_two() -> None:
+    """active() and reserved() must be in flight at the same time, so the
+    lookup costs one reply window. Sequential calls never meet at the
+    barrier: it times out, the lookup degrades to ok=False and this fails."""
+    barrier = threading.Barrier(2, timeout=5)
+
+    def meet_then_reply() -> dict:
+        barrier.wait()
+        return {}
+
+    celery_app = _fake_celery()
+    inspector = celery_app.control.inspect.return_value
+    inspector.active.side_effect = meet_then_reply
+    inspector.reserved.side_effect = meet_then_reply
+
+    index = get_live_job_index(celery_app)
+
+    assert index.ok is True
+
+
+def test_live_job_index_returns_not_ok_when_one_broadcast_raises() -> None:
+    """A half-answered lookup must not pass for a complete one: if reserved()
+    fails, a reserved job would read as 'not live' and get reaped."""
+    job_id = str(uuid.uuid4())
+    celery_app = _fake_celery(active={"celery@worker-1": [{"args": [job_id]}]})
+    celery_app.control.inspect.return_value.reserved.side_effect = RuntimeError("broker hiccup")
+
+    index = get_live_job_index(celery_app)
+
+    assert index.ok is False
+    assert index.all_job_ids() == set()
 
 
 def test_live_job_index_returns_not_ok_when_inspect_raises() -> None:
@@ -97,7 +167,6 @@ def test_runtime_state_active() -> None:
     celery_app = _fake_celery(
         active={"celery@worker-2": [{"args": [job_id]}]},
         reserved={},
-        ping={"celery@worker-2": {"ok": "pong"}},
     )
 
     state = get_job_runtime_state(celery_app, job_id, celery_task_id=job_id)
@@ -112,7 +181,6 @@ def test_runtime_state_reserved() -> None:
     celery_app = _fake_celery(
         active={},
         reserved={"celery@worker-3": [{"args": [job_id]}]},
-        ping={"celery@worker-3": {"ok": "pong"}},
     )
 
     state = get_job_runtime_state(celery_app, job_id, celery_task_id=job_id)
@@ -127,7 +195,6 @@ def test_runtime_state_not_found_when_inspect_ok_but_job_absent() -> None:
     celery_app = _fake_celery(
         active={},
         reserved={},
-        ping={"celery@worker-1": {"ok": "pong"}},
     )
 
     state = get_job_runtime_state(celery_app, job_id, celery_task_id=job_id)
@@ -153,7 +220,6 @@ def test_runtime_state_falls_back_to_job_id_when_celery_task_id_null() -> None:
     celery_app = _fake_celery(
         active={"celery@worker-1": [{"args": [job_id]}]},
         reserved={},
-        ping={"celery@worker-1": {"ok": "pong"}},
     )
 
     state = get_job_runtime_state(celery_app, job_id, celery_task_id=None)

@@ -47,6 +47,7 @@ Failure modes:
 from __future__ import annotations
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -78,6 +79,13 @@ def _inspector(celery_app: Celery):
         transport_options={"polling_interval": _INSPECT_POLLING_INTERVAL_S}
     )
     return conn, celery_app.control.inspect(timeout=_INSPECT_TIMEOUT_S, connection=conn)
+
+
+def _inspect_reply(celery_app: Celery, method: str) -> dict:
+    """One inspect broadcast on its own connection; no replies → {}."""
+    conn, inspector = _inspector(celery_app)
+    with conn:
+        return getattr(inspector, method)() or {}
 
 
 # Cap how many queued tasks we decode when computing oldest_pending_job_id
@@ -135,7 +143,6 @@ class LiveJobIndex:
 
     active: dict[str, str] = field(default_factory=dict)
     reserved: dict[str, str] = field(default_factory=dict)
-    workers: list[str] = field(default_factory=list)
     ok: bool = True
 
     def all_job_ids(self) -> set[str]:
@@ -179,18 +186,31 @@ def get_live_job_index(celery_app: Celery) -> LiveJobIndex:
     Returns LiveJobIndex with ok=False on inspect() failure. The reaper
     treats ok=False as "skip this cycle"; admin endpoints treat it as
     "unknown".
+
+    Latency: a broadcast without `limit` always waits out the full
+    `_INSPECT_TIMEOUT_S` reply window (we can't know how many workers will
+    answer), so cost = windows waited, not work done. Two broadcasts only
+    (no ping — nothing read the worker list it filled), issued concurrently
+    so the lookup costs ONE window instead of 3 back-to-back (15.6s locally
+    on 2026-10-06, 17-20s in prod). Each runs on its own `_inspector()`
+    connection: kombu connections are not thread-safe, and the per-thread
+    pidbox reply queue keeps the two replies apart. Concurrent also means
+    both snapshots are taken at the same instant, so a task moving from
+    reserved to active can no longer slip between them. Do NOT shorten the
+    window instead — a late reply would read as "not_found" (see module
+    docstring).
     """
     try:
-        conn, inspector = _inspector(celery_app)
-        with conn:
-            active = inspector.active() or {}
-            reserved = inspector.reserved() or {}
-            ping = inspector.ping() or {}
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="queue-state-inspect") as pool:
+            active_reply = pool.submit(_inspect_reply, celery_app, "active")
+            reserved_reply = pool.submit(_inspect_reply, celery_app, "reserved")
+            active = active_reply.result()
+            reserved = reserved_reply.result()
     except Exception as exc:  # noqa: BLE001
         log.warning("queue_state_inspect_failed", error=str(exc))
         return LiveJobIndex(ok=False)
 
-    index = LiveJobIndex(workers=sorted(ping.keys()))
+    index = LiveJobIndex()
 
     for worker_name, tasks in active.items():
         for task in tasks:
