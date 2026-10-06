@@ -1233,7 +1233,7 @@ struct KriaAPI: KriaAPIClient {
             #if DEBUG
             NativePreviewDiagnostics.record("http-failure", fields: ["status": String(http.statusCode)])
             #endif
-            throw APIError.requestFailed(status: http.statusCode, detail: RequestFailureDetail(Self.decodeDetail(from: data)))
+            throw APIError.requestFailed(status: http.statusCode, detail: RequestFailureDetail(Self.decodeDetail(from: data), retryAfter: http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)))
         }
         if http.statusCode == 204, let empty = EmptyProjectResponse() as? T { return empty }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .custom(ServerDateCoding.decode); return try decoder.decode(T.self, from: data)
@@ -1630,9 +1630,12 @@ enum APIError: Error, LocalizedError, Equatable {
 /// equality checks and patterns keep matching however the body decoded.
 struct RequestFailureDetail: Equatable, Sendable, CustomStringConvertible {
     let message: String?
-    init(_ message: String?) {
+    /// Seconds from the response's `Retry-After` header (429/503), when it was a plain number.
+    let retryAfter: TimeInterval?
+    init(_ message: String?, retryAfter: TimeInterval? = nil) {
         let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.message = trimmed?.isEmpty == false ? trimmed : nil
+        self.retryAfter = retryAfter.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
     }
     static func == (_: RequestFailureDetail, _: RequestFailureDetail) -> Bool { true }
     /// Diagnostics print errors with `String(describing:)`; keep server text out of them.
