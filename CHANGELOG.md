@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.112.0] - 2026-10-06
+
+### Changed
+- perf(queue-state): one inspect reply window per lookup (drop unused ping, concurrent broadcasts) (#1428) <!-- release-pr: 1428 -->
+
 ## [0.78.111.0] - 2026-10-06
 
 ### Changed
