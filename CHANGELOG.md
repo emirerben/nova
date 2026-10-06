@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.93.0] - 2026-10-06
+
+### Changed
+- feat(ios): live plan block feed after Create (KRI-443) (#1398) <!-- release-pr: 1398 -->
+
 ## [0.78.92.0] - 2026-10-06
 
 ### Changed
