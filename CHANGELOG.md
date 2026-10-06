@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.110.0] - 2026-10-06
+
+### Changed
+- fix(text): left-anchored intros stay put through a text Save (+ re-land #1419) (#1426) <!-- release-pr: 1426 -->
+
 ## [0.78.109.0] - 2026-10-06
 
 ### Fixed
