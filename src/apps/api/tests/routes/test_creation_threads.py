@@ -2420,7 +2420,7 @@ async def test_upload_urls_rate_limit_is_scoped_per_real_client_not_shared_machi
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """KRI-195: two users behind the same Fly machine must not share the
-    30/minute upload-urls budget. Prod logs show every request landing on a
+    upload-urls budget. Prod logs show every request landing on a
     given machine with the IDENTICAL raw socket address regardless of caller
     -- reproduced here via a fixed `client` host on every request, distinct
     real users disambiguated only by `Fly-Client-IP`. Before the fix (bare
@@ -2467,13 +2467,14 @@ async def test_upload_urls_rate_limit_is_scoped_per_real_client_not_shared_machi
     monkeypatch.setattr(routes, "_load", AsyncMock(return_value=thread_a))
     ip_a = f"203.0.113.{uuid.uuid4().int % 256}"
 
-    for i in range(30):
+    # 240/minute (a 50-clip pick makes 50 calls and must fit): see _MEDIA_INTAKE_RATE_LIMIT.
+    for i in range(240):
         await upload_urls(_request_from(ip_a), str(thread_a.id), _body(i), user_a, db)
 
     from slowapi.errors import RateLimitExceeded
 
     with pytest.raises(RateLimitExceeded):
-        await upload_urls(_request_from(ip_a), str(thread_a.id), _body(30), user_a, db)
+        await upload_urls(_request_from(ip_a), str(thread_a.id), _body(240), user_a, db)
 
     user_b = SimpleNamespace(id=uuid.uuid4())
     thread_b = SimpleNamespace(id=uuid.uuid4(), creator_id=user_b.id, status="active")

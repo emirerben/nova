@@ -6,7 +6,7 @@ Share of creator requirements the finished edit actually met (strict: `partial` 
 
 - **Requirements met: 44%** (4/9; partial 1, unmet 4)
 - Replies that overclaimed (talked as if a requirement was handled when it was not, with no 'not done' marker): **4**
-- Threads measured from recordings: 1. Authored threads awaiting recordings (not in the KPI): 29.
+- Threads measured from recordings: 1. Authored threads awaiting recordings (not in the KPI): 30.
 - Small-sample warning: until authored threads are recorded (P6b), the KPI is the East Run thread alone. Read it as a trend line per phase, not as a rate.
 
 ## By request type
@@ -71,6 +71,7 @@ Each authored brief carries a hand-built reference edit. It must score `met` on 
 | harbor_route_reversed_then_route_order | 3 | 3/3 | awaiting recording |
 | harbor_selection_duration_pacing | 3 | 3/3 | awaiting recording |
 | harbor_title_from_brief | 3 | 3/3 | awaiting recording |
+| sport_activity_sequence_after_denied_plan | 1 | 1/1 | awaiting recording |
 | sport_duration_pacing | 2 | 2/2 | awaiting recording |
 | sport_exact_labels | 1 | 1/1 | awaiting recording |
 | sport_exclude_then_duration | 2 | 2/2 | awaiting recording |

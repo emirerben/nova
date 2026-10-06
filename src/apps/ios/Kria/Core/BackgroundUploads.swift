@@ -275,6 +275,13 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     private var deselecting: Set<String> = []
     private var backgroundSession: URLSession!
     private var retryingRecords: Set<UUID> = []
+    /// Backoff for a busy server (429/503) on reserve/attach. The sleep is a seam so tests don't wait.
+    var transientRetryPolicy = TransientRetryPolicy()
+    var backoffSleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    /// Re-runs the intake of a clip that never got an upload record because the server stayed busy
+    /// (nothing for `retryUpload(recordID:)` to find). Keyed by the failure's id; only honored while
+    /// that failure is still listed.
+    private var intakeRetries: [UUID: @MainActor () async -> Void] = [:]
     private var cancellingRecords: Set<UUID> = []
     private var attachmentTasks: [UUID: (token: UUID, task: Task<Void, Never>)] = [:]
     private let backgroundActivity: any BackgroundActivityAssertion
@@ -495,10 +502,17 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             // server state (a reservation row) exists. Past this line an un-chosen clip is a real
             // upload that has to be cancelled or detached, not merely abandoned.
             try Task.checkCancellation()
-            let (reservation, visualReservationID) = try await reserve(
-                projectID: projectID, itemID: itemID, role: role, clientUploadID: clientUploadID,
-                filename: fileURL.lastPathComponent, contentType: contentType, size: Int64(size), contract: prepared.2
-            )
+            // A busy server (429/503) is waited out, and the admission slot is handed back while
+            // waiting so other clips keep preparing instead of queueing behind a sleeping one.
+            let (reservation, visualReservationID) = try await retryingTransient(
+                beforeWait: { if holdsSlot { gate.release(); holdsSlot = false } },
+                afterWait: { if role == .clip { try await gate.acquire(); holdsSlot = true } }
+            ) {
+                try await reserve(
+                    projectID: projectID, itemID: itemID, role: role, clientUploadID: clientUploadID,
+                    filename: fileURL.lastPathComponent, contentType: contentType, size: Int64(size), contract: prepared.2
+                )
+            }
             preparedToDiscard = nil   // the upload owns these files from here on
             if let original = prepared.1 {
                 try SourceAssetStore(project: Self.projectDirectory(projectID)).bind(mediaID: reservation.mediaID, original: original)
@@ -531,8 +545,36 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             if error is CancellationError || Task.isCancelled { return false }
             let message = CreationUploadError.message(for: error, role: role)
             lastError = message
-            recordFailure(id: recordID, projectID: projectID, role: role, filename: Self.displayFilename(fileURL.lastPathComponent), message: message, selectionKey: failureKey)
+            // The server stayed busy past every retry: the file is fine, so this is a retryable upload
+            // failure, not an unreadable file.
+            let busy = TransientRetryPolicy.isServerBusy(error)
+            recordFailure(id: recordID, projectID: projectID, role: role, filename: Self.displayFilename(fileURL.lastPathComponent), message: message, selectionKey: failureKey, cause: busy ? .uploadFailed : .unreadable)
+            // No record exists yet, so Retry must re-run the intake. Files are re-run from the same
+            // URL while it still exists; a Photos pick registers its own re-run in `select`.
+            if busy, failureKey == nil, FileManager.default.fileExists(atPath: fileURL.path) {
+                intakeRetries[recordID] = { [weak self] in
+                    await self?.enqueue(fileURL: fileURL, projectID: projectID, source: source, consentGiven: consentGiven, purpose: purpose, role: role, itemID: itemID, limit: limit, editorSourceTarget: editorSourceTarget, recordID: recordID)
+                }
+            }
             return false
+        }
+    }
+
+    /// Runs `operation`, waiting out HTTP 429/503 per `transientRetryPolicy` (honoring `Retry-After`).
+    /// Cancellation ends the wait at once. `beforeWait`/`afterWait` let a caller give up a scarce
+    /// resource (an admission slot) while it sleeps. Any other error is thrown straight away.
+    private func retryingTransient<T>(beforeWait: () -> Void = {}, afterWait: () async throws -> Void = {}, _ operation: () async throws -> T) async throws -> T {
+        var attempt = 0
+        var waited: TimeInterval = 0
+        while true {
+            do { return try await operation() } catch {
+                attempt += 1
+                guard let delay = transientRetryPolicy.delay(afterAttempt: attempt, error: error, waited: waited) else { throw error }
+                waited += delay
+                beforeWait()
+                try await backoffSleep(.milliseconds(Int(delay * 1000)))
+                try await afterWait()
+            }
         }
     }
 
@@ -590,7 +632,10 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// `enqueue` doing it (which erased a sibling clip's failure).
     func clearLastError() { lastError = nil }
 
-    func dismissFailure(id: UUID) { failures.removeAll { $0.id == id } }
+    func dismissFailure(id: UUID) {
+        failures.removeAll { $0.id == id }
+        intakeRetries[id] = nil
+    }
 
     /// Drops a project's "couldn't be read" lines once a message went out without those files. Lines
     /// for uploads that failed but still have a record are kept: they can still be retried.
@@ -681,7 +726,16 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 }
                 let accepted = await self.enqueue(fileURL: url, projectID: request.projectID, source: .photos, consentGiven: true, purpose: request.purpose, role: request.role, itemID: request.itemID, limit: request.limit, recordID: recordID, failureKey: key)
                 loaded = nil   // `enqueue` owns the file from here (it renames or links it)
-                if !accepted { self.releaseSelection(recordID: recordID, projectID: request.projectID) }
+                if !accepted {
+                    self.releaseSelection(recordID: recordID, projectID: request.projectID)
+                    // Failed only because the server stayed busy: Retry re-picks the same asset (the
+                    // exported file is gone, and a re-pick is also what a failed key allows again).
+                    if self.failures.contains(where: { $0.id == recordID && $0.cause == .uploadFailed }) {
+                        self.intakeRetries[recordID] = { [weak self] in
+                            self?.select(request, debounce: .zero, loadFile: loadFile)
+                        }
+                    }
+                }
             } catch {
                 if let loaded { try? FileManager.default.removeItem(at: loaded) }
                 self.releaseSelection(recordID: recordID, projectID: request.projectID)
@@ -1218,7 +1272,14 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     }
 
     func retryUpload(recordID: UUID) async {
-        guard let record = records.first(where: { $0.id == recordID }) else { return }
+        guard let record = records.first(where: { $0.id == recordID }) else {
+            // Never reserved (the server was busy): re-run the intake instead of resuming an upload.
+            if failures.contains(where: { $0.id == recordID }), let rerun = intakeRetries.removeValue(forKey: recordID) {
+                failures.removeAll { $0.id == recordID }
+                await rerun()
+            }
+            return
+        }
         // Retrying puts the record back in progress.
         failures.removeAll { $0.id == recordID }
         clearUploadFailed(recordID)
@@ -1403,7 +1464,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 } else {
                     // KRI-194: this was `lastError`-only, so an attach failure for one visual
                     // could sit hidden behind another clip's still-showing failure line.
-                    reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: error.localizedDescription, cause: .uploadFailed)
+                    reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename, message: CreationUploadError.message(for: error, role: record.role), cause: .uploadFailed)
                 }
             }
             return
@@ -1436,17 +1497,17 @@ struct PreparingUpload: Codable, Sendable, Equatable {
         let capture = record.role == .clip ? await ClipCaptureWire.forAttach(recordID: record.id) : nil
         for _ in 0..<2 {
             do {
-                let current = try await api.project(threadID: record.projectID)
+                let current = try await retryingTransient { try await api.project(threadID: record.projectID) }
                 // KRI-374: only a song carries a server role; footage and voiceover attach exactly as before.
                 let attachedThread: CreationThread
                 if record.role == .song {
-                    attachedThread = try await api.attachProjectMedia(
+                    attachedThread = try await retryingTransient { try await api.attachProjectMedia(
                         threadID: record.projectID, mediaID: mediaID, gcsPath: gcsPath, filename: record.filename,
                         contentType: contentType, expectedRevision: current.revision,
                         clientEventID: "ios-attach-\(record.id.uuidString)", role: .song
-                    )
+                    ) }
                 } else {
-                    attachedThread = try await api.attachProjectMedia(
+                    attachedThread = try await retryingTransient { try await api.attachProjectMedia(
                         threadID: record.projectID,
                         mediaID: mediaID,
                         gcsPath: gcsPath,
@@ -1455,7 +1516,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                         expectedRevision: current.revision,
                         clientEventID: "ios-attach-\(record.id.uuidString)",
                         capture: capture
-                    )
+                    ) }
                 }
                 // Publish the authoritative media_count before removing the
                 // pending record so clip capacity never briefly reopens.
@@ -1734,8 +1795,12 @@ enum CreationUploadError: LocalizedError {
 
     /// The failure line for an upload: the song-specific copy for a song, the error's own text otherwise.
     static func message(for error: Error, role: CreationMediaRole) -> String {
-        (role == .song ? songRefusalMessage(for: error) : nil) ?? error.localizedDescription
+        if TransientRetryPolicy.isServerBusy(error) { return busyMessage }
+        return (role == .song ? songRefusalMessage(for: error) : nil) ?? error.localizedDescription
     }
+
+    /// What the creator reads when the server stayed busy through every retry. The file itself is fine.
+    static let busyMessage = "Kria’s servers were busy, so this didn’t upload. Tap Retry to send it."
 
     case unsupportedType, tooLarge, proxyContractUnavailable
     var errorDescription: String? {
