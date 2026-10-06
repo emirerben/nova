@@ -1263,8 +1263,10 @@ struct NativeEditorTemporaryVideo {
         // A mirrored caption is its cue's sentence again (`isCaptionCueMirror`).
         // Listing both stacked every caption into a second CAPTIONS row and
         // left an unrendered tap target over the burned caption. Read-only text
-        // (`isReadOnly`) gets no item: the preview still draws it, but nothing
+        // (`isReadOnly`, the server's kill-switch shape for a phone Voiceover
+        // title, KRI-465) gets no item: the preview still draws it, but nothing
         // can select, drag or reorder it into a text Save the server refuses.
+        // An editable title has no `read_only`, so it is listed like any text.
         items += document.textElements.enumerated().filter { !document.isCaptionCueMirror($0.element) && !$0.element.isReadOnly }.map { index, item in projected(EditorSelection(kind: .text, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 300 + index), sourceIndex: index) }
         items += document.captionCues.enumerated().map { index, item in projected(EditorSelection(kind: .captionCue, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 400 + index), sourceIndex: index) }
         items += document.soundEffects.enumerated().map { index, item in projected(EditorSelection(kind: .soundEffect, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 100 + index), sourceIndex: index) }
@@ -3934,8 +3936,10 @@ struct NativeEditorTemporaryVideo {
     /// Whether a standalone text bar may be deleted from the editor, and why not.
     /// Caption cues belong to the Captions panel; bars linked to a card go with the
     /// card; lyric lines are generated. Everything else (title, clip labels, closing,
-    /// the creator's own text) drops out of `text_elements`, which the server treats
-    /// as a user deletion (full-replacement; guided tombstone `user_removed`).
+    /// the creator's own text, a phone Voiceover title) drops out of `text_elements`,
+    /// which the server treats as a user deletion (full-replacement; guided tombstone
+    /// `user_removed`). Only a `read_only` element (the server's kill-switch shape for
+    /// the Voiceover title, KRI-465) is blocked.
     enum TextDeletion: Equatable {
         case allowed
         case blocked(String)

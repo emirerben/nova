@@ -296,6 +296,22 @@ class Settings(BaseSettings):
     # builds that keep a `read_only` element out of every editing control
     # (older builds would let it be deleted, and that Save 422s).
     phone_narrated_title_preview_min_client_protocol: int = 4
+    # KRI-465 (editable title on phone Voiceover edits): the opening title the
+    # status route shows (`narrated_title_text_elements`) opens as an ordinary
+    # editable text element: the capability map opens `text_elements` and a
+    # text Save recompiles the pinned recipe's `title-` layers
+    # (`phone_narrated_plan.replace_narrated_title`). Requires the same
+    # "positionedText" + "animatedText" device features as the captions and
+    # an app build at `phone_narrated_title_preview_min_client_protocol` -- see
+    # `app.services.phone_rollout.phone_narrated_title_edits_supported`. It
+    # does not depend on `phone_narrated_title_enabled` (the planner's gate):
+    # an already-rendered title stays editable. False: byte-identical to
+    # KRI-455 -- the title is shown `read_only`, `text_elements` stays closed
+    # and a `text_elements` Save 422s. Rollback: `fly secrets set
+    # PHONE_NARRATED_TITLE_EDITS_ENABLED=false --app nova-video` + `fly machine
+    # restart <id>` (api). No NEXT_PUBLIC twin (the iOS editor follows the
+    # server's capability map and the title's `read_only` marker).
+    phone_narrated_title_edits_enabled: bool = True
     # KRI-290 (free clip edits on phone Voiceover videos): a phone `narrated`
     # or montage `voiceover` variant's timeline opens (trim, extend, reorder,
     # split, delete) instead of being locked to the voiceover. A Save swaps the

@@ -708,7 +708,10 @@ final class NativeEditorSessionTests: XCTestCase {
     static let voiceoverVideoPath = "users/owner/plan/item/pool/clip.mp4"
 
     /// KRI-455: a phone Voiceover edit's opening title arrives read-only beside
-    /// the caption mirrors. The live preview draws it, but nothing in the editor
+    /// the caption mirrors. Since KRI-465 this is the server's kill-switch shape
+    /// (`PHONE_NARRATED_TITLE_EDITS_ENABLED=false`); the editable shape is
+    /// `testEditableVoiceoverTitleIsOnTheTimelineAndRidesASave`.
+    /// The live preview draws it, but nothing in the editor
     /// can select, delete, retime or edit it, so a caption Save never sends
     /// `text_elements` (the narrated editor has no text lane: that Save 422s).
     func testReadOnlyTitleShowsInThePreviewButNeverReachesASave() async throws {
@@ -743,7 +746,87 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(request.captionCues?.count, 1)
     }
 
-    private static func phoneVoiceoverSession(mediaOpen: Bool, savedPhoto: Bool = false, title: Bool = false) async throws -> (NativeEditorSession, EditorCommitSpy, BackgroundUploadCoordinator) {
+    /// KRI-465: the same title without `read_only`, on a variant whose
+    /// `text_elements` capability is on. It goes through the ordinary text
+    /// paths: timeline item, Text list, edits and deletion all ride a Save.
+    func testEditableVoiceoverTitleIsOnTheTimelineAndRidesASave() async throws {
+        let (session, fake, uploads) = try await Self.phoneVoiceoverSession(mediaOpen: false, title: true, titleEditable: true)
+        defer { _ = uploads }
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
+            sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false, captionCues: false),
+            revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        let recipe = try XCTUnwrap(session.displayedSourcePreviewRecipe)
+        let title = try XCTUnwrap(recipe.textLayers.first { $0.id == "narrated-title" })
+        XCTAssertEqual(title.runs.map(\.text), ["Cacio e pepe in", "10 minutes"])
+        XCTAssertEqual(title.runs.first?.fontAssetID, "font-PlayfairDisplay-Bold.ttf")
+        XCTAssertEqual(title.anchorY, 288, accuracy: 0.001)
+        XCTAssertEqual(recipe.textLayers.filter { $0.runs.contains { $0.text.contains("First we pack") } }.count, 1,
+                       "the caption still shows once")
+
+        let item = try XCTUnwrap(session.timelineItems.first { $0.id == "narrated-title" }, "selectable and draggable")
+        XCTAssertEqual(item.kind, .text)
+        let block = try XCTUnwrap(session.document.textBlocks.first { $0.id == "narrated-title" }, "listed in the Text tab")
+        XCTAssertEqual(block.kindLabel, "Title")
+        XCTAssertEqual(block.text, "Cacio e pepe in 10 minutes")
+        XCTAssertTrue(session.textDeletion(id: "narrated-title").isAllowed)
+        XCTAssertFalse(session.hasUnsavedChanges)
+
+        session.updateTextContent(id: "narrated-title", content: "Cacio e pepe, fast")
+        session.updateTextTiming(id: "narrated-title", startS: 0.2, endS: 1.9)
+        session.setTextPosition(id: "narrated-title", x: 0.4, y: 0.3)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        func displayedTitle() -> String? {
+            session.displayedSourcePreviewRecipe?.textLayers.first { $0.id == "narrated-title" }?.runs.map(\.text).joined(separator: " ")
+        }
+        for _ in 0..<200 where displayedTitle() != "Cacio e pepe, fast" { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertEqual(displayedTitle(), "Cacio e pepe, fast", "the preview follows the edit")
+        await session.save()
+
+        let request = try XCTUnwrap(fake.lastRequest)
+        let rows = try XCTUnwrap(request.textElements, "a title edit rides the text section")
+        let sent = try XCTUnwrap(rows.compactMap(\.objectValue).first { $0["id"] == .string("narrated-title") })
+        XCTAssertEqual(sent["text"], .string("Cacio e pepe, fast"))
+        XCTAssertEqual(sent["start_s"], .number(0.2))
+        XCTAssertEqual(sent["end_s"], .number(1.9))
+        XCTAssertEqual(sent["x_frac"], .number(0.4))
+        XCTAssertEqual(sent["y_frac"], .number(0.3))
+        XCTAssertEqual(sent["position"], .string("custom"))
+        XCTAssertNil(sent["source_params"]?.objectValue?["read_only"])
+        XCTAssertTrue(rows.compactMap(\.objectValue).contains { $0["id"] == .string("mirror-0") },
+                      "the caption mirror row rides along: text_elements is a full replacement")
+        XCTAssertNil(request.deletions)
+    }
+
+    /// KRI-465: deleting the editable title drops it from the preview and the
+    /// Save carries the `text`/`narrated-title` deletion beside the section.
+    func testEditableVoiceoverTitleDeletionRidesASave() async throws {
+        let (session, fake, uploads) = try await Self.phoneVoiceoverSession(mediaOpen: false, title: true, titleEditable: true)
+        defer { _ = uploads }
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
+            sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: false, mix: false, captionCues: false),
+            revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertTrue(try XCTUnwrap(session.displayedSourcePreviewRecipe).textLayers.contains { $0.id == "narrated-title" })
+
+        XCTAssertTrue(session.deleteText(id: "narrated-title"))
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertFalse(session.timelineItems.contains { $0.id == "narrated-title" })
+        XCTAssertFalse(session.document.textBlocks.contains { $0.id == "narrated-title" })
+        func titleDrawn() -> Bool { session.displayedSourcePreviewRecipe?.textLayers.contains { $0.id == "narrated-title" } ?? true }
+        for _ in 0..<200 where titleDrawn() { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertNotNil(session.displayedSourcePreviewRecipe)
+        XCTAssertFalse(titleDrawn(), "the title layer is gone")
+        await session.save()
+
+        let request = try XCTUnwrap(fake.lastRequest)
+        XCTAssertEqual(request.deletions, [EditorDeletion(kind: "text", id: "narrated-title")])
+        let rows = try XCTUnwrap(request.textElements).compactMap(\.objectValue)
+        XCTAssertFalse(rows.contains { $0["id"] == .string("narrated-title") })
+        XCTAssertTrue(rows.contains { $0["id"] == .string("mirror-0") })
+    }
+
+    private static func phoneVoiceoverSession(mediaOpen: Bool, savedPhoto: Bool = false, title: Bool = false, titleEditable: Bool = false) async throws -> (NativeEditorSession, EditorCommitSpy, BackgroundUploadCoordinator) {
         let threadID = UUID(), jobID = UUID()
         let project = BackgroundUploadCoordinator.projectDirectory(threadID)
         let montage = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
@@ -777,7 +860,7 @@ final class NativeEditorSessionTests: XCTestCase {
         video.duration = 4.6
         try cache.store(video, for: "media:generation-1:\(voiceoverVideoID)")
 
-        var capabilities: [String: JSONValue] = ["timeline": .bool(false), "text_elements": .bool(false), "mix": .bool(false),
+        var capabilities: [String: JSONValue] = ["timeline": .bool(false), "text_elements": .bool(title && titleEditable), "mix": .bool(false),
             "overlays": .bool(true), "sfx": .bool(true), "visual_blocks": .bool(mediaOpen)]
         var variant: [String: JSONValue] = [
             "variant_id": .string("variant"),
@@ -804,7 +887,9 @@ final class NativeEditorSessionTests: XCTestCase {
                 "text": .string("First we pack"), "start_s": .number(0), "end_s": .number(2),
             ])])
             variant["text_elements"] = .array([
-                .object(NativeEditorRenderCompilerTests.readOnlyTitle("Cacio e pepe in 10 minutes").raw),
+                .object((titleEditable
+                    ? NativeEditorRenderCompilerTests.editableTitle("Cacio e pepe in 10 minutes")
+                    : NativeEditorRenderCompilerTests.readOnlyTitle("Cacio e pepe in 10 minutes")).raw),
                 .object(["id": .string("mirror-0"), "text": .string("First we pack"), "start_s": .number(0), "end_s": .number(2),
                          "role": .string("generative_sequence"), "position": .string("bottom"),
                          "source_params": .object(["source": .string("caption_cue"), "key": .string("0")])]),

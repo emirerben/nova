@@ -30,9 +30,11 @@ from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_g
 from app.pipeline.phone_narrated_plan import (
     _EDITOR_LANE_TRACK_IDS,
     EDITOR_MEDIA_TRACK_ID,
+    narrated_authored_text_elements,
     replace_editor_lanes,
     replace_editor_media,
     replace_narrated_captions,
+    replace_narrated_title,
 )
 from app.pipeline.phone_recipe_shared import (
     PhoneNarrationBed,
@@ -58,6 +60,7 @@ from app.services.phone_editor_sources import (
 )
 from app.services.phone_rollout import (
     phone_narrated_caption_edits_supported,
+    phone_narrated_title_edits_supported,
     phone_subtitled_editor_lanes_supported,
     phone_voiceover_editor_lanes_supported,
     phone_voiceover_editor_media_supported,
@@ -103,12 +106,16 @@ _SUBTITLED_EDITOR_SECTIONS = frozenset(
     {"sound_effects", "media_overlays", "caption_cues", "caption_meta", "landscape_fit"}
 )
 
-# The only native-editor sections a phone `narrated` (recorded voiceover)
-# variant honours (KRI-280): the caption lines and their look. The narrated
-# phone compiler has no editor lane for anything else, so every other section
-# stays closed rather than silently dropped on Save.
+# The native-editor sections a phone `narrated` (recorded voiceover) variant
+# always honours (KRI-280): the caption lines and their look. Every other
+# section opens only behind its own gate below, and the rest stay closed rather
+# than silently dropped on Save.
 _NARRATED_EDITOR_SECTIONS = frozenset({"caption_cues", "caption_meta"})
 _NARRATED_CAPTION_SECTIONS = frozenset({"caption_cues", "caption_meta"})
+# KRI-465: ...and the opening title / text the creator adds, as `text_elements`,
+# recompiled into the pinned recipe's `title-` layers by `replace_narrated_title`
+# -- only while `phone_narrated_title_edits_supported`.
+_NARRATED_TEXT_SECTIONS = frozenset({"text_elements"})
 # KRI-281: a phone Voiceover edit (`narrated`, or a montage `voiceover`) also
 # honours the sound-effect and Visuals lanes, recompiled through the SAME lane
 # helpers phone Talking uses -- only while `phone_voiceover_editor_lanes_supported`.
@@ -794,8 +801,9 @@ def _compile_narrated_editor_commit(
 ) -> None:
     """The `resolved_archetype == "narrated"` counterpart of the subtitled
     branch above (KRI-280): swap the committed caption cues and look into the
-    pinned recipe (`replace_narrated_captions`), and (KRI-281) recompile the
-    sound-effect / Visuals lanes (`replace_editor_lanes`).
+    pinned recipe (`replace_narrated_captions`), (KRI-281) recompile the
+    sound-effect / Visuals lanes (`replace_editor_lanes`), and (KRI-465)
+    recompile the opening title / added text (`replace_narrated_title`).
 
     ``variant`` is the STAGED row, so `_prepare_editor_commit` has already
     written the validated cues and caption-meta fields onto it. The narration
@@ -810,14 +818,20 @@ def _compile_narrated_editor_commit(
     lanes_active = active_sections & _VOICEOVER_LANE_SECTIONS
     media_active = active_sections & _VOICEOVER_MEDIA_SECTIONS
     cut_active = bool(active_sections & _VOICEOVER_CUT_SECTIONS)
+    text_active = bool(active_sections & _NARRATED_TEXT_SECTIONS)
     lanes_ok = phone_voiceover_editor_lanes_supported(require_client=False)
     media_ok = phone_voiceover_editor_media_supported(require_client=False)
+    text_ok = phone_narrated_title_edits_supported(require_client=False)
     if lanes_active and not lanes_ok:
         raise ValueError("phone Voiceover sound effects and Visuals aren't editable yet")
     if media_active and not media_ok:
         raise ValueError("phone Voiceover photos and videos aren't editable yet")
+    if text_active and not text_ok:
+        raise ValueError("phone Voiceover titles aren't editable yet")
     # A caption edit, or a Save with nothing else to do, is a caption Save.
-    caption_save = bool(caption_active) or not (lanes_active or media_active or cut_active)
+    caption_save = bool(caption_active) or not (
+        lanes_active or media_active or cut_active or text_active
+    )
     if caption_save and not phone_narrated_caption_edits_supported():
         raise ValueError("phone Narrated captions aren't editable yet")
 
@@ -826,6 +840,7 @@ def _compile_narrated_editor_commit(
         | _VOICEOVER_CUT_SECTIONS
         | (_VOICEOVER_LANE_SECTIONS if lanes_ok else frozenset())
         | (_VOICEOVER_MEDIA_SECTIONS if media_ok else frozenset())
+        | (_NARRATED_TEXT_SECTIONS if text_ok else frozenset())
     )
     unsupported_sections = active_sections - allowed
     if unsupported_sections:
@@ -842,6 +857,13 @@ def _compile_narrated_editor_commit(
     if cut_active:
         bindings, pool = _voiceover_sources(staged, assembly)
         recipe = _swap_voiceover_cut(recipe, prep, bindings, pool, archetype="narrated")
+    title_elements: list[dict] = []
+    if text_active:
+        # The STAGED row: `_prepare_editor_commit` validated the Save's
+        # `text_elements` and wrote them here. The caption mirrors the editor
+        # document also sends are the caption lane's, not title text.
+        title_elements = narrated_authored_text_elements(variant.get("text_elements") or [])
+        recipe = replace_narrated_title(recipe, title_elements)
     if caption_save or cut_active:
         # A new cut re-bounds the captions to where the video now ends.
         caption_style = "word" if variant.get("voiceover_caption_style") == "word" else "sentence"
@@ -885,6 +907,16 @@ def _compile_narrated_editor_commit(
         row["duration_s"] = recipe.duration
         if caption_cues_overridden:
             row["caption_cues"] = caption_cues
+        if text_active:
+            # One store for the title: `narrated_title_text_elements` is what the
+            # status route shows, so the staged `text_elements` must not keep a
+            # second copy (it would render the title twice).
+            if title_elements:
+                row["narrated_title_text_elements"] = title_elements
+            else:
+                row.pop("narrated_title_text_elements", None)
+            row.pop("text_elements", None)
+            row.pop("text_elements_user_edited", None)
         if cut_active:
             # Keep the persisted pair (admin/debug, older app builds) on the new cut.
             projected_cut = narrated_timings_and_assignments(recipe, list(bindings), pool)

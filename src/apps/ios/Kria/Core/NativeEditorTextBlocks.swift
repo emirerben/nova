@@ -59,7 +59,8 @@ extension EditorDocument {
     /// The on-screen text a creator can edit, in the order it appears.
     ///
     /// Left out on purpose: captions (they have their own tab and list), read-only
-    /// text (`isReadOnly`), blocks the renderer skips (`removed`, `enabled == false`),
+    /// text (`isReadOnly`, the server's kill-switch shape for a phone Voiceover
+    /// title; an editable title is listed like any text, KRI-465), blocks the renderer skips (`removed`, `enabled == false`),
     /// and zero-length blocks that cannot be selected on the timeline either.
     var textBlocks: [EditorTextBlock] {
         var seen = Set<String>()
@@ -84,7 +85,8 @@ extension EditorDocument {
             labelPosition[element.id] = Self.trailingNumber(of: element.id) ?? index + 1
         }
         func kind(of element: EditorTextElement) -> EditorTextBlock.Kind {
-            if element.id == "guided-title" { return .title }
+            // `narrated-title` is a phone Voiceover edit's opening title (KRI-465).
+            if element.id == "guided-title" || element.id == "narrated-title" { return .title }
             if let position = labelPosition[element.id] { return .clipLabel(position) }
             if element.id == "guided-closing-title" { return .closing }
             return .other

@@ -113,7 +113,14 @@ The element spells out what "top" / "large" resolve to on the cloud (y 0.15,
 the iOS editor preview, which draws text from the variant's ``text_elements``
 rather than the pinned recipe and has no cloud defaults of its own:
 `narrated_title_text_elements` is what the worker persists, and the status
-route shows it read-only to app builds that know the marker.
+route shows it to app builds that know the element (read-only, or editable
+since KRI-465: `phone_narrated_title_edits_supported`).
+
+Editing the title (KRI-465): a text Save sends the title and any text the
+creator added as ordinary `text_elements`; `replace_narrated_title` recompiles
+exactly the ``title-`` layers from them (`replace_narrated_captions`' sibling),
+and the Save persists them back as `narrated_title_text_elements` -- the one
+store the status route reads, so the title can never show twice.
 
 Both the cloud and the phone element take that look from
 `narrated_title.narrated_title_placement`, which also fits a long title into
@@ -322,9 +329,10 @@ def narrated_title_element(
         role="generative_intro",
         **narrated_title_placement(text, canvas=canvas, explicit=True),
         effect="fade-in",
-        # `read_only`: the editor draws it but offers no control for it; the
-        # narrated editor has no text lane to Save it through.
-        source_params={"narrated_storyboard": "intro", "read_only": True},
+        # No `read_only` marker (KRI-465): the status route decides per request
+        # whether the title is editable (`_with_phone_narrated_title`), so rows
+        # persisted before and after this change read the same way.
+        source_params={"narrated_storyboard": "intro"},
     )
 
 
@@ -351,14 +359,14 @@ def narrated_title_text_elements(
 
 
 def _compile_title_layers(
-    element: TextElement, *, canvas: Canvas, timeline_duration_s: float
+    elements: list[TextElement], *, canvas: Canvas, timeline_duration_s: float
 ) -> list[Any]:
     from app.pipeline.generative_overlays import build_overlays_from_text_elements
     from app.pipeline.portable_text_layout import compile_text_overlay
 
     try:
         overlays = build_overlays_from_text_elements(
-            [element], video_duration_s=timeline_duration_s, independent_box_alignment=True
+            elements, video_duration_s=timeline_duration_s, independent_box_alignment=True
         )
         return [
             compile_text_overlay(
@@ -371,6 +379,68 @@ def _compile_title_layers(
         ]
     except Exception as exc:  # noqa: BLE001 - untrusted title text
         raise UnsupportedPhonePlan(f"unable to compile the title: {exc}") from exc
+
+
+def narrated_authored_text_elements(rows: list[dict] | None) -> list[dict]:
+    """The creator-visible text a Voiceover editor Save carries, minus what the
+    recipe owns elsewhere (KRI-465).
+
+    The editor document sends every text element it shows: the opening title,
+    any text the creator added, and one mirror per caption cue. The mirrors
+    (``source_params.source == caption_cue``) are the caption lane's, lyric
+    lines are not a narrated concept, and removed rows are tombstones; none of
+    them compile as title layers.
+    """
+    from app.agents._schemas.text_element import CAPTION_CUE_SOURCE
+
+    return [
+        row
+        for row in rows or []
+        if isinstance(row, dict)
+        and (row.get("source_params") or {}).get("source") != CAPTION_CUE_SOURCE
+        and row.get("role") != "lyric_line"
+        and not row.get("removed")
+    ]
+
+
+def replace_narrated_title(recipe: EditRecipeV2, elements: list[dict]) -> EditRecipeV2:
+    """``recipe`` with only its title layers recompiled from ``elements`` (KRI-465).
+
+    The title counterpart of `replace_narrated_captions`: a text Save keeps
+    every clip, the narration bed, the audio mix and the caption layers exactly
+    as pinned, and swaps just the ``title-`` layers (and the fonts and text
+    capabilities they need). ``elements`` are authored text rows (see
+    `narrated_authored_text_elements`); each is clamped to the video's end, and
+    one that no longer has a visible window is dropped. An empty list removes
+    the title. Titles stay first, like `compile_phone_narrated_plan`.
+    """
+    from app.agents._schemas.text_element import TextElement
+
+    video = next((track for track in recipe.tracks if track.id == "narrated"), None)
+    if video is None or not video.clips:
+        raise UnsupportedPhonePlan("pinned narrated recipe has no video track")
+    duration = timeline_end_s(video.clips)
+
+    kept: list[TextElement] = []
+    for row in elements:
+        try:
+            element = TextElement.model_validate(row)
+        except Exception as exc:  # noqa: BLE001 - untrusted editor rows
+            raise UnsupportedPhonePlan(f"unable to read the title: {exc}") from exc
+        if element.removed:
+            continue
+        end_s = min(float(element.end_s), duration)
+        if end_s <= float(element.start_s):
+            continue
+        kept.append(element.model_copy(update={"end_s": end_s}))
+
+    titles = (
+        _compile_title_layers(kept, canvas=recipe.canvas, timeline_duration_s=duration)
+        if kept
+        else []
+    )
+    captions = [layer.model_copy() for layer in recipe.text_layers if not _is_title_layer(layer)]
+    return _with_text_layers(recipe, [*titles, *captions])
 
 
 def _is_title_layer(layer: object) -> bool:
@@ -667,7 +737,7 @@ def compile_phone_narrated_plan(
         recipe = _with_text_layers(
             recipe,
             _compile_title_layers(
-                title, canvas=story_canvas, timeline_duration_s=timeline_end_s(clips)
+                [title], canvas=story_canvas, timeline_duration_s=timeline_end_s(clips)
             ),
         )
     if caption_cues:

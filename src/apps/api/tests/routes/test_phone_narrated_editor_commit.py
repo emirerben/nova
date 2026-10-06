@@ -400,8 +400,10 @@ def test_cleaned_narration_binding_survives_a_caption_save(monkeypatch):
 # --- refusals -----------------------------------------------------------------------
 
 
-def test_a_non_caption_section_is_an_unsupported_phone_edit(monkeypatch):
+def test_a_text_section_is_an_unsupported_phone_edit_with_title_edits_off(monkeypatch):
+    """KRI-465: `text_elements` is the title lane, closed again by its kill switch."""
     job = phone_job(monkeypatch)
+    monkeypatch.setattr(gj.settings, "phone_narrated_title_edits_enabled", False)
     before = device_status(job, "narrated").request
     plan_before = job.assembly_plan
 
@@ -410,7 +412,7 @@ def test_a_non_caption_section_is_an_unsupported_phone_edit(monkeypatch):
 
     assert error.value.status_code == 422
     assert error.value.detail["code"] == "unsupported_phone_edit"
-    assert "text_elements" in error.value.detail["reason"]
+    assert "titles" in error.value.detail["reason"]
     # Nothing staged leaks onto the job.
     assert device_status(job, "narrated").request == before
     assert job.assembly_plan is plan_before

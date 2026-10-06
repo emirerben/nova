@@ -2140,24 +2140,65 @@ guided-story media imports). Saved media keeps rendering either way.
 Tests: `tests/routes/test_phone_voiceover_editor_media.py`; iOS
 `NativeEditorSessionTests.testPhoneVoiceoverEdit*`.
 
-**Opening title in the preview (KRI-455).** A confirmed `opening_title` burns as
-`title-*` layers in the pinned recipe (`phone_narrated_plan`, "Opening title"),
-but the editor preview compiles text from the variant, never from the recipe.
-So `_run_phone_narrated_job` also persists the element it compiled
-(`narrated_title_text_elements`, from `narrated_title_text_elements()`), and the
-status route prepends it to `text_elements` (`_with_phone_narrated_title`). It
-is read-only: `source_params.read_only`, `text_elements` stays closed, no Save
-lane carries it, and it is not in the deletion baseline (a hand-made `text`
-deletion is a 409). Only builds declaring `X-Kria-Client-Protocol` >=
-`PHONE_NARRATED_TITLE_PREVIEW_MIN_CLIENT_PROTOCOL` (default 4) get it: protocol
-4 keeps a `read_only` element off the timeline, out of the Text list and out of
-every mutation (`EditorTextElement.isReadOnly`); older builds would offer
-Delete and 422. The element spells out the cloud's "top"/"large"/default face
-(custom y 0.15, 120 px, Playfair Display), pinned to the cloud layers by
+**Opening title in the preview (KRI-455) and its edit lane (KRI-465).** A
+confirmed `opening_title` burns as `title-*` layers in the pinned recipe
+(`phone_narrated_plan`, "Opening title"), but the editor preview compiles text
+from the variant, never from the recipe. So `_run_phone_narrated_job` also
+persists the element it compiled (`narrated_title_text_elements`, from
+`narrated_title_text_elements()`), and the status route prepends it to
+`text_elements` (`_with_phone_narrated_title`). Only builds declaring
+`X-Kria-Client-Protocol` >= `PHONE_NARRATED_TITLE_PREVIEW_MIN_CLIENT_PROTOCOL`
+(default 4) get it; older builds would offer Delete on a title they don't know.
+The element spells out the cloud's "top"/"large"/default face (custom y 0.15,
+120 px, Playfair Display), pinned to the cloud layers by
 `test_title_element_spells_out_exactly_the_cloud_intro`. Not covered: cloud
 narrated storyboard titles (`text_elements_materialized_from ==
-"narrated_storyboard"`), which the read path still drops. Tests:
-`tests/routes/test_phone_narrated_title_preview.py`; iOS
+"narrated_storyboard"`), which the read path still drops.
+
+KRI-465 makes that title editable (and deletable), behind
+`PHONE_NARRATED_TITLE_EDITS_ENABLED` (default true; also needs
+`positionedText` + `animatedText` verified, and does NOT depend on the planner's
+`PHONE_NARRATED_TITLE_ENABLED`: a rendered title stays editable). Gate:
+`phone_rollout.phone_narrated_title_edits_supported(require_client=...)`; the
+status route and capability map judge the request's protocol (>= 4), Save
+passes `require_client=False` like the lanes do.
+
+- **Read path decides.** The persisted element carries no `read_only` marker
+  (rows the KRI-455 worker wrote still do). `_with_phone_narrated_title`
+  normalizes every row on the way out: editable drops `read_only` from a copy,
+  otherwise it sets `read_only: true` (protocol-4 iOS keeps such a row off the
+  timeline and out of every mutation, `EditorTextElement.isReadOnly`). The stored
+  row is never touched. `_clamp_phone_editor_capabilities(narrated_text=...)`
+  keeps `text_elements` open for a phone Voiceover variant only while the same
+  gate holds (a base map closed by the global `TEXT_ELEMENTS_ENABLED` stays
+  closed).
+- **One store.** `narrated_title_text_elements` is the title's only copy. A text
+  Save (`phone_editor._compile_narrated_editor_commit`) takes the staged
+  `text_elements` (already validated by `validate_text_elements_payload`),
+  keeps the authored rows (`narrated_authored_text_elements`: not caption-cue
+  mirrors, not `lyric_line`, not `removed`), recompiles exactly the `title-*`
+  layers (`replace_narrated_title`: ends clamped to the video, empty window
+  dropped, ids `title-{index}`, titles before captions), writes the rows back to
+  `narrated_title_text_elements` (key removed when empty) and removes the staged
+  `text_elements` / `text_elements_user_edited`, so the status route can never
+  show the title twice. A text-only Save is not a caption Save. The document the
+  app sends carries one caption mirror per cue, so phone Narrated variants use
+  `MAX_GUIDED_EDITOR_TEXT_ELEMENTS` instead of the cloud's 50.
+- **Deletion.** The deletion baseline adds the title like the status route does,
+  so deleting `narrated-title` is no longer `deletion_target_stale`; the Save
+  removes every `title-` layer. (Pre-existing: a `text` deletion also
+  materializes an empty `visual_blocks` lane, which 404s while
+  `VISUAL_BLOCKS_ENABLED` is off.)
+- **Caption and cut Saves** keep the edited title: `replace_narrated_captions`
+  and the cut swap leave `title-` layers as pinned.
+- **Rollback:** `fly secrets set PHONE_NARRATED_TITLE_EDITS_ENABLED=false --app
+  nova-video` + `fly machine restart <id>` (api). The title shows `read_only`
+  again, `text_elements` closes and a `text_elements` Save 422s
+  (`unsupported_phone_edit`); an edited title keeps rendering.
+
+Tests: `tests/routes/test_phone_narrated_title_preview.py`,
+`tests/pipeline/test_phone_narrated_plan.py` (`replace_narrated_title`),
+`tests/routes/test_caption_capabilities.py`; iOS
 `NativeEditorRenderCompilerTests.testReadOnlyTitle*`,
 `NativeEditorSessionTests.testReadOnlyTitle*`.
 

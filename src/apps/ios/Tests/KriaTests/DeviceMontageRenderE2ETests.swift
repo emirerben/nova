@@ -351,8 +351,8 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
     }
 
     /// KRI-455: the editor preview compiles a phone Voiceover title from the
-    /// variant's read-only element (`narrated_title_text_elements`), never from
-    /// the pinned recipe. Swap that compile into the export's own recipe,
+    /// variant's title element (`narrated_title_text_elements`; read-only, or
+    /// editable since KRI-465), never from the pinned recipe. Swap that compile into the export's own recipe,
     /// render both through the same exporter, and compare the title band: the
     /// lit text must cover the same box (the native layout keeps fractional
     /// line steps the server truncates, so allow a couple of pixels) and the
@@ -366,7 +366,9 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         )
         let document = EditorDocument(snapshot: snapshot)
         let title = try XCTUnwrap(document.textElements.first)
-        XCTAssertTrue(title.isReadOnly, "\(caseID): the status route marks the title read-only")
+        // The status route sends the title read-only (kill-switch shape) or, since
+        // KRI-465, editable; the fixture may come from either server version.
+        XCTAssertEqual(title.id, "narrated-title", "\(caseID): the voiceover title element")
         let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
         // Only the text compile matters here; the placeholder footage is never read.
         let placeholder = ResolvedEditorSource(clipIndex: 0, mediaID: "placeholder", asset: MediaAsset(id: "placeholder",
@@ -375,8 +377,12 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         let span = title.endS + 1
         let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: span,
             trimIn: 0, trimOut: span, sourceDuration: span, slotID: "slot")
+        // An editable title needs the timeline item the session builds for it; a
+        // read-only one draws without one.
+        let items = title.isReadOnly ? [] : [NativeEditorTimelineItem(
+            selection: EditorSelection(kind: .text, id: title.id), start: title.startS, end: title.endS)]
         let previewTitle = try XCTUnwrap(
-            compiler.compile(document: document, clips: [clip], items: [], sources: [0: placeholder]).recipe.textLayers.first
+            compiler.compile(document: document, clips: [clip], items: items, sources: [0: placeholder]).recipe.textLayers.first
         )
         var preview = recipe
         let exportedTitle = try XCTUnwrap(preview.textLayers.firstIndex { $0.id.hasPrefix("title-") })
