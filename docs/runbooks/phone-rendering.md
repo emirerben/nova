@@ -478,7 +478,9 @@ transcribes it (`transcribe_whisper` with `settings.narrated_whisper_model`),
 computes step timings — scripted force-alignment
 (`_narrated_script_steps` + `align_script_to_voiceover`) when the filming
 guide has 2+ steps, else auto-segmentation (`split_phrases` +
-`contiguous_step_timings`) for `narrated_ready` — assigns one clip per step in
+`contiguous_step_timings`) for `narrated_ready` (KRI-456: first tries
+`NarratedClipAlignmentAgent` to start each clip where the voice describes it,
+falling back to this split; see `docs/pipelines/generative.md`) — assigns one clip per step in
 narrative/guide order (no agentic storyboard re-ranking, unlike the cloud
 path), and burns the same caption-cue pipeline as `subtitled`. The gain math
 mirrors the montage-family voiceover render: `mix = 1.0 - bed_level`
