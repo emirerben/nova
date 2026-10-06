@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.106.0] - 2026-10-06
+
+### Changed
+- fix(ios): preview server text rows where and how the burn draws them (#1424) <!-- release-pr: 1424 -->
+
 ## [0.78.105.0] - 2026-10-06
 
 ### Changed
