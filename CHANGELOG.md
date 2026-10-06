@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.113.0] - 2026-10-06
+
+### Changed
+- fix(kria): hoist a brief_updates list the Main Creator nested under its action (KRI-456) (#1429) <!-- release-pr: 1429 -->
+
 ## [0.78.112.0] - 2026-10-06
 
 ### Changed
