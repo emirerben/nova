@@ -20,7 +20,9 @@ and does not need to know about this module.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+import os
 import shutil
 import subprocess
 import zipfile
@@ -329,6 +331,54 @@ def _overlay_filter_complex(base_vf: str, n_overlays: int) -> str:
     return ";".join(parts)
 
 
+# Bump when the image decode/normalize recipe changes so cached normalized
+# derivatives (content-addressed in GCS) are rebuilt. Image slides only.
+SLIDE_IMAGE_NORMALIZER_VERSION = 2
+
+
+def _decode_image_for_ffmpeg(src_path: str) -> str:
+    """Decode with Pillow into an sRGB, upright, opaque JPEG beside the source.
+
+    FFmpeg alone mishandles iPhone HEIC (grid tiles, ignored ICC/orientation),
+    producing B&W / tiled crops. Falls back to the original path if Pillow
+    cannot open the file.
+    """
+    try:
+        from PIL import Image, ImageOps  # noqa: PLC0415
+
+        try:
+            import pillow_heif  # type: ignore[import-not-found]  # noqa: PLC0415
+
+            pillow_heif.register_heif_opener()
+        except Exception:  # noqa: BLE001
+            pass
+        with Image.open(src_path) as opened:
+            icc = opened.info.get("icc_profile")
+            image = ImageOps.exif_transpose(opened)
+            image.load()
+            if "A" in image.getbands() or "transparency" in image.info:
+                rgba = image.convert("RGBA")
+                matte = Image.new("RGBA", rgba.size, (0, 0, 0, 255))
+                image = Image.alpha_composite(matte, rgba).convert("RGB")
+            else:
+                image = image.convert("RGB")
+            if icc:
+                try:
+                    from PIL import ImageCms  # noqa: PLC0415
+
+                    src_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc))
+                    dst_profile = ImageCms.createProfile("sRGB")
+                    image = ImageCms.profileToProfile(image, src_profile, dst_profile)
+                except Exception:  # noqa: BLE001
+                    pass
+            out = f"{os.path.splitext(src_path)[0]}_decoded.jpg"
+            image.save(out, format="JPEG", quality=95, subsampling=0, optimize=False)
+        return out
+    except Exception as exc:  # noqa: BLE001
+        log.warning("slide_image_decode_fallback", error=str(exc))
+        return src_path
+
+
 def normalize_image_slide(
     src_path: str, out_path: str, *, canvas: Canvas, edits: SlideEdits | None = None
 ) -> None:
@@ -336,6 +386,7 @@ def normalize_image_slide(
     if not Path(src_path).exists():
         raise SlideBuildError(f"image slide not found: {src_path}")
     rich = rich_text_active(edits)
+    decoded_path = _decode_image_for_ffmpeg(src_path)
     with (
         _edits_filter_fragment(
             edits, canvas=canvas, out_path=out_path, include_text=not rich
@@ -345,7 +396,7 @@ def normalize_image_slide(
         vf = _scale_crop_filter(canvas)
         if edit_fragment:
             vf = f"{vf},{edit_fragment}"
-        cmd = ["ffmpeg", "-y", "-loglevel", "warning", "-nostats", "-i", src_path]
+        cmd = ["ffmpeg", "-y", "-loglevel", "warning", "-nostats", "-i", decoded_path]
         for png in pngs:
             cmd += ["-i", png]
         if pngs:

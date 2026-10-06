@@ -8053,9 +8053,14 @@ def _build_slide_post_result(
             # a plain literal (not a hash) so the unedited path's key is
             # unchanged from before this feature existed.
             edits_digest = slide_build.edits_cache_digest(edits)
+            # Image slides carry the decode-recipe version so a normalizer
+            # fix rebuilds stale derivatives; videos keep their key.
+            norm_suffix = (
+                f"_n{slide_build.SLIDE_IMAGE_NORMALIZER_VERSION}" if kind == "image" else ""
+            )
             normalized_key = (
                 f"generative-jobs/{job_id}/slides/normalized/"
-                f"{fingerprint}_{canvas[0]}x{canvas[1]}_{edits_digest}.{ext}"
+                f"{fingerprint}_{canvas[0]}x{canvas[1]}_{edits_digest}{norm_suffix}.{ext}"
             )
             normalized_local = os.path.join(tmpdir, f"norm_{index:02d}.{ext}")
             if storage.object_exists(normalized_key):
