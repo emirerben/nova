@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.102.0] - 2026-10-06
+
+### Changed
+- fix(text): burn legacy font aliases in their face; project the intro's resolved look (#1418) <!-- release-pr: 1418 -->
+
 ## [0.78.101.0] - 2026-10-06
 
 ### Changed
