@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.121.0] - 2026-10-06
+
+### Changed
+- feat(slides): watermark every slider slide and rename "Photo & video post" to "Slider" (KRI-472) (#1438) <!-- release-pr: 1438 -->
+
 ## [0.78.120.0] - 2026-10-06
 
 ### Changed
