@@ -19,7 +19,7 @@ struct SlidePostWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @StateObject private var session: SlidePostSession
-    @StateObject private var exporter = SlidePostExporter()
+    @StateObject private var exporter = SlidePostExporter.makeDefault()
     @State private var showsConversation = false
     /// Chat-edit staging as decided when the AI sheet opened; it never flips while the sheet is up.
     @State private var aiChatEnabled = false
@@ -85,10 +85,6 @@ struct SlidePostWorkspaceView: View {
     private var hasFailedUploads: Bool { hasSkippedFiles || hasFailedAssets }
     private var canRequestProposal: Bool { !session.isBusy && !hasPendingAssets && !hasFailedAssets && !session.readyAssets.isEmpty }
 
-    private var canCreateRender: Bool {
-        guard !session.hasUnsavedChanges, !isRendering else { return false }
-        return session.draft != nil && session.state?.canExport != true
-    }
     private var pollingKey: String { "\(itemID ?? "")-\(session.state?.renderStatus ?? "")-\(hasPendingAssets)-\(session.isBusy)" }
 
     var body: some View {
@@ -102,6 +98,9 @@ struct SlidePostWorkspaceView: View {
         }
         .onGeometryChange(for: CGSize.self, of: { $0.size }) { rootSize = $0 }
         .background(KriaColor.paper)
+        // The workspace draws its own back circle; the system bar would add a second back button.
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $showsCaption) { captionSheet }
         .sheet(isPresented: $showsConversation) {
             SlidePostAISheet(
@@ -237,23 +236,24 @@ struct SlidePostWorkspaceView: View {
     private func aspect(_ draft: SlidePostDraft) -> CGFloat { draft.platformProfile == "instagram_carousel" ? 4.0 / 5 : 9.0 / 16 }
     private func platformName(_ draft: SlidePostDraft) -> String { draft.platformProfile == "instagram_carousel" ? "Instagram" : "TikTok" }
 
-    private var headerAction: SlidePostHeader.Action {
-        if session.isBusy { .saving }
-        else if session.hasUnsavedChanges { .save }
-        else if isRendering { .rendering }
-        else if session.canExport { .share }
-        else if canCreateRender { .create }
-        else { .save }
+    /// Why export cannot start right now (shown as a disabled row in the export menu); nil = it can.
+    private var exportBlockReason: String? {
+        if session.isChatting { return "Kria is editing. Export when it finishes." }
+        if hasPendingAssets { return "Wait for photos and videos to finish importing." }
+        guard let draft = session.draft else { return "Add photos and videos first." }
+        return draft.validationMessage
     }
 
     private var richHeader: some View {
-        let action = headerAction
-        return SlidePostHeader(
-            title: project.workspaceTitle, action: action, actionEnabled: action == .create || (action == .save && session.hasUnsavedChanges),
+        SlidePostHeader(
+            title: project.workspaceTitle,
+            saveState: NativeEditorSaveControl(isSaving: session.isBusy, hasUnsavedChanges: session.hasUnsavedChanges),
+            exportBlockReason: exportBlockReason,
+            isExporting: session.isBusy || exporter.isBusy,
             onBack: { if let onBack { onBack() } else { dismiss() } },
-            onAction: { Task { if action == .create { await create() } else { await save() } } },
-            onSaveToPhotos: { Task { await saveToPhotos() } },
-            onShare: { Task { await prepareShare() } }
+            onSave: { Task { await save() } },
+            onSaveToPhotos: { Task { await export(.photos) } },
+            onShare: { Task { await export(.share) } }
         )
     }
 
@@ -339,30 +339,31 @@ struct SlidePostWorkspaceView: View {
         .background(KriaColor.paper)
     }
 
-    @ViewBuilder private var richBanner: some View {
+    private var richBanner: some View {
+        VStack(spacing: 0) {
+            SlidePostExportBanner(exporter: exporter)
+            statusBanner
+        }
+    }
+
+    @ViewBuilder private var statusBanner: some View {
         if let error = session.error {
-            HStack(spacing: 10) {
-                Text(error).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText).frame(maxWidth: .infinity, alignment: .leading)
-                Button("Dismiss") { session.error = nil }.font(KriaFont.body(13).weight(.semibold)).frame(minHeight: 44)
+            Button { session.error = nil } label: {
+                NativeEditorBannerRow(title: "Something went wrong", detail: error, systemImage: "exclamationmark.triangle", tint: .red, identifier: "slidepost-error")
             }
-            .padding(.horizontal, 16).padding(.vertical, 4).background(KriaColor.failureSoft)
-            .accessibilityIdentifier("slidepost-error")
+            .buttonStyle(.plain).accessibilityHint("Dismiss")
         } else if let issue = session.state?.validationErrors.first {
-            Text(issue.message).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText)
-                .padding(.horizontal, 16).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading).background(KriaColor.failureSoft)
+            NativeEditorBannerRow(title: "Needs attention", detail: issue.message, systemImage: "exclamationmark.triangle", tint: .red, identifier: "slidepost-validation")
         } else if let notice = session.autoAppendNotice {
-            HStack(spacing: 10) {
-                Text(notice).font(KriaFont.body(13)).foregroundStyle(KriaColor.ink).frame(maxWidth: .infinity, alignment: .leading)
-                Button("Dismiss") { session.autoAppendNotice = nil }.font(KriaFont.body(13).weight(.semibold)).frame(minHeight: 44)
+            Button { session.autoAppendNotice = nil } label: {
+                NativeEditorBannerRow(title: "Heads up", detail: notice, systemImage: "info.circle", tint: KriaColor.ink, identifier: "slidepost-notice")
             }
-            .padding(.horizontal, 16).padding(.vertical, 4).background(KriaColor.sage.opacity(0.45))
-            .accessibilityIdentifier("slidepost-notice")
+            .buttonStyle(.plain).accessibilityHint("Dismiss")
         } else if hasFailedUploads {
             Button(action: addMedia) {
-                Text("Review files that need retrying")
-                    .font(KriaFont.body(13).weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
+                NativeEditorBannerRow(title: "Some files didn’t upload", detail: "Review files that need retrying.", systemImage: "arrow.clockwise", tint: KriaColor.ink, identifier: "slidepost-retry-files")
             }
-            .background(KriaColor.sage.opacity(0.45))
+            .buttonStyle(.plain)
         }
     }
 
@@ -384,16 +385,7 @@ struct SlidePostWorkspaceView: View {
 
     /// The editor's AI entry (same sparkles button as the video editor's preview), the page's only way into Kria chat.
     private var aiButton: some View {
-        Button { aiChatEnabled = chatEditOn; showsConversation = true } label: {
-            Image(systemName: "sparkles")
-                .font(.system(size: 23))
-                .foregroundStyle(.white)
-                .frame(width: 52, height: 52)
-                .background(KriaColor.ink, in: Circle())
-        }
-        .accessibilityLabel("Open Kria conversation")
-        .accessibilityIdentifier("slidepost-openkria")
-        .padding(.trailing, 16).padding(.bottom, 14)
+        KriaAIButton(identifier: "slidepost-openkria") { aiChatEnabled = chatEditOn; showsConversation = true }
     }
 
     private func richPreview(_ draft: SlidePostDraft, size: CGSize) -> some View {
@@ -533,19 +525,10 @@ struct SlidePostWorkspaceView: View {
         await refresh()
     }
     private func addMedia() { if let onAddMedia { onAddMedia() } else if ownerThread != nil { showsAttachments = true } }
-    private func saveToPhotos() async {
+    private func export(_ destination: SlidePostExporter.Destination) async {
         guard let itemID else { return }
-        await exporter.saveToPhotos(session: session) {
-            try await session.revalidateForExport(api: model.api, itemID: itemID)
-        }
+        await exporter.export(destination, session: session, api: model.api, itemID: itemID)
     }
-    private func prepareShare() async {
-        guard let itemID else { return }
-        await exporter.prepareShare(session: session) {
-            try await session.revalidateForExport(api: model.api, itemID: itemID)
-        }
-    }
-    private func create() async { guard let itemID else { return }; await session.create(api: model.api, itemID: itemID) }
     private func undo() async { guard let itemID else { return }; await session.undo(api: model.api, itemID: itemID) }
     private func save() async { guard let itemID else { return }; await session.save(api: model.api, itemID: itemID) }
 }

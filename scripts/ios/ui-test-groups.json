@@ -67,6 +67,8 @@
       "KriaUITests/SlidePostUITests/testFailedAIRequestShowsAClearMessageAndRetryKeepsTheMessage",
       "KriaUITests/SlidePostUITests/testAddMediaSheetForSlidePostsSaysPhotosAndVideos",
       "KriaUITests/SlidePostUITests/testSwitchingSlidesNeverShowsALoadingStateForLoadedImages",
+      "KriaUITests/SlidePostUITests/testGalleryOpenedPostHasOneBackButtonAndNoUnsavedChanges",
+      "KriaUITests/SlidePostUITests/testExportMenuSavesAnUnsavedPostToPhotosAndShowsTheBanner",
       "KriaUITests/CreationUITests/testReceiptChipsAndGuessedNamesStartACorrection",
       "KriaUITests/CreationUITests/testUnreadableAttachmentDoesNotBlockSend",
       "KriaUITests/CreationUITests/testFailedUploadWithRecordDoesNotBlockSendAndOffersRetry",

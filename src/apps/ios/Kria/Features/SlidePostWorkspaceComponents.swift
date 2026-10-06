@@ -6,8 +6,6 @@ import UIKit
 
 /// Slide-post specific tones that have no `KriaColor` token (taken from the approved Paper frames).
 enum SlidePostTone {
-    /// "Unsaved changes" subtitle.
-    static let warning = Color(red: 0x8A / 255, green: 0x4B / 255, blue: 0x14 / 255)
     /// Insertion bar while reordering.
     static let insertion = KriaColor.sky.mix(with: KriaColor.ink, by: 0.42)
     static let stage = KriaColor.paper
@@ -47,56 +45,93 @@ enum SlidePostMode: Equatable {
 
 // MARK: Header
 
-/// The native editor's floating header (`WorkspaceTopRow` + `kriaFloatingSurface`): a circle back
-/// button, a centred title and one floating action capsule. Undo/redo and the status line live in
-/// `SlidePostTransportRow`, where the editor keeps its own transport row.
+/// The video editor's floating header (`NativeEditorProjectHeader`): a circle back button, a
+/// centred title, a 44pt export circle (Save to Photos / Share files) and the shared save control.
+/// Undo/redo and the status line live in `SlidePostTransportRow`, where the editor keeps its own
+/// transport row.
 struct SlidePostHeader: View {
-    enum Action { case save, create, rendering, share, saving }
     let title: String
-    let action: Action
-    let actionEnabled: Bool
+    let saveState: NativeEditorSaveControl
+    /// Why export is unavailable right now; nil when the menu can act.
+    let exportBlockReason: String?
+    /// Saving, rendering or exporting: the export circle shows a spinner and the menu is inert.
+    let isExporting: Bool
     let onBack: () -> Void
-    let onAction: () -> Void
+    let onSave: () -> Void
     let onSaveToPhotos: () -> Void
     let onShare: () -> Void
 
     var body: some View {
         WorkspaceTopRow(title: title) {
             Button(action: onBack) {
-                Image(systemName: "chevron.left").font(.system(size: 15, weight: .semibold)).foregroundStyle(KriaColor.ink)
-                    .frame(width: 44, height: 44).kriaFloatingSurface(Circle())
+                Image(systemName: "chevron.left")
+                    .frame(width: 44, height: 44)
+                    .kriaFloatingSurface(Circle())
             }
             .accessibilityLabel("Back to creation")
+            .accessibilityIdentifier("slidepost-back")
         } trailing: {
-            trailing.frame(minWidth: 44, alignment: .trailing)
+            HStack(spacing: 8) {
+                exportMenu
+                saveButton
+            }
         }
         .buttonStyle(.plain)
         .foregroundStyle(KriaColor.ink)
     }
 
-    @ViewBuilder private var trailing: some View {
-        switch action {
-        case .save: pill("Save", id: "slidepost-save", enabled: actionEnabled, action: onAction)
-        case .saving: pill("Saving…", id: "slidepost-save", enabled: false, action: {})
-        case .create: pill("Create post", id: "slidepost-create", enabled: actionEnabled, action: onAction)
-        case .rendering: pill("Rendering…", id: "slidepost-rendering", enabled: false, action: {})
-        case .share:
-            Menu {
-                Button("Save to Photos", action: onSaveToPhotos).accessibilityIdentifier("slidepost-save-photos")
-                Button("Share files", action: onShare).accessibilityIdentifier("slidepost-share-files")
-            } label: { pillLabel("Share", enabled: true) }
-            .accessibilityIdentifier("slidepost-share")
+    /// Stays tappable while blocked so the menu can explain why export waits, instead of a
+    /// disabled icon that reads as a broken download button.
+    private var exportMenu: some View {
+        Menu {
+            if let reason = exportBlockReason {
+                Button(reason, systemImage: "info.circle") {}
+                    .disabled(true)
+                    .accessibilityIdentifier("slidepost-export-blocked")
+            } else {
+                Button("Save to Photos", systemImage: "square.and.arrow.down", action: onSaveToPhotos)
+                    .accessibilityIdentifier("slidepost-save-photos")
+                Button("Share files", systemImage: "square.and.arrow.up", action: onShare)
+                    .accessibilityIdentifier("slidepost-share-files")
+            }
+        } label: {
+            Group {
+                if isExporting {
+                    ProgressView().tint(KriaColor.ink)
+                } else {
+                    Image(systemName: "square.and.arrow.up")
+                        .foregroundStyle(exportBlockReason == nil ? KriaColor.ink : KriaColor.zinc)
+                }
+            }
+            .frame(width: 44, height: 44)
+            .kriaFloatingSurface(Circle())
         }
+        .disabled(isExporting)
+        .accessibilityLabel(isExporting ? "Preparing post" : "Export post")
+        .accessibilityIdentifier("slidepost-export")
     }
-    private func pill(_ title: String, id: String, enabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) { pillLabel(title, enabled: enabled) }
-            .disabled(!enabled).accessibilityIdentifier(id)
-    }
-    // Same capsule as the editor's Save: 14pt semibold, 44pt tall, floating frosted surface.
-    private func pillLabel(_ title: String, enabled: Bool) -> some View {
-        Text(title).font(KriaFont.body(14).weight(.semibold)).foregroundStyle(enabled ? KriaColor.ink : KriaColor.zinc)
-            .lineLimit(1).fixedSize().padding(.horizontal, 16).frame(minWidth: 44, minHeight: 44)
+
+    private var saveButton: some View {
+        Button(action: onSave) {
+            Group {
+                switch saveState {
+                case .saved:
+                    Image(systemName: "checkmark").foregroundStyle(KriaColor.zinc)
+                case .unsaved:
+                    Text("Save")
+                        .font(KriaFont.body(14).weight(.semibold))
+                        .lineLimit(1)
+                        .fixedSize()
+                case .saving:
+                    ProgressView().tint(KriaColor.ink)
+                }
+            }
+            .frame(minWidth: 44, minHeight: 44)
             .kriaFloatingSurface(Capsule())
+        }
+        .disabled(!saveState.isEnabled)
+        .accessibilityLabel(saveState.accessibilityLabel)
+        .accessibilityIdentifier("slidepost-save")
     }
 }
 
@@ -114,7 +149,7 @@ struct SlidePostTransportRow: View {
         HStack(spacing: 8) {
             Text(subtitle)
                 .font(KriaFont.body(13).weight(.semibold))
-                .foregroundStyle(unsaved ? SlidePostTone.warning : KriaColor.zinc)
+                .foregroundStyle(unsaved ? KriaColor.ink : KriaColor.zinc)
                 .lineLimit(1).minimumScaleFactor(0.7)
                 .accessibilityIdentifier("slidepost-subtitle")
             Spacer(minLength: 4)
@@ -124,12 +159,13 @@ struct SlidePostTransportRow: View {
         .padding(.horizontal, 14).frame(height: 54).background(KriaColor.paper)
     }
 
+    /// Same 44pt icon buttons as the video editor's undo/redo (`native-editor-undo`).
     private func historyButton(_ symbol: String, label: String, id: String, enabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 18, weight: .medium)).frame(width: 44, height: 44)
-                .foregroundStyle(enabled ? KriaColor.ink : KriaColor.line)
+            Image(systemName: symbol).frame(width: 44, height: 44)
         }
-        .buttonStyle(.plain).disabled(!enabled).accessibilityLabel(label).accessibilityIdentifier(id)
+        .buttonStyle(.plain).foregroundStyle(KriaColor.ink)
+        .disabled(!enabled).accessibilityLabel(label).accessibilityIdentifier(id)
     }
 }
 
