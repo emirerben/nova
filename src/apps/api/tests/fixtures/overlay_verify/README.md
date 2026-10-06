@@ -34,3 +34,9 @@ cloud burns it: one short title on the `top`/`large` preset and three long ones
 fitted into the top band by `narrated_title.narrated_title_placement` (smaller
 font, block top on the 6% safe margin). On the preset alone the long ones wrapped
 to 4-6 lines and ran off the top of the frame.
+
+`legacy_font_aliases.json` burns the four legacy file-root names TextElement
+still accepts ("Inter-Bold" guided narration captions + v<3 titles,
+"Inter-Regular"/"PlayfairDisplay-Regular" web presets, "PlayfairDisplay-Bold"
+visual-block cards). Each must resolve to its registry face, not fall back to
+the `display` default — a fallback is a FAIL here.
