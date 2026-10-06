@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.96.0] - 2026-10-06
+
+### Changed
+- fix(narrated): align phone voiceover clips to the words that describe them (KRI-456) (#1404) <!-- release-pr: 1404 -->
+
 ## [0.78.95.0] - 2026-10-06
 
 ### Changed
