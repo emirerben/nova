@@ -403,9 +403,7 @@ def test_observer_keeps_bound_recovery_message_without_extracted_requirements(
     )
 
     binding = SimpleNamespace(digest="pinned-digest", resolve=lambda _thread_id: None)
-    monkeypatch.setattr(
-        "app.kria.brief_binding.BriefBinding.model_validate", lambda _raw: binding
-    )
+    monkeypatch.setattr("app.kria.brief_binding.BriefBinding.model_validate", lambda _raw: binding)
     outcome, _execution, events = _observe(job, {})
 
     assert outcome == "failed"
