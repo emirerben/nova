@@ -132,6 +132,9 @@ public actor DeviceRenderCoordinator {
     private let failureReporter: (any DeviceRenderFailureReporter)?
     private var receipt: DeviceRenderReceipt?
     private var running: Task<Void, Never>?
+    /// Live fraction (0...1) of the CURRENT attempt's export, reported by the exporter. In memory only:
+    /// it is progress of a running encode, not recoverable state, so it never enters the receipt.
+    private var exportFraction: Double?
     private var receiptURL: URL { directory.appendingPathComponent("device-render.json") }
 
     public init(
@@ -153,6 +156,12 @@ public actor DeviceRenderCoordinator {
     }
     public func snapshot() -> DeviceRenderReceipt? { receipt }
     public func isBusy() -> Bool { running != nil }
+    /// Export progress of the running attempt, or nil when no encode is running or the exporter reports none.
+    public func exportProgress() -> Double? { running == nil ? nil : exportFraction }
+    private func recordExport(_ fraction: Double, attempt: UUID) {
+        guard receipt?.attemptID == attempt, fraction.isFinite else { return }
+        exportFraction = max(exportFraction ?? 0, min(1, max(0, fraction)))
+    }
     public func waitUntilIdle() async { await running?.value }
 
     public func start(_ request: DeviceRenderRequest, decision: CapabilityDecision) throws {
@@ -162,6 +171,7 @@ public actor DeviceRenderCoordinator {
         }
         running?.cancel()
         running = nil
+        exportFraction = nil
         let attempt = UUID()
         let phase: DeviceRenderPhase = decision.route == .local ? .preparing : .needsAttention
         receipt = DeviceRenderReceipt(request: request, attemptID: attempt, phase: phase, error: decision.reason)
@@ -246,8 +256,10 @@ public actor DeviceRenderCoordinator {
                 let assets = try await sources.resolve(for: saved.request.recipe)
                 guard current(attempt) else { return }
                 try update(attempt, phase: .rendering)
+                exportFraction = nil
                 output = directory.appendingPathComponent("\(attempt.uuidString).mp4")
-                _ = try await exporter.export(recipe: saved.request.recipe, assetURLs: assets, outputURL: output, exportID: attempt.uuidString, progress: nil)
+                _ = try await exporter.export(recipe: saved.request.recipe, assetURLs: assets, outputURL: output, exportID: attempt.uuidString,
+                                         progress: { [weak self] fraction in Task { await self?.recordExport(fraction, attempt: attempt) } })
                 guard current(attempt) else { return }
                 receipt?.outputURL = output
                 receipt?.outputFingerprint = try SHA256Fingerprinter().fingerprint(file: output)

@@ -176,6 +176,8 @@ protocol KriaAPIClient: Sendable {
     func editorVariant(jobID: UUID, variantID: String) async throws -> [String: JSONValue]
     func editorCommit(itemID: String, variantID: String, request: EditorCommitRequest) async throws -> EditorCommitResponse
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot
+    /// KRI-443: Stop on the live plan feed. A 409 `turn_not_cancellable` means the render can no longer be stopped.
+    func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot
     /// `speechCleanupAware` must always be sent `true` from this client build --
     /// it tells the server this decision understands the `speech_cleanup_*` 409
@@ -231,6 +233,7 @@ extension KriaAPIClient {
 /// editor saves fail explicitly when the production commit endpoint is not
 /// implemented by a substitute.
 extension KriaAPIClient {
+    func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled { throw APIError.unsupported }
     func refreshLibraryPosters(jobIDs: [UUID], brokenJobIDs: [UUID]) async throws -> [LibraryPoster] { throw APIError.unsupported }
     func slidePost(itemID: String) async throws -> SlidePostState { throw APIError.unsupported }
     func proposeSlidePost(itemID: String, request: SlidePostProposalRequest) async throws -> SlidePostProposal { throw APIError.unsupported }
@@ -1080,6 +1083,9 @@ struct KriaAPI: KriaAPIClient {
                           method: "GET", bodyData: nil, decode: EditorSourceRegistrationResponse.self)
     }
     func undoDraft(threadID: UUID, expectedRevision: Int) async throws -> DraftSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/draft/undo", method: "POST", bodyData: try JSONEncoder().encode(DraftUndoRequest(expectedRevision: expectedRevision)), decode: DraftSnapshot.self) }
+    func cancelRender(threadID: UUID, turnID: String, revision: Int) async throws -> TurnCancelled {
+        try await request(path: "creation-threads/\(threadID.uuidString)/turns/\(turnID)/cancel-render", method: "POST", bodyData: try JSONEncoder().encode(CancelRenderRequest(expectedThreadRevision: revision)), decode: TurnCancelled.self)
+    }
     func approval(threadID: UUID, approvalID: UUID) async throws -> ApprovalSnapshot { try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)", method: "GET", bodyData: nil, decode: ApprovalSnapshot.self) }
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?) async throws { _ = try await request(path: "creation-threads/\(threadID.uuidString)/approvals/\(approvalID.uuidString)/\(decision)", method: "POST", bodyData: try JSONEncoder().encode(ApprovalDecisionRequest(expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice, outputOrientation: outputOrientation, landscapeFit: landscapeFit)), decode: ApprovalResponse.self) }
     func playbackURL(jobID: UUID) async throws -> URL { let response = try await request(path: "me/jobs/\(jobID.uuidString)/playback-url", method: "GET", bodyData: nil, decode: PlaybackResponse.self); guard let url = URL(string: response.videoURL) else { throw APIError.invalidResponse }; return url }
@@ -1577,6 +1583,7 @@ struct ProjectMediaInput: Encodable {
 }
 private struct CreateThreadRequest: Encodable { let message: String?; let clientEventID: String; let runtimeVersion: Int; enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case runtimeVersion = "runtime_version" } }
 private struct DraftWriteRequest: Encodable { let expectedRevision: Int; let snapshot: [String: JSONValue]; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision"; case snapshot } }
+private struct CancelRenderRequest: Encodable { let expectedThreadRevision: Int; enum CodingKeys: String, CodingKey { case expectedThreadRevision = "expected_thread_revision" } }
 private struct DraftUndoRequest: Encodable { let expectedRevision: Int; enum CodingKeys: String, CodingKey { case expectedRevision = "expected_draft_revision" } }
 enum APIError: Error, LocalizedError, Equatable {
     /// The server answered with a status the request doesn't accept.

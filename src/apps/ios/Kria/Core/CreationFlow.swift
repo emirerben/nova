@@ -25,6 +25,8 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     /// server predating iOS-only creation rollout.
     var creationMode: CreationMode? = nil
     var minimumClientProtocol: Int? = nil
+    /// KRI-443: server emits `plan_block` events after Create and accepts cancel-render. Missing = off (fails closed).
+    var livePlanReviewEnabled: Bool? = nil
     var editorStateTurnsEnabled: Bool { editorStateTurns == true }
     var slidePostRichTextEnabled: Bool { slidePostRichText == true }
     var slidePostChatEditEnabled: Bool { slidePostChatEdit == true }
@@ -50,6 +52,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case songOrderQuestions = "song_order_questions"
         case choiceQuestions = "choice_questions"
         case creationMode = "creation_mode", minimumClientProtocol = "minimum_client_protocol"
+        case livePlanReviewEnabled = "live_plan_review_enabled"
     }
 }
 
@@ -73,6 +76,7 @@ extension CreationCapabilities {
         choiceQuestions = try container.decodeIfPresent(Bool.self, forKey: .choiceQuestions)
         creationMode = try container.decodeIfPresent(CreationMode.self, forKey: .creationMode)
         minimumClientProtocol = try container.decodeIfPresent(Int.self, forKey: .minimumClientProtocol)
+        livePlanReviewEnabled = try container.decodeIfPresent(Bool.self, forKey: .livePlanReviewEnabled)
     }
 }
 

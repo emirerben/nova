@@ -32,6 +32,9 @@ struct DeviceRenderPresentation: Equatable, Sendable {
     /// Generation published by the server for the authoritative device attempt.
     /// This is populated only for a server `published` response.
     var publishedGeneration: String?
+    /// Real export progress (0...1) while `phase == .rendering`; nil when the exporter has reported none.
+    /// Drives the live plan feed (KRI-443); never shown as a number.
+    var exportProgress: Double?
 }
 
 /// Short label for the editor's top-of-preview device-render affordance
@@ -246,13 +249,19 @@ enum DeviceRenderButtonTitle {
     }
 
     private func observe(_ key: DeviceRenderKey, coordinator: DeviceRenderCoordinator) async {
-        if let saved = await coordinator.snapshot() { presentations[key] = Self.presentation(saved) }
+        if let saved = await coordinator.snapshot() {
+            var presentation = Self.presentation(saved)
+            presentation.exportProgress = await coordinator.exportProgress()
+            presentations[key] = presentation
+        }
         guard observations[key] == nil else { return }
         observations[key] = Task { [weak self] in
             while !Task.isCancelled {
                 guard let saved = await coordinator.snapshot(), !Task.isCancelled, let self,
                       self.requests[key] == saved.request else { return }
-                self.presentations[key] = Self.presentation(saved)
+                var presentation = Self.presentation(saved)
+                presentation.exportProgress = await coordinator.exportProgress()
+                if self.presentations[key] != presentation { self.presentations[key] = presentation }
                 if ![.preparing, .rendering, .syncing].contains(saved.phase), !(await coordinator.isBusy()) {
                     guard !Task.isCancelled else { return }
                     self.observations[key] = nil

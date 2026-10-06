@@ -1,4 +1,5 @@
 import SwiftUI
+import KriaMediaEngine
 
 struct ChatWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
@@ -328,6 +329,10 @@ private struct CreationWorkspaceView: View {
     /// Approvals have no reply message, so a terminal job status also ends the wait (KRI-222).
     @State private var thinkingSettlesOnJobStatus = false
     @State private var failure: ChatFailure?
+    /// KRI-443: Stop on the live plan feed.
+    @State private var isStoppingRender = false
+    @State private var stopMessage: String?
+    @State private var stopUnavailableJobID: String?
     /// The server's reason the last confirmation was rejected, shown inside the card.
     @State private var confirmationConflict: CreationConfirmationConflict?
     @State private var showsAttachments = false
@@ -436,8 +441,111 @@ private struct CreationWorkspaceView: View {
         events.last { ChatTranscriptMessage.from(event: $0)?.clipQuestion != nil }?.id
     }
 
+    /// KRI-443: the live plan feed, reduced from the thread's `plan_block` events.
+    private var planFeed: PlanBlockFeedState { PlanBlockFeedState.reduce(events: events) }
+
+    private var showsPlanFeed: Bool {
+        PlanFeedVisibility.shows(
+            capabilityEnabled: capabilities?.livePlanReviewEnabled,
+            runtimeVersion: currentProject.runtimeVersion,
+            feed: planFeed,
+            activeJobID: fullThread?.activeJobID ?? currentProject.activeJobID?.uuidString
+        )
+    }
+
+    /// Where this iPhone's own build of the video has got to, when the render runs on the device. With no
+    /// presentation yet the device is about to prepare, so it reads as `.preparing` (the server's up-front
+    /// "all decided" must not show first). Cloud renders return nil and the feed shows the server's states.
+    private var deviceBuildStage: DeviceBuildStage? {
+        guard let key = deviceRenderKey else { return nil }
+        guard let presentation = model.deviceRenders.presentations[key] else { return .preparing }
+        return DeviceBuildStage(phase: presentation.phase, exportProgress: presentation.exportProgress)
+    }
+
+    /// The feed hosts the device build (instead of the status card) while the phone is preparing, rendering
+    /// or finished cleanly. Anything that needs the creator (stopped, needs attention, a failed sync with a
+    /// message, superseded) hands over to `DeviceRenderPanel`, which owns retry and recovery.
+    private var feedHostsDeviceBuild: Bool {
+        guard let key = deviceRenderKey, showsPlanFeed else { return false }
+        guard let presentation = model.deviceRenders.presentations[key] else { return true }
+        guard deviceBuildStage != nil else { return false }
+        return presentation.message == nil && !presentation.requiresServerRetry
+    }
+
+    @ViewBuilder private var planFeedView: some View {
+        let feed = planFeed.paced(by: deviceBuildStage)
+        let device = deviceRenderKey
+        let devicePhase = device.flatMap { model.deviceRenders.presentations[$0]?.phase } ?? .preparing
+        PlanBlockFeed(
+            feed: feed,
+            canStop: device != nil
+                ? [.preparing, .rendering].contains(devicePhase)
+                : feed.turnID != nil && stopUnavailableJobID != feed.jobID,
+            isStopping: isStoppingRender,
+            stopMessage: stopMessage,
+            stop: stopRender
+        )
+        .id("plan-feed")
+    }
+
+    /// Cancels the render behind the feed. Always sends the newest thread revision: every `plan_block`
+    /// event bumps it, so the revision the feed was drawn with is usually stale.
+    private func stopRender() {
+        if let key = deviceRenderKey {
+            // A device render is not a server job: the server cancel route answers 409 for it. Stop it the
+            // way the status card does, which also tells the server the creator stopped it.
+            guard !isStoppingRender else { return }
+            isStoppingRender = true
+            Task {
+                await model.deviceRenders.cancel(key)
+                isStoppingRender = false
+            }
+            return
+        }
+        let feed = planFeed
+        guard let turnID = feed.turnID, !isStoppingRender else { return }
+        isStoppingRender = true
+        stopMessage = nil
+        Task {
+            defer { isStoppingRender = false }
+            func hideStop() {
+                stopUnavailableJobID = feed.jobID
+                stopMessage = "This render can’t be stopped any more."
+            }
+            do {
+                _ = try await stopRenderRequest(turnID: turnID)
+                _ = try? await refreshDelta()
+                await refreshNow()
+            } catch let error as APIError where error.isConflict {
+                if error.conflictCode == "turn_not_cancellable" || (error.conflictDetail ?? "").contains("turn_not_cancellable") {
+                    hideStop()
+                } else {
+                    // A stale revision: take the latest from a fresh delta and try once more.
+                    _ = try? await refreshDelta()
+                    do {
+                        _ = try await stopRenderRequest(turnID: turnID)
+                        _ = try? await refreshDelta()
+                        await refreshNow()
+                    } catch let retry as APIError where retry.isConflict {
+                        hideStop()
+                    } catch {
+                        failure = ChatFailure("Kria couldn’t stop the render.", error: error)
+                    }
+                }
+            } catch {
+                failure = ChatFailure("Kria couldn’t stop the render.", error: error)
+            }
+        }
+    }
+
+    private func stopRenderRequest(turnID: String) async throws -> TurnCancelled {
+        try await model.api.cancelRender(threadID: project.id, turnID: turnID, revision: threadRevision)
+    }
+
     private var timelineUpdateToken: String {
-        timeline.map(\.id).joined(separator: "|") + "|\(isThinking)|\(isSending)|\(failure?.message ?? "")"
+        let feed = planFeed.paced(by: deviceBuildStage)
+        return timeline.map(\.id).joined(separator: "|") + "|\(isThinking)|\(isSending)|\(failure?.message ?? "")"
+            + "|feed\(feed.decidedCount)/\(feed.totalCount)"
     }
 
     @ViewBuilder private var conversationContent: some View {
@@ -448,7 +556,9 @@ private struct CreationWorkspaceView: View {
                 timelineRow(group.entries[0])
             }
         }
-        if (isThinking || isSending) && workspaceStage != .rendering { ThinkingRow().id("thinking") }
+        if (isThinking || isSending) && workspaceStage != .rendering {
+            if showsPlanFeed { planFeedView } else { ThinkingRow().id("thinking") }
+        }
         if let approvalNotice { Text(approvalNotice).font(KriaFont.body(13)) }
         if let failure {
             RecoveryCard(failure: failure) { Task { await refreshCapabilities(); await refreshNow() } }
@@ -996,11 +1106,15 @@ private struct CreationWorkspaceView: View {
                     .accessibilityIdentifier("open-current-cut")
             }
         case .rendering:
-            if let deviceRenderKey {
+            if feedHostsDeviceBuild {
+                planFeedView
+            } else if let deviceRenderKey {
                 DeviceRenderPanel(key: deviceRenderKey, sessions: model.deviceRenders) {
                     await refreshCapabilities()
                     await refreshDeviceRender(retry: true)
                 }
+            } else if showsPlanFeed {
+                planFeedView
             } else {
                 RenderingStage(
                     isPreparing: currentProject.activeJobID == nil,
@@ -1768,7 +1882,7 @@ enum ThreadRevisionOrder {
 /// the merged transcript and the sequence the turn was accepted at, never on which fetch delivered it.
 enum ChatThinkingSettlement {
     static let settledTypes: Set<String> = [
-        "generation_started", "render_queued", "render_started", "rendering",
+        "generation_started", "render_queued", "render_started", "rendering", "plan_block",
         "generation_ready", "render_failed", "generation_failed"
     ]
 
