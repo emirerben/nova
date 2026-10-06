@@ -1501,7 +1501,13 @@ def _op_patch_text_style(state: _DraftState, op: dict[str, Any]) -> None:
     if not patch:
         raise KriaEditorOpError("No portable text style fields were supplied")
     for index in indexes:
-        state.text_bar(index).update(patch)
+        bar = state.text_bar(index)
+        bar.update(patch)
+        if patch.get("position") not in (None, "custom"):
+            # A named position ignores x/y fractions on the burn, but the editors
+            # draw y_frac first: drop stale ones so the preview matches.
+            bar.pop("x_frac", None)
+            bar.pop("y_frac", None)
     state.changed.add("text")
 
 

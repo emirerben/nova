@@ -210,7 +210,7 @@ def test_bars_without_the_storyboard_marker_are_served_as_saved() -> None:
 # ── Save round trip ──────────────────────────────────────────────────────────
 
 
-def _save(monkeypatch, job, text_elements: list[dict]) -> dict:
+def _save(job, text_elements: list[dict]) -> dict:
     variant = job.assembly_plan["variants"][0]
     return gj.prepare_editor_commit(
         job,
@@ -239,7 +239,7 @@ def test_save_with_an_added_bar_keeps_the_storyboard_and_its_look(monkeypatch) -
         "font_family": "Inter",
     }
 
-    prep = _save(monkeypatch, job, [*served["text_elements"], added])
+    prep = _save(job, [*served["text_elements"], added])
 
     assert prep["sections"]["text_elements"] is True
     stored = job.assembly_plan["variants"][0]
@@ -258,7 +258,7 @@ def test_deleting_a_storyboard_bar_sticks(monkeypatch) -> None:
     job = _job(_storyboard_variant())
     [served] = gj._variants_for_response(job)
 
-    _save(monkeypatch, job, [row for row in served["text_elements"] if row["text"] != _PLAYER])
+    _save(job, [row for row in served["text_elements"] if row["text"] != _PLAYER])
 
     [reloaded] = gj._variants_for_response(job)
     assert _texts(reloaded["text_elements"]) == [_TITLE, _SCORE]
@@ -277,7 +277,7 @@ def test_editing_the_title_persists_the_edit(monkeypatch) -> None:
     #   jumbo 199); why_new=size_px-overwrite mutant survived 3932 text tests; seam=none
     rows[0].update({"size_px": 80.0, "size_class": None})
 
-    _save(monkeypatch, job, rows)
+    _save(job, rows)
 
     [reloaded] = gj._variants_for_response(job)
     title = reloaded["text_elements"][0]
@@ -324,7 +324,7 @@ def test_reburn_burns_the_storyboard_under_the_captions(monkeypatch, saved_from_
     job = _job(_storyboard_variant())
     if saved_from_editor:
         [served] = gj._variants_for_response(job)
-        _save(monkeypatch, job, served["text_elements"])
+        _save(job, served["text_elements"])
     variant = job.assembly_plan["variants"][0]
 
     assert gb._should_compose_subtitled_final(variant)
@@ -348,7 +348,7 @@ def test_reburn_honours_a_moved_and_resized_storyboard_title(monkeypatch) -> Non
     [served] = gj._variants_for_response(job)
     rows = copy.deepcopy(served["text_elements"])
     rows[0].update({"y_frac": 0.3, "size_px": 80.0, "size_class": None})
-    _save(monkeypatch, job, rows)
+    _save(job, rows)
 
     overlays, _cues = _compose(monkeypatch, job.assembly_plan["variants"][0])
 
@@ -479,3 +479,23 @@ def test_unvalidatable_storyboard_rows_are_served_as_stored() -> None:
     assert out[0] is bad
     assert _look(out[1]) == _PLAYER_LOOK
     assert out[2] == "junk"
+
+
+def test_kria_add_text_styled_like_the_title_previews_where_it_burns(monkeypatch) -> None:
+    """A copy of the title's look takes its spelled-out fields; a named spot drops them."""
+    from app.services.kria_editor_ops import compile_editor_ops
+
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True},
+    )
+    variant = _storyboard_variant(render_generation_id="gen-1")
+    add = {"op": "add_text", "text": "GOAL", "start_s": 0.5, "end_s": 1.5, "style_from": "title"}
+
+    plain = compile_editor_ops(_job(variant), variant, [add])
+    moved = compile_editor_ops(_job(variant), variant, [{**add, "patch": {"position": "bottom"}}])
+
+    assert _look(_by_text(plain.payload.text_elements)["GOAL"]) == _TITLE_LOOK
+    # The cloud burns a named "bottom" at 0.85 and ignores y_frac; iOS draws y_frac.
+    goal = _by_text(moved.payload.text_elements)["GOAL"]
+    assert (goal["position"], goal.get("y_frac")) == ("bottom", None)
