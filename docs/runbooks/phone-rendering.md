@@ -2222,6 +2222,65 @@ agree. Guards: `tests/pipeline/test_narrated_title.py`,
 `testReadOnlyTitleCompilesLikeTheExportedPhoneTitle`, overlay fixture
 `narrated_title_fit.json`.
 
+## Hook titles on phone Talking edits (KRI-467)
+
+A confirmed `opening_title` on a phone Talking edit (`subtitled`: one clip, or
+the multi-clip Talking head) used to be refused ("Talking edits show your words
+as captions, so I can't add a title on top yet"). It now renders as an ordinary,
+editable text row.
+
+- **Planner.** `compile_strategy_to_plan` lifts the subtitled refusal when the
+  manifest renders on the phone and `phone_subtitled_title_supported()` holds,
+  and keeps `opening_title_duration_s` ("in the first 2 seconds" -> 2.0). Cloud
+  Talking edits still ask (the cloud subtitled renderer has no title lane;
+  `generative_build` keeps its own raise).
+- **Worker.** `_run_phone_subtitled_job` builds the row
+  (`app.pipeline.phone_subtitled_title`): id `opening-title`, the narrated
+  title's look and long-title fit (`narrated_title_placement`), from 0 for the
+  confirmed hold, else a second after the first spoken word (0.5-3 s). Timing is
+  in cut-timeline seconds (the first N seconds of the video), so a speech
+  cleanup cut never shifts it. `place_talking_title` samples the speaker's
+  analysis proxy over the title window (through the cut and the cover-fit /
+  letterbox) and moves the title below the face, above the caption band
+  (`CAPTION_BAND_TOP_FRAC`), when the preset spot covers it; an unconfirmed
+  frame protects KRI-183's fallback talk-to-camera face. The row is persisted
+  to `text_elements` with `text_elements_user_edited` (so the read path serves
+  it beside the caption mirrors) plus an `opening_title_placement` receipt.
+- **Recipe.** `compile_phone_subtitled_plan(text_elements=...)` compiles the
+  variant's text rows through the cloud styled-text lane's burn dicts
+  (`_text_element_burn_dicts`: caption mirrors and removed rows skipped) as
+  `text-<n>` layers, drawn under the `caption-<n>` layers. No rows is
+  byte-identical to before.
+- **Editor.** The `text_elements` capability opens for phone Talking variants
+  (`_phone_subtitled_text_lane_available`: editor lanes + this flag), Save
+  accepts the `text_elements` section, and `_compile_subtitled_editor_commit`
+  compiles the staged row's text on every Save, so caption, style, lane and
+  framing Saves keep the title. The caption-cue mirrors the app echoes back in
+  the text lane are dropped before validation (no tombstones either): captions
+  save through `caption_cues`, a long talk has more cues than the 50-row text
+  cap, and a persisted mirror would outlive a later caption edit. Text timed
+  past the clip ends with it instead of failing the recipe. The iOS editor needs no new build: text editing
+  follows the capability map. The Text list labels `opening-title` "Title"
+  (new builds; older ones say "Text"). Creators can also add their own text to
+  a Talking edit.
+
+A self-narrated voiceover item with no recording (`narrated*`, rendered by the
+same job, KRI-136) draws its confirmed title too; the planner still treats it
+as a narrated strategy, so it uses the default fade timing. Known limit: the
+title's `y_frac` is chosen once by the worker; switching bars/crop later moves
+the face, not the title (the creator can drag it).
+
+Kill switch: `fly secrets set PHONE_SUBTITLED_TITLE_ENABLED=false --app
+nova-video` + restart (api + worker). The planner asks again for `subtitled`
+edits and the text lane closes; a title already on a variant keeps rendering
+and survives Saves.
+Tests: `tests/pipeline/test_phone_subtitled_title.py`,
+`tests/tasks/test_phone_subtitled_title_worker.py`,
+`tests/routes/test_phone_subtitled_title_editor.py`,
+`tests/kria/test_strategy_policy.py::test_title_on_*talking*`; iOS
+`NativeEditorSessionTests.testPhoneTalkingTitleIsAnEditableTextRowThatReachesTheSave`,
+`NativeEditorTextBlocksTests.testAPhoneTalkingHookTitleIsListedAsTheTitle`.
+
 ## Your song montages (KRI-374)
 
 A creator attaches their own song to a phone montage ("Add your song" in the

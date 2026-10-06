@@ -78,8 +78,49 @@ def test_plain_talking_strategy_passes_unchanged(prod_profile) -> None:
     assert checked.strategy.selected_media_ids == [CLIPS[0]]
 
 
-def test_title_on_talking_edit_is_asked_about_not_silently_dropped(prod_profile) -> None:
+def test_title_on_phone_talking_edit_renders_for_its_confirmed_seconds(prod_profile) -> None:
+    """KRI-467: the "3 sourdough mistakes" chat. The phone Talking compiler
+    draws the title as an editable text row, held for the seconds the creator
+    named, instead of asking to drop it."""
+    checked = check_strategy_for_runtime_v2(
+        _talking_manifest(),
+        _talking(
+            caption_style="karaoke",
+            opening_title="3 sourdough mistakes",
+            opening_title_duration_s=2.0,
+        ),
+    )
+
+    assert isinstance(checked, CheckedStrategy)
+    assert checked.strategy.opening_title == "3 sourdough mistakes"
+    assert checked.strategy.opening_title_duration_s == 2.0
+    assert checked.strategy.caption_style == "karaoke"
+
+
+def test_title_on_phone_talking_edit_is_asked_about_when_switched_off(
+    prod_profile, monkeypatch
+) -> None:
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_title_enabled", False)
+
     refused = check_strategy_for_runtime_v2(_talking_manifest(), _talking(opening_title="Top 3"))
+
+    assert isinstance(refused, RefusedStrategy)
+    assert refused.code == "title_unavailable"
+    assert refused.question == (
+        "Talking edits show your words as captions, so I can't add a title on "
+        "top yet. Should I make it without the title?"
+    )
+
+
+def test_title_on_cloud_talking_edit_is_still_asked_about(prod_profile) -> None:
+    """The cloud subtitled renderer has no title lane yet: ask, never drop."""
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-talking-cloud",
+        edit_format="subtitled",
+        media=[{"media_id": CLIPS[0], "kind": "video", "duration_s": 40.0}],
+    )
+
+    refused = check_strategy_for_runtime_v2(manifest, _talking(opening_title="Top 3"))
 
     assert isinstance(refused, RefusedStrategy)
     assert refused.code == "title_unavailable"

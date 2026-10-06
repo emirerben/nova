@@ -5714,6 +5714,7 @@ def _run_phone_subtitled_job(
     from app.services.phone_rollout import (  # noqa: PLC0415
         phone_subtitled_overlays_supported,
         phone_subtitled_reaction_beats_supported,
+        phone_subtitled_title_supported,
         phone_subtitled_video_overlays_supported,
         phone_talking_head_supported,
         validate_phone_pilot_recipe,
@@ -5854,6 +5855,21 @@ def _run_phone_subtitled_job(
     caption_style = (
         "word" if all_candidates.get("voiceover_caption_style") == "word" else "sentence"
     )
+    # KRI-467: the creator's confirmed hook title, drawn as an editable text row
+    # (`phone_subtitled_title`). Read only while the lane is on, so the flag-off
+    # recipe and variant stay byte-identical.
+    talking_title_text: str | None = None
+    talking_title_duration_s: float | None = None
+    if phone_subtitled_title_supported():
+        _title_strategy = all_candidates.get("creator_strategy")
+        _title_strategy = _title_strategy if isinstance(_title_strategy, dict) else {}
+        _raw_title = _title_strategy.get("opening_title")
+        talking_title_text = _raw_title if isinstance(_raw_title, str) and _raw_title else None
+        _raw_hold = _title_strategy.get("opening_title_duration_s")
+        if isinstance(_raw_hold, int | float) and not isinstance(_raw_hold, bool):
+            talking_title_duration_s = float(_raw_hold)
+    title_rows: list[dict] = []
+    title_receipt: dict[str, Any] | None = None
 
     # KRI-174 lane state. Kept at these empty defaults when the flag is off
     # (or there is no lane request), so the fences/persistence below become
@@ -6259,6 +6275,24 @@ def _run_phone_subtitled_job(
             )
             cues = resplit_cues_into_sentences(cues)
 
+            if talking_title_text:
+                title_rows, title_receipt = _phone_talking_title_rows(
+                    talking_title_text,
+                    duration_s=talking_title_duration_s,
+                    cues=cues,
+                    binding=binding,
+                    clip_path=clip_path,
+                    # The speaker's span exactly as the compiler plays it: the
+                    # cleanup cut, else the phone-measured clip (which can run
+                    # a hair shorter than the proxy `probe` measured).
+                    keep_segments=(
+                        list(cut_plan.keep_segments)
+                        if cut_plan is not None and cut_plan.removed
+                        else [(0.0, float(binding.original.duration_s))]
+                    ),
+                    landscape_fit=landscape_fit,
+                )
+
             sfx_duck: dict | None = None
             if not media_lanes_enabled:
                 recipe = compile_phone_subtitled_plan(
@@ -6268,6 +6302,8 @@ def _run_phone_subtitled_job(
                     cut_plan=cut_plan,
                     cutaways=cutaways,
                     landscape_fit=landscape_fit,  # type: ignore[arg-type]
+                    text_elements=title_rows,
+                    text_elements_user_edited=bool(title_rows),
                 )
             else:
                 raw_lane_request = snapshot.get(PHONE_SUBTITLED_LANES_FIELD)
@@ -6609,6 +6645,8 @@ def _run_phone_subtitled_job(
                             cut_plan=cut_plan,
                             cutaways=cutaways,
                             landscape_fit=landscape_fit,  # type: ignore[arg-type]
+                            text_elements=title_rows,
+                            text_elements_user_edited=bool(title_rows),
                         )
                         sfx_duck = sfx_duck_receipt(lanes, recipe)
                         break
@@ -6811,6 +6849,14 @@ def _run_phone_subtitled_job(
             new_entry["phone_lane_receipt"] = lane_receipt
         if sfx_duck is not None:
             new_entry[SFX_DUCK_RECEIPT_FIELD] = sfx_duck
+        if title_rows:
+            # KRI-467: the title is an ordinary saved text row. `user_edited`
+            # makes the read path serve it beside the projected caption
+            # mirrors (an unedited caption variant serves the mirrors alone).
+            new_entry["text_elements"] = title_rows
+            new_entry["text_elements_user_edited"] = True
+            new_entry["text_elements_materialized_from"] = "opening_title"
+            new_entry["opening_title_placement"] = title_receipt
         if multi_clip:
             # KRI-136: the phone Talking lane (and its editor) owns this
             # variant, so `resolved_archetype` stays "subtitled"; this receipt
@@ -6867,8 +6913,58 @@ def _run_phone_subtitled_job(
         lambda: {
             "clip_count": 1 + len({cutaway.binding.media_id for cutaway in cutaways}),
             "captions": len(cues or []),
+            **({"title": title_rows[0]["text"]} if title_rows else {}),
         },
     )
+
+
+def _phone_talking_title_rows(
+    opening_title: str,
+    *,
+    duration_s: float | None,
+    cues: list[dict],
+    binding: Any,
+    clip_path: str | None,
+    keep_segments: list[tuple[float, float]],
+    landscape_fit: str,
+) -> tuple[list[dict], dict[str, Any] | None]:
+    """The phone Talking edit's opening title row (KRI-467), placed off the
+    speaker's face, plus its placement receipt; ``([], None)`` when the title
+    is empty or the clip has no time for it. ``binding`` is the speaker's
+    `PhoneSourceBinding`."""
+    from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_title import (  # noqa: PLC0415
+        first_cue_word_end_s,
+        place_talking_title,
+        talking_title_element,
+    )
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    row = talking_title_element(
+        opening_title,
+        duration_s=duration_s,
+        first_word_end_s=first_cue_word_end_s(cues),
+        timeline_duration_s=sum(max(0.0, end - start) for start, end in keep_segments),
+        canvas=_STORY_CANVAS,
+    )
+    if row is None:
+        return [], None
+    display_width, display_height = display_dims(binding.original)
+    placed, receipt = place_talking_title(
+        row,
+        clip_path=clip_path,
+        keep_segments=keep_segments,
+        display_width=display_width,
+        display_height=display_height,
+        canvas=_STORY_CANVAS,
+        scale=fit_transform(display_width, display_height, _STORY_CANVAS, landscape_fit).scale,
+    )
+    try:
+        record_pipeline_event("phone", "subtitled_title_placement", receipt)
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return [placed], receipt
 
 
 def _phone_narrated_cleaned_narration(job_id: str, snapshot: dict) -> NarrationTrack:

@@ -85,8 +85,9 @@ extension EditorDocument {
             labelPosition[element.id] = Self.trailingNumber(of: element.id) ?? index + 1
         }
         func kind(of element: EditorTextElement) -> EditorTextBlock.Kind {
-            // `narrated-title` is a phone Voiceover edit's opening title (KRI-465).
-            if element.id == "guided-title" || element.id == "narrated-title" { return .title }
+            // Opening titles: `narrated-title` on a phone Voiceover edit (KRI-465),
+            // `opening-title` on a phone Talking edit (KRI-467).
+            if ["guided-title", "narrated-title", "opening-title"].contains(element.id) { return .title }
             if let position = labelPosition[element.id] { return .clipLabel(position) }
             if element.id == "guided-closing-title" { return .closing }
             return .other
