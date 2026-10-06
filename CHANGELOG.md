@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.107.0] - 2026-10-06
+
+### Changed
+- fix(narrated): phone renders follow the resolved clip order and feed the plan blocks (KRI-456) (#1423) <!-- release-pr: 1423 -->
+
 ## [0.78.106.0] - 2026-10-06
 
 ### Changed
