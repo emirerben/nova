@@ -778,3 +778,20 @@ def test_a_permanently_unreadable_take_is_still_unmatched(monkeypatch, aligner) 
     item_id = _seed(analysis=_ready_analysis(), clips=[_row(1)])
     task.align_user_song_takes_task.run(str(item_id))
     assert _alignment(item_id).takes["m1"].status == "unmatched"
+
+
+def test_shift_moves_every_placement_candidate() -> None:
+    from app.schemas.user_song import PlacementCandidate, TakeAlignment  # noqa: PLC0415
+
+    row = TakeAlignment(
+        media_id="m",
+        status="ambiguous",
+        delta_s=10.0,
+        candidates=[
+            PlacementCandidate(delta_s=10.0, likelihood=0.5, method="lyrics"),
+            PlacementCandidate(delta_s=30.0, likelihood=0.5, method="lyrics"),
+        ],
+    )
+    shifted = task._shift(row, 0.5)
+    assert shifted.delta_s == 10.5
+    assert [c.delta_s for c in shifted.candidates] == [10.5, 30.5]

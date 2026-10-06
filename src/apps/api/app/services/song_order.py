@@ -26,6 +26,13 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.pipeline.take_assignment import (
+    Assignment,
+    TakeSpec,
+    assign_takes,
+    resolve_with_order,
+    spec_from_alignment_row,
+)
 from app.schemas.user_song import (
     SONG_ALIGNMENT_VERSION,
     SONG_ORDER_ANSWER_KEY,
@@ -74,18 +81,74 @@ def uncertain_media_ids(alignment: SongAlignment, media_ids: Sequence[str]) -> l
     return [m for m in media_ids if _take_for(alignment, m).status != "confident"]
 
 
-def takes_needing_order(alignment: SongAlignment, media_ids: Sequence[str]) -> list[str]:
-    """Takes worth asking the creator about: ambiguous with at least one candidate.
+# A take's length is unknown to the alignment row; used only to size its claim when
+# the manifest gave no duration and the aligner no matched range.
+_DEFAULT_TAKE_S = 8.0
+# No song length known: large enough never to clip a claim.
+_UNBOUNDED_SONG_MS = 10**9
 
-    A confident take is placed; an unmatched take has no position to choose, so an
-    order question could not change anything for it (it renders as B-roll).
+
+def _duration_s(row: TakeAlignment, given: float | None) -> float:
+    if isinstance(given, (int, float)) and given > 0:
+        return float(given)
+    ends = [c.match_end_s for c in row.candidates_or_legacy() if c.match_end_s is not None]
+    return max([*ends, _DEFAULT_TAKE_S])
+
+
+def _specs(
+    alignment: SongAlignment,
+    media_ids: Sequence[str],
+    durations: Mapping[str, float] | None,
+) -> list[TakeSpec]:
+    return [
+        spec_from_alignment_row(
+            m,
+            _duration_s(_take_for(alignment, m), (durations or {}).get(m)),
+            alignment.takes.get(m),
+        )
+        for m in dict.fromkeys(media_ids)
+    ]
+
+
+def _assignment_options() -> dict[str, Any]:
+    from app.config import settings  # noqa: PLC0415
+
+    return {
+        "overlap_ms": int(round(settings.song_align_max_overlap_s * 1000)),
+        "tie_ratio": settings.song_align_tie_ratio,
+        "ask_likelihood": settings.song_align_ask_likelihood,
+    }
+
+
+def assign_for_question(
+    alignment: SongAlignment,
+    media_ids: Sequence[str],
+    durations: Mapping[str, float] | None = None,
+    song_duration_s: float | None = None,
+) -> Assignment:
+    """The deterministic assignment the question is derived from (no creator input)."""
+    song_ms = (
+        int(song_duration_s * 1000)
+        if isinstance(song_duration_s, (int, float)) and song_duration_s > 0
+        else _UNBOUNDED_SONG_MS
+    )
+    return assign_takes(_specs(alignment, media_ids, durations), song_ms, **_assignment_options())
+
+
+def takes_needing_order(
+    alignment: SongAlignment,
+    media_ids: Sequence[str],
+    durations: Mapping[str, float] | None = None,
+    song_duration_s: float | None = None,
+) -> list[str]:
+    """Takes worth asking the creator about (KRI-471): the assignment's ``ask`` set.
+
+    Placement is by likelihood, so a take is only asked about when the creator could
+    usefully decide it: a tie (repeated chorus), a weak match, or no evidence at all.
+    ``durations`` (media_id -> seconds, from the manifest) sizes each take's claim.
     """
-    out: list[str] = []
-    for media_id in media_ids:
-        take = _take_for(alignment, media_id)
-        if take.status == "ambiguous" and (take.delta_s is not None or take.alternates):
-            out.append(media_id)
-    return out
+    ask = assign_for_question(alignment, media_ids, durations, song_duration_s).ask
+    return [m for m in dict.fromkeys(media_ids) if m in ask]
 
 
 def load_ready_alignment(
@@ -134,12 +197,6 @@ def load_ready_alignment(
 # -- Question construction -----------------------------------------------------
 
 
-def _song_start(take: TakeAlignment) -> float | None:
-    if take.status == "unmatched":
-        return None
-    return take.delta_s
-
-
 def _alternates(take: TakeAlignment) -> list[AlignmentAlternate]:
     if take.status == "confident":
         return []
@@ -152,32 +209,71 @@ def build_song_order_question(
     *,
     question_id: str | None = None,
     song_generation: int | None = None,
+    durations: Mapping[str, float] | None = None,
+    song_duration_s: float | None = None,
 ) -> SongOrderQuestion:
     """The question for ``media_ids`` (the current takes, in their stored order).
 
-    ``proposed_order``: earliest song position first. Confident takes carry their
-    ``song_start_s``; ambiguous ones carry their best guess plus ``alternates``;
-    unmatched ones carry neither and sort last (stable, original order).
+    ``proposed_order`` is the song order of the assigned positions. Takes with no
+    evidence have no position: each goes right after the nearest preceding take (in
+    capture order) that has one, the filming order being the best prior. They are
+    sent as ``ambiguous`` with no ``song_start_s`` so the app lets the creator drag
+    them (``reason="no_evidence"``); their alignment row stays unmatched.
     """
     unique = list(dict.fromkeys(media_ids))
-    items = [
-        SongOrderItem(
-            media_id=media_id,
-            status=take.status,
-            song_start_s=_song_start(take),
-            alternates=_alternates(take),
-        )
-        for media_id in unique
-        for take in (_take_for(alignment, media_id),)
-    ]
-    placed = sorted(
-        (i for i in items if i.song_start_s is not None), key=lambda i: i.song_start_s or 0.0
-    )
-    unplaced = [i for i in items if i.song_start_s is None]
-    ordered = placed + unplaced
+    assignment = assign_for_question(alignment, unique, durations, song_duration_s)
+    position: dict[str, float] = {m: c.delta_ms / 1000 for m, c in assignment.placed.items()}
+    items: dict[str, SongOrderItem] = {}
+    for media_id in unique:
+        take = _take_for(alignment, media_id)
+        claim = assignment.placed.get(media_id)
+        reason = assignment.ask.get(media_id)
+        if claim is not None:
+            like = round(claim.likelihood, 4)
+            items[media_id] = SongOrderItem(
+                media_id=media_id,
+                status="ambiguous" if reason else "confident",
+                song_start_s=position[media_id],
+                alternates=_alternates(take) if reason else [],
+                likelihood=like,
+                reason=reason,
+            )
+        else:
+            # Unplaced with evidence (conflict) keeps its best guess for the card.
+            cands = take.candidates_or_legacy()
+            best = max(cands, key=lambda c: c.likelihood, default=None)
+            items[media_id] = SongOrderItem(
+                media_id=media_id,
+                status="ambiguous",
+                song_start_s=None,
+                alternates=(
+                    [AlignmentAlternate(delta_s=c.delta_s, score=c.likelihood) for c in cands][
+                        :MAX_ALTERNATES_PER_ITEM
+                    ]
+                    if best is not None
+                    else []
+                ),
+                likelihood=round(best.likelihood, 4) if best is not None else None,
+                reason=reason or "no_evidence",
+            )
+    # Song order for takes with a position; the rest follow the nearest preceding
+    # positioned take in capture order (or lead the list when none precedes them).
+    positioned = sorted((m for m in unique if m in position), key=lambda m: (position[m], m))
+    after: dict[str | None, list[str]] = {}
+    previous: str | None = None
+    for media_id in unique:
+        if media_id in position:
+            previous = media_id
+        else:
+            after.setdefault(previous, []).append(media_id)
+    order: list[str] = list(after.get(None, []))
+    for media_id in positioned:
+        order.append(media_id)
+        order.extend(after.get(media_id, []))
+    ordered = [items[m] for m in order]
     return SongOrderQuestion(
         question_id=question_id or str(uuid.uuid4()),
-        proposed_order=[i.media_id for i in ordered],
+        proposed_order=order,
         items=ordered,
         song_generation=(
             song_generation if song_generation is not None else alignment.song_generation
@@ -187,15 +283,15 @@ def build_song_order_question(
 
 def song_order_question_text(question: SongOrderQuestion) -> str:
     """Self-sufficient copy (the app also renders the video widgets)."""
-    uncertain = sum(1 for i in question.items if i.status == "ambiguous")
-    if uncertain == 1:
+    unsure = sum(1 for i in question.items if i.status == "ambiguous")
+    if unsure == 1:
         return (
-            "I couldn't tell where one of your takes sits in the song. "
-            "Preview them in this order and drag any that are out of place."
+            "I'm not sure where one of your clips sits in the song. "
+            "They're in the order I think; drag any that are out of place."
         )
     return (
-        f"I couldn't tell where {uncertain} of your takes sit in the song. "
-        "Preview them in this order and drag any that are out of place."
+        f"I'm not sure where {unsure} of your clips sit in the song. "
+        "They're in the order I think; drag any that are out of place."
     )
 
 
@@ -348,136 +444,134 @@ def validate_song_order_answer(
 # -- Resolving uncertain takes -------------------------------------------------
 
 
-def _candidates(take: TakeAlignment) -> list[tuple[float, float]]:
-    """``(delta_s, rank_score)`` for every position this take could sit at.
-
-    The aligner's primary ``delta_s`` ranks first on ties (it is the strongest peak);
-    alternates rank by their own score.
-    """
-    alts = [(a.delta_s, a.score) for a in take.alternates]
-    out: list[tuple[float, float]] = []
-    if take.delta_s is not None:
-        top = max([s for _d, s in alts], default=1.0)
-        out.append((take.delta_s, top))
-    for delta, score in alts:
-        if not any(abs(delta - d) <= _POSITION_EPS_S for d, _s in out):
-            out.append((delta, score))
-    return [(d, s) for d, s in out if math.isfinite(d)]
-
-
 def resolve_uncertain_takes(
-    alignment: SongAlignment, confirmed_order: Sequence[str]
+    alignment: SongAlignment,
+    confirmed_order: Sequence[str],
+    durations: Mapping[str, float] | None = None,
+    song_duration_s: float | None = None,
+    first_line_s: float | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Pin every take for a creator-confirmed order.
+    """Positions for every take given the creator's confirmed order (KRI-471).
 
-    Returns ``media_id -> {"delta_s", "status", "confirmed_by_creator"}`` (the
-    ``UserSongTake`` shape):
-
-    * confident take  -> its own ``delta_s``, ``confirmed_by_creator=False``;
-    * uncertain take  -> the candidate position (primary or alternate) that lies
-      strictly between its confirmed neighbours in ``confirmed_order``, best score
-      first; ``status="confident"``, ``confirmed_by_creator=True``;
-    * no fitting candidate -> B-roll: ``delta_s=None``, ``status="unmatched"``,
-      ``confirmed_by_creator=True``. Never a guessed position.
-
-    Uncertain takes resolve left to right, so one resolved to position X bounds the
-    next. The lower bound is the nearest earlier take with a known position, the
-    upper bound the nearest later CONFIDENT take.
+    Delegates to ``take_assignment.resolve_with_order``. Returns ``media_id -> row``
+    in the creator's order, each row ``{"order_index", "delta_s" | None, "place":
+    "pinned"|"stack"|"broll", "position_basis", "confirmed_by_creator",
+    "likelihood", "status", "reason"?}``. ``confirmed_by_creator`` is True only when
+    the creator's answer decided the position (``creator_position`` / ``creator_stack``);
+    a take the aligner was sure about keeps its own position and ``aligner`` basis.
     """
-    resolved: dict[str, dict[str, Any]] = {}
-    takes = [_take_for(alignment, m) for m in dict.fromkeys(confirmed_order)]
-    known: list[float | None] = [t.delta_s if t.status == "confident" else None for t in takes]
-    for index, take in enumerate(takes):
-        if take.status == "confident":
-            resolved[take.media_id] = {
-                "delta_s": take.delta_s,
-                "status": "confident",
-                "confirmed_by_creator": False,
-            }
-            continue
-        lo = next((k for k in reversed(known[:index]) if k is not None), -math.inf)
-        hi = next(
-            (
-                t.delta_s
-                for t in takes[index + 1 :]
-                if t.status == "confident" and t.delta_s is not None
-            ),
-            math.inf,
-        )
-        fitting = [
-            (d, s) for d, s in _candidates(take) if lo + _POSITION_EPS_S < d < hi - _POSITION_EPS_S
-        ]
-        if fitting:
-            best = max(fitting, key=lambda c: (c[1], -c[0]))[0]
-            known[index] = best
-            resolved[take.media_id] = {
-                "delta_s": best,
-                "status": "confident",
-                "confirmed_by_creator": True,
-            }
-        else:
-            resolved[take.media_id] = {
-                "delta_s": None,
-                "status": "unmatched",
-                "confirmed_by_creator": True,
-            }
-    return resolved
+    ids = list(dict.fromkeys(confirmed_order))
+    song_ms = (
+        int(song_duration_s * 1000)
+        if isinstance(song_duration_s, (int, float)) and song_duration_s > 0
+        else _UNBOUNDED_SONG_MS
+    )
+    choices = resolve_with_order(
+        _specs(alignment, ids, durations),
+        ids,
+        song_ms,
+        first_line_ms=int(round((first_line_s or 0.0) * 1000)),
+        **_assignment_options(),
+    )
+    out: dict[str, dict[str, Any]] = {}
+    for media_id, choice in choices.items():
+        row: dict[str, Any] = {
+            "order_index": choice.order_index,
+            "delta_s": None if choice.delta_ms is None else choice.delta_ms / 1000,
+            "place": choice.place,
+            "position_basis": choice.basis,
+            "confirmed_by_creator": choice.confirmed,
+            "likelihood": round(choice.likelihood, 4),
+            "status": "unmatched" if choice.delta_ms is None else "confident",
+        }
+        if choice.reason:
+            row["reason"] = choice.reason
+        out[media_id] = row
+    return out
+
+
+def _finite(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
 
 
 def apply_resolved_song_takes(
     alignment: SongAlignment, resolved_takes: Sequence[Mapping[str, Any]] | None
-) -> tuple[SongAlignment, list[str]]:
-    """Fold the strategy's ``resolved_song_takes`` back onto an alignment for the planner.
+) -> tuple[SongAlignment, list[str], dict[str, dict[str, Any]]]:
+    """Read the strategy's ``resolved_song_takes`` for the planner.
 
-    ``resolved_song_takes`` (written by the planner's song-order gate after the
-    creator answered) says, per take in the creator's confirmed order, where it sits
-    (``delta_s``) or that it is B-roll (``delta_s is None``). The lip-sync planner
-    places an uncertain take only when it is in ``confirmed_order``, and only at one
-    of the take's own candidate positions, so:
+    Returns ``(alignment, confirmed_order, creator_choices)``. The alignment is
+    returned UNCHANGED (rows are no longer rewritten to ambiguous/unmatched);
+    ``creator_choices`` maps media_id -> ``{"delta_s" | None, "place",
+    "position_basis", "confirmed_by_creator"}`` for the takes the creator's answer
+    placed:
 
-    * a creator-confirmed take with a position keeps ONLY that position (status
-      ``ambiguous`` so the planner treats it as the confirmed uncertain take it is);
-    * a creator-confirmed take with no position becomes ``unmatched`` (B-roll);
-    * every other row is left exactly as aligned (a confident take stays confident,
-      a take the creator was never asked about stays unplaceable).
-
-    Returns ``(alignment, confirmed_order)``. Nothing here invents a position.
+    * a row with ``place`` ("pinned"/"stack"/"broll") is taken as written;
+    * a legacy row (no ``place``) that the creator confirmed keeps its old meaning:
+      ``delta_s`` pins it (``creator_position``), ``delta_s None`` is B-roll;
+    * a legacy row the creator did not confirm is left to the assignment.
     """
     order: list[str] = []
-    takes = dict(alignment.takes)
-    for row in resolved_takes or ():
+    choices: dict[str, dict[str, Any]] = {}
+    for row in sorted(
+        (r for r in resolved_takes or () if isinstance(r, Mapping)),
+        key=lambda r: r.get("order_index") if isinstance(r.get("order_index"), int) else 10**6,
+    ):
         media_id = str(row.get("media_id") or "")
-        if not media_id or media_id in order or media_id not in takes:
+        if not media_id or media_id in order or media_id not in alignment.takes:
             continue
         order.append(media_id)
-        if not row.get("confirmed_by_creator"):
-            continue
-        current = takes[media_id]
-        delta = row.get("delta_s")
-        if isinstance(delta, (int, float)) and not isinstance(delta, bool) and math.isfinite(delta):
-            takes[media_id] = current.model_copy(
-                update={"status": "ambiguous", "delta_s": float(delta), "alternates": []}
-            )
+        delta = _finite(row.get("delta_s"))
+        place = row.get("place")
+        if place not in ("pinned", "stack", "broll"):
+            if not row.get("confirmed_by_creator"):
+                continue
+            place = "pinned" if delta is not None else "broll"
+            basis = "creator_position"
         else:
-            takes[media_id] = current.model_copy(
-                update={"status": "unmatched", "delta_s": None, "alternates": []}
+            if place != "broll" and delta is None:
+                place = "broll"
+            basis = row.get("position_basis") or (
+                "creator_stack" if place == "stack" else "creator_position"
             )
-    return alignment.model_copy(update={"takes": takes}), order
+        choices[media_id] = {
+            "delta_s": None if place == "broll" else delta,
+            "place": place,
+            "position_basis": basis,
+            "confirmed_by_creator": bool(row.get("confirmed_by_creator")),
+            "reason": row.get("reason"),
+        }
+    return alignment, order, choices
 
 
 def resolved_song_takes_payload(resolved: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """The server-owned ``resolved_song_takes`` list written onto the strategy:
+    """The server-owned ``resolved_song_takes`` list written onto the strategy, in the
+    creator's confirmed order:
 
-    ``[{"media_id": str, "delta_s": float | None, "status": "confident"|"unmatched",
-    "confirmed_by_creator": bool}, ...]`` in the creator's confirmed order.
-    ``delta_s is None`` (status ``unmatched``) means "use as B-roll, never place by song time".
+    ``[{"media_id", "order_index", "delta_s": float | None, "place":
+    "pinned"|"stack"|"broll", "position_basis", "confirmed_by_creator", "likelihood",
+    "status": "confident"|"unmatched", "reason"?}, ...]``.
+    ``place == "broll"`` (``delta_s is None``) means "muted B-roll, never placed by
+    song time"; ``"stack"`` is laid by the creator's order (approximate sync).
     """
-    return [
-        {
+    out: list[dict[str, Any]] = []
+    for index, (media_id, take) in enumerate(resolved.items()):
+        delta = take.get("delta_s")
+        item: dict[str, Any] = {
             "media_id": media_id,
-            "delta_s": take.get("delta_s"),
-            "status": take.get("status", "unmatched"),
+            "order_index": take.get("order_index", index),
+            "delta_s": delta,
+            "status": take.get("status", "unmatched" if delta is None else "confident"),
             "confirmed_by_creator": bool(take.get("confirmed_by_creator")),
         }
-        for media_id, take in resolved.items()
-    ]
+        if take.get("place"):
+            item["place"] = take["place"]
+        if take.get("position_basis"):
+            item["position_basis"] = take["position_basis"]
+        if take.get("likelihood") is not None:
+            item["likelihood"] = take["likelihood"]
+        if take.get("reason"):
+            item["reason"] = take["reason"]
+        out.append(item)
+    return out

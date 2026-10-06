@@ -5109,8 +5109,9 @@ def _plan_phone_user_song_montage(
     Background: ``plan_unified_montage`` with the song's beats and lyric lines.
     Lip-sync: ``plan_lipsync_montage`` over the take alignment, computed inline if the
     background tasks have not left a current one. An uncertain take that the creator
-    did not confirm is never placed (the planner guarantees it; the alignment fed here
-    only ever narrows positions to the ones the creator chose). Every failure is a
+    did not confirm is placed by likelihood (best candidate, tie broken toward the
+    cluster) and flagged low-confidence in the receipt; a take with no evidence stays
+    muted B-roll unless the creator's answer stacked it. Every failure is a
     ``UserSongPlanDeclined`` with a message the creator can act on.
     """
     from app.pipeline.lipsync_montage import (  # noqa: PLC0415
@@ -5184,7 +5185,7 @@ def _plan_phone_user_song_montage(
             }
         }
     )
-    alignment, confirmed_order = apply_resolved_song_takes(
+    alignment, confirmed_order, creator_choices = apply_resolved_song_takes(
         alignment, strategy.get("resolved_song_takes")
     )
     try:
@@ -5198,6 +5199,7 @@ def _plan_phone_user_song_montage(
             plan_item_id=str(item_id),
             font_covers=font_covers,
             output_orientation=output_orientation,
+            creator_choices=creator_choices,
         )
     except LipsyncPlanError as exc:
         if exc.code in ("no_synced_takes", "span_too_short"):
@@ -5224,7 +5226,8 @@ def _plan_phone_user_song_montage(
             unmatched_ids = [
                 clip.media_id
                 for clip in clips
-                if getattr(alignment.takes.get(clip.media_id), "status", "unmatched") != "confident"
+                if clip.media_id not in alignment.takes
+                or not alignment.takes[clip.media_id].candidates_or_legacy()
             ]
             plan.song_receipt = {
                 **plan.song_receipt,

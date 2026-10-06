@@ -753,6 +753,8 @@ def test_observer_review_notes_a_background_fallback_and_kept_broll(
             "requested_mode": "lipsync",
             "fallback_reason": "no_synced_takes",
             "kept_broll_ids": ["a", "b"],
+            "low_confidence_ids": ["c"],
+            "placed_outside_ids": ["d", "e"],
             "placed": [{"media_id": "c", "method": "lyrics"}],
         }
     }
@@ -760,7 +762,9 @@ def test_observer_review_notes_a_background_fallback_and_kept_broll(
     review = next(e for e in events if e["event_type"] == "assistant_review")
     assert review["content"].startswith(_LEGACY_REVIEW)
     assert "used it as background music cut to the beat" in review["content"]
-    assert "2 takes didn't match the song" in review["content"]
+    assert "2 takes have no usable singing or words" in review["content"]
+    assert "1 take is placed by my best guess and may be slightly off" in review["content"]
+    assert "2 takes sit later in the song than a 2-minute video can hold" in review["content"]
     assert "I matched 1 take by your singing." in review["content"]
 
 

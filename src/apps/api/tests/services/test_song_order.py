@@ -7,6 +7,7 @@ import pytest
 from app.schemas.user_song import (
     SONG_ALIGNMENT_VERSION,
     AlignmentAlternate,
+    PlacementCandidate,
     SongAlignment,
     SongOrderAnswerIn,
     SongOrderQuestion,
@@ -42,6 +43,27 @@ def _ambiguous(mid: str, delta: float | None, alts: list[tuple[float, float]]) -
     )
 
 
+def _cands(mid: str, *cands: tuple[float, float]) -> TakeAlignment:
+    """A v3 row: ``(delta_s, likelihood)`` candidates, best first."""
+    ranked = sorted(cands, key=lambda c: -c[1])
+    margin = 1.0 if len(ranked) == 1 else (ranked[0][1] - ranked[1][1]) / ranked[0][1]
+    return TakeAlignment(
+        media_id=mid,
+        status="confident" if len(ranked) == 1 and ranked[0][1] >= 0.35 else "ambiguous",
+        delta_s=ranked[0][0],
+        confidence=ranked[0][1],
+        likelihood=ranked[0][1],
+        margin=margin,
+        candidates=[
+            PlacementCandidate(delta_s=d, likelihood=li, method="lyrics") for d, li in ranked
+        ],
+    )
+
+
+def _none(mid: str) -> TakeAlignment:
+    return TakeAlignment(media_id=mid, status="unmatched")
+
+
 def _alignment(*takes: TakeAlignment) -> SongAlignment:
     return SongAlignment(song_generation=3, takes={t.media_id: t for t in takes})
 
@@ -49,10 +71,12 @@ def _alignment(*takes: TakeAlignment) -> SongAlignment:
 # -- build ---------------------------------------------------------------------
 
 
-def test_question_orders_by_song_position_with_unmatched_last() -> None:
+def test_question_orders_by_song_position_and_places_no_evidence_after_capture_predecessor() -> (
+    None
+):
     alignment = _alignment(
         _confident("late", 50.0),
-        TakeAlignment(media_id="silent", status="unmatched"),
+        _none("silent"),
         _ambiguous("chorus", 20.0, [(20.0, 0.9), (80.0, 0.8)]),
         _confident("early", 5.0),
     )
@@ -60,20 +84,55 @@ def test_question_orders_by_song_position_with_unmatched_last() -> None:
         alignment, ["late", "silent", "chorus", "early"], question_id="q1"
     )
     assert q.question_id == "q1"
+    # `silent` was filmed right after `late`, so it rides right after it.
     assert q.proposed_order == ["early", "chorus", "late", "silent"]
     assert [i.media_id for i in q.items] == q.proposed_order
     by_id = {i.media_id: i for i in q.items}
     assert by_id["early"].song_start_s == 5.0 and by_id["early"].alternates == []
-    assert by_id["chorus"].status == "ambiguous"
+    assert by_id["early"].status == "confident" and by_id["early"].reason is None
+    assert by_id["chorus"].status == "ambiguous" and by_id["chorus"].reason == "tie"
     assert [a.delta_s for a in by_id["chorus"].alternates] == [20.0, 80.0]
-    assert by_id["silent"].song_start_s is None and by_id["silent"].status == "unmatched"
+    # No evidence: sent as ambiguous with no position so the app lets it be dragged.
+    assert by_id["silent"].song_start_s is None
+    assert by_id["silent"].status == "ambiguous" and by_id["silent"].reason == "no_evidence"
 
 
-def test_missing_alignment_row_counts_as_unmatched_and_ids_are_deduped() -> None:
+def test_no_evidence_takes_interleave_by_capture_order() -> None:
+    alignment = _alignment(
+        _none("lead"),  # nothing precedes it: leads the list
+        _cands("b", (40.0, 0.8)),
+        _none("after_b"),
+        _cands("a", (10.0, 0.8)),
+        _none("after_a"),
+    )
+    ids = ["lead", "b", "after_b", "a", "after_a"]
+    q = build_song_order_question(alignment, ids)
+    assert q.proposed_order == ["lead", "a", "after_a", "b", "after_b"]
+    assert {i.media_id: i.reason for i in q.items if i.reason} == {
+        "lead": "no_evidence",
+        "after_b": "no_evidence",
+        "after_a": "no_evidence",
+    }
+
+
+def test_weak_and_tied_takes_carry_their_reason_and_likelihood() -> None:
+    alignment = _alignment(
+        _cands("sure", (5.0, 0.8)),
+        _cands("weak", (30.0, 0.2)),
+        _cands("repeat", (60.0, 0.7), (120.0, 0.7)),
+    )
+    q = build_song_order_question(alignment, ["sure", "weak", "repeat"])
+    by_id = {i.media_id: i for i in q.items}
+    assert by_id["sure"].reason is None
+    assert by_id["weak"].reason == "weak" and by_id["weak"].likelihood == 0.2
+    assert by_id["repeat"].reason == "tie"
+
+
+def test_missing_alignment_row_counts_as_no_evidence_and_ids_are_deduped() -> None:
     alignment = _alignment(_confident("a", 1.0))
     q = build_song_order_question(alignment, ["a", "b", "b"])
     assert q.proposed_order == ["a", "b"]
-    assert q.items[1].status == "unmatched"
+    assert q.items[1].status == "ambiguous" and q.items[1].reason == "no_evidence"
     assert uncertain_media_ids(alignment, ["a", "b"]) == ["b"]
 
 
@@ -216,114 +275,191 @@ def test_validate_rejects_with_a_typed_error(answer_ids, qid, open_q, code) -> N
 # -- resolve ----------------------------------------------------------------------
 
 
-def test_ambiguous_take_resolves_to_the_alternate_between_its_neighbours() -> None:
+def _row(out: dict, mid: str) -> tuple:
+    r = out[mid]
+    return r["delta_s"], r["place"], r["position_basis"], r["confirmed_by_creator"]
+
+
+def test_uncertain_take_resolves_to_the_candidate_between_its_neighbours() -> None:
     alignment = _alignment(
-        _confident("verse", 10.0),
-        _ambiguous("chorus", 25.0, [(25.0, 0.9), (70.0, 0.8)]),
-        _confident("outro", 100.0),
+        _cands("verse", (10.0, 0.9)),
+        _cands("chorus", (25.0, 0.7), (70.0, 0.7)),
+        _cands("bridge", (60.0, 0.9)),
+        _cands("outro", (100.0, 0.9)),
     )
-    # Creator says the chorus take is the LATE chorus (after verse, before outro).
-    out = resolve_uncertain_takes(alignment, ["verse", "chorus", "outro"])
-    assert out["chorus"]["delta_s"] == 25.0 and out["chorus"]["confirmed_by_creator"] is True
-    # Between verse(10) and a later confident take at 60 only the 25 s candidate fits...
-    alignment2 = _alignment(
-        _confident("verse", 10.0),
-        _ambiguous("chorus", 25.0, [(25.0, 0.9), (70.0, 0.95)]),
-        _confident("bridge", 60.0),
-        _confident("outro", 100.0),
-    )
-    first = resolve_uncertain_takes(alignment2, ["verse", "chorus", "bridge", "outro"])
-    assert first["chorus"]["delta_s"] == 25.0
-    # ...and after the bridge only the 70 s one does.
-    second = resolve_uncertain_takes(alignment2, ["verse", "bridge", "chorus", "outro"])
-    assert second["chorus"]["delta_s"] == 70.0
-    assert second["chorus"]["status"] == "confident"
+    # Before the bridge only the 25 s repeat fits: the creator's order decided it.
+    first = resolve_uncertain_takes(alignment, ["verse", "chorus", "bridge", "outro"])
+    assert _row(first, "chorus") == (25.0, "pinned", "creator_position", True)
+    # After the bridge only the 70 s repeat fits.
+    second = resolve_uncertain_takes(alignment, ["verse", "bridge", "chorus", "outro"])
+    assert _row(second, "chorus") == (70.0, "pinned", "creator_position", True)
+    # A take the aligner was sure of keeps its own position and is NOT creator-confirmed.
+    assert _row(first, "verse") == (10.0, "pinned", "aligner", False)
 
 
-def test_no_fitting_alternate_becomes_broll_never_a_guess() -> None:
+def test_several_tied_fits_are_a_tie_break_not_a_creator_confirmation() -> None:
     alignment = _alignment(
-        _confident("a", 10.0),
-        _ambiguous("x", 20.0, [(20.0, 0.9), (30.0, 0.5)]),
-        _confident("b", 15.0),
+        _cands("a", (10.0, 0.9)),
+        _cands("x", (30.0, 0.7), (50.0, 0.7)),
+        _cands("z", (200.0, 0.9)),
     )
-    out = resolve_uncertain_takes(alignment, ["a", "x", "b"])
-    assert out["x"] == {"delta_s": None, "status": "unmatched", "confirmed_by_creator": True}
+    out = resolve_uncertain_takes(alignment, ["a", "x", "z"])
+    # Both repeats fit between a and z: nearest the previous take wins, unconfirmed.
+    assert _row(out, "x") == (30.0, "pinned", "tie_break", False)
 
 
-def test_unmatched_take_is_broll() -> None:
-    alignment = _alignment(_confident("a", 1.0), TakeAlignment(media_id="s", status="unmatched"))
-    out = resolve_uncertain_takes(alignment, ["a", "s"])
-    assert out["s"]["delta_s"] is None and out["s"]["status"] == "unmatched"
-    assert out["a"] == {"delta_s": 1.0, "status": "confident", "confirmed_by_creator": False}
-
-
-def test_consecutive_uncertain_takes_bound_each_other() -> None:
+def test_a_take_with_no_fitting_candidate_is_stacked_in_the_gap() -> None:
     alignment = _alignment(
-        _confident("a", 0.0),
-        _ambiguous("x", 40.0, [(40.0, 0.9), (10.0, 0.8)]),
-        _ambiguous("y", 40.0, [(40.0, 0.9), (10.0, 0.8)]),
-        _confident("z", 100.0),
+        _cands("a", (10.0, 0.9)),
+        _cands("x", (5.0, 0.7), (60.0, 0.7)),
+        _cands("b", (35.0, 0.9)),
     )
-    out = resolve_uncertain_takes(alignment, ["a", "x", "y", "z"])
-    assert out["x"]["delta_s"] == 40.0  # best-scoring fitting candidate
-    # y must come after x (40): 40 itself is not > 40, 10 is earlier -> B-roll
-    assert out["y"]["delta_s"] is None
+    # x must sit between a (10) and b (35): neither repeat fits, so it is stacked, not dropped.
+    out = resolve_uncertain_takes(alignment, ["a", "x", "b"], {"a": 8.0, "x": 6.0, "b": 8.0})
+    delta, place, basis, confirmed = _row(out, "x")
+    assert (place, basis, confirmed) == ("stack", "creator_stack", True)
+    assert delta is not None and delta > 10.0  # after a's last trusted frame (10 + 8 - margin)
+
+
+def test_a_stacked_take_never_lands_after_the_take_it_must_precede() -> None:
+    alignment = _alignment(
+        _cands("a", (10.0, 0.9)),
+        _cands("x", (20.0, 0.7), (30.0, 0.7)),
+        _cands("b", (15.0, 0.9)),
+    )
+    # a and b already overlap: no room for x between them, so it is B-roll (not
+    # stacked on the wrong side of b).
+    out = resolve_uncertain_takes(alignment, ["a", "x", "b"], {"a": 8.0, "x": 6.0, "b": 8.0})
+    delta, place, _basis, _confirmed = _row(out, "x")
+    assert place == "broll" and delta is None
+
+
+def test_no_evidence_takes_stack_between_their_neighbours_in_creator_order() -> None:
+    alignment = _alignment(
+        _cands("a", (0.0, 0.9)), _none("s1"), _none("s2"), _cands("b", (40.0, 0.9))
+    )
+    durs = {"a": 8.0, "s1": 5.0, "s2": 6.0, "b": 8.0}
+    out = resolve_uncertain_takes(alignment, ["a", "s1", "s2", "b"], durs)
+    d1, d2 = out["s1"]["delta_s"], out["s2"]["delta_s"]
+    assert out["s1"]["place"] == out["s2"]["place"] == "stack"
+    assert 0.0 < d1 < d2 < 40.0
+    assert d2 == pytest.approx(d1 + 5.0, abs=0.01)  # laid end to end
+    assert out["s1"]["likelihood"] == 0.0
+    assert out["s1"]["confirmed_by_creator"] is True
+
+
+def test_all_no_evidence_takes_stack_from_the_first_lyric_line() -> None:
+    alignment = _alignment(_none("x"), _none("y"))
+    out = resolve_uncertain_takes(
+        alignment, ["x", "y"], {"x": 6.0, "y": 6.0}, song_duration_s=100.0, first_line_s=12.0
+    )
+    assert out["x"]["delta_s"] == 12.0 and out["y"]["delta_s"] == 18.0
+    assert {r["place"] for r in out.values()} == {"stack"}
+
+
+def test_a_stacked_take_with_no_room_becomes_broll() -> None:
+    alignment = _alignment(_cands("a", (0.0, 0.9)), _none("x"))
+    out = resolve_uncertain_takes(alignment, ["a", "x"], {"a": 8.0, "x": 6.0}, song_duration_s=8.5)
+    assert out["x"]["place"] == "broll" and out["x"]["delta_s"] is None
+    assert out["x"]["reason"] == "no_room"
 
 
 def test_resolved_payload_shape_keeps_creator_order() -> None:
-    alignment = _alignment(_confident("a", 1.0), TakeAlignment(media_id="s", status="unmatched"))
+    alignment = _alignment(_confident("a", 1.0), _none("s"))
     payload = resolved_song_takes_payload(resolve_uncertain_takes(alignment, ["s", "a"]))
     assert [p["media_id"] for p in payload] == ["s", "a"]
-    assert set(payload[0]) == {"media_id", "delta_s", "status", "confirmed_by_creator"}
+    assert [p["order_index"] for p in payload] == [0, 1]
+    for row in payload:
+        assert {"media_id", "order_index", "delta_s", "place", "position_basis"} <= set(row)
+        assert row["status"] in ("confident", "unmatched")
 
 
 # ── apply_resolved_song_takes (the worker's read of the gate's answer) ───────
 
 
-def test_apply_resolved_takes_narrows_a_confirmed_take_to_the_creators_position() -> None:
-    from app.schemas.user_song import AlignmentAlternate, SongAlignment, TakeAlignment
+def test_apply_returns_clean_creator_choices_and_never_rewrites_rows() -> None:
     from app.services.song_order import apply_resolved_song_takes
 
-    alignment = SongAlignment(
-        song_generation=1,
-        takes={
-            "a": TakeAlignment(media_id="a", status="confident", delta_s=5.0),
-            "b": TakeAlignment(
-                media_id="b",
-                status="ambiguous",
-                delta_s=70.0,
-                alternates=[AlignmentAlternate(delta_s=28.0, score=0.5)],
-            ),
-            "c": TakeAlignment(media_id="c", status="unmatched"),
-        },
+    alignment = _alignment(
+        _cands("a", (5.0, 0.9)), _cands("b", (70.0, 0.5), (28.0, 0.5)), _none("c")
     )
     resolved = [
+        {
+            "media_id": "a",
+            "order_index": 0,
+            "delta_s": 5.0,
+            "place": "pinned",
+            "position_basis": "aligner",
+            "confirmed_by_creator": False,
+        },
+        {
+            "media_id": "b",
+            "order_index": 1,
+            "delta_s": 28.0,
+            "place": "pinned",
+            "position_basis": "creator_position",
+            "confirmed_by_creator": True,
+        },
+        {
+            "media_id": "c",
+            "order_index": 2,
+            "delta_s": 33.0,
+            "place": "stack",
+            "position_basis": "creator_stack",
+            "confirmed_by_creator": True,
+        },
+        {"media_id": "gone", "order_index": 3, "delta_s": 1.0, "place": "pinned"},
+    ]
+    patched, order, choices = apply_resolved_song_takes(alignment, resolved)
+    assert patched is alignment  # rows untouched
+    assert order == ["a", "b", "c"]  # a removed take is ignored
+    assert choices["b"] == {
+        "delta_s": 28.0,
+        "place": "pinned",
+        "position_basis": "creator_position",
+        "confirmed_by_creator": True,
+        "reason": None,
+    }
+    assert choices["c"]["place"] == "stack" and choices["c"]["delta_s"] == 33.0
+    assert choices["a"]["confirmed_by_creator"] is False
+
+
+def test_legacy_resolved_rows_keep_their_old_meaning() -> None:
+    """Rows written before KRI-471 have no ``place``: delta None => B-roll, a confirmed
+    delta pins the take, an unconfirmed row is left to the assignment."""
+    from app.services.song_order import apply_resolved_song_takes
+
+    alignment = _alignment(_confident("a", 5.0), _cands("b", (70.0, 0.5), (28.0, 0.5)), _none("c"))
+    legacy = [
         {"media_id": "a", "delta_s": 5.0, "status": "confident", "confirmed_by_creator": False},
         {"media_id": "b", "delta_s": 28.0, "status": "confident", "confirmed_by_creator": True},
         {"media_id": "c", "delta_s": None, "status": "unmatched", "confirmed_by_creator": True},
-        {"media_id": "gone", "delta_s": 1.0, "status": "confident", "confirmed_by_creator": True},
     ]
-
-    patched, order = apply_resolved_song_takes(alignment, resolved)
-
-    assert order == ["a", "b", "c"]  # a removed take is ignored
-    assert patched.takes["a"] == alignment.takes["a"]  # confident rows are untouched
-    assert (patched.takes["b"].status, patched.takes["b"].delta_s) == ("ambiguous", 28.0)
-    assert patched.takes["b"].alternates == []  # only the creator's position remains
-    assert (patched.takes["c"].status, patched.takes["c"].delta_s) == ("unmatched", None)
-    assert alignment.takes["b"].delta_s == 70.0  # the input is not mutated
+    _a, order, choices = apply_resolved_song_takes(alignment, legacy)
+    assert order == ["a", "b", "c"]
+    assert "a" not in choices
+    assert (choices["b"]["place"], choices["b"]["delta_s"]) == ("pinned", 28.0)
+    assert choices["b"]["position_basis"] == "creator_position"
+    assert (choices["c"]["place"], choices["c"]["delta_s"]) == ("broll", None)
 
 
 def test_apply_resolved_takes_without_an_answer_changes_nothing() -> None:
-    from app.schemas.user_song import SongAlignment, TakeAlignment
     from app.services.song_order import apply_resolved_song_takes
 
-    alignment = SongAlignment(
-        song_generation=1,
-        takes={"a": TakeAlignment(media_id="a", status="ambiguous", delta_s=9.0)},
-    )
-    patched, order = apply_resolved_song_takes(alignment, None)
-    assert (patched, order) == (alignment, [])
+    alignment = _alignment(_ambiguous("a", 9.0, []))
+    assert apply_resolved_song_takes(alignment, None) == (alignment, [], {})
+
+
+def test_new_place_values_round_trip_through_the_payload() -> None:
+    from app.services.song_order import apply_resolved_song_takes
+
+    alignment = _alignment(_cands("a", (0.0, 0.9)), _none("s"), _cands("b", (40.0, 0.9)))
+    resolved = resolve_uncertain_takes(alignment, ["a", "s", "b"], {"a": 8.0, "s": 5.0, "b": 8.0})
+    payload = resolved_song_takes_payload(resolved)
+    _a, _order, choices = apply_resolved_song_takes(alignment, payload)
+    assert choices["s"]["place"] == "stack"
+    assert choices["s"]["delta_s"] == resolved["s"]["delta_s"]
+    assert choices["s"]["position_basis"] == "creator_stack"
 
 
 # -- KRI-374 review: answers are tied to the song generation ------------------------
@@ -389,45 +525,47 @@ def test_thread_keeps_lipsync_while_a_question_is_open_or_being_answered() -> No
     assert not thread_keeps_lipsync([("user", None)], 3)
 
 
-# -- KRI-466: only ambiguous takes need an order -------------------------------
+# -- KRI-471: the creator is asked only where their say could matter -----------
 
 
-def test_takes_needing_order_is_only_ambiguous_takes_with_candidates() -> None:
+def test_takes_needing_order_is_the_assignments_ask_set() -> None:
     alignment = _alignment(
-        _confident("a", 1.0),
-        _ambiguous("b", 5.0, [(5.0, 0.9)]),
-        TakeAlignment(media_id="c", status="unmatched"),
-        _ambiguous("d", None, []),  # nothing to choose between
+        _cands("sure", (1.0, 0.8)),
+        _cands("repeat", (20.0, 0.7), (60.0, 0.7)),
+        _cands("weak", (100.0, 0.2)),
+        _none("silent"),
     )
-    assert takes_needing_order(alignment, ["a", "b", "c", "d", "missing"]) == ["b"]
+    got = takes_needing_order(alignment, ["sure", "repeat", "weak", "silent", "missing"])
+    assert got == ["repeat", "weak", "silent", "missing"]
 
 
-def test_question_text_counts_only_ambiguous_takes() -> None:
-    alignment = _alignment(
-        _ambiguous("a", 5.0, [(5.0, 0.9)]),
-        _ambiguous("b", 9.0, [(9.0, 0.9)]),
-        TakeAlignment(media_id="c", status="unmatched"),
-    )
+def test_no_ask_when_every_take_is_clearly_placed() -> None:
+    alignment = _alignment(_cands("a", (1.0, 0.8)), _cands("b", (40.0, 0.7)))
+    assert takes_needing_order(alignment, ["a", "b"]) == []
+
+
+def test_a_no_evidence_only_set_is_asked_about() -> None:
+    assert takes_needing_order(_alignment(_none("a"), _none("b")), ["a", "b"]) == ["a", "b"]
+
+
+def test_question_text_counts_every_take_the_creator_is_asked_about() -> None:
     from app.services.song_order import song_order_question_text
 
-    question = build_song_order_question(alignment, ["a", "b", "c"])
-    assert "2 of your takes" in song_order_question_text(question)
-
-
-def test_apply_resolved_takes_keeps_the_match_range() -> None:
-    from app.services.song_order import apply_resolved_song_takes
-
-    row = TakeAlignment(
-        media_id="b",
-        status="ambiguous",
-        delta_s=70.0,
-        alternates=[AlignmentAlternate(delta_s=28.0, score=0.5)],
-        match_start_s=3.0,
-        match_end_s=9.0,
+    alignment = _alignment(
+        _cands("a", (5.0, 0.2)), _none("b"), _none("c"), _cands("d", (80.0, 0.9))
     )
-    alignment = SongAlignment(song_generation=1, takes={"b": row})
-    patched, _order = apply_resolved_song_takes(
-        alignment,
-        [{"media_id": "b", "delta_s": 28.0, "status": "confident", "confirmed_by_creator": True}],
-    )
-    assert (patched.takes["b"].match_start_s, patched.takes["b"].match_end_s) == (3.0, 9.0)
+    question = build_song_order_question(alignment, ["a", "b", "c", "d"])
+    text = song_order_question_text(question)
+    assert "3 of your clips" in text and "drag any that are out of place" in text
+    one = build_song_order_question(_alignment(_none("z"), _cands("y", (3.0, 0.9))), ["z", "y"])
+    assert "one of your clips" in song_order_question_text(one)
+
+
+def test_an_old_question_without_reasons_still_parses() -> None:
+    old = {
+        "question_id": "q",
+        "proposed_order": ["a"],
+        "items": [{"media_id": "a", "status": "ambiguous", "song_start_s": 3.0, "alternates": []}],
+    }
+    parsed = SongOrderQuestion.model_validate(old)
+    assert parsed.items[0].reason is None and parsed.items[0].likelihood is None

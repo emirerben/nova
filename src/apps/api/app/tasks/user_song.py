@@ -169,6 +169,10 @@ def _shift(alignment: TakeAlignment, offset_s: float) -> TakeAlignment:
                 alt.model_copy(update={"delta_s": alt.delta_s + offset_s})
                 for alt in alignment.alternates
             ],
+            "candidates": [
+                cand.model_copy(update={"delta_s": cand.delta_s + offset_s})
+                for cand in alignment.candidates
+            ],
         }
     )
 

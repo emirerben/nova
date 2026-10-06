@@ -43,7 +43,7 @@ CLIP_S = 20.0
 CLIPS = ("clip-a", "clip-b", "clip-c")
 
 
-def _bindings():
+def _bindings(durations=None):
     return tuple(
         PhoneSourceBinding(
             media_id=media_id,
@@ -52,7 +52,7 @@ def _bindings():
             original=OriginalMediaDescriptor(
                 sha256=f"{i + 1:x}".rjust(64, "a"),
                 byte_count=1000 + i,
-                duration_s=CLIP_S,
+                duration_s=(durations or {}).get(media_id, CLIP_S),
                 width=1080,
                 height=1920,
                 has_audio=True,
@@ -64,14 +64,22 @@ def _bindings():
 
 @pytest.fixture
 def harness(monkeypatch):
-    def build(*, sync: str, rows=(), strategy_extra=None, song_analysis=None, song_alignment=None):
-        bindings = _bindings()
+    def build(
+        *,
+        sync: str,
+        rows=(),
+        strategy_extra=None,
+        song_analysis=None,
+        song_alignment=None,
+        durations=None,
+    ):
+        bindings = _bindings(durations)
         assignments = [
             {
                 "gcs_path": b.proxy_path,
                 "media_id": b.media_id,
                 "storage_generation": b.generation,
-                "duration_s": CLIP_S,
+                "duration_s": (durations or {}).get(b.media_id, CLIP_S),
             }
             for b in bindings
         ]
@@ -215,7 +223,7 @@ def test_lipsync_song_montage_places_confident_takes_on_the_song_clock(harness):
         )
 
 
-def test_an_uncertain_take_is_not_placed_without_the_creators_answer(harness):
+def test_an_uncertain_take_is_placed_unconfirmed_without_the_creators_answer(harness):
     job, _snapshot, _bindings = harness(
         sync="lipsync",
         rows=[
@@ -229,7 +237,12 @@ def test_an_uncertain_take_is_not_placed_without_the_creators_answer(harness):
 
     assert job.status == "awaiting_device"
     song = job.assembly_plan["guided_story_execution_plan"]["user_song"]
-    assert "clip-b" not in song["takes"]  # never placed at a guessed song time
+    # KRI-471: placed by likelihood (no status gate), never marked creator-confirmed.
+    # The tie between 28 and 70 breaks toward the cluster: 28 sits among a and c.
+    assert set(song["takes"]) == set(CLIPS)
+    assert song["takes"]["clip-b"]["confirmed_by_creator"] is False
+    assert song["takes"]["clip-b"]["position_basis"] == "tie_break"
+    assert song["takes"]["clip-b"]["delta_s"] == pytest.approx(28.0)
     _recipe, clip = _song_clip(job)
     assert clip.source_start == pytest.approx(song["window_start_s"])
 
@@ -246,20 +259,26 @@ def test_the_creators_confirmed_order_places_the_uncertain_take(harness):
             "resolved_song_takes": [
                 {
                     "media_id": "clip-a",
+                    "order_index": 0,
                     "delta_s": 10.0,
-                    "status": "confident",
+                    "place": "pinned",
+                    "position_basis": "aligner",
                     "confirmed_by_creator": False,
                 },
                 {
                     "media_id": "clip-b",
+                    "order_index": 1,
                     "delta_s": 28.0,
-                    "status": "confident",
+                    "place": "pinned",
+                    "position_basis": "creator_position",
                     "confirmed_by_creator": True,
                 },
                 {
                     "media_id": "clip-c",
+                    "order_index": 2,
                     "delta_s": 46.0,
-                    "status": "confident",
+                    "place": "pinned",
+                    "position_basis": "aligner",
                     "confirmed_by_creator": False,
                 },
             ]
@@ -272,23 +291,48 @@ def test_the_creators_confirmed_order_places_the_uncertain_take(harness):
     takes = job.assembly_plan["guided_story_execution_plan"]["user_song"]["takes"]
     assert takes["clip-b"]["delta_s"] == pytest.approx(28.0)
     assert takes["clip-b"]["confirmed_by_creator"] is True
+    assert takes["clip-b"]["position_basis"] == "creator_position"
     assert takes["clip-a"]["confirmed_by_creator"] is False
 
 
-def test_a_take_the_creator_could_not_place_stays_broll(harness):
+def test_a_legacy_resolved_row_without_place_still_pins_the_confirmed_take(harness):
     job, _snapshot, _bindings = harness(
         sync="lipsync",
-        rows=[confident("clip-a", 10), ambiguous("clip-b", 28, 70), confident("clip-c", 46)],
+        rows=[confident("clip-a", 10), ambiguous("clip-b", 70, 28), confident("clip-c", 46)],
         strategy_extra={
             "resolved_song_takes": [
                 {"media_id": "clip-a", "delta_s": 10.0, "status": "confident"},
                 {
                     "media_id": "clip-b",
-                    "delta_s": None,
-                    "status": "unmatched",
+                    "delta_s": 28.0,
+                    "status": "confident",
                     "confirmed_by_creator": True,
                 },
                 {"media_id": "clip-c", "delta_s": 46.0, "status": "confident"},
+            ]
+        },
+    )
+    gb._run_generative_job(str(job.id))
+    takes = job.assembly_plan["guided_story_execution_plan"]["user_song"]["takes"]
+    assert takes["clip-b"]["delta_s"] == pytest.approx(28.0)
+    assert takes["clip-b"]["confirmed_by_creator"] is True
+
+
+def test_a_take_the_creator_asked_to_keep_as_broll_stays_broll(harness):
+    job, _snapshot, _bindings = harness(
+        sync="lipsync",
+        rows=[confident("clip-a", 10), ambiguous("clip-b", 28, 70), confident("clip-c", 46)],
+        strategy_extra={
+            "resolved_song_takes": [
+                {"media_id": "clip-a", "delta_s": 10.0, "place": "pinned"},
+                {
+                    "media_id": "clip-b",
+                    "delta_s": None,
+                    "place": "broll",
+                    "reason": "no_room",
+                    "confirmed_by_creator": True,
+                },
+                {"media_id": "clip-c", "delta_s": 46.0, "place": "pinned"},
             ]
         },
     )
@@ -358,25 +402,11 @@ def test_alignment_for_another_song_generation_falls_back_to_background(harness)
     assert _fallback_plan(job)[0]["mode"] == "background"
 
 
-def test_kri466_eight_unmatched_takes_with_a_confirmed_order_still_render(harness, monkeypatch):
-    """Prod replay: 8 takes, none matched, creator confirmed the (empty) order."""
+def test_kri466_eight_unmatched_takes_never_fail_the_job(harness, monkeypatch):
+    """Prod replay: 8 takes, none matched, no answer: the song stays as the beat bed."""
     ids = tuple(f"clip-{i}" for i in range(8))
     monkeypatch.setattr(sys.modules[__name__], "CLIPS", ids)
-    job, _snapshot, _bindings = harness(
-        sync="lipsync",
-        rows=[unmatched(m) for m in ids],
-        strategy_extra={
-            "resolved_song_takes": [
-                {
-                    "media_id": m,
-                    "delta_s": None,
-                    "status": "unmatched",
-                    "confirmed_by_creator": True,
-                }
-                for m in ids
-            ]
-        },
-    )
+    job, _snapshot, _bindings = harness(sync="lipsync", rows=[unmatched(m) for m in ids])
 
     gb._run_generative_job(str(job.id))
 
@@ -384,7 +414,180 @@ def test_kri466_eight_unmatched_takes_with_a_confirmed_order_still_render(harnes
     receipt, plan = _fallback_plan(job)
     assert receipt["mode"] == "background"
     assert receipt["fallback_reason"] == "no_synced_takes"
+    assert set(receipt["unmatched_ids"]) == set(ids)
     assert {m["media_id"] for m in plan["story_timeline"]} == set(ids)
+
+
+def test_kri466_eight_unmatched_takes_the_creator_ordered_are_stacked_from_the_first_line(
+    harness, monkeypatch
+):
+    """The same eight takes after the creator answered: they play in her order."""
+    ids = tuple(f"clip-{i}" for i in range(8))
+    monkeypatch.setattr(sys.modules[__name__], "CLIPS", ids)
+    durations = {m: 6.0 for m in ids}
+    alignment_ = alignment(*[unmatched(m) for m in ids])
+    from app.services.song_order import resolve_uncertain_takes, resolved_song_takes_payload
+
+    resolved = resolve_uncertain_takes(
+        alignment_, list(ids), durations, SONG_DURATION_S, first_line_s=2.0
+    )
+    job, _snapshot, _bindings = harness(
+        sync="lipsync",
+        song_alignment=alignment_,
+        durations=durations,
+        strategy_extra={"resolved_song_takes": resolved_song_takes_payload(resolved)},
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    plan = job.assembly_plan["guided_story_execution_plan"]
+    song = plan["user_song"]
+    assert song["mode"] == "lipsync"
+    assert set(song["takes"]) == set(ids)
+    assert {t["position_basis"] for t in song["takes"].values()} == {"creator_stack"}
+    deltas = [song["takes"][m]["delta_s"] for m in ids]
+    assert deltas == sorted(deltas)  # the creator's order is the play order
+    assert song["window_end_s"] - song["window_start_s"] <= 120.0
+
+
+# ── KRI-471 prod replay (job aed98bf6): 8 sung takes over one 226 s song ─────
+
+_REPLAY_DURATIONS = {
+    "t1": 7.2,
+    "t2": 4.57,
+    "t3": 7.23,
+    "t4": 8.9,
+    "t5": 8.87,
+    "t6": 13.77,
+    "t7": 7.63,
+    "t8": 13.17,
+}
+_REPLAY_CANDIDATES = {
+    "t1": [(0.72, 0.54)],
+    "t2": [],
+    "t3": [(11.56, 0.55)],
+    "t4": [(15.77, 0.56)],
+    "t5": [(24.02, 0.21)],
+    "t6": [],
+    "t7": [(151.96, 0.3), (138.24, 0.3), (56.42, 0.11), (70.96, 0.05)],
+    "t8": [(173.24, 0.6), (145.79, 0.56), (159.54, 0.55), (49.79, 0.55), (63.52, 0.51)],
+}
+
+
+def _replay_alignment():
+    from app.schemas.user_song import PlacementCandidate, TakeAlignment
+
+    rows = []
+    for media_id, cands in _REPLAY_CANDIDATES.items():
+        if not cands:
+            rows.append(unmatched(media_id))
+            continue
+        ranked = sorted(cands, key=lambda c: -c[1])
+        rows.append(
+            TakeAlignment(
+                media_id=media_id,
+                status="confident" if len(ranked) == 1 and ranked[0][1] >= 0.35 else "ambiguous",
+                delta_s=ranked[0][0],
+                confidence=ranked[0][1],
+                likelihood=ranked[0][1],
+                margin=1.0 if len(ranked) == 1 else (ranked[0][1] - ranked[1][1]) / ranked[0][1],
+                candidates=[
+                    PlacementCandidate(delta_s=d, likelihood=li, method="lyrics")
+                    for d, li in ranked
+                ],
+            )
+        )
+    return alignment(*rows)
+
+
+def _replay(harness, monkeypatch, *, answer: bool):
+    ids = tuple(_REPLAY_DURATIONS)
+    monkeypatch.setattr(sys.modules[__name__], "CLIPS", ids)
+    song = analysis(duration_s=226.4)
+    al = _replay_alignment()
+    extra = None
+    if answer:
+        from app.services.song_order import resolve_uncertain_takes, resolved_song_takes_payload
+
+        resolved = resolve_uncertain_takes(
+            al, list(ids), _REPLAY_DURATIONS, 226.4, first_line_s=2.0
+        )
+        extra = {"resolved_song_takes": resolved_song_takes_payload(resolved)}
+    job, _snapshot, _bindings = harness(
+        sync="lipsync",
+        song_alignment=al,
+        song_analysis=song,
+        durations=_REPLAY_DURATIONS,
+        strategy_extra=extra,
+    )
+    gb._run_generative_job(str(job.id))
+    assert job.status == "awaiting_device"
+    plan = job.assembly_plan["guided_story_execution_plan"]
+    return plan, job.assembly_plan["unified_montage"]["user_song"]
+
+
+def _assert_every_take_accounted_for(plan, receipt):
+    song = plan["user_song"]
+    ids = set(_REPLAY_DURATIONS)
+    in_edit = {m["media_id"] for m in plan["story_timeline"]}
+    reasons = {d["media_id"]: d["reason"] for d in receipt["dropped"]}
+    assert ids <= in_edit | set(reasons) | set(receipt["placed_outside_ids"]), "a take vanished"
+    assert song["window_end_s"] - song["window_start_s"] <= 120.0
+    for media_id in receipt["placed_outside_ids"]:
+        assert reasons.get(media_id) in ("gap_unfillable", "outside_window")
+
+
+def test_prod_replay_8_takes_without_an_answer(harness, monkeypatch):
+    plan, receipt = _replay(harness, monkeypatch, answer=False)
+    takes = plan["user_song"]["takes"]
+    _assert_every_take_accounted_for(plan, receipt)
+    # The clear takes sit where the aligner put them, unconfirmed.
+    for media_id, delta in (("t1", 0.72), ("t3", 11.56), ("t4", 15.77)):
+        assert takes[media_id]["delta_s"] == pytest.approx(delta)
+        assert takes[media_id]["position_basis"] == "aligner"
+    assert all(t["confirmed_by_creator"] is False for t in takes.values())
+    # The weak take is placed but flagged; the chorus repeat lands in the cluster.
+    assert "t5" in receipt["low_confidence_ids"]
+    placed = {p["media_id"]: p for p in receipt["placed"]}
+    if "t8" in placed:
+        assert placed["t8"]["delta_s"] < 80
+    # Nothing to place t2 / t6 by: they stay muted B-roll, never guessed.
+    assert "t2" not in takes and "t6" not in takes
+    assert {"t2", "t6"} <= set(receipt["broll_ids"]) | set(receipt["kept_broll_ids"])
+
+
+def test_prod_replay_8_takes_with_the_creators_order(harness, monkeypatch):
+    plan, receipt = _replay(harness, monkeypatch, answer=True)
+    takes = plan["user_song"]["takes"]
+    _assert_every_take_accounted_for(plan, receipt)
+    # t2 and t6 are no longer filler: the answer stacks them between their neighbours.
+    for media_id in ("t2", "t6"):
+        assert takes[media_id]["position_basis"] == "creator_stack"
+        assert takes[media_id]["confirmed_by_creator"] is True
+    assert takes["t2"]["delta_s"] < takes["t3"]["delta_s"]
+    assert takes["t6"]["delta_s"] > takes["t5"]["delta_s"]
+    # The window is fuller than the unanswered one (3.9 -> 30.3 s).
+    song = plan["user_song"]
+    assert song["window_end_s"] - song["window_start_s"] > 35.0
+
+
+def test_prod_replay_8_takes_sync_invariant_holds_for_stacked_takes(harness, monkeypatch):
+    plan, _receipt = _replay(harness, monkeypatch, answer=True)
+    song = plan["user_song"]
+    for moment in plan["story_timeline"]:
+        pinned = song["takes"].get(moment["media_id"])
+        if pinned is None:
+            continue
+        assert (
+            lipsync_sync_error_s(
+                output_start_s=moment["output_start_s"],
+                source_start_s=moment["source_start_s"],
+                delta_s=pinned["delta_s"],
+                window_start_s=song["window_start_s"],
+            )
+            <= 0.0015
+        )
 
 
 def test_a_replaced_song_fails_closed_before_planning(harness):

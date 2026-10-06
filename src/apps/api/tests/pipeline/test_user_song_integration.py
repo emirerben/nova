@@ -83,12 +83,20 @@ def test_the_real_aligner_places_unique_takes_and_flags_the_repeated_one(aligned
     assert any(abs(d - 41.0) < 0.005 for d in found)
 
 
-def test_an_unconfirmed_ambiguous_take_is_never_placed_at_a_guessed_time(aligned):
+def test_an_unconfirmed_ambiguous_take_is_placed_by_likelihood_and_flagged_not_confirmed(aligned):
     result = plan_lipsync_montage(
         _clips(), aligned, _song_analysis(), plan_item_id=SONG_ITEM_ID, confirmed_order=None
     )
-    assert set(result.user_song.takes) <= {"A", "B"}
-    assert "C" not in result.user_song.takes  # may only appear as muted B-roll
+    # No status gate (KRI-471): C is placed at its best candidate, but never marked
+    # as confirmed by the creator.
+    assert set(result.user_song.takes) == {"A", "B", "C"}
+    c = result.user_song.takes["C"]
+    assert c.confirmed_by_creator is False
+    assert c.position_basis == "tie_break"
+    # The tie is broken toward the cluster: the repeat that fits between A and B,
+    # not the one that would sit inside B's coverage.
+    assert c.delta_s == pytest.approx(21.0, abs=0.01)
+    assert "C" in result.song_receipt["low_confidence_ids"]
 
 
 def test_lipsync_recipe_from_real_alignments_keeps_every_take_on_the_song_clock(
@@ -101,14 +109,22 @@ def test_lipsync_recipe_from_real_alignments_keeps_every_take_on_the_song_clock(
     assert resolved["C"]["delta_s"] == pytest.approx(21.0, abs=0.01)  # 41.0 is past B
 
     # What the worker does with that payload before planning.
-    patched, order = apply_resolved_song_takes(aligned, payload)
+    patched, order, choices = apply_resolved_song_takes(aligned, payload)
+    assert patched is aligned  # rows are never rewritten any more
     assert order == ["A", "C", "B"]
+    assert choices["C"]["position_basis"] == "creator_position"
     result = plan_lipsync_montage(
-        _clips(), patched, _song_analysis(), plan_item_id=SONG_ITEM_ID, confirmed_order=order
+        _clips(),
+        patched,
+        _song_analysis(),
+        plan_item_id=SONG_ITEM_ID,
+        confirmed_order=order,
+        creator_choices=choices,
     )
     song_plan = result.user_song
     assert set(song_plan.takes) == {"A", "B", "C"}
     assert song_plan.takes["C"].confirmed_by_creator
+    assert song_plan.takes["C"].position_basis == "creator_position"
     assert song_plan.takes["A"].delta_s == pytest.approx(5.0, abs=0.002)
 
     footage, visuals = bindings_for(result)
