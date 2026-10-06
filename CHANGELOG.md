@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.100.0] - 2026-10-06
+
+### Changed
+- fix(kria): land remaining request-preservation stack on main (KRI-459) (#1413) <!-- release-pr: 1413 -->
+
 ## [0.78.99.0] - 2026-10-06
 
 ### Changed
