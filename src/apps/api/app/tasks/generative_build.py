@@ -25809,6 +25809,9 @@ def _text_element_burn_dicts(variant: dict) -> list[dict]:
         # Karaoke settle-color contract: user-edited variants hold the user's
         # element color after the sweep (see build_overlays_from_text_elements).
         user_edited=bool(variant.get("text_elements_user_edited")),
+        # Top-anchored legacy intros are measured back to their top y on the
+        # canvas the reburn draws on.
+        canvas=canvas_for_orientation(variant.get("orientation")),
     )
     schedules = {
         (element.text, round(float(element.start_s), 3)): params["reveal_schedule_s"]

@@ -2271,7 +2271,11 @@ canvas; pinned by `test_landscape_variant_projects_on_the_landscape_canvas`).
 The gaps below remain. The intro-effect gap (curated pop-in, typewriter,
 stream-in, bounce and slide-in intros projected as `static`, so a text Save
 dropped the entrance) closed 2026-10-06; guard
-`tests/tasks/test_intro_look_parity.py`.
+`tests/tasks/test_intro_look_parity.py`. So did the left-anchored intro jump
+(`word_reveal`/`typewriter`/`ai_answer` and knob `text_anchor=left` intros rose
+half a block on a text Save): the adapter projects the burned block's center
+and marks the element (`TOP_ANCHORED_BURN_PARAM`), and the compiler restores
+the burn's top anchoring; guard: the left-anchored section of the same file.
 
 - **P3 Adapter never threads `language` for the LEGACY profile.** The intro
   face/effect/colors/stroke are now resolved the way
@@ -2282,17 +2286,6 @@ dropped the entrance) closed 2026-10-06; guard
   the job language is not persisted on the variant, so a Turkish legacy
   cluster projects the English pairing. Fix: persist the render's `language`
   on the variant and pass it.
-- **P2 Left-anchored intros jump up on a text Save.** `word_reveal`,
-  `typewriter` and `ai_answer` burn `text_anchor=left` with no
-  `vertical_anchor`, which `_resolve_vertical_anchor` top-anchors at y. The
-  Save path (`_text_element_burn_dicts`) compiles with
-  `independent_box_alignment=True`, i.e. `vertical_anchor=center` on the same
-  y, so the saved intro sits half a block higher (~130-150 px at 1080x1920 for
-  a two-line hook). The CSS editor centers TextElements too, so it already
-  previews the moved position. Guard: strict xfail
-  `test_text_save_reburns_the_rendered_intro` for those three sets. Fix: have
-  the adapter project the block-center y (top y + block_h/2, measured with the
-  burn's face/size/wrap) for left-anchored legacy intros.
 - **P3 Cloud intros burn "Slide down" as static.** `slide-down` is missing
   from `generative_overlays._SKIA_EFFECTS`, so `build_intro_overlay` coerces it
   to `static` on both the first render and a Save, although Skia, the CSS

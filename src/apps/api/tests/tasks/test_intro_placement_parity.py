@@ -379,15 +379,19 @@ def test_default_placement_covers_every_placement_key():
 
 
 @pytest.mark.parametrize("style_set_id", ["word_reveal", "typewriter", "ai_answer"])
-def test_half_pinned_style_sets_project_at_the_burned_y(style_set_id):
+def test_half_pinned_style_sets_project_the_burned_block(style_set_id):
     """The three shipped sets that pin geometry: x=0.06, y=null, anchor=left.
 
     `_resolve_anchor` takes y from the named position when the burn dict has no
-    `position_y_frac` — _POSITION_Y["center"] is 0.45. The adapter used to invent
-    0.5 for any half-pinned overlay, so the editor drew these intros 0.05*H below
-    the burn, and saving baked the offset in as an explicit frac.
+    `position_y_frac` — _POSITION_Y["center"] is 0.45 — and
+    `_resolve_vertical_anchor` hangs the left-anchored block from it. The adapter
+    used to invent 0.5 for any half-pinned overlay (0.05*H below the burn), then
+    projected the block's TOP as the element's center y (half a block above it).
+    The element now carries the burned block's center. Pixel proof:
+    test_intro_look_parity.py (left-anchored section).
     """
     from app.pipeline.text_overlay import _POSITION_Y  # noqa: PLC0415
+    from app.pipeline.text_overlay_skia import static_block_height_px  # noqa: PLC0415
 
     burned, placement, intro_px = _render({"effect": "karaoke-line"}, style_set_id=style_set_id)
     assert placement is not None
@@ -396,11 +400,14 @@ def test_half_pinned_style_sets_project_at_the_burned_y(style_set_id):
     # Burn dicts stay shape-identical (the render never emits an explicit y here).
     assert _geometry(_projected(_variant(placement, intro_px))) == _geometry(burned)
 
-    # ...and the element the editor draws carries the RENDERER's y, not 0.5.
-    element = text_elements_for_variant(_variant(placement, intro_px))[0]
+    # ...and the element the editor draws is centered on the burned block. (This
+    # fixture persists no style_set_id, so measure the hold the adapter built.)
+    variant = _variant(placement, intro_px)
+    element = text_elements_for_variant(variant)[0]
     assert element.position == "custom"
     assert element.x_frac == 0.06
-    assert element.y_frac == _POSITION_Y["center"] != 0.5
+    half_block = static_block_height_px(_projected(variant)[-1]) / 2 / 1920
+    assert element.y_frac == pytest.approx(_POSITION_Y["center"] + half_block, abs=1e-12)
     assert element.alignment == "left"
 
 

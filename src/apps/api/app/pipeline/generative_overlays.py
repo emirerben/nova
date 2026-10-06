@@ -851,6 +851,28 @@ def _attach_masonry_layer_origin(overlay: dict, element: TextElement) -> None:
         overlay["masonry_layer_origin_x_px"] = float(origin)
 
 
+def _restore_top_anchor(overlay: dict, canvas: Canvas, independent_box_alignment: bool) -> None:
+    """Move a compiled top-anchored-burn overlay's center y back to its top y.
+
+    Measured with the renderer's static layout of the compiled overlay, the same
+    measure the read adapter used to center it, so an untouched element compiles
+    back to the burned frac (rounding strips the float noise of the round trip)
+    and an edited one stays centered where the editor shows it. If the block
+    can't be measured, the authoritative Save keeps the center contract.
+    """
+    try:
+        from app.pipeline.text_overlay_skia import static_block_height_px  # noqa: PLC0415
+
+        block_h = static_block_height_px(overlay, render_canvas=canvas)
+    except Exception as exc:  # noqa: BLE001 — a compile must never fail on measurement
+        log.warning("text_element_top_anchor_measure_failed", error=str(exc))
+        if independent_box_alignment:
+            overlay["vertical_anchor"] = "center"
+        return
+    center_px = float(overlay["position_y_frac"]) * canvas.height
+    overlay["position_y_frac"] = round((center_px - block_h / 2.0) / canvas.height, 12)
+
+
 def build_overlays_from_text_elements(
     elements: list[TextElement],
     *,
@@ -858,6 +880,7 @@ def build_overlays_from_text_elements(
     include_lyric_line: bool = False,
     independent_box_alignment: bool = False,
     user_edited: bool = False,
+    canvas: Canvas = PORTRAIT,
 ) -> list[dict]:
     """Compile a list of TextElement objects to burn-dict format.
 
@@ -907,8 +930,17 @@ def build_overlays_from_text_elements(
     settle-to-highlight look. TS mirror: ``settledColor`` in
     src/apps/web/src/lib/overlay-layout.ts (``userEdited`` on
     IntroOverlayParams).
+
+    An element the read adapter projected from a TOP-anchored left burn
+    (``source_params[TOP_ANCHORED_BURN_PARAM]``) compiles back to that top
+    anchoring while it stays left-aligned at a custom position, in both modes:
+    its y_frac (the block center) becomes the block's top at ``canvas`` size,
+    so the reburn keeps the render's position and its pop-in/rotation pivot.
     """
-    from app.agents._schemas.text_element import apply_text_case  # noqa: PLC0415
+    from app.agents._schemas.text_element import (  # noqa: PLC0415
+        TOP_ANCHORED_BURN_PARAM,
+        apply_text_case,
+    )
 
     overlays: list[dict] = []
     for elem in elements:
@@ -952,6 +984,12 @@ def build_overlays_from_text_elements(
         # yet (concurrent lane) — absent field reads as False, byte-identical.
         elem_behind_subject = bool(getattr(elem, "behind_subject", False))
         elem_theme_transition = getattr(elem, "theme_transition", None)
+        top_anchored_burn = (
+            text_anchor == "left"
+            and pos_y_frac is not None
+            and isinstance(elem.source_params, dict)
+            and bool(elem.source_params.get(TOP_ANCHORED_BURN_PARAM))
+        )
 
         def attach_motion(overlay: dict) -> None:
             if elem_motion is None or not _settings.text_motion_v2_enabled:
@@ -977,7 +1015,7 @@ def build_overlays_from_text_elements(
             only for lines inside a movable box, so their y coordinate always
             remains the block center, matching the CSS editor preview.
             """
-            if independent_box_alignment:
+            if independent_box_alignment and not top_anchored_burn:
                 overlay["vertical_anchor"] = "center"
             if not elem.wrap_lines:
                 overlay["wrap_lines"] = False
@@ -1005,6 +1043,8 @@ def build_overlays_from_text_elements(
                 )
             if elem.effect == "smooth-type" and effect == "static":
                 overlay["shape_text"] = True
+            if top_anchored_burn:
+                _restore_top_anchor(overlay, canvas, independent_box_alignment)
 
         # text_case: transform the display text AND any stored karaoke word
         # timings (their `text` keys are what _draw_karaoke_line burns).
