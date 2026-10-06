@@ -8280,6 +8280,9 @@ def _build_slide_post_result(
             "caption": caption,
             "cover_index": cover_index,
             "bundle_gcs_path": bundle_key,
+            # Exports rendered by an older image-decode recipe (raw HEIC/EXIF
+            # ignored by ffmpeg) are reported stale so clients re-render them.
+            "normalizer_version": slide_build.SLIDE_IMAGE_NORMALIZER_VERSION,
             "validation": {
                 "ok": validation.ok,
                 "errors": [

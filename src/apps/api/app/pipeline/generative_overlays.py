@@ -56,6 +56,7 @@ _SKIA_EFFECTS = {
     "dissolve-out",
     "bounce",
     "slide-up",
+    "slide-down",
     "slide-in",
 }
 _DEFAULT_EFFECT = "static"
