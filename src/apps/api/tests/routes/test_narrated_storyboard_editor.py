@@ -9,7 +9,8 @@ face). Its captions ride the separate ``caption_cues`` lane (``text_mode`` is
 
 The iOS editor fills a missing ``y_frac``/``font_family`` with 0.5 / Fraunces,
 so it previewed the title mid-frame and its Save wrote Fraunces into the next
-burn. The read path now hands the editor the look the cloud burns.
+burn. New renders now persist the look the cloud burns, and every
+editor-facing read resolves rows stored before that (these fixtures).
 """
 
 from __future__ import annotations
@@ -179,6 +180,32 @@ def test_ios_saved_row_resolves_to_where_the_cloud_burned_it() -> None:
     assert _look(merged[_PLAYER]) == ("custom", 0.5, 0.85, 36.0, "Fraunces")
 
 
+# Added by the /ship test-coverage audit (Claude Code).
+# Value: protects=only storyboard-marked bars get the resolved look, other saved bars
+#   are served as saved; fails_when=is_narrated_storyboard_element or its gate matches
+#   any bar; why_new=an always-true predicate mutant survived 3932 text tests; seam=none
+def test_bars_without_the_storyboard_marker_are_served_as_saved() -> None:
+    preset_bar = {
+        "id": "user-top-bar",
+        "text": "My own title",
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "role": "generative_intro",
+        "position": "top",
+        "size_class": "large",
+        "source_params": {"editable_placeholder": True},
+    }
+    variant = _storyboard_variant(
+        text_elements=[*_storyboard_rows(), preset_bar], text_elements_user_edited=True
+    )
+
+    merged = _by_text(merge_projected_text_elements_for_variant(variant))
+
+    assert _look(merged[_TITLE]) == _TITLE_LOOK
+    assert _look(merged["My own title"]) == ("top", None, None, None, None)
+    assert not is_narrated_storyboard_element(merged["My own title"])
+
+
 # ── Save round trip ──────────────────────────────────────────────────────────
 
 
@@ -242,6 +269,12 @@ def test_editing_the_title_persists_the_edit(monkeypatch) -> None:
     [served] = gj._variants_for_response(job)
     rows = copy.deepcopy(served["text_elements"])
     rows[0].update({"text": "Final Day", "y_frac": 0.3})
+    # Added by the /ship test-coverage audit (Claude Code): a resize, sent the
+    # way the web editor sends it (px size, size_class cleared).
+    # Value: protects=a creator's resize of a storyboard bar survives Save+reload;
+    #   fails_when=the resolver overwrites a set size_px from size_class (cleared ->
+    #   jumbo 199); why_new=size_px-overwrite mutant survived 3932 text tests; seam=none
+    rows[0].update({"size_px": 80.0, "size_class": None})
 
     _save(monkeypatch, job, rows)
 
@@ -252,6 +285,7 @@ def test_editing_the_title_persists_the_edit(monkeypatch) -> None:
         0.3,
         "Playfair Display",
     )
+    assert title["size_px"] == 80.0
 
 
 # ── Reburn ───────────────────────────────────────────────────────────────────
@@ -304,3 +338,106 @@ def test_reburn_burns_the_storyboard_under_the_captions(monkeypatch, saved_from_
         assert title["font_family"] == "Playfair Display"
     else:
         assert (title["position"], title["text_size"]) == ("top", "large")
+
+
+def test_reburn_honours_a_moved_and_resized_storyboard_title(monkeypatch) -> None:
+    """A named preset ignored y_frac on the burn; the resolved row is custom."""
+    _arm(monkeypatch)
+    job = _job(_storyboard_variant())
+    [served] = gj._variants_for_response(job)
+    rows = copy.deepcopy(served["text_elements"])
+    rows[0].update({"y_frac": 0.3, "size_px": 80.0, "size_class": None})
+    _save(monkeypatch, job, rows)
+
+    overlays, _cues = _compose(monkeypatch, job.assembly_plan["variants"][0])
+
+    title = next(overlay for overlay in overlays if overlay["text"] == _TITLE)
+    assert (title["position_y_frac"], title["text_size_px"]) == (0.3, 80)
+
+
+def test_ios_deletion_protocol_removes_a_storyboard_bar(monkeypatch) -> None:
+    """iOS deletes through ``deletions`` against the served (resolved) baseline."""
+    from app.config import settings
+
+    _arm(monkeypatch)
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True, raising=False)
+    job = _job(_storyboard_variant())
+    [served] = gj._variants_for_response(job)
+    player_id = next(row["id"] for row in served["text_elements"] if row["text"] == _PLAYER)
+    variant = job.assembly_plan["variants"][0]
+
+    gj.prepare_editor_commit(
+        job,
+        "narrated",
+        _commit_req(
+            base_generation=gj.variant_render_baseline(variant),
+            editor_state_version=1,
+            deletions=[{"kind": "text", "id": player_id}],
+        ),
+    )
+
+    [reloaded] = gj._variants_for_response(job)
+    assert _texts(reloaded["text_elements"]) == [_TITLE, _SCORE]
+    assert _look(reloaded["text_elements"][0]) == _TITLE_LOOK
+
+
+# ── Every other editor-facing reader of stored rows ─────────────────────────
+
+
+def test_authored_timeline_serves_stored_storyboard_rows_resolved(monkeypatch) -> None:
+    """An authored timeline skips the projection merge but not the look."""
+    _arm(monkeypatch)
+    own_bar = {
+        "id": "user-bar",
+        "text": "My own title",
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "role": "generative_intro",
+        "position": "top",
+        "size_class": "large",
+    }
+    job = _job(
+        _storyboard_variant(
+            editor_timeline_mode="authored",
+            text_elements_user_edited=True,
+            text_elements=[*_storyboard_rows(), own_bar],
+        )
+    )
+
+    [variant] = gj._variants_for_response(job)
+
+    rows = _by_text(variant["text_elements"])
+    assert _look(rows[_TITLE]) == _TITLE_LOOK
+    assert _look(rows[_PLAYER]) == _PLAYER_LOOK
+    assert rows["My own title"] == own_bar
+
+
+def test_kria_chat_edit_hands_the_editor_the_resolved_look(monkeypatch) -> None:
+    """A chat rename stages the same rows the status route serves, never presets."""
+    from app.services.kria_editor_ops import build_editor_snapshot, compile_editor_ops
+
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True},
+    )
+    variant = _storyboard_variant(render_generation_id="gen-1")
+    job = _job(variant)
+
+    bars = _by_text(build_editor_snapshot(job, variant)["text_bars"])
+    assert (bars[_TITLE]["position"], bars[_TITLE]["y_frac"]) == ("custom", 0.15)
+    player_index = _texts(variant["text_elements"]).index(_PLAYER)
+    compiled = compile_editor_ops(
+        job, variant, [{"op": "edit_text", "bar_index": player_index, "text": "LEO"}]
+    )
+
+    rows = _by_text(compiled.payload.text_elements)
+    assert _look(rows["LEO"]) == _PLAYER_LOOK
+    assert _look(rows[_TITLE]) == _TITLE_LOOK
+
+
+def test_kria_draft_bootstrap_carries_the_resolved_look() -> None:
+    from app.kria.drafts import _editor_snapshot
+
+    sections = _editor_snapshot(_storyboard_variant(), "gen-1")["sections"]
+
+    assert _look(_by_text(sections["text_elements"])[_TITLE]) == _TITLE_LOOK

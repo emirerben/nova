@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents._schemas.text_element import resolve_narrated_storyboard_rows
 from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.api_schemas import DraftSnapshotOut
 from app.kria.brief_binding import BriefBinding
@@ -400,6 +401,9 @@ def _editor_snapshot(variant: dict[str, Any], generation_id: str | None) -> dict
         "carousel_moment",
     )
     sections = {key: variant[key] for key in keys if key in variant}
+    if isinstance(sections.get("text_elements"), list):
+        # Storyboard bars carry their burned look, as the status route serves them.
+        sections["text_elements"] = resolve_narrated_storyboard_rows(sections["text_elements"])
     timeline = variant.get("user_timeline") or variant.get("ai_timeline")
     if isinstance(timeline, dict) and isinstance(timeline.get("slots"), list):
         sections["timeline_slots"] = timeline["slots"]

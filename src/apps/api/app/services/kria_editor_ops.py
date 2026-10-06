@@ -18,7 +18,11 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any, NamedTuple
 
-from app.agents._schemas.text_element import _ALLOWED_FONTS, CAPTION_CUE_SOURCE
+from app.agents._schemas.text_element import (
+    _ALLOWED_FONTS,
+    CAPTION_CUE_SOURCE,
+    resolve_narrated_storyboard_rows,
+)
 from app.config import settings
 from app.pipeline.camera_effects import easing_bounds, resolve_easing
 from app.routes.generative_jobs import (
@@ -744,7 +748,8 @@ def build_editor_snapshot(
             # Tombstoned generated text: selector ops must not match it.
             **({"removed": True} if row.get("removed") else {}),
         }
-        for row in variant.get("text_elements") or []
+        # Storyboard bars carry their burned look, as the editor shows them.
+        for row in resolve_narrated_storyboard_rows(variant.get("text_elements"))
         if isinstance(row, dict)
     ]
     cues = [
@@ -1909,8 +1914,14 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
             changes=["Apply reviewed speech cut"],
         )
 
+    # Storyboard bars carry their burned look, the same rows the editor shows,
+    # so a chat edit never hands the editor the bare presets back.
     text = copy.deepcopy(
-        [row for row in variant.get("text_elements") or [] if isinstance(row, dict)]
+        [
+            row
+            for row in resolve_narrated_storyboard_rows(variant.get("text_elements"))
+            if isinstance(row, dict)
+        ]
     )
     state = _DraftState(
         job=job,

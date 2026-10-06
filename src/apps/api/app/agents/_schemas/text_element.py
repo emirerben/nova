@@ -1150,6 +1150,32 @@ def _editor_saved_element(elem: TextElement) -> TextElement:
     return resolve_narrated_storyboard_look(elem) if is_narrated_storyboard_element(elem) else elem
 
 
+_STORYBOARD_LOOK_FIELDS = ("position", "x_frac", "y_frac", "size_px", "font_family")
+
+
+def resolve_narrated_storyboard_rows(rows: list | None) -> list:
+    """Stored ``text_elements`` rows with each storyboard bar's look resolved.
+
+    The row-level twin of `resolve_narrated_storyboard_look` for readers that
+    hand stored rows to an editor without going through
+    `merge_projected_text_elements_for_variant` (authored-timeline status
+    reads, Kria chat drafts). Only the look fields of storyboard-marked rows
+    change; every other row and key is returned as stored. A row that does
+    not validate is left alone.
+    """
+    out: list = []
+    for row in rows or []:
+        if isinstance(row, dict) and is_narrated_storyboard_element(row):
+            try:
+                resolved = resolve_narrated_storyboard_look(TextElement.model_validate(row))
+            except Exception:  # noqa: BLE001 — a malformed row is served as stored
+                out.append(row)
+                continue
+            row = {**row, **{key: getattr(resolved, key) for key in _STORYBOARD_LOOK_FIELDS}}
+        out.append(row)
+    return out
+
+
 def merge_projected_text_elements_for_variant(
     variant: dict, *, include_lyric_projection: bool = False
 ) -> list[dict] | None:
@@ -1158,6 +1184,11 @@ def merge_projected_text_elements_for_variant(
     This is the read-side single source of truth. It fixes legacy user-edited rows
     that only stored hand-created bars by appending any generated AI bar whose
     source identity has no saved counterpart. Saved tombstones suppress projection.
+
+    Saved narrated storyboard bars are served with their resolved cloud look
+    (`resolve_narrated_storyboard_look`), so the output can differ from the
+    stored rows, and a storyboard render takes the identity merge before the
+    first manual edit (see ``storyboard_render`` below).
     """
     projected = text_elements_for_variant(
         variant, include_lyric_projection=include_lyric_projection

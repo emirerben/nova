@@ -654,6 +654,25 @@ def test_initial_narrated_render_semantically_assigns_clips_and_composes_text(
         "PLAYER 2",
         "six four",
     }
+    # Persisted with the look the burn gives the presets, so every editor-facing
+    # reader (not just the status merge) previews the bars where they burn.
+    by_text = {item["text"]: item for item in result["text_elements"]}
+    look = ("position", "x_frac", "y_frac", "size_px", "font_family")
+    assert tuple(by_text["Match Story"][key] for key in look) == (
+        "custom",
+        0.5,
+        0.15,
+        120.0,
+        "Playfair Display",
+    )
+    assert tuple(by_text["PLAYER 1"][key] for key in look) == (
+        "custom",
+        0.5,
+        0.85,
+        36.0,
+        "Playfair Display",
+    )
+    assert seen["composed"]["text_elements"] == result["text_elements"]
     assert result["narrated_clip_assignments"] == [
         {
             "step_id": "shot_1",
