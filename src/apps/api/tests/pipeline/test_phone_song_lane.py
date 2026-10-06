@@ -72,6 +72,28 @@ def test_lipsync_recipe_replaces_camera_audio_and_starts_the_song_at_the_window(
     assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
 
 
+@pytest.mark.parametrize("make_plan", [lipsync_plan, background_plan])
+def test_song_is_audible_exactly_once(make_plan):
+    """KRI-481: the engine plays `audio.music_asset_id` as its own bed from 0s at
+    `music_volume`, on top of every audio-track clip. The song is already on the `song`
+    track at the creator's window, so the legacy bed must be silent or the song plays
+    twice at once (prod job 934811f3: a second copy from the start of the song)."""
+    result = make_plan()
+    footage, visuals = bindings_for(result)
+    recipe = compile_phone_guided_plan(compiled_plan(result), footage, visuals, song=song_bed())
+    song_id = recipe.audio.music_asset_id
+    assert song_id == "song-" + SONG_ITEM_ID  # still named: the device resolves the asset by it
+    track_copies = [
+        clip
+        for track in recipe.tracks
+        if track.kind == "audio"
+        for clip in track.clips
+        if clip.source_asset_id == song_id and clip.volume > 0
+    ]
+    legacy_bed_copies = 1 if recipe.audio.music_volume > 0 else 0
+    assert len(track_copies) + legacy_bed_copies == 1
+
+
 def test_background_recipe_uses_the_half_second_fades():
     result = background_plan()
     plan = compiled_plan(result)
