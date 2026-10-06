@@ -2512,6 +2512,12 @@ CLAUDE.md hit 38,000/38,000 chars while KRI-185 lanes each needed a flag line. T
 
 - `SILENCE_CUT_ENABLED` / `RETAKE_CUT_ENABLED` — default `false`; speech paths only, fail-open. Removal-cap lever `SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED` (default `1.0`) + `DETECTOR_VERSION` are in the policy fingerprint — a flip retires analyses, re-consents, reshuffles cohorts. **"cleanup cut a word" is a guard bug, not this lever** — use the kill switch. Full narrative + triage: `docs/runbooks/chat-speech-cleanup-rollout.md`. Pins `test_silence_cut*.py` (`TestRuleZeroCannotCutRealSpeech`); plans/010/019/021.
 
+Moved out of CLAUDE.md 2026-10-06 (KRI-470 PR-A, to make room for `KRIA_PLAN_AUTHORITY_ENABLED`); the full text of these two env-var lines, preserved verbatim:
+
+- `RECONCILE_STUCK_VARIANTS_ENABLED` — default `true`. Kill switch for the stuck-variant watchdog (`reconcile_stuck_variants`), which WRITES user-visible state. **Invariant:** every reaper jsonpath is param-bound and run against real Postgres by `tests/tasks/test_reaper_jsonpath.py`; migration 0099's index predicate must match `_STUCK_VARIANT_JSONPATH`. Apply: fly secret `…=false` + worker restart.
+
+- `NARRATED_SELF_NARRATION_ENABLED` — default **`false`**; narrated items without a voiceover use the footage's own audio (1 clip → `subtitled`, 2+ → `talking_head`, no speech → montage + `assembly_plan["archetype_fallback"]`). SOLE gate, bypasses the archetype flags. Twin `NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED`; Fly first. Guards: `tests/tasks/test_generative_dispatch.py`.
+
 ## [2026-09-24] One montage plan: phone montage compiles through the guided fast-montage format (KRI-190)
 
 Context. A v2 phone approval reaches the worker with no `guided_edit`, so the plain
