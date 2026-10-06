@@ -72,6 +72,7 @@ _TEXT_REL_BEST = 0.85
 _TEXT_MAX_SONG_WORDS = 4000
 _TEXT_MAX_TAKE_WORDS = 1500
 _TEXT_MAX_CANDIDATES = 6
+_TEXT_POOL_MIN_MATCHED = 8  # start+end offsets are pooled from this many matched words
 
 # Drift check.
 _DRIFT_SEARCH_S = 0.25
@@ -241,17 +242,25 @@ def _normalize_word(text: str) -> str:
     return "".join(ch for ch in s if ch.isalnum() and not unicodedata.combining(ch))
 
 
-def _tokens(words: Any, limit: int) -> tuple[list[str], list[float], bool]:
-    """Normalized tokens + start times, capped at ``limit``; the flag says it was capped."""
+def _tokens_full(words: Any, limit: int) -> tuple[list[str], list[float], list[float], bool]:
+    """Normalized tokens + start and end times, capped at ``limit``; the flag says it was capped."""
     toks: list[str] = []
     starts: list[float] = []
+    ends: list[float] = []
     for w in words or []:
-        text, start, _end = _word_fields(w)
+        text, start, end = _word_fields(w)
         norm = _normalize_word(text)
         if norm:
             toks.append(norm)
             starts.append(start)
-    return toks[:limit], starts[:limit], len(toks) > limit
+            ends.append(max(end, start))
+    return toks[:limit], starts[:limit], ends[:limit], len(toks) > limit
+
+
+def _tokens(words: Any, limit: int) -> tuple[list[str], list[float], bool]:
+    """Normalized tokens + start times, capped at ``limit``; the flag says it was capped."""
+    toks, starts, _ends, capped = _tokens_full(words, limit)
+    return toks, starts, capped
 
 
 def song_text_coverage_s(song_words: Any) -> float | None:
@@ -275,6 +284,19 @@ def song_text_coverage_s(song_words: Any) -> float | None:
     return float(starts[-1])
 
 
+@dataclass
+class _TextMatch:
+    """One lyric placement of a take: where it sits and how tightly the words agree."""
+
+    delta_s: float
+    score: float
+    matched: int
+    spread_s: float  # median absolute deviation of the per-word offsets
+    take_start_s: float  # first matched take word start
+    take_end_s: float  # last matched take word end
+    density: float  # matched words / take words inside the matched span
+
+
 def text_candidates(take_words: Any, song_words: Any) -> list[tuple[float, float, int]]:
     """Smith-Waterman candidates as ``(delta_s, sw_score, matched_words)``.
 
@@ -282,8 +304,13 @@ def text_candidates(take_words: Any, song_words: Any) -> list[tuple[float, float
     candidate (so a chorus sung twice gives two). Candidates need at least 3
     matched words. Sorted best-first, deduped within 0.25 s.
     """
-    tw, t_start, _ = _tokens(take_words, _TEXT_MAX_TAKE_WORDS)
-    sw, s_start, _ = _tokens(song_words, _TEXT_MAX_SONG_WORDS)
+    return [(m.delta_s, m.score, m.matched) for m in _text_matches(take_words, song_words)]
+
+
+def _text_matches(take_words: Any, song_words: Any) -> list[_TextMatch]:
+    """``text_candidates`` with the evidence the lyrics-only path needs."""
+    tw, t_start, t_end, _ = _tokens_full(take_words, _TEXT_MAX_TAKE_WORDS)
+    sw, s_start, s_end, _ = _tokens_full(song_words, _TEXT_MAX_SONG_WORDS)
     n, m = len(tw), len(sw)
     if n < _TEXT_MIN_MATCHED or m < _TEXT_MIN_MATCHED:
         return []
@@ -321,14 +348,18 @@ def text_candidates(take_words: Any, song_words: Any) -> list[tuple[float, float
         ends.append((int(h[i, j]), i, j))
     ends.sort(reverse=True)
 
-    cands: list[tuple[float, float, int]] = []
+    cands: list[_TextMatch] = []
     for score, i, j in ends[: _TEXT_MAX_CANDIDATES * 3]:
         diffs: list[float] = []
+        end_diffs: list[float] = []
+        took: list[int] = []
         while i > 0 and j > 0 and h[i, j] > 0:
             cur = h[i, j]
             if cur == h[i - 1, j - 1] + sub[i - 1, j - 1]:
                 if match[i - 1, j - 1]:
                     diffs.append(s_start[j - 1] - t_start[i - 1])
+                    end_diffs.append(s_end[j - 1] - t_end[i - 1])
+                    took.append(i - 1)
                 i, j = i - 1, j - 1
             elif cur == h[i - 1, j] + _SW_GAP:
                 i -= 1
@@ -336,10 +367,24 @@ def text_candidates(take_words: Any, song_words: Any) -> list[tuple[float, float
                 j -= 1
         if len(diffs) < _TEXT_MIN_MATCHED:
             continue
-        delta = float(np.median(diffs))
-        if any(abs(delta - d) <= _PEAK_SUPPRESS_S for d, _s, _k in cands):
+        # Sung onsets smear; with enough words the word ends steady the estimate.
+        pooled = diffs + end_diffs if len(diffs) >= _TEXT_POOL_MIN_MATCHED else diffs
+        delta = float(np.median(pooled))
+        if any(abs(delta - c.delta_s) <= _PEAK_SUPPRESS_S for c in cands):
             continue
-        cands.append((delta, float(score), len(diffs)))
+        spread = float(np.median(np.abs(np.asarray(diffs) - np.median(diffs))))
+        first, last = min(took), max(took)
+        cands.append(
+            _TextMatch(
+                delta_s=delta,
+                score=float(score),
+                matched=len(diffs),
+                spread_s=spread,
+                take_start_s=float(t_start[first]),
+                take_end_s=float(t_end[last]),
+                density=len(diffs) / float(last - first + 1),
+            )
+        )
         if len(cands) >= _TEXT_MAX_CANDIDATES:
             break
     return cands
@@ -385,6 +430,13 @@ def _window_delta(
 def _drift_ok(
     song: np.ndarray, take: np.ndarray, delta_s: float, sr: int, tolerance_s: float
 ) -> bool:
+    """Bool form of ``_drift_check``."""
+    return _drift_check(song, take, delta_s, sr, tolerance_s)[0]
+
+
+def _drift_check(
+    song: np.ndarray, take: np.ndarray, delta_s: float, sr: int, tolerance_s: float
+) -> tuple[bool, tuple[float, float] | None]:
     """Window-consistency check: the whole take must support ``delta_s``.
 
     The take is split into ~3 s sub-windows (2-5 of them). Each is re-measured
@@ -398,6 +450,10 @@ def _drift_ok(
 
     Audibly silent windows and windows that hang outside the song carry no
     information and are ignored.
+
+    Returns ``(ok, span)``. ``span`` is the take-time stretch from the first to the
+    last window that landed on ``delta_s`` (the part of the take that matches the
+    song), ``None`` when the check fails or nothing agreed.
     """
     n_samples = take.shape[0]
     n_windows = int(np.clip(round(n_samples / sr / _WINDOW_TARGET_S), 1, 5))
@@ -406,6 +462,8 @@ def _drift_ok(
     loud = max(rms)
     audible = 0
     agreeing = 0
+    agree_first: int | None = None
+    agree_last: int | None = None
     for k in range(n_windows):
         a, b = int(edges[k]), int(edges[k + 1])
         if rms[k] < max(_MIN_RMS, 0.1 * loud) or (b - a) / sr < 0.5:
@@ -417,11 +475,18 @@ def _drift_ok(
         if w[1] < _DRIFT_INFORMATIVE_Z:
             continue
         if abs(w[0] - delta_s) > tolerance_s:
-            return False
+            return False, None
         agreeing += 1
+        if agree_first is None:
+            agree_first = int(edges[k])
+        agree_last = int(edges[k + 1])
     if audible == 0:
-        return False
-    return agreeing >= int(np.ceil(_WINDOW_COVERAGE * audible))
+        return False, None
+    if agreeing < int(np.ceil(_WINDOW_COVERAGE * audible)):
+        return False, None
+    if agree_first is None or agree_last is None:
+        return True, None
+    return True, (agree_first / sr, agree_last / sr)
 
 
 # --------------------------------------------------------------------------- #
@@ -492,6 +557,69 @@ def _confidence(z: float, ratio: float, cfg: Any) -> float:
     return float(np.sqrt(cz * cr))
 
 
+def _lyrics_alignment(
+    media_id: str,
+    proxy_generation: int | None,
+    matches: list[_TextMatch],
+    take_len_s: float,
+    *,
+    offset: float,
+    text_score: float,
+    cfg: Any,
+) -> TakeAlignment | None:
+    """Place a take by its words alone (KRI-466), or ``None`` when they do not suffice.
+
+    A creator who sings along over earbuds leaves no song in the recording, so there
+    is no audio peak to find. The take's words must then match the song's words
+    closely: enough of them, tightly consistent per-word offsets, and most of the
+    take's words inside the matched span. One such placement is ``confident``;
+    several (a chorus) are ``ambiguous`` and go through the song-order question.
+    """
+    if not getattr(cfg, "song_align_lyrics_enabled", True):
+        return None
+    strong = [
+        m
+        for m in matches
+        if m.matched >= cfg.song_align_lyrics_min_words
+        and m.spread_s <= cfg.song_align_lyrics_max_spread_s
+        and m.density >= cfg.song_align_lyrics_min_density
+    ]
+    if not strong:
+        return None
+    best = strong[0]
+    pad = float(cfg.song_align_match_pad_s)
+    start = max(0.0, best.take_start_s - pad)
+    end = min(take_len_s, best.take_end_s + pad)
+    if end <= start:
+        return None
+    common = {
+        "media_id": media_id,
+        "proxy_generation": proxy_generation,
+        "text_score": text_score,
+        "method": "lyrics",
+        "match_start_s": start,
+        "match_end_s": end,
+    }
+    confidence = float(cfg.song_align_lyrics_confidence)
+    if len(strong) == 1:
+        return TakeAlignment(
+            status="confident",
+            delta_s=best.delta_s + offset,
+            confidence=confidence,
+            **common,
+        )
+    return TakeAlignment(
+        status="ambiguous",
+        delta_s=best.delta_s + offset,
+        confidence=min(confidence, 0.4),
+        alternates=[
+            AlignmentAlternate(delta_s=m.delta_s + offset, score=float(m.score))
+            for m in strong[:_MAX_ALTERNATES]
+        ],
+        **common,
+    )
+
+
 def align_take(
     song: Any,
     take_pcm: Any,
@@ -540,8 +668,21 @@ def _align_take(
     offset = float(cfg.song_alignment_proxy_offset_s)
 
     # --- text anchors ---------------------------------------------------
-    t_cands = text_candidates(take_words, song_words)
+    t_matches = _text_matches(take_words, song_words)
+    t_cands = [(m.delta_s, m.score, m.matched) for m in t_matches]
     text_score = float(t_cands[0][2]) if t_cands else 0.0
+    take_len_s = tl / sr
+
+    def by_lyrics() -> TakeAlignment | None:
+        return _lyrics_alignment(
+            media_id,
+            proxy_generation,
+            t_matches,
+            take_len_s,
+            offset=offset,
+            text_score=text_score,
+            cfg=cfg,
+        )
 
     # --- audio: full-song GCC-PHAT --------------------------------------
     nfft = spec.fft_size_for(tl)
@@ -552,7 +693,7 @@ def _align_take(
     suppress = int(_PEAK_SUPPRESS_S * sr)
     peaks = _top_peaks(corr, _N_AUDIO_PEAKS, suppress)
     if not peaks:
-        return _unmatched(media_id, proxy_generation, text_score=text_score)
+        return by_lyrics() or _unmatched(media_id, proxy_generation, text_score=text_score)
 
     # Union audio peaks with audio-refined text candidates.
     pool: list[tuple[int, float]] = list(peaks)
@@ -584,13 +725,19 @@ def _align_take(
     # A candidate is only a real placement if it is a strong peak AND the whole
     # take supports it (window consistency / drift check).
     valid: list[tuple[int, float]] = []
+    spans: dict[int, tuple[float, float] | None] = {}
     for i, v in cands:
         if z_of(v) < cfg.song_align_confident_peak_z:
             continue
-        if _drift_ok(spec.pcm, take, delta_of(i), sr, cfg.song_align_drift_tolerance_s):
+        ok, span = _drift_check(spec.pcm, take, delta_of(i), sr, cfg.song_align_drift_tolerance_s)
+        if ok:
             valid.append((i, v))
+            spans[i] = span
 
     if not valid:
+        lyrics = by_lyrics()
+        if lyrics is not None:
+            return lyrics
         z = z_of(top_v)
         ratio = ratio_of(top_i, top_v)
         return _unmatched(
@@ -630,7 +777,11 @@ def _align_take(
         "text_score": text_score,
         "peak_z": float(peak_z),
         "peak_ratio": float(peak_ratio),
+        "method": "audio",
     }
+    span = spans.get(best_i)
+    if span is not None and span[1] > span[0]:
+        common["match_start_s"], common["match_end_s"] = span
     if is_confident:
         return TakeAlignment(
             status="confident",

@@ -215,8 +215,8 @@ def test_unrelated_audio_is_unmatched(spec120):
     assert res.confidence <= 0.3
 
 
-def test_unrelated_audio_with_matching_lyrics_is_still_not_confident(spec120):
-    # Text alone must never make a take confident.
+def test_singing_without_song_audio_is_placed_by_lyrics(spec120):
+    # KRI-466: sung over earbuds -> the take holds the singer, not the song.
     rng = np.random.default_rng(2)
     words = make_words(rng, 120.0)
     other = make_song(15.0, seed=998)
@@ -226,8 +226,113 @@ def test_unrelated_audio_with_matching_lyrics_is_still_not_confident(spec120):
         words=take_words(words, 30.0, 15.0),
         song_words=words,
     )
-    assert res.status != "confident"
+    assert res.status == "confident"
+    assert res.method == "lyrics"
+    assert res.delta_s == pytest.approx(30.0, abs=0.1)
     assert res.text_score >= 3
+    assert res.match_start_s is not None and res.match_end_s is not None
+    assert 0.0 <= res.match_start_s < res.match_end_s <= 15.0
+
+
+def test_lyrics_alone_need_min_matched_words(spec120):
+    rng = np.random.default_rng(2)
+    words = make_words(rng, 120.0)
+    few = take_words(words, 30.0, 15.0)[:4]
+    res = _align(spec120, make_song(15.0, seed=998), words=few, song_words=words)
+    assert res.status == "unmatched"
+
+
+def test_lyrics_with_inconsistent_word_offsets_are_not_confident(spec120):
+    rng = np.random.default_rng(2)
+    words = make_words(rng, 120.0)
+    jitter = np.random.default_rng(5)
+    shaky = [
+        SongWord(
+            text=w.text,
+            start_s=max(0.0, w.start_s + float(jitter.normal(0, 1.0))),
+            end_s=max(0.3, w.start_s + 0.3),
+        )
+        for w in take_words(words, 30.0, 15.0)
+    ]
+    res = _align(spec120, make_song(15.0, seed=998), words=shaky, song_words=words)
+    assert res.status != "confident"
+
+
+def test_sparse_lyric_matches_inside_speech_are_not_confident(spec120):
+    # Song words interleaved with lots of unrelated speech must not place a take.
+    rng = np.random.default_rng(2)
+    words = make_words(rng, 120.0)
+    sung = take_words(words, 30.0, 15.0)[:6]
+    mixed: list[SongWord] = []
+    for k, w in enumerate(sung):
+        mixed.append(w)
+        for j in range(3):
+            t = w.start_s + 0.1 * (j + 1)
+            mixed.append(SongWord(text=f"x{k}_{j}", start_s=t, end_s=t + 0.05))
+    res = _align(spec120, make_song(15.0, seed=998), words=mixed, song_words=words)
+    assert res.status != "confident"
+
+
+def test_lyrics_over_a_repeated_chorus_are_ambiguous_with_every_offset():
+    song = make_song(60.0, seed=6)
+    rng = np.random.default_rng(4)
+    words = make_words(rng, 60.0, repeat_at=(20.0, 40.0, 10.0))
+    spec = sa.precompute_song(song)
+    res = _align(
+        spec,
+        make_song(8.0, seed=997),
+        words=take_words(words, 22.0, 6.0),
+        song_words=words,
+    )
+    assert res.status == "ambiguous"
+    assert res.method == "lyrics"
+    deltas = sorted([res.delta_s, *[a.delta_s for a in res.alternates]])
+    assert any(abs(d - 22.0) < 0.2 for d in deltas)
+    assert any(abs(d - 42.0) < 0.2 for d in deltas)
+
+
+def test_lyrics_path_respects_the_kill_switch(spec120):
+    rng = np.random.default_rng(2)
+    words = make_words(rng, 120.0)
+    cfg = settings.model_copy(update={"song_align_lyrics_enabled": False})
+    res = _align(
+        spec120,
+        make_song(15.0, seed=998),
+        words=take_words(words, 30.0, 15.0),
+        song_words=words,
+        settings_obj=cfg,
+    )
+    assert res.status == "unmatched"
+
+
+def test_audio_placement_wins_over_disagreeing_lyrics(song120, spec120):
+    rng = np.random.default_rng(8)
+    words = make_words(rng, 120.0)
+    take = slice_take(song120, 40.0, 16.0)
+    res = _align(spec120, take, words=take_words(words, 70.0, 16.0), song_words=words)
+    assert res.method == "audio"
+    assert res.delta_s == pytest.approx(40.0, abs=0.01)
+
+
+def test_audio_match_range_spans_only_agreeing_windows(song120, spec120):
+    # 6 s of unrelated sound, then 12 s of the song: the match starts after the lead-in.
+    lead = make_song(6.0, seed=321)
+    take = np.concatenate([lead, slice_take(song120, 50.0, 12.0)])
+    res = _align(spec120, take)
+    assert res.method == "audio"
+    assert res.status == "confident"
+    assert res.delta_s == pytest.approx(44.0, abs=0.01)
+    assert res.match_start_s == pytest.approx(6.0, abs=3.1)
+    assert res.match_end_s == pytest.approx(18.0, abs=0.1)
+
+
+def test_proxy_offset_does_not_move_the_match_range(song120, spec120):
+    take = slice_take(song120, 12.5, 15.0)
+    base = _align(spec120, take)
+    cfg = settings.model_copy(update={"song_alignment_proxy_offset_s": 0.05})
+    shifted = _align(spec120, take, settings_obj=cfg)
+    assert shifted.match_start_s == base.match_start_s
+    assert shifted.match_end_s == base.match_end_s
 
 
 def test_time_stretched_take_is_not_confident(song120, spec120):
