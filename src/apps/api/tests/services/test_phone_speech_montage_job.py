@@ -105,6 +105,7 @@ def world(monkeypatch):
         "phone_render_verified_features",
         ["basicComposition", "local1080Export", "audioMix"],
     )
+    state.assignments = assignments
     state.snapshot = dict(job.assembly_plan)
     state.candidates = {"clip_paths": [b.proxy_path for b in bindings]}
     return state
@@ -254,3 +255,68 @@ def test_lost_ownership_publishes_nothing(world, monkeypatch) -> None:
     plan = _plan({"kind": "speech", "clip_ref": "c1", "quote": "never rush a good espresso"})
     assert _run(world, plan) is True
     assert world.db.commits == 0 and "variants" not in world.job.assembly_plan
+
+
+def test_strategy_voice_target_and_capture_order_reach_the_plan(world, monkeypatch) -> None:
+    """Prod job fecf9337 (voice clip, 30s target, chronological) was ignored."""
+    from datetime import UTC, datetime
+
+    from app.services import clip_facts
+
+    seen = {}
+
+    def planner(planner_input):
+        seen["input"] = planner_input
+        return _plan({"kind": "speech", "clip_ref": "c1", "quote": "never rush a good espresso"})
+
+    # b0 was filmed last, b2 first: chronological means b2, b1, b0.
+    stamps = {"b0": 3, "b1": 2, "b2": 1}
+    monkeypatch.setattr(
+        clip_facts,
+        "capture_time_from_facts",
+        lambda facts: next(
+            (datetime(2026, 10, v, tzinfo=UTC) for k, v in stamps.items() if k in str(facts)),
+            None,
+        ),
+    )
+    monkeypatch.setattr(clip_facts, "facts_for_prompt", lambda facts: [str(f) for f in facts])
+    monkeypatch.setattr(
+        clip_facts,
+        "assignment_facts",
+        lambda entry: [entry["gcs_path"]],
+    )
+    from app.kria.brief import BriefRequirement, CreativeBrief
+
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(
+                id="r1",
+                kind="order",
+                scope="global",
+                description="chronologically",
+                facts={"key": "capture_time"},
+                source_turn_id="t1",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        gb,
+        "_load_unified_montage_inputs",
+        lambda _id: (world.job.user_id, world.assignments, brief),
+    )
+    world.candidates["creator_strategy"] = {
+        "target_duration_s": 30,
+        "montage_audio": {"source_media_ids": ["talk"], "preserve_source_audio": True},
+    }
+    job_module.run_phone_speech_montage_job(
+        JOB_ID,
+        world.snapshot,
+        world.candidates,
+        ownership_epoch=3,
+        run_planner=planner,
+        load_words=lambda _c: (_words(), "en"),
+    )
+    assert seen["input"].voice_clip_ref == "c1" and seen["input"].target_duration_s == 30
+    record = world.job.assembly_plan["speech_montage"]
+    assert record["ordering_basis"] == "capture_time"

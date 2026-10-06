@@ -14,6 +14,9 @@ $creator_request
 === Target length (seconds, may be null) ===
 $target_duration_s
 
+=== Designated voice clip (a ref, or "none") ===
+$voice_clip
+
 === Clips with speech (timed sentence segments: s/e are source seconds) ===
 $speech_clips
 
@@ -61,6 +64,18 @@ Decide:
    - the request needs something that cannot be done (a sentence nobody said,
      another person's voice, translating the speech).
    Never ask about something you can decide yourself.
+
+5. Designated voice clip. When the ref above is not "none", the creator's plan
+   already chose that clip as THE voice: it is the only clip with speech, so
+   never ask which clip to use, and wants_speech_excerpts is true. If the
+   creator wants that voice "behind", "over" or "throughout" the other footage,
+   build ONE continuous spoken track: consecutive speech sections from that
+   clip, each a passage of 6 to 15 seconds taken in the order it was said, until
+   the total reaches the target length (about 30 seconds when the target is
+   null). The first speech section uses "visual":"speaker" when the creator said
+   to open on the talking clip; every later one uses "visual":"cutaways". Add a
+   "montage" section only as a short bridge (2 to 4 seconds), never as the
+   bulk of the video.
 
 Return ONLY this JSON object, no prose, no code fence:
 {"wants_speech_excerpts": true|false, "sections": [...], "question": null|"..."}
