@@ -563,10 +563,14 @@ the status route's authored timelines, the Kria chat snapshot and compile
 missing `y_frac`/`font_family` as 0.5 / Fraunces and saves that face back. The
 burn is pixel-identical (`tests/pipeline/test_narrated_storyboard_look.py`),
 so a Save that persists the spelled-out look changes nothing on video, but it
-freezes that look against later preset or default-face changes. Known gap:
-Kria draft revisions and empty-editor drafts saved before this change are
-served as stored, so they can still carry preset rows until the next render
-or Save. Editor round trip, every reader and reburn:
+freezes that look against later preset or default-face changes. Text patches
+that set a named position (Kria chat `patch_text_style`/`patch_text`, the web
+copilot) drop stale `x_frac`/`y_frac` on any row, since the burn ignores them
+for a named position. Known gap: stored Kria draft documents are served as
+stored: a chat draft compiled before this change, and any empty-editor draft
+(its Save copies the variant's stored rows unless it carried the text lane),
+can still hand an editor preset rows until the next render or text Save.
+Editor round trip, every reader and reburn:
 `tests/routes/test_narrated_storyboard_editor.py`.
 
 ### Narrated clip alignment (KRI-456)
