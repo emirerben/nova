@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.120.0] - 2026-10-06
+
+### Changed
+- feat(song): likelihood-based lip-sync matching, no hard gates; ask per unplaceable clip (KRI-471) (#1440) <!-- release-pr: 1440 -->
+
 ## [0.78.119.0] - 2026-10-06
 
 ### Fixed
