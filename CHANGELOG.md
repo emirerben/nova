@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.108.0] - 2026-10-06
+
+### Changed
+- fix(ios): unblock TestFlight releases (flaky device-feed test + starving gate) (#1431) <!-- release-pr: 1431 -->
+
 ## [0.78.107.0] - 2026-10-06
 
 ### Changed
