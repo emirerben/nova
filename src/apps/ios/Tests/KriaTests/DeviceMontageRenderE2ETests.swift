@@ -340,6 +340,101 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
                 }
             }
         }
+        if let element = caseMeta["title_element"] as? [String: Any] {
+            try await assertTitlePreviewMatchesExport(
+                caseID: caseID, recipe: recipe, urls: urls, export: asset, element: element,
+                region: try XCTUnwrap(caseMeta["title_region"] as? [Int]),
+                times: try XCTUnwrap(caseMeta["title_preview_samples"] as? [Double]),
+                frames: frames, state: project.root.appendingPathComponent("preview-state")
+            )
+        }
+    }
+
+    /// KRI-455: the editor preview compiles a phone Voiceover title from the
+    /// variant's read-only element (`narrated_title_text_elements`), never from
+    /// the pinned recipe. Swap that compile into the export's own recipe,
+    /// render both through the same exporter, and compare the title band: the
+    /// lit text must cover the same box (the native layout keeps fractional
+    /// line steps the server truncates, so allow a couple of pixels) and the
+    /// same amount of the frame.
+    private func assertTitlePreviewMatchesExport(
+        caseID: String, recipe: KriaMediaEngine.EditRecipe, urls: [String: URL], export: AVURLAsset, element: [String: Any],
+        region: [Int], times: [Double], frames: URL, state: URL
+    ) async throws {
+        let snapshot = try JSONDecoder().decode(
+            [String: JSONValue].self, from: JSONSerialization.data(withJSONObject: ["text_elements": [element]])
+        )
+        let document = EditorDocument(snapshot: snapshot)
+        let title = try XCTUnwrap(document.textElements.first)
+        XCTAssertTrue(title.isReadOnly, "\(caseID): the status route marks the title read-only")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        // Only the text compile matters here; the placeholder footage is never read.
+        let placeholder = ResolvedEditorSource(clipIndex: 0, mediaID: "placeholder", asset: MediaAsset(id: "placeholder",
+            relativePath: "placeholder.mov", fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 1)),
+            url: URL(fileURLWithPath: "/placeholder.mov"))
+        let span = title.endS + 1
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: span,
+            trimIn: 0, trimOut: span, sourceDuration: span, slotID: "slot")
+        let previewTitle = try XCTUnwrap(
+            compiler.compile(document: document, clips: [clip], items: [], sources: [0: placeholder]).recipe.textLayers.first
+        )
+        var preview = recipe
+        let exportedTitle = try XCTUnwrap(preview.textLayers.firstIndex { $0.id.hasPrefix("title-") })
+        preview.textLayers[exportedTitle] = previewTitle
+        let movie = frames.appendingPathComponent("\(caseID)-title-preview.mp4")
+        try? FileManager.default.removeItem(at: movie)
+        let checkpoint = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: state), branding: .none)
+            .export(recipe: preview, assetURLs: urls, outputURL: movie)
+        XCTAssertEqual(checkpoint.status, .completed, "\(caseID) title preview")
+
+        let exported = AVAssetImageGenerator(asset: export)
+        exported.requestedTimeToleranceBefore = .zero; exported.requestedTimeToleranceAfter = .zero
+        let previewed = AVAssetImageGenerator(asset: AVURLAsset(url: movie))
+        previewed.requestedTimeToleranceBefore = .zero; previewed.requestedTimeToleranceAfter = .zero
+        for t in times {
+            let time = CMTime(seconds: t, preferredTimescale: 600)
+            let a = try await exported.image(at: time).image
+            let b = try await previewed.image(at: time).image
+            for (image, kind) in [(a, "export"), (b, "preview")] {
+                let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(
+                    frames.appendingPathComponent("\(caseID)-title-\(kind)-\(t).png") as CFURL, "public.png" as CFString, 1, nil))
+                CGImageDestinationAddImage(destination, image, nil)
+                XCTAssertTrue(CGImageDestinationFinalize(destination))
+            }
+            let lit = try litBox(a, region: region), litPreview = try litBox(b, region: region)
+            print("[title-preview] \(caseID) t=\(t) export=\(lit) preview=\(litPreview)")
+            XCTAssertGreaterThan(lit.count, captionPixelPresenceThreshold, "\(caseID) t=\(t): the exported title is on screen")
+            XCTAssertEqual(Double(litPreview.count), Double(lit.count), accuracy: Double(lit.count) * 0.05,
+                           "\(caseID) t=\(t): the preview lights as much of the frame as the export")
+            for (side, edge) in ["left", "top", "right", "bottom"].enumerated() {
+                XCTAssertEqual(litPreview.box[side], lit.box[side], accuracy: 3, "\(caseID) t=\(t): title \(edge) edge")
+            }
+        }
+    }
+
+    /// Bright, low-saturation pixels in `region` (as `nearWhiteTextPixelCount`
+    /// counts them) and their bounding box `[left, top, right, bottom]` in
+    /// frame pixels, top-left origin.
+    private func litBox(_ image: CGImage, region: [Int]) throws -> (count: Int, box: [Double]) {
+        let x0 = max(0, region[0]), y0 = max(0, region[1])
+        let x1 = min(image.width, region[2]), y1 = min(image.height, region[3])
+        let width = x1 - x0, height = y1 - y0
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+        let context = try XCTUnwrap(CGContext(
+            data: &rgba, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.draw(image, in: CGRect(x: -x0, y: -(image.height - height - y0), width: image.width, height: image.height))
+        var count = 0, left = width, top = height, right = -1, bottom = -1
+        for row in 0..<height {
+            for column in 0..<width {
+                let i = (row * width + column) * 4
+                guard rgba[i] > 200, rgba[i + 1] > 200, rgba[i + 2] > 200 else { continue }
+                count += 1
+                left = min(left, column); right = max(right, column); top = min(top, row); bottom = max(bottom, row)
+            }
+        }
+        return (count, [Double(x0 + left), Double(y0 + top), Double(x0 + right), Double(y0 + bottom)])
     }
 
     private func inputDirectory() throws -> URL {

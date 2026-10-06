@@ -17,3 +17,16 @@ not silently bounded.
 `render_brief_request` is the unrestricted, persistence-safe representation.
 `brief_context` and `batch_brief_requests` own planning-context limits and must
 either cover every applicable requirement as whole entries or fail explicitly.
+
+## Requirement-evidence failure modes
+
+Receipts distinguish a factual conclusion from an unverified request. A bound
+writer can request an unchecked receipt so every active requirement remains
+visible, while legacy callers retain their existing omission behavior.
+
+| Failure mode | Required behavior |
+| --- | --- |
+| A checker has no evidence for a live requirement | Emit `partial` with `verification: "unchecked"` only when the caller requests unchecked receipts; never say it is fulfilled. |
+| A generic editor text element contains a clip-scoped caption | Do not credit the caption unless the exact target clip has evidence. |
+| A reply has unchecked receipts | Omit a generic success summary and name the unverified requirement. |
+| A checker makes a determinate factual comparison | Mark it `verification: "checked"` and include the furthest evidence stage (`understood`, `matched`, `applied`, or `checked`). |

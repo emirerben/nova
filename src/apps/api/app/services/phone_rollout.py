@@ -704,6 +704,25 @@ def phone_narrated_title_supported() -> bool:
     )
 
 
+def phone_narrated_title_preview_supported() -> bool:
+    """Can the requesting app build show a phone `narrated` edit's opening
+    title in its editor preview (KRI-455)?
+
+    The title is read-only there (the narrated editor has no text lane), so
+    only builds whose `X-Kria-Client-Protocol` is at least
+    `phone_narrated_title_preview_min_client_protocol` get it: they keep a
+    `read_only` element out of every editing control. Outside an HTTP request
+    there is no app build to qualify, so the answer is False.
+    """
+    from app.services.client_protocol import current_client_protocol  # noqa: PLC0415
+
+    protocol = current_client_protocol()
+    return (
+        protocol is not None
+        and protocol >= settings.phone_narrated_title_preview_min_client_protocol
+    )
+
+
 # Device feature the video-PiP lane needs on top of the overlay lane: the
 # compiler emits a video overlay card as a muted, trimmed `TimelineClip` on
 # the `subtitled-overlays` track, which the device composites through the

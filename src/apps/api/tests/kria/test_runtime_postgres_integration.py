@@ -2108,6 +2108,15 @@ async def test_brief_version_is_idempotent_per_turn_and_never_written_on_requeue
                 claimed_thread_revision=revision,
                 plan=question,
                 brief_updates=updates,
+                requirement_receipts=[
+                    {
+                        "requirement_id": "r1",
+                        "status": "partial",
+                        "verification": "unchecked",
+                        "stage": "understood",
+                        "reason": "Needs an output check.",
+                    }
+                ],
             )
         )
         assert done.committed is True
@@ -2130,6 +2139,15 @@ async def test_brief_version_is_idempotent_per_turn_and_never_written_on_requeue
                 ).scalars()
             )
             assert rows == [1]
+            event = db.execute(
+                select(CreationThreadEvent).where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.event_type == "assistant_response",
+                )
+            ).scalar_one()
+            receipt = event.payload["requirement_receipts"][0]
+            assert receipt["brief_version"] == 1
+            assert receipt["generation_id"] is None
     finally:
         await async_engine.dispose()
 
@@ -2237,6 +2255,61 @@ async def test_brief_read_skips_stored_receipts_that_judged_nothing(
             ("r3", "met"),
         }
         assert sorted(r.requirement_id for r in brief.requirement_receipts) == ["r1", "r3"]
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_brief_read_never_recredits_unversioned_receipt_after_stable_id_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A flag rollback cannot apply a legacy success to revised wording."""
+    from app.kria.brief import BriefRequirement
+    from app.kria.runtime import read_creative_brief
+
+    user_id, thread_id, _session_id = _seed_runtime_project()
+    old = BriefRequirement(id="r1", kind="text", scope="title", literal="Old title")
+    changed = BriefRequirement(id="r1", kind="text", scope="title", literal="New title")
+    with sync_session() as db:
+        db.add_all(
+            [
+                CreativeBriefVersion(
+                    thread_id=thread_id,
+                    version=1,
+                    requirements=[old.model_dump(mode="json")],
+                    source_turn_id=None,
+                ),
+                CreativeBriefVersion(
+                    thread_id=thread_id,
+                    version=2,
+                    requirements=[changed.model_dump(mode="json")],
+                    source_turn_id=None,
+                ),
+            ]
+        )
+        db.add(
+            CreationThreadEvent(
+                thread_id=thread_id,
+                sequence=2,
+                revision=3,
+                role="assistant",
+                event_type="draft_applied",
+                content="Drafted.",
+                payload={
+                    "requirement_receipts": [
+                        {"requirement_id": "r1", "status": "met", "inferred": []}
+                    ]
+                },
+            )
+        )
+        db.commit()
+
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    try:
+        async with AsyncSessionLocal() as db:
+            brief = await read_creative_brief(db, thread_id=thread_id, creator_id=user_id)
+        assert [(row.id, row.status) for row in brief.requirements] == [("r1", "open")]
+        assert brief.requirement_receipts == []
     finally:
         await async_engine.dispose()
 

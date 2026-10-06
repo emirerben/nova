@@ -580,7 +580,9 @@ async def _copilot_clip_context(
                 brief = await load_latest_brief(db, thread_id)
             if brief is not None and brief.live():
                 context["brief"] = render_brief_request(brief)
-    except Exception:  # noqa: BLE001 - fail open to no brief
+    except Exception:  # noqa: BLE001 - legacy readers retain their behavior
+        if settings.brief_binding_for(thread.creator_id):
+            raise BriefCoverageError("saved request unavailable to editor") from None
         log.warning("kria_copilot_brief_unavailable", thread_id=str(thread_id), exc_info=True)
     try:
         # Mirrors the sfx capability: no query when the lane is server-disabled.
@@ -835,9 +837,19 @@ async def _plan_editor_revision(
     user_message: str,
     editor_state: Any = None,
 ) -> KriaTurnPlan | None:
-    target = await _load_editor_target(
-        db, thread_id=thread_id, item=item, **_state_kw(editor_state)
-    )
+    try:
+        target = await _load_editor_target(
+            db, thread_id=thread_id, item=item, **_state_kw(editor_state)
+        )
+    except BriefCoverageError:
+        return KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=(
+                "Your saved request is too large or unavailable for this editor step. "
+                "Your draft is unchanged. Which clip or part should I work on first?"
+            ),
+        )
     if target is None:
         return None
     # Release the read transaction before Copilot model I/O. The response is
@@ -1090,7 +1102,11 @@ async def _plan_from_creator_output(
     if isinstance(action, ProposeStrategy):
         # KRI-142: the same server compile v1 runs, so a phone render never
         # silently drops what it can't draw while the reply claims it.
-        checked = check_strategy_for_runtime_v2(manifest, action.strategy)
+        checked = check_strategy_for_runtime_v2(
+            manifest,
+            action.strategy,
+            **({"ask_before_simplifying": True} if settings.brief_binding_for(creator_id) else {}),
+        )
         if isinstance(checked, RefusedStrategy):
             log.info("kria_strategy_refused", thread_id=str(thread_id), code=checked.code)
             return PlannedKriaTurn(
@@ -1588,6 +1604,32 @@ async def _plan_live_turn(
     persona = await db.get(Persona, plan.persona_id)
     if persona is None or persona.user_id != creator_id:
         raise RuntimeError("Kria creator context is unavailable")
+    pending_analysis_ids: list[str] = []
+    if settings.brief_binding_for(creator_id) and settings.kria_clip_understanding_enabled:
+        from app.services.clip_intent_planning import wait_for_clip_understanding  # noqa: PLC0415
+
+        clips = await load_intent_clips_for_item(db, item, persona)
+        if any(understanding_incomplete(clip.analysis, kind=clip.kind) for clip in clips):
+            await _kick_clip_understanding(item_id, clips)
+            clips, _ = await wait_for_clip_understanding(
+                clips,
+                refresh=lambda: _reload_intent_clips(db, item_id=item_id, creator_id=creator_id),
+                until=_clip_understanding_wait_until(),
+            )
+            missing = [
+                clip.media_id
+                for clip in clips
+                if understanding_incomplete(clip.analysis, kind=clip.kind)
+            ]
+            if missing:
+                # Extract and persist this turn's requirements before pausing.
+                # Otherwise a later "continue" would replace a long original
+                # request that never reached the durable brief.
+                pending_analysis_ids = missing
+                log.info("kria_required_analysis_pending", stage="main_creator", media_ids=missing)
+            item = await db.get(PlanItem, item_id, populate_existing=True)
+            plan = await db.get(ContentPlan, item.content_plan_id, populate_existing=True)
+            persona = await db.get(Persona, plan.persona_id, populate_existing=True)
     manifest, media_context = await resolve_item_creator_context(db, item, persona=persona)
     brief_on = settings.creative_brief_for(creator_id)
     binding_on = settings.brief_binding_for(creator_id)
@@ -1809,6 +1851,27 @@ async def _plan_live_turn(
         "enforced_ids": [],
         "unresolved_ids": [req.id for req in effective.live()],
     }
+    if pending_analysis_ids:
+        return PlannedKriaTurn(
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="recovery",
+                response=(
+                    f"I'm still checking {len(pending_analysis_ids)} of your clips. "
+                    "Your request and completed answers are saved. "
+                    "Ask me to continue once those clips are ready."
+                ),
+            ),
+            manifest_hash=manifest.manifest_hash,
+            context_hash=manifest.context_hash,
+            brief_updates=updates,
+            brief_expected_version=prior_brief.version if prior_brief else 0,
+            brief_coverage={
+                **coverage,
+                "stage": "analysis",
+                "missing_media_ids": pending_analysis_ids,
+            },
+        )
     clip_ids = tuple(str(media.media_id) for media in manifest.media)
     shape = CurrentPlanShape(has_render=False)
     # Every rollback above expires loaded rows; an expired attribute read on an

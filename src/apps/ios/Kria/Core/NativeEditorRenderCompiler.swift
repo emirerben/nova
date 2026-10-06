@@ -409,7 +409,13 @@ enum NativeEditorRenderError: Error, Equatable {
             }
             let element = rawElement.isCaption
                 ? Self.applyingCaptionMeta(captionMeta, to: rawElement) : rawElement
-            guard let authoredItem = items.first(where: { $0.kind == .text && $0.id == element.id }) else {
+            // Read-only text (a phone Voiceover title, KRI-455) has no timeline
+            // item, since nothing may select or move it: it draws over its own
+            // window, exactly where the server pinned it in the export.
+            guard let authoredItem = rawElement.isReadOnly
+                ? NativeEditorTimelineItem(selection: EditorSelection(kind: .text, id: element.id),
+                    start: element.startS, end: min(element.endS, total))
+                : items.first(where: { $0.kind == .text && $0.id == element.id }) else {
                 throw RecipeError.invalidTimeline
             }
             // Sentence projection may extend a caption through the silent gap

@@ -2643,17 +2643,23 @@ def _variants_for_response(job: Job) -> list[dict]:
             else:
                 v = {
                     **v,
-                    "text_elements": merge_projected_text_elements_for_variant(
-                        v, include_lyric_projection=_LYRICS_EDITOR_ENABLED
+                    "text_elements": _with_phone_narrated_title(
+                        v,
+                        merge_projected_text_elements_for_variant(
+                            v, include_lyric_projection=_LYRICS_EDITOR_ENABLED
+                        ),
                     ),
                     "text_elements_user_edited": v.get("text_elements_user_edited", False),
                     "geometry_materialized_at_version": v.get("geometry_materialized_at_version"),
                     "text_elements_materialized_from": v.get("text_elements_materialized_from"),
                 }
         elif _TEXT_ELEMENTS_ENABLED and v.get("text_elements"):
-            # An authored timeline is served as stored, but storyboard bars
-            # saved before their look was persisted still get it resolved.
+            # An authored timeline is served as stored, but its storyboard bars
+            # still get their resolved look.
             v = {**v, "text_elements": resolve_narrated_storyboard_rows(v["text_elements"])}
+        # Server-side copy of the phone Narrated title; clients read it (if
+        # their build can) from `text_elements` above.
+        v.pop("narrated_title_text_elements", None)
         if _LYRICS_EDITOR_ENABLED:
             v = {**v, "lyrics_enabled": _variant_lyrics_enabled(v)}
         v = {**v, "orientation": _variant_orientation(v)}
@@ -6708,6 +6714,37 @@ def _phone_narrated_caption_edits_available(variant: dict) -> bool:
     )
 
     return is_phone_narrated_editor_variant(variant) and phone_narrated_caption_edits_supported()
+
+
+def _with_phone_narrated_title(
+    variant: dict, text_elements: list[dict] | None
+) -> list[dict] | None:
+    """``text_elements`` plus a phone Narrated variant's opening title (KRI-455).
+
+    The title lives in the pinned recipe, which the editor preview never reads,
+    so the worker keeps its element in ``narrated_title_text_elements``. It is
+    shown read-only (``source_params.read_only``) and only to app builds that
+    honour that marker (`phone_narrated_title_preview_supported`): the narrated
+    editor has no text lane, so any Save that carried it would 422.
+    """
+    from app.services.phone_editor import is_phone_narrated_editor_variant  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_narrated_title_preview_supported,
+    )
+
+    titles = variant.get("narrated_title_text_elements")
+    if (
+        not titles
+        or not is_phone_narrated_editor_variant(variant)
+        or not phone_narrated_title_preview_supported()
+    ):
+        return text_elements
+    current = list(text_elements or [])
+    ids = {row.get("id") for row in current if isinstance(row, dict)}
+    return [
+        *(row for row in titles if isinstance(row, dict) and row.get("id") not in ids),
+        *current,
+    ] or None
 
 
 # The editor sections a phone Talking Save persists onto the variant.

@@ -261,6 +261,91 @@ def _repair_position(data: dict[str, Any]) -> None:
     data["position"] = "first" if first else "last" if last else None
 
 
+# KRI-456: a `caption` intent is a chapter caption on named clips. Two shapes the
+# model keeps minting are NOT clip operations: a style ask ("big readable
+# captions") and a title treatment (`Title: "..."`). Resolved against footage they
+# match zero or one arbitrary clip, and the zero-match case stops the turn with
+# a clip-not-found question about the word "captions". They are dropped silently here.
+_GENERIC_CAPTION_WORDS = frozenset(
+    "captions caption subtitles subtitle altyazı altyazılar altyazi text texts".split()
+)
+# Style adjectives, glue words and articles that may surround a generic caption
+# word without naming any clips ("big readable on-screen captions", "the subtitles").
+_CAPTION_STYLE_FILLER = frozenset(
+    "big bigger large larger huge readable legible bold clear clean simple nice good "
+    "on screen onscreen burned burnt in auto automatic generated the a an my our your "
+    "some and with büyük okunaklı".split()
+)
+_WHOLE_VIDEO_TARGETS = frozenset(
+    {
+        "video",
+        "title",
+        "the title",
+        "video title",
+        "the video title",
+        "opening title",
+        "the opening title",
+        "intro title",
+        "the intro title",
+        "the video",
+        "whole video",
+        "the whole video",
+        "entire video",
+        "the entire video",
+    }
+)
+# Verbs that may wrap a bare style ask in the creator's quote ("add captions").
+_CAPTION_ASK_VERBS = frozenset(
+    "add put turn give make use show want please ekle ver aç let lets i would like can you".split()
+)
+_TITLE_QUOTE_PREFIX = re.compile(r"^(title|başlık)\s*:", re.IGNORECASE)
+_WORDS = re.compile(r"[^\W_]+")
+
+
+def _words(value: str) -> list[str]:
+    return _WORDS.findall(_norm(value).casefold())
+
+
+def _is_generic_caption_phrase(value: object) -> bool:
+    """True when ``value`` is only generic caption words plus style filler."""
+    if not isinstance(value, str):
+        return False
+    words = _words(value)
+    rest = [w for w in words if w not in _CAPTION_STYLE_FILLER]
+    return bool(rest) and all(w in _GENERIC_CAPTION_WORDS for w in rest)
+
+
+def _silent_caption_drop(data: dict[str, Any]) -> str | None:
+    """Why a `caption` intent is not a clip operation, or None to keep it.
+
+    Closed vocabulary: ``style_caption_dropped`` (the target is just the word
+    captions/subtitles/text, e.g. "Big readable captions", or a whole-video target
+    whose quote is only a style ask) or ``title_caption_dropped`` (a `Title: "..."`
+    line or any other whole-video target). Exact copy on a generic target
+    ('add the text "Hello"') is kept: dropping it would silently lose creator words.
+    """
+    if data.get("op") != "caption":
+        return None
+    quote = data.get("source_quote")
+    quote_text = quote if isinstance(quote, str) else ""
+    if _TITLE_QUOTE_PREFIX.match(_norm(quote_text)):
+        return "title_caption_dropped"
+    attribute = data.get("attribute")
+    creator_text = data.get("creator_text")
+    if isinstance(attribute, str) and " ".join(_words(attribute)) in _WHOLE_VIDEO_TARGETS:
+        # "video" / "the video" targets nothing; if the creator's quote is only a style
+        # ask ("Big readable captions") it is a style ask, otherwise a title treatment.
+        asked = " ".join(w for w in _words(quote_text) if w not in _CAPTION_ASK_VERBS)
+        if creator_text is None and _is_generic_caption_phrase(asked):
+            return "style_caption_dropped"
+        return "title_caption_dropped"
+    if _is_generic_caption_phrase(attribute) and (
+        creator_text is None or _is_generic_caption_phrase(creator_text)
+    ):
+        return "style_caption_dropped"
+    return None
+
+
 def _collapse_captioned_groups(
     kept: list[tuple[PlannedClipIntent, object]],
 ) -> list[tuple[PlannedClipIntent, object]]:
@@ -324,13 +409,18 @@ class ClipIntentPlannerOutput(BaseModel):
     salvage_reasons: list[str] = Field(
         default_factory=list, max_length=16, exclude_if=lambda value: not value
     )
+    # Parser-authored (KRI-456): intents that were never clip operations (a style
+    # ask like "big readable captions", a `Title: "..."` line) and were dropped
+    # SILENTLY, as {closed-vocabulary reason: count}. Diagnostics only: it never
+    # raises a creator question.
+    silent_drops: dict[str, int] = Field(default_factory=dict, exclude_if=lambda value: not value)
 
 
 class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.clip_intent_planner",
         prompt_id="clip_intent_planner",
-        prompt_version="2026-10-04.1",
+        prompt_version="2026-10-06.1",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -419,9 +509,10 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             set()
         )
         seen_ids: set[str] = set()
+        silent: list[str] = []
         for index, raw_intent in enumerate(raw_intents):
             try:
-                intent = self._build_intent(raw_intent, sources, input, index=index)
+                intent = self._build_intent(raw_intent, sources, input, index=index, silent=silent)
             except _IntentRejected as rejected:
                 dropped.append(_preview(raw_intent))
                 drop_classes.append(rejected.error_class)
@@ -482,6 +573,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
                 intents=[intent for intent, _ in kept],
                 salvage_question=salvage,
                 salvage_reasons=reasons,
+                silent_drops={reason: silent.count(reason) for reason in sorted(set(silent))},
             )
         except ValidationError as exc:
             raise ClipIntentSchemaError(
@@ -496,6 +588,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         input: ClipIntentPlannerInput,  # noqa: A002
         *,
         index: int = 0,
+        silent: list[str] | None = None,
     ) -> PlannedClipIntent | None:
         """One validated intent; None drops it silently; ``_IntentRejected`` drops it loudly."""
         if not isinstance(raw_intent, dict):
@@ -512,6 +605,13 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         if not isinstance(data.get("intent_id"), str) or not data["intent_id"].strip():
             data["intent_id"] = f"intent-{index + 1}"
         _repair_placeholder(data, sources)
+        # KRI-456: a style ask or title line is not a clip operation. Drop it before
+        # shape/provenance checks so a garbled quote can never turn it into a question.
+        silent_reason = _silent_caption_drop(data)
+        if silent_reason is not None:
+            if silent is not None:
+                silent.append(silent_reason)
+            return None
         # Benign shape repairs: none of these change what the creator asked for.
         if isinstance(data.get("creator_text"), str):
             data["creator_text"] = " ".join(data["creator_text"].split()) or None

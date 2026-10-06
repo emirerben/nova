@@ -184,10 +184,13 @@ struct SlidePostDraft: Codable, Equatable, Sendable {
     var caption: String = ""
     var renderedVersion: Int? = nil
     var userEdited: Bool = false
+    /// Opaque server binding for the request that produced this draft.
+    var briefBinding: JSONValue? = nil
     enum CodingKeys: String, CodingKey {
         case version, slides, caption
         case schemaVersion = "schema_version", platformProfile = "platform_profile", coverIndex = "cover_index"
         case renderedVersion = "rendered_version", userEdited = "user_edited"
+        case briefBinding = "brief_binding"
     }
     /// Rendering stamps and server metadata do not turn a clean editor dirty.
     func hasSameContent(as other: Self) -> Bool {
@@ -315,13 +318,16 @@ struct SlidePostSaveRequest: Encodable, Sendable {
     let slides: [SlidePostSlide]
     let coverIndex: Int
     let caption: String
+    let briefBinding: JSONValue?
     init(draft: SlidePostDraft, expectedVersion: Int) {
         self.expectedVersion = expectedVersion; platformProfile = draft.platformProfile; slides = draft.slides
         coverIndex = draft.coverIndex; caption = draft.caption
+        briefBinding = draft.briefBinding
     }
     enum CodingKeys: String, CodingKey {
         case slides, caption
         case expectedVersion = "expected_version", platformProfile = "platform_profile", coverIndex = "cover_index"
+        case briefBinding = "brief_binding"
     }
 }
 
@@ -622,8 +628,9 @@ private struct SlidePostItemResponse: Decodable {
             // Saved content is what the user was looking at; keep any later undo history but
             // swap in the server's stamps (version, rendered_version).
             draft = saved
-            // Clear old output immediately, even if the follow-up GET fails.
-            state?.draft = saved; state?.slides = []; state?.bundleURL = nil
+            // Keep the old render in place (no flash); `canExport` compares versions, so it reads
+            // stale until the follow-up render lands.
+            state?.draft = saved
             state?.renderedVersion = saved.renderedVersion
             if state?.jobID != nil { state?.renderStatus = "rendering" }
             let result = try await api.slidePost(itemID: itemID)

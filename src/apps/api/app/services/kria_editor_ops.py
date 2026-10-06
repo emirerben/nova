@@ -197,7 +197,7 @@ def _safe_slot(
 _CLIP_LABEL_MEDIA_PREFIX = "clip-label-media-"
 _MAX_SLOT_FACTS = 4
 _MAX_FACT_VALUE_CHARS = 80
-_MAX_BRIEF_CHARS = 1500
+_MAX_BRIEF_CHARS = 12_000
 
 
 def clip_facts_by_media_id(
@@ -776,7 +776,11 @@ def build_editor_snapshot(
     }
     brief = clip_context.get("brief")
     if isinstance(brief, str) and brief.strip():
-        snapshot["brief"] = " ".join(brief.split())[:_MAX_BRIEF_CHARS]
+        from app.kria.brief import BriefCoverageError  # noqa: PLC0415
+
+        if len(brief) > _MAX_BRIEF_CHARS:
+            raise BriefCoverageError("editor request exceeds 12,000-character limit")
+        snapshot["brief"] = brief
     if "text" in families and any(slot.get("facts") for slot in slots):
         # Server-only capability: `label_each_clip` needs grounded per-clip facts
         # that the web drawer's snapshot never carries, so the parser refuses the

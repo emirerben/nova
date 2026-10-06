@@ -22,6 +22,7 @@ from app.agents.edit_copilot import (
     _family_allowed,
 )
 from app.config import settings
+from app.kria.brief_binding import BriefBinding
 from app.schemas.slide_post import (
     SlideEdits,
     SlidePostDraft,
@@ -489,17 +490,20 @@ def test_prompt_version_was_bumped_for_the_slide_surface() -> None:
 class _Stub:
     def __init__(self, output: EditCopilotOutput | Exception) -> None:
         self.output = output
+        self.input: EditCopilotInput | None = None
 
     def run(self, _input: EditCopilotInput, ctx: Any = None) -> EditCopilotOutput:
+        self.input = _input
         if isinstance(self.output, Exception):
             raise self.output
         return self.output
 
 
-def _patch_agent(monkeypatch: pytest.MonkeyPatch, output: EditCopilotOutput | Exception) -> None:
+def _patch_agent(monkeypatch: pytest.MonkeyPatch, output: EditCopilotOutput | Exception) -> _Stub:
     stub = _Stub(output)
     monkeypatch.setattr("app.agents._model_client.default_client", lambda: object())
     monkeypatch.setattr(svc, "EditCopilotAgent", lambda _client: stub)
+    return stub
 
 
 async def _run(draft: SlidePostDraft, assets: list[SimpleNamespace], server_version: int = 7):
@@ -600,6 +604,119 @@ async def test_run_agent_failure_is_honest(monkeypatch: pytest.MonkeyPatch) -> N
     result = await _run(_draft(assets), assets)
     assert result.outcome == "failed" and result.draft is None
     assert result.base_version == 7
+
+
+def _binding(request: str) -> BriefBinding:
+    return BriefBinding.create(
+        "slide-thread", None, latest_message=request, media_snapshot={"assets": ["a"]}
+    )
+
+
+def test_snapshot_includes_a_verified_stored_brief_binding() -> None:
+    assets = [_asset()]
+    binding = _binding("Keep the carousel in the order I described, with no extra text.")
+    draft = _draft(assets).model_copy(update={"brief_binding": binding})
+    snapshot = build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID)
+    assert snapshot["brief"] == binding.creator_request
+    assert SlidePostDraft.model_validate(draft.model_dump(mode="json")).brief_binding == binding
+
+
+@pytest.mark.asyncio
+async def test_run_persists_new_binding_only_for_writer_cohort_and_uses_full_snapshot_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assets = [_asset()]
+    draft = _draft(assets, caption="before")
+    binding = _binding("First request. Later request: use the blue cover photo.")
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    stub = _patch_agent(
+        monkeypatch,
+        _output([{"op": "set_post_caption", "caption": "after"}]),
+    )
+    result = await run_slide_post_chat_edit(
+        draft=draft,
+        assets_by_id=_by_id(assets),
+        message="Use the cover I mentioned.",
+        turns=[],
+        user_id=USER_ID,
+        server_version=7,
+        brief_binding=binding,
+    )
+    assert result.outcome == "edited" and result.draft is not None
+    assert result.draft.brief_binding == binding
+    assert (
+        stub.input is not None and stub.input.variant_snapshot["brief"] == binding.creator_request
+    )
+    assert stub.input.original_request is None
+
+
+@pytest.mark.asyncio
+async def test_stored_binding_survives_writer_rollback_and_unsaved_draft_edit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assets = [_asset()]
+    stored = _binding("The creator asked for a quiet photo story.")
+    incoming = _binding("This incoming value must not replace stored authority while disabled.")
+    draft = _draft(assets, caption="before").model_copy(update={"brief_binding": stored})
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", False)
+    monkeypatch.setattr(settings, "kria_brief_binding_user_ids", [])
+    stub = _patch_agent(monkeypatch, _output([{"op": "set_post_caption", "caption": "after"}]))
+    result = await run_slide_post_chat_edit(
+        draft=draft,
+        assets_by_id=_by_id(assets),
+        message="Change the caption.",
+        turns=[],
+        user_id=USER_ID,
+        server_version=7,
+        brief_binding=incoming,
+    )
+    assert result.outcome == "edited" and result.draft is not None
+    assert result.draft.brief_binding == stored
+    assert stub.input is not None and stub.input.variant_snapshot["brief"] == stored.creator_request
+
+
+@pytest.mark.asyncio
+async def test_context_overflow_is_unsupported_without_calling_or_mutating_draft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assets = [_asset()]
+    binding = _binding("x" * 12_001)
+    draft = _draft(assets)
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    result = await run_slide_post_chat_edit(
+        draft=draft,
+        assets_by_id=_by_id(assets),
+        message="do it",
+        turns=[],
+        user_id=USER_ID,
+        server_version=7,
+        brief_binding=binding,
+    )
+    assert result.outcome == "unsupported" and result.draft is None
+    assert "unchanged" in result.reply
+
+
+@pytest.mark.asyncio
+async def test_unrenderable_text_property_is_unsupported_without_partial_draft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assets = [_asset()]
+    draft = _draft(assets, edits={0: SlideEdits(texts=[_text("a", "Keep")])})
+    _patch_agent(
+        monkeypatch,
+        _output(
+            [
+                {
+                    "op": "patch_text_style",
+                    "bar_index": 0,
+                    "patch": {"rotation_deg": 15},
+                }
+            ]
+        ),
+    )
+    result = await _run(draft, assets)
+    assert result.outcome == "unsupported" and result.draft is None
+    assert "unchanged" in result.reply
 
 
 def test_slide_wording() -> None:

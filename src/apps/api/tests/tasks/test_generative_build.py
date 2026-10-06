@@ -7379,6 +7379,81 @@ def test_compose_subtitled_without_text_passes_base_to_captions(monkeypatch, tmp
     assert seen["input"] == str(base)
 
 
+def _caption_variant_with_persisted_mirrors(archetype: str) -> dict:
+    """A caption variant whose saved text lane carries the editor's caption-cue
+    mirrors beside an authored title — what a dirty iOS text save or an
+    authored-timeline snapshot persists. Mirrors come from the real read
+    projection so a change to its marker breaks these tests, not prod."""
+    from app.agents._schemas.text_element import (
+        CAPTION_CUE_SOURCE,
+        merge_projected_text_elements_for_variant,
+    )
+
+    variant = {
+        "resolved_archetype": archetype,
+        "text_mode": "agent_text",
+        "duration_s": 3.0,
+        "caption_cues": [
+            {"text": "First sentence", "start_s": 0.0, "end_s": 1.2},
+            {"text": "Second sentence", "start_s": 1.2, "end_s": 2.5},
+        ],
+    }
+    mirrors = merge_projected_text_elements_for_variant(variant) or []
+    assert [row["source_params"]["source"] for row in mirrors] == [CAPTION_CUE_SOURCE] * 2
+    title = {
+        "id": "title",
+        "text": "TITLE",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "role": "generative_intro",
+        "position": "top",
+    }
+    return {**variant, "text_elements": [title, *mirrors], "text_elements_user_edited": True}
+
+
+@pytest.mark.parametrize("archetype", ["narrated", "subtitled"])
+def test_compose_subtitled_never_skia_burns_caption_cue_mirrors(monkeypatch, tmp_path, archetype):
+    """Captions burn once, through the cue lane — persisted mirrors must not
+    also reach the Skia text burn (the server twin of iOS KRI-172 1aff3f03)."""
+    base = tmp_path / "base.mp4"
+    base.write_bytes(b"base")
+    skia_overlays: list[dict] = []
+    caption_cues: list[dict] = []
+
+    def _burn_text(input_path, overlays, output_path, tmpdir, **_kwargs):
+        skia_overlays.extend(overlays)
+        with open(output_path, "wb") as f:
+            f.write(b"text")
+
+    def _burn_captions(
+        input_path,
+        output_path,
+        variant,
+        tmpdir,
+        *,
+        creator_direction_typed_overrides=None,
+    ):
+        caption_cues.extend(variant["caption_cues"])
+        with open(output_path, "wb") as f:
+            f.write(b"captions")
+
+    monkeypatch.setattr("app.pipeline.text_overlay_skia.burn_text_overlays_skia", _burn_text)
+    monkeypatch.setattr(gb, "_burn_persisted_captions_onto_base", _burn_captions)
+
+    gb._compose_subtitled_final(
+        str(base),
+        _caption_variant_with_persisted_mirrors(archetype),
+        str(tmp_path),
+        job_id="job",
+        variant_id=archetype,
+        upload_key_base=f"generative-jobs/job/variant_1_{archetype}_base.mp4",
+    )
+
+    assert skia_overlays
+    assert {overlay["element_id"] for overlay in skia_overlays} == {"title"}
+    assert [cue["text"] for cue in caption_cues] == ["First sentence", "Second sentence"]
+
+
 def test_reburn_captions_happy_swaps_video_and_marks_ready(monkeypatch):
     import uuid
 

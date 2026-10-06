@@ -39,7 +39,7 @@ import XCTest
 
     func testShareKeepsOrderedMixedFilesAndCaption() async {
         let session = await session(state()); var requested: [URL] = []
-        let exporter = SlidePostExporter(downloadFile: downloader { requested.append($0) }, authorizePhotos: { .authorized }, writePhotos: { _ in }, defaults: defaults)
+        let exporter = SlidePostExporter(downloadFile: downloader { requested.append($0) }, authorizePhotos: { .authorized }, writePhotos: { _ in })
         await exporter.prepareShare(session: session, revalidate: {})
         XCTAssertEqual(requested.map(\.lastPathComponent), ["one.jpg", "two.mp4"])
         XCTAssertEqual(exporter.shareItems.count, 3)
@@ -50,32 +50,47 @@ import XCTest
 
     func testFailedSecondDownloadCleansUpAndNeverWritesPhotos() async {
         let session = await session(state()); var writes = 0
-        let exporter = SlidePostExporter(downloadFile: downloader({ _ in }, failSecond: true), authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 }, defaults: defaults)
+        let exporter = SlidePostExporter(downloadFile: downloader({ _ in }, failSecond: true), authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 })
         await exporter.saveToPhotos(session: session, revalidate: {})
         XCTAssertEqual(writes, 0)
-        XCTAssertFalse(defaults.bool(forKey: "kria.slide-post.photos.\(itemID).1"))
     }
 
     func testVersionChangeAfterDownloadBlocksPhotoCommit() async {
         let session = await session(state()); var writes = 0; var changed = false
         let exporter = SlidePostExporter(downloadFile: downloader { _ in
             if !changed { changed = true; session.draft?.caption = "new" }
-        }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 }, defaults: defaults)
+        }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 })
         await exporter.saveToPhotos(session: session, revalidate: {})
         XCTAssertEqual(writes, 0)
     }
 
-    func testAtomicWriteReceiptPreventsDuplicateAndFailureCanRetry() async {
+    func testSavingTheSameVersionTwiceWritesPhotosTwice() async {
         let session = await session(state()); var downloads = 0; var writes = 0
-        let exporter = SlidePostExporter(downloadFile: downloader { _ in downloads += 1 }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 }, defaults: defaults)
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in downloads += 1 }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 })
         await exporter.saveToPhotos(session: session, revalidate: {})
-        XCTAssertEqual(writes, 1); XCTAssertTrue(defaults.bool(forKey: "kria.slide-post.photos.\(itemID).1"))
         await exporter.saveToPhotos(session: session, revalidate: {})
-        XCTAssertEqual(writes, 1); XCTAssertEqual(downloads, 2)
-        let retryDefaults = UserDefaults(suiteName: "\(suite).retry")!
-        let failed = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in throw URLError(.cannotWriteToFile) }, defaults: retryDefaults)
-        await failed.saveToPhotos(session: session, revalidate: {})
-        XCTAssertFalse(retryDefaults.bool(forKey: "kria.slide-post.photos.\(itemID).1"))
+        XCTAssertEqual(writes, 2, "no receipt: a re-save always writes, like the video editor")
+        XCTAssertEqual(downloads, 4)
+        XCTAssertEqual(exporter.status, .savedToPhotos(2))
+    }
+
+    func testFailedPhotosWriteSurfacesFailureAndRetryCanWrite() async {
+        let session = await session(state()); var attempts = 0
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in
+            attempts += 1; if attempts == 1 { throw URLError(.cannotWriteToFile) }
+        })
+        await exporter.saveToPhotos(session: session, revalidate: {})
+        guard case .failed = exporter.status else { return XCTFail("expected failure, got \(exporter.status)") }
+        await exporter.saveToPhotos(session: session, revalidate: {})
+        XCTAssertEqual(attempts, 2)
+        XCTAssertEqual(exporter.status, .savedToPhotos(2))
+    }
+
+    func testLookPickerHidesRetiredPresets() {
+        let ids = SlidePostLookPanel.looks.map(\.0)
+        XCTAssertFalse(ids.contains("stadium_diffusion"))
+        XCTAssertFalse(ids.contains("olive_film"))
+        XCTAssertTrue(ids.contains("none"))
     }
 
     func testSecondRevalidationWithNewerServerDraftBlocksPhotoCommit() async {
@@ -85,7 +100,7 @@ import XCTest
         await session.refresh(api: NativeEditorTestSupport.api(), itemID: itemID)
         var checks = 0
         var writes = 0
-        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 }, defaults: defaults)
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 })
 
         await exporter.saveToPhotos(session: session, revalidate: {
             checks += 1
@@ -95,7 +110,6 @@ import XCTest
 
         XCTAssertEqual(checks, 2)
         XCTAssertEqual(writes, 0)
-        XCTAssertFalse(defaults.bool(forKey: "kria.slide-post.photos.\(itemID).1"))
     }
 
     // MARK: Photos order (creationDate) and export from any state
@@ -105,7 +119,7 @@ import XCTest
         let fixedNow = Date(timeIntervalSince1970: 1_800_000_000)
         var written: [SlidePostExporter.PhotoResource] = []
         let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized },
-                                         writePhotos: { written = $0 }, defaults: defaults, now: { fixedNow })
+                                         writePhotos: { written = $0 }, now: { fixedNow })
         await exporter.saveToPhotos(session: session, revalidate: {})
         XCTAssertEqual(written.map(\.url.lastPathComponent), ["01.jpg", "02.mp4"], "slide order is preserved")
         XCTAssertEqual(written.map(\.kind), ["image", "video"])
@@ -126,7 +140,7 @@ import XCTest
 
     func testPhotosDeniedSurfacesAsItsOwnStatusAndWritesNothing() async {
         let session = await session(state()); var writes = 0
-        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .denied }, writePhotos: { _ in writes += 1 }, defaults: defaults)
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .denied }, writePhotos: { _ in writes += 1 })
         await exporter.saveToPhotos(session: session, revalidate: {})
         XCTAssertEqual(exporter.status, .photosDenied)
         XCTAssertEqual(writes, 0)
@@ -187,7 +201,7 @@ import XCTest
         XCTAssertFalse(session.canExport)
         var written: [SlidePostExporter.PhotoResource] = []
         let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized },
-                                         writePhotos: { written = $0 }, defaults: defaults)
+                                         writePhotos: { written = $0 })
 
         await exporter.export(.photos, session: session, api: api, itemID: itemID, pollInterval: .milliseconds(1), maxPolls: 50)
 
@@ -195,7 +209,6 @@ import XCTest
         XCTAssertEqual(written.count, 2, "then both slides went to Photos")
         XCTAssertEqual(exporter.status, .savedToPhotos(2))
         XCTAssertFalse(session.hasUnsavedChanges)
-        XCTAssertTrue(defaults.bool(forKey: "kria.slide-post.photos.\(itemID).2"), "the receipt is for the saved version")
     }
 
     /// A denial must surface before any save/render work, not after the user waited for the render.
@@ -207,7 +220,7 @@ import XCTest
         await session.refresh(api: api, itemID: itemID)
         session.draft?.caption = "Edited"
         var writes = 0
-        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .denied }, writePhotos: { _ in writes += 1 }, defaults: defaults)
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .denied }, writePhotos: { _ in writes += 1 })
         await exporter.export(.photos, session: session, api: api, itemID: itemID, pollInterval: .milliseconds(1), maxPolls: 5)
         XCTAssertEqual(exporter.status, .photosDenied)
         XCTAssertTrue(server.calls.isEmpty, "no save and no render before access is known")
@@ -222,7 +235,7 @@ import XCTest
         let session = SlidePostSession(defaults: defaults)
         await session.refresh(api: api, itemID: itemID)
         var writes = 0
-        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 }, defaults: defaults)
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 })
         let task = Task { await exporter.export(.photos, session: session, api: api, itemID: itemID, pollInterval: .milliseconds(1), maxPolls: 50) }
         task.cancel()
         await task.value
@@ -238,7 +251,7 @@ import XCTest
         let session = SlidePostSession(defaults: defaults)
         await session.refresh(api: api, itemID: itemID)
         var writes = 0
-        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 }, defaults: defaults)
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 })
         await exporter.export(.photos, session: session, api: api, itemID: itemID, pollInterval: .milliseconds(1), maxPolls: 50)
         XCTAssertEqual(server.calls, ["generate"])
         XCTAssertEqual(writes, 1)
@@ -251,7 +264,7 @@ import XCTest
         let session = SlidePostSession(defaults: defaults)
         await session.refresh(api: api, itemID: itemID)
         var writes = 0
-        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 }, defaults: defaults)
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 })
         await exporter.export(.photos, session: session, api: api, itemID: itemID, pollInterval: .milliseconds(1), maxPolls: 5)
         XCTAssertTrue(server.calls.isEmpty)
         XCTAssertEqual(writes, 1)
@@ -270,7 +283,7 @@ import XCTest
         let session = SlidePostSession(defaults: defaults)
         await session.refresh(api: api, itemID: itemID)
         var writes = 0
-        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 }, defaults: defaults)
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 })
         await exporter.export(.photos, session: session, api: api, itemID: itemID, pollInterval: .milliseconds(1), maxPolls: 3)
         XCTAssertEqual(writes, 0)
         guard case .failed = exporter.status else { return XCTFail("expected a failure status, got \(exporter.status)") }
@@ -306,12 +319,11 @@ import XCTest
         let session = await session(state())
         var downloads = 0
         var writes = 0
-        let exporter = SlidePostExporter(downloadFile: downloader { _ in downloads += 1 }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 }, defaults: defaults)
+        let exporter = SlidePostExporter(downloadFile: downloader { _ in downloads += 1 }, authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 })
 
         await exporter.saveToPhotos(session: session, revalidate: { throw URLError(.cannotConnectToHost) })
 
         XCTAssertEqual(downloads, 0)
         XCTAssertEqual(writes, 0)
-        XCTAssertFalse(defaults.bool(forKey: "kria.slide-post.photos.\(itemID).1"))
     }
 }
