@@ -660,13 +660,18 @@ import XCTest
         addText(app, words)
         let save = app.buttons["slidepost-save"]
         XCTAssertTrue(save.waitForExistence(timeout: 5)); if save.isEnabled { save.tap() }
-        let create = app.buttons["slidepost-create"]
-        XCTAssertTrue(create.waitForExistence(timeout: 10)); create.tap()
-        XCTAssertTrue(app.buttons["slidepost-share"].waitForExistence(timeout: 12), "the post is created and exportable")
+        // There is no Create step: exporting renders the post first (KRI-305). Needs KRIA_SLIDE_POST_FIXTURE_PHOTOS=1.
+        let export = app.buttons["slidepost-export"]
+        XCTAssertTrue(export.waitForExistence(timeout: 10)); export.tap()
+        app.buttons["slidepost-save-photos"].tap()
+        let banner = app.descendants(matching: .any)["slidepost-export-state"]
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "Saved"), evaluatedWith: banner); waitForExpectations(timeout: 25)
+        // The "Saved" banner auto-dismisses; wait it out so it can't shift or cover the preview under the next tap.
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: banner); waitForExpectations(timeout: 10)
     }
 
     func testTappingTextOnACreatedPostOpensEditTextWithKeyboard() {
-        let app = openRichWorkspace()
+        let app = openRichWorkspace(extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1"])
         openReadyPostWithText(app, "Athens")
         let text = canvasText(app)
         XCTAssertTrue(text.waitForExistence(timeout: 5), "a created post still shows its live, editable text")
@@ -680,7 +685,7 @@ import XCTest
     }
 
     func testHoldAndDragTextOnACreatedPostMovesItDirectly() {
-        let app = openRichWorkspace()
+        let app = openRichWorkspace(extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1"])
         openReadyPostWithText(app, "Athens")
         let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
         let text = canvasText(app)
