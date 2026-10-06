@@ -8,6 +8,8 @@ import UIKit
     typealias PhotosAuthorization = () async -> PHAuthorizationStatus
     typealias AtomicPhotoWrite = ([PhotoResource]) async throws -> Void
     typealias Revalidate = () async throws -> Void
+    /// Renders one slide's JPEG on the device (draft slide, its asset, platform profile).
+    typealias OnDeviceRender = (SlidePostSlide, SlidePostAsset, String) async throws -> Data
 
     /// One slide handed to Photos. `creationDate` ascends with slide order so Photos' date sort
     /// (the only order it has; we deliberately create no album) shows the slides in post order.
@@ -50,6 +52,7 @@ import UIKit
     private let authorizePhotos: PhotosAuthorization
     private let writePhotos: AtomicPhotoWrite
     private let now: () -> Date
+    private let onDeviceRender: OnDeviceRender
     private var dismissTask: Task<Void, Never>?
 
     /// UI tests (`KRIA_SLIDE_POST_FIXTURE_PHOTOS=1`) save through a stub: no Photos permission prompt,
@@ -79,10 +82,13 @@ import UIKit
                 }
             }
         },
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        onDeviceRender: @escaping OnDeviceRender = { slide, asset, profile in
+            try await SlidePostOnDeviceRender.renderSlide(slide: slide, asset: asset, profile: profile)
+        }
     ) {
         self.downloadFile = downloadFile; self.authorizePhotos = authorizePhotos
-        self.writePhotos = writePhotos; self.now = now
+        self.writePhotos = writePhotos; self.now = now; self.onDeviceRender = onDeviceRender
     }
 
     /// Ascending, one second apart, ending at `now` so nothing is dated in the future.
@@ -117,6 +123,12 @@ import UIKit
             let permission = await authorizePhotos()
             guard permission == .authorized || permission == .limited else { set(.photosDenied); return }
         }
+        // Image-only posts render on the phone from the original photos: the live draft (unsaved edits
+        // included) goes straight to Photos / the share sheet, no save, generate or poll.
+        if SlidePostOnDeviceRender.supports(session.draft, assets: session.state?.assets ?? []) {
+            await exportOnDevice(destination, session: session, api: api, itemID: itemID)
+            return
+        }
         var generated = 0
         var polls = 0
         while !session.canExport {
@@ -144,6 +156,54 @@ import UIKit
         case .photos: await saveToPhotos(session: session, revalidate: revalidate)
         case .share: await prepareShare(session: session, revalidate: revalidate)
         }
+    }
+
+    /// Renders every slide of the current draft into a temp directory, then hands it to Photos or the share sheet.
+    /// A render error fails the export (no mid-way server fallback); an expired signed URL refreshes the
+    /// session once and retries that slide.
+    private func exportOnDevice(_ destination: Destination, session: SlidePostSession, api: any KriaAPIClient, itemID: String) async {
+        guard let draft = session.draft else { return }
+        isWorking = true; defer { isWorking = false }
+        let directory = FileManager.default.temporaryDirectory.appending(path: "kria-slide-post-\(itemID)-\(draft.version)-\(UUID().uuidString)")
+        var retainsDirectoryForShare = false
+        defer { if !retainsDirectoryForShare { try? FileManager.default.removeItem(at: directory) } }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            var files: [PhotoResource] = []
+            var refreshed = false
+            let dates = Self.creationDates(count: draft.slides.count, now: now())
+            for (index, slide) in draft.slides.enumerated() {
+                if Task.isCancelled { set(.idle); return }
+                set(.preparing(done: index, total: draft.slides.count))
+                let data: Data
+                do {
+                    data = try await renderOnDevice(slide, session: session, profile: draft.platformProfile)
+                } catch SlidePostImageCache.LoadError.expired where !refreshed {
+                    refreshed = true
+                    await session.refresh(api: api, itemID: itemID)
+                    data = try await renderOnDevice(slide, session: session, profile: draft.platformProfile)
+                }
+                let file = directory.appending(path: String(format: "%02d", index + 1) + ".jpg")
+                try data.write(to: file, options: .atomic)
+                files.append(PhotoResource(url: file, kind: "image", creationDate: dates[index]))
+            }
+            switch destination {
+            case .photos:
+                try await writePhotos(files)
+                set(.savedToPhotos(files.count), autoDismiss: true)
+            case .share:
+                let caption = directory.appending(path: "caption.txt")
+                try Data(draft.caption.utf8).write(to: caption, options: .atomic)
+                shareItems = files.map(\.url) + [caption]; isSharing = true
+                retainsDirectoryForShare = true
+                set(.idle)
+            }
+        } catch { set(.failed(error.localizedDescription)) }
+    }
+
+    private func renderOnDevice(_ slide: SlidePostSlide, session: SlidePostSession, profile: String) async throws -> Data {
+        guard let asset = session.state?.assets.first(where: { $0.id == slide.assetID }) else { throw SlidePostExportError.downloadFailed }
+        return try await onDeviceRender(slide, asset, profile)
     }
 
     func saveToPhotos(session: SlidePostSession, revalidate: Revalidate) async {
