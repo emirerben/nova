@@ -82,6 +82,39 @@ import UIKit
         XCTAssertTrue(coordinator.records.isEmpty)
     }
 
+    func testDismissingAFinalFailureForgetsItsCaptureButARetryableOneKeepsIt() async throws {
+        let (coordinator, projectID, _, cleanup) = try visualCoordinator(attach: false)
+        defer { cleanup() }
+        let finalID = UUID()
+        ClipCaptureStore.shared.set(capturedRaw, for: finalID)
+        defer { ClipCaptureStore.shared.remove(finalID) }
+        coordinator.reportFailure(id: finalID, projectID: projectID, role: .visual, filename: "a.jpg", message: "Couldn't attach")
+        // A failed upload that still has a record listed for Retry.
+        coordinator.seedFailedUploadForTesting(projectID: projectID)
+        let retryableID = try XCTUnwrap(coordinator.records.last?.id)
+        ClipCaptureStore.shared.set(capturedRaw, for: retryableID)
+        defer { ClipCaptureStore.shared.remove(retryableID) }
+
+        coordinator.dismissFailure(id: finalID)
+        coordinator.dismissFailure(id: retryableID)
+
+        XCTAssertNil(ClipCaptureStore.shared.capture(for: finalID), "a final failure must not leave coarse location behind")
+        XCTAssertNotNil(ClipCaptureStore.shared.capture(for: retryableID), "Retry keeps the date and place")
+    }
+
+    func testClearingFailuresForARoleForgetsTheirFinalCaptures() async throws {
+        let (coordinator, projectID, _, cleanup) = try visualCoordinator(attach: false)
+        defer { cleanup() }
+        let recordID = UUID()
+        ClipCaptureStore.shared.set(capturedRaw, for: recordID)
+        defer { ClipCaptureStore.shared.remove(recordID) }
+        coordinator.reportFailure(id: recordID, projectID: projectID, role: .visual, filename: "a.jpg", message: "Couldn't attach")
+
+        coordinator.clearFailures(projectID: projectID, role: .visual)
+
+        XCTAssertNil(ClipCaptureStore.shared.capture(for: recordID))
+    }
+
     // MARK: Busy server (429/503) on reserve
 
     private static let reservationJSON = Data(#"{"urls":[{"reservation_id":"res-1","upload_url":"https://uploads.test/put","gcs_path":"pool/photo.jpg","upload_headers":{}}]}"#.utf8)

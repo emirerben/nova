@@ -559,6 +559,14 @@ final class CreationChatFixture: @unchecked Sendable {
             return ["id": "asset-\(index)", "kind": media.2, "status": "ready", "media_status": "available", "source_filename": "\(media.0).\(media.1)", "source_url": url, "display_url": url, "preview_url": poster, "duration_s": 8]
         }
         let slides: [[String: Any]] = assets.enumerated().map { index, asset in ["id": "slide-\(index)", "asset_id": asset["id"]!, "kind": asset["kind"]!] }
+        // `KRIA_SLIDE_POST_READY_DRAFT=1`: the READY post (`KRIA_SLIDE_POST_READY_THREAD`) already has a saved,
+        // rendered server draft, like a post opened from the gallery in production.
+        if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_READY_DRAFT"] == "1",
+           itemID.uppercased() == "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", slideDrafts[itemID] == nil {
+            slideDrafts[itemID] = ["schema_version": 1, "version": 1, "platform_profile": "instagram_carousel", "slides": slides, "cover_index": 0,
+                                   "caption": "Three moments, one story.", "user_edited": true, "rendered_version": 1]
+            slideRendered.insert(itemID)
+        }
         func lateAsset(status: String) -> [String: Any] {
             let url = Bundle.main.url(forResource: "trulli-street", withExtension: "jpg")?.absoluteString ?? ""
             return ["id": "asset-3", "kind": "image", "status": status, "media_status": "available", "source_filename": "late.jpg", "source_url": url, "display_url": url, "preview_url": url, "duration_s": 0]

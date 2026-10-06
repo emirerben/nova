@@ -311,17 +311,7 @@ struct NativeEditorView: View {
                 .padding(.vertical, 5)
                 .overlay(alignment: .bottomTrailing) {
                     if conversation != nil, session.pendingText == nil, !captionEditing {
-                        Button { showsConversation = true } label: {
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 23))
-                                .foregroundStyle(.white)
-                                .frame(width: 52, height: 52)
-                                .background(KriaColor.ink, in: Circle())
-                        }
-                        .accessibilityLabel("Open Kria conversation")
-                        .accessibilityIdentifier("native-editor-conversation")
-                        .padding(.trailing, 16)
-                        .padding(.bottom, 14)
+                        KriaAIButton(identifier: "native-editor-conversation") { showsConversation = true }
                     }
                 }
                 // The centered preview leaves horizontal editor margins on
