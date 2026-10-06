@@ -2217,7 +2217,8 @@ def test_narrated_burns_the_confirmed_title_like_the_cloud_intro(monkeypatch):
     [row] = variant["narrated_title_text_elements"]
     assert row["text"] == "Cacio e pepe in 10 minutes"
     assert (row["start_s"], row["end_s"]) == (0.0, pytest.approx(1.5))
-    assert row["source_params"]["read_only"] is True
+    # No `read_only` marker (KRI-465): the status route decides per request.
+    assert "read_only" not in row["source_params"]
     [overlay] = build_overlays_from_text_elements(
         [TextElement.model_validate(row)],
         video_duration_s=recipe.duration,
