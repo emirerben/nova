@@ -184,10 +184,13 @@ struct SlidePostDraft: Codable, Equatable, Sendable {
     var caption: String = ""
     var renderedVersion: Int? = nil
     var userEdited: Bool = false
+    /// Opaque server binding for the request that produced this draft.
+    var briefBinding: JSONValue? = nil
     enum CodingKeys: String, CodingKey {
         case version, slides, caption
         case schemaVersion = "schema_version", platformProfile = "platform_profile", coverIndex = "cover_index"
         case renderedVersion = "rendered_version", userEdited = "user_edited"
+        case briefBinding = "brief_binding"
     }
     /// Rendering stamps and server metadata do not turn a clean editor dirty.
     func hasSameContent(as other: Self) -> Bool {
@@ -315,13 +318,16 @@ struct SlidePostSaveRequest: Encodable, Sendable {
     let slides: [SlidePostSlide]
     let coverIndex: Int
     let caption: String
+    let briefBinding: JSONValue?
     init(draft: SlidePostDraft, expectedVersion: Int) {
         self.expectedVersion = expectedVersion; platformProfile = draft.platformProfile; slides = draft.slides
         coverIndex = draft.coverIndex; caption = draft.caption
+        briefBinding = draft.briefBinding
     }
     enum CodingKeys: String, CodingKey {
         case slides, caption
         case expectedVersion = "expected_version", platformProfile = "platform_profile", coverIndex = "cover_index"
+        case briefBinding = "brief_binding"
     }
 }
 

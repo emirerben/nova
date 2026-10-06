@@ -2,7 +2,7 @@
 
 Parent: https://linear.app/kria/issue/KRI-459
 
-This first delivery preserves complete request entries and binds new drafts to a
+This delivery preserves complete request entries and binds new drafts to a
 request version and the server's media snapshot. Later chat messages cannot change
 an approved request. Source replacement invalidates a pending approval; enriching
 analysis for the same source does not. The dispatch transaction checks again so a
@@ -34,7 +34,20 @@ pause. The downstream clip planner accepts a complete request up to 12,000
 characters; exceeding its limit preserves the full ledger/chat and asks the creator
 which part to work on first. No prefix is silently treated as the complete request.
 
-This PR does not prove that an exported video fulfills the request. Shared analysis
-connections, truthful checks and rendered journey verification follow in the next
-stacked deliveries. Model replay, local database tests and simulator checks are
-reported separately from paid live-model and physical-device export evidence.
+The connected paths preserve unchecked requirements and ask before a known
+requirement-breaking fallback. This does not prove that an exported video fulfills
+the request. Model replay, local database tests and simulator checks are reported
+separately from paid live-model and physical-device export evidence.
+
+The source fixes from PR #1404 (`bcd96657`) and #1405 (`36223175`) were still open
+on 2026-10-06. Their code is integrated here without merging either PR. Unlike the
+source alignment PR, this stack defaults `NARRATED_CLIP_ALIGNMENT_ENABLED` to false
+for the reader-first rollout. Enable it separately before testing bound narrated
+requests; while unavailable they request recovery rather than silently bucket clips.
+
+Capabilities continue to come from `services/creator_capabilities.py` and the
+existing editor tool registry. Montage supports resolved clip ordering and labels;
+Voiceover adds word-timed alignment when enabled; Talking uses its speech/text
+operations; Slides uses its slide-specific text/reorder operations. Each operation
+is checked against the actual format, renderer and flags, rather than claiming
+all four formats support every operation.

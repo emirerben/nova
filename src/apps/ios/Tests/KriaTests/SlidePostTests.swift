@@ -42,6 +42,19 @@ import XCTest
         XCTAssertNil(draft.validationMessage)
         draft.coverIndex = 2; XCTAssertNotNil(draft.validationMessage)
     }
+    func testBriefBindingSurvivesDraftRoundTripAndSaveRequest() throws {
+        let raw = Data(#"{"schema_version":1,"version":2,"platform_profile":"instagram_carousel","slides":[],"cover_index":0,"caption":"","user_edited":false,"brief_binding":{"brief_id":"b1","version":3}}"#.utf8)
+        let draft = try JSONDecoder().decode(SlidePostDraft.self, from: raw)
+        XCTAssertEqual(draft.briefBinding, .object(["brief_id": .string("b1"), "version": .number(3)]))
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(draft)) as? [String: Any]
+        let encodedBinding = encoded?["brief_binding"] as? [String: Any]
+        XCTAssertEqual(encodedBinding?["brief_id"] as? String, "b1")
+
+        let request = SlidePostSaveRequest(draft: draft, expectedVersion: 2)
+        let requestJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any]
+        let requestBinding = requestJSON?["brief_binding"] as? [String: Any]
+        XCTAssertEqual(requestBinding?["version"] as? Double, 3)
+    }
     func testAuthenticatedProposalIsReadOnlyUntilExplicitAcceptance() async throws {
         let saved = fixture()
         let response = SlidePostProposal(draft: try XCTUnwrap(saved.draft), baseVersion: 1, fallbackUsed: false, summary: "Review the order")

@@ -619,6 +619,96 @@ def _group_first(
     return result
 
 
+def _sequence_intents(
+    strategy: Mapping[str, Any], enabled: bool
+) -> list[tuple[str | None, str, list[str], str]]:
+    """The creator's stated sequence: (position, name, member ids, status), listed order.
+
+    Only ``order`` intents with a ``first`` / ``last`` position, or no position and no
+    ``order_by`` ("then the beach volleyball"), describe a sequence of groups. A basis
+    order (``order_by``: capture time / route) is the brief's, not this one's.
+    """
+    if not enabled:
+        return []
+    rows: list[tuple[str | None, str, list[str], str]] = []
+    for intent in strategy.get("resolved_clip_intents") or []:
+        if not isinstance(intent, Mapping) or intent.get("op") != "order":
+            continue
+        if intent.get("order_by") or intent.get("placeholder"):
+            continue
+        position = intent.get("position")
+        if position not in (None, "first", "last"):
+            continue
+        status = str(intent.get("status") or "resolved")
+        members = _members(intent) if status == "resolved" else []
+        rows.append((position, _nfc(intent.get("attribute")), members, status))
+    return rows
+
+
+def _apply_sequence(
+    ordered: Sequence[UnifiedClip], rows: Sequence[tuple[str | None, str, list[str], str]]
+) -> list[UnifiedClip]:
+    """Seat the described groups: ``first`` ones lead, ``last`` ones close, the rest follow.
+
+    A group is the clips the server matched to the creator's words (clip facts), kept in
+    the order they already had. A clip named by two groups belongs to the first one. Clips
+    no group names keep their relative order between the leading and the closing groups.
+    """
+    claimed: set[str] = set()
+    buckets: dict[str, list[UnifiedClip]] = {"first": [], "mid": [], "last": []}
+    refs = {clip.ref_id for clip in ordered}
+    for position, _name, members, _status in rows:
+        wanted = {m for m in members if m in refs and m not in claimed}
+        claimed |= wanted
+        buckets[position or "mid"].extend(clip for clip in ordered if clip.ref_id in wanted)
+    if not claimed:
+        return list(ordered)
+    rest = [clip for clip in ordered if clip.ref_id not in claimed]
+    return [*buckets["first"], *buckets["mid"], *rest, *buckets["last"]]
+
+
+def _sequence_outcomes(
+    rows: Sequence[tuple[str | None, str, list[str], str]], ordered: Sequence[UnifiedClip]
+) -> list[dict[str, Any]]:
+    """Did each described group land where the creator said? Read off the finished order."""
+    spot = {clip.ref_id: i for i, clip in enumerate(c for c in ordered if c.lane == "clip")}
+    named = {m for _p, _n, members, _s in rows for m in members if m in spot}
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for position, name, members, status in rows:
+        label = f"{position or 'then'}: {name}" if name else "the order you described"
+        row = {"op": "order", "name": label}
+        mine = [m for m in members if m in spot and m not in seen]
+        if status != "resolved":
+            out.append({**row, "status": "not_possible", "reason": "I couldn't tell which clips"})
+            continue
+        if not mine:
+            reason = (
+                "its clips are already in an earlier group"
+                if any(m in seen for m in members)
+                else "I found no clips of it"
+            )
+            out.append({**row, "status": "not_possible", "reason": reason})
+            continue
+        seen.update(mine)
+        ahead = {spot[m] for m in mine}
+        others = [i for r, i in spot.items() if i not in ahead and r not in named]
+        met = (
+            position is None
+            or not others
+            or (position == "first" and max(ahead) < min(others))
+            or (position == "last" and min(ahead) > max(others))
+        )
+        out.append(
+            {
+                **row,
+                "status": "met" if met else "partial",
+                "reason": None if met else "the clips did not end up there",
+            }
+        )
+    return out
+
+
 def _ordering_choice(strategy: Mapping[str, Any], enabled: bool) -> str | None:
     choice = strategy.get("ordering_choice") if enabled else None
     return choice if choice in ("group_first", "chronological") else None
@@ -800,6 +890,11 @@ def plan_unified_montage(
         # The creator chose grouping over strict filming order (KRI-282). Blocks are
         # built from the chronological order above, so each block stays chronological.
         ordered = _group_first(ordered, _group_owners(strategy))
+    # KRI-458: "start with X, then Y, end at Z" -- the creator's own sequence of
+    # described groups, matched to clips by the server, outranks every other order.
+    sequence = _sequence_intents(strategy, clip_intents_enabled)
+    if sequence:
+        ordered = _apply_sequence(ordered, sequence)
     ordered = _scatter(ordered, visuals)
     if view.order_by_capture:
         # Visuals carry no capture time: they keep their spread slot, and the
@@ -1411,6 +1506,7 @@ def _intent_outcomes(
     """
     if not enabled:
         return []
+    sequence = _sequence_outcomes(_sequence_intents(strategy, enabled), ordered)
     position = {clip.ref_id: i for i, clip in enumerate(ordered)}
     printed = {
         clip.ref_id: labels[clip.media_id].text for clip in ordered if clip.media_id in labels
@@ -1445,6 +1541,7 @@ def _intent_outcomes(
                 out.append({**row, "status": "not_possible", "reason": reason})
             else:
                 out.append({**row, "status": "met", "reason": None})
+    out.extend(sequence)
     if groups:
         out.append(_group_outcome(groups, _ordering_choice(strategy, enabled)))
         names = {fold_text(n) for n, _spots in groups}

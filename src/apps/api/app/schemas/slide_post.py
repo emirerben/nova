@@ -26,6 +26,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
 
+from app.kria.brief_binding import BriefBinding
 from app.pipeline.look_presets import LookPreset
 from app.pipeline.slide_post.profiles import PlatformProfile
 
@@ -278,6 +279,9 @@ class SlidePostDraft(BaseModel):
     # False for an untouched AI (composer) draft; True the moment the user
     # changes anything. Display-only — never gates rendering.
     user_edited: bool = False
+    # Immutable creator-request/asset identity authority for follow-up chat
+    # edits. Optional keeps legacy draft readers and rollback payloads valid.
+    brief_binding: BriefBinding | None = None
 
     @model_validator(mode="after")
     def _validate_cover_and_ids(self) -> SlidePostDraft:

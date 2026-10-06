@@ -44,6 +44,7 @@ from app.auth import SYNTHETIC_USER_ID, CurrentUser
 from app.config import settings
 from app.database import get_db
 from app.db_locks import CONTENT_PLAN_LOCK
+from app.kria.brief_binding import BriefBinding
 from app.kria.media_sources import (
     ClipCapture,
     ClipPlace,
@@ -53,6 +54,7 @@ from app.kria.media_sources import (
 from app.limiter import limiter
 from app.models import (
     ContentPlan,
+    CreationThread,
     CreatorAgentSession,
     Job,
     MusicTrack,
@@ -4238,6 +4240,9 @@ def _require_slide_post_profile(value: str) -> str:
     return normalized
 
 
+_SLIDE_POST_BINDING_REQUEST_MAX_CHARS = 12_000
+
+
 class SlidePostDraftBody(BaseModel):
     """PUT /{item_id}/slide-post request — a full replacement of the draft's
     user-editable fields. `version`/`rendered_version`/`user_edited` are
@@ -4247,6 +4252,10 @@ class SlidePostDraftBody(BaseModel):
     slides: list[SlideRef]
     cover_index: int = 0
     caption: str = ""
+    # A chat-edit proposal may carry a server-issued binding until this versioned
+    # save.  The route validates its item, thread, and media identities before
+    # accepting it; clients cannot use a valid digest as cross-item authority.
+    brief_binding: BriefBinding | None = None
     # Optional for the web editor's legacy payload. Native always supplies it.
     expected_version: int | None = Field(default=None, ge=0)
 
@@ -4283,7 +4292,10 @@ class SlidePostChatEditBody(BaseModel):
     only, so there is no version-conflict step. Asset ownership is still checked.
     """
 
-    message: str = Field(min_length=1, max_length=2000)
+    # Follow-up request text becomes part of the immutable binding.  Keep the
+    # complete message through the service's 12k context guard; never truncate
+    # it into a different creator request.
+    message: str = Field(min_length=1, max_length=_SLIDE_POST_BINDING_REQUEST_MAX_CHARS)
     expected_version: int = Field(default=0, ge=0)
     draft: SlidePostDraft | None = None
     turns: list[SlidePostChatTurn] = Field(default_factory=list, max_length=12)
@@ -4401,6 +4413,114 @@ def _validate_slide_ref_ownership(
             )
 
 
+def _slide_post_media_snapshot(
+    item: PlanItem, draft: SlidePostDraft, owned_assets: list[PlanItemAsset]
+) -> dict[str, Any]:
+    """Record only server-owned slide/media identities for a staged chat turn.
+
+    The draft is included as an audit snapshot of the unsaved state the model
+    edited.  It never authorizes the binding: the item id and every referenced
+    ready asset are checked again before a later PUT accepts the binding.
+    """
+    by_id = {asset.id: asset for asset in owned_assets}
+    assets = []
+    for ref in draft.slides:
+        asset = by_id[ref.asset_id]
+        assets.append(
+            {
+                "asset_id": str(asset.id),
+                "kind": asset.kind,
+                "gcs_generation": getattr(asset, "gcs_generation", None),
+                "content_fingerprint": getattr(asset, "content_fingerprint", None),
+            }
+        )
+    return {
+        "item_id": str(item.id),
+        "assets": assets,
+        "draft": draft.model_dump(mode="json", exclude={"brief_binding"}),
+    }
+
+
+async def _slide_post_thread_for_item(
+    item: PlanItem, user_id: uuid.UUID, db: AsyncSession
+) -> CreationThread | None:
+    """Find the one creator thread that owns this item, scoped to its creator."""
+    return (
+        await db.execute(
+            select(CreationThread).where(
+                CreationThread.creator_id == user_id,
+                CreationThread.active_plan_item_id == item.id,
+            )
+        )
+    ).scalar_one_or_none()
+
+
+def _binding_matches_slide_post(
+    binding: BriefBinding,
+    *,
+    thread: CreationThread,
+    item: PlanItem,
+    draft: SlidePostDraft,
+    owned_assets: list[PlanItemAsset],
+) -> bool:
+    """Validate a client-round-tripped binding against current server identity.
+
+    A digest detects a payload change but does not establish who minted it or
+    authorize its use.  Compare thread and media identities to the authenticated
+    item and ready asset rows as well.
+    """
+    if binding.thread_id != str(thread.id):
+        return False
+    snapshot = binding.media_snapshot
+    if not isinstance(snapshot, dict) or snapshot.get("item_id") != str(item.id):
+        return False
+    expected = _slide_post_media_snapshot(item, draft, owned_assets)
+    actual_assets = snapshot.get("assets")
+    if not isinstance(actual_assets, list):
+        return False
+
+    # Reordering slides is a supported edit.  A staged binding describes the
+    # pre-edit asset set, so it must remain valid when only display order moves.
+    def asset_map(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]] | None:
+        result = {str(row.get("asset_id")): row for row in rows if isinstance(row, dict)}
+        return result if len(result) == len(rows) and "None" not in result else None
+
+    return asset_map(actual_assets) == asset_map(expected["assets"])
+
+
+def _append_slide_post_request(previous: str, latest: str) -> str:
+    """Retain the complete prior request and latest user turn without truncation."""
+    if not previous:
+        return latest
+    return f"{previous}\n\nLatest message: {latest}"
+
+
+def _new_slide_post_binding(
+    *,
+    thread: CreationThread,
+    item: PlanItem,
+    draft: SlidePostDraft,
+    owned_assets: list[PlanItemAsset],
+    latest_message: str,
+    previous: BriefBinding | None,
+) -> BriefBinding:
+    """Mint a route-authoritative binding for this exact unsaved editor state."""
+    request = _append_slide_post_request(
+        previous.creator_request if previous is not None else "", latest_message
+    )
+    brief = previous.brief.model_copy(deep=True) if previous and previous.brief else None
+    state = "pinned" if brief is not None else "none"
+    media_snapshot = _slide_post_media_snapshot(item, draft, owned_assets)
+    return BriefBinding(
+        thread_id=str(thread.id),
+        state=state,
+        brief=brief,
+        creator_request=request,
+        media_snapshot=media_snapshot,
+        digest=BriefBinding._digest(str(thread.id), state, brief, request, media_snapshot),
+    )
+
+
 async def _maybe_rebuild_slide_post(item: PlanItem, user_id: uuid.UUID, db: AsyncSession) -> None:
     """After a draft write, rebuild the rendered variant if one already exists.
 
@@ -4478,6 +4598,27 @@ async def put_slide_post_draft(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": "slide_post_invalid", "message": str(exc)},
         ) from exc
+    # Old clients do not send the optional field: preserve the binding already
+    # saved with the draft.  A staged chat proposal can supply a new binding,
+    # but only rollout writers may replace it and only after server ownership
+    # checks for the creator thread, item, and every referenced asset.
+    if body.brief_binding is not None and settings.brief_binding_for(user.id):
+        thread = await _slide_post_thread_for_item(item, user.id, db)
+        if thread is None or not _binding_matches_slide_post(
+            body.brief_binding,
+            thread=thread,
+            item=item,
+            draft=new_draft,
+            owned_assets=owned_assets,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "slide_post_binding_invalid",
+                    "message": "This staged edit no longer belongs to this slide post.",
+                },
+            )
+        new_draft = new_draft.model_copy(update={"brief_binding": body.brief_binding})
     item.slide_post = new_draft.model_dump(mode="json")
     flag_modified(item, "slide_post")
     await db.commit()
@@ -4655,6 +4796,66 @@ async def chat_edit_slide_post(
         # The editor's draft wins over the stored one; the server's version is only
         # the base the client's next PUT must quote.
         draft = draft.model_copy(update={"version": max(server_version, 1)})
+        # A legacy editor knows nothing about bindings.  Keep an already saved
+        # binding available to the service during a reader/rollback turn.
+        if draft.brief_binding is None and stored is not None:
+            draft = draft.model_copy(update={"brief_binding": stored.brief_binding})
+
+    brief_binding: BriefBinding | None = None
+    if settings.brief_binding_for(user.id):
+        thread = await _slide_post_thread_for_item(item, user.id, db)
+        if thread is None:
+            return SlidePostChatEditResponse(
+                outcome="unsupported",
+                reply=(
+                    "This slide post is not linked to a creator thread, so I left your draft "
+                    "unchanged."
+                ),
+                base_version=server_version,
+            )
+        previous = draft.brief_binding
+        if previous is not None and not _binding_matches_slide_post(
+            previous,
+            thread=thread,
+            item=item,
+            draft=draft,
+            owned_assets=owned_assets,
+        ):
+            same_thread_and_item = (
+                previous.thread_id == str(thread.id)
+                and isinstance(previous.media_snapshot, dict)
+                and previous.media_snapshot.get("item_id") == str(item.id)
+            )
+            if not same_thread_and_item:
+                # A submitted binding can be internally consistent while still
+                # belonging to another item.  Never use it as request context.
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "code": "slide_post_binding_invalid",
+                        "message": "This staged edit does not belong to this slide post.",
+                    },
+                )
+            # The asset set changed after the prior turn.  Preserve its complete
+            # creator request while minting a fresh snapshot for these assets;
+            # silently dropping it would erase an earlier requirement.
+        brief_binding = _new_slide_post_binding(
+            thread=thread,
+            item=item,
+            draft=draft,
+            owned_assets=owned_assets,
+            latest_message=body.message,
+            previous=previous,
+        )
+        if len(brief_binding.creator_request) > _SLIDE_POST_BINDING_REQUEST_MAX_CHARS:
+            return SlidePostChatEditResponse(
+                outcome="unsupported",
+                reply=(
+                    "This request context is too long to safely apply as a slide edit. "
+                    "Your draft is unchanged."
+                ),
+                base_version=server_version,
+            )
     return await run_slide_post_chat_edit(
         draft=draft,
         assets_by_id={asset.id: asset for asset in owned_assets},
@@ -4662,6 +4863,7 @@ async def chat_edit_slide_post(
         turns=[t.model_dump() for t in body.turns],
         user_id=user.id,
         server_version=server_version,
+        brief_binding=brief_binding,
         run_context=_creator_run_context(
             request,
             creator_id=user.id,

@@ -67,6 +67,7 @@ from app.pipeline.silence_cut import (
     removal_cut_points,
 )
 from app.services.clip_speech import speech_coverage
+from app.services.clip_understanding import understanding_payload
 from app.services.pipeline_trace import record_pipeline_event
 
 log = structlog.get_logger()
@@ -138,13 +139,13 @@ class BrollWindow:
 
 
 def _content_type(meta: object) -> str:
-    # getattr default keeps this forward-compatible with the ClipMeta dataclass
-    # (orchestration carrier) and tolerant of a drifted/missing Lane A label.
-    return str(getattr(meta, "content_type", "broll") or "broll")
+    # Read the canonical shared projection. ClipMeta stores this as
+    # `clip_content_type` because older modules already read the bare name.
+    return str(understanding_payload(meta).get("content_type") or "broll")
 
 
 def _audio_type(meta: object) -> str:
-    return str(getattr(meta, "audio_type", "ambient") or "ambient")
+    return str(understanding_payload(meta).get("audio_type") or "ambient")
 
 
 def select_spine(
