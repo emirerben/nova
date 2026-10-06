@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.103.0] - 2026-10-06
+
+### Changed
+- fix(text): keep "Slide down" intros animated on render and text Save (#1421) <!-- release-pr: 1421 -->
+
 ## [0.78.102.0] - 2026-10-06
 
 ### Changed
