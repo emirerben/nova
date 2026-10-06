@@ -62,7 +62,7 @@ export const TYPE_COPY: Record<
     meta: "1 talking clip + extra footage",
   },
   slides: {
-    label: "Photo & video post",
+    label: "Slider",
     desc: "An ordered mixed-media post — TikTok photo mode or Instagram carousel",
     meta: "Photos + videos, no editing required",
   },

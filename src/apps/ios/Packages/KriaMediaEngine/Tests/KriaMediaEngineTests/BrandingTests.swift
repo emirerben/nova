@@ -90,6 +90,30 @@ final class BrandingTests: XCTestCase {
         XCTAssertEqual(markOrigin.y, 222.5, accuracy: 1.0)
     }
 
+    /// The still-image placement (photo slides, KRI-472) is the compositor's,
+    /// flipped to top-left drawing coordinates. On 1080x1920 it is the brand
+    /// kit's `overlay_xy` for the standard tile; on 4:5 it is the same
+    /// height-bound scale the API's slide renderer uses.
+    func testWatermarkTileRectIsTheCompositorPlacementInDrawingCoordinates() {
+        let tile = CGSize(width: 193, height: 119)
+        let tall = KriaBranding.watermarkTileRect(canvas: CGSize(width: 1080, height: 1920), tileSize: tile)
+        XCTAssertEqual(tall.minX, 30, accuracy: 0.01)
+        XCTAssertEqual(tall.minY, 1386, accuracy: 0.01)
+        XCTAssertEqual(tall.size, tile)
+
+        let carousel = KriaBranding.watermarkTileRect(canvas: CGSize(width: 1080, height: 1350), tileSize: tile)
+        let scale = 1350.0 / 1920.0
+        XCTAssertEqual(carousel.minX, 30 * scale, accuracy: 0.01)
+        XCTAssertEqual(carousel.maxY, 1350 - 415 * scale, accuracy: 0.01)
+        XCTAssertEqual(carousel.width, 193 * scale, accuracy: 0.01)
+
+        // The phone renders photo slides at 2x: everything doubles.
+        let doubled = KriaBranding.watermarkTileRect(canvas: CGSize(width: 2160, height: 3840), tileSize: tile)
+        XCTAssertEqual(doubled.minX, 60, accuracy: 0.01)
+        XCTAssertEqual(doubled.minY, 2772, accuracy: 0.01)
+        XCTAssertEqual(doubled.width, 386, accuracy: 0.01)
+    }
+
     /// Every branding file the engine ships resolves out of the LIBRARY's
     /// bundle. Unconditional on purpose: `testBundledAssetsMatchTheBrandKit`
     /// skips when the brand kit is not in the checkout, but "is the file in

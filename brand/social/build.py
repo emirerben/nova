@@ -38,18 +38,23 @@ from kria_brand import (  # noqa: E402
 HERE = Path(__file__).resolve().parent
 DIST = HERE / "dist"
 
-# The iOS renderer needs these at runtime and `brand/` is not part of the app
-# bundle, so the build copies them into the Swift package's Resources. Rather
-# than keep a second hand-maintained copy, the build writes both and
-# `BrandingTests` fails if they drift.
-RUNTIME_ASSET_DIRS = (
-    REPO_ROOT / "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/Resources",
-)
-RUNTIME_ASSET_FILES = (
-    "watermark/kria-watermark-mist-standard.png",
-    "watermark/kria-watermark-graphite-standard.png",
-    "outro/kria-outro-paper.mp4",
-)
+# The iOS renderer and the API's slide-post renderer need these at runtime and
+# `brand/` is part of neither the app bundle nor the API image, so the build
+# copies them into each runtime's asset directory. Rather than keep a second
+# hand-maintained copy, the build writes all of them and a test on each side
+# fails if they drift: `BrandingTests` (iOS) and
+# `tests/pipeline/test_slide_post_build.py` (API).
+RUNTIME_ASSETS = {
+    REPO_ROOT / "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/Resources": (
+        "watermark/kria-watermark-mist-standard.png",
+        "watermark/kria-watermark-graphite-standard.png",
+        "outro/kria-outro-paper.mp4",
+    ),
+    # Slide posts (KRI-472) stamp the same default mark on every slide.
+    REPO_ROOT / "src/apps/api/assets/branding": (
+        "watermark/kria-watermark-mist-standard.png",
+    ),
+}
 
 # --- placements (all verified against the chrome map before export) -----------
 WATERMARK_SIZES = {"compact": 108, "standard": 132, "demo": 165}
@@ -820,9 +825,9 @@ def pick_variant(frame: Path, at: float, slot: tuple[int, int],
 
 def sync_runtime_assets() -> None:
     """Copy the files the renderers load into each runtime that bundles them."""
-    for directory in RUNTIME_ASSET_DIRS:
+    for directory, files in RUNTIME_ASSETS.items():
         directory.mkdir(parents=True, exist_ok=True)
-        for rel in RUNTIME_ASSET_FILES:
+        for rel in files:
             shutil.copyfile(DIST / rel, directory / Path(rel).name)
 
 

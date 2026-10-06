@@ -83,7 +83,7 @@ public enum KriaBranding {
     /// missing resource reports — a failure the creator forwards should name
     /// the file to go looking for.
     static var outroFileName: String { "\(outroResourceName).mp4" }
-    static func watermarkFileName(_ variant: Variant) -> String { "\(variant.resourceName).png" }
+    public static func watermarkFileName(_ variant: Variant) -> String { "\(variant.resourceName).png" }
 
     public static func outroURL() -> URL? {
         Bundle.module.url(forResource: outroResourceName, withExtension: "mp4")
@@ -139,6 +139,16 @@ public enum KriaBranding {
         return CGAffineTransform(scaleX: scale, y: scale)
             .concatenating(CGAffineTransform(translationX: (markLeft - tilePad) * scale,
                                              y: (markBottomInset - tilePad) * scale))
+    }
+
+    /// The padded tile's frame on `canvas` in top-left (UIKit / Core Graphics
+    /// drawing) coordinates: the placement `tileTransform` gives the video
+    /// compositor, for a renderer that draws a still instead of compositing a
+    /// timeline (photo slides, KRI-472). The API's slide renderer mirrors this
+    /// rule in app/pipeline/slide_post/build.py.
+    public static func watermarkTileRect(canvas: CGSize, tileSize: CGSize) -> CGRect {
+        let placed = CGRect(origin: .zero, size: tileSize).applying(tileTransform(canvas: canvas))
+        return CGRect(x: placed.minX, y: canvas.height - placed.maxY, width: placed.width, height: placed.height)
     }
 
     /// - Returns: nil only for an empty time range. A PNG that is absent or

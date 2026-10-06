@@ -271,7 +271,18 @@ def test_run_slide_post_job_raises_on_empty_draft(monkeypatch) -> None:
     assert exc_info.value.reason == "empty_draft"
 
 
-def test_run_slide_post_job_reuses_already_normalized_slide(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("cached_suffix", "reused"),
+    [
+        ("_n2_wm1", True),
+        # Cached before the watermark (KRI-472): must re-render, never ship
+        # the unbranded derivative.
+        ("_n2", False),
+    ],
+)
+def test_run_slide_post_job_reuses_already_normalized_slide(
+    monkeypatch, cached_suffix: str, reused: bool
+) -> None:
     """A pure reorder/caption edit must not re-encode an unchanged slide —
     only the normalize step is skipped; the slide is still downloaded to
     build this render's preview segment."""
@@ -300,7 +311,8 @@ def test_run_slide_post_job_reuses_already_normalized_slide(monkeypatch) -> None
     ]
     monkeypatch.setattr(gb, "_sync_session", lambda: _FakeSession(job, item, assets))
     existing_key = (
-        f"generative-jobs/{job_id}/slides/normalized/{fingerprint}_1080x1920_noedits_n2.jpg"
+        f"generative-jobs/{job_id}/slides/normalized/"
+        f"{fingerprint}_1080x1920_noedits{cached_suffix}.jpg"
     )
     _patch_storage_and_ffmpeg(monkeypatch, existing_normalized={existing_key})
 
@@ -315,8 +327,8 @@ def test_run_slide_post_job_reuses_already_normalized_slide(monkeypatch) -> None
 
     gb._run_slide_post_job(job_id, render_trace_id="trace-5")
 
-    assert normalize_calls == [], (
-        "normalize must be skipped when the content-addressed key already exists"
+    assert normalize_calls == ([] if reused else ["called"]), (
+        "normalize must be skipped only when the current content-addressed key exists"
     )
 
 

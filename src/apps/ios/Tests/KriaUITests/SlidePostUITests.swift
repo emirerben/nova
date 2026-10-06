@@ -26,7 +26,7 @@ import XCTest
         XCTAssertFalse(app.buttons["open-current-cut"].exists)
     }
 
-    /// New chat -> Photo & video post lands straight in the one slide layout (no "Start your post"
+    /// New chat -> Slider lands straight in the one slide layout (no "Start your post"
     /// screen): preview, strip, AI button and Save/Create, then Create and the contextual Kria sheet.
     func testSlidePostCreationIsTheRichLayoutThenCreateThenKriaPropose() {
         let app = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1"])

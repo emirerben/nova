@@ -5370,8 +5370,7 @@ async def upload_urls(
         _reject_media(
             "creation_thread.upload_urls.rejected",
             422,
-            "This item is a Photo & video post — add photos and videos "
-            "from its Visuals pool above, not here.",
+            "This item is a Slider — add photos and videos from its Visuals pool above, not here.",
             reason="slide_post_fence",
             thread_id=str(thread.id),
         )
@@ -5703,8 +5702,7 @@ async def attach_media(
         _reject_media(
             "creation_thread.attach_media.rejected",
             422,
-            "This item is a Photo & video post — add photos and videos "
-            "from its Visuals pool above, not here.",
+            "This item is a Slider — add photos and videos from its Visuals pool above, not here.",
             reason="slide_post_fence",
             thread_id=str(thread.id),
         )

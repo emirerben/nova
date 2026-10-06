@@ -13,7 +13,7 @@ import uuid
 import pytest
 from pydantic import ValidationError
 
-from app.pipeline.slide_post.build import SLIDE_IMAGE_NORMALIZER_VERSION
+from app.pipeline.slide_post.build import SLIDE_IMAGE_NORMALIZER_VERSION, SLIDE_WATERMARK_VERSION
 from app.routes.plan_items import _slide_post_export_is_current
 from app.schemas.slide_post import (
     MAX_SLIDE_TEXT_LENGTH,
@@ -107,6 +107,7 @@ def test_export_freshness_requires_complete_unique_rendered_assets() -> None:
         "slide_post": {
             "validation": {"errors": []},
             "normalizer_version": SLIDE_IMAGE_NORMALIZER_VERSION,
+            "watermark_version": SLIDE_WATERMARK_VERSION,
         },
     }
     assert _slide_post_export_is_current(draft, valid)
@@ -115,6 +116,13 @@ def test_export_freshness_requires_complete_unique_rendered_assets() -> None:
         assert not _slide_post_export_is_current(
             draft,
             {**valid, "slide_post": {**valid["slide_post"], "normalizer_version": stale}},
+        )
+    # Rendered before the watermark (KRI-472) or an older one => stale, so an
+    # unbranded export re-renders instead of downloading.
+    for stale in (SLIDE_WATERMARK_VERSION - 1, None):
+        assert not _slide_post_export_is_current(
+            draft,
+            {**valid, "slide_post": {**valid["slide_post"], "watermark_version": stale}},
         )
     assert not _slide_post_export_is_current(
         draft, {**valid, "slides": [valid["slides"][0], valid["slides"][0]]}

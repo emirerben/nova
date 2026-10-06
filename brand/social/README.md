@@ -205,7 +205,20 @@ mark is not something they can select, move or trim. Branding is added by
   `build.py pick` does offline) is not wired into the renderer yet. At the
   approved weight a bright shot washes the mark out either way — see §2.
 
-Cloud renders are a separate path and are **not** branded by this change.
+**Sliders (slide posts) carry the mark on every slide**, photo or video (KRI-472),
+whether the phone renders them or the API does. The mark is the same `mist`
+standard tile in the same corner, scaled with the canvas by the rule
+`tileTransform` uses (a 4:5 carousel slide gets a 0.703× mark). They get no
+outro, because a slide is a still or a standalone clip, not a timeline.
+
+- Phone: `SlidePostOnDeviceRender` draws it at `KriaBranding.watermarkTileRect`.
+- API: `app/pipeline/slide_post/build.py` composites
+  `src/apps/api/assets/branding/kria-watermark-mist-standard.png`, which
+  `build.py` also writes (`RUNTIME_ASSETS`). A test in
+  `tests/pipeline/test_slide_post_build.py` fails if that copy drifts.
+- Details: `docs/pipelines/slide-post.md` → "Watermark".
+
+Other cloud renders are a separate path and are **not** branded.
 
 ---
 

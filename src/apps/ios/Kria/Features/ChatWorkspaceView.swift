@@ -1349,7 +1349,7 @@ private struct CreationWorkspaceView: View {
     private func selectFormat(_ format: CreationFormat) {
         guard capabilitiesAreAuthoritative, availableFormats.contains(format) else { return }
         if format.usesVisualPool, attachedClipCount > 0 {
-            failure = ChatFailure("Photo & video posts use Photos & videos. Remove primary footage before switching formats.")
+            failure = ChatFailure("Sliders use Photos & videos. Remove primary footage before switching formats.")
             return
         }
         let pendingClips = model.uploads.records.filter { $0.projectID == project.id && $0.role == .clip }.count
@@ -2010,7 +2010,7 @@ enum CreationFormat: String, CaseIterable, Identifiable {
         case .montage: "Montage"
         case .narrated: "Narrated"
         case .talkingToCamera: "Talking"
-        case .slides: "Photo & video post"
+        case .slides: "Slider"
         }
     }
     var choiceSentence: String {
@@ -2018,7 +2018,7 @@ enum CreationFormat: String, CaseIterable, Identifiable {
         case .montage: "Let’s make a montage"
         case .narrated: "Let’s make it narrated"
         case .talkingToCamera: "Let’s make a talking video"
-        case .slides: "Let’s make a photo and video post"
+        case .slides: "Let’s make a slider"
         }
     }
     var imageName: String {

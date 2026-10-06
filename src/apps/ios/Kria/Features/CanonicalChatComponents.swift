@@ -369,8 +369,8 @@ private struct SlidePostFormatCard: View {
                 .buttonStyle(.plain)
                 .disabled(isBusy)
                 .accessibilityIdentifier("format-slides")
-                .accessibilityLabel("Photo & video post")
-                .accessibilityHint("Choose Photo & video post as this creation format")
+                .accessibilityLabel("Slider")
+                .accessibilityHint("Choose Slider as this creation format")
                 // The moving strip has four visual frames. Keep its children
                 // out of Accessibility so this card's frame stays at 156pt and
                 // cannot overlap the narrated card beside it.
@@ -390,7 +390,7 @@ private struct SlidePostFormatCard: View {
                 .accessibilityLabel(paused ? "Play format preview" : "Pause format preview")
                 .accessibilityIdentifier("slide-format-cover-playback")
             }
-            Text("Photo & video post")
+            Text("Slider")
                 .font(KriaFont.display(18))
                 .foregroundStyle(KriaColor.ink)
         }

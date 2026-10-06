@@ -78,7 +78,7 @@ const FORMATS: Array<{ value: CreationFormat; label: string; description: string
   { value: "montage", label: "Montage", description: "Music-led cuts from your strongest moments." },
   { value: "narrated_planned", label: "Narrated", description: "Let your voice guide the story." },
   { value: "subtitled", label: "Talking to camera", description: "A clean, captioned edit from your delivery." },
-  { value: "slides", label: "Photo & video post", description: "An ordered mixed-media post, like a TikTok photo post or Instagram carousel." },
+  { value: "slides", label: "Slider", description: "An ordered mixed-media post, like a TikTok photo post or Instagram carousel." },
 ];
 const FORMAT_GUIDANCE: Record<CreationFormat, { title: string; description: string }> = {
   montage: {

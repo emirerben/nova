@@ -352,7 +352,7 @@ private struct GalleryProjectCard: View {
                 .font(KriaFont.body(13).weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
             if project.isSlidePost {
-                Text(project.slideCount.map { "Photo & video post · \($0) slides" } ?? "Photo & video post")
+                Text(project.slideCount.map { "Slider · \($0) slides" } ?? "Slider")
                     .font(KriaFont.body(11)).foregroundStyle(KriaColor.zinc)
             }
             Text(project.updatedAt, style: .relative)

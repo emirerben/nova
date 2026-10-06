@@ -1,4 +1,5 @@
 import ImageIO
+import KriaMediaEngine
 import UniformTypeIdentifiers
 import XCTest
 @testable import Kria
@@ -111,6 +112,29 @@ import XCTest
         // And far from the text nothing changed.
         let i = (Int(Double(plain.height) * 0.05) * plain.width + plain.width / 4) * 4
         XCTAssertEqual(plain.bitmap[i], texted.bitmap[i])
+    }
+
+    /// Pixels in `rect` the mist mark lifts off pure red (its grey adds green; red footage has none).
+    private func markedPixels(_ bitmap: [UInt8], width: Int, in rect: CGRect) -> Int {
+        var count = 0
+        for y in Int(rect.minY)..<Int(rect.maxY) {
+            for x in Int(rect.minX)..<Int(rect.maxX) where bitmap[(y * width + x) * 4 + 1] > 50 { count += 1 }
+        }
+        return count
+    }
+
+    /// KRI-472: every slide carries the Kria mark bottom-left, where the server render and the video engine put
+    /// it, scaled with the canvas (the 4:5 carousel gets the smaller, height-bound mark), and nowhere else.
+    func testEverySlideCarriesTheWatermarkBottomLeft() async throws {
+        let url = try photo(name: "w.jpg")   // left half red, so the mark's corner is pure red
+        let tile = try XCTUnwrap(UIImage(contentsOfFile: try XCTUnwrap(KriaBranding.watermarkURL(.mist)).path)).size
+        for profile in ["tiktok_photo", "instagram_carousel"] {
+            let out = try decoded(try await render(slide("a"), asset("asset-a", source: url), profile: profile))
+            let rect = KriaBranding.watermarkTileRect(canvas: out.size, tileSize: tile)
+            XCTAssertGreaterThan(markedPixels(out.bitmap, width: out.width, in: rect), 500, profile)
+            let above = rect.offsetBy(dx: 0, dy: -rect.minY + out.size.height * 0.1)
+            XCTAssertEqual(markedPixels(out.bitmap, width: out.width, in: above), 0, "\(profile): the mark is drawn once, bottom-left")
+        }
     }
 
     func testExpiredSignedURLSurfacesForTheCallerToRefresh() async throws {
