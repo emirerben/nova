@@ -16,7 +16,7 @@ from app.pipeline.lipsync_montage import (
 )
 from app.pipeline.phone_guided_plan import compile_phone_guided_plan
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
-from app.schemas.user_song import TakeAlignment, UserSongPlan, UserSongTake
+from app.schemas.user_song import PlacementCandidate, TakeAlignment, UserSongPlan, UserSongTake
 from tests.pipeline.user_song_helpers import (
     SONG_ITEM_ID,
     alignment,
@@ -92,15 +92,19 @@ def test_switch_falls_back_to_a_beat_when_the_song_has_no_lyric_lines():
     )
 
 
-def test_a_take_inside_another_takes_coverage_is_left_out():
-    contained = take("C", 5)  # covers 15.3-19.7, fully inside A
+def test_a_take_inside_another_takes_coverage_is_never_placed_so_nothing_is_dropped_redundant():
+    contained = take("C", 5)  # claims 15-20, fully inside A
     result = plan(
         [take("A"), take("B"), contained],
         [confident("A", 10), confident("B", 25), confident("C", 15)],
     )
     assert [b["media_id"] for b in blocks(result)] == ["A", "B"]
-    assert {"media_id": "C", "reason": "overlapped"} in result.song_receipt["dropped"]
+    # Assignment refuses the conflicting claim, so the tiler never meets a
+    # redundant take: C is kept as muted B-roll with its assignment reason.
+    reasons = {row["media_id"]: row["reason"] for row in result.song_receipt["dropped"]}
+    assert reasons == {"C": "kept_as_broll"}
     assert "C" not in result.user_song.takes
+    assert "overlapped" not in reasons.values()
 
 
 def test_each_take_is_used_once_in_song_order_whatever_the_attachment_order():
@@ -135,7 +139,8 @@ def test_gap_without_broll_shrinks_to_the_largest_covered_span():
     assert [b["media_id"] for b in blocks(result)] == ["B"]
     assert result.user_song.window_start_s == pytest.approx(30.3)
     assert result.user_song.window_end_s == pytest.approx(49.7)
-    assert {"media_id": "A", "reason": "disconnected"} in result.song_receipt["dropped"]
+    assert {"media_id": "A", "reason": "gap_unfillable"} in result.song_receipt["dropped"]
+    assert result.song_receipt["placed_outside_ids"] == ["A"]
 
 
 def test_small_gap_is_bridged_by_the_takes_own_spare_margin():
@@ -182,26 +187,34 @@ def test_every_segment_is_at_least_a_second():
     assert all(c.output_duration_s >= 1.0 - 1e-6 for c in result.snapshot.fast_cuts)
 
 
-def test_ambiguous_and_unmatched_takes_are_never_placed_by_song_time():
+def test_ambiguous_takes_are_placed_by_likelihood_unmatched_ones_stay_broll():
     clips = [take("A", 30), take("X", 20), take("U", 20)]
     rows = [confident("A", 10), ambiguous("X", 60, 80), unmatched("U")]
     result = plan(clips, rows)
-    assert set(result.user_song.takes) == {"A"}
+    # No status gates placement: X is placed at its candidate nearest A. Nothing
+    # connects it to A, so the likelihood-weighted best span is A and X rides as
+    # unused media with a named reason (never silently lost).
     assert [b["media_id"] for b in blocks(result)] == ["A"]
+    assert result.song_receipt["placed_outside_ids"] == ["X"]
     reasons = {row["media_id"]: row["reason"] for row in result.song_receipt["dropped"]}
-    assert reasons == {"X": "kept_as_broll", "U": "kept_as_broll"}
-    # Kept as muted B-roll after the sung take, in creator order, never pinned.
-    assert result.song_receipt["kept_broll_ids"] == ["X", "U"]
-    assert [c.media_id for c in result.snapshot.fast_cuts] == ["A", "X", "U"]
+    assert reasons == {"X": "gap_unfillable", "U": "kept_as_broll"}
+    assert result.song_receipt["kept_broll_ids"] == ["U"]
+    assert [c.media_id for c in result.snapshot.fast_cuts] == ["A", "U"]
     assert {ref.media_id for ref in result.snapshot.media} == {"A", "X", "U"}
+    assert set(result.user_song.takes) == {"A"}
 
 
-def test_uncertain_take_may_serve_as_broll_but_is_not_pinned():
+def test_a_placed_take_is_never_reused_as_filler():
     clips = [take("A", 12), take("B", 20), take("X", 12)]
     rows = [confident("A", 10), confident("B", 30), ambiguous("X", 60, 80)]
     result = plan(clips, rows)
-    assert "X" in result.song_receipt["broll_ids"]
-    assert "X" not in result.user_song.takes
+    # A->B has a gap only X could fill, but X is a placed take (at 60): it plays in
+    # sync at its own delta only, so it is never muted filler between A and B.
+    assert "X" not in result.song_receipt["broll_ids"]
+    in_sync_ids = set(result.user_song.takes)
+    for cut in result.snapshot.fast_cuts:
+        if cut.media_id == "X":
+            assert "X" in in_sync_ids
 
 
 def test_creator_confirmed_order_resolves_an_ambiguous_take_to_its_fitting_alternate():
@@ -213,6 +226,7 @@ def test_creator_confirmed_order_resolves_an_ambiguous_take_to_its_fitting_alter
     assert [b["media_id"] for b in blocks(result)] == ["A", "X", "B"]
     pinned = result.user_song.takes["X"]
     assert pinned.delta_s == 35 and pinned.confirmed_by_creator is True
+    assert pinned.position_basis == "creator_position"
     assert result.user_song.takes["A"].confirmed_by_creator is False
     assert_in_sync(result, compiled_plan(result))
 
@@ -236,11 +250,91 @@ def test_confirmed_order_does_not_place_an_unmatched_take():
     assert "U" in {ref.media_id for ref in result.snapshot.media}
 
 
-def test_a_take_missing_from_the_confirmed_order_stays_unplaced():
+def test_a_take_missing_from_the_confirmed_order_is_still_placed_by_likelihood():
     clips = [take("A", 30), take("X", 20), take("B", 30)]
     rows = [confident("A", 10), ambiguous("X", 35), confident("B", 50)]
     result = plan(clips, rows, order=["A", "B"])
-    assert "X" not in result.user_song.takes
+    assert result.user_song.takes["X"].confirmed_by_creator is False
+    assert result.user_song.takes["X"].delta_s == 35
+
+
+def test_every_take_with_a_candidate_is_placed_and_tiles_without_redundant_drops():
+    clips = [take(f"T{i}", 14) for i in range(5)]
+    rows = [confident("T0", 10), ambiguous("T1", 22), confident("T2", 33)]
+    rows += [ambiguous("T3", 44, 90), confident("T4", 55)]
+    result = plan(clips, rows)
+    assert [b["media_id"] for b in blocks(result)] == [f"T{i}" for i in range(5)]
+    assert set(result.user_song.takes) == {f"T{i}" for i in range(5)}
+    assert all(r["reason"] != "overlapped" for r in result.song_receipt["dropped"])
+    assert result.song_receipt["placed_outside_ids"] == []
+    assert_in_sync(result, compiled_plan(result))
+
+
+def test_own_footage_bridge_cuts_on_a_lyric_line_inside_the_gap():
+    # A matched 0-12 s (song 10.3-22), B matched from 3 s in (song 33-45); both
+    # have spare footage, so the 11 s gap closes with their own frames. Lines start
+    # every 4 s from 2.0: 30.0 is the one inside the reachable cut range.
+    clips = [take("A", 25), take("B", 20)]
+    rows = [lyric_row("A", 10, 0, 12), lyric_row("B", 29, 3, 15)]
+    result = plan(clips, rows)
+    assert result.song_receipt["bridged_gaps"] == 1
+    a, b = blocks(result)
+    assert a["song_end_s"] == b["song_start_s"]
+    assert result.song_receipt["switches"][-1]["snapped_to"] == "line"
+    assert a["song_end_s"] % 4 == pytest.approx(2.0)
+    assert_in_sync(result, compiled_plan(result))
+
+
+def test_a_gap_beyond_own_footage_is_filled_from_visuals_not_a_placed_take():
+    pics = [photo(f"2222222{i}-2222-4222-8222-222222222222") for i in range(3)]
+    clips = [take("A", 12), take("B", 20), *pics]
+    result = plan(clips, [confident("A", 10), confident("B", 30)])
+    ids = [c.media_id for c in result.snapshot.fast_cuts]
+    assert ids[0] == "A" and ids[-1] == "B" and {p.media_id for p in pics} <= set(ids)
+    assert result.song_receipt["placed_outside_ids"] == []
+
+
+def test_irreducible_gap_keeps_the_best_likelihood_span_and_names_the_rest():
+    # A is a sure take; B is a weak long guess far away. The weighted span picks A
+    # even though B covers more seconds.
+    weak = TakeAlignment(
+        media_id="B",
+        status="ambiguous",
+        delta_s=60,
+        confidence=0.2,
+        candidates=[PlacementCandidate(delta_s=60, likelihood=0.2, method="lyrics")],
+    )
+    clips = [take("A", 14), take("B", 30)]
+    result = plan(clips, [confident("A", 10), weak])
+    assert [b["media_id"] for b in blocks(result)] == ["A"]
+    assert result.song_receipt["placed_outside_ids"] == ["B"]
+    assert {"media_id": "B", "reason": "gap_unfillable"} in result.song_receipt["dropped"]
+    assert "B" in {ref.media_id for ref in result.snapshot.media}  # still editable
+    assert "B" not in result.song_receipt["broll_ids"]
+
+
+def test_receipt_carries_likelihood_margin_basis_and_low_confidence_ids():
+    tied = TakeAlignment(
+        media_id="X",
+        status="ambiguous",
+        delta_s=28,
+        confidence=0.6,
+        candidates=[
+            PlacementCandidate(delta_s=28, likelihood=0.6, method="lyrics"),
+            PlacementCandidate(delta_s=95, likelihood=0.6, method="lyrics"),
+        ],
+        margin=0.0,
+        likelihood=0.6,
+    )
+    result = plan([take("A", 20), take("X", 20)], [confident("A", 10), tied])
+    rows = {b["media_id"]: b for b in blocks(result)}
+    assert rows["A"]["position_basis"] == "aligner" and rows["A"]["likelihood"] == 0.95
+    assert rows["X"]["position_basis"] == "tie_break" and rows["X"]["margin"] == 0
+    assert rows["X"]["confirmed_by_creator"] is False
+    assert result.song_receipt["low_confidence_ids"] == ["X"]
+    assert result.user_song.takes["X"].position_basis == "tie_break"
+    assert result.user_song.takes["X"].likelihood == pytest.approx(0.6)
+    assert result.user_song.takes["X"].delta_s == 28  # inside the cluster, not 95
 
 
 def test_source_start_follows_the_song_clock_after_compile():
@@ -399,7 +493,7 @@ def test_a_stale_alignment_or_unready_song_is_refused():
 
 def test_nothing_placeable_is_an_explicit_error_not_a_guess():
     with pytest.raises(LipsyncPlanError) as error:
-        plan([take("X")], [ambiguous("X", 30, 50)])
+        plan([take("X")], [unmatched("X")])
     assert error.value.code == "no_synced_takes"
 
 
@@ -553,7 +647,7 @@ def test_kept_broll_never_runs_past_the_song_end():
     # The leftover takes are still editable media.
     assert {"U1", "U2"} <= {ref.media_id for ref in result.snapshot.media}
     reasons = {r["media_id"]: r["reason"] for r in result.song_receipt["dropped"]}
-    assert reasons == {"U1": "unmatched", "U2": "unmatched"}
+    assert reasons == {"U1": "no_evidence", "U2": "no_evidence"}
 
 
 def test_kept_broll_stays_inside_the_120_second_cap():
@@ -566,28 +660,20 @@ def test_kept_broll_stays_inside_the_120_second_cap():
 
 
 def test_every_unplaced_take_is_editable_unused_media_and_compiles():
-    clips = [
-        take("A", 30),
-        take("B", 20),
-        take(
-            "C",
-            5,
-        ),
-        take("X", 20),
-    ]
-    # C is contained in A (overlapped); X is ambiguous; both end up in no cut
-    # only if B-roll is not kept, so give the song no room after A.
-    song = analysis(duration_s=40.0)
+    # A and B sit far apart and nothing fills the gap, so the weaker side rides
+    # along as unused media (placed_outside), as does a conflicting take.
+    song = analysis(duration_s=100.0)
+    clips = [take("A", 30), take("B", 20), take("C", 5), take("X", 20)]
     result = plan(
         clips,
-        [confident("A", 10), confident("B", 16), confident("C", 15), ambiguous("X", 20, 30)],
+        [confident("A", 10), confident("B", 70), confident("C", 15), unmatched("X")],
         song=song,
     )
     cut_ids = {c.media_id for c in result.snapshot.fast_cuts}
     media_ids = {ref.media_id for ref in result.snapshot.media}
     assert media_ids == {"A", "B", "C", "X"}
     unused = media_ids - cut_ids
-    assert "C" in unused
+    assert unused  # at least B (outside the span) or C (conflict) is not in a cut
     assert set(result.clip_ids) == cut_ids  # used media only
     assert set(result.snapshot.selected_media_ids) == cut_ids
     assert result.snapshot.media_scope == "selected"

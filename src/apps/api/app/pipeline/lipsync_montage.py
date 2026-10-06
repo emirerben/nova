@@ -49,6 +49,15 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.config import settings
+from app.pipeline.take_assignment import (
+    Assignment,
+    CandidateSpec,
+    TakeSpec,
+    assign_takes,
+    cover_ms,
+    spec_from_alignment_row,
+)
 from app.pipeline.unified_montage import (
     MIN_TOTAL_S,
     SNAPSHOT_FALLBACK_TITLE,
@@ -85,6 +94,9 @@ MIN_SEGMENT_MS = 1000
 # attention, unless the pool is too small to fill the gap otherwise.
 BROLL_HOLD_MS = int(STILL_MAX_S * 1000)
 MIN_BROLL_PIECE_MS = 600
+# A gap bridge may dip this close to a take's own first/last frame (a cover
+# margin is 300 ms; 100 ms still clears the unclean edge frames).
+DIP_MARGIN_MS = 100
 MAX_WINDOW_MS = MAX_PROPOSAL_DURATION_S * 1000
 MIN_TOTAL_MS = int(MIN_TOTAL_S * 1000)
 # Two candidate positions closer than this are the same position.
@@ -244,6 +256,9 @@ class _Placed:
     delta_ms: int
     status: str
     confirmed: bool
+    likelihood: float = 0.0
+    margin: float = 1.0
+    position_basis: str = "aligner"
     cover_start: int = 0
     cover_end: int = 0
     true_end: int = 0  # delta + duration: the take's real end in song time
@@ -268,18 +283,6 @@ class _Block:
 
 def _ms(seconds: float) -> int:
     return int(round(float(seconds) * 1000))
-
-
-def _candidate_deltas_ms(row: TakeAlignment) -> list[int]:
-    found: list[int] = []
-    values = ([row.delta_s] if row.delta_s is not None else []) + [
-        alt.delta_s for alt in row.alternates
-    ]
-    for value in values:
-        candidate = _ms(value)
-        if all(abs(candidate - existing) > _SAME_POSITION_MS for existing in found):
-            found.append(candidate)
-    return found
 
 
 def _match_ms(row: TakeAlignment | None) -> tuple[int, int] | None:
@@ -314,65 +317,118 @@ def _place_takes(
     confirmed_order: Sequence[str] | None,
     song_ms: int,
 ) -> tuple[dict[str, _Placed], dict[str, str]]:
-    """Which takes may be placed by song time, and why the others may not."""
-    placed: dict[str, _Placed] = {}
-    reasons: dict[str, str] = {}
-    uncertain: dict[str, TakeAlignment] = {}
+    """Where each take sits on the song (by likelihood), and why the others do not.
+
+    No ``status`` gates placement: every take with a non-conflicting candidate is
+    placed (``take_assignment``). ``confirmed_order`` (the creator's answer to the
+    song-order question) re-decides the takes the assignment was unsure about.
+    """
+    specs = {
+        clip.media_id: spec_from_alignment_row(
+            clip.media_id, clip.duration_s, alignment.takes.get(clip.media_id)
+        )
+        for clip in takes
+    }
+    # A row patched after the creator's answer (``apply_resolved_song_takes``) keeps
+    # its aligner candidates but carries the creator's delta / "no position": the
+    # patch wins over the stale candidates.
     for clip in takes:
         row = alignment.takes.get(clip.media_id)
-        if row is None or row.status == "unmatched":
-            reasons[clip.media_id] = "unmatched"
-        elif row.status == "confident" and row.delta_s is not None:
-            placed[clip.media_id] = _Placed(
-                clip,
-                _ms(row.delta_s),
-                "confident",
-                False,
-                match_ms=_match_ms(row),
-                method=row.method,
-            )
-        else:
-            uncertain[clip.media_id] = row
-            reasons[clip.media_id] = "ambiguous_unconfirmed"
+        if row is None or not row.candidates:
+            continue
+        spec = specs[clip.media_id]
+        if row.status == "unmatched" or row.delta_s is None:
+            specs[clip.media_id] = TakeSpec(spec.media_id, spec.duration_ms, ())
+        elif all(abs(_ms(row.delta_s) - c.delta_ms) > 50 for c in spec.candidates):
+            patched = CandidateSpec(_ms(row.delta_s), row.confidence or 0.4, None, "lyrics")
+            specs[clip.media_id] = TakeSpec(spec.media_id, spec.duration_ms, (patched,))
+    spec_list = [specs[clip.media_id] for clip in takes]
 
-    def covered(clip: UnifiedClip, delta_ms: int, match: tuple[int, int] | None) -> bool:
-        start, end, *_ = _coverage(clip, delta_ms, song_ms, match)
-        return end - start >= MIN_SEGMENT_MS
-
-    order = [
-        media_id
-        for media_id in (confirmed_order or ())
-        if media_id in placed or media_id in uncertain
-    ]
-    confident_ids = set(placed)
-    for index, media_id in enumerate(order):
-        row = uncertain.get(media_id)
-        if row is None:
-            continue
-        before = next((placed[m] for m in reversed(order[:index]) if m in placed), None)
-        after = next((placed[m] for m in order[index + 1 :] if m in confident_ids), None)
-        if before is None and after is None:
-            reasons[media_id] = "no_fitting_position"
-            continue
-        clip = next(c for c in takes if c.media_id == media_id)
-        chosen: int | None = None
-        for candidate in _candidate_deltas_ms(row):
-            start = candidate + COVER_MARGIN_MS
-            if before is not None and start < before.delta_ms + COVER_MARGIN_MS:
-                continue
-            if after is not None and start > after.delta_ms + COVER_MARGIN_MS:
-                continue
-            if covered(clip, candidate, _match_ms(row)):
-                chosen = candidate
-                break
-        if chosen is None:
-            reasons[media_id] = "no_fitting_position"
-            continue
-        placed[media_id] = _Placed(
-            clip, chosen, row.status, True, match_ms=_match_ms(row), method=row.method
+    def run(pinned=None, exclude=None) -> Assignment:
+        return assign_takes(
+            spec_list,
+            song_ms,
+            overlap_ms=_ms(settings.song_align_max_overlap_s),
+            cap_ms=MAX_WINDOW_MS,
+            pinned=pinned,
+            exclude=exclude,
+            cover_margin_ms=COVER_MARGIN_MS,
+            min_cover_ms=MIN_SEGMENT_MS,
         )
-        reasons.pop(media_id, None)
 
+    assignment = run()
+    pinned: dict[str, int] = {}
+    exclude: dict[str, str] = {}
+    creator_choice: dict[str, str] = {}  # media_id -> position_basis
+    if confirmed_order:
+        order = [m for m in confirmed_order if m in specs]
+        uncertain = {
+            m
+            for m in order
+            if specs[m].candidates
+            and (
+                m in assignment.ask
+                or getattr(alignment.takes.get(m), "status", None) == "ambiguous"
+            )
+        }
+        delta_of = {m: c.delta_ms for m, c in assignment.placed.items()}
+        for index, media_id in enumerate(order):
+            if media_id not in uncertain:
+                continue
+            before = next((delta_of[m] for m in reversed(order[:index]) if m in delta_of), None)
+            after = next(
+                (delta_of[m] for m in order[index + 1 :] if m in delta_of and m not in uncertain),
+                None,
+            )
+            if before is None and after is None:
+                continue
+            spec = specs[media_id]
+            fits = [
+                c
+                for c in spec.candidates
+                if (before is None or c.delta_ms >= before)
+                and (after is None or c.delta_ms <= after)
+                and cover_ms(spec, c, song_ms, COVER_MARGIN_MS) >= MIN_SEGMENT_MS
+            ]
+            if not fits:
+                exclude[media_id] = "no_fitting_position"
+                delta_of.pop(media_id, None)
+                continue
+            fits.sort(key=lambda c: (-c.likelihood, c.delta_ms))
+            tied = [
+                c
+                for c in fits
+                if c.likelihood >= settings.song_align_tie_ratio * fits[0].likelihood
+            ]
+            pinned[media_id] = fits[0].delta_ms
+            delta_of[media_id] = fits[0].delta_ms
+            creator_choice[media_id] = "creator_position" if len(tied) == 1 else "tie_break"
+        if pinned or exclude:
+            assignment = run(pinned, exclude)
+
+    placed: dict[str, _Placed] = {}
+    reasons: dict[str, str] = dict(assignment.unplaced)
+    for clip in takes:
+        claim = assignment.placed.get(clip.media_id)
+        if claim is None:
+            reasons.setdefault(clip.media_id, "no_evidence")
+            continue
+        row = alignment.takes.get(clip.media_id)
+        basis = creator_choice.get(clip.media_id) or (
+            "tie_break" if claim.basis == "tie_break" else "aligner"
+        )
+        status = row.status if row is not None and row.status != "unmatched" else "ambiguous"
+        placed[clip.media_id] = _Placed(
+            clip,
+            claim.delta_ms,
+            status,
+            creator_choice.get(clip.media_id) == "creator_position",
+            likelihood=claim.likelihood,
+            margin=claim.margin,
+            position_basis=basis,
+            match_ms=claim.match_ms,
+            method=claim.method,
+        )
     for media_id, item in list(placed.items()):
         (
             item.cover_start,
@@ -533,8 +589,14 @@ def _media_ref(clip: UnifiedClip) -> MediaRef:
     )
 
 
-def _covered_ms(blocks: Sequence[_Block]) -> int:
-    return sum(b.end - b.start for b in blocks if b.placed is not None)
+def _weight(block: _Block) -> float:
+    """How much a placed block counts toward a span: its likelihood, never zero."""
+    return max(block.placed.likelihood, 0.05) if block.placed is not None else 0.0
+
+
+def _covered_ms(blocks: Sequence[_Block]) -> float:
+    """Likelihood-weighted covered time: a sure take outweighs a long guess."""
+    return sum((b.end - b.start) * _weight(b) for b in blocks if b.placed is not None)
 
 
 def _window_blocks(blocks: list[_Block]) -> tuple[list[_Block], bool]:
@@ -544,10 +606,10 @@ def _window_blocks(blocks: list[_Block]) -> tuple[list[_Block], bool]:
     starts = {b.start for b in blocks} | {b.end - MAX_WINDOW_MS for b in blocks}
     starts = {s for s in starts if blocks[0].start <= s <= blocks[-1].end - MAX_WINDOW_MS}
 
-    def density(window_start: int) -> int:
+    def density(window_start: int) -> float:
         window_end = window_start + MAX_WINDOW_MS
         return sum(
-            max(0, min(b.end, window_end) - max(b.start, window_start))
+            max(0, min(b.end, window_end) - max(b.start, window_start)) * _weight(b)
             for b in blocks
             if b.placed is not None
         )
@@ -615,13 +677,26 @@ def plan_lipsync_montage(
     # ── B-roll pool: takes we could not place, then the Visuals pool ─────────
     pool_clips = [
         c for c in takes if c.media_id not in placed and reasons.get(c.media_id) != "too_short"
-    ]
+    ]  # a placed take is never filler: it only plays in sync at its own delta
     pool_clips += others
     pool = _Pool(
         [(c, cap) for c in pool_clips if (cap := _broll_capacity_ms(c)) >= MIN_BROLL_PIECE_MS]
     )
 
     # ── join islands: bridge a small gap, fill a bigger one, else split ──────
+    # Per consecutive pair with gap g: (1) even split into both margins; (2) the
+    # neighbours' own footage bridges it (cut on a lyric line, else a beat);
+    # (3) the same, dipping into the 300 ms cover margins; (4) muted Visuals /
+    # unplaced-take B-roll; (5) irreducible: split, the best span wins.
+    def own_footage(previous: _Block, nxt: _Block, margin_left: int) -> tuple[int, int]:
+        assert previous.placed is not None and nxt.placed is not None
+        if margin_left == COVER_MARGIN_MS:
+            prev_limit, next_limit = previous.placed.full_end, nxt.placed.full_start
+        else:
+            prev_limit = min(song_ms, previous.placed.true_end - margin_left)
+            next_limit = max(0, nxt.placed.delta_ms + margin_left)
+        return max(0, prev_limit - previous.end), max(0, nxt.start - next_limit)
+
     spans: list[list[_Block]] = [list(islands[0])]
     bridged = 0
     for island in islands[1:]:
@@ -635,20 +710,22 @@ def plan_lipsync_montage(
             bridged += 1
             spans[-1].extend(island)
             continue
-        # A trimmed take still has footage past its matched range: close the gap
-        # with the neighbours' own footage (same delta, so still in sync).
-        avail_prev = previous.placed.full_end - previous.end
-        avail_next = island[0].start - island[0].placed.full_start
-        if gap <= max(0, avail_prev) + max(0, avail_next):
-            ext_prev = min(max(0, avail_prev), gap - gap // 2)
-            ext_next = gap - ext_prev
-            if ext_next > avail_next:
-                ext_next = max(0, avail_next)
-                ext_prev = gap - ext_next
-            previous.end += ext_prev
-            island[0].start -= ext_next
+        joined = False
+        for margin_left in (COVER_MARGIN_MS, DIP_MARGIN_MS):
+            avail_prev, avail_next = own_footage(previous, island[0], margin_left)
+            if gap > avail_prev + avail_next:
+                continue
+            low = max(island[0].start - avail_next, previous.end)
+            high = min(previous.end + avail_prev, island[0].start)
+            at, kind = _pick_switch(low, high, line_starts, beats)
+            switches.append({"at_s": at / 1000, "snapped_to": kind})
+            previous.end = at
+            island[0].start = at
             bridged += 1
             spans[-1].extend(island)
+            joined = True
+            break
+        if joined:
             continue
         pieces = pool.fill(gap)
         if pieces is None:
@@ -673,12 +750,11 @@ def plan_lipsync_montage(
     # ── unplaced takes stay in the edit: short, muted, after the last sung take ──
     # (the song keeps playing; camera audio is muted for every B-roll cut).
     in_blocks = {b.clip.media_id for b in blocks}
-    keepable = {"unmatched", "ambiguous_unconfirmed", "no_fitting_position", "too_short"}
     kept_ids: list[str] = []
     cursor = blocks[-1].end
     for clip in takes:  # creator (input) order
-        if clip.media_id in in_blocks or reasons.get(clip.media_id) not in keepable:
-            continue
+        if clip.media_id in in_blocks or clip.media_id in placed:
+            continue  # placed takes never double as B-roll, even when they fell outside
         room = min(song_ms, blocks[0].start + MAX_WINDOW_MS) - cursor
         length = min(BROLL_HOLD_MS, _broll_capacity_ms(clip), room)
         if length < MIN_BROLL_PIECE_MS:
@@ -706,6 +782,8 @@ def plan_lipsync_montage(
                 delta_s=block.placed.delta_ms / 1000,
                 status=block.placed.status,  # type: ignore[arg-type]
                 confirmed_by_creator=block.placed.confirmed,
+                likelihood=round(block.placed.likelihood, 4),
+                position_basis=block.placed.position_basis,  # type: ignore[arg-type]
             )
         elif clip.kind == "image":
             start, end = 0.0, round(length / 1000, 3)
@@ -813,7 +891,7 @@ def plan_lipsync_montage(
         if reasons.get(clip.media_id) == "overlapped":
             reason = "overlapped"
         elif clip.media_id in placed:
-            reason = "outside_window" if trimmed else "disconnected"
+            reason = "outside_window" if trimmed else "gap_unfillable"
         elif clip.lane == "asset" or clip.media_id not in reasons:
             reason = "no_gap"
         else:
@@ -832,12 +910,27 @@ def plan_lipsync_montage(
                 "delta_s": b.placed.delta_ms / 1000,
                 "confirmed_by_creator": b.placed.confirmed,
                 "method": b.placed.method,
+                "likelihood": round(b.placed.likelihood, 4),
+                "margin": round(b.placed.margin, 4),
+                "position_basis": b.placed.position_basis,
             }
             for b in blocks
             if b.placed is not None
         ],
         "broll_ids": broll_ids,
         "kept_broll_ids": kept_ids,
+        "placed_outside_ids": [
+            c.media_id for c in takes if c.media_id in placed and c.media_id not in used
+        ],
+        "low_confidence_ids": [
+            b.clip.media_id
+            for b in blocks
+            if b.placed is not None
+            and (
+                b.placed.likelihood < settings.song_align_ask_likelihood
+                or b.placed.position_basis in ("tie_break", "creator_stack")
+            )
+        ],
         "bridged_gaps": bridged,
         "switches": [s for s in switches if window_start <= s["at_s"] * 1000 <= window_end],
         "dropped": dropped,

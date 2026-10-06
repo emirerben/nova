@@ -83,12 +83,14 @@ def test_the_real_aligner_places_unique_takes_and_flags_the_repeated_one(aligned
     assert any(abs(d - 41.0) < 0.005 for d in found)
 
 
-def test_an_unconfirmed_ambiguous_take_is_never_placed_at_a_guessed_time(aligned):
+def test_an_unconfirmed_ambiguous_take_is_placed_by_likelihood_and_flagged_not_confirmed(aligned):
     result = plan_lipsync_montage(
         _clips(), aligned, _song_analysis(), plan_item_id=SONG_ITEM_ID, confirmed_order=None
     )
-    assert set(result.user_song.takes) <= {"A", "B"}
-    assert "C" not in result.user_song.takes  # may only appear as muted B-roll
+    # No status gate (KRI-471): C is placed at its best candidate, but never marked
+    # as confirmed by the creator.
+    assert set(result.user_song.takes) <= {"A", "B", "C"}
+    assert result.user_song.takes["C"].confirmed_by_creator is False
 
 
 def test_lipsync_recipe_from_real_alignments_keeps_every_take_on_the_song_clock(

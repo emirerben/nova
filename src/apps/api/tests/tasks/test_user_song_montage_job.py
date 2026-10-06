@@ -215,7 +215,7 @@ def test_lipsync_song_montage_places_confident_takes_on_the_song_clock(harness):
         )
 
 
-def test_an_uncertain_take_is_not_placed_without_the_creators_answer(harness):
+def test_an_uncertain_take_is_placed_unconfirmed_without_the_creators_answer(harness):
     job, _snapshot, _bindings = harness(
         sync="lipsync",
         rows=[
@@ -229,7 +229,8 @@ def test_an_uncertain_take_is_not_placed_without_the_creators_answer(harness):
 
     assert job.status == "awaiting_device"
     song = job.assembly_plan["guided_story_execution_plan"]["user_song"]
-    assert "clip-b" not in song["takes"]  # never placed at a guessed song time
+    # KRI-471: placed by likelihood (no status gate), never marked creator-confirmed.
+    assert song["takes"]["clip-b"]["confirmed_by_creator"] is False
     _recipe, clip = _song_clip(job)
     assert clip.source_start == pytest.approx(song["window_start_s"])
 
