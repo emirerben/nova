@@ -50,7 +50,7 @@ jobs:
           # a commit whose own iOS run was cancelled or red still ships with the next
           # green commit.  Falls back to the parent commit when none is found.
           base=""
-          for run_id in $(gh run list --workflow TestFlight --branch main --status success --limit 30 --json databaseId,headSha --jq '.[] | "\(.databaseId):\(.headSha)"'); do
+          for run_id in $(gh run list --workflow TestFlight --limit 50 --json databaseId,headSha,headBranch,conclusion --jq '.[] | select(.headBranch == "main" and .conclusion == "success") | "\(.databaseId):\(.headSha)"'); do
             id="${run_id%%:*}"; sha="${run_id##*:}"
             uploaded="$(gh run view "$id" --json jobs --jq '[.jobs[].steps[] | select(.name == "Upload and distribute to external TestFlight" and .conclusion == "success")] | length')"
             if [ "$uploaded" != "0" ] && git cat-file -e "$sha^{commit}" 2>/dev/null && git merge-base --is-ancestor "$sha" "$HEAD_SHA"; then
@@ -92,10 +92,11 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          # Filter locally: gh run list server-side branch+status filters return stale runs here.
           # A superseded Fly deploy can be cancelled, so accept any successful deploy
           # of this commit or a later one on main.
           for attempt in $(seq 1 120); do
-            for deployed_sha in $(gh run list --workflow 'Fly Deploy' --branch main --status success --limit 30 --json headSha --jq '.[].headSha'); do
+            for deployed_sha in $(gh run list --workflow 'Fly Deploy' --limit 50 --json headSha,headBranch,conclusion --jq '.[] | select(.headBranch == "main" and .conclusion == "success") | .headSha'); do
               status="$(gh api "repos/$REPO/compare/$HEAD_SHA...$deployed_sha" --jq .status 2>/dev/null || true)"
               if [ "$status" = "identical" ] || [ "$status" = "ahead" ]; then
                 echo "Production API deploy $deployed_sha contains $HEAD_SHA"

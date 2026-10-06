@@ -182,6 +182,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertRegex(gate.group("paths"), r"(?m)^\s*src/apps/api\s*\\$")
         self.assertIn("Wait for a production API deploy that contains this commit", self.text)
         self.assertRegex(self.text, r"compare/\$HEAD_SHA\.\.\.\$deployed_sha")
+        # gh's server-side --branch/--status filters return stale runs; filter locally.
+        self.assertNotRegex(self.text, r"Fly Deploy' --branch main --status success")
+        self.assertNotRegex(self.text, r"--branch main --status success")
+        self.assertIn('.headBranch == "main" and .conclusion == "success"', self.text)
         self.assertRegex(
             self.text,
             r"if: steps\.gate\.outputs\.eligible == 'true' && steps\.gate\.outputs\.requires_api_deploy == 'true'",
