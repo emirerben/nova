@@ -982,3 +982,291 @@ def test_stitched_quote_with_an_invented_half_is_still_rejected() -> None:
     )
     out = _agent().parse(raw, _t04_input())
     assert out.salvage_reasons == ["source_quote_not_creator_text"]
+
+
+# ── KRI-456: style asks and title lines are not caption intents ─────────────
+# Prod thread 63fd08d6 (2026-10-06): "Big readable captions" and `Title: "..."`
+# became caption intents; the first matched zero clips and stopped the turn with
+# 'I couldn't find any clips for "captions"'.
+
+_CACIO_REQUEST = (
+    "Recipe video with my voiceover. Match every step I say to the clip that shows it: "
+    "boiling the pasta, grating the pecorino, toasting the pepper, adding pasta water, "
+    "tossing with the cheese, plating with pepper. Use the eating shot at the very end. "
+    'Big readable captions. Title: "Cacio e pepe in 10 minutes".'
+)
+
+
+def _cacio_input() -> ClipIntentPlannerInput:
+    return ClipIntentPlannerInput(creator_request=_CACIO_REQUEST, latest_user_message=None)
+
+
+_CACIO_ORDER = _games_intent(
+    "boil", "order", "boiling the pasta", "boiling the pasta", position=None
+)
+
+
+@pytest.mark.parametrize(
+    "attribute",
+    [
+        "captions",
+        "Big readable captions",
+        "large captions",
+        "the subtitles",
+        "on-screen text",
+        "burned-in captions",
+        "altyazı",
+        "altyazılar",
+        "text",
+    ],
+)
+def test_style_caption_is_dropped_silently(attribute: str) -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                _CACIO_ORDER,
+                _games_intent(
+                    "style",
+                    "caption",
+                    attribute,
+                    "Big readable captions",
+                    caption_attribute="what is said",
+                ),
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _cacio_input())
+    assert [i.intent_id for i in out.intents] == ["boil"]
+    assert out.salvage_question is None
+    assert out.salvage_reasons == []
+    assert out.silent_drops == {"style_caption_dropped": 1}
+
+
+def test_style_caption_with_a_garbled_quote_is_still_silent() -> None:
+    # A quote that is not creator text would normally be a loud rejection.
+    raw = json.dumps(
+        {
+            "intents": [
+                _CACIO_ORDER,
+                _games_intent(
+                    "style",
+                    "caption",
+                    "captions",
+                    "make the captions big",
+                    caption_attribute="speech",
+                ),
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _cacio_input())
+    assert [i.intent_id for i in out.intents] == ["boil"]
+    assert out.salvage_question is None
+
+
+def test_style_caption_with_no_shape_is_silent_not_a_schema_error() -> None:
+    # No creator_text and no caption_attribute fails the caption shape validator.
+    raw = json.dumps(
+        {
+            "intents": [
+                _CACIO_ORDER,
+                _games_intent("style", "caption", "captions", "Big readable captions"),
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _cacio_input())
+    assert [i.intent_id for i in out.intents] == ["boil"]
+    assert out.silent_drops == {"style_caption_dropped": 1}
+
+
+@pytest.mark.parametrize(
+    ("attribute", "quote"),
+    [
+        ("title", 'Title: "Cacio e pepe in 10 minutes"'),
+        ("the title", "Title:"),
+        ("video title", "Big readable captions"),
+        ("opening title", "Big readable captions"),
+        ("intro title", "Big readable captions"),
+        ("the video", "Big readable captions"),
+        ("whole video", "Big readable captions"),
+        ("the entire video", "Big readable captions"),
+        # The attribute can be anything: the quote is the title line itself.
+        ("the first clip", 'Title: "Cacio e pepe in 10 minutes"'),
+        ("pasta clip", 'Title: "Cacio e pepe in 10 minutes"'),
+    ],
+)
+def test_title_caption_is_dropped_silently(attribute: str, quote: str) -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                _CACIO_ORDER,
+                _games_intent(
+                    "title",
+                    "caption",
+                    attribute,
+                    quote,
+                    creator_text="Cacio e pepe in 10 minutes",
+                ),
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _cacio_input())
+    assert [i.intent_id for i in out.intents] == ["boil"]
+    assert out.salvage_question is None
+    assert out.silent_drops == {"title_caption_dropped": 1}
+
+
+def test_turkish_title_prefix_is_a_title() -> None:
+    request = 'Başlık: "Makarna tarifi". Adımları göster.'
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent(
+                    "t", "caption", "ilk klip", 'Başlık: "Makarna tarifi"', creator_text="Makarna"
+                )
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, ClipIntentPlannerInput(creator_request=request))
+    assert out.intents == []
+    assert out.silent_drops == {"title_caption_dropped": 1}
+
+
+def test_live_shape_video_attribute_with_style_quote_is_a_style_drop() -> None:
+    # Live Flash output on the old prompt (2026-10-06): attribute "video", the style
+    # wording in caption_attribute, and the quote is just the style ask.
+    raw = json.dumps(
+        {
+            "intents": [
+                _CACIO_ORDER,
+                _games_intent(
+                    "caption_readable",
+                    "caption",
+                    "video",
+                    "Big readable captions",
+                    caption_attribute="Big readable captions",
+                ),
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _cacio_input())
+    assert [i.intent_id for i in out.intents] == ["boil"]
+    assert out.silent_drops == {"style_caption_dropped": 1}
+
+
+def test_cacio_request_keeps_only_the_order_intents_and_reports_both_drops() -> None:
+    steps = [
+        "boiling the pasta",
+        "grating the pecorino",
+        "toasting the pepper",
+        "adding pasta water",
+        "tossing with the cheese",
+        "plating with pepper",
+    ]
+    intents = [_games_intent(f"s{n}", "order", s, s) for n, s in enumerate(steps)]
+    intents.append(
+        _games_intent(
+            "eat",
+            "order",
+            "the eating shot",
+            "Use the eating shot at the very end",
+            position="last",
+        )
+    )
+    intents.append(
+        _games_intent(
+            "style", "caption", "captions", "Big readable captions", caption_attribute="speech"
+        )
+    )
+    intents.append(
+        _games_intent(
+            "title",
+            "caption",
+            "first clip",
+            'Title: "Cacio e pepe in 10 minutes"',
+            creator_text="Cacio e pepe in 10 minutes",
+        )
+    )
+    out = _agent().parse(json.dumps({"intents": intents, "question": None}), _cacio_input())
+    assert len(out.intents) == 7
+    assert out.intents[-1].position == "last"
+    assert out.salvage_question is None
+    assert out.silent_drops == {"style_caption_dropped": 1, "title_caption_dropped": 1}
+
+
+def test_only_style_captions_returned_is_an_empty_inventory_not_an_error() -> None:
+    request = "Big readable captions"
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent(
+                    "style", "caption", "captions", "Big readable captions", caption_attribute="x"
+                )
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, ClipIntentPlannerInput(creator_request=request))
+    assert out.intents == []
+    assert out.question is None
+    assert out.salvage_question is None
+
+
+@pytest.mark.parametrize(
+    ("request_text", "attribute", "quote", "extra"),
+    [
+        (
+            'Say "Kitchen notes" on clips showing ingredients.',
+            "clips showing ingredients",
+            'Say "Kitchen notes" on clips showing ingredients',
+            {"creator_text": "Kitchen notes"},
+        ),
+        (
+            'Say "Post-match" on the pub chapter.',
+            "the pub chapter",
+            'Say "Post-match" on the pub chapter',
+            {"creator_text": "Post-match"},
+        ),
+        (
+            "Chapter 5 · fireworks · It's La Mercè.",
+            "Chapter 5",
+            "Chapter 5 · fireworks · It's La Mercè.",
+            {"creator_text": "It's La Mercè."},
+        ),
+        (
+            "Caption the beach clips with what the weather was like.",
+            "beach clips",
+            "Caption the beach clips with what the weather was like",
+            {"caption_attribute": "what the weather was like"},
+        ),
+        (
+            "Add captions to the beach clips.",
+            "captions for the beach clips",
+            "Add captions to the beach clips",
+            {"caption_attribute": "the beach"},
+        ),
+        (
+            'Put the text "Hello" on screen.',
+            "text",
+            'Put the text "Hello" on screen',
+            {"creator_text": "Hello"},
+        ),
+    ],
+)
+def test_real_chapter_captions_survive_the_style_and_title_guard(
+    request_text: str, attribute: str, quote: str, extra: dict
+) -> None:
+    raw = json.dumps(
+        {
+            "intents": [_games_intent("c", "caption", attribute, quote, **extra)],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, ClipIntentPlannerInput(creator_request=request_text))
+    assert [i.op for i in out.intents] == ["caption"]
+    assert out.silent_drops == {}
