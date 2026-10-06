@@ -39,11 +39,10 @@ authority. An editor revision is a per-variant contract; sibling variants and
 retries must not inherit another variant's edits.
 
 Replacement renders are staged and generation-fenced before they can replace a
-published artifact. A rejected or stale replacement returns `False` to its
-caller and leaves the last-good video and poster reachable. When cloud policy
-blocks an in-place rerender, the terminal write is status-only: it reports
-`ready` only when a last-good artifact still exists (otherwise it reports
-`failed`) and never manufactures a playable state from a failed first render.
+published artifact. Cloud update/upsert boundaries return `False` on rejection
+and preserve the last-good video and poster. Staged replacements need fresh
+evidence before callers can retire the previous artifact; a later status-only
+`ready` write rechecks that evidence and cannot revive a rejected attempt.
 
 The contract marker in `all_candidates` is mandatory for new contracted work.
 If the marker is present but the assembly contract is missing or invalid, the
@@ -138,7 +137,7 @@ publish an ordinary montage or overwrite the last-good result.
 
 Text proof is based on rendered layers, not a flat string list. Multiline text
 joins runs by baseline, karaoke lines join word runs with spaces, and every
-required non-whitespace run must be visibly painted. An invisible required word
+required non-whitespace run needs non-transparent paint evidence. An invisible required word
 is rejected unless an active karaoke highlight supplies the visible proof for
 that word.
 
