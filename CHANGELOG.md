@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.109.0] - 2026-10-06
+
+### Fixed
+- fix(admin): run Celery inspect off the event loop on job debug + queue-state (#1425) <!-- release-pr: 1425 -->
+
 ## [0.78.108.0] - 2026-10-06
 
 ### Changed
