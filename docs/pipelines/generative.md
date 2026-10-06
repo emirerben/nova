@@ -549,6 +549,18 @@ order is caption-free base → TextElements → narrated captions. If analysis o
 agent fails, phrase segmentation/upload order remains the deterministic fallback.
 The backend-only flag defaults false and must be set on API and worker together.
 
+Editor read path: the variant stores these bars as presets ("top"/"bottom", a
+size class, no face; `text_elements_materialized_from == "narrated_storyboard"`)
+and nothing re-projects them, so the saved list is their only copy and a Save
+that omits one deletes it. `merge_projected_text_elements_for_variant` serves
+them through `resolve_narrated_storyboard_look`: centred custom position, px
+size and the display face the Skia burn resolves the presets to, so the iOS
+editor (which otherwise loads a missing `y_frac`/`font_family` as 0.5 /
+Fraunces and saves that face back) and the web editor preview them where the
+cloud burns them. The burn is pixel-identical
+(`tests/pipeline/test_narrated_storyboard_look.py`); editor round trip and
+reburn: `tests/routes/test_narrated_storyboard_editor.py`.
+
 ### Narrated clip alignment (KRI-456)
 
 Phone narrated edits without a filming guide (`_run_phone_narrated_job`'s

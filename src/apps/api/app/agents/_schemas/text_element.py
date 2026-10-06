@@ -1096,6 +1096,60 @@ def append_ai_text_tombstones(
     return out
 
 
+NARRATED_STORYBOARD_SOURCE = "narrated_storyboard"
+
+
+def is_narrated_storyboard_element(raw: TextElement | dict) -> bool:
+    """True for a bar authored by the cloud narrated storyboard.
+
+    `_narrated_storyboard_text_elements` marks its bars with a
+    ``source_params["narrated_storyboard"]`` key (no ``source``/``identity``, so
+    they have no projection identity: they live only in the saved list).
+    """
+    params = raw.source_params if isinstance(raw, TextElement) else raw.get("source_params")
+    return isinstance(params, dict) and NARRATED_STORYBOARD_SOURCE in params
+
+
+def resolve_narrated_storyboard_look(elem: TextElement) -> TextElement:
+    """A storyboard bar with the look the cloud burn gives it spelled out.
+
+    Storyboard bars are authored with presets: a named ``position``, a
+    ``size_class`` and no face. The Skia burn resolves those through
+    `text_overlay._POSITION_Y` ("top" 0.15, "bottom" 0.85, "middle" via
+    "center" 0.45, ignoring any x/y fracs), `_FONT_SIZE_MAP` and the
+    registry's "display" face (Playfair Display). The iOS editor has none of
+    those defaults: it loads a row without ``y_frac``/``font_family`` at
+    y 0.5 in Fraunces, and its Save writes that face back, so the next burn
+    changed font. The editor therefore gets the resolved values: centred
+    custom position, explicit px size, explicit face. The burn is
+    pixel-identical either way (`test_storyboard_resolved_look_burns_identically`),
+    so a Save that persists the resolved bar changes nothing on video, and a
+    later drag is honoured (a named position ignores ``y_frac``).
+    """
+    from app.pipeline.generative_overlays import _DEFAULT_SIZE_CLASS  # noqa: PLC0415
+    from app.pipeline.text_overlay import (  # noqa: PLC0415
+        _FONT_REGISTRY,
+        _FONT_SIZE_MAP,
+        _POSITION_Y,
+    )
+
+    updates: dict = {}
+    if elem.position != "custom":
+        burn_position = "center" if elem.position == "middle" else elem.position
+        updates.update(position="custom", x_frac=0.5, y_frac=_POSITION_Y[burn_position])
+    if elem.size_px is None:
+        updates["size_px"] = float(_FONT_SIZE_MAP[elem.size_class or _DEFAULT_SIZE_CLASS])
+    if elem.font_family is None:
+        display_face = (_FONT_REGISTRY.get("style_defaults") or {}).get("display")
+        if display_face in _ALLOWED_FONTS:
+            updates["font_family"] = display_face
+    return elem.model_copy(update=updates) if updates else elem
+
+
+def _editor_saved_element(elem: TextElement) -> TextElement:
+    return resolve_narrated_storyboard_look(elem) if is_narrated_storyboard_element(elem) else elem
+
+
 def merge_projected_text_elements_for_variant(
     variant: dict, *, include_lyric_projection: bool = False
 ) -> list[dict] | None:
@@ -1108,8 +1162,21 @@ def merge_projected_text_elements_for_variant(
     projected = text_elements_for_variant(
         variant, include_lyric_projection=include_lyric_projection
     )
-    saved = coerce_text_elements(variant.get("text_elements") or []) or []
-    if not variant.get("text_elements_user_edited"):
+    saved = [
+        _editor_saved_element(elem)
+        for elem in coerce_text_elements(variant.get("text_elements") or []) or []
+    ]
+    # A narrated storyboard render saves its authored bars (title, PLAYER n,
+    # scores); nothing re-projects them. Its rows project no text today
+    # (text_mode "none": captions ride the ``caption_cues`` lane), but any
+    # projection that did appear (caption mirrors, context labels, lyrics)
+    # would replace the saved bars in the branch below. So these rows take
+    # the identity merge even before the first manual edit: saved bars
+    # first, then every projected bar the saved list does not carry.
+    storyboard_render = variant.get(
+        "text_elements_materialized_from"
+    ) == NARRATED_STORYBOARD_SOURCE and bool(saved)
+    if not variant.get("text_elements_user_edited") and not storyboard_render:
         # Guided-story text is compiled from the approved proposal and persisted
         # with exact beat windows.  The legacy intro projection only understands
         # ``intro_text`` and would collapse that authoritative title + thought
