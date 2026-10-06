@@ -131,6 +131,9 @@ from app.services.speech_cleanup_decision import (
 log = structlog.get_logger()
 
 _MAX_MEDIA = _MAX_CLIPS_PER_ITEM
+# One upload-urls and one media call per clip: a 50-clip pick must fit in a minute. The old
+# 30/minute made clips 31+ of a big pick fail with 429, which the app showed as "couldn't be read".
+_MEDIA_INTAKE_RATE_LIMIT = "240/minute"
 # Waiting for creator input is idle, even though the session remains open.
 _DELETION_BLOCKING_AGENT_STATUSES = frozenset(
     {"planning", "executing", "rendering", "reviewing", "revising"}
@@ -5330,7 +5333,7 @@ async def action_thread(
 
 
 @router.post("/{thread_id}/upload-urls", response_model=list[UploadTarget])
-@limiter.limit("30/minute")
+@limiter.limit(_MEDIA_INTAKE_RATE_LIMIT)
 async def upload_urls(
     request: Request,
     thread_id: str,
@@ -5597,7 +5600,7 @@ async def upload_urls(
 
 
 @router.post("/{thread_id}/media", response_model=CreationThreadOut)
-@limiter.limit("30/minute")
+@limiter.limit(_MEDIA_INTAKE_RATE_LIMIT)
 async def attach_media(
     request: Request,
     thread_id: str,

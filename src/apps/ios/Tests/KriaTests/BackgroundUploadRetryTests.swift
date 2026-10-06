@@ -82,6 +82,189 @@ import UIKit
         XCTAssertTrue(coordinator.records.isEmpty)
     }
 
+    // MARK: Busy server (429/503) on reserve
+
+    private static let reservationJSON = Data(#"{"urls":[{"reservation_id":"res-1","upload_url":"https://uploads.test/put","gcs_path":"pool/photo.jpg","upload_headers":{}}]}"#.utf8)
+
+    /// Sleeps are recorded, not taken; jitter is pinned to 0 so the delays are exact.
+    private func instant(_ coordinator: BackgroundUploadCoordinator, sleeps: SleepLog) {
+        coordinator.transientRetryPolicy.jitter = { 0 }
+        coordinator.backoffSleep = { sleeps.durations.append($0) }
+    }
+
+    @MainActor private final class SleepLog { var durations: [Duration] = [] }
+
+    private func enqueueVisual(_ coordinator: BackgroundUploadCoordinator, _ projectID: UUID, _ source: URL, recordID: UUID = UUID()) async -> Bool {
+        await coordinator.enqueue(fileURL: source, projectID: projectID, source: .files, consentGiven: true, purpose: .cloudRenderSource, role: .visual, itemID: "item-1", recordID: recordID)
+    }
+
+    func testReserve429ThenSuccessAttachesWithoutAFailureAndHonorsRetryAfter() async throws {
+        let (coordinator, projectID, source, cleanup) = try visualCoordinator(attach: false)
+        defer { cleanup() }
+        let sleeps = SleepLog(); instant(coordinator, sleeps: sleeps)
+        var reservations = 0
+        UploadRetryProtocol.handler = { transport in
+            if transport.request.httpMethod == "PUT" { return }
+            if transport.request.url?.path.hasSuffix("upload-urls") == true {
+                reservations += 1
+                if reservations == 1 { transport.finish(429, Data(), headers: ["Retry-After": "2"]) } else { transport.finish(200, Self.reservationJSON) }
+                return
+            }
+            transport.finish(200, Data("{}".utf8))
+        }
+
+        let accepted = await enqueueVisual(coordinator, projectID, source)
+
+        XCTAssertTrue(accepted)
+        XCTAssertEqual(reservations, 2)
+        XCTAssertEqual(sleeps.durations, [.seconds(2)], "Retry-After wins over the exponential schedule")
+        XCTAssertTrue(coordinator.failures.isEmpty)
+    }
+
+    func testPersistentReserve429BecomesOneRetryableUploadFailureNotUnreadable() async throws {
+        let (coordinator, projectID, source, cleanup) = try visualCoordinator(attach: false)
+        defer { cleanup() }
+        let sleeps = SleepLog(); instant(coordinator, sleeps: sleeps)
+        var reservations = 0
+        UploadRetryProtocol.handler = { transport in
+            if transport.request.url?.path.hasSuffix("upload-urls") == true { reservations += 1 }
+            transport.finish(429, Data())
+        }
+
+        let accepted = await enqueueVisual(coordinator, projectID, source)
+
+        XCTAssertFalse(accepted)
+        XCTAssertEqual(reservations, 6)
+        XCTAssertEqual(sleeps.durations, [.milliseconds(500), .seconds(1), .seconds(2), .seconds(4), .seconds(8)])
+        XCTAssertEqual(coordinator.failures.count, 1)
+        let failure = try XCTUnwrap(coordinator.failures.first)
+        XCTAssertEqual(failure.cause, .uploadFailed)
+        XCTAssertEqual(failure.message, CreationUploadError.busyMessage)
+        XCTAssertFalse(failure.message.contains("read"))
+        XCTAssertTrue(UploadFailureBanner.canRetry(coordinator.failures))
+        XCTAssertEqual(UploadFailureBanner.message(for: coordinator.failures), "1 file didn’t upload and won’t be sent unless you retry")
+    }
+
+    func testRetryAfterAFailedIntakeReRunsItWhenTheServerRecovers() async throws {
+        let (coordinator, projectID, source, cleanup) = try visualCoordinator(attach: false)
+        defer { cleanup() }
+        instant(coordinator, sleeps: SleepLog())
+        var busy = true
+        UploadRetryProtocol.handler = { transport in
+            if transport.request.httpMethod == "PUT" { return }
+            if transport.request.url?.path.hasSuffix("upload-urls") == true {
+                if busy { transport.finish(503, Data()) } else { transport.finish(200, Self.reservationJSON) }
+                return
+            }
+            transport.finish(200, Data("{}".utf8))
+        }
+        _ = await enqueueVisual(coordinator, projectID, source)
+        let failure = try XCTUnwrap(coordinator.failures.first)
+        XCTAssertEqual(failure.cause, .uploadFailed)
+
+        busy = false
+        await coordinator.retryUpload(recordID: failure.id)
+
+        XCTAssertTrue(coordinator.failures.isEmpty)
+        XCTAssertEqual(coordinator.records.count, 1, "the re-run reserved and started the upload")
+    }
+
+    func testCancelDuringBackoffEndsTheWaitWithoutAFailure() async throws {
+        let (coordinator, projectID, source, cleanup) = try visualCoordinator(attach: false)
+        defer { cleanup() }
+        coordinator.transientRetryPolicy.jitter = { 0 }
+        var waiting = false
+        coordinator.backoffSleep = { duration in waiting = true; try await Task.sleep(for: .seconds(30)) }
+        var reservations = 0
+        UploadRetryProtocol.handler = { transport in
+            if transport.request.url?.path.hasSuffix("upload-urls") == true { reservations += 1 }
+            transport.finish(429, Data())
+        }
+        let task = Task { await self.enqueueVisual(coordinator, projectID, source) }
+        for _ in 0..<200 where !waiting { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertTrue(waiting)
+
+        task.cancel()
+        let accepted = await task.value
+
+        XCTAssertFalse(accepted)
+        XCTAssertEqual(reservations, 1, "no second request after the cancel")
+        XCTAssertTrue(coordinator.failures.isEmpty, "un-choosing is not a failure")
+    }
+
+    func testNonBusyReserveFailureStaysUnreadableAndIsNotRetried() async throws {
+        let (coordinator, projectID, source, cleanup) = try visualCoordinator(attach: false)
+        defer { cleanup() }
+        let sleeps = SleepLog(); instant(coordinator, sleeps: sleeps)
+        UploadRetryProtocol.handler = { $0.finish(500, Data()) }
+
+        _ = await enqueueVisual(coordinator, projectID, source)
+
+        XCTAssertTrue(sleeps.durations.isEmpty)
+        XCTAssertEqual(coordinator.failures.first?.cause, .unreadable)
+    }
+
+    func testPhotosLoadFailureStaysUnreadable() async throws {
+        let (coordinator, projectID, _, cleanup) = try visualCoordinator(attach: false)
+        defer { cleanup() }
+        let request = BackgroundUploadCoordinator.PhotoSelectionRequest(assetIdentifier: "asset-x", projectID: projectID, role: .visual, purpose: .cloudRenderSource, itemID: "item-1", limit: nil, attachedMediaIDs: [])
+        coordinator.select(request, debounce: .zero) { throw URLError(.cannotOpenFile) }
+        for _ in 0..<200 where coordinator.failures.isEmpty { try await Task.sleep(for: .milliseconds(25)) }
+
+        let failure = try XCTUnwrap(coordinator.failures.first)
+        XCTAssertEqual(failure.cause, .unreadable)
+        XCTAssertTrue(failure.message.contains("couldn’t be read"))
+        XCTAssertFalse(UploadFailureBanner.canRetry(coordinator.failures))
+    }
+
+    func testPhotosPickBusyFailureRetriesByReRunningTheSelection() async throws {
+        let (coordinator, projectID, source, cleanup) = try visualCoordinator(attach: false)
+        defer { cleanup() }
+        instant(coordinator, sleeps: SleepLog())
+        var busy = true
+        UploadRetryProtocol.handler = { transport in
+            if transport.request.httpMethod == "PUT" { return }
+            if transport.request.url?.path.hasSuffix("upload-urls") == true {
+                if busy { transport.finish(429, Data()) } else { transport.finish(200, Self.reservationJSON) }
+                return
+            }
+            transport.finish(200, Data("{}".utf8))
+        }
+        var loads = 0
+        let request = BackgroundUploadCoordinator.PhotoSelectionRequest(assetIdentifier: "asset-y", projectID: projectID, role: .visual, purpose: .cloudRenderSource, itemID: "item-1", limit: nil, attachedMediaIDs: [])
+        coordinator.select(request, debounce: .zero) {
+            loads += 1
+            let copy = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString)-photo.jpg")
+            try FileManager.default.copyItem(at: source, to: copy)
+            return copy
+        }
+        for _ in 0..<200 where coordinator.failures.isEmpty { try await Task.sleep(for: .milliseconds(25)) }
+        let failure = try XCTUnwrap(coordinator.failures.first)
+        XCTAssertEqual(failure.cause, .uploadFailed)
+        XCTAssertEqual(failure.message, CreationUploadError.busyMessage)
+
+        busy = false
+        await coordinator.retryUpload(recordID: failure.id)
+        for _ in 0..<200 where coordinator.records.isEmpty { try await Task.sleep(for: .milliseconds(25)) }
+
+        XCTAssertEqual(loads, 2)
+        XCTAssertTrue(coordinator.failures.isEmpty)
+        XCTAssertEqual(coordinator.records.count, 1)
+    }
+
+    func testTransientPolicySchedule() {
+        var policy = TransientRetryPolicy()
+        policy.jitter = { 0 }
+        let busy = APIError.requestFailed(status: 429, detail: RequestFailureDetail(nil, retryAfter: 7))
+        XCTAssertEqual(policy.delay(afterAttempt: 1, error: busy, waited: 0), 7)
+        let longAdvice = APIError.requestFailed(status: 503, detail: RequestFailureDetail(nil, retryAfter: 600))
+        XCTAssertEqual(policy.delay(afterAttempt: 1, error: longAdvice, waited: 0), 30, "a huge Retry-After is capped")
+        XCTAssertNil(policy.delay(afterAttempt: 1, error: longAdvice, waited: 45), "would exceed the 60s budget")
+        XCTAssertNil(policy.delay(afterAttempt: 6, error: busy, waited: 0), "six tries total")
+        XCTAssertNil(policy.delay(afterAttempt: 1, error: APIError.requestFailed(status: 500), waited: 0))
+        XCTAssertNil(policy.delay(afterAttempt: 1, error: APIError.offline, waited: 0))
+    }
+
     func testProxyCannotEnterCloudSourceReservationContract() throws {
         XCTAssertThrowsError(try BackgroundUploadCoordinator.validateProjectUploadPurpose(.analysisProxy))
         XCTAssertNoThrow(try BackgroundUploadCoordinator.validateProjectUploadPurpose(.cloudRenderSource))
@@ -548,9 +731,9 @@ private final class UploadRetryProtocol: URLProtocol, @unchecked Sendable {
     private struct Callback: @unchecked Sendable { let transport: UploadRetryProtocol }
     override func stopLoading() { lock.withLock { stopped = true } }
 
-    @MainActor func finish(_ status: Int, _ data: Data) {
+    @MainActor func finish(_ status: Int, _ data: Data, headers: [String: String] = [:]) {
         guard claimReply() else { return }
-        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"].merging(headers) { $1 })!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: data)
         client?.urlProtocolDidFinishLoading(self)
