@@ -30,6 +30,6 @@ Do not turn a hand-authored reference edit into execution or render proof.
 Run the free suite from `src/apps/api`:
 
 ```bash
-GEMINI_API_KEY=test DATABASE_URL=postgresql://postgres:postgres@localhost:5432/nova_kri459_test \\
+GEMINI_API_KEY=test DATABASE_URL="$NOVA_DEV_DATABASE_URL" \
   .venv/bin/python -m pytest tests/evals/request_following -q
 ```
