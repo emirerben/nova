@@ -1141,9 +1141,9 @@ def _narrated_storyboard_look_updates(elem: TextElement) -> dict:
 def resolve_narrated_storyboard_look(elem: TextElement) -> TextElement:
     """A storyboard bar with the look the cloud burn gives it spelled out.
 
-    The iOS editor has none of the cloud's preset defaults: it loads a row
-    without ``y_frac``/``font_family`` at y 0.5 in Fraunces, and its Save writes
-    that face back, so the next burn changed font. Editors therefore get the
+    iOS builds before #1424 have none of the cloud's preset defaults: they load
+    a row without ``y_frac``/``font_family`` at y 0.5 in Fraunces, and their Save
+    writes that face back, so the next burn changed font. Editors therefore get the
     resolved values (`_narrated_storyboard_look_updates`): centred custom
     position, explicit px size, explicit face. The burn is pixel-identical
     either way (`test_storyboard_resolved_look_burns_identically`), so a Save

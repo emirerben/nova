@@ -559,8 +559,9 @@ face): `merge_projected_text_elements_for_variant` via
 `resolve_narrated_storyboard_look`, and `resolve_narrated_storyboard_rows` for
 the status route's authored timelines, the Kria chat snapshot and compile
 (re-applied after its ops, so a chat move to a named spot drops the old
-`y_frac`) and the Kria draft bootstrap. The iOS editor otherwise loads a
-missing `y_frac`/`font_family` as 0.5 / Fraunces and saves that face back. The
+`y_frac`) and the Kria draft bootstrap. iOS builds before #1424 load a
+missing `y_frac`/`font_family` as 0.5 / Fraunces and save that face back; this
+keeps those builds right, and current builds resolve presets themselves. The
 burn is pixel-identical (`tests/pipeline/test_narrated_storyboard_look.py`),
 so a Save that persists the spelled-out look changes nothing on video, but it
 freezes that look against later preset or default-face changes. Text patches
