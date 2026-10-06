@@ -13,10 +13,8 @@ private func nativeEffectName(_ raw: [String: JSONValue], fallback: String) -> S
 }
 
 private func nativeTextPosition(_ layer: EditorTextElement) -> CGPoint {
-    CGPoint(
-        x: min(max(layer.raw["x_frac"]?.numberValue ?? 0.5, 0), 1),
-        y: min(max(layer.raw["y_frac"]?.numberValue ?? (layer.raw["position"] == .string("top") ? 0.2 : (layer.raw["position"] == .string("bottom") ? 0.8 : 0.5)), 0), 1)
-    )
+    let anchor = layer.anchor
+    return CGPoint(x: min(max(anchor.x, 0), 1), y: min(max(anchor.y, 0), 1))
 }
 
 /// The shared transform layer's view of a native text element.
@@ -143,7 +141,7 @@ struct NativeVideoPreview: View {
                     item: item,
                     text: layer?.text,
                     position: layer.map(nativeTextPosition) ?? CGPoint(x: 0.5, y: 0.5),
-                    style: layer?.raw["font_family"]?.stringValue,
+                    style: layer?.fontFamily,
                     title: "Text",
                     render: .text,
                     detail: nil,

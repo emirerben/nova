@@ -15,6 +15,8 @@ import SwiftUI
 /// stores style differently maps it in `textElement(id:)` and back in `updateTextRaw`.
 @MainActor protocol NativeTextEditing: NativeTransactionControlling {
     func textElement(id: String) -> EditorTextElement?
+    /// Where the surface draws the text (0–1 canvas), presets resolved its own way.
+    func textAnchor(id: String) -> CGPoint?
     func canEdit(_ section: EditorSection) -> Bool
     var timelineProjection: NativeEditorTimelineProjection { get }
     func textDeletion(id: String) -> NativeEditorSession.TextDeletion
@@ -34,6 +36,16 @@ import SwiftUI
     func setTextAnimationSpeed(id: String, speed: Double)
 }
 
+extension NativeTextEditing {
+    /// Move the text along one axis; the other stays where the text is drawn,
+    /// so a row on a named preset keeps that spot rather than stale fracs.
+    func moveText(id: String, x: Double? = nil, y: Double? = nil) {
+        guard let anchor = textAnchor(id: id) else { return }
+        setTextPosition(id: id, x: x ?? anchor.x, y: y ?? anchor.y)
+    }
+}
+
 extension NativeEditorSession: NativeTextEditing {
     func textElement(id: String) -> EditorTextElement? { document.textElements.first { $0.id == id } }
+    func textAnchor(id: String) -> CGPoint? { textElement(id: id)?.anchor }
 }

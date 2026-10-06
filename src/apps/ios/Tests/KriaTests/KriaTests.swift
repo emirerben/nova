@@ -182,6 +182,8 @@ final class KriaTests: XCTestCase {
         let draft = server.editorDraft(projectID: PreviewFixtures.projectID)
         XCTAssertEqual(draft.clips.first?.trimIn, 0.25)
         XCTAssertEqual(draft.text.first?.content, "Hello")
+        XCTAssertEqual(draft.text.first?.position, CGPoint(x: 0.2, y: 0.8))
+        XCTAssertEqual(draft.text.first?.style, "Fraunces")
         XCTAssertEqual(draft.music?.trackID, trackID)
         XCTAssertTrue(draft.captions.enabled)
     }

@@ -469,7 +469,7 @@ struct NativeVisualPanel: View {
                     TextField("Card text", text: Binding(get: { cardElement?.text ?? "" }, set: { session.updateTextContent(id: element.id, content: $0) }), axis: .vertical)
                         .focused($editingText).padding(12).background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
                     NativeFontPicker(
-                        selection: cardElement?.raw["font_family"]?.stringValue ?? "Inter",
+                        selection: cardElement?.fontFamily ?? EditorTextElement.defaultFontFamily,
                         accessibilityID: "native-editor-card-font"
                     ) { if let family = $0 { session.setTextStyle(id: element.id, style: family) } }
                     ColorPicker("Text color", selection: Binding(get: { nativeEditorColor(cardElement?.raw["color"]?.stringValue ?? "#FFFFFF") }, set: { session.setTextColor(id: element.id, color: nativeEditorHex($0)) }), supportsOpacity: false).frame(minHeight: 44)
