@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.agents._runtime import SchemaError
 from app.agents._schemas.creator_agent import (
     AskUser,
     CapabilityAvailability,
@@ -26,12 +27,16 @@ from app.agents.main_creator import (
 from app.config import Settings, settings
 from app.kria import planner
 from app.kria.brief import (
+    BriefCoverageError,
     BriefRequirement,
     BriefUpdate,
+    BriefUpdateBatchError,
     CreativeBrief,
     CurrentPlanShape,
     apply_receipt_statuses,
     apply_updates,
+    batch_brief_requests,
+    brief_context,
     merge_requirements,
     new_requirements,
     parse_brief_updates,
@@ -70,7 +75,7 @@ def _upd(kind: str, scope: str, **kw) -> BriefUpdate:  # noqa: ANN003
 # ------------------------------------------------------------------- ledger
 
 
-def test_later_requirement_with_same_kind_and_scope_supersedes_earlier() -> None:
+def test_same_kind_and_scope_requirements_coexist_until_explicitly_targeted() -> None:
     first = apply_updates(None, [_upd("text", "title", literal="Old")], source_turn_id="t1")
     second = apply_updates(
         first,
@@ -78,19 +83,19 @@ def test_later_requirement_with_same_kind_and_scope_supersedes_earlier() -> None
         source_turn_id="t2",
     )
     by_id = {req.id: req for req in second.requirements}
-    assert by_id["r1"].status == "superseded"
+    assert by_id["r1"].status == "open"
     assert by_id["r2"].literal == "New" and by_id["r2"].status == "open"
     assert by_id["r3"].kind == "order"
-    assert [req.id for req in second.live()] == ["r2", "r3"]
-    # A superseded item is not carried into the NEXT version.
+    assert [req.id for req in second.live()] == ["r1", "r2", "r3"]
+    # A retained requirement remains part of subsequent versions.
     third = apply_updates(second, [_upd("timing", "global")], source_turn_id="t3")
-    assert "r1" not in {req.id for req in third.requirements}
+    assert "r1" in {req.id for req in third.requirements}
 
 
-def test_merge_collapses_duplicate_keys_within_one_update_batch() -> None:
+def test_merge_keeps_independent_same_key_requirements_with_distinct_ids() -> None:
     new = [_req("text", "title", id="r5", literal="A"), _req("text", "title", id="r6", literal="B")]
     merged = merge_requirements([], new)
-    assert [req.literal for req in merged] == ["B"]
+    assert [req.literal for req in merged] == ["A", "B"]
 
 
 def test_turkish_text_is_kept_nfc_and_never_folded_to_ascii() -> None:
@@ -101,19 +106,17 @@ def test_turkish_text_is_kept_nfc_and_never_folded_to_ascii() -> None:
     assert "ş" in update.literal and "ö" in update.literal
 
 
-def test_parse_brief_updates_drops_bad_entries_without_raising() -> None:
-    parsed = parse_brief_updates(
-        [
-            {"kind": "text", "scope": "title", "literal": "Hi"},
-            {"kind": "bogus", "scope": "title", "literal": "x"},
-            {"kind": "text", "scope": "somewhere", "literal": "x"},
-            {"kind": "order", "scope": "global"},  # neither literal nor description
-            "not-an-object",
-        ]
-    )
-    assert [(u.kind, u.scope) for u in parsed] == [("text", "title")]
+def test_parse_brief_updates_rejects_invalid_batches_without_partial_results() -> None:
+    with pytest.raises(BriefUpdateBatchError):
+        parse_brief_updates(
+            [
+                {"kind": "text", "scope": "title", "literal": "Hi"},
+                {"kind": "bogus", "scope": "title", "literal": "x"},
+            ]
+        )
     assert parse_brief_updates(None) == []
-    assert parse_brief_updates({"kind": "text"}) == []
+    with pytest.raises(BriefUpdateBatchError):
+        parse_brief_updates({"kind": "text"})
 
 
 def test_new_requirements_returns_only_what_this_turn_added() -> None:
@@ -127,6 +130,133 @@ def test_receipt_statuses_overlay_live_requirements_only() -> None:
     brief = apply_updates(None, [_upd("text", "title", literal="A")], source_turn_id="t1")
     shown = apply_receipt_statuses(brief, [{"requirement_id": "r1", "status": "partial"}])
     assert shown.requirements[0].status == "partial"
+
+
+def test_oversized_update_batch_is_rejected_without_silently_dropping_tail() -> None:
+    raw = [
+        {"kind": "text", "scope": "global", "description": f"requirement {index}"}
+        for index in range(17)
+    ]
+    with pytest.raises(BriefUpdateBatchError, match="exceeds"):
+        parse_brief_updates(raw)
+
+
+def test_ledger_preserves_more_than_forty_requirements() -> None:
+    updates = [
+        _upd("text", "global", description=f"independent requirement {index}")
+        for index in range(41)
+    ]
+    brief = apply_updates(None, updates, source_turn_id="t1")
+    assert [req.id for req in brief.live()] == [f"r{index}" for index in range(1, 42)]
+
+
+def test_rendered_ledger_never_truncates_latest_message_or_requirement_text() -> None:
+    long_text = "keep every sentence. " * 600
+    brief = apply_updates(
+        None, [_upd("text", "global", description="keep this requirement")], source_turn_id="t1"
+    )
+    rendered = render_brief_request(brief, latest_message=long_text)
+    assert long_text.strip() in rendered
+    assert rendered.endswith(f"Latest message: {long_text.strip()}")
+
+
+def test_bounded_context_batches_whole_requirements_or_returns_recovery_error() -> None:
+    brief = apply_updates(
+        None,
+        [
+            _upd("text", "global", description=f"requirement {index}: " + "x" * 100)
+            for index in range(4)
+        ],
+        source_turn_id="t1",
+    )
+    batches = batch_brief_requests(
+        brief, latest_message="latest request stays whole", max_chars=280
+    )
+    assert [requirement_id for batch in batches for requirement_id in batch.requirement_ids] == [
+        "r1",
+        "r2",
+        "r3",
+        "r4",
+    ]
+    assert all(
+        batch.text.endswith("Latest message: latest request stays whole") for batch in batches
+    )
+    with pytest.raises(BriefCoverageError, match="batch budget"):
+        brief_context(
+            brief, latest_message="latest request stays whole", max_chars=280, max_batches=1
+        )
+
+
+def test_targeted_caption_change_preserves_id_and_leaves_other_caption_untouched() -> None:
+    first = apply_updates(
+        None,
+        [
+            _upd("text", "per_clip", literal="Old A", description="first clip"),
+            _upd("text", "per_clip", literal="Keep B", description="second clip"),
+        ],
+        source_turn_id="t1",
+    )
+    second = apply_updates(
+        first,
+        [
+            BriefUpdate(
+                operation="change",
+                target_requirement_id="r1",
+                expected_version=first.version,
+                kind="text",
+                scope="per_clip",
+                literal="New A",
+                description="first clip",
+            )
+        ],
+        source_turn_id="t2",
+    )
+    assert [(req.id, req.literal, req.status) for req in second.requirements] == [
+        ("r1", "New A", "open"),
+        ("r2", "Keep B", "open"),
+    ]
+
+
+def test_targeted_remove_tombstones_only_the_named_requirement() -> None:
+    first = apply_updates(
+        None,
+        [_upd("text", "title", literal="A"), _upd("text", "title", literal="B")],
+        source_turn_id="t1",
+    )
+    second = apply_updates(
+        first,
+        [BriefUpdate(operation="remove", target_requirement_id="r1", expected_version=0)],
+        source_turn_id="t2",
+    )
+    assert [(req.id, req.status) for req in second.requirements] == [
+        ("r1", "superseded"),
+        ("r2", "open"),
+    ]
+
+
+def test_ambiguous_or_stale_targeted_updates_fail_closed() -> None:
+    brief = apply_updates(None, [_upd("text", "title", literal="A")], source_turn_id="t1")
+    with pytest.raises(BriefUpdateBatchError, match="exact current"):
+        apply_updates(
+            brief,
+            [
+                BriefUpdate(
+                    operation="change",
+                    target_requirement_id="r1",
+                    expected_version=1,
+                    kind="text",
+                    scope="title",
+                    literal="B",
+                )
+            ],
+            source_turn_id="t2",
+        )
+    with pytest.raises(BriefUpdateBatchError, match="missing or superseded"):
+        apply_updates(
+            brief,
+            [BriefUpdate(operation="remove", target_requirement_id="r999", expected_version=0)],
+            source_turn_id="t2",
+        )
 
 
 # KRI-422 (prod thread C800E2C7, 2026-10-04): one message dictating the text for
@@ -178,7 +308,7 @@ def test_six_dictated_shot_texts_in_one_message_all_stay_live() -> None:
         assert f'{shot} ("{words}")' in rendered
 
 
-def test_restating_one_shot_replaces_only_that_shots_text() -> None:
+def test_legacy_add_for_a_restated_shot_keeps_both_caption_requirements() -> None:
     first = apply_updates(None, parse_brief_updates(_shot_updates()), source_turn_id="t1")
     # Case, list number and trailing punctuation differ; it is the same shot.
     restated = _upd(
@@ -186,37 +316,33 @@ def test_restating_one_shot_replaces_only_that_shots_text() -> None:
     )
     second = apply_updates(first, [restated], source_turn_id="t2")
     by_id = {req.id: req for req in second.requirements}
-    assert by_id["r2"].status == "superseded"
+    assert by_id["r2"].status == "open"
     assert by_id["r7"].literal == "Gutter ball" and by_id["r7"].live
-    assert [req.id for req in second.live()] == ["r1", "r3", "r4", "r5", "r6", "r7"]
+    assert [req.id for req in second.live()] == ["r1", "r2", "r3", "r4", "r5", "r6", "r7"]
 
 
-def test_label_every_clip_rule_still_supersedes_the_previous_rule() -> None:
+def test_label_every_clip_rules_coexist_without_an_explicit_target() -> None:
     place = apply_updates(None, [_place_rule()], source_turn_id="t1")
     time = apply_updates(
         place,
         [_upd("text", "per_clip", literal=None, description="the time each clip was filmed")],
         source_turn_id="t2",
     )
-    assert [(req.id, req.status) for req in time.requirements] == [
-        ("r1", "superseded"),
-        ("r2", "open"),
-    ]
-    # The same words on every clip (a literal, no shot) are a whole-lane rule too.
+    assert [(req.id, req.status) for req in time.requirements] == [("r1", "open"), ("r2", "open")]
+    # The same words on every clip are also separate requirements until targeted.
     day1 = apply_updates(
         None, [_upd("text", "per_clip", literal="Day 1", description=None)], source_turn_id="t1"
     )
     day2 = apply_updates(
         day1, [_upd("text", "per_clip", literal="Day 2", description=None)], source_turn_id="t2"
     )
-    assert [req.literal for req in day2.live()] == ["Day 2"]
+    assert [req.literal for req in day2.live()] == ["Day 1", "Day 2"]
 
 
-def test_label_every_clip_rule_replaces_dictated_shot_texts() -> None:
+def test_label_every_clip_rule_keeps_dictated_shot_texts_without_targeted_removals() -> None:
     shots = apply_updates(None, parse_brief_updates(_shot_updates()), source_turn_id="t1")
     rule = apply_updates(shots, [_place_rule()], source_turn_id="t2")
-    assert [req.id for req in rule.live()] == ["r7"]
-    assert all(req.status == "superseded" for req in rule.requirements if req.id != "r7")
+    assert [req.id for req in rule.live()] == ["r1", "r2", "r3", "r4", "r5", "r6", "r7"]
 
 
 def test_a_dictated_shot_text_leaves_the_label_every_clip_rule_live() -> None:
@@ -737,7 +863,7 @@ def test_prompt_is_unchanged_when_brief_is_off_and_taught_when_on() -> None:
     assert on.replace("\n" + _BRIEF_PROMPT_SECTION, "") == off
 
 
-def test_parse_reads_brief_updates_only_when_enabled_and_never_fails_on_bad_ones() -> None:
+def test_parse_rejects_invalid_brief_update_batch_when_enabled() -> None:
     agent = MainCreatorAgent(object())
     raw = json.dumps(
         {
@@ -751,10 +877,8 @@ def test_parse_reads_brief_updates_only_when_enabled_and_never_fails_on_bad_ones
     off = agent.parse(raw, _agent_input())
     assert off.brief_updates == []
     assert "brief_updates" not in off.model_dump(mode="json")
-    on = agent.parse(raw, _agent_input(brief_enabled=True))
-    assert [(u.kind, u.scope, u.literal) for u in on.brief_updates] == [
-        ("text", "title", "20K Koşu")
-    ]
+    with pytest.raises(SchemaError):
+        agent.parse(raw, _agent_input(brief_enabled=True))
 
 
 # ------------------------------------------------------- planner routing (flag on)

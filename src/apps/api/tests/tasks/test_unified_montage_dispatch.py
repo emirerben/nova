@@ -514,6 +514,7 @@ def _loader(monkeypatch, *, item, thread_id, brief_flag):
     job = SimpleNamespace(
         id=uuid.uuid4(),
         user_id=user_id,
+        assembly_plan={},
         content_plan_item_id=item.id if item is not None else None,
     )
     db = _LoaderDb(job, item, thread_id)
@@ -536,17 +537,26 @@ def _loader(monkeypatch, *, item, thread_id, brief_flag):
     return job, db, latest, loaded
 
 
-def test_loader_returns_the_items_assignments_and_the_threads_latest_brief(monkeypatch):
+def test_loader_reads_approved_snapshot_even_after_writer_flag_rollback(monkeypatch):
     item = SimpleNamespace(id=uuid.uuid4(), clip_assignments=[{"gcs_path": "a"}, "junk"])
     thread_id = uuid.uuid4()
     job, db, latest, loaded = _loader(monkeypatch, item=item, thread_id=thread_id, brief_flag=True)
 
+    from app.kria.brief_binding import BriefBinding, snapshot_media
+
+    job.assembly_plan = {
+        "creator_brief_binding": BriefBinding.create(
+            thread_id, latest, media_snapshot=snapshot_media(item)
+        ).model_dump(mode="json")
+    }
+    item.clip_assignments = [{"gcs_path": "replacement"}]
+    monkeypatch.setattr(gb.settings, "kria_creative_brief_enabled", False)
     user_id, assignments, brief = gb._load_unified_montage_inputs(str(job.id))
 
     assert user_id == job.user_id
     assert assignments == [{"gcs_path": "a"}]
     assert assignments[0] is not item.clip_assignments[0], "a copy, never the live row"
-    assert brief is latest and loaded == [thread_id]
+    assert brief == latest and brief is not latest and loaded == []
     # The thread lookup is scoped to this item and this creator.
     (statement,) = db.statements
     assert str(item.id).replace("-", "") in statement

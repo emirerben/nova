@@ -697,7 +697,7 @@ async def test_generic_montage_context_with_empty_inventory_stays_actionable(
         "render.request",
     ]
     inventory.assert_awaited_once()
-    assert inventory.await_args.kwargs["creator_request"] == request
+    assert request in inventory.await_args.kwargs["creator_request"]
     assert inventory.await_args.kwargs["latest_user_message"] == request
     assert "[order/global]" in inventory.await_args.kwargs["generated_brief"]
 

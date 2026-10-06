@@ -6423,6 +6423,19 @@
         "additionalProperties": false,
         "description": "One deterministic outcome per Creative Brief requirement (KRI-188).\n\n``inferred`` lists values the server guessed rather than read from the\ncreator or the footage (for example a landmark name), so the client can show\nthem and let the creator correct one. ``inferred_labels`` is the same list with\nthe clip each guess belongs to (additive, KRI-207); ``inferred`` stays for\nclients that only read strings.",
         "properties": {
+          "brief_version": {
+            "default": null,
+            "minimum": 0,
+            "nullable": true,
+            "title": "Brief Version",
+            "type": "integer"
+          },
+          "generation_id": {
+            "default": null,
+            "nullable": true,
+            "title": "Generation Id",
+            "type": "string"
+          },
           "inferred": {
             "items": {
               "type": "string"

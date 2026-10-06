@@ -53,7 +53,8 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # `song_sync`), taught only when the manifest carries a usable song (v42).
 # KRI-422: dictated per-shot texts are one per_clip brief entry per shot (they all
 # stay in force); `brief_updates` cap 8 -> 16 (v43).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-04-v43"
+# KRI-459: stable IDs make changes and removals unambiguous (v44).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-06-v44"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -238,8 +239,10 @@ CREATIVE BRIEF
 The FULL CREATOR REQUEST CONTRACT lists every requirement the creator has stated so far. In
 ADDITION to `action`, return a top-level `brief_updates` list (at most 16 objects, in the same
 JSON object as `action`) holding ONLY the requirements the CURRENT USER MESSAGE newly states or
-changes -- never re-list a requirement that is already in the contract and unchanged. Each
-object: {"kind": "text|order|select|timing|audio|style", "scope":
+changes -- never re-list a requirement that is already in the contract and unchanged. For a new
+requirement use `operation`: "add" and include `kind`, `scope`, `literal`, `description`, and
+`facts`. An add object is: {"operation":"add", "kind": "text|order|select|timing|audio|style",
+"scope":
 "title|per_clip|clip:<media_id>|global", "literal": "the creator's exact words to print, or
 null", "description": "what is wanted in the creator's own framing, or null", "facts": {}}.
 `literal` is ONLY text the creator wrote out; described text ("the landmark on each clip") goes
@@ -264,21 +267,26 @@ an `order` requirement when the creator ASKS the edit to follow a sequence ("put
 I filmed", "order them chronologically", "start the edit at X and finish at Y"): {"kind":
 "order", "scope": "global", "facts": {"key": "capture_time"}} plus "start"/"end" when named.
 Merely narrating that footage was captured "from A to B", at sunset and then at night, or during
-two activities is not such an ask. One requirement per (kind, scope): a new one replaces the
-older one. The exception is exact text the creator dictates for particular shots ("1. The
-bookshop photo: "..." 2. The bowling video: "..."): add one {"kind": "text", "scope":
+two activities is not such an ask. Compatible requirements with the same kind and scope coexist.
+The exception is exact text the creator dictates for particular shots ("1. The
+bookshop photo: "..." 2. The bowling video: "..."): add one {"operation":"add", "kind": "text",
+"scope":
 "per_clip"} object PER SHOT with `literal` = that shot's exact words and `description` = the
-shot as the creator named it. All of them stay in force; to change one shot's text, restate
-only that shot and copy its `description` exactly as the contract shows it. The same words on
-every clip are one object with that `literal` and `description` null. A message that only asks
-to redo the edit ("do it again based on my prompt") adds no
+shot as the creator named it. All of them stay in force. To change one requirement, use
+`operation`: "change", its exact `target_requirement_id` and `expected_version` from the
+contract, plus the complete replacement kind, scope, literal, description and facts. To withdraw
+one requirement, use only `operation`: "remove", `target_requirement_id`, and
+`expected_version`. Never guess a target; ask one concise question when the request does not name
+an unambiguous requirement. Never mutate one target twice in a batch. A message that only asks to
+redo the edit ("do it again based on my prompt") adds no
 requirements -- propose a full strategy that honours EVERY requirement in the contract. Example:
 "Title it 20K Koşu, put the landmark name on each clip and order them by the time I filmed
 them" => brief_updates:
-[{"kind": "text", "scope": "title", "literal": "20K Koşu", "description": null, "facts": {}},
-{"kind": "text", "scope": "per_clip", "literal": null, "description": "the landmark shown in
-each clip", "facts": {}}, {"kind": "order", "scope": "global", "literal": null, "description":
-"chronological by filming time", "facts": {"key": "capture_time"}}].
+[{"operation":"add", "kind": "text", "scope": "title", "literal": "20K Koşu",
+"description": null, "facts": {}}, {"operation":"add", "kind": "text", "scope": "per_clip",
+"literal": null, "description": "the landmark shown in each clip", "facts": {}},
+{"operation":"add", "kind": "order", "scope": "global", "literal": null,
+"description": "chronological by filming time", "facts": {"key": "capture_time"}}].
 """.strip("\n")
 
 

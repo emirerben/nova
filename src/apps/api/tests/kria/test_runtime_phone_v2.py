@@ -504,6 +504,7 @@ def _claim(job: SimpleNamespace, prepare) -> tuple[object, SimpleNamespace, Simp
         yield db
 
     document = SimpleNamespace(
+        brief_binding=None,
         kind="editor",
         editor_payload={"base_generation": approval.target_generation_id},
         strategy=None,

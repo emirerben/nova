@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import copy
+import json
 import re
 import time
 import uuid
@@ -37,11 +38,14 @@ from app.agents.main_creator import (
 )
 from app.config import settings
 from app.kria.brief import (
+    BriefCoverageError,
     BriefUpdate,
+    BriefUpdateBatchError,
     CreativeBrief,
     CurrentPlanShape,
     Route,
     apply_updates,
+    brief_context,
     load_latest_brief,
     new_requirements,
     plan_shape_from_editor_snapshot,
@@ -123,6 +127,9 @@ class PlannedKriaTurn:
     # The manifest this turn planned against, so the receipt checks resolve
     # reaction beats (owned images, capability) exactly as approval will.
     brief_manifest: ResolvedCreatorManifest | None = None
+    brief_coverage: dict | None = None
+    brief_expected_version: int | None = None
+    media_snapshot: dict | None = None
     # KRI-219 latency: the editor copilot served this in-place edit BEFORE the slow
     # Main Creator requirement extraction; the completed turn schedules that
     # extraction off the critical path (`extract_deferred_brief`).
@@ -884,6 +891,7 @@ class _CreatorInputs:
     agent_input: MainCreatorInput
     intent_clips: list
     creator_request: str | None
+    brief_batches: tuple = ()
 
 
 async def _load_creator_inputs(
@@ -902,7 +910,7 @@ async def _load_creator_inputs(
     """Read everything the Main Creator needs, then release the transaction."""
     intent_clips = []
     creator_request: str | None = None
-    if settings.clip_intents_enabled:
+    if settings.clip_intents_enabled and not brief_on:
         # This deliberately has no row limit or per-message truncation. The
         # inventory agent must see every creator instruction; a request over
         # the bound is rejected below rather than silently dropping context.
@@ -938,6 +946,8 @@ async def _load_creator_inputs(
         # Capture DB-backed clip identity before releasing the transaction for
         # the external planner/resolver calls below.
         intent_clips = await load_intent_clips_for_item(db, item, persona)
+    if settings.clip_intents_enabled and brief_on:
+        intent_clips = await load_intent_clips_for_item(db, item, persona)
     rows = list(
         (
             await db.execute(
@@ -957,13 +967,13 @@ async def _load_creator_inputs(
     rows.reverse()
     creator_summary, item_summary = creator_context(persona, item)
     extra: dict = {}
+    batches = ()
     if brief_on:
         extra["brief_enabled"] = True
-        if prior_brief is not None and prior_brief.live():
-            # The model reads the brief, never a chip-concatenated chat string.
-            extra["creator_request"] = render_brief_request(
-                prior_brief, latest_message=user_message
-            )
+        context = brief_context(prior_brief, latest_message=user_message, max_batches=3)
+        batches = context.batches
+        if batches:
+            extra["creator_request"] = batches[0].text
     agent_input = MainCreatorInput(
         user_message=user_message,
         creator_context=creator_summary,
@@ -979,7 +989,10 @@ async def _load_creator_inputs(
     # durable turn lease while the synchronous model client is in flight.
     await db.rollback()
     return _CreatorInputs(
-        agent_input=agent_input, intent_clips=intent_clips, creator_request=creator_request
+        agent_input=agent_input,
+        intent_clips=intent_clips,
+        creator_request=creator_request,
+        brief_batches=batches,
     )
 
 
@@ -1128,7 +1141,7 @@ async def _plan_from_creator_output(
                 update={"strategy": _with_resolved_song_takes(action.strategy, gate.resolved_takes)}
             )
     intent_clips = inputs.intent_clips
-    creator_request = inputs.creator_request
+    creator_request = brief_request or inputs.creator_request
     if (
         settings.clip_intents_enabled
         and isinstance(action, ProposeStrategy)
@@ -1368,6 +1381,41 @@ def _brief_wants_capture_order(brief: CreativeBrief | None) -> bool:
     return brief_view(brief).order_by_capture
 
 
+def _request_recovery(manifest, prior, *, updates=(), reason="context_limit") -> PlannedKriaTurn:
+    effective = apply_updates(prior, updates, source_turn_id=None)
+    ids = [req.id for req in effective.live()]
+    log.info("kria_request_recovery", stage="planning", reason=reason, requirement_ids=ids)
+    detail = {
+        "request_extraction_failed": "I couldn't reliably read every requested change.",
+        "planning_batches_disagree": "The separate parts of your brief produced conflicting plans.",
+        "clip_planner_context_limit": (
+            "Your complete brief exceeds the clip planner's 12,000-character limit."
+        ),
+    }.get(reason, "Your complete request exceeds the context this planning step can safely read.")
+    return PlannedKriaTurn(
+        plan=KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=(
+                f"{detail} Your complete request is saved and your draft is unchanged. "
+                "Which clip or part of the edit should I work on first?"
+            ),
+        ),
+        manifest_hash=manifest.manifest_hash,
+        context_hash=manifest.context_hash,
+        brief_updates=tuple(updates),
+        brief_expected_version=prior.version if prior else 0,
+        brief_coverage={
+            "applicable_ids": ids,
+            "retrieved_ids": [],
+            "enforced_ids": [],
+            "unresolved_ids": ids,
+            "stage": "planning",
+            "reason": reason,
+        },
+    )
+
+
 async def _refetch_item(db: AsyncSession, item_id: uuid.UUID) -> PlanItem:
     item = await db.get(PlanItem, item_id)
     if item is None:
@@ -1486,7 +1534,33 @@ def _editor_target_recovery(manifest: object) -> PlannedKriaTurn:
     )
 
 
-async def plan_live_turn(
+async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
+    """Fence planning against source replacement while providers are running."""
+    from app.kria.brief_binding import media_identity, snapshot_media  # noqa: PLC0415
+
+    item = await db.get(PlanItem, kwargs["item_id"])
+    before = snapshot_media(item) if item is not None else {}
+    planned = await _plan_live_turn(db, **kwargs)
+    if planned.plan.mode != "act":
+        return planned
+    current = await db.get(PlanItem, kwargs["item_id"], populate_existing=True)
+    after = snapshot_media(current) if current is not None else {}
+    if media_identity(before) != media_identity(after):
+        return replace(
+            planned,
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="recovery",
+                response=(
+                    "Your clips changed while I was planning. Your draft is unchanged; "
+                    "please ask again using the current clips."
+                ),
+            ),
+        )
+    return replace(planned, media_snapshot=after)
+
+
+async def _plan_live_turn(
     db: AsyncSession,
     *,
     thread_id: uuid.UUID,
@@ -1516,6 +1590,11 @@ async def plan_live_turn(
         raise RuntimeError("Kria creator context is unavailable")
     manifest, media_context = await resolve_item_creator_context(db, item, persona=persona)
     brief_on = settings.creative_brief_for(creator_id)
+    binding_on = settings.brief_binding_for(creator_id)
+    if binding_on:
+        # The fast path defers extraction until after the draft is accepted.
+        # A bound draft must include this turn before it can be approved.
+        allow_fast_path = False
     # KRI-188: with a render present and the brief on, the requirement router
     # decides between the editor-op tool and a re-plan, so the Main Creator
     # (which extracts the requirements) runs FIRST. Everything else keeps the
@@ -1588,7 +1667,7 @@ async def plan_live_turn(
             answers_clip_question=answers_clip_question,
             **_state_kw(editor_state),
         )
-    if not extract_first and not answers_clip_question:
+    if not extract_first and not answers_clip_question and not (binding_on and brief_on):
         has_render = item.current_job_id is not None
         _editor_target_miss.set(None)
         editor_plan = await _plan_editor_revision(
@@ -1639,8 +1718,30 @@ async def plan_live_turn(
         )
         if isinstance(inputs, PlannedKriaTurn):
             return inputs
-        output = await _call_main_creator(inputs, thread_id=thread_id, creator_id=creator_id)
-    except (RuntimeError, ValidationError):
+        outputs = []
+        retrieved_ids = []
+        for batch in inputs.brief_batches or (None,):
+            batch_inputs = (
+                inputs
+                if batch is None
+                else replace(
+                    inputs,
+                    agent_input=inputs.agent_input.model_copy(
+                        update={"creator_request": batch.text}
+                    ),
+                )
+            )
+            outputs.append(
+                await _call_main_creator(batch_inputs, thread_id=thread_id, creator_id=creator_id)
+            )
+            if batch is not None:
+                retrieved_ids.extend(batch.requirement_ids)
+        output = outputs[-1]
+    except BriefCoverageError as exc:
+        return _request_recovery(manifest, prior_brief, reason=str(exc))
+    except (RuntimeError, ValidationError, BriefUpdateBatchError):
+        if binding_on and brief_on:
+            return _request_recovery(manifest, prior_brief, reason="request_extraction_failed")
         if not extract_first or answers_clip_question:
             raise
         # KRI-188: the Main Creator now runs before the copilot only to extract
@@ -1669,9 +1770,45 @@ async def plan_live_turn(
             output=output,
         )
 
-    updates = tuple(output.brief_updates)
-    effective = apply_updates(prior_brief, updates, source_turn_id=None)
+    unique_updates = {
+        json.dumps(update.model_dump(mode="json"), sort_keys=True): update
+        for result in outputs
+        for update in result.brief_updates
+    }
+    updates = tuple(unique_updates.values())
+    try:
+        effective = apply_updates(prior_brief, updates, source_turn_id=None)
+    except BriefUpdateBatchError as exc:
+        return _request_recovery(manifest, prior_brief, reason=str(exc))
+    effective_request = render_brief_request(effective, latest_message=user_message)
+    if (
+        len(outputs) > 1
+        and len(
+            {
+                json.dumps(result.action.model_dump(mode="json"), sort_keys=True)
+                for result in outputs
+            }
+        )
+        > 1
+    ):
+        return _request_recovery(
+            manifest, prior_brief, updates=updates, reason="planning_batches_disagree"
+        )
+    # Downstream clip inventory currently consumes one complete request. Refuse
+    # explicitly if it cannot receive it; never send a sliced prefix.
+    from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS  # noqa: PLC0415
+
+    if len(effective_request) > CREATOR_REQUEST_MAX_CHARS:
+        return _request_recovery(
+            manifest, prior_brief, updates=updates, reason="clip_planner_context_limit"
+        )
     fresh = new_requirements(prior_brief, effective)
+    coverage = {
+        "applicable_ids": [req.id for req in effective.live()],
+        "retrieved_ids": list(dict.fromkeys([*retrieved_ids, *[req.id for req in fresh]])),
+        "enforced_ids": [],
+        "unresolved_ids": [req.id for req in effective.live()],
+    }
     clip_ids = tuple(str(media.media_id) for media in manifest.media)
     shape = CurrentPlanShape(has_render=False)
     # Every rollback above expires loaded rows; an expired attribute read on an
@@ -1715,6 +1852,8 @@ async def plan_live_turn(
                 brief_route=route,
                 brief_clip_ids=clip_ids,
                 brief_manifest=manifest,
+                brief_coverage=coverage,
+                brief_expected_version=prior_brief.version if prior_brief else 0,
             )
         log.info(
             "kria_copilot_skipped_replan",
@@ -1732,11 +1871,7 @@ async def plan_live_turn(
         manifest=manifest,
         inputs=inputs,
         output=output,
-        brief_request=(
-            render_brief_request(effective, latest_message=user_message)
-            if effective.live()
-            else None
-        ),
+        brief_request=effective_request,
         wants_capture_order=_brief_wants_capture_order(effective),
     )
     return replace(
@@ -1747,6 +1882,8 @@ async def plan_live_turn(
         brief_route=route,
         brief_clip_ids=clip_ids,
         brief_manifest=manifest,
+        brief_coverage=coverage,
+        brief_expected_version=prior_brief.version if prior_brief else 0,
     )
 
 

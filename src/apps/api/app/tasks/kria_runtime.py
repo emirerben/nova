@@ -121,6 +121,7 @@ class _ApprovalDispatchClaim:
     target_variant_id: str | None
     target_generation_id: str | None
     creator_request: str
+    brief_binding: dict[str, Any] | None = None
     preflight_analysis_id: uuid.UUID | None = None
     speech_cleanup_analysis_id: uuid.UUID | None = None
     speech_cleanup_choice: str | None = None
@@ -163,6 +164,8 @@ def _complete_response_turn(
     claimed_thread_revision: int,
     plan: KriaTurnPlan,
     brief_updates: tuple[BriefUpdate, ...] = (),
+    brief_coverage: dict | None = None,
+    brief_expected_version: int | None = None,
 ) -> _Completion:
     with sync_session() as db:
         turn = db.execute(
@@ -185,6 +188,14 @@ def _complete_response_turn(
             turn.lease_expires_at = None
             db.commit()
             return _Completion(committed=False, requeue_turn_id=str(turn.id))
+        if brief_expected_version is not None:
+            current_brief = load_latest_brief_sync(db, thread.id)
+            if brief_expected_version != (current_brief.version if current_brief else 0):
+                turn.status = "pending"
+                turn.lease_owner = None
+                turn.lease_expires_at = None
+                db.commit()
+                return _Completion(committed=False, requeue_turn_id=str(turn.id))
         if brief_updates:
             # KRI-188: a question/recovery turn still records what the creator
             # stated. Written under the thread lock, after the revision fence,
@@ -204,6 +215,7 @@ def _complete_response_turn(
                 "receipt_ids": [],
                 "next_actions": [],
                 "schema_version": plan.schema_version,
+                **({"brief_coverage": brief_coverage} if brief_coverage is not None else {}),
                 **({"clip_question": plan.clip_question} if plan.clip_question else {}),
                 # KRI-374: persisted so the answer can be validated + folded later.
                 **(
@@ -420,6 +432,11 @@ def _complete_draft_turn(
             db.commit()
             return _Completion(committed=False, requeue_turn_id=str(turn.id))
 
+        if planned.media_snapshot is not None:
+            from app.kria.brief_binding import media_identity, snapshot_media  # noqa: PLC0415
+
+            if media_identity(planned.media_snapshot) != media_identity(snapshot_media(item)):
+                raise RuntimeError("Your clips changed after planning; please plan again")
         variant_key = str(session.target_variant_id or "initial")
         generation_id = str(session.target_generation_id or "") or None
         draft_generation_id = generation_id
@@ -531,9 +548,16 @@ def _complete_draft_turn(
             raise RuntimeError("Kria produced an unsupported draft tool")
         reply_text = arguments.summary
         requirement_receipts: list[dict[str, Any]] = []
+        brief = None
         if planned.brief_route is not None:
             # KRI-188: persist this turn's requirements (idempotent per turn),
             # then check each one deterministically against what was drafted.
+            if planned.brief_expected_version is not None:
+                current_brief = load_latest_brief_sync(db, thread.id)
+                if planned.brief_expected_version != (
+                    current_brief.version if current_brief else 0
+                ):
+                    raise RuntimeError("The request changed during planning; please retry")
             brief = persist_brief_version_sync(
                 db,
                 thread_id=thread.id,
@@ -575,6 +599,33 @@ def _complete_draft_turn(
                         summary=arguments.summary,
                         notices=planned.policy_notices,
                     )
+        if settings.brief_binding_for(thread.creator_id):
+            from app.kria.brief_binding import BriefBinding, snapshot_media  # noqa: PLC0415
+
+            if brief is None:
+                brief = load_latest_brief_sync(db, thread.id)
+            source_event = db.get(CreationThreadEvent, turn.source_event_id)
+            document = document.model_copy(
+                update={
+                    "brief_binding": BriefBinding.create(
+                        thread.id,
+                        brief,
+                        latest_message=str(source_event.content or "")
+                        if source_event
+                        else document.intent,
+                        media_snapshot=planned.media_snapshot
+                        if planned.media_snapshot is not None
+                        else snapshot_media(item),
+                    ),
+                    "brief_coverage": planned.brief_coverage,
+                }
+            )
+            snapshot, snapshot_hash = canonical_snapshot(document)
+        if brief is not None:
+            requirement_receipts = [
+                {**receipt, "brief_version": brief.version, "generation_id": generation_id}
+                for receipt in requirement_receipts
+            ]
         next_revision = (
             int(
                 db.execute(
@@ -712,7 +763,12 @@ def _complete_draft_turn(
             target_manifest_hash=planned.manifest_hash,
             target_ownership_epoch=int(session.ownership_epoch),
             status="awaiting_approval",
-            result={"consequence": "Start one render from this exact draft."},
+            result={
+                "consequence": "Start one render from this exact draft.",
+                "creator_request": render_brief_request(brief)
+                if brief is not None
+                else document.intent,
+            },
             started_at=datetime.now(UTC),
             awaiting_approval_at=datetime.now(UTC),
         )
@@ -1332,6 +1388,8 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     claimed_thread_revision=claimed_thread_revision,
                     plan=planned.plan,
                     brief_updates=planned.brief_updates,
+                    brief_coverage=planned.brief_coverage,
+                    brief_expected_version=planned.brief_expected_version,
                 )
             else:
                 try:
@@ -1710,6 +1768,24 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
         ):
             target_valid = False
 
+        if target_valid and document is not None:
+            from app.kria.brief_binding import media_identity, snapshot_media  # noqa: PLC0415
+
+            if document.brief_binding is not None:
+                try:
+                    document.brief_binding.resolve(thread.id)
+                    if execution.status != "accepted" and document.brief_binding.media_snapshot:
+                        target_valid = media_identity(
+                            document.brief_binding.media_snapshot
+                        ) == media_identity(snapshot_media(item))
+                except ValueError:
+                    target_valid = False
+            elif settings.brief_binding_for(thread.creator_id):
+                # Legacy accepted work may retry only its own saved inputs.
+                target_valid = execution.status == "accepted" and isinstance(
+                    (execution.result or {}).get("creator_request"), str
+                )
+
         if (
             target_valid
             and execution.status == "accepted"
@@ -2012,13 +2088,22 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                     if revision is not None and editor_prep.get("has_render_section"):
                         editor_prep = {**editor_prep, "device_recipe_revision": int(revision)}
 
-        dispatch_request = document.intent
-        if document.kind == "strategy" and settings.creative_brief_for(thread.creator_id):
-            # KRI-188: the strategy's creator request is rendered from the
-            # Creative Brief, never from the draft summary or chip text.
-            brief = load_latest_brief_sync(db, thread.id)
-            if brief is not None and brief.live():
-                dispatch_request = render_brief_request(brief)
+        dispatch_request = str((execution.result or {}).get("creator_request", document.intent))
+        if document.brief_binding is not None:
+            document.brief_binding.resolve(thread.id)
+            dispatch_request = document.brief_binding.creator_request
+        execution.result = {
+            **(execution.result or {}),
+            "creator_request": dispatch_request,
+            "brief_binding": document.brief_binding.model_dump(mode="json")
+            if document.brief_binding
+            else None,
+        }
+        if document.kind == "editor" and document.brief_binding is not None:
+            assembly = dict(current_job.assembly_plan or {})
+            bindings = dict(assembly.get("creator_brief_bindings") or {})
+            bindings[target_generation_id] = document.brief_binding.model_dump(mode="json")
+            current_job.assembly_plan = {**assembly, "creator_brief_bindings": bindings}
 
         approval.status = "consumed"
         approval.consumed_at = approval.consumed_at or now
@@ -2046,6 +2131,9 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             target_variant_id=target_variant_id,
             target_generation_id=target_generation_id,
             creator_request=dispatch_request,
+            brief_binding=document.brief_binding.model_dump(mode="json")
+            if document.brief_binding
+            else None,
             preflight_analysis_id=preflight_analysis_id,
             speech_cleanup_analysis_id=speech_cleanup_analysis_id,
             speech_cleanup_choice=speech_cleanup_choice,
@@ -2187,6 +2275,10 @@ _SPEECH_CLEANUP_DISPATCH_REFUSALS: dict[str, str] = {
 # KRI-217: the project's Visuals block this render. Resending the same approval
 # refuses the same way, so these are never the generic "retry" copy either.
 _VISUALS_DISPATCH_REFUSALS: dict[str, str] = {
+    "request_binding_stale": (
+        "Your source clips changed after this draft was approved. Your draft is saved; "
+        "please make a fresh plan before rendering."
+    ),
     # The montage lane this edit renders on cannot place Visuals (a cloud
     # runtime-v2 montage, or a Visual kind the phone cannot draw yet).
     "guided_edit_bypass_unsafe": (
@@ -2535,6 +2627,11 @@ def execute_kria_approval(approval_id: str) -> dict[str, str | None]:
             phone_speech_cleanup_unattended=True,
             creator_strategy=claim.strategy,
             creator_request=claim.creator_request,
+            **(
+                {"creator_brief_binding": claim.brief_binding}
+                if getattr(claim, "brief_binding", None)
+                else {}
+            ),
             speech_cleanup_analysis_id=(
                 str(claim.speech_cleanup_analysis_id)
                 if claim.speech_cleanup_analysis_id is not None
