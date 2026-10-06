@@ -253,6 +253,7 @@ class _Placed:
     # its own unmatched footage while staying on the song clock.
     full_start: int = 0
     full_end: int = 0
+    method: str | None = None  # how the aligner found it: "audio" | "lyrics"
 
 
 @dataclass
@@ -323,7 +324,12 @@ def _place_takes(
             reasons[clip.media_id] = "unmatched"
         elif row.status == "confident" and row.delta_s is not None:
             placed[clip.media_id] = _Placed(
-                clip, _ms(row.delta_s), "confident", False, match_ms=_match_ms(row)
+                clip,
+                _ms(row.delta_s),
+                "confident",
+                False,
+                match_ms=_match_ms(row),
+                method=row.method,
             )
         else:
             uncertain[clip.media_id] = row
@@ -362,7 +368,9 @@ def _place_takes(
         if chosen is None:
             reasons[media_id] = "no_fitting_position"
             continue
-        placed[media_id] = _Placed(clip, chosen, row.status, True, match_ms=_match_ms(row))
+        placed[media_id] = _Placed(
+            clip, chosen, row.status, True, match_ms=_match_ms(row), method=row.method
+        )
         reasons.pop(media_id, None)
 
     for media_id, item in list(placed.items()):
@@ -823,6 +831,7 @@ def plan_lipsync_montage(
                 "song_end_s": b.end / 1000,
                 "delta_s": b.placed.delta_ms / 1000,
                 "confirmed_by_creator": b.placed.confirmed,
+                "method": b.placed.method,
             }
             for b in blocks
             if b.placed is not None

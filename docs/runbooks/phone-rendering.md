@@ -2205,8 +2205,10 @@ Flow:
    `SONG_ALIGNMENT_TURN_DEADLINE_S` (45 s) for the alignment, then replies "still
    checking your clips". Any take that is not `confident` produces a
    `song_order_question` (video widgets in a proposed order); the creator's answer
-   is written onto the strategy as server-owned `resolved_song_takes`. All takes
-   confident means no question.
+   is written onto the strategy as server-owned `resolved_song_takes`. Only
+   `ambiguous` takes with candidate positions are asked about (`takes_needing_order`):
+   all takes confident or unmatched means no question. A missing or stale
+   (`SONG_ALIGNMENT_VERSION`) alignment is re-enqueued once per gate call.
 5. **Render.** `_run_phone_unified_montage_job` branches on
    `all_candidates["user_song"]` (`gcs_path, generation, duration_s, sync`):
    - `background`: `plan_unified_montage(song_*)`. The total is capped at the song
@@ -2313,7 +2315,27 @@ Flags and rollout:
 - Thresholds (settings, `song_align_*`): confident = `peak_z >= 8` and
   `peak_ratio >= 1.5` and the drift check (`song_align_drift_tolerance_s` 0.04
   s) passes and (text anchors agree within 0.15 s, or `peak_z >= 12` and
-  `peak_ratio >= 2`). Text alone never makes a take confident.
+  `peak_ratio >= 2`).
+  **Lyrics-only placement (KRI-466):** a creator singing along over earbuds leaves no
+  song in the take, so no audio peak exists. When no audio placement is valid, a take
+  whose words match the song's (`song_align_lyrics_min_words` 6, per-word offset
+  spread <= `song_align_lyrics_max_spread_s` 0.35 s, `song_align_lyrics_min_density`
+  0.6) is `confident` with `method="lyrics"` if exactly one placement qualifies, and
+  `ambiguous` (song-order question) when several do (a chorus). Audio always wins when
+  valid. Kill switch: `SONG_ALIGN_LYRICS_ENABLED=false`. Lyric sync is "close"
+  (+-~0.1 s), not frame-exact. Every placed row carries `method` and
+  `match_start_s/match_end_s` (the part of the take that matches); the planner trims
+  the take to that range but keeps the full source, so the editor can extend the tail
+  (the FIRST cut's head stays locked: `USER_SONG_LIPSYNC_LOCKED`).
+- **Unplaced takes are never dropped silently.** They are appended after the last sung
+  take as short (3 s) muted B-roll (`kept_broll_ids`; dropped reason `kept_as_broll`)
+  and every take stays in the editor's media list (`media_scope="selected"`).
+- **Nothing placeable falls back, it does not fail.** On `no_synced_takes` /
+  `span_too_short` the worker plans a background-style song edit
+  (`lipsync_fallback_to_background`; receipt `requested_mode`, `fallback_reason`,
+  `unmatched_ids`) and the chat tells the creator how to film for lip-sync.
+- **Deploy order:** API before worker (`TakeAlignment` is `extra="forbid"`; an old API
+  rejects rows with the new fields and the gate keeps saying "still checking").
   `SONG_ALIGNMENT_PROXY_OFFSET_S` (default 0) is added to every delta to absorb a
   measured analysis-proxy vs original audio offset (AAC priming, `.mov` edit
   lists); measure it with the device fixture before relying on frame-exact sync.
@@ -2325,11 +2347,16 @@ Troubleshooting:
   is not rendering on the phone (cloud destination, no analysis-proxy footage), or
   `phone_user_song_supported()` is false: check the flag and
   `PHONE_RENDER_VERIFIED_FEATURES` contains `musicBed` and `audioMix`.
-- **`phone_plan_unsupported` with "couldn't find where any of your clips...".**
-  `LipsyncPlanError.no_synced_takes`: nothing aligned. Check the job's
-  `unified_montage.user_song` receipt and `PlanItem.song_alignment` (statuses,
-  `peak_z`, `peak_ratio`). A take filmed without the song audible, or a silent
-  take, is `unmatched`. The planner never places a guess.
+- **Lip-sync edit came out as a plain background-song edit.** Expected when nothing
+  could be placed: check `unified_montage.user_song.fallback_reason` and
+  `PlanItem.song_alignment` (`status`, `method`, `peak_z`, `text_score`). A take with
+  neither audible song nor clearly sung words is `unmatched`; the planner never places
+  a guess.
+- **`user_song_plan_declined`.** A real decline (song missing/replaced/unreadable, or
+  fallback impossible). The chat shows `Job.error_detail` verbatim for this code
+  (`CREATOR_FACING_DETAIL_CODES`), so keep those strings creator-facing. Before
+  KRI-466 these surfaced as `phone_plan_unsupported` with the generic "your iPhone
+  can't render yet" copy.
 - **"Your song was replaced after this edit was approved".** The item's
   `song_generation` or duration no longer matches the approved plan; the creator
   must ask for the edit again.
