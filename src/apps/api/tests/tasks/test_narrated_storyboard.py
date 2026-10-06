@@ -308,9 +308,10 @@ def test_storyboard_provider_failure_returns_upload_order_fallback(monkeypatch) 
             SimpleNamespace(
                 clip_id="clip_0",
                 hook_text="tennis serve",
+                clip_summary="shared tennis serve summary",
                 detected_subject="player",
                 transcript="",
-                content_type="broll",
+                clip_content_type="action",
                 best_moments=[],
             )
         ],
@@ -345,9 +346,10 @@ def test_storyboard_receives_filming_guide_context(monkeypatch) -> None:
             SimpleNamespace(
                 clip_id="clip_0",
                 hook_text="tennis serve",
+                clip_summary="shared tennis serve summary",
                 detected_subject="player",
                 transcript="",
-                content_type="broll",
+                clip_content_type="action",
                 best_moments=[],
             )
         ],
@@ -361,6 +363,9 @@ def test_storyboard_receives_filming_guide_context(monkeypatch) -> None:
 
     assert receipt["status"] == "ready"
     assert captured["input"].segments[0].guidance == "Show the opening serve"
+    clip = captured["input"].clips[0]
+    assert clip.summary == "shared tennis serve summary"
+    assert clip.content_type == "action"
 
 
 def test_storyboard_intro_overlay_requires_creator_intro_intent() -> None:

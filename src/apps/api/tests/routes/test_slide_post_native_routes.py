@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import HTTPException
 
+from app.config import settings
+from app.kria.brief_binding import BriefBinding
 from app.routes import plan_items
 from app.schemas.slide_post import SlidePostDraft, SlideRef
 from app.tasks.content_plan_build import DispatchResult
@@ -289,3 +291,100 @@ def test_capability_flag_is_exposed_and_defaults_off() -> None:
 
     assert settings.slide_post_rich_text_enabled is False
     assert CreationCapabilitiesOut.model_fields["slide_post_rich_text"].default is False
+
+
+@pytest.mark.asyncio
+async def test_put_accepts_server_staged_binding_and_roundtrips_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset_id = uuid.uuid4()
+    item = SimpleNamespace(id=uuid.uuid4(), edit_format="slides", slide_post=None)
+    asset = SimpleNamespace(
+        id=asset_id, kind="image", gcs_generation="7", content_fingerprint="fingerprint"
+    )
+    draft = SlidePostDraft(
+        platform_profile="tiktok_photo",
+        slides=[SlideRef(id="slide", asset_id=asset_id, kind="image")],
+    )
+    thread = SimpleNamespace(id=uuid.uuid4())
+    binding = BriefBinding.create(
+        thread.id,
+        None,
+        latest_message="Use this exact caption.",
+        media_snapshot=plan_items._slide_post_media_snapshot(item, draft, [asset]),
+    )
+    _wire_put(monkeypatch, item)
+    monkeypatch.setattr(plan_items, "_owned_ready_slide_assets", AsyncMock(return_value=[asset]))
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    monkeypatch.setattr(plan_items, "_slide_post_thread_for_item", AsyncMock(return_value=thread))
+    body = plan_items.SlidePostDraftBody(
+        platform_profile="tiktok_photo",
+        slides=draft.slides,
+        brief_binding=binding,
+    )
+
+    await plan_items.put_slide_post_draft(str(item.id), body, _user(), AsyncMock())
+
+    saved = SlidePostDraft.model_validate(item.slide_post)
+    assert saved.brief_binding == binding
+
+
+@pytest.mark.asyncio
+async def test_put_old_client_preserves_stored_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    item = _item()
+    stored = SlidePostDraft.model_validate(item.slide_post)
+    binding = BriefBinding.create(uuid.uuid4(), None, latest_message="original request")
+    item.slide_post = stored.model_copy(update={"brief_binding": binding}).model_dump(mode="json")
+    _wire_put(monkeypatch, item)
+    body = plan_items.SlidePostDraftBody(
+        platform_profile="tiktok_photo",
+        slides=stored.slides,
+        expected_version=stored.version,
+    )
+
+    await plan_items.put_slide_post_draft(str(item.id), body, _user(), AsyncMock())
+
+    assert SlidePostDraft.model_validate(item.slide_post).brief_binding == binding
+
+
+@pytest.mark.asyncio
+async def test_put_staged_binding_survives_slide_reorder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, second = uuid.uuid4(), uuid.uuid4()
+    item = SimpleNamespace(id=uuid.uuid4(), edit_format="slides", slide_post=None)
+    assets = [
+        SimpleNamespace(id=first, kind="image", gcs_generation="1", content_fingerprint="first"),
+        SimpleNamespace(id=second, kind="image", gcs_generation="2", content_fingerprint="second"),
+    ]
+    before = SlidePostDraft(
+        platform_profile="tiktok_photo",
+        slides=[
+            SlideRef(id="one", asset_id=first, kind="image"),
+            SlideRef(id="two", asset_id=second, kind="image"),
+        ],
+    )
+    thread = SimpleNamespace(id=uuid.uuid4())
+    binding = BriefBinding.create(
+        thread.id,
+        None,
+        latest_message="Put the second photo first.",
+        media_snapshot=plan_items._slide_post_media_snapshot(item, before, assets),
+    )
+    _wire_put(monkeypatch, item)
+    monkeypatch.setattr(plan_items, "_owned_ready_slide_assets", AsyncMock(return_value=assets))
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    monkeypatch.setattr(plan_items, "_slide_post_thread_for_item", AsyncMock(return_value=thread))
+    body = plan_items.SlidePostDraftBody(
+        platform_profile="tiktok_photo",
+        slides=list(reversed(before.slides)),
+        brief_binding=binding,
+    )
+
+    await plan_items.put_slide_post_draft(str(item.id), body, _user(), AsyncMock())
+
+    saved = SlidePostDraft.model_validate(item.slide_post)
+    assert [slide.id for slide in saved.slides] == ["two", "one"]
+    assert saved.brief_binding == binding

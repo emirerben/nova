@@ -549,6 +549,30 @@ order is caption-free base → TextElements → narrated captions. If analysis o
 agent fails, phrase segmentation/upload order remains the deterministic fallback.
 The backend-only flag defaults false and must be set on API and worker together.
 
+### Narrated clip alignment (KRI-456)
+
+Phone narrated edits without a filming guide (`_run_phone_narrated_job`'s
+auto-segment branch) used to give clip *i* the *i*-th equal-duration bucket of
+the transcript, so each clip played a step or two before the voice reached it.
+With `NARRATED_CLIP_ALIGNMENT_ENABLED=true` (separate rollout; default false) the worker first asks
+`NarratedClipAlignmentAgent` (`nova.compose.narrated_clip_alignment`) which
+voiceover word each clip should start on, from the timed words, each clip's
+visual description, the creator's shot labels (resolved clip intents) and the
+creator request. `order_locked` (a filming-guide order or any `order` clip
+intent) pins the clip order; otherwise the agent may reorder. The agent never
+owns timestamps: `app.pipeline.narrated_alignment.resolve_aligned_steps` turns
+the chosen words into contiguous windows (first step starts at 0.0, minimum step
+1.5 s by pulling boundaries earlier). Any precondition miss (<2 clips, no/too
+many words, missing clip metadata), agent error or unresolvable result falls
+back to the equal-bucket split and records a `narrated`/`narrated_clip_alignment`
+pipeline event (`status` `aligned` / `fallback` + `reason`) for the admin
+job-debug view. The scripted filming-guide branch and the cloud
+`_render_narrated_variant` path are untouched. Kill switch:
+`fly secrets set NARRATED_CLIP_ALIGNMENT_ENABLED=false --app nova-video` + worker
+restart (byte-identical to the bucket split). Eval:
+`tests/evals/test_narrated_clip_alignment_evals.py` (goldens recorded from the
+cacio e pepe job).
+
 Supersession discipline: every caption dispatch mints a `render_generation_id`
 and commits BEFORE enqueue (R1-1) — the reburn's start write is token-checked,
 so an enqueue that outran the commit would read the old generation and strand

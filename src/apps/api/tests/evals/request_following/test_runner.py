@@ -12,6 +12,7 @@ from app.kria.replay import load_fixture as load_kria_fixture
 from .models import FinalPlan, PlanClip, PlanText, RFFixture, Turn
 from .runner import (
     FIXTURE_ROOT,
+    evaluate_rollout_gate,
     load_fixture,
     replay_turns,
     run_thread,
@@ -147,3 +148,114 @@ def test_scored_plan_text_roles_survive_an_editor_round_trip():
     turn = next(t for t in replay_turns(fixture) if t.turn_id == "t1-brief")
     assert [t.role for t in turn.plan_after.texts] == ["title", "label", "label", "label"]
     assert all(isinstance(t, PlanText) for t in turn.plan_after.texts)
+
+
+def test_v2_cassette_compiles_the_actual_plan_instead_of_using_recorded_plan_after():
+    fixture = load_fixture(FIXTURE_ROOT / "threads" / "v2_food_title_cassette.json")
+    turn = replay_turns(fixture)[0]
+    assert turn.plan_after.title().text == "Kadıköy'de Pazar"
+    assert turn.plan_after != fixture.turns[0].recorded.plan_after
+    assert turn.execution_proof is not None
+    assert turn.execution_proof.execution_path == "compile_only"
+    assert turn.execution_proof.model_call_observed
+    assert turn.execution_proof.prompt_hash and turn.execution_proof.compiler_hash
+    assert any(
+        "unexecuted: stage/save/DB dispatch/device apply/render/export" == note
+        for note in turn.notes
+    )
+
+
+def test_v2_cassette_scores_compiled_output_but_never_claims_rollout_or_render_proof():
+    fixture = load_fixture(FIXTURE_ROOT / "threads" / "v2_food_title_cassette.json")
+    result = run_thread(fixture)
+    assert [score.status for score in result.scores] == ["met"]
+    assert result.evidence and result.evidence.execution_path == "compile_only"
+    assert result.evidence.replay_only
+    assert not result.rollout_eligible
+    assert evaluate_rollout_gate([result]).status == "incomplete"
+
+
+def test_v2_strategy_cassette_compiles_an_inert_plan_without_fabricating_a_timeline():
+    source = json.loads(
+        (
+            Path(__file__).resolve().parents[2]
+            / "fixtures"
+            / "agent_evals"
+            / "main_creator"
+            / "kri129_caption_food_and_weather.json"
+        ).read_text(encoding="utf-8")
+    )
+    fixture = RFFixture(
+        fixture_id="v2-strategy-cassette",
+        provenance="authored",
+        footage="food_day",
+        turns=[
+            Turn(
+                turn_id="strategy",
+                user_message=source["input"]["user_message"],
+                engine="v2_kria",
+                kria={
+                    "strategy_cassette": {
+                        "agent_input": source["input"],
+                        "model_output": source["raw_text"],
+                    }
+                },
+                expected_outcome={"plan_after": FinalPlan().model_dump(), "reply": None},
+            )
+        ],
+        requirements=[],
+        reference={"plan_after": FinalPlan().model_dump()},
+    )
+    result = replay_turns(fixture)[0]
+    assert result.plan_after == FinalPlan()
+    assert result.execution_proof and result.execution_proof.execution_path == "compile_only"
+    assert any("inert CreatorEditPlan" in note for note in result.notes)
+    assert any(
+        "unexecuted: draft persistence/DB dispatch/render/device export" == note
+        for note in result.notes
+    )
+
+
+def test_v2_six_captions_then_one_correction_changes_only_the_target_label():
+    fixture = load_fixture(FIXTURE_ROOT / "threads" / "v2_six_captions_one_correction.json")
+    result = run_thread(fixture)
+    captions, correction = result.turns[-2:]
+    assert [text.text for text in captions.plan_after.texts] == [
+        "Simit and tea",
+        "Turkish coffee",
+        "Spice bazaar",
+        "Lahmacun",
+        "Baklava",
+        "Ferry snack",
+    ]
+    assert correction.plan_after.clips == captions.plan_after.clips
+    changed = [
+        after.id
+        for before, after in zip(
+            captions.plan_after.texts, correction.plan_after.texts, strict=True
+        )
+        if before != after
+    ]
+    assert changed == ["c3"]
+    assert correction.plan_after.texts[2].text == "Spice market"
+    assert [score.status for score in result.scores] == ["met", "met"]
+
+
+def test_v2_unsupported_talking_and_slides_keep_unsaved_editor_state_and_reply_honestly():
+    fixture = load_fixture(FIXTURE_ROOT / "threads" / "v2_talking_slides_unsupported.json")
+    result = run_thread(fixture)
+    seed, talking, slides = result.turns
+    assert talking.plan_after == seed.plan_after == slides.plan_after
+    assert "not available" in talking.reply.lower()
+    assert "not supported" in slides.reply.lower()
+    assert [score.status for score in result.scores] == ["met", "met"]
+
+
+def test_v2_later_cassette_cannot_repair_an_earlier_compile_result():
+    fixture = load_fixture(FIXTURE_ROOT / "threads" / "v2_six_captions_one_correction.json")
+    first = fixture.turns[1].kria["cassette"]["model_output"]["ops"]
+    first[0]["text"] = "Unexpected first caption"
+    results = replay_turns(fixture)
+    assert results[-1].plan_after.texts[0].text == "Unexpected first caption"
+    assert results[-1].plan_after.texts[2].text == "Spice market"
+    assert results[-2].plan_after.texts[2].text == "Spice bazaar"

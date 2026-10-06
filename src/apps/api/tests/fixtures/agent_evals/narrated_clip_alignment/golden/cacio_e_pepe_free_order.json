@@ -1,0 +1,651 @@
+{
+ "agent": "nova.compose.narrated_clip_alignment",
+ "prompt_version": "2026-10-05.1",
+ "input": {
+  "words": [
+   {
+    "word_id": "w000000",
+    "text": "Cacio",
+    "start_s": 0.0,
+    "end_s": 0.54
+   },
+   {
+    "word_id": "w000001",
+    "text": "e",
+    "start_s": 0.54,
+    "end_s": 0.88
+   },
+   {
+    "word_id": "w000002",
+    "text": "pepe.",
+    "start_s": 0.88,
+    "end_s": 1.22
+   },
+   {
+    "word_id": "w000003",
+    "text": "3",
+    "start_s": 1.6,
+    "end_s": 2.0
+   },
+   {
+    "word_id": "w000004",
+    "text": "ingredients,",
+    "start_s": 2.0,
+    "end_s": 2.72
+   },
+   {
+    "word_id": "w000005",
+    "text": "10",
+    "start_s": 3.04,
+    "end_s": 3.26
+   },
+   {
+    "word_id": "w000006",
+    "text": "minutes.",
+    "start_s": 3.26,
+    "end_s": 3.7
+   },
+   {
+    "word_id": "w000007",
+    "text": "First,",
+    "start_s": 3.95,
+    "end_s": 4.51
+   },
+   {
+    "word_id": "w000008",
+    "text": "boil",
+    "start_s": 4.81,
+    "end_s": 4.95
+   },
+   {
+    "word_id": "w000009",
+    "text": "your",
+    "start_s": 4.95,
+    "end_s": 5.23
+   },
+   {
+    "word_id": "w000010",
+    "text": "spaghetti",
+    "start_s": 5.23,
+    "end_s": 5.63
+   },
+   {
+    "word_id": "w000011",
+    "text": "in",
+    "start_s": 5.63,
+    "end_s": 6.13
+   },
+   {
+    "word_id": "w000012",
+    "text": "less",
+    "start_s": 6.13,
+    "end_s": 6.53
+   },
+   {
+    "word_id": "w000013",
+    "text": "water",
+    "start_s": 6.53,
+    "end_s": 6.91
+   },
+   {
+    "word_id": "w000014",
+    "text": "than",
+    "start_s": 6.91,
+    "end_s": 7.09
+   },
+   {
+    "word_id": "w000015",
+    "text": "you",
+    "start_s": 7.09,
+    "end_s": 7.37
+   },
+   {
+    "word_id": "w000016",
+    "text": "think.",
+    "start_s": 7.37,
+    "end_s": 7.67
+   },
+   {
+    "word_id": "w000017",
+    "text": "You",
+    "start_s": 7.92,
+    "end_s": 8.1
+   },
+   {
+    "word_id": "w000018",
+    "text": "want",
+    "start_s": 8.1,
+    "end_s": 8.36
+   },
+   {
+    "word_id": "w000019",
+    "text": "that",
+    "start_s": 8.36,
+    "end_s": 9.0
+   },
+   {
+    "word_id": "w000020",
+    "text": "starchy",
+    "start_s": 9.0,
+    "end_s": 9.36
+   },
+   {
+    "word_id": "w000021",
+    "text": "water.",
+    "start_s": 9.36,
+    "end_s": 9.82
+   },
+   {
+    "word_id": "w000022",
+    "text": "While",
+    "start_s": 10.07,
+    "end_s": 10.41
+   },
+   {
+    "word_id": "w000023",
+    "text": "it",
+    "start_s": 10.41,
+    "end_s": 10.95
+   },
+   {
+    "word_id": "w000024",
+    "text": "cooks,",
+    "start_s": 10.95,
+    "end_s": 10.95
+   },
+   {
+    "word_id": "w000025",
+    "text": "grate",
+    "start_s": 11.41,
+    "end_s": 11.41
+   },
+   {
+    "word_id": "w000026",
+    "text": "a",
+    "start_s": 11.41,
+    "end_s": 11.71
+   },
+   {
+    "word_id": "w000027",
+    "text": "big",
+    "start_s": 11.71,
+    "end_s": 12.37
+   },
+   {
+    "word_id": "w000028",
+    "text": "pile",
+    "start_s": 12.37,
+    "end_s": 12.41
+   },
+   {
+    "word_id": "w000029",
+    "text": "of",
+    "start_s": 12.41,
+    "end_s": 13.09
+   },
+   {
+    "word_id": "w000030",
+    "text": "pecorino.",
+    "start_s": 13.09,
+    "end_s": 13.15
+   },
+   {
+    "word_id": "w000031",
+    "text": "Really",
+    "start_s": 13.61,
+    "end_s": 13.99
+   },
+   {
+    "word_id": "w000032",
+    "text": "fine.",
+    "start_s": 13.99,
+    "end_s": 14.45
+   },
+   {
+    "word_id": "w000033",
+    "text": "Then,",
+    "start_s": 14.7,
+    "end_s": 15.2
+   },
+   {
+    "word_id": "w000034",
+    "text": "toast",
+    "start_s": 15.48,
+    "end_s": 15.78
+   },
+   {
+    "word_id": "w000035",
+    "text": "cracked",
+    "start_s": 15.78,
+    "end_s": 16.12
+   },
+   {
+    "word_id": "w000036",
+    "text": "black",
+    "start_s": 16.12,
+    "end_s": 16.48
+   },
+   {
+    "word_id": "w000037",
+    "text": "pepper",
+    "start_s": 16.48,
+    "end_s": 16.76
+   },
+   {
+    "word_id": "w000038",
+    "text": "in",
+    "start_s": 16.76,
+    "end_s": 16.98
+   },
+   {
+    "word_id": "w000039",
+    "text": "a",
+    "start_s": 16.98,
+    "end_s": 17.18
+   },
+   {
+    "word_id": "w000040",
+    "text": "dry",
+    "start_s": 17.18,
+    "end_s": 17.4
+   },
+   {
+    "word_id": "w000041",
+    "text": "pan",
+    "start_s": 17.4,
+    "end_s": 17.64
+   },
+   {
+    "word_id": "w000042",
+    "text": "until",
+    "start_s": 17.64,
+    "end_s": 18.28
+   },
+   {
+    "word_id": "w000043",
+    "text": "it",
+    "start_s": 18.28,
+    "end_s": 19.0
+   },
+   {
+    "word_id": "w000044",
+    "text": "smells",
+    "start_s": 19.0,
+    "end_s": 19.0
+   },
+   {
+    "word_id": "w000045",
+    "text": "amazing.",
+    "start_s": 19.0,
+    "end_s": 19.86
+   },
+   {
+    "word_id": "w000046",
+    "text": "Add",
+    "start_s": 20.11,
+    "end_s": 20.37
+   },
+   {
+    "word_id": "w000047",
+    "text": "a",
+    "start_s": 20.37,
+    "end_s": 20.85
+   },
+   {
+    "word_id": "w000048",
+    "text": "ladle",
+    "start_s": 20.85,
+    "end_s": 20.85
+   },
+   {
+    "word_id": "w000049",
+    "text": "of",
+    "start_s": 20.85,
+    "end_s": 21.27
+   },
+   {
+    "word_id": "w000050",
+    "text": "pasta",
+    "start_s": 21.27,
+    "end_s": 21.39
+   },
+   {
+    "word_id": "w000051",
+    "text": "water",
+    "start_s": 21.39,
+    "end_s": 21.71
+   },
+   {
+    "word_id": "w000052",
+    "text": "to",
+    "start_s": 21.71,
+    "end_s": 21.93
+   },
+   {
+    "word_id": "w000053",
+    "text": "the",
+    "start_s": 21.93,
+    "end_s": 22.31
+   },
+   {
+    "word_id": "w000054",
+    "text": "pepper",
+    "start_s": 22.31,
+    "end_s": 22.45
+   },
+   {
+    "word_id": "w000055",
+    "text": "and",
+    "start_s": 22.45,
+    "end_s": 23.11
+   },
+   {
+    "word_id": "w000056",
+    "text": "drop",
+    "start_s": 23.11,
+    "end_s": 23.43
+   },
+   {
+    "word_id": "w000057",
+    "text": "in",
+    "start_s": 23.43,
+    "end_s": 23.67
+   },
+   {
+    "word_id": "w000058",
+    "text": "the",
+    "start_s": 23.67,
+    "end_s": 24.19
+   },
+   {
+    "word_id": "w000059",
+    "text": "pasta.",
+    "start_s": 24.19,
+    "end_s": 24.19
+   },
+   {
+    "word_id": "w000060",
+    "text": "Now,",
+    "start_s": 24.44,
+    "end_s": 24.96
+   },
+   {
+    "word_id": "w000061",
+    "text": "take",
+    "start_s": 25.22,
+    "end_s": 25.4
+   },
+   {
+    "word_id": "w000062",
+    "text": "it",
+    "start_s": 25.4,
+    "end_s": 25.56
+   },
+   {
+    "word_id": "w000063",
+    "text": "off",
+    "start_s": 25.56,
+    "end_s": 25.64
+   },
+   {
+    "word_id": "w000064",
+    "text": "the",
+    "start_s": 25.64,
+    "end_s": 25.9
+   },
+   {
+    "word_id": "w000065",
+    "text": "heat",
+    "start_s": 25.9,
+    "end_s": 26.16
+   },
+   {
+    "word_id": "w000066",
+    "text": "and",
+    "start_s": 26.16,
+    "end_s": 26.7
+   },
+   {
+    "word_id": "w000067",
+    "text": "add",
+    "start_s": 26.7,
+    "end_s": 26.92
+   },
+   {
+    "word_id": "w000068",
+    "text": "the",
+    "start_s": 26.92,
+    "end_s": 27.46
+   },
+   {
+    "word_id": "w000069",
+    "text": "cheese",
+    "start_s": 27.46,
+    "end_s": 27.46
+   },
+   {
+    "word_id": "w000070",
+    "text": "a",
+    "start_s": 27.46,
+    "end_s": 27.78
+   },
+   {
+    "word_id": "w000071",
+    "text": "little",
+    "start_s": 27.78,
+    "end_s": 27.96
+   },
+   {
+    "word_id": "w000072",
+    "text": "at",
+    "start_s": 27.96,
+    "end_s": 28.14
+   },
+   {
+    "word_id": "w000073",
+    "text": "a",
+    "start_s": 28.14,
+    "end_s": 28.36
+   },
+   {
+    "word_id": "w000074",
+    "text": "time,",
+    "start_s": 28.36,
+    "end_s": 28.56
+   },
+   {
+    "word_id": "w000075",
+    "text": "tossing",
+    "start_s": 28.948,
+    "end_s": 29.128
+   },
+   {
+    "word_id": "w000076",
+    "text": "like",
+    "start_s": 29.128,
+    "end_s": 29.388
+   },
+   {
+    "word_id": "w000077",
+    "text": "crazy.",
+    "start_s": 29.388,
+    "end_s": 29.888
+   },
+   {
+    "word_id": "w000078",
+    "text": "That's",
+    "start_s": 30.138,
+    "end_s": 30.458
+   },
+   {
+    "word_id": "w000079",
+    "text": "how",
+    "start_s": 30.458,
+    "end_s": 30.598
+   },
+   {
+    "word_id": "w000080",
+    "text": "it",
+    "start_s": 30.598,
+    "end_s": 30.738
+   },
+   {
+    "word_id": "w000081",
+    "text": "gets",
+    "start_s": 30.738,
+    "end_s": 30.978
+   },
+   {
+    "word_id": "w000082",
+    "text": "creamy",
+    "start_s": 30.978,
+    "end_s": 31.378
+   },
+   {
+    "word_id": "w000083",
+    "text": "instead",
+    "start_s": 31.378,
+    "end_s": 31.758
+   },
+   {
+    "word_id": "w000084",
+    "text": "of",
+    "start_s": 31.758,
+    "end_s": 32.378
+   },
+   {
+    "word_id": "w000085",
+    "text": "clumpy.",
+    "start_s": 32.378,
+    "end_s": 32.458
+   },
+   {
+    "word_id": "w000086",
+    "text": "Plate",
+    "start_s": 32.708,
+    "end_s": 33.008
+   },
+   {
+    "word_id": "w000087",
+    "text": "it,",
+    "start_s": 33.008,
+    "end_s": 33.308
+   },
+   {
+    "word_id": "w000088",
+    "text": "more",
+    "start_s": 33.708,
+    "end_s": 33.948
+   },
+   {
+    "word_id": "w000089",
+    "text": "pepper",
+    "start_s": 33.948,
+    "end_s": 34.188
+   },
+   {
+    "word_id": "w000090",
+    "text": "on",
+    "start_s": 34.188,
+    "end_s": 34.468
+   },
+   {
+    "word_id": "w000091",
+    "text": "top,",
+    "start_s": 34.468,
+    "end_s": 34.748
+   },
+   {
+    "word_id": "w000092",
+    "text": "done.",
+    "start_s": 35.228,
+    "end_s": 35.528
+   }
+  ],
+  "clips": [
+   {
+    "clip_id": "clip_5",
+    "description": "A close-up shot shows a hand holding a pepper grinder, seasoning a freshly prepared plate of spaghetti with black pepper. | grinding black pepper onto spaghetti | chef plating pasta | kitchen counter",
+    "creator_label": ""
+   },
+   {
+    "clip_id": "clip_0",
+    "description": "A hand holds a bundle of raw spaghetti over a pot of boiling water and then releases it, allowing the noodles to fan out and begin cooking. | cooking spaghetti | hand adding spaghetti to boiling water | kitchen stove",
+    "creator_label": ""
+   },
+   {
+    "clip_id": "clip_3",
+    "description": "A hand uses a ladle to pour a light-colored liquid into a hot pan containing dark spices, causing the liquid to bubble vigorously and steam. | pouring liquid into a hot pan for cooking | hand pouring liquid into a pan | kitchen stove",
+    "creator_label": ""
+   },
+   {
+    "clip_id": "clip_1",
+    "description": "A person's hand is shown grating a block of cheese onto a wooden cutting board, forming a pile of shredded cheese. | grating cheese | hand grating cheese | kitchen counter",
+    "creator_label": ""
+   },
+   {
+    "clip_id": "clip_6",
+    "description": "A person is shown eating a plate of steaming spaghetti, twirling it onto a fork before taking a bite. | eating spaghetti | person eating spaghetti | rustic kitchen or dining area",
+    "creator_label": ""
+   },
+   {
+    "clip_id": "clip_2",
+    "description": "A hand uses a wooden spoon to stir black peppercorns in a stainless steel pan on a stovetop. | toasting black peppercorns | black peppercorns in a pan | kitchen stovetop",
+    "creator_label": ""
+   },
+   {
+    "clip_id": "clip_4",
+    "description": "A person uses metal tongs to mix spaghetti in a large silver pan on a stovetop, adding grated cheese to the pasta. | mixing spaghetti and adding cheese in a pan | chef cooking pasta | kitchen interior",
+    "creator_label": ""
+   }
+  ],
+  "creator_request": "Cacio e pepe in 10 minutes",
+  "order_locked": false,
+  "language": "en"
+ },
+ "raw_text": "{\n  \"placements\": [\n    {\n      \"clip_id\": \"clip_0\",\n      \"start_word_id\": \"w000000\",\n      \"reason\": \"Introduce the dish and steps; first clip starts at the beginning, describing boiling spaghetti.\"\n    },\n    {\n      \"clip_id\": \"clip_1\",\n      \"start_word_id\": \"w000025\",\n      \"reason\": \"Narration directly describes grating cheese.\"\n    },\n    {\n      \"clip_id\": \"clip_2\",\n      \"start_word_id\": \"w000034\",\n      \"reason\": \"Narration describes toasting black pepper in a pan.\"\n    },\n    {\n      \"clip_id\": \"clip_3\",\n      \"start_word_id\": \"w000046\",\n      \"reason\": \"Narration describes adding pasta water to the pepper.\"\n    },\n    {\n      \"clip_id\": \"clip_4\",\n      \"start_word_id\": \"w000060\",\n      \"reason\": \"Narration describes adding cheese and mixing the pasta off the heat.\"\n    },\n    {\n      \"clip_id\": \"clip_5\",\n      \"start_word_id\": \"w000086\",\n      \"reason\": \"Narration describes plating and adding more pepper on top.\"\n    },\n    {\n      \"clip_id\": \"clip_6\",\n      \"start_word_id\": \"w000092\",\n      \"reason\": \"Final clip to show the dish being enjoyed, aligning with the 'done' remark and creator request.\"\n    }\n  ]\n}",
+ "output": {
+  "placements": [
+   {
+    "clip_id": "clip_0",
+    "start_word_id": "w000000",
+    "reason": "Introduce the dish and steps; first clip starts at the beginning, describing boiling spaghetti."
+   },
+   {
+    "clip_id": "clip_1",
+    "start_word_id": "w000025",
+    "reason": "Narration directly describes grating cheese."
+   },
+   {
+    "clip_id": "clip_2",
+    "start_word_id": "w000034",
+    "reason": "Narration describes toasting black pepper in a pan."
+   },
+   {
+    "clip_id": "clip_3",
+    "start_word_id": "w000046",
+    "reason": "Narration describes adding pasta water to the pepper."
+   },
+   {
+    "clip_id": "clip_4",
+    "start_word_id": "w000060",
+    "reason": "Narration describes adding cheese and mixing the pasta off the heat."
+   },
+   {
+    "clip_id": "clip_5",
+    "start_word_id": "w000086",
+    "reason": "Narration describes plating and adding more pepper on top."
+   },
+   {
+    "clip_id": "clip_6",
+    "start_word_id": "w000092",
+    "reason": "Final clip to show the dish being enjoyed, aligning with the 'done' remark and creator request."
+   }
+  ]
+ },
+ "meta": {
+  "source": "live_capture_gemini-2.5-flash_2026-10-05",
+  "scenario": "unordered clips; the model should follow the narration (KRI-456)",
+  "job": "prod 781e23b5"
+ }
+}

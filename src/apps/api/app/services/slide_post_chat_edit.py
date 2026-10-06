@@ -37,6 +37,7 @@ from app.agents.edit_copilot import (
     EditCopilotInput,
 )
 from app.config import settings
+from app.kria.brief_binding import BriefBinding
 from app.schemas.slide_post import (
     MAX_SLIDE_TEXT_LENGTH,
     MAX_SLIDE_TEXTS,
@@ -103,6 +104,7 @@ class CompiledSlideDraft:
     draft: SlidePostDraft
     changes: list[str]
     notes: list[str] = field(default_factory=list)
+    unsupported_requested_property: bool = False
 
 
 # --------------------------------------------------------------------------- facts
@@ -226,6 +228,7 @@ def build_slide_post_snapshot(
     assets_by_id: Mapping[Any, Any],
     *,
     user_id: object = None,
+    brief_binding: BriefBinding | None = None,
 ) -> dict[str, Any]:
     """The copilot's view of a slide post (``surface: "slide_post"``, editor ops v2)."""
     facts_on = settings.clip_facts_for(user_id)
@@ -266,6 +269,11 @@ def build_slide_post_snapshot(
     }
     if any(slot.get("facts") for slot in slots):
         snapshot["label_facts"] = True
+    binding = brief_binding or draft.brief_binding
+    if binding is not None:
+        # Immutable request context for interpreting a follow-up. It is not a
+        # claim that the request was fulfilled.
+        snapshot["brief"] = binding.creator_request
     if _text_appearance_enabled():
         snapshot["text_appearance_version"] = 1
         snapshot["text_appearance"] = _text_appearance_inventory(text_bars, cues_present=False)
@@ -588,7 +596,12 @@ def compile_slide_post_ops(
         if missing:
             noun = "photo has" if missing == 1 else "photos have"
             notes.append(f"{missing} {noun} no location.")
-    return CompiledSlideDraft(draft=next_draft, changes=changes, notes=notes)
+    return CompiledSlideDraft(
+        draft=next_draft,
+        changes=changes,
+        notes=notes,
+        unsupported_requested_property=unsupported_style,
+    )
 
 
 # ------------------------------------------------------------------------- run
@@ -628,22 +641,40 @@ async def run_slide_post_chat_edit(
     user_id: object,
     server_version: int,
     run_context: RunContext | None = None,
+    brief_binding: BriefBinding | None = None,
 ) -> SlidePostChatEditResponse:
     """One chat-edit turn. Never writes; every outcome is honest about what changed."""
     from app.agents._model_client import default_client  # noqa: PLC0415
     from app.routes._copilot import _honest_outcome  # noqa: PLC0415
 
-    snapshot = build_slide_post_snapshot(draft, assets_by_id, user_id=user_id)
-    agent_input = EditCopilotInput(
-        utterance=message,
-        prior_turns=turns[:12],
-        variant_snapshot=snapshot,
+    stored_binding = draft.brief_binding
+    # A stored binding remains authoritative when the writer feature is rolled
+    # back. A new binding is accepted only for the configured writer cohort.
+    incoming_binding = (
+        brief_binding if brief_binding is not None and settings.brief_binding_for(user_id) else None
     )
+    active_binding = incoming_binding or stored_binding
 
     def response(outcome: SlideOutcome, reply: str, **extra: Any) -> SlidePostChatEditResponse:
         return SlidePostChatEditResponse(
             outcome=outcome, reply=reply, base_version=server_version, **extra
         )
+
+    if active_binding is not None and len(active_binding.creator_request) > 12_000:
+        return response(
+            "unsupported",
+            "This request context is too long to safely apply as a slide edit. "
+            "Your draft is unchanged.",
+        )
+
+    snapshot = build_slide_post_snapshot(
+        draft, assets_by_id, user_id=user_id, brief_binding=active_binding
+    )
+    agent_input = EditCopilotInput(
+        utterance=message,
+        prior_turns=turns[:12],
+        variant_snapshot=snapshot,
+    )
 
     try:
         output = await asyncio.to_thread(
@@ -670,8 +701,17 @@ async def run_slide_post_chat_edit(
             slide_wording(f"I couldn't apply that: {exc}."),
             suggestions=suggestions,
         )
+    if compiled.unsupported_requested_property:
+        return response(
+            "unsupported",
+            "That requested text property isn't available on slides, "
+            "so I left your draft unchanged.",
+            suggestions=suggestions,
+        )
     if _same_content(compiled.draft, draft):
         return response("no_effect", "Your slides already look like that.", suggestions=suggestions)
+    if active_binding is not None:
+        compiled.draft = compiled.draft.model_copy(update={"brief_binding": active_binding})
     notes = " ".join(slide_wording(n) for n in [output.reply_notes, *compiled.notes] if n)
     summary = ", ".join(compiled.changes) or "Updated your slides"
     reply_text = f"{summary}. {notes} Save when you're happy.".replace("  ", " ").strip()

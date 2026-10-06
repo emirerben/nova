@@ -138,6 +138,13 @@ class InferredLabel(_KriaModel):
 class RequirementReceipt(_KriaModel):
     """One deterministic outcome per Creative Brief requirement (KRI-188).
 
+    ``verification`` is ``checked`` only after a deterministic comparison.
+    ``unchecked`` means the request was understood (or its target was matched)
+    but no conclusive output evidence was available; it never means the
+    requirement was fulfilled. ``stage`` records the furthest lifecycle point:
+    understood, matched, applied, or checked. ``target_media_ids`` names known
+    clip targets.
+
     ``inferred`` lists values the server guessed rather than read from the
     creator or the footage (for example a landmark name), so the client can show
     them and let the creator correct one. ``inferred_labels`` is the same list with
@@ -149,6 +156,11 @@ class RequirementReceipt(_KriaModel):
     brief_version: int | None = Field(default=None, ge=0)
     generation_id: str | None = None
     status: Literal["met", "partial", "not_possible"]
+    # Optional evidence metadata is additive: receipts written before KRI-459
+    # have no verification state and retain their existing interpretation.
+    verification: Literal["checked", "unchecked"] | None = None
+    stage: Literal["understood", "matched", "applied", "checked"] | None = None
+    target_media_ids: list[str] = Field(default_factory=list, max_length=50)
     reason: str | None = Field(default=None, max_length=300)
     inferred: list[str] = Field(default_factory=list, max_length=24)
     inferred_labels: list[InferredLabel] = Field(default_factory=list, max_length=24)
