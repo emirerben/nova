@@ -145,6 +145,41 @@ struct UploadFailure: Identifiable, Equatable, Sendable {
     }
 }
 
+/// How long to keep trying when the server says it is busy (HTTP 429/503) on an upload intake call
+/// (reserve, attach). A busy server is a reason to wait, never a reason to tell the creator their file
+/// could not be read. Bounded so a server that stays busy still ends in a visible, retryable failure.
+struct TransientRetryPolicy {
+    /// Total tries, the first included.
+    var maxAttempts = 6
+    var baseDelay: TimeInterval = 1
+    var maxDelay: TimeInterval = 16
+    /// A `Retry-After` longer than this is capped to it.
+    var maxRetryAfter: TimeInterval = 30
+    /// Total time we are willing to spend waiting across all tries.
+    var budget: TimeInterval = 60
+    /// 0...1; injected so tests are deterministic.
+    var jitter: () -> Double = { Double.random(in: 0...1) }
+
+    static func isServerBusy(_ error: Error) -> Bool {
+        guard case let APIError.requestFailed(status, _) = error else { return false }
+        return status == 429 || status == 503
+    }
+
+    /// Seconds to wait before try `attempt + 1`, or nil to give up (not a busy error, out of tries,
+    /// or the wait would blow the budget).
+    func delay(afterAttempt attempt: Int, error: Error, waited: TimeInterval) -> TimeInterval? {
+        guard Self.isServerBusy(error), attempt < maxAttempts else { return nil }
+        var wait: TimeInterval
+        if case let APIError.requestFailed(_, detail) = error, let advised = detail.retryAfter {
+            wait = min(advised, maxRetryAfter) + jitter() * 0.5
+        } else {
+            wait = min(baseDelay * pow(2, Double(attempt - 1)), maxDelay) * (0.5 + 0.5 * jitter())
+        }
+        wait = max(wait, 0)
+        return waited + wait <= budget ? wait : nil
+    }
+}
+
 /// FIFO limiter for the expensive part of preparing a clip (import + hash, and the proxy
 /// transcode on the phone-render path). Not `actor`-isolated: everything that touches it is already
 /// on the main actor, so an actor would only add hops.
