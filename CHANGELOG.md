@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.119.0] - 2026-10-06
+
+### Fixed
+- fix(creator): enforce approved render requirements (KRI-470) (#1439) <!-- release-pr: 1439 -->
+
 ## [0.78.118.0] - 2026-10-06
 
 ### Changed
