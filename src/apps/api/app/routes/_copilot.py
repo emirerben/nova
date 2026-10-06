@@ -40,10 +40,10 @@ class CopilotTurnBody(BaseModel):
     # Minted once per user intent and retained for transport retries. Optional
     # only for split-deploy compatibility with already-open browser bundles.
     client_request_id: str | None = Field(default=None, min_length=1, max_length=128)
-    message: str = Field(default="", max_length=2000)
+    message: str = Field(default="", max_length=12000)
     turns: list[dict] = Field(default_factory=list, max_length=12)
     # KRI-186: the thread's first creator brief (chat-thread callers only).
-    original_request: str | None = Field(default=None, max_length=2000)
+    original_request: str | None = Field(default=None, max_length=12000)
     snapshot: dict = Field(default_factory=dict)
     # Contract v2 distinguishes a server proposal from a locally staged edit.
     # Default to v1 so an already-open pre-v2 browser remains compatible while

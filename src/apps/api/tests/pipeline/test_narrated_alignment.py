@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from app.pipeline.narrated_alignment import (
+    MIN_ALIGNED_STEP_S,
     StepScript,
     align_script_to_voiceover,
     contiguous_step_timings,
+    enforce_min_step_starts,
+    resolve_aligned_steps,
 )
 from app.pipeline.transcribe import Word
 
@@ -105,3 +108,75 @@ def test_align_script_low_confidence_step_falls_back_to_even_split() -> None:
     assert timings[1].confidence < 0.5
     assert timings[1].start_s == 0.9
     assert timings[1].end_s == 1.8
+
+
+# --- KRI-456: agent-chosen clip starts -> step windows -----------------------
+
+
+def test_resolve_aligned_steps_uses_word_boundaries_and_starts_at_zero() -> None:
+    # The first clip's chosen word (3.0) is ignored: the intro stays with clip a.
+    resolved = resolve_aligned_steps(["a", "b", "c"], [3.0, 10.07, 14.7], timeline_end=20.0)
+
+    assert resolved is not None
+    assert [clip_id for clip_id, _ in resolved] == ["a", "b", "c"]
+    assert [(t.start_s, t.end_s) for _, t in resolved] == [
+        (0.0, 10.07),
+        (10.07, 14.7),
+        (14.7, 20.0),
+    ]
+    assert [t.step_id for _, t in resolved] == ["seg_0", "seg_1", "seg_2"]
+
+
+def test_resolve_aligned_steps_keeps_the_agent_clip_order() -> None:
+    resolved = resolve_aligned_steps(["c", "a", "b"], [0.0, 4.0, 9.0], timeline_end=15.0)
+    assert resolved is not None
+    assert [clip_id for clip_id, _ in resolved] == ["c", "a", "b"]
+
+
+def test_short_last_step_borrows_from_the_previous_step() -> None:
+    # Last clip would get 1.0 s; its start moves to 20.0 - 1.5, the previous step keeps 6.5 s.
+    resolved = resolve_aligned_steps(["a", "b", "c"], [0.0, 12.0, 19.0], timeline_end=20.0)
+
+    assert resolved is not None
+    assert [(t.start_s, t.end_s) for _, t in resolved] == [
+        (0.0, 12.0),
+        (12.0, 18.5),
+        (18.5, 20.0),
+    ]
+
+
+def test_short_middle_step_moves_its_start_earlier() -> None:
+    resolved = resolve_aligned_steps(["a", "b", "c"], [0.0, 8.0, 8.5], timeline_end=20.0)
+
+    assert resolved is not None
+    # b is only 0.5 s long, so c's start stays and b's start moves back to 8.5 - 1.5 = 7.0.
+    assert [(t.start_s, t.end_s) for _, t in resolved] == [
+        (0.0, 7.0),
+        (7.0, 8.5),
+        (8.5, 20.0),
+    ]
+
+
+def test_cluster_of_short_steps_cascades_backwards() -> None:
+    resolved = resolve_aligned_steps(["a", "b", "c", "d"], [0.0, 5.0, 5.5, 6.0], timeline_end=10.0)
+
+    assert resolved is not None
+    assert [round(t.start_s, 3) for _, t in resolved] == [0.0, 3.0, 4.5, 6.0]
+    assert all(t.end_s - t.start_s >= MIN_ALIGNED_STEP_S - 1e-9 for _, t in resolved)
+
+
+def test_resolve_returns_none_when_the_timeline_cannot_fit_the_minimum() -> None:
+    # Three steps need 4.5 s; only 4.0 s of voiceover.
+    assert resolve_aligned_steps(["a", "b", "c"], [0.0, 1.0, 2.0], timeline_end=4.0) is None
+    assert enforce_min_step_starts([0.0, 1.0, 2.0], 4.0) is None
+
+
+def test_resolve_returns_none_for_invalid_input() -> None:
+    assert resolve_aligned_steps([], [], timeline_end=10.0) is None
+    assert resolve_aligned_steps(["a", "b"], [0.0], timeline_end=10.0) is None
+    assert resolve_aligned_steps(["a", "b", "c"], [0.0, 6.0, 5.0], timeline_end=10.0) is None
+    assert resolve_aligned_steps(["a", "b"], [0.0, 5.0], timeline_end=0.0) is None
+
+
+def test_well_spaced_steps_are_left_untouched() -> None:
+    assert enforce_min_step_starts([0.0, 4.0, 9.0], 15.0) == [0.0, 4.0, 9.0]

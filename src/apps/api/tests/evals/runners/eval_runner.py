@@ -311,6 +311,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.narrated_storyboard import NarratedStoryboardAgent
 
         return NarratedStoryboardAgent
+    if agent_name == "nova.compose.narrated_clip_alignment":
+        from app.agents.narrated_clip_alignment import NarratedClipAlignmentAgent
+
+        return NarratedClipAlignmentAgent
     if agent_name == "nova.compose.narration_annotations":
         from app.agents.narration_annotations import NarrationAnnotationAgent
 

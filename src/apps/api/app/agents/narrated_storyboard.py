@@ -49,7 +49,7 @@ class NarratedStoryboardInput(BaseModel):
     words: list[dict] = Field(min_length=1, max_length=600)
     segments: list[NarratedStoryboardSegment] = Field(min_length=1, max_length=80)
     clips: list[NarratedStoryboardClip] = Field(min_length=1, max_length=50)
-    creator_request: str = Field(default="", max_length=1000)
+    creator_request: str = Field(default="", max_length=12_000)
     language: str = Field(default="", max_length=20)
 
 
@@ -79,7 +79,7 @@ class NarratedStoryboardAgent(Agent[NarratedStoryboardInput, NarratedStoryboardO
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.narrated_storyboard",
         prompt_id="narrated_storyboard",
-        prompt_version="2026-09-06.4",
+        prompt_version="2026-10-06.1",
         model="gemini-2.5-flash",
         thinking_budget=512,
         timeout_s=45.0,

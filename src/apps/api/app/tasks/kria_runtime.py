@@ -98,6 +98,7 @@ class _Completion:
     committed: bool
     successor_turn_id: str | None = None
     requeue_turn_id: str | None = None
+    response_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -166,6 +167,7 @@ def _complete_response_turn(
     brief_updates: tuple[BriefUpdate, ...] = (),
     brief_coverage: dict | None = None,
     brief_expected_version: int | None = None,
+    requirement_receipts: list[dict[str, Any]] | None = None,
 ) -> _Completion:
     with sync_session() as db:
         turn = db.execute(
@@ -196,13 +198,22 @@ def _complete_response_turn(
                 turn.lease_expires_at = None
                 db.commit()
                 return _Completion(committed=False, requeue_turn_id=str(turn.id))
+        persisted_brief = None
         if brief_updates:
             # KRI-188: a question/recovery turn still records what the creator
             # stated. Written under the thread lock, after the revision fence,
             # so a requeued turn never persists a version.
-            persist_brief_version_sync(
+            persisted_brief = persist_brief_version_sync(
                 db, thread_id=thread.id, turn_id=turn.id, updates=brief_updates
             )
+        if requirement_receipts and persisted_brief is not None:
+            # A response/recovery has no produced output generation.  Pin its
+            # diagnostics to the version it just persisted so a later edit of
+            # the same stable requirement cannot inherit this outcome.
+            requirement_receipts = [
+                {**receipt, "brief_version": persisted_brief.version, "generation_id": None}
+                for receipt in requirement_receipts
+            ]
         event = _append_sync_event(
             db,
             thread,
@@ -215,6 +226,7 @@ def _complete_response_turn(
                 "receipt_ids": [],
                 "next_actions": [],
                 "schema_version": plan.schema_version,
+                **({"requirement_receipts": requirement_receipts} if requirement_receipts else {}),
                 **({"brief_coverage": brief_coverage} if brief_coverage is not None else {}),
                 **({"clip_question": plan.clip_question} if plan.clip_question else {}),
                 # KRI-374: persisted so the answer can be validated + folded later.
@@ -591,7 +603,11 @@ def _complete_draft_turn(
                     )
                     checked = [req for req in brief.live() if req.source_turn_id == str(turn.id)]
                 if checked:
-                    receipts = build_receipts(checked, facts)
+                    receipts = build_receipts(
+                        checked,
+                        facts,
+                        include_unchecked=settings.brief_binding_for(thread.creator_id),
+                    )
                     requirement_receipts = [r.model_dump(mode="json") for r in receipts]
                     reply_text = reply_from_receipts(
                         CreativeBrief(version=brief.version, requirements=checked),
@@ -599,12 +615,73 @@ def _complete_draft_turn(
                         summary=arguments.summary,
                         notices=planned.policy_notices,
                     )
+        if settings.brief_binding_for(thread.creator_id) and brief is not None:
+            from app.kria.contracts import RequirementReceipt  # noqa: PLC0415
+
+            checked_ids = {receipt["requirement_id"] for receipt in requirement_receipts}
+            requirement_receipts.extend(
+                RequirementReceipt(
+                    requirement_id=req.id,
+                    status="partial",
+                    verification="unchecked",
+                    stage="understood",
+                    reason="This requirement still needs an output check.",
+                    target_media_ids=[req.scope.split(":", 1)[1]]
+                    if req.scope.startswith("clip:")
+                    else [],
+                ).model_dump(mode="json")
+                for req in brief.live()
+                if req.id not in checked_ids
+            )
+        if settings.brief_binding_for(thread.creator_id) and any(
+            receipt.get("verification") == "checked" and receipt.get("status") != "met"
+            for receipt in requirement_receipts
+        ):
+            # Do not replace a creator's current draft with a known partial edit.
+            # Roll back the speculative draft/brief work, then persist the request
+            # and the specific choice in the normal response transaction.
+            db.rollback()
+            recovery = KriaTurnPlan(
+                mode="respond",
+                turn_value="question",
+                response=(
+                    f"{reply_text}\nYour current draft is unchanged. "
+                    "Should I try a different approach, or make this simpler version?"
+                ),
+            )
+            completed = _complete_response_turn(
+                turn_id,
+                lease_owner=lease_owner,
+                lease_epoch=lease_epoch,
+                claimed_thread_revision=claimed_thread_revision,
+                plan=recovery,
+                brief_updates=planned.brief_updates,
+                requirement_receipts=requirement_receipts,
+                brief_coverage={
+                    **(planned.brief_coverage or {}),
+                    "stage": "draft",
+                    "reason": "simplification_requires_choice",
+                },
+                brief_expected_version=planned.brief_expected_version,
+            )
+            return replace(completed, response_only=True)
         if settings.brief_binding_for(thread.creator_id):
             from app.kria.brief_binding import BriefBinding, snapshot_media  # noqa: PLC0415
 
             if brief is None:
                 brief = load_latest_brief_sync(db, thread.id)
             source_event = db.get(CreationThreadEvent, turn.source_event_id)
+            coverage = dict(planned.brief_coverage or {})
+            coverage["enforced_ids"] = [
+                r["requirement_id"]
+                for r in requirement_receipts
+                if r.get("verification") == "checked" and r["status"] == "met"
+            ]
+            coverage["unresolved_ids"] = (
+                [req.id for req in brief.live() if req.id not in coverage["enforced_ids"]]
+                if brief
+                else []
+            )
             document = document.model_copy(
                 update={
                     "brief_binding": BriefBinding.create(
@@ -617,7 +694,7 @@ def _complete_draft_turn(
                         if planned.media_snapshot is not None
                         else snapshot_media(item),
                     ),
-                    "brief_coverage": planned.brief_coverage,
+                    "brief_coverage": coverage,
                 }
             )
             snapshot, snapshot_hash = canonical_snapshot(document)
@@ -1468,7 +1545,8 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                 "turn_id": turn_id,
                 "status": (
                     "awaiting_approval"
-                    if any(intent.tool_name == "render.request" for intent in planned.plan.intents)
+                    if not completion.response_only
+                    and any(intent.tool_name == "render.request" for intent in planned.plan.intents)
                     else "completed"
                 ),
             }
@@ -2755,6 +2833,59 @@ def _unified_montage_review(
     )
 
 
+def _approved_generation_review(
+    db: Any,
+    thread: CreationThread,
+    job: Job,
+    variant: dict,
+    execution: CreatorAgentExecution,
+    default_text: str,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Read the accepted request, never a newer chat brief, when describing output."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.contracts import RequirementReceipt  # noqa: PLC0415
+
+    raw = (execution.result or {}).get("brief_binding")
+    if raw is None:
+        raw = (job.assembly_plan or {}).get("creator_brief_binding")
+    if raw is None:
+        return _unified_montage_review(db, thread, job, default_text)
+    binding = BriefBinding.model_validate(raw)
+    brief = binding.resolve(thread.id)
+    if brief is None or not brief.live():
+        return default_text, []
+    generation = str(variant.get("render_generation_id") or "") or None
+    record = (job.assembly_plan or {}).get("unified_montage") or {}
+    receipts = []
+    if record.get("generation_id") == generation and record.get("brief_version") == brief.version:
+        for row in record.get("requirement_receipts") or []:
+            try:
+                receipt = RequirementReceipt.model_validate(row)
+            except ValueError:
+                continue
+            if receipt.brief_version == brief.version and receipt.generation_id == generation:
+                receipts.append(receipt)
+    known = {receipt.requirement_id for receipt in receipts}
+    facts = plan_facts_from_editor_payload(variant)
+    receipts.extend(
+        build_receipts(
+            [req for req in brief.live() if req.id not in known], facts, include_unchecked=True
+        )
+    )
+    receipts = [
+        receipt.model_copy(
+            update={
+                "brief_version": brief.version,
+                "generation_id": generation,
+            }
+        )
+        for receipt in receipts
+    ]
+    return reply_from_receipts(brief, receipts, summary=default_text), [
+        receipt.model_dump(mode="json") for receipt in receipts
+    ]
+
+
 def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | None]:
     """Settle one dispatched receipt from durable Job truth."""
 
@@ -2924,10 +3055,12 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                     },
                 )
                 execution.observed_event_id = event.id
-                review_text, review_receipts = _unified_montage_review(
+                review_text, review_receipts = _approved_generation_review(
                     db,
                     thread,
                     job,
+                    variant,
+                    execution,
                     f"The {variant_id.replace('_', ' ')} cut is ready. "
                     "The approved render finished; review the opening, pacing, and text, "
                     "then tell me what you want changed.",
@@ -2982,11 +3115,67 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         session.last_error = execution.error
         from app.tasks.content_plan_build import humanize_job_failure_reason  # noqa: PLC0415
 
+        recovery_receipts: list[dict[str, Any]] = []
+        recovery_message: str | None = None
+        raw_recovery = (job.assembly_plan or {}).get("request_recovery")
+        expected_generation = (
+            str((job.assembly_plan or {}).get("creator_generation_id") or "") or None
+        )
+        raw_binding = (job.assembly_plan or {}).get("creator_brief_binding")
+        try:
+            from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+            from app.kria.contracts import RequirementReceipt  # noqa: PLC0415
+
+            binding = BriefBinding.model_validate(raw_binding)
+            approved_brief = binding.resolve(thread.id)
+        except ValueError:
+            approved_brief = None
+            binding = None
+        recovery_matches_binding = (
+            isinstance(raw_recovery, dict)
+            and isinstance(raw_recovery.get("message"), str)
+            and raw_recovery["message"].strip()
+            and binding is not None
+            and raw_recovery.get("binding_digest") == binding.digest
+            and raw_recovery.get("generation_id") == expected_generation
+            and isinstance(raw_recovery.get("requirement_receipts"), list)
+        )
+        if (
+            recovery_matches_binding
+            and approved_brief is None
+            and raw_recovery.get("brief_version") is None
+            and not raw_recovery["requirement_receipts"]
+        ):
+            # A bound request can be exact even before extraction found a
+            # structured requirement. Keep the specific recovery question;
+            # there is no receipt to publish or judge.
+            recovery_message = raw_recovery["message"].strip()
+        elif (
+            recovery_matches_binding
+            and approved_brief is not None
+            and raw_recovery.get("brief_version") == approved_brief.version
+        ):
+            try:
+                receipts = [
+                    RequirementReceipt.model_validate(row)
+                    for row in raw_recovery["requirement_receipts"]
+                ]
+            except (TypeError, ValueError):
+                receipts = []
+            if len(receipts) == len(raw_recovery["requirement_receipts"]) and all(
+                receipt.brief_version == approved_brief.version
+                and receipt.generation_id == expected_generation
+                for receipt in receipts
+            ):
+                recovery_receipts = [receipt.model_dump(mode="json") for receipt in receipts]
+                recovery_message = raw_recovery["message"].strip()
         if device_failed:
             failure_content = (
                 "Your iPhone couldn't finish the render. Your approved edit is still saved: "
                 "open the project on your iPhone and tap Retry."
             )
+        elif recovery_message is not None:
+            failure_content = recovery_message
         elif deterministic or failure_code == "phone_capability_unavailable":
             # Retryable, but the generic "didn't finish" copy would hide WHY (KRI-286).
             failure_content = humanize_job_failure_reason(failure_code)
@@ -3009,6 +3198,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 "code": failure_code,
                 "recovery": recovery,
                 "receipt_ids": [str(execution.id)],
+                **({"requirement_receipts": recovery_receipts} if recovery_receipts else {}),
             },
         )
         execution.observed_event_id = event.id

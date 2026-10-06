@@ -843,6 +843,8 @@ export interface SlidePostDraft {
   caption: string;
   rendered_version?: number | null;
   user_edited: boolean;
+  /** Opaque request/brief binding retained across editor saves. */
+  brief_binding?: Record<string, unknown> | null;
 }
 
 /** One resolved, signed-preview slide on a rendered "slides" variant.
@@ -2961,6 +2963,7 @@ export function putSlidePostDraft(
     slides: SlideRef[];
     cover_index: number;
     caption: string;
+    brief_binding?: Record<string, unknown> | null;
   },
 ): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${itemId}/slide-post`, {

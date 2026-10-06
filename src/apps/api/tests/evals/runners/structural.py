@@ -55,6 +55,10 @@ from app.agents.intro_writer import (
 from app.agents.landmark_guess import LandmarkGuessInput, LandmarkGuessOutput
 from app.agents.main_creator import MainCreatorInput, MainCreatorOutput
 from app.agents.music_matcher import MusicMatcherInput, MusicMatcherOutput
+from app.agents.narrated_clip_alignment import (
+    NarratedClipAlignmentInput,
+    NarratedClipAlignmentOutput,
+)
 from app.agents.narrated_storyboard import (
     NarratedStoryboardInput,
     NarratedStoryboardOutput,
@@ -2759,6 +2763,47 @@ def check_scene_matcher(
     return failures
 
 
+def check_narrated_clip_alignment(
+    output: NarratedClipAlignmentOutput,
+    input: NarratedClipAlignmentInput,  # noqa: A002
+) -> list[str]:
+    """Pin the alignment contract independently of parse(), plus usability.
+
+    Beyond ids/ordering, the placements must resolve to real step windows
+    (minimum step length) over the voiceover; otherwise the worker would fall
+    back to the bucket split and the agent would have changed nothing.
+    """
+    from app.pipeline.narrated_alignment import resolve_aligned_steps  # noqa: PLC0415
+
+    failures: list[str] = []
+    input_order = [clip.clip_id for clip in input.clips]
+    placed = [placement.clip_id for placement in output.placements]
+    if sorted(placed) != sorted(input_order):
+        failures.append("placements must cover every input clip exactly once")
+    if input.order_locked and placed != input_order:
+        failures.append("clip order is locked but the placements reorder it")
+    index_by_word = {str(word.get("word_id")): i for i, word in enumerate(input.words)}
+    start_by_word = {
+        str(word.get("word_id")): float(word.get("start_s") or 0.0) for word in input.words
+    }
+    previous = -1
+    starts: list[float] = []
+    for placement in output.placements:
+        index = index_by_word.get(placement.start_word_id)
+        if index is None:
+            failures.append(f"unknown start word {placement.start_word_id!r}")
+            continue
+        if index <= previous:
+            failures.append(f"start word {placement.start_word_id} is not strictly increasing")
+        previous = index
+        starts.append(start_by_word[placement.start_word_id])
+    if not failures:
+        timeline_end = max(float(word.get("end_s") or 0.0) for word in input.words)
+        if resolve_aligned_steps(placed, starts, timeline_end) is None:
+            failures.append("placements do not resolve to valid step windows")
+    return failures
+
+
 def check_narrated_storyboard(
     output: NarratedStoryboardOutput,
     input: NarratedStoryboardInput,  # noqa: A002
@@ -3094,6 +3139,8 @@ def run_structural(
         return check_smart_edit_planner(output, input)
     if agent_name == "nova.compose.scene_matcher":
         return check_scene_matcher(output, input)
+    if agent_name == "nova.compose.narrated_clip_alignment":
+        return check_narrated_clip_alignment(output, input)
     if agent_name == "nova.compose.narrated_storyboard":
         return check_narrated_storyboard(output, input)
     if agent_name == "nova.compose.narration_annotations":

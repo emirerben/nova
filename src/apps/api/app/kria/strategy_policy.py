@@ -189,11 +189,40 @@ def _refusal_question(exc: ValueError, strategy: CreativeStrategy) -> RefusedStr
     )
 
 
+def _drops_requested_action(before: CreativeStrategy, after: CreativeStrategy) -> bool:
+    """Semantic losses need consent; styling normalization can still recover."""
+    prior = before.model_dump(mode="json")
+    next_values = after.model_dump(mode="json")
+    fields = (
+        "clip_intents",
+        "reaction_beats",
+        "closing_visual_id",
+        "closing_badge_id",
+        "opening_title",
+        "shot_labels",
+        "closing_title",
+        "execution_contract",
+        "mixed_media_timing",
+        "licensed_sfx",
+        "target_duration_s",
+    )
+    if any(
+        prior.get(key) not in (None, [], "") and prior.get(key) != next_values.get(key)
+        for key in fields
+    ):
+        return True
+    return prior.get("caption_style") == "none" and next_values.get("caption_style") != "none"
+
+
 def check_strategy_for_runtime_v2(
-    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+    manifest: ResolvedCreatorManifest,
+    strategy: CreativeStrategy,
+    *,
+    ask_before_simplifying: bool = False,
 ) -> CheckedStrategy | RefusedStrategy:
     """Run v1's plan compile over a v2 strategy; never raises a policy error."""
 
+    original = strategy
     notices: list[str] = []
     if strategy.caption_style == "none" and (
         strategy.edit_format == "subtitled" or strategy.edit_format in NARRATED_EDIT_FORMATS
@@ -228,7 +257,17 @@ def check_strategy_for_runtime_v2(
         # whole manifest for the guided specialist. Runtime-v2 dispatches without
         # that specialist, so keep the selection the model boundary normalized.
         checked = checked.model_copy(update={"selected_media_ids": strategy.selected_media_ids})
-    return CheckedStrategy(strategy=checked, notices=(*notices, *edit_plan.notices))
+    all_notices = (*notices, *edit_plan.notices)
+    if ask_before_simplifying and _drops_requested_action(original, checked):
+        details = (
+            " ".join(all_notices)
+            or "This edit cannot carry out that exact combination of requests."
+        )
+        return RefusedStrategy(
+            question=f"{details} Your current draft is unchanged. Should I make a simpler version?",
+            code="simplification_requires_choice",
+        )
+    return CheckedStrategy(strategy=checked, notices=all_notices)
 
 
 __all__ = [

@@ -2573,7 +2573,7 @@ def _run_generative_job_impl(
         raw_creator_request = all_candidates.get("creator_request")
         if not raw_creator_request and isinstance(all_candidates.get("brief"), dict):
             raw_creator_request = (all_candidates.get("brief") or {}).get("creator_request")
-        creator_request = str(raw_creator_request or "")[:1000]
+        creator_request = str(raw_creator_request or "")
         # Per-user style (Creator Agent M1). Absent on legacy/public jobs →
         # all render branches fall through to today's byte-identical behavior.
         user_style = _effective_render_user_style(all_candidates)
@@ -4452,7 +4452,7 @@ def _run_phone_voiceover_montage_job(
     landscape_fit: str = all_candidates.get("landscape_fit") or "fill"
     variant_policy: str | None = all_candidates.get("variant_policy") or None
     montage_preset = coerce_montage_preset(all_candidates.get("montage_preset"))
-    creator_request = str(all_candidates.get("creator_request") or "")[:1000]
+    creator_request = str(all_candidates.get("creator_request") or "")
     user_style = _effective_render_user_style(all_candidates)
     raw_creator_strategy = all_candidates.get("creator_strategy") or {}
     creator_opening_title = raw_creator_strategy.get("opening_title")
@@ -5169,6 +5169,55 @@ def _resolve_phone_song_bed(job_id: str, user_song: Any) -> Any:
     )
 
 
+def _save_request_recovery(
+    job_id: str,
+    snapshot: dict,
+    *,
+    ownership_epoch: int | None,
+    message: str,
+    receipts: list[dict] | None = None,
+) -> bool:
+    """Persist the exact recovery choice under the same owner/generation fence."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.brief_checks import PlanFacts, build_receipts  # noqa: PLC0415
+
+    binding = BriefBinding.model_validate(snapshot["creator_brief_binding"])
+    brief = binding.resolve()
+    generation = snapshot.get("creator_generation_id")
+    if receipts is None:
+        receipts = [
+            receipt.model_dump(mode="json")
+            for receipt in build_receipts(
+                brief.live() if brief else [], PlanFacts(), include_unchecked=True
+            )
+        ]
+    stamped = [
+        {**row, "brief_version": brief.version if brief else None, "generation_id": generation}
+        for row in receipts
+    ]
+    with _sync_session() as db:
+        entry = _lock_owned_entry_job(db, job_id)
+        if entry is None or entry[1] != ownership_epoch or entry[0].status == _CANCELLED_JOB_STATUS:
+            return False
+        job = entry[0]
+        current = copy.deepcopy(job.assembly_plan or {})
+        if (
+            current.get("creator_generation_id") != generation
+            or (current.get("creator_brief_binding") or {}).get("digest") != binding.digest
+        ):
+            return False
+        current["request_recovery"] = {
+            "message": message,
+            "requirement_receipts": stamped,
+            "brief_version": brief.version if brief else None,
+            "generation_id": generation,
+            "binding_digest": binding.digest,
+        }
+        job.assembly_plan = current
+        db.commit()
+    return True
+
+
 def _run_phone_unified_montage_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> dict | None:
@@ -5331,14 +5380,58 @@ def _run_phone_unified_montage_job(
             plan_facts_from_unified_montage,
         )
 
+        record["generation_id"] = generation
         record["requirement_receipts"] = [
             {
                 **receipt.model_dump(mode="json"),
                 "brief_version": brief.version,
                 "generation_id": generation,
             }
-            for receipt in build_receipts(brief.live(), plan_facts_from_unified_montage(record))
+            for receipt in build_receipts(
+                brief.live(),
+                plan_facts_from_unified_montage(record),
+                include_unchecked=bool(snapshot.get("creator_brief_binding")),
+            )
         ]
+        if snapshot.get("creator_brief_binding") and any(
+            row.get("verification") == "checked" and row["status"] != "met"
+            for row in record["requirement_receipts"]
+        ):
+            from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+            failures = [
+                row
+                for row in record["requirement_receipts"]
+                if row.get("verification") == "checked" and row["status"] != "met"
+            ]
+            record_pipeline_event(
+                "montage",
+                "requirement_recovery",
+                {
+                    "stage": "compile",
+                    "decision": "ask_before_simplifying",
+                    "generation_id": generation,
+                    "requirement_receipts": failures,
+                },
+            )
+            reasons = " ".join(
+                dict.fromkeys(
+                    row.get("reason") or "A requested change is missing." for row in failures
+                )
+            )
+            recovery_message = (
+                f"{reasons} Your draft is saved. Should I try again or simplify this request?"
+            )
+            if not _save_request_recovery(
+                job_id,
+                snapshot,
+                ownership_epoch=ownership_epoch,
+                message=recovery_message,
+                receipts=record["requirement_receipts"],
+            ):
+                return None
+            raise UnsupportedPhonePlan(recovery_message)
 
     with _sync_session() as db:
         entry_row = _lock_owned_entry_job(db, job_id)
@@ -6876,9 +6969,10 @@ def _run_phone_narrated_job(
                     voiceover_local, model=settings.narrated_whisper_model
                 )
 
-            narrative_order = _resolve_narrative_order(
+            guide_narrative_order = _resolve_narrative_order(
                 narrative_shot_count, clip_id_to_gcs, job_id=job_id, strict=False
-            ) or list(clip_id_to_local)
+            )
+            narrative_order = guide_narrative_order or list(clip_id_to_local)
             bindings_by_gcs = {binding.proxy_path: binding.media_id for binding in bindings}
             clip_path_to_id = {path: cid for cid, path in clip_id_to_local.items()}
 
@@ -6927,33 +7021,81 @@ def _run_phone_narrated_job(
                 ordered_ids = list(narrative_order)
                 if not ordered_ids:
                     raise UnsupportedPhonePlan("narrated_ready variant has no clips")
-                n_clips = len(ordered_ids)
-                target_count = max(1, min(n_clips, len(phrases)))
-                if len(phrases) > target_count:
-                    speech_start = phrases[0]["speech_start_s"]
-                    speech_end = phrases[-1]["speech_end_s"]
-                    total_speech = max(speech_end - speech_start, 0.1)
-                    bucket_dur = total_speech / target_count
-                    buckets: list[dict] = []
-                    bucket_open = phrases[0].copy()
-                    for p in phrases[1:]:
-                        if (
-                            p["speech_end_s"] - bucket_open["speech_start_s"]
-                        ) >= bucket_dur and len(buckets) < target_count - 1:
-                            buckets.append(
-                                {**bucket_open, "speech_end_s": bucket_open["speech_end_s"]}
-                            )
-                            bucket_open = p.copy()
-                        else:
-                            bucket_open = {**bucket_open, "speech_end_s": p["speech_end_s"]}
-                    buckets.append(bucket_open)
-                    phrases = buckets
                 timeline_end = max(total_s, vo_dur)
-                step_timings = contiguous_step_timings(
-                    [float(p["speech_start_s"]) for p in phrases], timeline_end
-                )
-                for index, timing in enumerate(step_timings):
-                    clip_id = ordered_ids[index % len(ordered_ids)]
+                # KRI-456: let the alignment agent pick where each clip starts
+                # (voice-vs-footage), instead of equal-duration buckets. Any
+                # failure returns None and the legacy split below runs unchanged.
+                aligned = None
+                if settings.narrated_clip_alignment_enabled:
+                    creator_labels, brief_orders_clips = _narrated_creator_clip_labels(
+                        all_candidates, clip_id_to_gcs, _media_id_for_clip
+                    )
+                    aligned = _narrated_clip_alignment_steps(
+                        transcript=transcript,
+                        clip_ids=ordered_ids,
+                        clip_metas=list(ingest.get("clip_metas") or []),
+                        labels_by_clip=creator_labels,
+                        creator_request=str(all_candidates.get("creator_request") or ""),
+                        order_locked=bool(guide_narrative_order) or brief_orders_clips,
+                        timeline_end_s=timeline_end,
+                        job_id=job_id,
+                    )
+                if aligned is not None:
+                    ordered_ids, step_timings = aligned
+                    step_clip_ids = list(ordered_ids)
+                else:
+                    if snapshot.get("creator_brief_binding") and len(ordered_ids) > 1:
+                        record_pipeline_event(
+                            "narrated",
+                            "requirement_recovery",
+                            {
+                                "stage": "alignment",
+                                "decision": "ask_before_simplifying",
+                                "reason": "spoken_word_alignment_unavailable",
+                                "generation_id": generation,
+                            },
+                        )
+                        recovery_message = (
+                            "I couldn't match the narration to the actions reliably. "
+                            "Your draft is saved. Should I try again "
+                            "or use a simpler clip sequence?"
+                        )
+                        if not _save_request_recovery(
+                            job_id,
+                            snapshot,
+                            ownership_epoch=ownership_epoch,
+                            message=recovery_message,
+                        ):
+                            return None
+                        raise UnsupportedPhonePlan(recovery_message)
+                    n_clips = len(ordered_ids)
+                    target_count = max(1, min(n_clips, len(phrases)))
+                    if len(phrases) > target_count:
+                        speech_start = phrases[0]["speech_start_s"]
+                        speech_end = phrases[-1]["speech_end_s"]
+                        total_speech = max(speech_end - speech_start, 0.1)
+                        bucket_dur = total_speech / target_count
+                        buckets: list[dict] = []
+                        bucket_open = phrases[0].copy()
+                        for p in phrases[1:]:
+                            if (
+                                p["speech_end_s"] - bucket_open["speech_start_s"]
+                            ) >= bucket_dur and len(buckets) < target_count - 1:
+                                buckets.append(
+                                    {**bucket_open, "speech_end_s": bucket_open["speech_end_s"]}
+                                )
+                                bucket_open = p.copy()
+                            else:
+                                bucket_open = {**bucket_open, "speech_end_s": p["speech_end_s"]}
+                        buckets.append(bucket_open)
+                        phrases = buckets
+                    step_timings = contiguous_step_timings(
+                        [float(p["speech_start_s"]) for p in phrases], timeline_end
+                    )
+                    step_clip_ids = [
+                        ordered_ids[index % len(ordered_ids)] for index in range(len(step_timings))
+                    ]
+                for timing, clip_id in zip(step_timings, step_clip_ids, strict=True):
                     steps.append(
                         NarratedPhoneStep(
                             step_id=timing.step_id,
@@ -21079,6 +21221,7 @@ def _narrated_storyboard_plan(
             NarratedStoryboardInput,
             NarratedStoryboardSegment,
         )
+        from app.services.clip_understanding import understanding_payload  # noqa: PLC0415
 
         clip_by_id = {str(getattr(meta, "clip_id", "")): meta for meta in clip_metas}
         clips = []
@@ -21086,13 +21229,18 @@ def _narrated_storyboard_plan(
             meta = clip_by_id.get(clip_id)
             if meta is None:
                 continue
+            understanding = understanding_payload(meta)
             clips.append(
                 NarratedStoryboardClip(
                     clip_id=clip_id,
-                    summary=str(getattr(meta, "hook_text", "") or "")[:500],
+                    # KRI-459: use the shared record's summary; hook_text is a
+                    # legacy fallback for older analysis rows without one.
+                    summary=str(
+                        understanding.get("summary") or getattr(meta, "hook_text", "") or ""
+                    )[:500],
                     subject=str(getattr(meta, "detected_subject", "") or "")[:240],
                     transcript=str(getattr(meta, "transcript", "") or "")[:500],
-                    content_type=str(getattr(meta, "content_type", "broll") or "broll"),
+                    content_type=str(understanding.get("content_type") or "broll"),
                     duration_s=float(clip_durations_s.get(clip_id, 0.0) or 0.0) or None,
                     best_moments=[
                         moment if isinstance(moment, Mapping) else moment.model_dump(mode="json")
@@ -21139,7 +21287,7 @@ def _narrated_storyboard_plan(
                 words=words,
                 segments=segments,
                 clips=clips,
-                creator_request=(creator_request or "")[:1000],
+                creator_request=creator_request or "",
                 language=str(getattr(transcript, "language", "") or ""),
             ),
             ctx=RunContext(job_id=job_id),
@@ -21160,6 +21308,182 @@ def _narrated_storyboard_plan(
             "overlays": [],
             "failure_code": "storyboard_provider_error",
         }
+
+
+_NARRATED_ALIGNMENT_MAX_WORDS = 600
+
+
+def _narrated_clip_description(meta: Any) -> str:
+    """Short visual description of one analysed clip for the alignment agent.
+
+    Visual fields only: the clip's own transcript is skipped on purpose (silent
+    footage routinely gets a hallucinated one, and the voiceover is the only
+    speech that matters here).
+    """
+    parts: list[str] = []
+    for attr in ("clip_summary", "activity", "detected_subject", "setting"):
+        text = " ".join(str(getattr(meta, attr, "") or "").split())
+        if text and all(text.casefold() not in part.casefold() for part in parts):
+            parts.append(text)
+    return " | ".join(parts)[:600]
+
+
+def _narrated_creator_clip_labels(
+    all_candidates: Mapping[str, Any],
+    clip_id_to_gcs: Mapping[str, str],
+    media_id_for_clip: Callable[[str], str | None],
+) -> tuple[dict[str, str], bool]:
+    """Creator brief labels per clip id, and whether the brief ordered the shots.
+
+    A resolved clip intent names a shot ("grating the pecorino") and the media
+    it matched; ``media_id`` is the basename of the clip's proxy path (or the
+    phone source binding id). Any ``op == "order"`` intent means the creator
+    fixed the clip order.
+    """
+    strategy = all_candidates.get("creator_strategy")
+    strategy = strategy if isinstance(strategy, Mapping) else {}
+    resolved = [
+        intent
+        for intent in (strategy.get("resolved_clip_intents") or [])
+        if isinstance(intent, Mapping)
+    ]
+    ordered = any(
+        isinstance(intent, Mapping) and intent.get("op") == "order"
+        for intent in [*resolved, *(strategy.get("clip_intents") or [])]
+    )
+    labels_by_media: dict[str, list[str]] = {}
+    for intent in resolved:
+        attribute = " ".join(str(intent.get("attribute") or "").split())
+        if not attribute or intent.get("status") not in (None, "resolved"):
+            continue
+        for assignment in intent.get("assignments") or []:
+            media_id = assignment.get("media_id") if isinstance(assignment, Mapping) else None
+            if media_id and attribute not in labels_by_media.setdefault(str(media_id), []):
+                labels_by_media[str(media_id)].append(attribute)
+    labels: dict[str, str] = {}
+    for clip_id, gcs_path in clip_id_to_gcs.items():
+        keys = [os.path.basename(str(gcs_path))]
+        try:
+            bound = media_id_for_clip(clip_id)
+        except Exception:  # noqa: BLE001 -- a missing binding only costs a label
+            bound = None
+        if bound:
+            keys.append(str(bound))
+        found: list[str] = []
+        for key in keys:
+            for label in labels_by_media.get(key, []):
+                if label not in found:
+                    found.append(label)
+        if found:
+            labels[clip_id] = "; ".join(found)[:240]
+    return labels, ordered
+
+
+def _narrated_clip_alignment_steps(
+    *,
+    transcript: Any,
+    clip_ids: list[str],
+    clip_metas: list[Any],
+    labels_by_clip: Mapping[str, str],
+    creator_request: str,
+    order_locked: bool,
+    timeline_end_s: float,
+    job_id: str,
+) -> tuple[list[str], list[Any]] | None:
+    """Ask the alignment agent where each clip should start, failing open.
+
+    Returns ``(clip_ids_in_screen_order, step_timings)`` or ``None`` when the
+    caller must use the legacy equal-bucket split (any precondition miss, agent
+    failure, invalid placement or timeline too short). Every outcome is recorded
+    on the job's pipeline trace; this function never raises.
+    """
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    def _fallback(reason: str, **extra: Any) -> None:
+        record_pipeline_event(
+            "narrated",
+            "narrated_clip_alignment",
+            {"status": "fallback", "reason": reason, "order_locked": order_locked, **extra},
+        )
+        log.warning("narrated_clip_alignment_fallback", job_id=job_id, reason=reason, **extra)
+        return None
+
+    try:
+        words, _ = _narrated_word_rows(transcript)
+        if len(clip_ids) < 2:
+            return _fallback("too_few_clips")
+        if not words:
+            return _fallback("no_words")
+        if len(words) > _NARRATED_ALIGNMENT_MAX_WORDS:
+            return _fallback("too_many_words", words=len(words))
+        if len(words) < len(clip_ids):
+            return _fallback("too_few_words", words=len(words), clips=len(clip_ids))
+        meta_by_id = {str(getattr(meta, "clip_id", "")): meta for meta in clip_metas}
+        if any(clip_id not in meta_by_id for clip_id in clip_ids):
+            return _fallback("missing_clip_meta")
+
+        from app.agents._model_client import default_client  # noqa: PLC0415
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents.narrated_clip_alignment import (  # noqa: PLC0415
+            NarratedAlignmentClip,
+            NarratedClipAlignmentAgent,
+            NarratedClipAlignmentInput,
+        )
+        from app.pipeline.narrated_alignment import resolve_aligned_steps  # noqa: PLC0415
+
+        output = NarratedClipAlignmentAgent(default_client()).run(
+            NarratedClipAlignmentInput(
+                words=words,
+                clips=[
+                    NarratedAlignmentClip(
+                        clip_id=clip_id,
+                        description=_narrated_clip_description(meta_by_id[clip_id]),
+                        creator_label=labels_by_clip.get(clip_id, ""),
+                    )
+                    for clip_id in clip_ids
+                ],
+                creator_request=creator_request or "",
+                order_locked=order_locked,
+                language=str(getattr(transcript, "language", "") or ""),
+            ),
+            ctx=RunContext(job_id=job_id),
+        )
+        start_by_word = {str(row["word_id"]): float(row["start_s"]) for row in words}
+        order = [placement.clip_id for placement in output.placements]
+        starts = [start_by_word[placement.start_word_id] for placement in output.placements]
+        resolved = resolve_aligned_steps(order, starts, timeline_end_s)
+        if resolved is None:
+            return _fallback(
+                "invalid_result",
+                placements=[
+                    {"clip_id": cid, "start_s": start} for cid, start in zip(order, starts)
+                ],
+            )
+        record_pipeline_event(
+            "narrated",
+            "narrated_clip_alignment",
+            {
+                "status": "aligned",
+                "order_locked": order_locked,
+                "prompt_version": NarratedClipAlignmentAgent.spec.prompt_version,
+                "clips": [
+                    {
+                        "clip_id": clip_id,
+                        "agent_start_s": agent_start,
+                        "start_s": timing.start_s,
+                        "end_s": timing.end_s,
+                        "start_word_id": placement.start_word_id,
+                        "reason": placement.reason,
+                    }
+                    for (clip_id, timing), agent_start, placement in zip(
+                        resolved, starts, output.placements
+                    )
+                ],
+            },
+        )
+        return [clip_id for clip_id, _timing in resolved], [timing for _id, timing in resolved]
+    except Exception as exc:  # noqa: BLE001 -- alignment is best effort
+        return _fallback("agent_error", error=f"{type(exc).__name__}: {str(exc)[:200]}")
 
 
 def _creator_requests_narrated_treatment(request: str, pattern: str) -> bool:
