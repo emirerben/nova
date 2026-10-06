@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.94.0] - 2026-10-06
+
+### Changed
+- fix(kria): preserve every request and pin approved inputs (KRI-459, 1/3) (#1409) <!-- release-pr: 1409 -->
+
 ## [0.78.93.0] - 2026-10-06
 
 ### Changed
