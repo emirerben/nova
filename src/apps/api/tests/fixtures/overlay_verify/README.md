@@ -28,3 +28,9 @@ never clips text; face-avoidance placement logic is unit-tested separately in
 
 `generic_context_labels.json` compiles short and long combined location/activity
 labels through the same right-aligned burn-dict contract used by guided edits.
+
+`legacy_font_aliases.json` burns the four legacy file-root names TextElement
+still accepts ("Inter-Bold" guided narration captions + v<3 titles,
+"Inter-Regular"/"PlayfairDisplay-Regular" web presets, "PlayfairDisplay-Bold"
+visual-block cards). Each must resolve to its registry face, not fall back to
+the `display` default — a fallback is a FAIL here.

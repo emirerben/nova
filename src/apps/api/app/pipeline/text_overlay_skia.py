@@ -64,6 +64,7 @@ from app.pipeline.dissolve_effect import (
     dissolve_filter_parts,
     render_dissolve_skia_image,
 )
+from app.pipeline.font_aliases import registry_font_name
 from app.pipeline.generative_overlays import (
     resolve_letter_spacing_em,
     resolve_letter_spacing_px,
@@ -865,7 +866,10 @@ class TypefaceResolution:
     def fallback(self) -> bool:
         if self.source == "authored_centerline":
             return False
-        return bool(self.requested_font_family and self.name != self.requested_font_family)
+        return bool(
+            self.requested_font_family
+            and self.name != registry_font_name(self.requested_font_family)
+        )
 
     def report_dict(self) -> dict[str, Any]:
         return {
@@ -942,6 +946,10 @@ def _overlay_text(overlay: dict) -> str:
 
 
 def _registry_typeface(name: str) -> tuple[str, str, skia.Typeface] | None:
+    # Legacy aliases ("Inter-Bold") resolve to their registry face, matching the
+    # Pillow/libass lookup (`text_overlay._registry_entry`), the web preview and
+    # the iOS compiler. Unresolved, they burned the `display` style default.
+    name = registry_font_name(name)
     entry = _FONT_REGISTRY.get("fonts", {}).get(name)
     if not entry:
         return None
