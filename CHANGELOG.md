@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.105.0] - 2026-10-06
+
+### Changed
+- fix(slides): re-render pre-fix slide posts so exports pick up the decode fix (KRI-462) (#1420) <!-- release-pr: 1420 -->
+
 ## [0.78.104.0] - 2026-10-06
 
 ### Changed
