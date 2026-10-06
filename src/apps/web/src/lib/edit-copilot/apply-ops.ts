@@ -1356,7 +1356,14 @@ export function applyCopilotOps(
         );
         continue;
       }
-      const effectivePatch = motionPatch ? { ...patch, ...motionPatch } : patch;
+      // A named position ignores x/y fractions on the burn, so drop stale ones:
+      // the preview prefers y_frac and would keep drawing the old spot.
+      const namedPosition = typeof patch.position === "string" && patch.position !== "custom";
+      const effectivePatch = {
+        ...patch,
+        ...(motionPatch ?? {}),
+        ...(namedPosition ? { x_frac: null, y_frac: null } : {}),
+      };
       const patchKeys = Object.keys(patch) as TextStylePatchKey[];
       if (patchKeys.length === 0) {
         rejected.push(

@@ -540,6 +540,11 @@ def apply_patch(row: dict[str, Any], patch: dict[str, Any]) -> None:
             row[key] = value
         else:
             raise KriaEditorOpError("No portable text style fields were supplied")
+    if patch.get("position") not in (None, "custom"):
+        # A named position ignores x/y fractions on the burn, but the editors
+        # draw y_frac first: drop stale ones so the preview matches.
+        row.pop("x_frac", None)
+        row.pop("y_frac", None)
 
 
 def op_patch_text(state: _DraftState, op: dict[str, Any]) -> None:
