@@ -263,6 +263,43 @@ def test_a_caption_save_keeps_the_creator_cut(monkeypatch):
     assert all(layer.end <= 10.0 for layer in recipe.text_layers)
 
 
+def test_a_cut_save_keeps_the_opening_title(monkeypatch):
+    """KRI-455: a cut Save re-bounds the captions; the title stays as pinned."""
+    import tests.routes.test_phone_voiceover_editor_lanes as lanes
+    from app.pipeline.phone_narrated_plan import compile_phone_narrated_plan
+
+    def titled():
+        return compile_phone_narrated_plan(
+            [
+                lanes._step("s0", "c0", start_s=0.0, end_s=4.0, source_start_s=1.5),
+                lanes._step("s1", "c1", start_s=4.0, end_s=8.0),
+                lanes._step("s2", "c2", start_s=8.0, end_s=12.0),
+            ],
+            lanes._bindings(),
+            lanes._narration(duration_s=12.0),
+            voiceover_duration_s=12.0,
+            mix=0.7,
+            caption_cues=lanes._CUES,
+            opening_title="Cacio e pepe in 10 minutes",
+            opening_title_end_s=1.6,
+        )
+
+    monkeypatch.setattr(lanes, "_narrated_recipe", titled)
+    _enable(monkeypatch)
+    job, vid = voiceover_job()
+    before = [layer for layer in _recipe(job, vid).text_layers if layer.id.startswith("title-")]
+    slots = _slots(job, vid)
+    slots[-1]["duration_s"] = 2.0
+
+    _save(job, vid, timeline_slots=slots)
+
+    recipe = _recipe(job, vid)
+    assert recipe.duration == pytest.approx(10.0)
+    assert [layer for layer in recipe.text_layers if layer.id.startswith("title-")] == before
+    fonts = {a.id for a in recipe.asset_manifest.assets if a.kind == "library"}
+    assert {run.font_asset_id for layer in before for run in layer.runs} <= fonts
+
+
 def test_lanes_follow_the_cut_and_come_back_when_it_grows(monkeypatch):
     _enable(monkeypatch)
     _fake_inspect(monkeypatch)

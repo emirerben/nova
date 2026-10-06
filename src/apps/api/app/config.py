@@ -279,6 +279,17 @@ class Settings(BaseSettings):
     # + `fly machine restart <id>` (api). No NEXT_PUBLIC twin (the iOS editor
     # follows the server's capability map).
     phone_narrated_caption_edits_enabled: bool = True
+    # KRI-455 (titles on phone Voiceover edits): a confirmed `opening_title` on
+    # a phone-rendered `narrated` edit burns like the cloud narrated intro
+    # (`phone_narrated_plan`, "Opening title") instead of the planner asking to
+    # drop it. Also requires "positionedText" + "animatedText" in
+    # `phone_render_verified_features` -- see
+    # `app.services.phone_rollout.phone_narrated_title_supported`. False: the
+    # planner asks to make the edit without the title again, as before; an
+    # already-approved title still renders. Rollback: `fly secrets set
+    # PHONE_NARRATED_TITLE_ENABLED=false --app nova-video` + `fly machine
+    # restart <id>` (api).
+    phone_narrated_title_enabled: bool = True
     # KRI-290 (free clip edits on phone Voiceover videos): a phone `narrated`
     # or montage `voiceover` variant's timeline opens (trim, extend, reorder,
     # split, delete) instead of being locked to the voiceover. A Save swaps the
@@ -525,6 +536,12 @@ class Settings(BaseSettings):
     # `fly machine restart <id>`. Needs `musicBed` + `audioMix` in
     # PHONE_RENDER_VERIFIED_FEATURES (both already verified in prod).
     user_song_montage_enabled: bool = True
+    # KRI-443: live plan block feed. After Create on a v2 thread, the render emits
+    # `plan_block` events into CreationThreadEvent (read via GET /delta), and
+    # POST /creation-threads/{id}/turns/{turn}/cancel-render is enabled. Default
+    # FALSE (dark). Off = no events, no job metadata, capability false, byte-identical.
+    # Kill switch = false + restart (api + worker). Contract: docs/pipelines/live-plan-blocks.md.
+    live_plan_review_enabled: bool = False
     # Longest song accepted (seconds); the montage itself is capped at 120 s.
     user_song_max_duration_s: float = Field(default=600.0, gt=0)
     # How long a planner turn waits for song analysis / take alignment before it

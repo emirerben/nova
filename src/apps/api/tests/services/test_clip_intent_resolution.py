@@ -419,6 +419,106 @@ async def test_creator_named_place_labels_resolve_through_the_real_parser(monkey
     assert {label.grounding for label in grounded_labels(result.intents)} == {"creator_text"}
 
 
+def _named_label(name: str) -> ClipIntent:
+    slug = name.lower().replace(" ", "-")
+    return ClipIntent(
+        intent_id=f"label-{slug}", op="label", attribute=f"shots: {name}", creator_text=name
+    )
+
+
+_LISBON_REQUEST = "Put a short place label on these shots: Alfama, Mouraria, Pink Street."
+_LISBON_CLIPS = [
+    _video_clip("alley", subject="narrow cobblestone street with laundry overhead"),
+    _video_clip("ferry", subject="ferry crossing open water under a red bridge"),
+]
+
+
+async def _resolve_named(monkeypatch, intents, guesses, vision=("", 0.0)):  # noqa: ANN001, ANN202
+    """`guesses`: {intent_id: [(alias, resolver confidence)]}; `vision`: every check's answer."""
+    _patch_resolver(
+        monkeypatch,
+        ClipRequestResolverOutput(
+            intents=[
+                ResolverIntentOut(
+                    intent_id=intent_id,
+                    assignments=[
+                        ResolverAssignment(media=alias, value=None, confidence=conf)
+                        for alias, conf in pairs
+                    ],
+                )
+                for intent_id, pairs in guesses.items()
+            ]
+        ),
+    )
+    calls = _patch_vision_success(monkeypatch, vision[0], vision[1])
+    result = await resolve_clip_intents_for_turn(
+        intents=intents,
+        creator_request=_LISBON_REQUEST,
+        clips=_LISBON_CLIPS,
+        run_context=RunContext(),
+        max_vision_requeries=18,
+    )
+    return result, calls[0]
+
+
+async def test_named_place_guess_stands_when_vision_cannot_name_it(monkeypatch) -> None:
+    """KRI-454 prod thread 8D6EBDF3: the resolver put "Alfama" on the right alley at
+    0.70; the vision check answered "unknown" (it reads pixels and cannot confirm a
+    neighbourhood name), so the turn asked the creator anyway. The creator already
+    said Alfama is in their footage: a lone, uncontested guess stands."""
+    result, vision_calls = await _resolve_named(
+        monkeypatch, [_named_label("Alfama")], {"label-alfama": [("m001", 0.7)]}
+    )
+
+    assert vision_calls == 1
+    assert result.question is None
+    assert result.status == "resolved"
+    [intent] = result.intents
+    assert [(a.media_id, a.value, a.grounding) for a in intent.assignments] == [
+        ("alley", "Alfama", "creator_text")
+    ]
+    assert result.diagnostics["named_guesses_settled"] == 1
+
+
+@pytest.mark.parametrize(
+    ("guess", "vision"),
+    [
+        (0.7, ("no", 0.4)),  # an unsure "no" is still a no
+        (0.7, ("no", 0.9)),  # confidently another place
+        (0.5, ("", 0.0)),  # below the membership bar: not a real guess
+    ],
+)
+async def test_named_place_guess_still_asks_without_a_real_unvetoed_guess(
+    monkeypatch, guess: float, vision: tuple[str, float]
+) -> None:
+    result, _calls = await _resolve_named(
+        monkeypatch, [_named_label("Alfama")], {"label-alfama": [("m001", guess)]}, vision
+    )
+
+    assert result.status == "needs_creator"
+    assert result.intents[0].assignments == []
+    assert result.diagnostics["named_guesses_settled"] == 0
+
+
+async def test_named_place_guesses_that_compete_still_ask(monkeypatch) -> None:
+    """Two names wanting the same clip, or two clips for one name, is a real choice."""
+    shared, _ = await _resolve_named(
+        monkeypatch,
+        [_named_label("Alfama"), _named_label("Mouraria")],
+        {"label-alfama": [("m001", 0.7)], "label-mouraria": [("m001", 0.7)]},
+    )
+    split, _ = await _resolve_named(
+        monkeypatch,
+        [_named_label("Alfama")],
+        {"label-alfama": [("m001", 0.7), ("m002", 0.65)]},
+    )
+
+    for result in (shared, split):
+        assert result.status == "needs_creator"
+        assert all(i.assignments == [] for i in result.intents)
+        assert result.diagnostics["named_guesses_settled"] == 0
+
+
 async def test_resolver_terminal_error_degrades_gracefully(monkeypatch) -> None:
     def _boom(self, input, *, ctx=None):  # noqa: A002, ANN001
         raise TerminalError("nova.plan.clip_request_resolver: exhausted 1 model(s)")

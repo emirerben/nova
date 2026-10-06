@@ -5091,8 +5091,18 @@ def render_execution_plan(
     tmpdir: str,
     track: Any | None,
     attempt_id: str | None = None,
+    on_stage: Callable[[tuple[str, ...], str], None] | None = None,
 ) -> dict[str, Any]:
-    """Render and verify one strict guided-story variant."""
+    """Render and verify one strict guided-story variant.
+
+    ``on_stage(sections, state)`` (KRI-443 live feed) is called from this thread at the
+    real stage boundaries: a section is ``deciding`` when its work starts and ``decided``
+    when it finishes. It is best-effort and optional; None changes nothing.
+    """
+
+    def stage(sections: tuple[str, ...], state: str) -> None:
+        if on_stage is not None:
+            on_stage(sections, state)
 
     from app.pipeline.generative_overlays import (  # noqa: PLC0415
         build_overlays_from_text_elements,
@@ -5109,6 +5119,7 @@ def render_execution_plan(
     strict_mixed_duration = uses_quick_photo_long_video_timing(mixed_timing) or bool(
         plan.get("montage_cadence")
     )
+    stage(("clips",), "deciding")
     local_by_id, media_receipts = _download_selected(plan, tmpdir)
     moment_paths, moment_receipts = _render_moments(plan, local_by_id, tmpdir)
     assembled = os.path.join(tmpdir, "guided_story_assembled.mp4")
@@ -5194,8 +5205,11 @@ def render_execution_plan(
             tmpdir=tmpdir,
             attempt_id=attempt_id,
         )
+    stage(("clips",), "decided")  # selection, trim and assembly of the cuts are done
     music = plan.get("music")
     narration = plan.get("narration")
+    if music is not None or narration is not None:
+        stage(("music",), "deciding")
     if music is not None and narration is not None:
         raise GuidedStoryError(
             "guided_story_snapshot_invalid",
@@ -5239,6 +5253,8 @@ def render_execution_plan(
         music_applied = False
         narration_applied = False
 
+    stage(("music",), "decided")  # bed mixed (or truly absent -> Not used)
+    stage(("overlays",), "deciding")
     clean_base = _compose_guided_pretext_lanes(
         clean_base,
         plan,
@@ -5246,6 +5262,7 @@ def render_execution_plan(
         attempt_id=attempt_id,
         tmpdir=tmpdir,
     )
+    stage(("overlays",), "decided")
     if strict_mixed_duration:
         clean_base = _enforce_strict_story_duration(
             clean_base,
@@ -5253,6 +5270,7 @@ def render_execution_plan(
             target_s=float(plan["resolved_duration_s"]),
         )
 
+    stage(("title", "captions", "look"), "deciding")
     if settings.guided_text_face_placement_enabled:
         plan["text_elements"] = _apply_guided_text_face_placement(
             clean_base, plan["text_elements"], job_id=job_id, canvas=canvas
@@ -5320,6 +5338,8 @@ def render_execution_plan(
         # interval. Preserve the already-composed clean base byte-for-byte.
         shutil.copyfile(clean_base, final_path)
         text_receipts = []
+    stage(("title", "captions", "look"), "decided")  # text burned
+    stage(("sfx",), "deciding")
     final_path = _compose_guided_sfx(
         final_path,
         plan,
@@ -5327,6 +5347,7 @@ def render_execution_plan(
         attempt_id=attempt_id,
         tmpdir=tmpdir,
     )
+    stage(("sfx",), "decided")
     if strict_mixed_duration:
         final_path = _enforce_strict_story_duration(
             final_path,

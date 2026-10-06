@@ -385,6 +385,63 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertTrue(session.hasUnsavedChanges)
     }
 
+    /// KRI-432: a volume change on a settled preview is a player-level change: same composition, same player,
+    /// no recompile (no black frame, no restart), and the recipe on screen still carries the new level.
+    /// The song is compiled at unity gain and `AVPlayer.volume` carries the level, because swapping the live
+    /// item's audio mix silences the iPhone preview (KRI-241).
+    func testSongVolumeChangeIsAppliedLiveWithoutRebuildingThePreview() async throws {
+        let (session, _, sourceURL) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertTrue(session.liveSongVolumeActive, "the song is the only audible track")
+        func songClip() throws -> TimelineClip? {
+            try XCTUnwrap(session.displayedSourcePreviewRecipe).tracks.first { $0.id == "song" }?.clips.first
+        }
+        let player = try XCTUnwrap(session.player)
+        let item = try XCTUnwrap(player.currentItem)
+        let compiles = session.sourcePreviewCompileCount
+        let time = session.currentTime
+        XCTAssertEqual(player.volume, 1)
+
+        for level in [0.4, 0.0, 1.0, 0.25] {
+            session.setUserSongVolume(level)
+            for _ in 0..<5 { await Task.yield() }
+            try await Task.sleep(for: .milliseconds(150))
+            XCTAssertTrue(session.player === player, "no player swap at \(level)")
+            XCTAssertTrue(session.player?.currentItem === item, "no item swap at \(level)")
+            XCTAssertEqual(session.sourcePreviewCompileCount, compiles, "no recompile at \(level)")
+            XCTAssertEqual(Double(player.volume), level, accuracy: 0.001)
+            XCTAssertEqual(try XCTUnwrap(songClip()).volume, level, accuracy: 0.001, "the recipe on screen carries the level")
+            XCTAssertEqual(session.currentTime, time, "the playhead did not move")
+        }
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        XCTAssertEqual(try XCTUnwrap(songClip()).sourceStart, 1, accuracy: 0.001, "fades and window are untouched")
+    }
+
+    /// KRI-432: dragging the start edits the document live (one undo step) but rebuilds the preview once, on release.
+    func testStartDragRebuildsThePreviewOnceOnReleaseAndIsOneUndoStep() async throws {
+        let (session, _, sourceURL) = try await userSongSession(mode: "background", caps: Self.allSongCaps)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        let compiles = session.sourcePreviewCompileCount
+        session.beginSongStartDrag()
+        for start in [0.25, 0.5, 1.0, 1.5] {
+            session.moveSongStart(start)
+            try await Task.sleep(for: .milliseconds(120))
+        }
+        XCTAssertEqual(session.sourcePreviewCompileCount, compiles, "no rebuild while the finger is down")
+        XCTAssertEqual(session.document.userSong?.windowStartS, 1.5)
+        session.endSongStartDrag()
+        for _ in 0..<100 where session.sourcePreviewCompileCount == compiles { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(session.sourcePreviewCompileCount, compiles + 1, "one rebuild, at release")
+        let song = try XCTUnwrap(session.displayedSourcePreviewRecipe?.tracks.first { $0.id == "song" }?.clips.first)
+        XCTAssertEqual(song.sourceStart, 1.5, accuracy: 0.01, "the rebuilt preview starts at the new start")
+        session.songAudition.cancel()
+        session.undo()
+        XCTAssertNil(session.document.userSong, "the whole drag is one undo step")
+        XCTAssertFalse(session.canUndo)
+    }
+
     /// A background or lip-sync creator-song edit on a device recipe whose song file is 4s long and whose
     /// bed plays 1s...3s of it; `caps` are the nested `user_song.{volume,window,remove}` editable flags.
     private func userSongSession(mode: String, caps: [String: Bool], songDuration: Double = 200, videoDuration: Double = 2) async throws -> (NativeEditorSession, EditorCommitSpy, URL) {

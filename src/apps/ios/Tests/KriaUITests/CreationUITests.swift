@@ -190,6 +190,53 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["photos-picker-done"].exists)
     }
 
+    /// KRI-282 regression: every asset picked in the in-app gallery used to fail with "This file couldn't be
+    /// read" (a `PhotosPickerItem(itemIdentifier:)` has no item provider). A gallery pick must be read from
+    /// Photos and reach the upload step: the offline fixture has no upload reservations, so it surfaces as a
+    /// failure NAMED after the file ("kria-outro-paper.mp4: ...") -- never the generic "Selected item".
+    func testGalleryPickIsReadFromPhotosAndReachesUpload() {
+        let app = XCUIApplication()
+        app.resetAuthorizationStatus(for: .photos)
+        app.launchArguments = ["-ui-testing-chat", "-ui-testing-seed-photo-video", "-ui-testing-seed-photo-videos"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launch()
+        createFreshChat(in: app)
+        let card = app.buttons["format-montage"]
+        if !card.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.tap()
+        let chooseVideos = app.buttons["choose-videos"]
+        XCTAssertTrue(chooseVideos.waitForExistence(timeout: 5))
+        chooseVideos.tap()
+        func allowFullAccess(_ alert: XCUIElement) -> Bool {
+            guard alert.buttons.count == 3 else { return false }
+            alert.buttons.element(boundBy: 1).tap()
+            return true
+        }
+        let monitor = addUIInterruptionMonitor(withDescription: "Photos access", handler: allowFullAccess)
+        defer { removeUIInterruptionMonitor(monitor) }
+        let photos = app.buttons["Choose from Photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 3))
+        photos.tap()
+        let permission = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        if permission.waitForExistence(timeout: 10) { XCTAssertTrue(allowFullAccess(permission)) }
+
+        let tile0 = app.buttons["gallery-tile-0"]
+        XCTAssertTrue(tile0.waitForExistence(timeout: 40), app.debugDescription)
+        tile0.tap()
+        XCTAssertTrue(eventually { app.staticTexts["gallery-count"].label.hasPrefix("1 of") })
+        app.buttons["photos-picker-done"].tap()
+
+        // The offline fixture has no upload reservations, so a pick that was READ from Photos fails later, at the
+        // reservation decode, and surfaces that error. A pick the loader could not read never reaches upload,
+        // so that text is absent and the generic "This file couldn't be read" line is shown instead.
+        let reachedUpload = app.staticTexts["The data couldn\u{2019}t be read because it isn\u{2019}t in the correct format."]
+        XCTAssertTrue(reachedUpload.waitForExistence(timeout: 25),
+            "The gallery pick must be read from Photos and reach upload\n\(app.debugDescription)")
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'This file couldn\u{2019}t be read'")).firstMatch.exists,
+            "A loader failure means the Photos asset could not be read")
+    }
+
     /// Full-access Photos returns to the attachment flow on Done. A selected
     /// talking-to-camera clip advances to overlays; Done there returns to chat.
     func testLibraryPickerReturnsToChatByDoneAndBySinglePick() {

@@ -56,7 +56,7 @@ from app.schemas.user_song import SongOrderAnswerIn
 from app.services.choice_questions import ChoiceSelectionIn, latest_open_choice_question
 from app.services.clip_selection import ClipSelectionIn, latest_open_clip_question
 from app.services.creation_thread_titles import (
-    matches_conversation_revision,
+    conversation_revision_matches,
     prepare_message_title,
 )
 from app.services.song_order import STALE_CODE as SONG_ORDER_STALE_CODE
@@ -377,7 +377,8 @@ async def submit_turn(
             ),
             should_publish,
         )
-    if not matches_conversation_revision(
+    if not await conversation_revision_matches(
+        db,
         thread,
         body.expected_thread_revision
         if _expected_revision_override is None
@@ -725,7 +726,7 @@ async def cancel_turn(
     if turn is None:
         raise RuntimeFailure(404, "turn_not_found", "Kria turn not found")
     thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=True)
-    if not matches_conversation_revision(thread, expected_thread_revision):
+    if not await conversation_revision_matches(db, thread, expected_thread_revision):
         raise RuntimeFailure(
             409,
             "thread_revision_stale",
@@ -801,6 +802,154 @@ async def cancel_turn(
         ),
         successor_id,
     )
+
+
+async def cancel_render(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    expected_thread_revision: int,
+) -> TurnCancelled:
+    """Stop the render an `observing`/`executing` turn is waiting on (KRI-443).
+
+    Phase 1 (no locks held across it): validate ownership, revision and cancellability.
+    Phase 2: the shared job-cancel service locks the Job (before Session/Turn/Thread in
+    `app/db_locks.CANONICAL_LOCK_ORDER`), cancels, commits, then revokes the Celery task.
+    Phase 3: lock Session -> Turn -> Execution -> Thread, mark the turn/execution
+    cancelled and append `render_cancelled`.
+    """
+    from app.models import Job  # noqa: PLC0415
+    from app.services.job_cancel import (  # noqa: PLC0415
+        JobCancelError,
+        lock_and_cancel_job,
+        revoke_and_cleanup_job,
+    )
+
+    if not settings.live_plan_review_enabled:
+        raise RuntimeFailure(404, "live_plan_review_unavailable", "Cancelling a render is off")
+    thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=False)
+    if not await conversation_revision_matches(db, thread, expected_thread_revision):
+        raise RuntimeFailure(
+            409,
+            "thread_revision_stale",
+            "The project changed before cancellation.",
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        )
+    turn = (
+        await db.execute(
+            select(CreatorAgentTurn).where(
+                CreatorAgentTurn.id == turn_id, CreatorAgentTurn.thread_id == thread_id
+            )
+        )
+    ).scalar_one_or_none()
+    if turn is None:
+        raise RuntimeFailure(404, "turn_not_found", "Kria turn not found")
+
+    revision_seen = int(thread.revision)
+
+    def not_cancellable(message: str) -> RuntimeFailure:
+        return RuntimeFailure(
+            409,
+            "turn_not_cancellable",
+            message,
+            phase="observe",
+            recovery="manual",
+            current_revision=revision_seen,
+        )
+
+    if turn.status not in {"observing", "executing"}:
+        raise not_cancellable("This render is not running.")
+    execution = (
+        (
+            await db.execute(
+                select(CreatorAgentExecution)
+                .where(
+                    CreatorAgentExecution.turn_id == turn.id,
+                    CreatorAgentExecution.target_job_id.is_not(None),
+                )
+                .order_by(CreatorAgentExecution.created_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if execution is None or execution.target_job_id is None:
+        raise not_cancellable("This render has not started.")
+    job_id = execution.target_job_id
+    execution_id = execution.id
+    session_id = execution.session_id
+    job = await db.get(Job, job_id)
+    if (
+        job is None
+        or job.user_id != creator_id
+        or job.content_plan_item_id != thread.active_plan_item_id
+    ):
+        raise not_cancellable("This render is no longer current.")
+    await db.rollback()
+
+    try:
+        outcome = await lock_and_cancel_job(
+            db,
+            str(job_id),
+            source="user",
+            failure_reason="cancelled_by_user",
+            error_detail="Cancelled by the creator",
+            speech_error="render cancelled by creator",
+            require_celery_task=True,
+        )
+    except JobCancelError as exc:
+        raise not_cancellable(exc.detail) from exc
+    revoke_and_cleanup_job(outcome, source="user")
+
+    # Canonical order: Session -> Turn -> Execution -> Thread (Job was released above).
+    session = (
+        await db.execute(
+            select(CreatorAgentSession)
+            .where(CreatorAgentSession.id == session_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    turn = (
+        await db.execute(
+            select(CreatorAgentTurn).where(CreatorAgentTurn.id == turn_id).with_for_update()
+        )
+    ).scalar_one()
+    execution = (
+        await db.execute(
+            select(CreatorAgentExecution)
+            .where(CreatorAgentExecution.id == execution_id)
+            .with_for_update()
+        )
+    ).scalar_one()
+    thread = await _owned_thread(db, thread_id=thread_id, creator_id=creator_id, lock=True)
+    if turn.status in {"observing", "executing"}:
+        now = datetime.now(UTC)
+        turn.status = "cancelled"
+        turn.cancel_requested_at = now
+        turn.completed_at = now
+        if execution.status in {"dispatched", "accepted"}:
+            execution.status = "cancelled"
+            execution.completed_at = now
+        if session is not None and session.status == "rendering":
+            session.status = "awaiting_feedback"
+        await _append_event(
+            db,
+            thread,
+            role="system",
+            event_type="render_cancelled",
+            content=None,
+            payload={"turn_id": str(turn.id), "job_id": str(job_id)},
+        )
+        await db.commit()
+        final_revision = int(thread.revision)
+    else:
+        # The observer settled the (now cancelled) job first; nothing left to mark.
+        final_revision = int(thread.revision)
+        await db.rollback()
+    return TurnCancelled(turn_id=str(turn_id), thread_revision=final_revision, status="cancelled")
 
 
 async def _promote_queued_successor(db: AsyncSession, *, thread_id: uuid.UUID) -> str | None:
@@ -1674,8 +1823,8 @@ async def decide_approval(
                 "prepare it again."
             ),
         )
-    if decision == "approve" and not matches_conversation_revision(
-        thread, body.expected_thread_revision
+    if decision == "approve" and not await conversation_revision_matches(
+        db, thread, body.expected_thread_revision
     ):
         raise RuntimeFailure(
             409,

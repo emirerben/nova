@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.88.0] - 2026-10-05
+
+### Changed
+- fix(kria): render titles on iPhone voiceover edits (KRI-455) (#1403) <!-- release-pr: 1403 -->
+
+## [0.78.87.0] - 2026-10-05
+
+### Changed
+- feat(ios): slide-post editor parity with the video editor (hold-to-transform, AI sheet, drag reorder, cached previews) (#1402) <!-- release-pr: 1402 -->
+
+## [0.78.86.0] - 2026-10-05
+
+### Changed
+- fix(kria): pace plan_block events to real render steps + fix section values (KRI-443) (#1401) <!-- release-pr: 1401 -->
+
+## [0.78.85.0] - 2026-10-05
+
+### Changed
+- fix(kria): keep a named place's lone guess when vision can't name it (KRI-454) (#1400) <!-- release-pr: 1400 -->
+
+## [0.78.84.0] - 2026-10-05
+
+### Changed
+- feat(song): seamless volume and start-point audition in the editor (KRI-432) (#1396) <!-- release-pr: 1396 -->
+
+## [0.78.83.0] - 2026-10-05
+
+### Changed
+- KRI-282 fix unreadable files from the in-app gallery (#1399) <!-- release-pr: 1399 -->
+
+## [0.78.82.0] - 2026-10-05
+
+### Changed
+- feat(kria): plan_block events + cancel-render behind LIVE_PLAN_REVIEW_ENABLED (KRI-443) (#1397) <!-- release-pr: 1397 -->
+
+## [0.78.81.0] - 2026-10-05
+
+### Fixed
+- fix(ios): clear message when picking Vertical on a landscape video (KRI-431) (#1390) <!-- release-pr: 1390 -->
+
 ## [0.78.80.0] - 2026-10-05
 
 ### Changed

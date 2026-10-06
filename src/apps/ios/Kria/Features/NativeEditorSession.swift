@@ -95,6 +95,12 @@ struct NativeEditorTemporaryVideo {
             timelineClipsCache = nil
             timelineProjectionCache = nil
             previewTextCache = nil
+            // KRI-432: a song volume change on a settled preview is applied to the player, not rebuilt.
+            if liveSongVolumeActive, sourcePreviewSettled, let built = previewBuiltDocument,
+               Self.differsOnlyBySongVolume(document, built) {
+                applyLiveSongVolume()
+                return
+            }
             scheduleSourcePreviewUpdate()
         }
     }
@@ -323,6 +329,33 @@ struct NativeEditorTemporaryVideo {
     /// Song edits the server has acknowledged since the current variant loaded (KRI-428). They are
     /// folded out of `document.userSong` on Save so a retry or a rebase never sends them again.
     private var acknowledgedUserSong: EditorUserSongState?
+    /// KRI-432: the built composition plays the song at unity gain and the PLAYER carries the level, so a
+    /// volume change is `AVPlayer.volume` (instant, no rebuild, no black frame). Re-assigning the item's
+    /// audio mix is not an option: on iPhone any live `audioMix` swap silences the preview (KRI-241).
+    /// Only when the song is the sole audible track; with SFX, music or narration the level stays baked in.
+    private(set) var liveSongVolumeActive = false
+    /// The document the current source composition was compiled from.
+    private var previewBuiltDocument: EditorDocument?
+    /// A song start drag is open: preview rebuilds wait for the release (one rebuild, not one per tick).
+    private var isSongStartDragActive = false
+    private var isRestoringVideoAfterAudition = false
+    /// Plays the song from the chosen start while the creator slides the start bar.
+    private(set) lazy var songAudition = NativeSongAuditionController(
+        engine: AVAudioSongAuditionEngine(),
+        host: .init(
+            pauseVideo: { [weak self] in
+                guard let self else { return false }
+                let wasPlaying = self.isPlaying
+                if wasPlaying { self.pausePlayback() }
+                return wasPlaying
+            },
+            resumeVideo: { [weak self] in
+                guard let self, !self.isPlaying else { return }
+                self.isRestoringVideoAfterAudition = true
+                self.togglePlayback()
+                self.isRestoringVideoAfterAudition = false
+            },
+            activateAudioSession: { [weak self] in self?.activatePreviewAudio() }))
     /// Re-maps unsaved song edits (in the document and its undo history) onto the song as just saved.
     private var userSongRebase: (EditorUserSongState?) -> EditorUserSongState? = { $0 }
     /// The acknowledged volume / start a render retry sends again (a removal is never resent).
@@ -370,6 +403,49 @@ struct NativeEditorTemporaryVideo {
         (acknowledgedUserSong?.removed == true || document.userSong?.removed == true)
             && (baseUserSong != nil || deviceSongBed != nil)
     }
+    /// The song level the preview plays at right now, saved or not.
+    private var currentSongVolume: Double { effectiveSongBed?.volume ?? effectiveUserSongState?.volume ?? 1 }
+
+    /// Everything but the song volume is the same: the one difference a settled preview absorbs live.
+    static func differsOnlyBySongVolume(_ a: EditorDocument, _ b: EditorDocument) -> Bool {
+        func stripped(_ value: EditorDocument) -> EditorDocument {
+            var copy = value
+            if var state = copy.userSong { state.volume = nil; copy.userSong = state.isEmpty ? nil : state }
+            return copy
+        }
+        return a != b && stripped(a) == stripped(b)
+    }
+
+    /// Sets the player's level for the song on the composition now on screen.
+    private func applyLiveSongVolume() {
+        guard let player, let preview = sourcePreview, player.currentItem === preview.preview.playerItem else { return }
+        player.volume = liveSongVolumeActive ? Float(min(1, max(0, currentSongVolume))) : 1
+        previewBuiltDocument = document
+    }
+
+    /// The recipe on screen with the live song level written back into the song clip, so what is
+    /// exported or inspected carries the volume the creator hears.
+    private func recipeWithLiveSongVolume(_ recipe: KriaMediaEngine.EditRecipe) -> KriaMediaEngine.EditRecipe {
+        guard liveSongVolumeActive else { return recipe }
+        var result = recipe
+        let level = currentSongVolume
+        result.tracks = result.tracks.map { track in
+            guard track.id == NativeEditorSongBed.trackID, track.kind == .audio else { return track }
+            var copy = track
+            copy.clips = track.clips.map { var clip = $0; clip.volume = level; return clip }
+            return copy
+        }
+        return result
+    }
+
+    /// True when the song is the only thing audible in `recipe`: every other clip is silent.
+    private static func songIsOnlyAudibleTrack(_ recipe: KriaMediaEngine.EditRecipe) -> Bool {
+        let song = recipe.tracks.filter { $0.id == NativeEditorSongBed.trackID && $0.kind == .audio }
+        guard song.count == 1 else { return false }
+        return recipe.tracks.filter { $0.id != NativeEditorSongBed.trackID }
+            .allSatisfy { $0.clips.allSatisfy { $0.volume == 0 } }
+    }
+
     /// What the preview plays: the pinned recipe's bed with the user's unsaved volume / start applied,
     /// the same values the server writes into the recipe on Save. Nil after Remove.
     private var effectiveSongBed: NativeEditorSongBed? {
@@ -415,6 +491,31 @@ struct NativeEditorTemporaryVideo {
         if let song = baseUserSong, let limit = maxUserSongStart(for: song) { start = min(start, limit) }
         updateUserSong { state, saved in state.windowStartS = abs(start - saved.windowStartS) < 0.0005 ? nil : start }
     }
+    /// A start-bar drag began: one undo step, no preview rebuilds until it ends, and the song plays from
+    /// the chosen start so the creator hears what they pick (KRI-432).
+    func beginSongStartDrag() {
+        beginTransaction()
+        isSongStartDragActive = true
+        if userSongAudioURL != nil { songAudition.begin() }
+    }
+
+    /// The start moved to `value`: updates the document and (debounced) restarts the audition from it.
+    func moveSongStart(_ value: Double) {
+        setUserSongStart(value)
+        guard songAudition.isActive, let song = effectiveUserSong, let url = userSongAudioURL else { return }
+        let length = duration > 0 ? duration : song.windowLengthS
+        songAudition.update(SongAuditionRequest(url: url, start: song.windowStartS, length: length, volume: Float(song.volume)))
+    }
+
+    /// The drag ended: close the undo step, rebuild the preview ONCE at the new start, and let the audition
+    /// play the window out before handing the video back.
+    func endSongStartDrag() {
+        endTransaction()
+        isSongStartDragActive = false
+        flushDeferredSourcePreviewUpdate()
+        songAudition.end()
+    }
+
     /// Drops the song for this edit; camera audio plays again. Undoable until Save.
     func removeUserSong() {
         guard savedUserSong != nil, document.userSong?.removed != true, canEditOperation(["user_song.remove"], section: .userSong) else { return }
@@ -837,16 +938,17 @@ struct NativeEditorTemporaryVideo {
             throw NativeEditorVideoDownloadError.unavailable
         }
         let snapshot = sourcePreview.exportSnapshot()
+        let exportRecipe = recipeWithLiveSongVolume(snapshot.recipe)
         let wasPlaying = isPlaying
         pausePlayback()
         defer { if wasPlaying { togglePlayback() } }
         do {
-            return try await performLocalExport(recipe: snapshot.recipe, assetURLs: snapshot.assetURLs)
+            return try await performLocalExport(recipe: exportRecipe, assetURLs: snapshot.assetURLs)
         } catch {
             #if DEBUG
             NativePreviewDiagnostics.failure("editor-export-first-attempt", error: error)
             #endif
-            return try await performLocalExport(recipe: snapshot.recipe, assetURLs: snapshot.assetURLs)
+            return try await performLocalExport(recipe: exportRecipe, assetURLs: snapshot.assetURLs)
         }
     }
 
@@ -1608,6 +1710,7 @@ struct NativeEditorTemporaryVideo {
         player = nil
         finishedRenderURL = nil; finishedRenderPlayer = nil; finishedRenderIsCurrent = true
         sourcePreview = nil; sourceCompiler = nil; sourcePool = nil; resolvedSources = nil
+        liveSongVolumeActive = false; previewBuiltDocument = nil
         sourcePreviewState = .idle; sourcePreviewGeneration = nil
         previewVariant = [:]
         pendingDeviceRenderIdentity = nil
@@ -2030,6 +2133,7 @@ struct NativeEditorTemporaryVideo {
         deviceNarrationResolutionGeneration = nil
         resolvedMedia.removeAll()
         sourcePreview = nil
+        liveSongVolumeActive = false; previewBuiltDocument = nil
         textInteractionTask?.cancel()
         textInteractionSequence += 1
         textInteractionFrame = nil
@@ -2287,7 +2391,7 @@ struct NativeEditorTemporaryVideo {
         guard resolvedSources != nil, sourceCompiler != nil else { return }
         sourcePreviewTask?.cancel()
         sourcePreviewSequence += 1
-        guard !isTimingGestureActive, !isDirectManipulating else {
+        guard !isTimingGestureActive, !isDirectManipulating, !isSongStartDragActive else {
             sourcePreviewUpdateDeferred = true
             return
         }
@@ -2364,12 +2468,23 @@ struct NativeEditorTemporaryVideo {
                 "projectedActiveText": String(items.filter { ($0.kind == .text || $0.kind == .captionCue) && $0.start <= 0 && $0.end > 0 }.count),
                 "textWindows": snapshot.textElements.prefix(8).map { "\($0.startS):\($0.endS)" }.joined(separator: ",")])
             #endif
-            let program = try compiler.compile(document: snapshot, clips: clips, items: items,
-                                               sources: sources, audioSources: audio, mediaSources: media,
-                                               referenceOnlyMusic: musicPlaybackMode == .referenceOnly,
-                                               sourceAudioPreserved: sourceAudioPreserved || songRemoved,
-                                               songBed: audio[NativeEditorRenderCompiler.songSourceKey] != nil ? effectiveSongBed : nil,
-                                               deviceCaptions: rendersOnDevice)
+            // KRI-432: the song is compiled at unity gain and the player carries its level (see
+            // `liveSongVolumeActive`); only when something else is audible does the level stay baked in.
+            let hasSong = audio[NativeEditorRenderCompiler.songSourceKey] != nil
+            let realBed = hasSong ? effectiveSongBed : nil
+            func compileProgram(songBed: NativeEditorSongBed?) throws -> NativeEditorRenderProgram {
+                try compiler.compile(document: snapshot, clips: clips, items: items,
+                                     sources: sources, audioSources: audio, mediaSources: media,
+                                     referenceOnlyMusic: musicPlaybackMode == .referenceOnly,
+                                     sourceAudioPreserved: sourceAudioPreserved || songRemoved,
+                                     songBed: songBed, deviceCaptions: rendersOnDevice)
+            }
+            var program = try compileProgram(songBed: realBed.map {
+                NativeEditorSongBed(assetID: $0.assetID, sourceStart: $0.sourceStart, sourceDuration: $0.sourceDuration,
+                                    volume: 1, fadeIn: $0.fadeIn, fadeOut: $0.fadeOut)
+            })
+            let liveVolume = hasSong && Self.songIsOnlyAudibleTrack(program.recipe)
+            if hasSong, !liveVolume { program = try compileProgram(songBed: realBed) }
             // The in-place text update only applies while the canvas is still
             // on this composition. After a transient compile failure handed
             // the canvas to the finished-render fallback, its player item was
@@ -2379,6 +2494,9 @@ struct NativeEditorTemporaryVideo {
             // while the user keeps watching the stale cloud render (KRI-110).
             if let preview = sourcePreview, player?.currentItem === preview.preview.playerItem,
                updatePreviewInPlace(preview, program: program) {
+                liveSongVolumeActive = liveVolume
+                previewBuiltDocument = baseline
+                applyLiveSongVolume()
                 sourcePreviewState = .ready
                 sourcePreviewSettledSequence = sequence
                 if !isPlaying { seek(to: currentTime) }
@@ -2395,6 +2513,9 @@ struct NativeEditorTemporaryVideo {
             let resumePlayback = isPlaying
             sourcePreview = preview
             installPlayer(item: preview.preview.playerItem, preferredDuration: TimelineMath.totalDuration(of: program.recipe))
+            liveSongVolumeActive = liveVolume
+            previewBuiltDocument = baseline
+            applyLiveSongVolume()
             sourcePreviewState = .ready
             sourcePreviewSettledSequence = sequence
             if resumePlayback {
@@ -2460,6 +2581,8 @@ struct NativeEditorTemporaryVideo {
             return
         }
         pendingPlayRequest = false
+        // The creator pressed play themselves: the audition ends and does not hand the video back.
+        if songAudition.isActive, !isRestoringVideoAfterAudition { songAudition.cancel(restoreVideo: false) }
         if isPlaying {
             pausePlayback()
             return
@@ -2697,7 +2820,7 @@ struct NativeEditorTemporaryVideo {
     var displayedSourcePreviewRecipe: KriaMediaEngine.EditRecipe? {
         guard sourcePreviewState == .ready, let sourcePreview,
               player?.currentItem === sourcePreview.preview.playerItem else { return nil }
-        return sourcePreview.exportSnapshot().recipe
+        return recipeWithLiveSongVolume(sourcePreview.exportSnapshot().recipe)
     }
 
     func auditPreviewWindow() async -> [[String: String]] {

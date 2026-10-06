@@ -9,8 +9,10 @@ from app.kria.render_assets import RenderFingerprint
 from app.pipeline.phone_captions import PhoneCaptionLook
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_narrated_plan import (
+    TITLE_LAYER_PREFIX,
     NarratedPhoneStep,
     compile_phone_narrated_plan,
+    narrated_title_end_s,
     replace_narrated_captions,
 )
 from app.pipeline.phone_recipe_shared import PhoneNarrationBed
@@ -466,3 +468,142 @@ def test_swapping_captions_refuses_a_recipe_without_the_narrated_track():
 
     with pytest.raises(UnsupportedPhonePlan):
         replace_narrated_captions(foreign, caption_cues=_WORD_CUES)
+
+
+# --- opening title (KRI-455: titles on phone Voiceover edits) -----------------------
+
+_TITLE = "Cacio e pepe in 10 minutes"
+
+
+def _titled_recipe(*, cues=_WORD_CUES, title=_TITLE, title_end_s=1.6, look=None):
+    return compile_phone_narrated_plan(
+        _three_steps(),
+        _three_bindings(),
+        _narration(duration_s=12.0),
+        voiceover_duration_s=12.0,
+        caption_cues=cues,
+        opening_title=title,
+        opening_title_end_s=title_end_s,
+        caption_look=look,
+    )
+
+
+def _title_layers(recipe):
+    return [layer for layer in recipe.text_layers if layer.id.startswith(TITLE_LAYER_PREFIX)]
+
+
+def _layer_text(layer) -> str:
+    return " ".join(run.text for run in layer.runs)
+
+
+def _font_ids(recipe) -> set[str]:
+    return {a.id for a in recipe.asset_manifest.assets if a.kind == "library"}
+
+
+def test_title_window_mirrors_the_cloud_narrated_intro():
+    assert narrated_title_end_s(0.6) == pytest.approx(1.6)
+    assert narrated_title_end_s(None) == 3.0
+    assert narrated_title_end_s(5.0) == 3.0
+    assert narrated_title_end_s(-0.9) == 0.5
+
+
+def test_title_compiles_like_the_cloud_intro_above_the_captions():
+    recipe = _titled_recipe()
+
+    [title] = _title_layers(recipe)
+    assert recipe.text_layers[0] is title, "the title draws beneath the captions"
+    assert _layer_text(title) == _TITLE
+    assert (title.start, title.end) == (0.0, pytest.approx(1.6))
+    assert title.effect == "fade-in"
+    # Top band, like the cloud's `position="top"` generative intro.
+    assert title.anchor_y < recipe.canvas.height / 3
+    title_fonts = {run.font_asset_id for run in title.runs}
+    assert title_fonts <= _font_ids(recipe)
+    assert {"positionedText", "animatedText"} <= recipe.required_capabilities
+    assert [_layer_text(layer) for layer in recipe.text_layers[1:]] == [
+        "First we pack",
+        "then we drive",
+    ]
+
+
+def test_title_without_captions_still_renders():
+    recipe = _titled_recipe(cues=None)
+
+    assert [layer.id for layer in recipe.text_layers] == [f"{TITLE_LAYER_PREFIX}0"]
+    assert {"positionedText", "animatedText"} <= recipe.required_capabilities
+
+
+def test_no_title_is_byte_identical_to_before():
+    untitled = _titled_recipe(title=None)
+    blank = _titled_recipe(title="   ")
+    legacy = compile_phone_narrated_plan(
+        _three_steps(),
+        _three_bindings(),
+        _narration(duration_s=12.0),
+        voiceover_duration_s=12.0,
+        caption_cues=_WORD_CUES,
+    )
+
+    assert recipe_digest(untitled) == recipe_digest(legacy)
+    assert recipe_digest(blank) == recipe_digest(legacy)
+    assert not _title_layers(legacy)
+
+
+def test_title_is_clamped_to_a_short_voiceover():
+    recipe = compile_phone_narrated_plan(
+        [_step("s0", "c0", start_s=0.0, end_s=1.2)],
+        (_binding("c0"),),
+        _narration(duration_s=1.2),
+        voiceover_duration_s=1.2,
+        opening_title=_TITLE,
+        opening_title_end_s=3.0,
+    )
+
+    [title] = _title_layers(recipe)
+    assert title.end <= recipe.duration
+
+
+def test_titled_recipe_passes_phone_pilot_validation_in_production(prod_profile):
+    validate_phone_pilot_recipe(_titled_recipe())
+
+
+def test_swapping_captions_keeps_the_title_and_its_font():
+    pinned = _titled_recipe()
+    edited = [dict(_WORD_CUES[0], text="Packed and ready"), _WORD_CUES[1]]
+
+    swapped = replace_narrated_captions(
+        pinned, caption_cues=edited, look=PhoneCaptionLook(font_family="Montserrat Bold")
+    )
+
+    assert _title_layers(swapped) == _title_layers(pinned)
+    assert {run.font_asset_id for run in _title_layers(swapped)[0].runs} <= _font_ids(swapped)
+    assert "font-Montserrat-Bold.ttf" in _font_ids(swapped)
+    assert [_layer_text(layer) for layer in swapped.text_layers[1:]] == [
+        "Packed and ready",
+        "then we drive",
+    ]
+
+
+def test_swapping_in_the_same_captions_keeps_a_titled_recipe_equal():
+    pinned = _titled_recipe()
+
+    swapped = replace_narrated_captions(pinned, caption_cues=_WORD_CUES)
+
+    assert recipe_digest(swapped) == recipe_digest(pinned)
+
+
+@pytest.mark.parametrize(
+    "swap",
+    [
+        {"caption_cues": []},
+        {"caption_cues": _WORD_CUES, "look": PhoneCaptionLook(captions_enabled=False)},
+    ],
+)
+def test_turning_captions_off_keeps_the_title(swap):
+    pinned = _titled_recipe()
+
+    swapped = replace_narrated_captions(pinned, **swap)
+
+    assert swapped.text_layers == _title_layers(pinned)
+    assert {run.font_asset_id for run in swapped.text_layers[0].runs} == _font_ids(swapped)
+    assert {"positionedText", "animatedText"} <= swapped.required_capabilities

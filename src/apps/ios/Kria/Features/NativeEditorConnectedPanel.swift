@@ -278,6 +278,8 @@ struct NativeEditorPanelTabs<Tab: Hashable & RawRepresentable>: View where Tab.R
     let tabs: [Tab]
     @Binding var selection: Tab
     let accessibilityPrefix: String
+    /// Reuses the control where an existing screen already publishes its own tab identifiers.
+    var identifier: ((Tab) -> String)?
 
     var body: some View {
         HStack(spacing: 2) {
@@ -295,7 +297,7 @@ struct NativeEditorPanelTabs<Tab: Hashable & RawRepresentable>: View where Tab.R
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(value == selection ? .isSelected : [])
-                .accessibilityIdentifier(accessibilityPrefix + "-tab-" + value.rawValue)
+                .accessibilityIdentifier(identifier?(value) ?? accessibilityPrefix + "-tab-" + value.rawValue)
             }
         }
         .padding(3)

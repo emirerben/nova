@@ -64,6 +64,21 @@ from app.agents._schemas.edit_format import (
 from app.config import settings
 from app.database import sync_session as _sync_session
 from app.db_locks import CONTENT_PLAN_LOCK
+from app.kria.plan_blocks import (  # KRI-443 live plan feed; every call is best-effort
+    block as _plan_block,
+)
+from app.kria.plan_blocks import (
+    blocks_from_guided_plan as _blocks_from_guided_plan,
+)
+from app.kria.plan_blocks import (
+    emit_plan_blocks as _emit_plan_blocks,
+)
+from app.kria.plan_blocks import (
+    emit_skipped_remainder as _emit_plan_blocks_remainder,
+)
+from app.kria.plan_blocks import (
+    make_stage_reporter as _make_plan_stage_reporter,
+)
 from app.models import Job, MusicTrack
 from app.pipeline.canvas import PORTRAIT, Canvas, canvas_for_orientation
 from app.pipeline.generative_decision import (
@@ -2952,6 +2967,20 @@ def _run_generative_job_impl(
             job_id=job_id,
             strict=edit_format == "day_vlog",
         )
+        _emit_plan_blocks(
+            job_id,
+            [
+                _plan_block(
+                    "clips",
+                    "decided",
+                    f"{len(clip_metas)} clip{'s' if len(clip_metas) != 1 else ''}"
+                    + (f" · {round(available_footage_s)}s" if available_footage_s > 0 else ""),
+                ),
+                _plan_block("title", "deciding"),
+                _plan_block("look", "deciding"),
+                _plan_block("music", "deciding"),
+            ],
+        )
         if narrative_order:
             # Ground the hook text in the clip that actually OPENS the edit
             # (the guide's first shot), not the max-hook_score clip. Intro
@@ -3115,6 +3144,26 @@ def _run_generative_job_impl(
         else:
             pool.shutdown(wait=True)
 
+        _emit_plan_blocks(
+            job_id,
+            [
+                _plan_block("title", "decided", str(agent_text))
+                if agent_text
+                else _plan_block("title", "decided", "Not used", skipped=True),
+                _plan_block("look", "decided", str(style_set_id).replace("_", " ").capitalize())
+                if style_set_id
+                else _plan_block("look", "decided", "Not used", skipped=True),
+                _plan_block(
+                    "music",
+                    "decided",
+                    f"{best_track.title} · {best_track.artist}"
+                    if getattr(best_track, "artist", None)
+                    else str(best_track.title),
+                )
+                if best_track is not None and getattr(best_track, "title", None)
+                else _plan_block("music", "decided", "Not used", skipped=True),
+            ],
+        )
         record_pipeline_event("reframe", "hdr_pretonemap_done", {"clips_converted": n_tonemapped})
         record_pipeline_event("overlay", "agent_text_done", {"has_text": bool(agent_text)})
         record_pipeline_event("overlay", "style_set_selected", {"style_set_id": style_set_id})
@@ -3821,6 +3870,7 @@ def _run_generative_job_impl(
             isinstance(finalization, JobFinalizationResult) and not finalization.accepted
         ) or finalization is False:
             return
+        _emit_plan_blocks_remainder(job_id)
         if speech_cut_operation_id and speech_cut_attempt_id:
             _compose_speech_cut_rerender(
                 job_id,
@@ -4405,6 +4455,7 @@ def _run_phone_voiceover_montage_job(
     creator_request = str(all_candidates.get("creator_request") or "")[:1000]
     user_style = _effective_render_user_style(all_candidates)
     raw_creator_strategy = all_candidates.get("creator_strategy") or {}
+    creator_opening_title = raw_creator_strategy.get("opening_title")
     creator_font_family = raw_creator_strategy.get("font_family")
     creator_text_color = raw_creator_strategy.get("text_color")
     raw_pacing = raw_creator_strategy.get("pacing")
@@ -4436,16 +4487,26 @@ def _run_phone_voiceover_montage_job(
             if narrative_order:
                 hero = next((m for m in clip_metas if m.clip_id == narrative_order[0]), hero)
 
-            agent_text, agent_form = _run_text_agents(
-                clip_metas,
-                hero,
-                job_id=job_id,
-                language=language,
-                persona=persona,
-                filming_guide=filming_guide_candidates,
-                clip_notes=clip_notes_candidates,
-                creator_direction=creator_request,
-            )
+            if isinstance(creator_opening_title, str) and creator_opening_title:
+                # KRI-455: same as the cloud's `_text_then_style` -- confirmed
+                # copy is the intro, never rewritten by intro_writer.
+                import types as _types  # noqa: PLC0415
+
+                agent_text = _types.SimpleNamespace(
+                    text=creator_opening_title, highlight_word=None, word_roles=None
+                )
+                agent_form = {}
+            else:
+                agent_text, agent_form = _run_text_agents(
+                    clip_metas,
+                    hero,
+                    job_id=job_id,
+                    language=language,
+                    persona=persona,
+                    filming_guide=filming_guide_candidates,
+                    clip_notes=clip_notes_candidates,
+                    creator_direction=creator_request,
+                )
             pinned_set_id = str(user_style.get("style_set_id") or "").strip()
             if pinned_set_id and pinned_set_id != "default":
                 from app.pipeline.style_sets import style_set_ids  # noqa: PLC0415
@@ -6657,6 +6718,7 @@ def _run_phone_narrated_job(
     from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
         NarratedPhoneStep,
         compile_phone_narrated_plan,
+        narrated_title_end_s,
     )
     from app.pipeline.phrase_sequence import split_phrases  # noqa: PLC0415
     from app.pipeline.transcribe import Transcript, Word, transcribe_whisper  # noqa: PLC0415
@@ -6721,6 +6783,9 @@ def _run_phone_narrated_job(
         "word" if all_candidates.get("voiceover_caption_style") == "word" else "sentence"
     )
     language: str = all_candidates.get("language") or "en"
+    # KRI-455: the confirmed title burns like the cloud narrated intro.
+    raw_opening_title = (all_candidates.get("creator_strategy") or {}).get("opening_title")
+    opening_title = raw_opening_title if isinstance(raw_opening_title, str) else None
 
     # `required_v1`: the recorded voiceover is a normal, fully uploaded audio
     # file (never an analysis proxy -- see `content_plan_build.py`'s dispatch
@@ -6964,6 +7029,10 @@ def _run_phone_narrated_job(
                 caption_style=caption_style,
                 target_lufs=settings.output_target_lufs,
                 duck_footage_bed="audioDucking" in settings.phone_render_verified_features,
+                opening_title=opening_title,
+                opening_title_end_s=narrated_title_end_s(
+                    transcript.words[0].end_s if transcript.words else None
+                ),
             )
 
     validate_phone_pilot_recipe(recipe)
@@ -7063,8 +7132,15 @@ def _run_phone_narrated_job(
         db.commit()
 
 
-def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, MusicTrack | None]:
-    """Load or atomically pin the deterministic strict-story execution plan."""
+def _guided_execution_plan(
+    job_id: str, guided_snapshot: dict, *, emit_decided: bool = True
+) -> tuple[dict, MusicTrack | None]:
+    """Load or atomically pin the deterministic strict-story execution plan.
+
+    ``emit_decided=False`` (the cloud render path) leaves the KRI-443 feed to the real
+    render stages in `render_execution_plan`; the phone path keeps the all-at-once
+    report because its render happens on the device.
+    """
 
     from app.pipeline.guided_story import (  # noqa: PLC0415
         compile_execution_plan,
@@ -7384,6 +7460,11 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
         # A pinned narration, or the creator's own uploaded song (KRI-374), is the chosen
         # audio; never silently add auto-matched music (the compiler would turn it into a
         # catalog song_reference, which a creator-song plan refuses).
+        if not (
+            getattr(snapshot, "narration", None) is not None
+            or getattr(snapshot, "user_song", None) is not None
+        ):
+            _emit_plan_blocks(job_id, [_plan_block("music", "deciding")])
         matched = (
             None
             if (
@@ -7478,6 +7559,11 @@ def _guided_execution_plan(job_id: str, guided_snapshot: dict) -> tuple[dict, Mu
                     "guided_story_execution_plan": plan,
                 }
                 db.commit()
+
+    # KRI-443: the plan is pinned and every lock above is released (each `with` block
+    # committed), so the live feed may report all seven sections now. Best-effort.
+    if emit_decided:
+        _emit_plan_blocks(job_id, _blocks_from_guided_plan(plan))
 
     music = plan.get("music")
     if music is None:
@@ -7691,7 +7777,7 @@ def _run_guided_story_job(
     )
 
     compile_t0 = time.monotonic()
-    plan, track = _guided_execution_plan(job_id, guided_snapshot)
+    plan, track = _guided_execution_plan(job_id, guided_snapshot, emit_decided=False)
     record_phase(
         job_id,
         "analyze_clips",
@@ -7750,6 +7836,8 @@ def _run_guided_story_job(
                     tmpdir=tmpdir,
                     track=track,
                     attempt_id=attempt_id,
+                    # KRI-443: the feed follows the real render stages (no lock held here).
+                    on_stage=_make_plan_stage_reporter(job_id, plan),
                 )
     result["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
     result["render_generation_id"] = attempt_id
@@ -29370,6 +29458,8 @@ def _finalize_job(
     )
     if decision.error is not None:
         raise decision.error
+    if decision.accepted:
+        _emit_plan_blocks_remainder(job_id)
     return decision.accepted
 
 

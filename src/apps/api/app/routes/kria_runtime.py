@@ -32,6 +32,7 @@ from app.kria.drafts import read_or_bootstrap_draft, undo_draft, write_draft
 from app.kria.http import KriaRuntimeRoute, problem_response
 from app.kria.runtime import (
     RuntimeFailure,
+    cancel_render,
     cancel_turn,
     decide_approval,
     read_approval,
@@ -228,6 +229,42 @@ async def cancel_runtime_turn(
                     error_class=type(exc).__name__,
                 )
         return response
+    except RuntimeFailure as failure:
+        await db.rollback()
+        return _problem(request, failure)
+
+
+@router.post(
+    "/{thread_id}/turns/{turn_id}/cancel-render",
+    response_model=TurnCancelled,
+    responses={404: {"model": KriaProblemOut}, 409: {"model": KriaProblemOut}},
+)
+@limiter.limit("30/minute")
+async def cancel_runtime_render(
+    request: Request,
+    thread_id: str,
+    turn_id: str,
+    body: TurnCancelBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
+) -> TurnCancelled | JSONResponse:
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
+    try:
+        _runtime_enabled(user)
+        return await cancel_render(
+            db,
+            thread_id=_uuid(
+                thread_id, code="thread_not_found", message="Creation thread not found"
+            ),
+            turn_id=_uuid(turn_id, code="turn_not_found", message="Kria turn not found"),
+            creator_id=user.id,
+            expected_thread_revision=body.expected_thread_revision,
+        )
     except RuntimeFailure as failure:
         await db.rollback()
         return _problem(request, failure)

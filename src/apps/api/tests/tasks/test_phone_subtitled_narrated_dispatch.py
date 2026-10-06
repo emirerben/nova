@@ -2162,6 +2162,37 @@ def test_narrated_bed_level_mix_math_matches_montage_convention(monkeypatch):
     assert status.request.recipe.audio.original_volume == pytest.approx(0.4)
 
 
+def test_narrated_burns_the_confirmed_title_like_the_cloud_intro(monkeypatch):
+    """KRI-455: the creator's confirmed title rides the pinned device recipe."""
+    job, snapshot, _session, _bindings = _setup_narrated(monkeypatch)
+    candidates = {
+        **job.all_candidates,
+        "creator_strategy": {"opening_title": "Cacio e pepe in 10 minutes"},
+    }
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+
+    recipe = device_status(job, "narrated").request.recipe
+    title = recipe.text_layers[0]
+    assert title.id == "title-0"
+    assert " ".join(run.text for run in title.runs) == "Cacio e pepe in 10 minutes"
+    # The first word ends at 0.5 s, so the title fades out a second later.
+    assert (title.start, title.end) == (0.0, pytest.approx(1.5))
+    assert [layer.id for layer in recipe.text_layers[1:]] and all(
+        layer.id.startswith("caption") for layer in recipe.text_layers[1:]
+    )
+
+
+def test_narrated_without_a_title_has_only_captions(monkeypatch):
+    job, snapshot, _session, _bindings = _setup_narrated(monkeypatch)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    recipe = device_status(job, "narrated").request.recipe
+    assert recipe.text_layers
+    assert all(layer.id.startswith("caption") for layer in recipe.text_layers)
+
+
 def test_narrated_worker_rejects_format_it_does_not_own(monkeypatch):
     job, snapshot, _session, _bindings = _setup_narrated(monkeypatch, edit_format="montage")
     with pytest.raises(ValueError, match="No phone renderer is registered"):

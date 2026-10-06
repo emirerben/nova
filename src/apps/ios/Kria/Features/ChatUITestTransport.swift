@@ -29,11 +29,14 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     private var delayedResponse: DispatchWorkItem?
     override func startLoading() {
-        if request.url?.path.hasSuffix("/messages") == true,
-           ProcessInfo.processInfo.environment["KRIA_CHAT_SLOW_CREATION"] == "1" {
+        // `KRIA_SLIDE_POST_CAPS=slow`: capabilities answer after 6s (the slide editor must not wait for them).
+        let slowCapabilities = request.url?.path.hasSuffix("/capabilities") == true
+            && ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CAPS"] == "slow"
+        if slowCapabilities || (request.url?.path.hasSuffix("/messages") == true
+            && ProcessInfo.processInfo.environment["KRIA_CHAT_SLOW_CREATION"] == "1") {
             let work = DispatchWorkItem { [weak self] in self?.finishLoading() }
             delayedResponse = work
-            DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: work)
+            DispatchQueue.global().asyncAfter(deadline: .now() + (slowCapabilities ? 6 : 5), execute: work)
         } else { finishLoading() }
     }
     private func finishLoading() {
@@ -69,6 +72,10 @@ final class CreationChatFixture: @unchecked Sendable {
     private var failedGenerates: Set<String> = []
     private var slideDrafts: [String: [String: Any]] = [:]
     private var slideRendered: Set<String> = []
+    private var chatEditFailed = false
+    /// `KRIA_SLIDE_POST_LATE_ASSET=1`: a fourth photo that is still processing for the first two reads
+    /// after a draft exists and then turns ready, like an upload that finishes while the editor is open.
+    private var lateAssetPolls: [String: Int] = [:]
     private var deviceRevisions: [String: Int] = [:]
     /// KRI-443 (`KRIA_CHAT_PLAN_BLOCKS=1`): how far the staged `plan_block` script has advanced, per thread.
     private var planStages: [String: Int] = [:]
@@ -83,6 +90,8 @@ final class CreationChatFixture: @unchecked Sendable {
         let body = (try? JSONSerialization.jsonObject(with: bodyData(request))) as? [String: Any] ?? [:]
         func response(_ object: Any, status: Int = 200) -> (Int, Data) { (status, (try? JSONSerialization.data(withJSONObject: object)) ?? Data()) }
         if path == "/creation-threads/capabilities" {
+            // `KRIA_SLIDE_POST_CAPS=fail`: the capabilities request never gets an answer.
+            if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CAPS"] == "fail" { return nil }
             var capabilities: [String: Any] = ["formats": [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", 1), ("slides", "slides", 20)].map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
             if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1" { capabilities["live_plan_review_enabled"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_RICH_TEXT"] == "1" { capabilities["slide_post_rich_text"] = true }
@@ -104,7 +113,31 @@ final class CreationChatFixture: @unchecked Sendable {
             }
             return response(capabilities)
         }
+        // `KRIA_SLIDE_POST_READY_THREAD=1`: a READY slide post already exists. The LIST (drawer) payload is the
+        // worst case (no `state.format`, no variants), while the FULL projection carries the format, which is
+        // what the app only learns after the thread loads.
+        let readySlideID = "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"
+        if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_READY_THREAD"] == "1", threads[readySlideID] == nil {
+            func event(_ seq: Int, _ type: String, _ payload: [String: Any] = [:]) -> [String: Any] {
+                ["id": UUID().uuidString, "sequence": seq, "revision": seq + 1, "role": "assistant", "event_type": type, "content": "", "payload": payload, "created_at": "2026-09-10T10:00:00Z"]
+            }
+            threads[readySlideID] = ["id": readySlideID, "title": "Weekend trip", "status": "active", "revision": 3, "runtime_version": 2,
+                "state": ["format": "slides", "edit_format": "slides"],
+                "events": [event(0, "thread_created"), event(1, "format_prompt"), event(2, "action_select_format", ["format": "slides"])],
+                "active_plan_item_id": readySlideID, "active_job_id": readySlideID,
+                "job": ["id": readySlideID, "status": "ready", "variants": [["variant_id": "slides", "render_status": "ready"]]],
+                "updated_at": "2026-09-10T10:00:00Z"]
+        }
         if path == "/creation-threads" {
+            if request.httpMethod != "POST", ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_READY_THREAD"] == "1" {
+                let listed: [[String: Any]] = threads.values.map { thread in
+                    guard thread["id"] as? String == readySlideID else { return thread }
+                    var stripped = thread; stripped["state"] = [:]; stripped["events"] = []
+                    stripped["job"] = ["id": readySlideID, "status": "ready", "variants": []]
+                    return stripped
+                }
+                return response(listed)
+            }
             if request.httpMethod == "POST" {
                 let id = UUID().uuidString
                 let fixtureEvents: [[String: Any]] = ProcessInfo.processInfo.environment["KRIA_CHAT_LONG_HISTORY"] == "1"
@@ -128,6 +161,11 @@ final class CreationChatFixture: @unchecked Sendable {
             return response(Array(threads.values))
         }
         let parts = path.split(separator: "/").map(String.init)
+        // Gallery row for the READY slide post (`KRIA_SLIDE_POST_READY_THREAD=1`).
+        if path == "/me/jobs", ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_READY_THREAD"] == "1" {
+            let id = "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"
+            return response(["jobs": [["id": id, "title": "Weekend trip", "status": "ready", "output_variant_id": "slides", "content_plan_item_id": id, "created_at": "2026-09-10T10:00:00Z"]], "next_cursor": NSNull()])
+        }
         if parts.count >= 4, parts[0] == "me", parts[1] == "jobs", parts[3] == "device-render",
            let scenario = DeviceRenderUITestFixture.scenario, let jobID = UUID(uuidString: parts[2]) {
             return deviceRenderResponse(scenario: scenario, jobID: jobID, route: parts.count > 4 ? parts[4] : nil, body: body)
@@ -490,12 +528,25 @@ final class CreationChatFixture: @unchecked Sendable {
     /// proposal, versioned save, and version-approved dispatch endpoints.
     private func slideResponse(_ request: URLRequest, itemID: String, parts: [String], body: [String: Any]) -> (Int, Data) {
         func response(_ object: Any, status: Int = 200) -> (Int, Data) { (status, (try? JSONSerialization.data(withJSONObject: object)) ?? Data()) }
-        let media = [("trulli-street", "jpg", "image"), ("istanbul", "mp4", "video"), ("lisbon", "jpg", "image")]
-        let assets: [[String: Any]] = media.enumerated().map { index, media in
-            let url = Bundle.main.url(forResource: media.0, withExtension: media.1)?.absoluteString ?? ""
-            return ["id": "asset-\(index)", "kind": media.2, "status": "ready", "media_status": "available", "source_filename": "\(media.0).\(media.1)", "source_url": url, "display_url": url, "preview_url": media.2 == "video" ? Bundle.main.url(forResource: "trulli-street", withExtension: "jpg")!.absoluteString : url, "duration_s": 8]
+        // `KRIA_SLIDE_POST_MANY=1`: twelve slides, so the strip overflows and auto-scroll can be exercised.
+        let base = [("trulli-street", "jpg", "image"), ("istanbul", "mp4", "video"), ("lisbon", "jpg", "image")]
+        let media = ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_MANY"] == "1" ? Array(repeating: base, count: 4).flatMap { $0 } : base
+        var assets: [[String: Any]] = media.enumerated().map { index, media in
+            var url = Bundle.main.url(forResource: media.0, withExtension: media.1)?.absoluteString ?? ""
+            var poster = media.2 == "video" ? Bundle.main.url(forResource: "trulli-street", withExtension: "jpg")!.absoluteString : url
+            // `KRIA_SLIDE_POST_REMOTE_MEDIA=1`: photos look remote (slow, re-signed on every response) so the image
+            // cache is exercised: same asset, new `sig` each time. Videos keep their local source for AVPlayer.
+            if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_REMOTE_MEDIA"] == "1" {
+                let signed = { (name: String, ext: String) in "https://fixture.invalid/\(name).\(ext)?sig=\(UUID().uuidString)" }
+                if media.2 == "image" { url = signed(media.0, media.1); poster = url } else { poster = signed("trulli-street", "jpg") }
+            }
+            return ["id": "asset-\(index)", "kind": media.2, "status": "ready", "media_status": "available", "source_filename": "\(media.0).\(media.1)", "source_url": url, "display_url": url, "preview_url": poster, "duration_s": 8]
         }
         let slides: [[String: Any]] = assets.enumerated().map { index, asset in ["id": "slide-\(index)", "asset_id": asset["id"]!, "kind": asset["kind"]!] }
+        func lateAsset(status: String) -> [String: Any] {
+            let url = Bundle.main.url(forResource: "trulli-street", withExtension: "jpg")?.absoluteString ?? ""
+            return ["id": "asset-3", "kind": "image", "status": status, "media_status": "available", "source_filename": "late.jpg", "source_url": url, "display_url": url, "preview_url": url, "duration_s": 0]
+        }
         if parts.last == "assets" { return response(["assets": assets, "max_assets": 20]) }
         if parts.last == "propose" {
             var draft = slideDrafts[itemID] ?? ["schema_version": 1, "version": 1, "platform_profile": "instagram_carousel", "slides": slides, "cover_index": 0, "caption": "Three moments, one story.", "user_edited": false]
@@ -508,6 +559,16 @@ final class CreationChatFixture: @unchecked Sendable {
             // KRI-298 Lane E stub: reverse the slides and label the first two with a place. The editor's
             // own draft wins when sent; `base_version` is the stored version the next PUT must quote.
             let stored = slideDrafts[itemID]
+            // Mirrors the server's `SlidePostDraft.version: ge=1`: the first AI message on a brand-new post carries
+            // a never-saved draft, and an invalid one is a 422 (prod 2026-10-05).
+            if let sent = body["draft"] as? [String: Any], (sent["version"] as? Int ?? 0) < 1 {
+                return response(["detail": [["type": "greater_than_equal", "loc": ["body", "draft", "version"], "msg": "Input should be greater than or equal to 1"]]], status: 422)
+            }
+            // `KRIA_SLIDE_POST_CHAT_EDIT_FAIL_ONCE=1`: the first request fails with a server error, a retry works.
+            if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CHAT_EDIT_FAIL_ONCE"] == "1", !chatEditFailed {
+                chatEditFailed = true
+                return response(["detail": "boom"], status: 500)
+            }
             var draft = (body["draft"] as? [String: Any]) ?? stored ?? ["schema_version": 1, "platform_profile": "instagram_carousel", "slides": slides, "cover_index": 0, "caption": "", "user_edited": false]
             let base = stored?["version"] as? Int ?? 0
             guard var edited = (draft["slides"] as? [[String: Any]])?.reversed().map({ $0 }) else { return response(["detail": "no draft"], status: 409) }
@@ -533,6 +594,11 @@ final class CreationChatFixture: @unchecked Sendable {
             let version = slideDrafts[itemID]?["version"]
             slideDrafts[itemID]?["rendered_version"] = version
             return response(["slide_post": slideDrafts[itemID] ?? [:]])
+        }
+        if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_LATE_ASSET"] == "1", slideDrafts[itemID] != nil {
+            let polls = lateAssetPolls[itemID, default: 0] + 1
+            lateAssetPolls[itemID] = polls
+            assets.append(lateAsset(status: polls <= 2 ? "processing" : "ready"))
         }
         var state: [String: Any] = ["schema_version": 1, "item_id": itemID, "title": "Three connected moments", "assets": assets, "render_status": "not_rendered", "slides": [], "validation_errors": []]
         if let draft = slideDrafts[itemID] { state["draft"] = draft }

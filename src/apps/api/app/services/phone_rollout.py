@@ -691,6 +691,19 @@ def phone_narrated_caption_edits_supported() -> bool:
     )
 
 
+def phone_narrated_title_supported() -> bool:
+    """Can a phone-rendered `narrated` edit carry a confirmed opening title
+    (KRI-455)? The title is one fade-in positioned text layer, so it needs the
+    same device features as the captions beside it.
+    """
+
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        settings.phone_narrated_title_enabled
+        and all(feature in verified for feature in PHONE_NARRATED_CAPTION_FEATURES)
+    )
+
+
 # Device feature the video-PiP lane needs on top of the overlay lane: the
 # compiler emits a video overlay card as a muted, trimmed `TimelineClip` on
 # the `subtitled-overlays` track, which the device composites through the
