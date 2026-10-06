@@ -1,0 +1,70 @@
+{
+  "id": "kri185-east-run-route-order",
+  "incident": {
+    "ticket": "KRI-185",
+    "summary": "A 20k run edit: keep 15s, include everything, follow the running route. A re-plan dropped the brief and the route order was never honoured."
+  },
+  "kind": "output",
+  "approved": {
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "order",
+          "scope": "global",
+          "description": "clips follow the route, Arnavutkoy to Eminonu",
+          "facts": {
+            "key": "route_rank"
+          },
+          "source_turn_id": "turn-1"
+        },
+        {
+          "id": "r2",
+          "kind": "timing",
+          "scope": "global",
+          "description": "Keep 15 seconds",
+          "facts": {
+            "duration_s": 15
+          },
+          "source_turn_id": "turn-3"
+        },
+        {
+          "id": "r3",
+          "kind": "select",
+          "scope": "global",
+          "description": "include everything",
+          "facts": {
+            "all": true
+          },
+          "source_turn_id": "turn-3"
+        }
+      ]
+    },
+    "creator_request": "Do an edit highlighting the landmarks and locations of each spot ... I ran from Arnavutkoy to Eminonu. Keep 15 seconds and include everything with faster pacing.",
+    "provenance": "Requirements transcribed from the east_run thread's own `requirements` list (prod thread bf8459ae, captured by tests/evals/request_following/capture_east_run.py); kinds/facts follow the brief schema."
+  },
+  "inputs": {
+    "notes": [
+      "No media snapshot: the thread fixture carries plan states, not capture facts.",
+      "Route order is not a capture-time rule, so today the contract carries it as UNRESOLVED and phone/cloud verification declines: a dead end the clarification gate (KRI-476) and route resolver (KRI-477) must turn into an answer.",
+      "Recorded baseline verdicts (thread fixture): keep-15s partial, route-order unmet, per-clip labels unmet, readability unmet."
+    ]
+  },
+  "expect": {
+    "contract": {
+      "duration_s": 15,
+      "order_required": true,
+      "unresolved_contains": [
+        "ordering rule"
+      ]
+    }
+  },
+  "repro": {
+    "command": "pytest tests/evals/request_following/test_runner.py",
+    "status": "available"
+  },
+  "sources": [
+    "tests/fixtures/request_following/threads/east_run.json"
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "kri118-phone-plan-unsupported-1",
+  "incident": {
+    "ticket": "KRI-118",
+    "summary": "Phone dispatch declined an approved montage: 'phone transition needs the full source window'."
+  },
+  "kind": "output",
+  "inputs": {
+    "media": [],
+    "notes": [
+      "Structural shape of a real prod failure (admin debug, 2026-09-23); ids/paths/text were anonymized when the fixture was made. The replay depth is stated in tests/replay/README.md."
+    ]
+  },
+  "expect": {
+    "failure_reason": "phone_plan_unsupported"
+  },
+  "repro": {
+    "command": "pytest tests/replay/test_prod_failure_replay.py::test_phone_plan_unsupported_replays_real_message_through_worker_mapping",
+    "status": "available"
+  },
+  "sources": [
+    "tests/fixtures/kri118/phone_plan_unsupported_1.json"
+  ]
+}

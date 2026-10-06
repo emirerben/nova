@@ -1,0 +1,120 @@
+{
+  "id": "clarify-missing-capture-dates",
+  "incident": {
+    "ticket": "KRI-476",
+    "summary": "Must ask: 'in the order I filmed them' was approved but no clip carries a capture time; the contract is unresolved and nothing asks the creator what order to use."
+  },
+  "kind": "clarification",
+  "approved": {
+    "strategy": {
+      "direction": "guided_story",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "pacing": "fast"
+    },
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "order",
+          "scope": "global",
+          "description": "in the order I filmed them",
+          "facts": {
+            "key": "capture_time"
+          },
+          "source_turn_id": "turn-1"
+        }
+      ]
+    },
+    "creator_request": "Put them in the order I filmed them.",
+    "provenance": "Synthetic: the KRI-469/KRI-481 chronological ask over clips whose Photos metadata has no capture time (contract message is the real one)."
+  },
+  "inputs": {
+    "media": [
+      {
+        "id": "n0",
+        "kind": "video",
+        "duration_s": 3.0,
+        "has_audio": true
+      },
+      {
+        "id": "n1",
+        "kind": "video",
+        "duration_s": 3.4,
+        "has_audio": true
+      },
+      {
+        "id": "n2",
+        "kind": "video",
+        "duration_s": 3.8,
+        "has_audio": true
+      },
+      {
+        "id": "n3",
+        "kind": "video",
+        "duration_s": 4.2,
+        "has_audio": true
+      },
+      {
+        "id": "n4",
+        "kind": "video",
+        "duration_s": 4.6,
+        "has_audio": true
+      },
+      {
+        "id": "n5",
+        "kind": "video",
+        "duration_s": 5.0,
+        "has_audio": true
+      },
+      {
+        "id": "n6",
+        "kind": "video",
+        "duration_s": 5.4,
+        "has_audio": true
+      },
+      {
+        "id": "n7",
+        "kind": "video",
+        "duration_s": 5.800000000000001,
+        "has_audio": true
+      }
+    ],
+    "turns": [
+      {
+        "role": "user",
+        "text": "Put them in the order I filmed them."
+      }
+    ],
+    "planner_flags": {
+      "wants_capture_order": true
+    },
+    "notes": [
+      "Gate lands in PR-C (KRI-476): order_basis -> use upload order, or the creator's own sequence."
+    ]
+  },
+  "expect": {
+    "contract": {
+      "order_required": true,
+      "unresolved_contains": [
+        "capture times for every selected clip"
+      ]
+    },
+    "question": {
+      "kind": "order_basis",
+      "min_options": 2
+    }
+  },
+  "xfail": [
+    {
+      "reason": "KRI-476",
+      "scope": "question"
+    }
+  ],
+  "repro": {
+    "command": "pytest tests/kria/test_planner_choice_question.py",
+    "status": "available"
+  },
+  "sources": []
+}

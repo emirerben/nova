@@ -1,0 +1,158 @@
+{
+  "id": "kri129-sixteen-clip-pub-group",
+  "incident": {
+    "ticket": "KRI-129",
+    "summary": "The creator's prompt lost to the planner: a 60s, use-every-clip redo of a 16-clip pub-group story left clips out and repaired the plan away from what was asked."
+  },
+  "kind": "routing",
+  "approved": {
+    "strategy": {
+      "direction": "guided_story",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "pacing": "fast",
+      "opening_title": "Emir Olympics London Edition",
+      "montage_audio": {
+        "source_media_ids": [],
+        "preview_source_beds": false,
+        "preserve_source_audio": true
+      },
+      "video_reuse_policy": "once"
+    },
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "timing",
+          "scope": "global",
+          "description": "Keep 60 seconds",
+          "facts": {
+            "duration_s": 60
+          },
+          "source_turn_id": "turn-1"
+        },
+        {
+          "id": "r2",
+          "kind": "select",
+          "scope": "global",
+          "description": "include everything / use all the videos",
+          "facts": {
+            "all": true
+          },
+          "source_turn_id": "turn-1"
+        }
+      ]
+    },
+    "creator_request": "Keep 60 seconds and include everything with faster pacing. Do it again using all the videos.",
+    "provenance": "Projected from tests/fixtures/kri129_sixteen_clip_pub_group.json: its request text and strategy fields; the timing/select requirements are read off the request's own words."
+  },
+  "inputs": {
+    "media": [
+      {
+        "id": "clip-01.mp4",
+        "kind": "video",
+        "duration_s": 8.933
+      },
+      {
+        "id": "clip-02.mp4",
+        "kind": "video",
+        "duration_s": 8.0
+      },
+      {
+        "id": "clip-03.mp4",
+        "kind": "video",
+        "duration_s": 4.533
+      },
+      {
+        "id": "clip-04.mp4",
+        "kind": "video",
+        "duration_s": 1.267
+      },
+      {
+        "id": "clip-05.mp4",
+        "kind": "video",
+        "duration_s": 10.3
+      },
+      {
+        "id": "clip-06.mp4",
+        "kind": "video",
+        "duration_s": 3.767
+      },
+      {
+        "id": "clip-07.mp4",
+        "kind": "video",
+        "duration_s": 2.567
+      },
+      {
+        "id": "clip-08.mp4",
+        "kind": "video",
+        "duration_s": 1.667
+      },
+      {
+        "id": "clip-09.mp4",
+        "kind": "video",
+        "duration_s": 1.433
+      },
+      {
+        "id": "clip-10.mp4",
+        "kind": "video",
+        "duration_s": 2.167
+      },
+      {
+        "id": "clip-11.mp4",
+        "kind": "video",
+        "duration_s": 1.867
+      },
+      {
+        "id": "clip-12.mp4",
+        "kind": "video",
+        "duration_s": 2.0
+      },
+      {
+        "id": "clip-13.mp4",
+        "kind": "video",
+        "duration_s": 7.867
+      },
+      {
+        "id": "clip-14.mp4",
+        "kind": "video",
+        "duration_s": 6.3
+      },
+      {
+        "id": "clip-15.mp4",
+        "kind": "video",
+        "duration_s": 5.0
+      },
+      {
+        "id": "clip-16.mp4",
+        "kind": "video",
+        "duration_s": 9.033
+      }
+    ],
+    "notes": [
+      "Existing redacted fixture."
+    ]
+  },
+  "expect": {
+    "contract": {
+      "duration_s": 60,
+      "audio_source_ids": [],
+      "original_audio": "require",
+      "exact_texts": [
+        {
+          "role": "opening",
+          "text": "Emir Olympics London Edition"
+        }
+      ],
+      "resolved": true
+    }
+  },
+  "repro": {
+    "command": "pytest tests/agents/test_kri129_prompt_wins.py",
+    "status": "available"
+  },
+  "sources": [
+    "tests/fixtures/kri129_sixteen_clip_pub_group.json"
+  ]
+}

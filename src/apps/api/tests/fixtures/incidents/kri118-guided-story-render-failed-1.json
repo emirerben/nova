@@ -1,0 +1,30 @@
+{
+  "id": "kri118-guided-story-render-failed-1",
+  "incident": {
+    "ticket": "KRI-118",
+    "summary": "Approved guided story failed at render."
+  },
+  "kind": "output",
+  "inputs": {
+    "media": [
+      {
+        "id": "clip-a",
+        "kind": "video",
+        "duration_s": 11.2
+      }
+    ],
+    "notes": [
+      "Structural shape of a real prod failure (admin debug, 2026-09-23); ids/paths/text were anonymized when the fixture was made. The replay depth is stated in tests/replay/README.md."
+    ]
+  },
+  "expect": {
+    "failure_reason": "guided_story_render_failed"
+  },
+  "repro": {
+    "command": "pytest tests/replay/test_prod_failure_replay.py::test_render_and_receipt_shapes_are_plannable_and_typed_when_they_fail",
+    "status": "available"
+  },
+  "sources": [
+    "tests/fixtures/kri118/guided_story_render_failed_1.json"
+  ]
+}

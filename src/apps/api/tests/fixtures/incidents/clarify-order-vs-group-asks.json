@@ -1,0 +1,110 @@
+{
+  "id": "clarify-order-vs-group-asks",
+  "incident": {
+    "ticket": "KRI-282",
+    "summary": "Control: a real chronological-vs-grouped conflict is asked once, with options (the only question the planner asks today)."
+  },
+  "kind": "clarification",
+  "approved": {
+    "strategy": {
+      "direction": "guided_story",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "pacing": "fast",
+      "audio_strategy": "licensed_music"
+    },
+    "provenance": "Scenario of tests/kria/test_planner_choice_question.py (KRI-282): six clips, football/dodgeball clips interleaved in time."
+  },
+  "inputs": {
+    "media": [
+      {
+        "id": "c0",
+        "kind": "video",
+        "duration_s": 4.0,
+        "capture_time": "2026-01-01T09:00:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "c1",
+        "kind": "video",
+        "duration_s": 4.5,
+        "capture_time": "2026-01-01T09:01:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "c2",
+        "kind": "video",
+        "duration_s": 5.0,
+        "capture_time": "2026-01-01T09:02:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "c3",
+        "kind": "video",
+        "duration_s": 5.5,
+        "capture_time": "2026-01-01T09:03:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "c4",
+        "kind": "video",
+        "duration_s": 6.0,
+        "capture_time": "2026-01-01T09:04:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "c5",
+        "kind": "video",
+        "duration_s": 6.5,
+        "capture_time": "2026-01-01T09:05:00Z",
+        "has_audio": true
+      }
+    ],
+    "turns": [
+      {
+        "role": "user",
+        "text": "Make it chronological and group the clips by sport."
+      }
+    ],
+    "clip_groups": [
+      {
+        "name": "football",
+        "media_ids": [
+          "c0",
+          "c2",
+          "c4"
+        ]
+      },
+      {
+        "name": "dodgeball",
+        "media_ids": [
+          "c1",
+          "c3",
+          "c5"
+        ]
+      }
+    ],
+    "planner_flags": {
+      "wants_capture_order": true
+    },
+    "notes": [
+      "Passing control: proves the harness can observe a question, so the xfail records below fail for the intended reason."
+    ]
+  },
+  "expect": {
+    "question": {
+      "kind": "order_vs_group",
+      "option_keys": [
+        "group_first",
+        "chronological"
+      ]
+    }
+  },
+  "repro": {
+    "command": "pytest tests/kria/test_planner_choice_question.py",
+    "status": "available"
+  },
+  "sources": [
+    "tests/kria/test_planner_choice_question.py"
+  ]
+}

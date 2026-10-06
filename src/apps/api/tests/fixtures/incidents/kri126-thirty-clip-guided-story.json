@@ -1,0 +1,206 @@
+{
+  "id": "kri126-thirty-clip-guided-story",
+  "incident": {
+    "ticket": "KRI-126",
+    "summary": "A 30-clip guided story ignored the creator's prompt: the planner silently fell back to deterministic beats and random captions."
+  },
+  "kind": "routing",
+  "approved": {
+    "strategy": {
+      "direction": "guided_story",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "pacing": "balanced",
+      "opening_title": "Emir Olympics London Edition",
+      "closing_title": "post match pub",
+      "montage_audio": {
+        "source_media_ids": [],
+        "preview_source_beds": false,
+        "preserve_source_audio": true
+      }
+    },
+    "creator_request": "Continue with 30 clips Group content by sports. Add the name of each sport to the screen. Group the pub videos together in the add and say “post match pub”. Add an intro title saying “Emir Olympics London Edition”. Group the videos from the park with individuals not playing sports the first, that is from everyone playing. Include some parts from the video where I talk to the camera and give a speech",
+    "provenance": "Projected from tests/fixtures/kri126_thirty_clip_guided_story.json (redacted prod input: title, closing title, source-audio plan). The fixture holds planner input, not the persisted strategy, so no duration is asserted."
+  },
+  "inputs": {
+    "media": [
+      {
+        "id": "clip-01.mp4",
+        "kind": "video",
+        "duration_s": 6.7
+      },
+      {
+        "id": "clip-02.mp4",
+        "kind": "video",
+        "duration_s": 0.867
+      },
+      {
+        "id": "clip-03.mp4",
+        "kind": "video",
+        "duration_s": 2.833
+      },
+      {
+        "id": "clip-04.mp4",
+        "kind": "video",
+        "duration_s": 11.2
+      },
+      {
+        "id": "clip-05.mp4",
+        "kind": "video",
+        "duration_s": 6.467
+      },
+      {
+        "id": "clip-06.mp4",
+        "kind": "video",
+        "duration_s": 5.067
+      },
+      {
+        "id": "clip-07.mp4",
+        "kind": "video",
+        "duration_s": 2.533
+      },
+      {
+        "id": "clip-08.mp4",
+        "kind": "video",
+        "duration_s": 4.667
+      },
+      {
+        "id": "clip-09.mp4",
+        "kind": "video",
+        "duration_s": 4.667
+      },
+      {
+        "id": "clip-10.mp4",
+        "kind": "video",
+        "duration_s": 1.3
+      },
+      {
+        "id": "clip-11.mp4",
+        "kind": "video",
+        "duration_s": 6.7
+      },
+      {
+        "id": "clip-12.mp4",
+        "kind": "video",
+        "duration_s": 7.333
+      },
+      {
+        "id": "clip-13.mp4",
+        "kind": "video",
+        "duration_s": 1.833
+      },
+      {
+        "id": "clip-14.mp4",
+        "kind": "video",
+        "duration_s": 2.5
+      },
+      {
+        "id": "clip-15.mp4",
+        "kind": "video",
+        "duration_s": 4.6
+      },
+      {
+        "id": "clip-16.mp4",
+        "kind": "video",
+        "duration_s": 1.567
+      },
+      {
+        "id": "clip-17.mp4",
+        "kind": "video",
+        "duration_s": 1.933
+      },
+      {
+        "id": "clip-18.mp4",
+        "kind": "video",
+        "duration_s": 2.833
+      },
+      {
+        "id": "clip-19.mp4",
+        "kind": "video",
+        "duration_s": 1.2
+      },
+      {
+        "id": "clip-20.mp4",
+        "kind": "video",
+        "duration_s": 13.167
+      },
+      {
+        "id": "clip-21.mp4",
+        "kind": "video",
+        "duration_s": 3.733
+      },
+      {
+        "id": "clip-22.mp4",
+        "kind": "video",
+        "duration_s": 2.933
+      },
+      {
+        "id": "clip-23.mp4",
+        "kind": "video",
+        "duration_s": 11.3
+      },
+      {
+        "id": "clip-24.mp4",
+        "kind": "video",
+        "duration_s": 8.733
+      },
+      {
+        "id": "clip-25.mp4",
+        "kind": "video",
+        "duration_s": 2.533
+      },
+      {
+        "id": "clip-26.mp4",
+        "kind": "video",
+        "duration_s": 6.467
+      },
+      {
+        "id": "clip-27.mp4",
+        "kind": "video",
+        "duration_s": 7.6
+      },
+      {
+        "id": "clip-28.mp4",
+        "kind": "video",
+        "duration_s": 3.4
+      },
+      {
+        "id": "clip-29.mp4",
+        "kind": "video",
+        "duration_s": 1.2
+      },
+      {
+        "id": "clip-30.mp4",
+        "kind": "video",
+        "duration_s": 2.167
+      }
+    ],
+    "notes": [
+      "Existing redacted fixture; transcripts and brand strings were already removed upstream."
+    ]
+  },
+  "expect": {
+    "contract": {
+      "audio_source_ids": [],
+      "original_audio": "require",
+      "exact_texts": [
+        {
+          "role": "opening",
+          "text": "Emir Olympics London Edition"
+        },
+        {
+          "role": "closing",
+          "text": "post match pub"
+        }
+      ],
+      "resolved": true
+    }
+  },
+  "repro": {
+    "command": "pytest tests/services/test_kri126_clip_intents_acceptance.py",
+    "status": "available"
+  },
+  "sources": [
+    "tests/fixtures/kri126_thirty_clip_guided_story.json"
+  ]
+}
