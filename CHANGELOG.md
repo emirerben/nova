@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.101.0] - 2026-10-06
+
+### Changed
+- fix(captions): never Skia-burn caption-cue mirrors on caption variants (#1417) <!-- release-pr: 1417 -->
+
 ## [0.78.100.0] - 2026-10-06
 
 ### Changed
