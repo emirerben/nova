@@ -1096,3 +1096,31 @@ async def test_turn_rekicks_clip_understanding_only_for_unanalysed_clips(
     )
 
     assert enqueued == ([item_id] if kicked else [])
+
+
+def test_draft_summary_admits_an_order_group_with_no_clips():
+    """KRI-458: never claim "I'll start with X" when no clip of X was found."""
+    from app.agents._schemas.creator_agent import CreativeStrategy, ProposeStrategy  # noqa: PLC0415
+    from app.kria.planner import adapt_creator_action  # noqa: PLC0415
+    from app.schemas.clip_intents import ResolvedClipIntent  # noqa: PLC0415
+
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(
+            direction="fast_montage",
+            edit_format="montage",
+            audio_strategy="licensed_music",
+            pacing="fast",
+            render_program="guided",
+            selected_media_ids=[],
+            rationale="Start with the field.",
+        ),
+        summary="I'll start with the field.",
+    )
+    ghost = ResolvedClipIntent(
+        op="order", intent_id="order_x", attribute="the field", position="first", assignments=[]
+    )
+    plan = adapt_creator_action(action, server_resolved_clip_intents=[ghost])
+    summary = plan.intents[0].arguments["summary"]
+    assert summary.startswith("I'll start with the field.")
+    assert "I found no clips of the field" in summary

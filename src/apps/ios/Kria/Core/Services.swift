@@ -1227,7 +1227,7 @@ struct KriaAPI: KriaAPIClient {
             #if DEBUG
             NativePreviewDiagnostics.record("http-failure", fields: ["status": String(http.statusCode)])
             #endif
-            throw APIError.requestFailed(status: http.statusCode, detail: RequestFailureDetail(Self.decodeDetail(from: data)))
+            throw APIError.requestFailed(status: http.statusCode, detail: RequestFailureDetail(Self.decodeDetail(from: data), retryAfter: http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)))
         }
         if http.statusCode == 204, let empty = EmptyProjectResponse() as? T { return empty }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .custom(ServerDateCoding.decode); return try decoder.decode(T.self, from: data)
@@ -1302,7 +1302,8 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
     /// KRI-428: the creator's song is gone from this edit; `reason` is the server's own words.
     case userSongUnavailable(reason: String?)
     case userSongLipsyncLocked
-    case userSongWindowOutOfRange
+    /// Less than a second of the song would remain after the start; `reason` is the server's own words.
+    case userSongWindowOutOfRange(reason: String?)
     case rejected
 
     var errorDescription: String? {
@@ -1320,8 +1321,9 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
                 ?? "This edit no longer has a song. Reopen the editor to continue."
         case .userSongLipsyncLocked:
             "Lip-sync keeps the song where you filmed it."
-        case .userSongWindowOutOfRange:
-            "That start point runs past the end of your song. Slide it earlier."
+        case .userSongWindowOutOfRange(let reason):
+            reason?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmptyString
+                ?? "That start point leaves less than a second of your song. Slide it earlier."
         case .rejected:
             "This save was rejected. Your edits are still here."
         }
@@ -1348,7 +1350,7 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
         case .code("guided_story_source_stale", _): return .guidedStorySourceStale
         case .code("user_song_unavailable", let reason): return .userSongUnavailable(reason: reason)
         case .code("user_song_lipsync_locked", _): return .userSongLipsyncLocked
-        case .code("user_song_window_out_of_range", _): return .userSongWindowOutOfRange
+        case .code("user_song_window_out_of_range", let reason): return .userSongWindowOutOfRange(reason: reason)
         case .validation(let issues) where issues.contains(where: { $0.loc?.contains(.string("text_elements")) == true }):
             return .invalidTextSettings
         default: return .rejected
@@ -1623,9 +1625,12 @@ enum APIError: Error, LocalizedError, Equatable {
 /// equality checks and patterns keep matching however the body decoded.
 struct RequestFailureDetail: Equatable, Sendable, CustomStringConvertible {
     let message: String?
-    init(_ message: String?) {
+    /// Seconds from the response's `Retry-After` header (429/503), when it was a plain number.
+    let retryAfter: TimeInterval?
+    init(_ message: String?, retryAfter: TimeInterval? = nil) {
         let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.message = trimmed?.isEmpty == false ? trimmed : nil
+        self.retryAfter = retryAfter.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
     }
     static func == (_: RequestFailureDetail, _: RequestFailureDetail) -> Bool { true }
     /// Diagnostics print errors with `String(describing:)`; keep server text out of them.

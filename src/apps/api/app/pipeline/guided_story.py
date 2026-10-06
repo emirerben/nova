@@ -41,7 +41,7 @@ from app.schemas.edit_proposal import (
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
 )
-from app.schemas.user_song import UserSongPlan
+from app.schemas.user_song import MIN_PLAYABLE_SONG_S, UserSongPlan
 
 log = structlog.get_logger()
 
@@ -287,8 +287,18 @@ class GuidedStoryExecutionPlan(BaseModel):
                     "a creator song cannot be combined with catalog music, a song "
                     "reference, or a recorded voiceover"
                 )
-            if abs(self.user_song.window_duration_s - float(self.resolved_duration_s)) > 0.001:
-                raise ValueError("the song window must cover the resolved video duration")
+            song = self.user_song
+            if abs(song.window_duration_s - float(self.resolved_duration_s)) > 0.001:
+                # KRI-457: a background song that runs out before the video does simply
+                # stops, so its window may be shorter than the video, but only because
+                # it ends where the song ends. Lip-sync windows stay exactly the video.
+                runs_out = (
+                    song.mode == "background"
+                    and song.window_duration_s < float(self.resolved_duration_s)
+                    and abs(song.window_end_s - song.duration_s) <= 0.001
+                )
+                if not runs_out:
+                    raise ValueError("the song window must cover the resolved video duration")
         if (self.song_reference is None) != (self.song_reference_track_duration_s is None):
             raise ValueError("song reference requires its pinned catalog duration")
         if self.song_reference is not None:
@@ -3042,18 +3052,34 @@ def compile_guided_runtime_plan(
                     song_row["window_start_s"] = round(new_start, 3)
             if "volume" in song_edit:
                 song_row["volume"] = float(song_edit["volume"])
-            # KRI-374: the song window always equals the video's length, so a
-            # trim or extension re-windows the song from the SAME start (the
-            # per-take deltas are untouched; the song stays the master clock).
+            # KRI-374: the song window follows the video's length, so a trim or extension
+            # re-windows the song from the SAME start (the per-take deltas are untouched;
+            # the song stays the master clock). Always recomputed from the start and the NEW
+            # length, never from the previous window end.
+            song_duration_s = float(song_row["duration_s"])
             window_end = round(
                 float(song_row["window_start_s"]) + float(runtime_payload["resolved_duration_s"]),
                 3,
             )
-            if window_end > float(song_row["duration_s"]) + 1e-3:
-                raise GuidedStoryError(
-                    USER_SONG_WINDOW_OUT_OF_RANGE,
-                    "That edit runs past the end of your song.",
-                )
+            if song_row.get("mode") == "lipsync":
+                # The window is defined by the takes: a video that outruns the song is
+                # refused, never played past the song's end.
+                if window_end > song_duration_s + 1e-3:
+                    raise GuidedStoryError(
+                        USER_SONG_WINDOW_OUT_OF_RANGE,
+                        "That edit runs past the end of your song.",
+                    )
+            else:
+                # KRI-457: a background song plays while it has time left and stops when
+                # it ends (no shift, no loop). Only a start that leaves under a second of
+                # song is refused.
+                if song_duration_s - float(song_row["window_start_s"]) < MIN_PLAYABLE_SONG_S - 1e-3:
+                    raise GuidedStoryError(
+                        USER_SONG_WINDOW_OUT_OF_RANGE,
+                        "That start point leaves less than a second of your song. "
+                        "Slide it earlier.",
+                    )
+                window_end = min(window_end, song_duration_s)
             song_row["window_end_s"] = window_end
         # A timeline revision can split, reorder, or reuse sources. Rebuild
         # grounded clip labels against its output windows so a label never leaks

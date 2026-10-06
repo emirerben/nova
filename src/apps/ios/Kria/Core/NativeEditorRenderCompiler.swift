@@ -210,7 +210,9 @@ enum NativeEditorRenderError: Error, Equatable {
                   available.isFinite, available > 0 else { throw MediaEngineError.missingAsset(Self.songTrackID) }
             let bed = songBed ?? NativeEditorSongBed(assetID: song.mediaID)
             let start = min(max(0, bed.sourceStart), available)
-            let length = min(total, bed.sourceDuration, available - start)
+            // The song plays while it has time left and stops where it ends (KRI-457). The bed's own duration
+            // was only the window the last saved recipe had, so it never caps a longer video.
+            let length = min(total, available - start)
             if length > 0 {
                 let id = Self.songTrackID
                 assets[id] = MediaAsset(id: id, relativePath: id, fingerprint: fingerprint, duration: available)

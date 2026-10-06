@@ -115,8 +115,6 @@ struct NativeSongWindowBar: View {
     private let minimumWindowWidth: CGFloat = 28
     private static let waveformKey = "user-song"
 
-    private var maxStart: Double { controls.maxStartS ?? controls.startS }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -128,6 +126,12 @@ struct NativeSongWindowBar: View {
             if let duration = controls.songDurationS, duration > 0 {
                 bar(duration: duration)
             }
+            if controls.songEndsBeforeVideo {
+                Text(NativeEditorYourSong.songEndsEarlyCopy)
+                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("native-editor-your-song-ends-early")
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("native-editor-your-song-start")
@@ -137,9 +141,10 @@ struct NativeSongWindowBar: View {
     private func bar(duration: Double) -> some View {
         GeometryReader { geo in
             let width = max(1, geo.size.width)
+            // The bar is the whole song. The window starts where the song does and is as long as the video,
+            // or what is left of the song when that is shorter (so it shrinks as the start moves right).
             let windowWidth = min(width, max(minimumWindowWidth, CGFloat(controls.windowLengthS / duration) * width))
-            let travel = width - windowWidth
-            let x = maxStart > 0 ? CGFloat(controls.startS / maxStart) * travel : 0
+            let x = min(CGFloat(controls.startS / duration) * width, width - windowWidth)
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 10).fill(KriaColor.softZinc)
                 Group {
@@ -166,8 +171,8 @@ struct NativeSongWindowBar: View {
                 .updating($isDragging) { _, state, _ in state = true }
                 .onChanged { gesture in
                     if dragOrigin == nil { dragOrigin = controls.startS; onBegin() }
-                    // Dragging the window across the free travel moves the start across `maxStart`.
-                    let seconds = travel > 0 ? Double(gesture.translation.width / travel) * maxStart : 0
+                    // One bar width is the whole song.
+                    let seconds = Double(gesture.translation.width / width) * duration
                     onChange((dragOrigin ?? controls.startS) + seconds)
                 }
                 .onEnded { _ in finishDrag(if: true) })

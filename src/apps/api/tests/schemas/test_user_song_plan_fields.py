@@ -170,3 +170,69 @@ def test_an_edited_volume_round_trips_and_is_bounded():
     for bad in (-0.1, 1.1):
         with pytest.raises(ValidationError):
             UserSongPlan.model_validate(_plan_dict(volume=bad))
+
+
+# ── KRI-457: a background song may stop early, only where the song itself ends ──────
+
+
+def _runtime_plan(mode: str) -> dict:
+    from app.pipeline.lipsync_montage import plan_lipsync_montage
+    from tests.pipeline.user_song_helpers import (
+        SONG_DURATION_S,
+        SONG_GENERATION,
+        SONG_ITEM_ID,
+        alignment,
+        analysis,
+        compiled_plan,
+        confident,
+        take,
+    )
+
+    info = analysis()
+    if mode == "lipsync":
+        result = plan_lipsync_montage(
+            [take("A"), take("B")],
+            alignment(confident("A", 10), confident("B", 25)),
+            info,
+            plan_item_id=SONG_ITEM_ID,
+        )
+    else:
+        result = plan_unified_montage(
+            [take(f"c{i}", 6.0) for i in range(1, 6)],
+            song_beats=info.beats_s,
+            song_lines=info.lines,
+            song_duration_s=SONG_DURATION_S,
+            song_plan_item_id=SONG_ITEM_ID,
+            song_generation=SONG_GENERATION,
+        )
+    return compiled_plan(result).model_dump(mode="json", exclude_none=False)
+
+
+def test_a_stored_plan_whose_window_equals_the_video_still_validates():
+    for mode in ("background", "lipsync"):
+        GuidedStoryExecutionPlan.model_validate(_runtime_plan(mode))
+
+
+def test_a_background_window_may_be_shorter_than_the_video_only_at_the_song_end():
+    plan = _runtime_plan("background")
+    song = plan["user_song"]
+    song["window_start_s"] = song["duration_s"] - plan["resolved_duration_s"] + 2.0
+    song["window_end_s"] = song["duration_s"]
+    GuidedStoryExecutionPlan.model_validate(plan)
+    # Shorter than the video but NOT ending where the song ends: still refused.
+    song["window_end_s"] = song["duration_s"] - 1.0
+    with pytest.raises(ValidationError, match="song window must cover"):
+        GuidedStoryExecutionPlan.model_validate(plan)
+
+
+def test_a_lipsync_window_must_still_equal_the_video():
+    plan = _runtime_plan("lipsync")
+    song = plan["user_song"]
+    song["window_end_s"] = song["window_end_s"] - 1.0
+    with pytest.raises(ValidationError, match="song window must cover"):
+        GuidedStoryExecutionPlan.model_validate(plan)
+    plan = _runtime_plan("lipsync")
+    plan["user_song"]["duration_s"] = plan["user_song"]["window_end_s"]
+    plan["resolved_duration_s"] = plan["resolved_duration_s"] + 2.0
+    with pytest.raises(ValidationError, match="song window must cover"):
+        GuidedStoryExecutionPlan.model_validate(plan)

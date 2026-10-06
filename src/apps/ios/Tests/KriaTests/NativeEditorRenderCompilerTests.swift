@@ -603,6 +603,46 @@ import KriaMediaEngine
         XCTAssertEqual(try XCTUnwrap(removed.recipe.tracks.first { $0.kind == .video }?.clips.first).volume, 1)
     }
 
+    /// KRI-457: the song follows the video. The bed's own duration is only the window the last saved recipe had, so
+    /// an extended video plays the song longer (while it has time left) and a shortened one plays it shorter.
+    func testSongLengthFollowsTheVideoNotTheStaleBedDuration() throws {
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "original", relativePath: "original.mp4", fingerprint: fingerprint, duration: 30), url: URL(fileURLWithPath: "/original.mp4"))
+        func song(duration: Double) -> ResolvedEditorSource {
+            ResolvedEditorSource(clipIndex: -1, mediaID: "song-item", asset: MediaAsset(id: "song-item", relativePath: "song.wav", fingerprint: fingerprint, duration: duration), url: URL(fileURLWithPath: "/song.wav"))
+        }
+        func compile(video seconds: Double, songLength: Double, start: Double, preserved: Bool = true) throws -> NativeEditorRenderProgram {
+            let document = EditorDocument(clips: [.init(id: "shot", clipIndex: 0, inS: 0, durationS: seconds)])
+            let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: seconds, trimIn: 0, trimOut: seconds, sourceDuration: 30, slotID: "shot")
+            // The bed still says 4s: the length of the window the last saved recipe had.
+            let bed = NativeEditorSongBed(assetID: "song-item", sourceStart: start, sourceDuration: 4, volume: 0.7, fadeIn: 0.5, fadeOut: 3)
+            return try compiler.compile(document: document, clips: [clip], items: [], sources: [0: source],
+                                        audioSources: [NativeEditorRenderCompiler.songSourceKey: song(duration: songLength)],
+                                        sourceAudioPreserved: preserved, songBed: bed)
+        }
+        func songClip(_ program: NativeEditorRenderProgram) -> TimelineClip? { program.recipe.tracks.first { $0.id == "song" }?.clips.first }
+        func cameraLevels(_ program: NativeEditorRenderProgram) -> [Double] { program.recipe.tracks.first { $0.kind == .video }?.clips.map(\.volume) ?? [] }
+
+        // Extended past the bed's 4s: the song plays the whole video.
+        let extended = try compile(video: 9, songLength: 200, start: 100)
+        XCTAssertEqual(try XCTUnwrap(songClip(extended)).sourceDuration, 9, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(songClip(extended)).sourceStart, 100)
+        XCTAssertEqual(try XCTUnwrap(songClip(extended)).audioFadeOut ?? 0, 3, accuracy: 0.0001, "the fade-out lands at the song's real end")
+        // Shortened below it: shorter.
+        let shortened = try compile(video: 2.5, songLength: 200, start: 100)
+        XCTAssertEqual(try XCTUnwrap(songClip(shortened)).sourceDuration, 2.5, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(songClip(shortened)).audioFadeOut ?? 0, 1.25, accuracy: 0.0001, "fades stay capped at half the length")
+        // The song runs out before the video: it plays to its end and stops, with no throw, and camera stays muted.
+        let runsOut = try compile(video: 9, songLength: 105, start: 100)
+        XCTAssertEqual(try XCTUnwrap(songClip(runsOut)).sourceDuration, 5, accuracy: 0.0001)
+        XCTAssertEqual(cameraLevels(runsOut), [0])
+        // A start past the end of the file plays nothing, so the camera is not muted for nothing.
+        let past = try compile(video: 9, songLength: 105, start: 500)
+        XCTAssertNil(songClip(past))
+        XCTAssertEqual(cameraLevels(past), [1])
+    }
+
     func testWithoutSongSourceCameraAudioFollowsTheUsualRules() throws {
         let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
         let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
