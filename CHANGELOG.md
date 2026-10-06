@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.98.0] - 2026-10-06
+
+### Changed
+- fix(slides): one-tap save to Photos + HEIC decode fix (KRI-462) (#1414) <!-- release-pr: 1414 -->
+
 ## [0.78.97.0] - 2026-10-06
 
 ### Changed
