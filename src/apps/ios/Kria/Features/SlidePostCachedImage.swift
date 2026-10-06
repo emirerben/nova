@@ -1,3 +1,4 @@
+import OSLog
 import SwiftUI
 import UIKit
 
@@ -15,6 +16,9 @@ struct SlidePostCachedImage: View {
     var showsSpinner = true
     var showsRetry = false
     var cache: SlidePostImageCache = .shared
+    /// Exposes `slidepost-preview-image` with value `<assetID>|full` or `<assetID>|blur` so UI tests can see
+    /// whether the full picture or the blurred placeholder is on screen.
+    var reportsState = false
 
     @State private var tick = 0
     @State private var failed = false
@@ -23,7 +27,7 @@ struct SlidePostCachedImage: View {
     private var taskID: String { "\(SlidePostImageCache.key(assetID, variant))|\(url == nil)|\(tick)" }
 
     var body: some View {
-        let full = cache.cachedImage(assetID: assetID, variant: variant)
+        let full = resolved()
         ZStack {
             if let full {
                 Image(uiImage: full).resizable().scaledToFill()
@@ -43,11 +47,24 @@ struct SlidePostCachedImage: View {
             }
         }
         .task(id: taskID) { await load() }
+        .modifier(PreviewStateReport(enabled: reportsState, value: "\(assetID)|\(full != nil ? "full" : "blur")", blurred: full == nil && variant == .preview && cache.cachedImage(assetID: assetID, variant: .thumb) != nil))
+    }
+
+    private static let log = Logger(subsystem: "com.kria.app", category: "slidepost-images")
+
+    /// Memory, then the pinned working set, then (previews only) a synchronous disk read: the selected slide
+    /// must never fall back to the blurred thumbnail when its decoded copy is merely a few ms away.
+    private func resolved() -> UIImage? {
+        guard variant == .preview else { return cache.cachedImage(assetID: assetID, variant: variant) }
+        guard let hit = cache.lookup(assetID: assetID, variant: variant) else { return nil }
+        if hit.tier != .memory { Self.log.info("select \(assetID, privacy: .public) hit=\(hit.tier.rawValue, privacy: .public)") }
+        return hit.image
     }
 
     private func load() async {
         guard let url else { return }
-        if cache.cachedImage(assetID: assetID, variant: variant) != nil { return }
+        if resolved() != nil { return }
+        Self.log.info("select \(assetID, privacy: .public) hit=miss (async load)")
         failed = false
         do {
             _ = try await cache.image(assetID: assetID, variant: variant, url: url)
@@ -62,6 +79,22 @@ struct SlidePostCachedImage: View {
         } catch {
             failed = true
         }
+    }
+}
+
+private struct PreviewStateReport: ViewModifier {
+    let enabled: Bool
+    let value: String
+    let blurred: Bool
+    func body(content: Content) -> some View {
+        if enabled {
+            content.overlay {
+                ZStack {
+                    Color.clear.accessibilityElement().accessibilityIdentifier("slidepost-preview-image").accessibilityValue(value)
+                    if blurred { Color.clear.accessibilityElement().accessibilityIdentifier("slidepost-preview-blurred") }
+                }.allowsHitTesting(false)
+            }
+        } else { content }
     }
 }
 

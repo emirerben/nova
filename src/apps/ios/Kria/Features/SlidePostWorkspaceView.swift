@@ -164,9 +164,7 @@ struct SlidePostWorkspaceView: View {
                     if previewPlayer != nil, previewPlayerAssetID == asset.id { VideoPlayer(player: previewPlayer) }
                 } else {
                     SlidePostCachedImage(assetID: asset.id, variant: .preview, url: url, onExpired: { await refresh() },
-                                         loadingIdentifier: "slidepost-preview-loading", showsRetry: true)
-                        .accessibilityHidden(true)
-                        .overlay { Color.clear.accessibilityElement().accessibilityIdentifier("slidepost-preview-image").accessibilityValue(asset.id) }
+                                         loadingIdentifier: "slidepost-preview-loading", showsRetry: true, reportsState: true)
                 }
             } else { Image(systemName: "photo.on.rectangle").font(.largeTitle).foregroundStyle(KriaColor.zinc) }
         }
@@ -179,6 +177,13 @@ struct SlidePostWorkspaceView: View {
             previewPlayer = AVPlayer(url: previewURL); previewPlayerAssetID = asset.id
         }
         .task(id: prefetchKey) { prefetchNeighbours() }
+        #if DEBUG
+        .onChange(of: mode) { _, next in
+            if next == .text, SlidePostImageFixtures.evictOnText {
+                SlidePostImageCache.shared.evictPreviewsFromMemory(assetIDs: session.draft?.slides.map(\.assetID) ?? [])
+            }
+        }
+        #endif
         .onDisappear { previewPlayer?.pause() }
     }
 
@@ -190,7 +195,10 @@ struct SlidePostWorkspaceView: View {
     private func prefetchNeighbours() {
         guard let draft = session.draft, let assets = session.state?.assets else { return }
         let selected = draft.slides.firstIndex { $0.id == session.selectedID }
-        SlidePostImageCache.shared.prefetch(SlidePostPrefetch.requests(slideAssetIDs: draft.slides.map(\.assetID), selectedIndex: selected, assets: assets))
+        let ids = draft.slides.map(\.assetID)
+        let center = selected ?? 0
+        let working = ids.indices.filter { abs($0 - center) <= SlidePostPrefetch.radius }.map { ids[$0] }
+        SlidePostImageCache.shared.prefetch(SlidePostPrefetch.requests(slideAssetIDs: ids, selectedIndex: selected, assets: assets), workingSet: working)
     }
 
     /// Rich editor: always the SOURCE media (the live canvas draws the editable text over it); the render is
@@ -319,8 +327,12 @@ struct SlidePostWorkspaceView: View {
                                 detail: "Kria can't sort by time or add locations. You can still reorder by hand, or ask for text you write yourself.")
                     .padding(.bottom, 8)
             }
-            stage(draft, compact: panelOpen)
-                .frame(maxHeight: panelOpen ? max(keyboardUp && mode == .text ? 144 : 150, 0.33 * height - (keyboardUp && mode == .text ? 96 : 0)) : .infinity)
+            // KRI-185 rule: typing shrinks the preview to a fixed 120pt, it never covers it and never grows.
+            let typing = keyboardUp && mode == .text
+            let typingHeight = NativeEditorLayoutMetrics.typingPreviewHeight
+            stage(draft, compact: panelOpen, fixedHeight: typing ? typingHeight : nil)
+                .frame(maxHeight: typing ? typingHeight + 8 : (panelOpen ? max(150, 0.33 * height) : .infinity))
+                .overlay(alignment: .bottomTrailing) { if typing { typingAddTextPill(slide) } }
                 .animation(.easeOut(duration: 0.2), value: keyboardUp)
             if !(keyboardUp && mode == .text) { transportRow(draft) }
             if mode == .text, let slide {
@@ -337,6 +349,28 @@ struct SlidePostWorkspaceView: View {
             }
         }
         .background(KriaColor.paper)
+    }
+
+    /// KRI-305: with the keyboard up on a small phone the panel has no room for its pinned Add text row (it
+    /// squeezed the text box to a sliver), so while typing the action rides in the stage's free space beside
+    /// the 120pt preview, always above the keyboard.
+    @ViewBuilder private func typingAddTextPill(_ slide: SlidePostSlide?) -> some View {
+        // The Style tab keeps the panel's own row (it carries Apply to all), so only the Edit tab hoists it.
+        if let slide, textTab == .edit, (slide.edits?.effectiveTexts.count ?? 0) < SlidePostEdits.maxTexts {
+            Button {
+                textTab = .edit
+                _ = session.addText(slideID: slide.id)
+            } label: {
+                // Capped type + width: the free strip beside a 120pt preview is only ~120pt on an SE-class phone,
+                // and the pill must never grow over the preview at accessibility sizes.
+                Label("Add text", systemImage: "plus").font(KriaFont.body(13)).lineLimit(1).minimumScaleFactor(0.7)
+                    .dynamicTypeSize(...DynamicTypeSize.large)
+                    .padding(.horizontal, 10).frame(maxWidth: 124, minHeight: 44)
+            }
+            .buttonStyle(KriaSecondaryButtonStyle())
+            .accessibilityIdentifier("slidepost-add-text")
+            .padding(.trailing, 16).padding(.bottom, 4)
+        }
     }
 
     private var richBanner: some View {
