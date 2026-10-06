@@ -77,77 +77,6 @@ def test_live_job_index_separates_active_and_reserved() -> None:
     assert index.all_job_ids() == {job_a, job_b}
 
 
-def test_live_job_index_issues_exactly_active_and_reserved_broadcasts() -> None:
-    """Every un-limited broadcast waits out the full _INSPECT_TIMEOUT_S window,
-    so each extra call adds ~5s to the reaper sweep and the admin Worker state
-    panel. Only active() + reserved() feed the index; ping() was dropped
-    because nothing read the worker list it filled (2026-10-06)."""
-    celery_app = _fake_celery(active={}, reserved={})
-    inspector = celery_app.control.inspect.return_value
-
-    get_live_job_index(celery_app)
-
-    assert sorted(name for name, _args, _kwargs in inspector.method_calls) == [
-        "active",
-        "reserved",
-    ]
-
-
-def test_live_job_index_runs_each_broadcast_on_its_own_connection() -> None:
-    """kombu connections are not thread-safe: the two concurrent broadcasts
-    must never share one, and each must be closed."""
-    from app.services import queue_state
-
-    celery_app = _fake_celery(active={}, reserved={})
-    conns = [MagicMock(name="conn-a"), MagicMock(name="conn-b")]
-    celery_app.connection_for_write.side_effect = conns
-
-    get_live_job_index(celery_app)
-
-    assert celery_app.connection_for_write.call_count == 2
-    for call in celery_app.connection_for_write.call_args_list:
-        assert call.kwargs == {"transport_options": {"polling_interval": 1}}
-    used = [call.kwargs["connection"] for call in celery_app.control.inspect.call_args_list]
-    assert sorted(used, key=id) == sorted(conns, key=id)
-    for call in celery_app.control.inspect.call_args_list:
-        assert call.kwargs["timeout"] == queue_state._INSPECT_TIMEOUT_S
-    for conn in conns:
-        conn.__exit__.assert_called_once()
-
-
-def test_live_job_index_waits_one_reply_window_not_two() -> None:
-    """active() and reserved() must be in flight at the same time, so the
-    lookup costs one reply window. Sequential calls never meet at the
-    barrier: it times out, the lookup degrades to ok=False and this fails."""
-    barrier = threading.Barrier(2, timeout=5)
-
-    def meet_then_reply() -> dict:
-        barrier.wait()
-        return {}
-
-    celery_app = _fake_celery()
-    inspector = celery_app.control.inspect.return_value
-    inspector.active.side_effect = meet_then_reply
-    inspector.reserved.side_effect = meet_then_reply
-
-    index = get_live_job_index(celery_app)
-
-    assert index.ok is True
-
-
-def test_live_job_index_returns_not_ok_when_one_broadcast_raises() -> None:
-    """A half-answered lookup must not pass for a complete one: if reserved()
-    fails, a reserved job would read as 'not live' and get reaped."""
-    job_id = str(uuid.uuid4())
-    celery_app = _fake_celery(active={"celery@worker-1": [{"args": [job_id]}]})
-    celery_app.control.inspect.return_value.reserved.side_effect = RuntimeError("broker hiccup")
-
-    index = get_live_job_index(celery_app)
-
-    assert index.ok is False
-    assert index.all_job_ids() == set()
-
-
 def test_live_job_index_returns_not_ok_when_inspect_raises() -> None:
     """Broker hiccup → ok=False so callers don't read empty dicts as 'all dead'."""
     celery_app = MagicMock()
@@ -488,26 +417,123 @@ def test_render_worker_queues_constant_matches_fly_toml_worker_queues() -> None:
     )
 
 
-def test_inspect_uses_dedicated_fast_polling_connection() -> None:
-    """Regression: worker.py sets broker polling_interval=10 (Upstash cost);
-    inspect() replies are drained with BRPOP whose timeout IS polling_interval,
-    so sharing the app connection made each inspect block ~10s (3 calls > the
-    lifecycle task's 30s soft limit) and drop replies. inspect() must run on
-    its own connection with the 1s default."""
+# ── inspect broadcasts (every caller) ────────────────────────────────────────
+#
+# Every un-limited inspect broadcast waits out the full _INSPECT_TIMEOUT_S
+# reply window, so back-to-back calls stacked one window each (15.6s for the
+# live-job lookup locally, 2026-10-06). Pinned per caller: which broadcasts go
+# out, one fast-polling connection each, all in flight together (one window),
+# and a half-answered lookup degrades to that caller's "unknown".
+
+# caller name → (call, broadcasts it must issue, "is this the unknown result")
+_INSPECT_CALLERS = {
+    "get_live_job_index": (
+        get_live_job_index,
+        ["active", "reserved"],
+        lambda index: index.ok is False,
+    ),
+    "get_task_runtime_state": (
+        lambda app: get_task_runtime_state(app, "task-x", queue_name="creator-guided-jobs"),
+        ["active", "reserved"],
+        lambda state: state.state == "unknown",
+    ),
+    "get_queue_snapshot": (
+        get_queue_snapshot,
+        ["active_queues", "ping"],
+        lambda snapshot: snapshot.ok is False,
+    ),
+    "render_worker_idle": (
+        render_worker_idle,
+        ["active", "active_queues", "reserved"],
+        lambda idle: idle is None,
+    ),
+}
+
+
+def _idle_celery() -> MagicMock:
+    """Workers answer with nothing; every queue is empty."""
+    return _fake_celery(active={}, reserved={}, ping={}, active_queues={}, redis=_zero_llen_redis())
+
+
+@pytest.mark.parametrize("caller", sorted(_INSPECT_CALLERS))
+def test_inspect_caller_issues_only_its_broadcasts(caller: str) -> None:
+    """Each extra broadcast is ~5s more on the reaper sweep, the render-worker
+    lifecycle task (30s soft limit) or an admin panel. get_live_job_index
+    dropped ping() on 2026-10-06: nothing read the worker list it filled."""
+    call, broadcasts, _is_unknown = _INSPECT_CALLERS[caller]
+    celery_app = _idle_celery()
+    inspector = celery_app.control.inspect.return_value
+
+    call(celery_app)
+
+    assert sorted(name for name, _args, _kwargs in inspector.method_calls) == broadcasts
+
+
+@pytest.mark.parametrize("caller", sorted(_INSPECT_CALLERS))
+def test_inspect_caller_gives_each_broadcast_its_own_fast_connection(caller: str) -> None:
+    """kombu connections are not thread-safe, so concurrent broadcasts never
+    share one. Each also keeps the 1s polling interval: worker.py raises the
+    app-wide polling_interval to 10 (Upstash cost), and inspect replies are
+    drained with BRPOP whose timeout IS that interval, so sharing the app
+    connection made each call block ~10s and drop replies (2026-08-22)."""
     from app.services import queue_state
 
-    celery_app = MagicMock()
-    conn = MagicMock()
-    conn.__enter__ = MagicMock(return_value=conn)
-    conn.__exit__ = MagicMock(return_value=False)
-    celery_app.connection_for_write.return_value = conn
+    call, broadcasts, _is_unknown = _INSPECT_CALLERS[caller]
+    celery_app = _idle_celery()
+    conns = [MagicMock(name=f"conn-{method}") for method in broadcasts]
+    celery_app.connection_for_write.side_effect = conns
 
-    queue_state.render_worker_idle(celery_app)
+    call(celery_app)
 
-    celery_app.connection_for_write.assert_called_once_with(
-        transport_options={"polling_interval": 1}
+    assert celery_app.connection_for_write.call_count == len(broadcasts)
+    for call_args in celery_app.connection_for_write.call_args_list:
+        assert call_args.kwargs == {"transport_options": {"polling_interval": 1}}
+    inspect_calls = celery_app.control.inspect.call_args_list
+    assert sorted((c.kwargs["connection"] for c in inspect_calls), key=id) == sorted(conns, key=id)
+    for call_args in inspect_calls:
+        assert call_args.kwargs["timeout"] == queue_state._INSPECT_TIMEOUT_S
+    for conn in conns:
+        conn.__exit__.assert_called_once()
+
+
+@pytest.mark.parametrize("caller", sorted(_INSPECT_CALLERS))
+def test_inspect_caller_waits_one_reply_window_not_one_per_broadcast(caller: str) -> None:
+    """All broadcasts must be in flight at once. Sequential calls never all
+    meet at the barrier: it times out and breaks, and this fails."""
+    call, broadcasts, is_unknown = _INSPECT_CALLERS[caller]
+    barrier = threading.Barrier(len(broadcasts), timeout=5)
+
+    def meet_then_reply() -> dict:
+        barrier.wait()
+        return {}
+
+    celery_app = _idle_celery()
+    inspector = celery_app.control.inspect.return_value
+    for method in broadcasts:
+        getattr(inspector, method).side_effect = meet_then_reply
+
+    result = call(celery_app)
+
+    assert barrier.broken is False
+    assert not is_unknown(result)
+
+
+@pytest.mark.parametrize(
+    ("caller", "failing"),
+    [
+        (caller, method)
+        for caller in sorted(_INSPECT_CALLERS)
+        for method in _INSPECT_CALLERS[caller][1]
+    ],
+)
+def test_inspect_caller_is_unknown_when_one_broadcast_fails(caller: str, failing: str) -> None:
+    """A half-answered lookup must not pass for a complete one: a missing
+    reserved() reply would make a reserved job look dead to the reaper, or
+    an idle-looking render worker get stopped mid-render."""
+    call, _broadcasts, is_unknown = _INSPECT_CALLERS[caller]
+    celery_app = _idle_celery()
+    getattr(celery_app.control.inspect.return_value, failing).side_effect = RuntimeError(
+        "broker hiccup"
     )
-    celery_app.control.inspect.assert_called_once_with(
-        timeout=queue_state._INSPECT_TIMEOUT_S, connection=conn
-    )
-    conn.__exit__.assert_called_once()
+
+    assert is_unknown(call(celery_app))

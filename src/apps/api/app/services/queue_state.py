@@ -88,6 +88,30 @@ def _inspect_reply(celery_app: Celery, method: str) -> dict:
         return getattr(inspector, method)() or {}
 
 
+def _inspect_replies(celery_app: Celery, *methods: str) -> tuple[dict, ...]:
+    """Issue several inspect broadcasts concurrently; replies in `methods` order.
+
+    A broadcast without `limit` always waits out the full
+    `_INSPECT_TIMEOUT_S` reply window (we can't know how many workers will
+    answer), so cost = windows waited, not work done. Back-to-back calls
+    stacked one window each (3 calls = 15.6s locally on 2026-10-06, 17-20s
+    in prod); concurrent calls cost ONE window however many there are.
+    Each broadcast gets its own `_inspector()` connection: kombu connections
+    are not thread-safe, and the per-thread pidbox reply queue keeps the
+    replies apart. Concurrent also means every snapshot is taken at the same
+    instant, so a task moving from reserved to active can no longer slip
+    between two of them. Do NOT shorten the window instead — a late reply
+    would read as "not_found" (see module docstring).
+
+    Raises if any broadcast raises; callers map that to their "unknown".
+    """
+    with ThreadPoolExecutor(
+        max_workers=len(methods), thread_name_prefix="queue-state-inspect"
+    ) as pool:
+        replies = [pool.submit(_inspect_reply, celery_app, method) for method in methods]
+        return tuple(reply.result() for reply in replies)
+
+
 # Cap how many queued tasks we decode when computing oldest_pending_job_id
 # / queue position. Deeper-than-this queues are pathological and the
 # admin UI just shows "100+".
@@ -187,25 +211,11 @@ def get_live_job_index(celery_app: Celery) -> LiveJobIndex:
     treats ok=False as "skip this cycle"; admin endpoints treat it as
     "unknown".
 
-    Latency: a broadcast without `limit` always waits out the full
-    `_INSPECT_TIMEOUT_S` reply window (we can't know how many workers will
-    answer), so cost = windows waited, not work done. Two broadcasts only
-    (no ping — nothing read the worker list it filled), issued concurrently
-    so the lookup costs ONE window instead of 3 back-to-back (15.6s locally
-    on 2026-10-06, 17-20s in prod). Each runs on its own `_inspector()`
-    connection: kombu connections are not thread-safe, and the per-thread
-    pidbox reply queue keeps the two replies apart. Concurrent also means
-    both snapshots are taken at the same instant, so a task moving from
-    reserved to active can no longer slip between them. Do NOT shorten the
-    window instead — a late reply would read as "not_found" (see module
-    docstring).
+    No ping() here: nothing read the worker list it filled, and every
+    broadcast costs a full reply window (see `_inspect_replies`).
     """
     try:
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="queue-state-inspect") as pool:
-            active_reply = pool.submit(_inspect_reply, celery_app, "active")
-            reserved_reply = pool.submit(_inspect_reply, celery_app, "reserved")
-            active = active_reply.result()
-            reserved = reserved_reply.result()
+        active, reserved = _inspect_replies(celery_app, "active", "reserved")
     except Exception as exc:  # noqa: BLE001
         log.warning("queue_state_inspect_failed", error=str(exc))
         return LiveJobIndex(ok=False)
@@ -292,10 +302,7 @@ def get_task_runtime_state(
         return TaskRuntimeState(state="unknown")
 
     try:
-        conn, inspector = _inspector(celery_app)
-        with conn:
-            active = inspector.active() or {}
-            reserved = inspector.reserved() or {}
+        active, reserved = _inspect_replies(celery_app, "active", "reserved")
     except Exception as exc:  # noqa: BLE001
         log.warning("task_runtime_inspect_failed", task_id=task_id, error=str(exc))
         return TaskRuntimeState(state="unknown")
@@ -319,12 +326,7 @@ def get_queue_snapshot(celery_app: Celery) -> QueueSnapshot:
     reserved on workers). Falls back to ok=False on any failure.
     """
     try:
-        # Pull workers from inspect() so we don't issue two separate
-        # broker calls for the same data.
-        conn, inspector = _inspector(celery_app)
-        with conn:
-            ping = inspector.ping() or {}
-            active_queues = inspector.active_queues() or {}
+        ping, active_queues = _inspect_replies(celery_app, "ping", "active_queues")
     except Exception as exc:  # noqa: BLE001
         log.warning("queue_snapshot_inspect_failed", error=str(exc))
         return QueueSnapshot(queues=[], active_workers=[], ok=False)
@@ -423,11 +425,9 @@ def render_worker_idle(celery_app: Celery) -> bool | None:
          true then; queue depth is what actually detects pending work.
     """
     try:
-        conn, inspector = _inspector(celery_app)
-        with conn:
-            active = inspector.active() or {}
-            reserved = inspector.reserved() or {}
-            active_queues = inspector.active_queues() or {}
+        active, reserved, active_queues = _inspect_replies(
+            celery_app, "active", "reserved", "active_queues"
+        )
     except Exception as exc:  # noqa: BLE001
         log.warning("render_worker_idle_inspect_failed", error=str(exc))
         return None
