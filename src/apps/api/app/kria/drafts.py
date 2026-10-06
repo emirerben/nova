@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents._schemas.creator_agent import CreativeStrategy
 from app.agents._schemas.text_element import resolve_narrated_storyboard_rows
 from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.api_schemas import DraftSnapshotOut
@@ -36,6 +37,22 @@ from app.models import (
 )
 
 MAX_DRAFT_BYTES = 2 * 1024 * 1024
+
+
+def _sanitize_strategy_duration_provenance(raw: dict[str, Any]) -> dict[str, Any]:
+    """Persist only server-derived duration approval provenance.
+
+    Draft snapshots are client-writable. A client may propose a duration, but
+    must not claim it was explicitly approved by supplying the server-owned
+    marker. Reconstruct the marker from the raw duration key before schema
+    normalization, which otherwise materializes the default 24 seconds.
+    """
+
+    requested = "target_duration_s" in raw
+    strategy = CreativeStrategy.model_validate(
+        {key: value for key, value in raw.items() if key != "target_duration_requested"}
+    ).model_copy(update={"target_duration_requested": True if requested else None})
+    return strategy.model_dump(mode="json", exclude_none=True)
 
 
 class KriaDraftDocument(BaseModel):
@@ -486,6 +503,8 @@ async def write_draft(
                 recovery="refresh_replan",
             )
         snapshot[field] = authoritative
+    if snapshot.get("kind") == "strategy" and isinstance(snapshot.get("strategy"), dict):
+        snapshot["strategy"] = _sanitize_strategy_duration_provenance(snapshot["strategy"])
     document = KriaDraftDocument.model_validate(snapshot)
     row = await _insert_revision(db, target=target, document=document, parent=head)
     await db.commit()

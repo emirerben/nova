@@ -129,6 +129,96 @@ def _plan(*sections):
     )
 
 
+def _contract(world, **requirements):
+    from app.services.creator_render_contract import CONTRACT_FIELD, CreatorRenderContract
+
+    contract = CreatorRenderContract(generation_id="gen-1").rebind(**requirements)
+    world.snapshot[CONTRACT_FIELD] = contract.model_dump(mode="json")
+    world.job.assembly_plan[CONTRACT_FIELD] = contract.model_dump(mode="json")
+    return contract
+
+
+def test_approved_source_and_duration_reach_planner_without_live_request(world, monkeypatch):
+    from app.services.creator_render_contract import CreatorRenderContractError
+
+    _contract(world, audio_source_ids=("talk",), original_audio="require", duration_s=30)
+    monkeypatch.setattr(gb, "_first_user_message", lambda _: pytest.fail("live text reread"))
+    seen = []
+
+    def planner(value):
+        seen.append(value)
+        return _plan({"kind": "speech", "clip_ref": "c1", "quote": "never rush a good espresso"})
+
+    with pytest.raises(CreatorRenderContractError, match="length"):
+        job_module.run_phone_speech_montage_job(
+            JOB_ID,
+            world.snapshot,
+            world.candidates,
+            ownership_epoch=3,
+            run_planner=planner,
+            load_words=lambda _: (_words(), "en"),
+        )
+    assert seen[0].target_duration_s == 30
+    assert world.db.commits == 0
+
+
+def test_approved_speech_never_falls_through_when_switch_disabled(world, monkeypatch):
+    _contract(world, audio_source_ids=("talk",), original_audio="require")
+    monkeypatch.setattr(settings, "speech_excerpt_montage_enabled", False)
+    with pytest.raises(job_module.SpeechMontageClarification, match="unavailable"):
+        _run(world, SpeechMontagePlan(wants_speech_excerpts=False))
+
+
+def test_contract_without_speech_does_not_probe_raw_text(world, monkeypatch):
+    _contract(world, original_audio="forbid")
+    monkeypatch.setattr(gb, "_load_unified_montage_inputs", lambda _: pytest.fail("speech probe"))
+    assert _run(world, SpeechMontagePlan(wants_speech_excerpts=False)) is False
+
+
+def test_approved_voice_and_length_pin_a_matching_real_compiler_recipe(world):
+    from app.services.device_render import (
+        device_record,
+        device_status,
+        verify_device_record_contract,
+    )
+
+    contract = _contract(world, original_audio="require", audio_source_ids=("talk",), duration_s=8)
+    assert _run(
+        world, _plan({"kind": "speech", "clip_ref": "c1", "quote": SPEECH, "visual": "cutaways"})
+    )
+    status = device_status(world.job, "speech_montage")
+    record = device_record(world.job, "speech_montage")
+    assert world.job.status == "awaiting_device"
+    assert abs(status.request.recipe.duration - 8) < 0.8
+    assert record["contract_digest"] == contract.digest
+    verify_device_record_contract(world.job, record, status)
+
+
+def test_contracted_retry_preserves_recipe_and_final_guard_rejects_changed_authority(world):
+    from app.services.creator_render_contract import CONTRACT_FIELD, CreatorRenderContractError
+    from app.services.device_render import (
+        device_record,
+        device_status,
+        mark_device_failed,
+        retry_device_render,
+        verify_device_record_contract,
+    )
+
+    contract = _contract(world, original_audio="require", audio_source_ids=("talk",), duration_s=8)
+    _run(world, _plan({"kind": "speech", "clip_ref": "c1", "quote": SPEECH, "visual": "cutaways"}))
+    original = device_status(world.job, "speech_montage").request
+    mark_device_failed(world.job, "speech_montage", reason_code="export_failed", detail="try again")
+    retried = retry_device_render(world.job, "speech_montage")
+    assert retried.request.recipe == original.recipe
+    assert retried.request.identity.recipe_revision == original.identity.recipe_revision + 1
+    record = device_record(world.job, "speech_montage")
+    assert record["contract_digest"] == contract.digest
+    verify_device_record_contract(world.job, record, retried)
+    world.job.assembly_plan[CONTRACT_FIELD] = contract.rebind(duration_s=30).model_dump(mode="json")
+    with pytest.raises(CreatorRenderContractError, match="changed"):
+        verify_device_record_contract(world.job, record, retried)
+
+
 def test_ready_plan_pins_a_speech_montage_variant(world) -> None:
     handled = _run(
         world,

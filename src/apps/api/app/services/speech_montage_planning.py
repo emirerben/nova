@@ -195,6 +195,8 @@ def plan_speech_montage(
     load_words: WordLoader,
     target_duration_s: float | None = None,
     voice_media_ids: Collection[str] = (),
+    required_source_ids: Sequence[str] = (),
+    speech_required: bool = False,
 ) -> SpeechMontageResolution:
     """See the module docstring. Never raises for planner/transcription trouble.
 
@@ -202,24 +204,42 @@ def plan_speech_montage(
     voice (``montage_audio.source_media_ids``). When one of them has usable speech
     it is the only speech source the planner sees: every other clip is plain
     footage, so no excerpt can come from a different speaker.
+
+    ``required_source_ids`` are approved contract requirements: every named
+    source must be usable, and failed transcription never selects another voice.
     """
     request = (creator_request or "").strip()
+    if speech_required and not request:
+        request = "Use the confirmed camera-audio sources."
     videos = [c for c in candidates if c.kind == "video"]
     claimed = [c for c in videos if c.has_speech]
-    if not speech_montage_possible(request, any_clip_has_speech=bool(claimed)):
+    if required_source_ids:
+        required = set(required_source_ids)
+        # Confirmed sources outrank coarse speech detection; transcription is
+        # the evidence that they can supply the required voice.
+        claimed = [c for c in videos if c.media_id in required]
+        if {c.media_id for c in claimed} != required or len(claimed) > _MAX_SPEECH_CLIPS:
+            return SpeechMontageResolution(
+                "needs_creator", question="I can't use all of your confirmed audio sources."
+            )
+    if not speech_required and not speech_montage_possible(
+        request, any_clip_has_speech=bool(claimed)
+    ):
         return SpeechMontageResolution("not_requested")
 
-    voice_ids = set(voice_media_ids)
+    voice_ids = set(required_source_ids or voice_media_ids)
     speech: list[SpeechCandidate] = []
     pinned = [c for c in claimed if c.media_id in voice_ids]
     if pinned:
         speech = _load_speech(pinned, load_words)
     voice_pinned = bool(speech)
-    if not speech:
+    if not speech and not required_source_ids:
         speech = _load_speech(claimed, load_words)
     speech.sort(key=lambda c: (not c.to_camera, -spoken_word_count(c.words)))
     speech = speech[:_MAX_SPEECH_CLIPS]
     speech_ids = {c.media_id for c in speech}
+    if required_source_ids and not set(required_source_ids).issubset(speech_ids):
+        return SpeechMontageResolution("needs_creator", question=NO_SPEECH_QUESTION)
     others = [c for c in videos if c.media_id not in speech_ids]
 
     speech_refs = {f"c{i + 1}": c for i, c in enumerate(speech)}
@@ -255,7 +275,7 @@ def plan_speech_montage(
     except Exception as exc:  # noqa: BLE001 - planner trouble is never a render failure by itself
         _reraise_if_timeout(exc)
         log.warning("speech_montage_planner_failed", error=type(exc).__name__)
-        if mentions_speech(request):
+        if speech_required or mentions_speech(request):
             # The creator very likely asked for it; quietly rendering a plain montage
             # would be a silent override.
             return SpeechMontageResolution(
@@ -269,6 +289,13 @@ def plan_speech_montage(
         return SpeechMontageResolution("not_requested")
 
     if not plan.wants_speech_excerpts:
+        if speech_required:
+            return SpeechMontageResolution(
+                "needs_creator",
+                question=(
+                    "I couldn't build the confirmed camera-audio edit. Which passage should play?"
+                ),
+            )
         return SpeechMontageResolution("not_requested")
     if plan.question:
         return SpeechMontageResolution("needs_creator", question=plan.question)

@@ -367,6 +367,49 @@ def test_a_voiceover_montage_never_takes_the_unified_lane(harness, monkeypatch):
     plain.assert_called_once()
 
 
+def test_approved_montage_skips_raw_speech_probe_and_unrequested_recording(harness, monkeypatch):
+    from app.services import phone_speech_montage_job
+    from app.services.creator_render_contract import CONTRACT_FIELD, CreatorRenderContract
+
+    job, *_ = harness(brief=None)
+    contract = CreatorRenderContract(
+        generation_id=job.assembly_plan["creator_generation_id"]
+    ).rebind()
+    job.assembly_plan[CONTRACT_FIELD] = contract.model_dump(mode="json")
+    job.all_candidates["voiceover_gcs_path"] = "unselected-recording.m4a"
+    speech = Mock(side_effect=AssertionError("raw speech inference is not route authority"))
+    unified = Mock(return_value=None)
+    monkeypatch.setattr(phone_speech_montage_job, "run_phone_speech_montage_job", speech)
+    monkeypatch.setattr(gb, "_run_phone_unified_montage_job", unified)
+    gb._run_generative_job(str(job.id))
+    speech.assert_not_called()
+    unified.assert_called_once()
+
+
+def test_approved_source_cannot_fall_back_to_unified_when_planner_declines(harness, monkeypatch):
+    from app.services import phone_speech_montage_job
+    from app.services.creator_render_contract import CONTRACT_FIELD, CreatorRenderContract
+
+    job, *_ = harness(brief=None)
+    contract = CreatorRenderContract(
+        generation_id=job.assembly_plan["creator_generation_id"]
+    ).rebind(
+        original_audio="require",
+        audio_source_ids=("clip-0",),
+    )
+    job.assembly_plan[CONTRACT_FIELD] = contract.model_dump(mode="json")
+    speech = Mock(return_value=False)
+    unified = Mock(side_effect=AssertionError("silent fallback"))
+    failure = Mock(return_value=True)
+    monkeypatch.setattr(phone_speech_montage_job, "run_phone_speech_montage_job", speech)
+    monkeypatch.setattr(gb, "_run_phone_unified_montage_job", unified)
+    monkeypatch.setattr(gb, "_fail_job", failure)
+    gb._run_generative_job(str(job.id))
+    speech.assert_called_once()
+    unified.assert_not_called()
+    assert "confirmed" in failure.call_args.args[1]
+
+
 def test_redelivery_after_planning_reuses_the_pinned_plan(harness):
     job, *_ = harness(brief=_brief())
     gb._run_generative_job(str(job.id))
