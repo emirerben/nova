@@ -9,7 +9,7 @@ from app.agents._schemas.creator_agent import (
     ProposeStrategy,
     ResolvedCreatorManifest,
 )
-from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
+from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION, MainCreatorAgent, MainCreatorInput
 
 
 def _manifest() -> ResolvedCreatorManifest:
@@ -115,6 +115,18 @@ def test_main_creator_prompt_carries_full_request_but_redacts_narration_identity
     assert request in prompt
     assert narration.gcs_path not in prompt
     assert narration.generation not in prompt
+
+
+def test_brief_prompt_requires_explicit_versioned_target_for_changes() -> None:
+    prompt = MainCreatorAgent(None).render_prompt(  # type: ignore[arg-type]
+        _input().model_copy(update={"brief_enabled": True})
+    )
+
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-06-v44"
+    assert '`operation`: "change"' in prompt
+    assert "target_requirement_id" in prompt
+    assert "expected_version" in prompt
+    assert "Compatible requirements with the same kind and scope coexist" in prompt
 
 
 def test_main_creator_recognizes_mixed_media_timing_request() -> None:

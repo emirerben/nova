@@ -607,11 +607,14 @@ class Settings(BaseSettings):
     # `fly secrets set KRIA_CREATIVE_BRIEF_ENABLED=true --app nova-video`
     # + restart api + worker. Rollback: set it false + restart.
     kria_creative_brief_enabled: bool = False
+    # Deploy readers everywhere before enabling snapshot writers.
+    kria_brief_binding_enabled: bool = False
+    kria_brief_binding_user_ids: Annotated[list[str], NoDecode] = []
     # NoDecode: pydantic-settings would otherwise JSON-decode the env string
     # before the validator below runs, crashing boot on a bare id or CSV.
     kria_creative_brief_user_ids: Annotated[list[str], NoDecode] = []
 
-    @field_validator("kria_creative_brief_user_ids", mode="before")
+    @field_validator("kria_creative_brief_user_ids", "kria_brief_binding_user_ids", mode="before")
     @classmethod
     def parse_creative_brief_user_ids(cls, value: object) -> object:
         if not isinstance(value, str):
@@ -625,6 +628,12 @@ class Settings(BaseSettings):
             except json.JSONDecodeError:
                 return value
         return [part.strip() for part in raw.split(",") if part.strip()]
+
+    def brief_binding_for(self, user_id: object) -> bool:
+        """Writer cohort only; readers always honor previously saved bindings."""
+        return self.kria_brief_binding_enabled or (
+            user_id is not None and str(user_id) in set(self.kria_brief_binding_user_ids)
+        )
 
     def creative_brief_for(self, user_id: object) -> bool:
         """Global flag OR the per-account allowlist (allowlist only ever adds)."""

@@ -635,6 +635,7 @@ DispatchOutcome = Literal[
     # until the user revises it in the planner.
     "proposal_render_blocked",
     "proposal_replan_required",
+    "request_binding_stale",
     # A raw website/API Generate request raced with an active Main Creator
     # session. The caller must finish or cancel that typed plan instead of
     # bypassing it through the legacy renderer.
@@ -1420,6 +1421,7 @@ def _dispatch_item_render(
     creator_strategy: dict | None = None,
     creator_clip_order: list[int] | None = None,
     creator_request: str = "",
+    creator_brief_binding: dict | None = None,
     creator_guided_attempt_id: str | None = None,
     creator_render_shape: dict | None = None,
     speech_cleanup_contract: str | None = None,
@@ -1489,6 +1491,22 @@ def _dispatch_item_render(
         renderer_enabled_for_item,
     )
     from app.tasks.generative_build import orchestrate_generative_job  # noqa: PLC0415
+
+    if creator_brief_binding is not None:
+        from app.kria.brief_binding import (  # noqa: PLC0415
+            BriefBinding,
+            media_identity,
+            snapshot_media,
+        )
+
+        try:
+            pinned = BriefBinding.model_validate(creator_brief_binding)
+            if pinned.media_snapshot and media_identity(pinned.media_snapshot) != media_identity(
+                snapshot_media(item)
+            ):
+                return DispatchResult("request_binding_stale")
+        except ValueError:
+            return DispatchResult("request_binding_stale")
 
     audio_mode = getattr(item, "audio_mode", "kria")
     if audio_mode not in {"kria", "original", "voiceover", "song"}:
@@ -2204,6 +2222,26 @@ def _dispatch_item_render(
             **(job.assembly_plan or {}),
             "creator_generation_id": uuid.uuid4().hex,
         }
+        if creator_brief_binding is not None:
+            from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+
+            binding = BriefBinding.model_validate(creator_brief_binding)
+            from app.models import CreationThread  # noqa: PLC0415
+
+            thread = session.execute(
+                select(CreationThread).where(
+                    CreationThread.id == uuid.UUID(binding.thread_id),
+                    CreationThread.active_plan_item_id == item.id,
+                    CreationThread.creator_id == job.user_id,
+                )
+            ).scalar_one_or_none()
+            if thread is None:
+                raise ValueError("Approved request does not belong to this project")
+            binding.resolve(thread.id)
+            job.assembly_plan = {
+                **job.assembly_plan,
+                "creator_brief_binding": binding.model_dump(mode="json"),
+            }
         from app.services.creator_direction_snapshot import ensure_job_snapshot  # noqa: PLC0415
 
         ensure_job_snapshot(
@@ -2459,6 +2497,7 @@ def dispatch_item_render_for(
     creator_strategy: dict | None = None,
     creator_clip_order: list[int] | None = None,
     creator_request: str = "",
+    creator_brief_binding: dict | None = None,
     creator_guided_attempt_id: str | None = None,
     creator_render_shape: dict | None = None,
     speech_cleanup_contract: str | None = None,
@@ -2788,6 +2827,7 @@ def dispatch_item_render_for(
             creator_strategy=creator_strategy,
             creator_clip_order=creator_clip_order,
             creator_request=creator_request,
+            creator_brief_binding=creator_brief_binding,
             creator_guided_attempt_id=creator_guided_attempt_id,
             creator_render_shape=creator_render_shape,
             speech_cleanup_contract=speech_cleanup_contract,

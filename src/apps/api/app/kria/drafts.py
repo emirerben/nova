@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db_locks import CONTENT_PLAN_LOCK
 from app.kria.api_schemas import DraftSnapshotOut
+from app.kria.brief_binding import BriefBinding
 from app.kria.runtime import RuntimeFailure, _append_event, _owned_thread, _promote_queued_successor
 from app.models import (
     ContentPlan,
@@ -53,6 +54,8 @@ class KriaDraftDocument(BaseModel):
     # Opaque id of the client editor state this draft was built on (echoed, never
     # recomputed). Absent for drafts that predate it, so their hashes do not change.
     client_state_id: str | None = Field(default=None, max_length=64)
+    brief_binding: BriefBinding | None = None
+    brief_coverage: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def _shape_matches_kind(self) -> KriaDraftDocument:
@@ -85,6 +88,9 @@ def canonical_snapshot(document: KriaDraftDocument) -> tuple[dict[str, Any], str
         snapshot.pop("editor_text_diff", None)
     if snapshot.get("client_state_id") is None:
         snapshot.pop("client_state_id", None)
+    for field in ("brief_binding", "brief_coverage"):
+        if snapshot.get(field) is None:
+            snapshot.pop(field, None)
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8")
     if len(encoded) > MAX_DRAFT_BYTES:
         raise RuntimeFailure(
@@ -464,6 +470,18 @@ async def write_draft(
             recovery="refresh_replan",
             current_revision=int(target.thread.revision),
         )
+    snapshot = dict(snapshot)
+    for field in ("brief_binding", "brief_coverage"):
+        authoritative = (head.snapshot_json or {}).get(field)
+        if field in snapshot and snapshot[field] != authoritative:
+            raise RuntimeFailure(
+                422,
+                "draft_authority_read_only",
+                "Refresh the draft before saving this edit.",
+                phase="tool",
+                recovery="refresh_replan",
+            )
+        snapshot[field] = authoritative
     document = KriaDraftDocument.model_validate(snapshot)
     row = await _insert_revision(db, target=target, document=document, parent=head)
     await db.commit()

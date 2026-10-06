@@ -146,6 +146,8 @@ class RequirementReceipt(_KriaModel):
     """
 
     requirement_id: str = Field(min_length=1, max_length=24)
+    brief_version: int | None = Field(default=None, ge=0)
+    generation_id: str | None = None
     status: Literal["met", "partial", "not_possible"]
     reason: str | None = Field(default=None, max_length=300)
     inferred: list[str] = Field(default_factory=list, max_length=24)

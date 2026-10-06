@@ -49,7 +49,8 @@ Route = Literal["replan", "editor_ops"]
 # Two titles plus six dictated shot texts used all of the old 8, so a duration
 # or "no stock images" ask in the same message was cut (KRI-422).
 MAX_UPDATES_PER_TURN = 16
-MAX_LIVE_REQUIREMENTS = 40
+# This bounds a single planner response, not the ledger.  A larger model batch
+# is rejected as a whole so the caller can recover without losing its tail.
 MAX_BRIEF_REQUEST_CHARS = 9_000
 _SCOPE_RE = re.compile(r"^(title|per_clip|global|clip:[A-Za-z0-9._:-]{1,100})$")
 _MAX_FACTS_BYTES = 2_000
@@ -80,8 +81,11 @@ class _BriefModel(BaseModel):
 class BriefUpdate(_BriefModel):
     """One requirement as proposed by the planner model. Ids/status are server-owned."""
 
-    kind: RequirementKind
-    scope: str
+    operation: Literal["add", "change", "remove"] = "add"
+    target_requirement_id: str | None = Field(default=None, min_length=1, max_length=24)
+    expected_version: int | None = Field(default=None, ge=0)
+    kind: RequirementKind | None = None
+    scope: str | None = None
     literal: str | None = Field(default=None, max_length=200)
     description: str | None = Field(default=None, max_length=300)
     facts: dict[str, Any] = Field(default_factory=dict)
@@ -106,15 +110,39 @@ class BriefUpdate(_BriefModel):
     @classmethod
     def _facts(cls, value: object) -> dict[str, Any]:
         if not isinstance(value, dict):
-            return {}
+            raise ValueError("facts must be an object")
         try:
             encoded = json.dumps(value, ensure_ascii=False, default=str)
         except (TypeError, ValueError):
-            return {}
-        return value if len(encoded.encode("utf-8")) <= _MAX_FACTS_BYTES else {}
+            raise ValueError("facts must be JSON serializable") from None
+        if len(encoded.encode("utf-8")) > _MAX_FACTS_BYTES:
+            raise ValueError(f"facts exceed {_MAX_FACTS_BYTES} bytes")
+        return value
 
     @model_validator(mode="after")
     def _needs_content(self) -> BriefUpdate:
+        if self.operation == "remove":
+            if (
+                self.target_requirement_id is None
+                or self.expected_version is None
+                or self.literal is not None
+                or self.description is not None
+                or self.kind is not None
+                or self.scope is not None
+                or self.facts
+            ):
+                raise ValueError("remove needs only target_requirement_id and expected_version")
+            return self
+        if self.kind is None or self.scope is None:
+            raise ValueError("add/change need kind and scope")
+        if self.operation == "change" and self.target_requirement_id is None:
+            raise ValueError("change needs target_requirement_id")
+        if self.operation in {"change", "remove"} and self.expected_version is None:
+            raise ValueError("change/remove need expected_version")
+        if self.operation == "add" and (
+            self.target_requirement_id is not None or self.expected_version is not None
+        ):
+            raise ValueError("add cannot target a requirement or version")
         if not self.literal and not self.description:
             raise ValueError("a requirement needs a literal or a description")
         return self
@@ -170,24 +198,38 @@ class CreativeBrief(_BriefModel):
     version: int = Field(default=0, ge=0)
     requirements: list[BriefRequirement] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def _unique_requirement_ids(self) -> CreativeBrief:
+        ids = [req.id for req in self.requirements]
+        if len(ids) != len(set(ids)):
+            raise ValueError("duplicate requirement ids in creative brief")
+        return self
+
     def live(self) -> list[BriefRequirement]:
         return [req for req in self.requirements if req.live]
 
 
-def parse_brief_updates(raw: object) -> list[BriefUpdate]:
-    """Tolerant parse of the model's ``brief_updates``: drop bad entries, never raise.
+class BriefUpdateBatchError(ValueError):
+    """The model proposed a malformed or unsafe update batch."""
 
-    Requirement extraction is best-effort; a malformed entry must not fail the
-    whole planning turn (the plan itself is validated separately and strictly).
-    """
+
+def parse_brief_updates(raw: object) -> list[BriefUpdate]:
+    """Strictly parse a complete update batch without silently dropping entries."""
     if not isinstance(raw, list):
-        return []
+        if raw in (None, []):
+            return []
+        raise BriefUpdateBatchError("brief_updates must be a list")
+    if len(raw) > MAX_UPDATES_PER_TURN:
+        raise BriefUpdateBatchError(f"brief_updates exceeds {MAX_UPDATES_PER_TURN} entries")
     out: list[BriefUpdate] = []
-    for item in raw[:MAX_UPDATES_PER_TURN]:
+    for item in raw:
         try:
             out.append(BriefUpdate.model_validate(item))
         except (ValidationError, ValueError, TypeError):
-            continue
+            raise BriefUpdateBatchError("brief_updates contains an invalid entry") from None
+    targets = [update.target_requirement_id for update in out if update.operation != "add"]
+    if len(targets) != len(set(targets)):
+        raise BriefUpdateBatchError("brief_updates contains duplicate targets")
     return out
 
 
@@ -204,34 +246,14 @@ def merge_requirements(
     old: Iterable[BriefRequirement],
     new: Iterable[BriefRequirement],
 ) -> list[BriefRequirement]:
-    """Return the next ledger: a later requirement with the same key supersedes
-    the earlier one.
-
-    The key is (kind, scope), plus the shot for a dictated shot text (see
-    ``BriefRequirement.key``). A new (kind, scope)-keyed requirement also
-    supersedes every older shot text under that (kind, scope): "label each clip
-    with the place" replaces the whole per-clip lane, as it always did.
-
-    ``old`` items already superseded in a prior version are dropped (they live
-    in the older version rows); items superseded *by this merge* are kept,
-    flagged, so the transition is visible in the new version. Two entries in
-    ``new`` with the same key collapse to the last one.
-    """
-    fresh: dict[tuple[str, ...], BriefRequirement] = {}
+    """Append independent requirements, retaining stable-ID tombstones."""
+    merged = list(old)
+    known_ids = {req.id for req in merged}
     for req in new:
-        fresh[req.key] = req.model_copy(update={"status": "open"})
-    whole_lanes = {key for key in fresh if len(key) == 2}
-    merged: list[BriefRequirement] = []
-    for req in old:
-        if not req.live:
-            continue
-        if req.key in fresh or req.key[:2] in whole_lanes:
-            merged.append(req.model_copy(update={"status": "superseded"}))
-        else:
-            merged.append(req)
-    live_old = [req for req in merged if req.live]
-    room = MAX_LIVE_REQUIREMENTS - len(live_old)
-    merged.extend(list(fresh.values())[: max(room, 0)])
+        if req.id in known_ids:
+            raise BriefUpdateBatchError("duplicate requirement id")
+        merged.append(req.model_copy(update={"status": "open"}))
+        known_ids.add(req.id)
     return merged
 
 
@@ -243,9 +265,40 @@ def apply_updates(
 ) -> CreativeBrief:
     """Server-assign ids and merge ``updates`` into ``prior`` (version is set on persist)."""
     prior = prior or CreativeBrief()
+    updates = list(updates)
+    live_by_id = {req.id: req for req in prior.live()}
+    if any(
+        update.operation != "add" and update.expected_version != prior.version for update in updates
+    ):
+        raise BriefUpdateBatchError("change/remove requires the exact current brief version")
+    targets = [update.target_requirement_id for update in updates if update.operation != "add"]
+    if len(targets) != len(set(targets)):
+        raise BriefUpdateBatchError("conflicting updates target the same requirement")
+    for update in updates:
+        if update.operation != "add" and update.target_requirement_id not in live_by_id:
+            raise BriefUpdateBatchError("target requirement is missing or superseded")
     counter = _next_id_number(prior.requirements)
     incoming: list[BriefRequirement] = []
+    changed: dict[str, BriefRequirement] = {}
+    removed: set[str] = set()
     for update in updates:
+        if update.operation == "remove":
+            removed.add(update.target_requirement_id or "")
+            continue
+        if update.operation == "change":
+            target = live_by_id[update.target_requirement_id or ""]
+            changed[target.id] = target.model_copy(
+                update={
+                    "kind": update.kind,
+                    "scope": update.scope,
+                    "literal": update.literal,
+                    "description": update.description,
+                    "facts": update.facts,
+                    "source_turn_id": source_turn_id,
+                    "status": "open",
+                }
+            )
+            continue
         incoming.append(
             BriefRequirement(
                 id=f"r{counter}",
@@ -258,15 +311,27 @@ def apply_updates(
             )
         )
         counter += 1
-    return CreativeBrief(
-        version=prior.version, requirements=merge_requirements(prior.requirements, incoming)
-    )
+    requirements = []
+    for req in prior.requirements:
+        if req.id in removed and req.live:
+            requirements.append(req.model_copy(update={"status": "superseded"}))
+        elif req.id in changed and req.live:
+            requirements.append(changed[req.id])
+        else:
+            requirements.append(req)
+    requirements.extend(incoming)
+    return CreativeBrief(version=prior.version, requirements=requirements)
 
 
 def new_requirements(before: CreativeBrief | None, after: CreativeBrief) -> list[BriefRequirement]:
-    """Live requirements in ``after`` that are not already live in ``before``."""
-    known = {req.id for req in (before.live() if before else [])}
-    return [req for req in after.live() if req.id not in known]
+    """Live additions and changed requirements in ``after``."""
+    prior = {req.id: req for req in (before.live() if before else [])}
+    return [
+        req
+        for req in after.live()
+        if req.id not in prior
+        or req.model_dump(mode="json") != prior[req.id].model_dump(mode="json")
+    ]
 
 
 # --------------------------------------------------------------------------- router
@@ -542,21 +607,208 @@ def render_brief_request(brief: CreativeBrief | None, *, latest_message: str = "
 
     This replaces the chip-concatenated chat string: every live requirement is
     listed verbatim, so a requirement typed after a render can never be lost to
-    truncation or chip boilerplate.
+    truncation or chip boilerplate.  This is the persistence-safe full request;
+    bounded planning contexts are made by ``brief_context`` below.
     """
     lines: list[str] = []
     if brief is not None:
         for req in brief.live():
-            lines.append(f"- [{req.kind}/{req.scope}] {req.text()}")
+            lines.append(_render_requirement(req))
     if not lines:
         return _nfc(latest_message)
-    body = "Creative brief (everything the creator has asked for, still in force):\n" + "\n".join(
-        lines
+    body = (
+        f"Creative brief v{brief.version} (everything the creator has asked for, still in force):\n"
+        + "\n".join(lines)
     )
     latest = _nfc(latest_message)
     if latest:
         body += f"\nLatest message: {latest}"
-    return body[:MAX_BRIEF_REQUEST_CHARS]
+    return body
+
+
+class BriefCoverageError(ValueError):
+    """A bounded request cannot represent every applicable requirement intact."""
+
+
+# Compatibility spelling for callers that distinguish a recoverable supported
+# stage limit from invalid model output.
+BriefContextOverflow = BriefCoverageError
+
+
+class BriefCoverage(_BriefModel):
+    """Explicit accounting for requirements entering and leaving a context."""
+
+    applicable_ids: tuple[str, ...] = ()
+    retrieved_ids: tuple[str, ...] = ()
+    enforced_ids: tuple[str, ...] = ()
+    unresolved_ids: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _validate_subsets(self) -> BriefCoverage:
+        applicable = set(self.applicable_ids)
+        for name in ("retrieved_ids", "enforced_ids", "unresolved_ids"):
+            values = getattr(self, name)
+            if len(values) != len(set(values)) or not set(values) <= applicable:
+                raise ValueError(f"{name} must be a unique subset of applicable_ids")
+        return self
+
+    @property
+    def complete(self) -> bool:
+        return not self.unresolved_ids and set(self.applicable_ids) <= (
+            set(self.retrieved_ids) | set(self.enforced_ids)
+        )
+
+    def mark_retrieved(self, ids: Iterable[str]) -> BriefCoverage:
+        seen = set(self.retrieved_ids) | set(ids)
+        if not seen <= set(self.applicable_ids):
+            raise BriefCoverageError("retrieved ids must be applicable")
+        return self.model_copy(update={"retrieved_ids": tuple(sorted(seen))})
+
+    def mark_seen(self, ids: Iterable[str]) -> BriefCoverage:
+        return self.mark_retrieved(ids)
+
+    def mark_enforced(self, ids: Iterable[str]) -> BriefCoverage:
+        enforced = set(self.enforced_ids) | set(ids)
+        if not enforced <= set(self.applicable_ids):
+            raise BriefCoverageError("enforced ids must be applicable")
+        return self.model_copy(
+            update={
+                "enforced_ids": tuple(sorted(enforced)),
+                "unresolved_ids": tuple(sorted(set(self.applicable_ids) - enforced)),
+            }
+        )
+
+
+@dataclass(frozen=True)
+class BriefRequestBatch:
+    text: str
+    requirement_ids: tuple[str, ...]
+    latest_message: str
+
+
+@dataclass(frozen=True)
+class BriefContext:
+    batches: tuple[BriefRequestBatch, ...]
+    coverage: BriefCoverage
+
+    def __iter__(self):
+        yield self.batches
+        yield self.coverage
+
+
+def applicable_requirements(
+    brief: CreativeBrief | None,
+    *,
+    stage: str | None = None,
+    scope: str | None = None,
+    target_clip_id: str | None = None,
+) -> list[BriefRequirement]:
+    """Return live requirements matching the requested planning slice."""
+    if brief is None:
+        return []
+    result: list[BriefRequirement] = []
+    for req in brief.live():
+        if scope is not None and req.scope != scope:
+            continue
+        if target_clip_id is not None and req.scope not in {
+            "global",
+            "per_clip",
+            f"clip:{target_clip_id}",
+        }:
+            continue
+        if stage is not None and req.facts.get("stage") not in {None, stage}:
+            continue
+        result.append(req)
+    return result
+
+
+def _render_requirement(req: BriefRequirement) -> str:
+    facts = (
+        " facts=" + json.dumps(req.facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if req.facts
+        else ""
+    )
+    return f"- [{req.id}] [{req.kind}/{req.scope}] {req.text()}{facts}"
+
+
+def batch_brief_requests(
+    brief: CreativeBrief | None,
+    *,
+    latest_message: str = "",
+    stage: str | None = None,
+    scope: str | None = None,
+    target_clip_id: str | None = None,
+    max_chars: int = MAX_BRIEF_REQUEST_CHARS,
+) -> list[BriefRequestBatch]:
+    """Batch whole entries without dropping requirements or latest-message text."""
+    if max_chars <= 0:
+        raise ValueError("max_chars must be positive")
+    reqs = applicable_requirements(brief, stage=stage, scope=scope, target_clip_id=target_clip_id)
+    latest = _nfc(latest_message)
+    version = brief.version if brief is not None else 0
+    prefix = f"Creative brief v{version} (everything the creator has asked for, still in force):\n"
+    suffix = f"\nLatest message: {latest}" if latest else ""
+    if len(prefix) + len(suffix) > max_chars:
+        raise BriefCoverageError("latest message cannot fit planning budget")
+    batches: list[BriefRequestBatch] = []
+    current: list[BriefRequirement] = []
+    for req in reqs:
+        candidate = prefix + "\n".join(_render_requirement(row) for row in [*current, req]) + suffix
+        if len(candidate) <= max_chars:
+            current.append(req)
+            continue
+        if not current:
+            raise BriefCoverageError(f"requirement {req.id} cannot fit planning budget")
+        batches.append(
+            BriefRequestBatch(
+                prefix + "\n".join(_render_requirement(row) for row in current) + suffix,
+                tuple(row.id for row in current),
+                latest,
+            )
+        )
+        current = [req]
+        if len(prefix + _render_requirement(req) + suffix) > max_chars:
+            raise BriefCoverageError(f"requirement {req.id} cannot fit planning budget")
+    if current:
+        batches.append(
+            BriefRequestBatch(
+                prefix + "\n".join(_render_requirement(row) for row in current) + suffix,
+                tuple(row.id for row in current),
+                latest,
+            )
+        )
+    return batches
+
+
+def brief_context(
+    brief: CreativeBrief | None,
+    *,
+    latest_message: str = "",
+    stage: str | None = None,
+    scope: str | None = None,
+    target_clip_id: str | None = None,
+    max_batches: int = 3,
+    max_chars: int = MAX_BRIEF_REQUEST_CHARS,
+) -> BriefContext:
+    """Build bounded context with explicit initial coverage accounting."""
+    if max_batches <= 0:
+        raise ValueError("max_batches must be positive")
+    reqs = applicable_requirements(brief, stage=stage, scope=scope, target_clip_id=target_clip_id)
+    batches = batch_brief_requests(
+        brief,
+        latest_message=latest_message,
+        stage=stage,
+        scope=scope,
+        target_clip_id=target_clip_id,
+        max_chars=max_chars,
+    )
+    if len(batches) > max_batches:
+        raise BriefCoverageError("applicable requirements exceed context batch budget")
+    ids = tuple(req.id for req in reqs)
+    return BriefContext(
+        batches=tuple(batches),
+        coverage=BriefCoverage(applicable_ids=ids, unresolved_ids=ids),
+    )
 
 
 def apply_receipt_statuses(
@@ -579,13 +831,11 @@ def apply_receipt_statuses(
 def _brief_from_row(row: CreativeBriefVersion | None) -> CreativeBrief | None:
     if row is None:
         return None
-    reqs: list[BriefRequirement] = []
-    for item in row.requirements or []:
-        try:
-            reqs.append(BriefRequirement.model_validate(item))
-        except (ValidationError, ValueError):
-            continue
-    return CreativeBrief(version=int(row.version), requirements=reqs)
+    # A corrupt historical row requires recovery. Returning only its valid
+    # prefix would silently discard a creator requirement.
+    return CreativeBrief.model_validate(
+        {"version": int(row.version), "requirements": row.requirements or []}
+    )
 
 
 async def load_latest_brief(db: Any, thread_id: uuid.UUID) -> CreativeBrief | None:
@@ -660,12 +910,21 @@ def persist_brief_version_sync(
 
 
 __all__ = [
+    "BriefContextOverflow",
+    "BriefCoverage",
+    "BriefCoverageError",
+    "BriefContext",
+    "BriefRequestBatch",
     "BriefRequirement",
+    "BriefUpdateBatchError",
     "BriefUpdate",
     "CreativeBrief",
     "CurrentPlanShape",
     "apply_receipt_statuses",
     "apply_updates",
+    "applicable_requirements",
+    "batch_brief_requests",
+    "brief_context",
     "load_latest_brief",
     "load_latest_brief_sync",
     "merge_requirements",

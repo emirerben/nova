@@ -4717,15 +4717,14 @@ def _run_phone_voiceover_montage_job(
 
 
 def _load_unified_montage_inputs(job_id: str) -> tuple[Any, list[dict], Any]:
-    """(user_id, the item's clip assignments, the thread's latest Creative Brief).
+    """Read owned media assignments and the job's immutable approved brief.
 
-    Read-only and short: no lock survives into the landmark/planning work. The
-    brief is None unless the Creative Brief is on for this account and the job's
-    item belongs to a thread that has one.
+    Reader behavior is independent of writer flags. Legacy jobs retain their
+    saved creator_request; a worker never imports a later thread requirement.
     """
     from sqlalchemy import select  # noqa: PLC0415
 
-    from app.kria.brief import load_latest_brief_sync  # noqa: PLC0415
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
     from app.models import CreationThread, PlanItem  # noqa: PLC0415
 
     with _sync_session() as db:
@@ -4741,16 +4740,26 @@ def _load_unified_montage_inputs(job_id: str) -> tuple[Any, list[dict], Any]:
             if isinstance(row, dict)
         ]
         brief = None
-        if item is not None and settings.creative_brief_for(user_id):
+        raw_binding = (job.assembly_plan or {}).get("creator_brief_binding")
+        if raw_binding is not None:
+            binding = BriefBinding.model_validate(raw_binding)
             thread_id = db.execute(
-                select(CreationThread.id)
-                .where(
-                    CreationThread.active_plan_item_id == item.id,
+                select(CreationThread.id).where(
+                    CreationThread.id == uuid.UUID(binding.thread_id),
+                    CreationThread.active_plan_item_id == item_id,
                     CreationThread.creator_id == user_id,
                 )
-                .limit(1)
             ).scalar_one_or_none()
-            brief = load_latest_brief_sync(db, thread_id) if thread_id is not None else None
+            if thread_id is None:
+                raise ValueError("Approved brief ownership is unavailable; recovery required")
+            brief = binding.resolve(thread_id)
+            if binding.media_snapshot:
+                assignments = [
+                    dict(row)
+                    for row in binding.media_snapshot.get("clip_assignments") or []
+                    if isinstance(row, dict)
+                ]
+        # Legacy jobs retain their immutable creator_request. Never import live memory.
     return user_id, assignments, brief
 
 
@@ -5323,7 +5332,11 @@ def _run_phone_unified_montage_job(
         )
 
         record["requirement_receipts"] = [
-            receipt.model_dump(mode="json")
+            {
+                **receipt.model_dump(mode="json"),
+                "brief_version": brief.version,
+                "generation_id": generation,
+            }
             for receipt in build_receipts(brief.live(), plan_facts_from_unified_montage(record))
         ]
 
