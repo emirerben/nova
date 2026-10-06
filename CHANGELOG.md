@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.95.0] - 2026-10-06
+
+### Changed
+- feat(ios): save all slides to Photos from the header, no blur on slide switch, cleaner AI sheet (KRI-305) (#1412) <!-- release-pr: 1412 -->
+
 ## [0.78.94.0] - 2026-10-06
 
 ### Changed
