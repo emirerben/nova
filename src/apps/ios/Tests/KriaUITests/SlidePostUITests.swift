@@ -828,6 +828,55 @@ import XCTest
         attach(app, "Text panel style chips")
     }
 
+    /// KRI-305: on a small phone the keyboard used to hide the Add text / Apply row (and the stage kept
+    /// growing past the KRI-185 120pt rule). Run on an iPhone SE class simulator for the real constraint.
+    func testAddTextStaysHittableWithKeyboardUpAndStagePinnedTo120() {
+        let app = openRichWorkspace()
+        app.buttons["slidepost-tool-text"].tap()
+        let field = app.textViews["slidepost-text-field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        sleep(1) // layout animation
+        let add = app.buttons["slidepost-add-text"]
+        XCTAssertTrue(add.waitForExistence(timeout: 3), "Add text is on screen with the keyboard up")
+        XCTAssertTrue(add.isHittable, "Add text is hittable with the keyboard up")
+        XCTAssertLessThanOrEqual(add.frame.maxY, keyboard.frame.minY + 1, "Add text sits above the keyboard")
+        XCTAssertTrue(field.isHittable, "the edit field stays usable too")
+        XCTAssertLessThanOrEqual(field.frame.maxY, keyboard.frame.minY + 1, "the whole edit field sits above the keyboard")
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        XCTAssertTrue(preview.exists)
+        XCTAssertEqual(preview.frame.height, 120, accuracy: 2, "typing pins the stage to 120pt (shrink, never cover)")
+        attach(app, "Small phone: keyboard up")
+        let canvasTexts = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'slidepost-canvas-text-'"))
+        let before = canvasTexts.count
+        add.tap()
+        expectation(for: NSPredicate(format: "count > %d", before), evaluatedWith: canvasTexts); waitForExpectations(timeout: 5)
+    }
+
+    /// KRI-305: one pass over the slide screens at an accessibility Dynamic Type size (only accessibility5 is
+    /// honoured by the app-level UI-test override, so that is the size used).
+    func testSlideScreensAtAccessibilityTypeSizeStayReachable() {
+        let app = openRichWorkspace(dynamicType: "accessibility5")
+        XCTAssertTrue(app.buttons["slidepost-tile-1"].isHittable, "strip tile")
+        XCTAssertTrue(app.buttons["slidepost-tool-text"].isHittable, "tool dock")
+        attach(app, "A11y type: browse")
+        app.buttons["slidepost-tool-text"].tap()
+        let field = app.textViews["slidepost-text-field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["slidepost-done"].waitForExistence(timeout: 3) || app.buttons["slidepost-add-text"].exists)
+        attach(app, "A11y type: text panel, no keyboard")
+        field.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        sleep(1)
+        let add = app.buttons["slidepost-add-text"]
+        XCTAssertTrue(add.exists, "Add text exists at large type")
+        XCTAssertTrue(add.isHittable, "Add text is hittable at large type with the keyboard up")
+        XCTAssertLessThanOrEqual(add.frame.maxY, app.keyboards.firstMatch.frame.minY + 1)
+        attach(app, "A11y type: text panel, keyboard up")
+    }
+
     // MARK: One layout in every entry path and capability state
 
     /// The slide editor, whatever loaded or didn't: tool dock, "+ Add" LAST in the strip with the tiles'
@@ -1001,11 +1050,34 @@ import XCTest
             let started = Date()
             app.buttons[tile].tap()
             XCTAssertFalse(loading.exists, "no loading indicator right after selecting \(tile)")
+            XCTAssertFalse(app.descendants(matching: .any)["slidepost-preview-blurred"].exists, "no blur state right after selecting \(tile)")
             XCTAssertTrue(image.exists, "the photo is on screen immediately")
             switches.append(Date().timeIntervalSince(started))
         }
         attach(app, "After switching slides")
         print("KRIA_SLIDE_TIMING first-visible=\(String(format: "%.3f", firstVisible))s switch-taps=\(switches.map { String(format: "%.3f", $0) })")
+    }
+
+    /// KRI-305: after adding text, the next slide used to flash its blurred thumbnail because the NSCache had
+    /// dropped the previews under text-mode memory pressure. `EVICT_ON_TEXT` reproduces that eviction
+    /// deterministically; the media delay makes any async fallback (network or disk) visible.
+    func testSwitchingSlidesAfterAddingTextNeverShowsTheBlur() {
+        let app = openRichWorkspace(save: false, extraEnv: [
+            "KRIA_SLIDE_POST_REMOTE_MEDIA": "1", "KRIA_SLIDE_POST_MEDIA_DELAY_MS": "900", "KRIA_SLIDE_POST_EVICT_ON_TEXT": "1",
+        ])
+        let image = app.descendants(matching: .any)["slidepost-preview-image"]
+        let blurred = app.descendants(matching: .any)["slidepost-preview-blurred"]
+        XCTAssertTrue(image.waitForExistence(timeout: 10))
+        expectation(for: NSPredicate(format: "value ENDSWITH '|full'"), evaluatedWith: image); waitForExpectations(timeout: 15)
+        sleep(4) // neighbours + disk copies are written in the background
+        addText(app, "Athens")
+        for tile in ["slidepost-tile-3", "slidepost-tile-1", "slidepost-tile-3", "slidepost-tile-1"] {
+            app.buttons[tile].tap()
+            let value = image.value as? String ?? "<none>"
+            XCTAssertTrue(value.hasSuffix("|full"), "right after \(tile) the full preview is showing, not the blur (\(value))")
+            XCTAssertFalse(blurred.exists, "no blurred thumbnail right after \(tile)")
+        }
+        attach(app, "After add text then switching slides")
     }
 
     private func scrollTo(_ element: XCUIElement, app: XCUIApplication) {

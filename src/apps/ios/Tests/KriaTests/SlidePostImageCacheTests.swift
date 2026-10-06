@@ -18,6 +18,8 @@ final class SlidePostImageCacheTests: XCTestCase {
     private final class Counter: @unchecked Sendable {
         private let lock = NSLock(); private var value = 0
         func bump() { lock.withLock { value += 1 } }
+        func drop() { lock.withLock { value -= 1 } }
+        func setMax(_ candidate: Int) { lock.withLock { value = Swift.max(value, candidate) } }
         var count: Int { lock.withLock { value } }
     }
     private func cache(fetches: Counter, delayMs: UInt64 = 0, failWith: Error? = nil) -> SlidePostImageCache {
@@ -84,6 +86,55 @@ final class SlidePostImageCacheTests: XCTestCase {
         }
         XCTAssertNotNil(cache.cachedImage(assetID: "a", variant: .preview))
         XCTAssertNotNil(cache.cachedImage(assetID: "b", variant: .preview))
+    }
+
+    // MARK: Working set (KRI-305: no blur after memory pressure)
+
+    func testWorkingSetSurvivesNSCacheEviction() async throws {
+        let fetches = Counter(); let cache = cache(fetches: fetches)
+        cache.setWorkingSet(assetIDs: ["a", "b"])
+        _ = try await cache.image(assetID: "a", variant: .preview, url: url("x"))
+        _ = try await cache.image(assetID: "c", variant: .preview, url: url("z"))
+        cache.evictPreviewsFromMemory(assetIDs: ["a", "c"])   // what the OS does to the NSCache under pressure
+        XCTAssertNotNil(cache.cachedImage(assetID: "a", variant: .preview), "pinned slide is still instantly available")
+        XCTAssertNil(cache.cachedImage(assetID: "c", variant: .preview), "an unpinned slide is evictable")
+        XCTAssertEqual(cache.lookup(assetID: "a", variant: .preview)?.tier, .workingSet)
+        XCTAssertEqual(fetches.count, 2, "no refetch")
+    }
+
+    func testWorkingSetDropsSlidesThatLeaveTheWindow() async throws {
+        let fetches = Counter(); let cache = cache(fetches: fetches)
+        cache.setWorkingSet(assetIDs: ["a"])
+        _ = try await cache.image(assetID: "a", variant: .preview, url: url("x"))
+        XCTAssertEqual(cache.workingSetCount, 1)
+        cache.setWorkingSet(assetIDs: ["b"])
+        XCTAssertEqual(cache.workingSetCount, 0)
+    }
+
+    func testSelectedSlideIsReadSynchronouslyFromDiskWhenEvicted() async throws {
+        let fetches = Counter(); let cache = cache(fetches: fetches)
+        _ = try await cache.image(assetID: "a", variant: .preview, url: url("x"))
+        cache.evictPreviewsFromMemory(assetIDs: ["a"])
+        XCTAssertNil(cache.cachedImage(assetID: "a", variant: .preview))
+        let hit = try XCTUnwrap(cache.lookup(assetID: "a", variant: .preview), "disk copy decodes synchronously, no blur frame")
+        XCTAssertEqual(hit.tier, .syncDisk)
+        XCTAssertEqual(fetches.count, 1)
+        XCTAssertNotNil(cache.cachedImage(assetID: "a", variant: .preview), "and is back in memory afterwards")
+    }
+
+    func testPrefetchCapsConcurrency() async throws {
+        let live = Counter(), peak = Counter()
+        let data = jpeg(width: 800, height: 600)
+        let cache = SlidePostImageCache(directory: directory) { _ in
+            live.bump(); peak.setMax(live.count)
+            try await Task.sleep(nanoseconds: 60_000_000)
+            live.drop()
+            return data
+        }
+        cache.prefetch((0..<9).map { .init(assetID: "p\($0)", variant: .preview, url: url("s\($0)")) })
+        for _ in 0..<100 where cache.cachedImage(assetID: "p8", variant: .preview) == nil { try await Task.sleep(nanoseconds: 50_000_000) }
+        XCTAssertNotNil(cache.cachedImage(assetID: "p8", variant: .preview))
+        XCTAssertLessThanOrEqual(peak.count, SlidePostImageCache.prefetchConcurrency)
     }
 
     // MARK: Prefetch plan
