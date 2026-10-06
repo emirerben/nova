@@ -60,6 +60,37 @@ private actor PausedSessionPublisher: DeviceRenderPublishing {
     }
 }
 
+/// Holds the coordinator after it records localReady but before publication.
+private actor LocalReadySessionPublisher: DeviceRenderPublishing {
+    private var checks = 0
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private let ready: XCTestExpectation
+    private var released = false
+
+    init(ready: XCTestExpectation) { self.ready = ready }
+
+    func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool {
+        checks += 1
+        if checks == 2, !released {
+            await withCheckedContinuation { continuation in
+                releaseContinuation = continuation
+                ready.fulfill()
+            }
+        }
+        return true
+    }
+
+    func release() {
+        released = true
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
+        .published
+    }
+}
+
 private actor SessionRequest {
     var request: DeviceRenderRequest
     init(_ request: DeviceRenderRequest) { self.request = request }
@@ -111,6 +142,34 @@ private actor RetryGate {
     private let enabled = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.map(\.rawValue))
     /// KRI-132: every feature except `narrationAudio`, for the "not yet verified" voiceover cases.
     private let enabledWithoutNarration = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.filter { $0 != .narrationAudio }.map(\.rawValue))
+
+    func testObservationCapturesLocalReadyAndBusyTogether() async throws {
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let ready = expectation(description: "Coordinator reached localReady before publication")
+        let publisher = LocalReadySessionPublisher(ready: ready)
+        let coordinator = try DeviceRenderCoordinator(directory: output, exporter: SessionExport(), sources: SessionSources(), publisher: publisher)
+        try await coordinator.start(request(UUID()), decision: CapabilityDecision(route: .local, reason: nil))
+        await fulfillment(of: [ready], timeout: 3)
+
+        let pending = await coordinator.observationSnapshot()
+        let legacyReceipt = await coordinator.snapshot()
+        await publisher.release()
+        await coordinator.waitUntilIdle()
+        let legacyBusy = await coordinator.isBusy()
+        let finished = await coordinator.observationSnapshot()
+
+        // The old observer could combine these separate reads and stop on
+        // localReady forever, although publication had already succeeded.
+        XCTAssertEqual(legacyReceipt?.phase, .localReady)
+        XCTAssertFalse(legacyBusy)
+        // A single actor read retains the liveness belonging to its receipt.
+        XCTAssertEqual(pending.receipt?.phase, .localReady)
+        XCTAssertTrue(pending.isBusy)
+        XCTAssertEqual(finished.receipt?.phase, .synced)
+        XCTAssertFalse(finished.isBusy)
+        XCTAssertNil(finished.exportProgress)
+    }
 
     func testDisabledGateNeverStartsExport() async throws {
         let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
