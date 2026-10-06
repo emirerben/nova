@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.104.0] - 2026-10-06
+
+### Changed
+- fix(slides): header shadow no longer clipped into a grey band (KRI-462) (#1422) <!-- release-pr: 1422 -->
+
 ## [0.78.103.0] - 2026-10-06
 
 ### Changed
