@@ -25,7 +25,8 @@ final class SlidePostImageCache: @unchecked Sendable {
         let variant: Variant
         let url: URL
     }
-    struct Stats: Equatable, Sendable { var memoryHits = 0, diskHits = 0, network = 0 }
+    struct Stats: Equatable, Sendable { var memoryHits = 0, diskHits = 0, network = 0, workingSetHits = 0, syncDiskHits = 0 }
+    enum Tier: String, Sendable { case memory, workingSet, syncDisk }
 
     static let shared = SlidePostImageCache()
 
@@ -35,6 +36,13 @@ final class SlidePostImageCache: @unchecked Sendable {
     private let lock = NSLock()
     private var inflight: [String: Task<UIImage, Error>] = [:]
     private var counts = Stats()
+    /// Strongly-held working set (selected slide +/- radius, preview size). `NSCache` may evict ANY entry
+    /// under memory pressure (text mode + keyboard is exactly when that happens), which made the next slide
+    /// show its blurred thumbnail while the preview re-decoded. These are never evicted by the OS.
+    private var pinnedIDs: Set<String> = []
+    private var pinned: [String: UIImage] = [:]
+    private var prefetchTask: Task<Void, Never>?
+    static let prefetchConcurrency = 3
     private let log = Logger(subsystem: "com.kria.app", category: "slidepost-images")
 
     init(directory: URL? = nil, fetch: @escaping Fetcher = SlidePostImageCache.defaultFetch) {
@@ -59,7 +67,50 @@ final class SlidePostImageCache: @unchecked Sendable {
     /// Instant, main-thread-safe lookup. Nil when the image is not decoded in memory yet.
     func cachedImage(assetID: String, variant: Variant) -> UIImage? {
         if bypass { return nil }
-        return memory.object(forKey: Self.key(assetID, variant) as NSString)
+        let key = Self.key(assetID, variant)
+        if let hit = memory.object(forKey: key as NSString) { return hit }
+        return lock.withLock { pinned[key] }
+    }
+
+    /// Lookup for the SELECTED slide: memory, the pinned working set, then a synchronous disk read (a
+    /// ~1600px JPEG decode is a few ms, far cheaper than a visible blur-up frame). Reports which tier hit.
+    func lookup(assetID: String, variant: Variant) -> (image: UIImage, tier: Tier)? {
+        if bypass { return nil }
+        let key = Self.key(assetID, variant)
+        if let hit = memory.object(forKey: key as NSString) { return (hit, .memory) }
+        if let hit = lock.withLock({ pinned[key] }) {
+            memory.setObject(hit, forKey: key as NSString, cost: Self.cost(hit))
+            lock.withLock { counts.workingSetHits += 1 }
+            return (hit, .workingSet)
+        }
+        let file = directory.appending(path: Self.fileName(key))
+        guard let data = try? Data(contentsOf: file), let image = Self.decode(data, maxPixel: variant.maxPixel) else { return nil }
+        store(image, key: key)
+        lock.withLock { counts.syncDiskHits += 1 }
+        return (image, .syncDisk)
+    }
+
+    /// Writes to the NSCache and, when the asset is in the working set, to the pinned copy too.
+    private func store(_ image: UIImage, key: String) {
+        memory.setObject(image, forKey: key as NSString, cost: Self.cost(image))
+        lock.withLock { if pinnedIDs.contains(key) { pinned[key] = image } }
+    }
+
+    /// Declares which preview keys must survive eviction, keeping whatever is already decoded.
+    func setWorkingSet(assetIDs: [String]) {
+        let keys = Set(assetIDs.map { Self.key($0, .preview) })
+        lock.withLock {
+            pinnedIDs = keys
+            pinned = pinned.filter { keys.contains($0.key) }
+        }
+        for key in keys { if let hit = memory.object(forKey: key as NSString) { lock.withLock { pinned[key] = hit } } }
+    }
+    var workingSetCount: Int { lock.withLock { pinned.count } }
+
+    /// Memory-pressure stand-in: drops these assets' decoded previews from the NSCache only (the pinned
+    /// working set and the disk copies stay; thumbnails stay so the blur-up path is the one exercised).
+    func evictPreviewsFromMemory(assetIDs: [String]) {
+        for id in assetIDs { memory.removeObject(forKey: Self.key(id, .preview) as NSString) }
     }
 
     /// Memory, then disk, then network. Never touches the main thread for decoding.
@@ -70,7 +121,12 @@ final class SlidePostImageCache: @unchecked Sendable {
             return image
         }
         if let hit = memory.object(forKey: key as NSString) {
-            lock.withLock { counts.memoryHits += 1 }
+            lock.withLock { counts.memoryHits += 1; if pinnedIDs.contains(key) { pinned[key] = hit } }
+            return hit
+        }
+        if let hit = lock.withLock({ pinned[key] }) {
+            memory.setObject(hit, forKey: key as NSString, cost: Self.cost(hit))
+            lock.withLock { counts.workingSetHits += 1 }
             return hit
         }
         let task: Task<UIImage, Error> = lock.withLock {
@@ -85,17 +141,32 @@ final class SlidePostImageCache: @unchecked Sendable {
         return try await task.value
     }
 
-    /// Warms the cache in the background; failures (including an expired URL) are ignored.
-    func prefetch(_ requests: [Request]) {
-        for request in requests where cachedImage(assetID: request.assetID, variant: request.variant) == nil {
-            Task.detached(priority: .utility) { [self] in
-                _ = try? await image(assetID: request.assetID, variant: request.variant, url: request.url)
+    /// Warms the cache in the background with capped concurrency, in request order (the caller queues the
+    /// selected slide's +/-1 previews first, then +/-2, then thumbnails). Failures (including an expired URL)
+    /// are ignored. `workingSet` (asset ids) is pinned against eviction. A newer call supersedes an older one.
+    func prefetch(_ requests: [Request], workingSet: [String]? = nil) {
+        if let workingSet { setWorkingSet(assetIDs: workingSet) }
+        let todo = requests.filter { cachedImage(assetID: $0.assetID, variant: $0.variant) == nil }
+        guard !todo.isEmpty else { return }
+        let limit = Self.prefetchConcurrency
+        let task = Task.detached(priority: .utility) { [self] in
+            await withTaskGroup(of: Void.self) { group in
+                var next = 0
+                func launch() {
+                    guard next < todo.count, !Task.isCancelled else { return }
+                    let request = todo[next]; next += 1
+                    group.addTask { _ = try? await self.image(assetID: request.assetID, variant: request.variant, url: request.url) }
+                }
+                for _ in 0..<limit { launch() }
+                while await group.next() != nil { launch() }
             }
         }
+        lock.withLock { prefetchTask?.cancel(); prefetchTask = task }
     }
 
     func removeAll() {
         memory.removeAllObjects()
+        lock.withLock { pinned = [:] }
         try? FileManager.default.removeItem(at: directory)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
@@ -105,7 +176,10 @@ final class SlidePostImageCache: @unchecked Sendable {
     private func load(key: String, variant: Variant, url: URL) async throws -> UIImage {
         let file = directory.appending(path: Self.fileName(key))
         if let data = try? Data(contentsOf: file), let image = Self.decode(data, maxPixel: variant.maxPixel) {
-            memory.setObject(image, forKey: key as NSString, cost: Self.cost(image))
+            #if DEBUG
+            await SlidePostImageFixtures.diskDelay()
+            #endif
+            store(image, key: key)
             lock.withLock { counts.diskHits += 1 }
             return image
         }
@@ -113,7 +187,7 @@ final class SlidePostImageCache: @unchecked Sendable {
         let data = try await fetch(url)
         guard let image = Self.decode(data, maxPixel: variant.maxPixel) else { throw LoadError.failed }
         lock.withLock { counts.network += 1 }
-        memory.setObject(image, forKey: key as NSString, cost: Self.cost(image))
+        store(image, key: key)
         if let jpeg = image.jpegData(compressionQuality: 0.88) { try? jpeg.write(to: file, options: .atomic) }
         // Every rendition of one asset is the same picture: a full-size download also yields the
         // thumbnail, so the strip tile (and the blur-up placeholder) never costs a second request.
@@ -202,6 +276,14 @@ enum SlidePostImageFixtures {
     static var isActive: Bool {
         ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") && ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_REMOTE_MEDIA"] == "1"
     }
+    /// Async (non-pinned) disk loads sleep the same delay as the "network", standing in for a slow decode on a
+    /// loaded device, so a view that falls back to the async path is observable.
+    static func diskDelay() async {
+        guard isActive, let ms = ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_MEDIA_DELAY_MS"].flatMap(UInt64.init) else { return }
+        try? await Task.sleep(nanoseconds: ms * 1_000_000)
+    }
+    /// `KRIA_SLIDE_POST_EVICT_ON_TEXT=1`: opening text mode evicts the slides' previews from the NSCache.
+    static var evictOnText: Bool { isActive && ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_EVICT_ON_TEXT"] == "1" }
     static var cacheDisabled: Bool { isActive && ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_NO_IMAGE_CACHE"] == "1" }
     static func fetch(_ url: URL) async throws -> Data? {
         guard isActive, url.host == "fixture.invalid" else { return nil }

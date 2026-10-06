@@ -554,7 +554,7 @@ The backend-only flag defaults false and must be set on API and worker together.
 Phone narrated edits without a filming guide (`_run_phone_narrated_job`'s
 auto-segment branch) used to give clip *i* the *i*-th equal-duration bucket of
 the transcript, so each clip played a step or two before the voice reached it.
-With `NARRATED_CLIP_ALIGNMENT_ENABLED=true` (separate rollout; default false) the worker first asks
+With `NARRATED_CLIP_ALIGNMENT_ENABLED=true` (default) the worker first asks
 `NarratedClipAlignmentAgent` (`nova.compose.narrated_clip_alignment`) which
 voiceover word each clip should start on, from the timed words, each clip's
 visual description, the creator's shot labels (resolved clip intents) and the
@@ -562,14 +562,15 @@ creator request. `order_locked` (a filming-guide order or any `order` clip
 intent) pins the clip order; otherwise the agent may reorder. The agent never
 owns timestamps: `app.pipeline.narrated_alignment.resolve_aligned_steps` turns
 the chosen words into contiguous windows (first step starts at 0.0, minimum step
-1.5 s by pulling boundaries earlier). Any precondition miss (<2 clips, no/too
+1.5 s by pulling boundaries earlier). For legacy unbound jobs, a precondition miss (<2 clips, no/too
 many words, missing clip metadata), agent error or unresolvable result falls
 back to the equal-bucket split and records a `narrated`/`narrated_clip_alignment`
 pipeline event (`status` `aligned` / `fallback` + `reason`) for the admin
-job-debug view. The scripted filming-guide branch and the cloud
+job-debug view. Bound multi-clip requests instead preserve the draft and ask
+before using a simpler sequence when alignment is unavailable. The scripted filming-guide branch and the cloud
 `_render_narrated_variant` path are untouched. Kill switch:
 `fly secrets set NARRATED_CLIP_ALIGNMENT_ENABLED=false --app nova-video` + worker
-restart (byte-identical to the bucket split). Eval:
+restart (restores the bucket split for unbound jobs; bound requests ask for recovery). Eval:
 `tests/evals/test_narrated_clip_alignment_evals.py` (goldens recorded from the
 cacio e pepe job).
 

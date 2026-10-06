@@ -535,7 +535,13 @@ private struct SlidePostItemResponse: Decodable {
     private func adopt(_ result: SlidePostState) {
         let remoteVersion = result.draft?.version ?? 0
         guard remoteVersion >= baseVersion else { return }
-        let wasDirty = draft.map { local in baselineDraft.map { !local.hasSameContent(as: $0) } ?? true } ?? false
+        // Without a remembered baseline (a fresh session, or a restored draft saved before baselines were
+        // kept) the server's draft IS the baseline: a local copy equal to it is clean, so a post just
+        // opened from the gallery never reads "Unsaved changes". With no server draft either, the local
+        // draft is a never-saved seed and stays unsaved.
+        let wasDirty = draft.map { local in
+            (baselineDraft ?? result.draft).map { !local.hasSameContent(as: $0) } ?? true
+        } ?? false
         state = result
         baselineDraft = result.draft
         // A clean copy follows the server; unsaved edits stay and simply rebase onto the new version.
@@ -839,7 +845,8 @@ private struct SlidePostItemResponse: Decodable {
     /// "start your post" screen. Nothing reaches the server until the user saves. Returns true when seeded.
     @discardableResult
     func seedDraftIfNeeded() -> Bool {
-        guard !isBusy, !isChatting, draft == nil, proposal == nil, state != nil, !readyAssets.isEmpty else { return false }
+        // A post that already has a server draft adopts it (see `adopt`); only a post with none is seeded.
+        guard !isBusy, !isChatting, draft == nil, proposal == nil, let state, state.draft == nil, !readyAssets.isEmpty else { return false }
         let ready = readyAssets
         let profile = (ready.count >= 2 || ready.contains { $0.kind == "video" }) ? "instagram_carousel" : "tiktok_photo"
         let limit = SlidePostAutoAppend.maxSlides(profile: profile)

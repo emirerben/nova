@@ -19,7 +19,10 @@ struct SlidePostWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @StateObject private var session: SlidePostSession
-    @StateObject private var exporter = SlidePostExporter()
+    @StateObject private var exporter = SlidePostExporter.makeDefault()
+    /// The running Save to Photos / Share flow; cancelled when the editor goes away so it cannot keep polling
+    /// (and prompt for Photos) from a screen the user already left.
+    @State private var exportTask: Task<Void, Never>?
     @State private var showsConversation = false
     /// Chat-edit staging as decided when the AI sheet opened; it never flips while the sheet is up.
     @State private var aiChatEnabled = false
@@ -85,10 +88,6 @@ struct SlidePostWorkspaceView: View {
     private var hasFailedUploads: Bool { hasSkippedFiles || hasFailedAssets }
     private var canRequestProposal: Bool { !session.isBusy && !hasPendingAssets && !hasFailedAssets && !session.readyAssets.isEmpty }
 
-    private var canCreateRender: Bool {
-        guard !session.hasUnsavedChanges, !isRendering else { return false }
-        return session.draft != nil && session.state?.canExport != true
-    }
     private var pollingKey: String { "\(itemID ?? "")-\(session.state?.renderStatus ?? "")-\(hasPendingAssets)-\(session.isBusy)" }
 
     var body: some View {
@@ -102,6 +101,10 @@ struct SlidePostWorkspaceView: View {
         }
         .onGeometryChange(for: CGSize.self, of: { $0.size }) { rootSize = $0 }
         .background(KriaColor.paper)
+        // The workspace draws its own back circle; the system bar would add a second back button.
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
+        .onDisappear { exportTask?.cancel() }
         .sheet(isPresented: $showsCaption) { captionSheet }
         .sheet(isPresented: $showsConversation) {
             SlidePostAISheet(
@@ -165,9 +168,7 @@ struct SlidePostWorkspaceView: View {
                     if previewPlayer != nil, previewPlayerAssetID == asset.id { VideoPlayer(player: previewPlayer) }
                 } else {
                     SlidePostCachedImage(assetID: asset.id, variant: .preview, url: url, onExpired: { await refresh() },
-                                         loadingIdentifier: "slidepost-preview-loading", showsRetry: true)
-                        .accessibilityHidden(true)
-                        .overlay { Color.clear.accessibilityElement().accessibilityIdentifier("slidepost-preview-image").accessibilityValue(asset.id) }
+                                         loadingIdentifier: "slidepost-preview-loading", showsRetry: true, reportsState: true)
                 }
             } else { Image(systemName: "photo.on.rectangle").font(.largeTitle).foregroundStyle(KriaColor.zinc) }
         }
@@ -180,6 +181,13 @@ struct SlidePostWorkspaceView: View {
             previewPlayer = AVPlayer(url: previewURL); previewPlayerAssetID = asset.id
         }
         .task(id: prefetchKey) { prefetchNeighbours() }
+        #if DEBUG
+        .onChange(of: mode) { _, next in
+            if next == .text, SlidePostImageFixtures.evictOnText {
+                SlidePostImageCache.shared.evictPreviewsFromMemory(assetIDs: session.draft?.slides.map(\.assetID) ?? [])
+            }
+        }
+        #endif
         .onDisappear { previewPlayer?.pause() }
     }
 
@@ -191,7 +199,10 @@ struct SlidePostWorkspaceView: View {
     private func prefetchNeighbours() {
         guard let draft = session.draft, let assets = session.state?.assets else { return }
         let selected = draft.slides.firstIndex { $0.id == session.selectedID }
-        SlidePostImageCache.shared.prefetch(SlidePostPrefetch.requests(slideAssetIDs: draft.slides.map(\.assetID), selectedIndex: selected, assets: assets))
+        let ids = draft.slides.map(\.assetID)
+        let center = selected ?? 0
+        let working = ids.indices.filter { abs($0 - center) <= SlidePostPrefetch.radius }.map { ids[$0] }
+        SlidePostImageCache.shared.prefetch(SlidePostPrefetch.requests(slideAssetIDs: ids, selectedIndex: selected, assets: assets), workingSet: working)
     }
 
     /// Rich editor: always the SOURCE media (the live canvas draws the editable text over it); the render is
@@ -237,23 +248,24 @@ struct SlidePostWorkspaceView: View {
     private func aspect(_ draft: SlidePostDraft) -> CGFloat { draft.platformProfile == "instagram_carousel" ? 4.0 / 5 : 9.0 / 16 }
     private func platformName(_ draft: SlidePostDraft) -> String { draft.platformProfile == "instagram_carousel" ? "Instagram" : "TikTok" }
 
-    private var headerAction: SlidePostHeader.Action {
-        if session.isBusy { .saving }
-        else if session.hasUnsavedChanges { .save }
-        else if isRendering { .rendering }
-        else if session.canExport { .share }
-        else if canCreateRender { .create }
-        else { .save }
+    /// Why export cannot start right now (shown as a disabled row in the export menu); nil = it can.
+    private var exportBlockReason: String? {
+        if session.isChatting { return "Kria is editing. Export when it finishes." }
+        if hasPendingAssets { return "Wait for photos and videos to finish importing." }
+        guard let draft = session.draft else { return "Add photos and videos first." }
+        return draft.validationMessage
     }
 
     private var richHeader: some View {
-        let action = headerAction
-        return SlidePostHeader(
-            title: project.workspaceTitle, action: action, actionEnabled: action == .create || (action == .save && session.hasUnsavedChanges),
+        SlidePostHeader(
+            title: project.workspaceTitle,
+            saveState: NativeEditorSaveControl(isSaving: session.isBusy, hasUnsavedChanges: session.hasUnsavedChanges),
+            exportBlockReason: exportBlockReason,
+            isExporting: session.isBusy || exporter.isBusy,
             onBack: { if let onBack { onBack() } else { dismiss() } },
-            onAction: { Task { if action == .create { await create() } else { await save() } } },
-            onSaveToPhotos: { Task { await saveToPhotos() } },
-            onShare: { Task { await prepareShare() } }
+            onSave: { Task { await save() } },
+            onSaveToPhotos: { exportTask = Task { await export(.photos) } },
+            onShare: { exportTask = Task { await export(.share) } }
         )
     }
 
@@ -319,8 +331,12 @@ struct SlidePostWorkspaceView: View {
                                 detail: "Kria can't sort by time or add locations. You can still reorder by hand, or ask for text you write yourself.")
                     .padding(.bottom, 8)
             }
-            stage(draft, compact: panelOpen)
-                .frame(maxHeight: panelOpen ? max(keyboardUp && mode == .text ? 144 : 150, 0.33 * height - (keyboardUp && mode == .text ? 96 : 0)) : .infinity)
+            // KRI-185 rule: typing shrinks the preview to a fixed 120pt, it never covers it and never grows.
+            let typing = keyboardUp && mode == .text
+            let typingHeight = NativeEditorLayoutMetrics.typingPreviewHeight
+            stage(draft, compact: panelOpen, fixedHeight: typing ? typingHeight : nil)
+                .frame(maxHeight: typing ? typingHeight + 8 : (panelOpen ? max(150, 0.33 * height) : .infinity))
+                .overlay(alignment: .bottomTrailing) { if typing { typingAddTextPill(slide) } }
                 .animation(.easeOut(duration: 0.2), value: keyboardUp)
             if !(keyboardUp && mode == .text) { transportRow(draft) }
             if mode == .text, let slide {
@@ -339,30 +355,53 @@ struct SlidePostWorkspaceView: View {
         .background(KriaColor.paper)
     }
 
-    @ViewBuilder private var richBanner: some View {
+    /// KRI-305: with the keyboard up on a small phone the panel has no room for its pinned Add text row (it
+    /// squeezed the text box to a sliver), so while typing the action rides in the stage's free space beside
+    /// the 120pt preview, always above the keyboard.
+    @ViewBuilder private func typingAddTextPill(_ slide: SlidePostSlide?) -> some View {
+        // The Style tab keeps the panel's own row (it carries Apply to all), so only the Edit tab hoists it.
+        if let slide, textTab == .edit, (slide.edits?.effectiveTexts.count ?? 0) < SlidePostEdits.maxTexts {
+            Button {
+                textTab = .edit
+                _ = session.addText(slideID: slide.id)
+            } label: {
+                // Capped type + width: the free strip beside a 120pt preview is only ~120pt on an SE-class phone,
+                // and the pill must never grow over the preview at accessibility sizes.
+                Label("Add text", systemImage: "plus").font(KriaFont.body(13)).lineLimit(1).minimumScaleFactor(0.7)
+                    .dynamicTypeSize(...DynamicTypeSize.large)
+                    .padding(.horizontal, 10).frame(maxWidth: 124, minHeight: 44)
+            }
+            .buttonStyle(KriaSecondaryButtonStyle())
+            .accessibilityIdentifier("slidepost-add-text")
+            .padding(.trailing, 16).padding(.bottom, 4)
+        }
+    }
+
+    private var richBanner: some View {
+        VStack(spacing: 0) {
+            SlidePostExportBanner(exporter: exporter)
+            statusBanner
+        }
+    }
+
+    @ViewBuilder private var statusBanner: some View {
         if let error = session.error {
-            HStack(spacing: 10) {
-                Text(error).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText).frame(maxWidth: .infinity, alignment: .leading)
-                Button("Dismiss") { session.error = nil }.font(KriaFont.body(13).weight(.semibold)).frame(minHeight: 44)
+            Button { session.error = nil } label: {
+                NativeEditorBannerRow(title: "Something went wrong", detail: error, systemImage: "exclamationmark.triangle", tint: .red, identifier: "slidepost-error")
             }
-            .padding(.horizontal, 16).padding(.vertical, 4).background(KriaColor.failureSoft)
-            .accessibilityIdentifier("slidepost-error")
+            .buttonStyle(.plain).accessibilityHint("Dismiss")
         } else if let issue = session.state?.validationErrors.first {
-            Text(issue.message).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText)
-                .padding(.horizontal, 16).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading).background(KriaColor.failureSoft)
+            NativeEditorBannerRow(title: "Needs attention", detail: issue.message, systemImage: "exclamationmark.triangle", tint: .red, identifier: "slidepost-validation")
         } else if let notice = session.autoAppendNotice {
-            HStack(spacing: 10) {
-                Text(notice).font(KriaFont.body(13)).foregroundStyle(KriaColor.ink).frame(maxWidth: .infinity, alignment: .leading)
-                Button("Dismiss") { session.autoAppendNotice = nil }.font(KriaFont.body(13).weight(.semibold)).frame(minHeight: 44)
+            Button { session.autoAppendNotice = nil } label: {
+                NativeEditorBannerRow(title: "Heads up", detail: notice, systemImage: "info.circle", tint: KriaColor.ink, identifier: "slidepost-notice")
             }
-            .padding(.horizontal, 16).padding(.vertical, 4).background(KriaColor.sage.opacity(0.45))
-            .accessibilityIdentifier("slidepost-notice")
+            .buttonStyle(.plain).accessibilityHint("Dismiss")
         } else if hasFailedUploads {
             Button(action: addMedia) {
-                Text("Review files that need retrying")
-                    .font(KriaFont.body(13).weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
+                NativeEditorBannerRow(title: "Some files didn’t upload", detail: "Review files that need retrying.", systemImage: "arrow.clockwise", tint: KriaColor.ink, identifier: "slidepost-retry-files")
             }
-            .background(KriaColor.sage.opacity(0.45))
+            .buttonStyle(.plain)
         }
     }
 
@@ -384,16 +423,7 @@ struct SlidePostWorkspaceView: View {
 
     /// The editor's AI entry (same sparkles button as the video editor's preview), the page's only way into Kria chat.
     private var aiButton: some View {
-        Button { aiChatEnabled = chatEditOn; showsConversation = true } label: {
-            Image(systemName: "sparkles")
-                .font(.system(size: 23))
-                .foregroundStyle(.white)
-                .frame(width: 52, height: 52)
-                .background(KriaColor.ink, in: Circle())
-        }
-        .accessibilityLabel("Open Kria conversation")
-        .accessibilityIdentifier("slidepost-openkria")
-        .padding(.trailing, 16).padding(.bottom, 14)
+        KriaAIButton(identifier: "slidepost-openkria") { aiChatEnabled = chatEditOn; showsConversation = true }
     }
 
     private func richPreview(_ draft: SlidePostDraft, size: CGSize) -> some View {
@@ -533,19 +563,10 @@ struct SlidePostWorkspaceView: View {
         await refresh()
     }
     private func addMedia() { if let onAddMedia { onAddMedia() } else if ownerThread != nil { showsAttachments = true } }
-    private func saveToPhotos() async {
+    private func export(_ destination: SlidePostExporter.Destination) async {
         guard let itemID else { return }
-        await exporter.saveToPhotos(session: session) {
-            try await session.revalidateForExport(api: model.api, itemID: itemID)
-        }
+        await exporter.export(destination, session: session, api: model.api, itemID: itemID)
     }
-    private func prepareShare() async {
-        guard let itemID else { return }
-        await exporter.prepareShare(session: session) {
-            try await session.revalidateForExport(api: model.api, itemID: itemID)
-        }
-    }
-    private func create() async { guard let itemID else { return }; await session.create(api: model.api, itemID: itemID) }
     private func undo() async { guard let itemID else { return }; await session.undo(api: model.api, itemID: itemID) }
     private func save() async { guard let itemID else { return }; await session.save(api: model.api, itemID: itemID) }
 }

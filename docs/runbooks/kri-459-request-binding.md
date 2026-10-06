@@ -40,10 +40,11 @@ the request. Model replay, local database tests and simulator checks are reporte
 separately from paid live-model and physical-device export evidence.
 
 PR #1405 merged as `cf0d99cca` during implementation and is included through
-current main. PR #1404 (`bcd96657`) remains open; its alignment code is integrated
-without merging that PR. Unlike the source alignment PR, this stack defaults `NARRATED_CLIP_ALIGNMENT_ENABLED` to false
-for the reader-first rollout. Enable it separately before testing bound narrated
-requests; while unavailable they request recovery rather than silently bucket clips.
+current main. PR #1404 merged as `45d333978`; its alignment code and existing
+`NARRATED_CLIP_ALIGNMENT_ENABLED=true` default are inherited from main.
+Request-binding writers remain gated separately for the reader-first rollout.
+When alignment is unavailable, bound narrated requests ask for recovery rather
+than silently assigning clips to equal-duration buckets.
 
 Capabilities continue to come from `services/creator_capabilities.py` and the
 existing editor tool registry. Montage supports resolved clip ordering and labels;

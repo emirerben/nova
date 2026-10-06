@@ -141,6 +141,27 @@ struct NativeEditorSaveBanner: View {
     }
 }
 
+/// The sparkles button that opens the Kria conversation, shared by the video editor and the slide
+/// editor so the two stay identical. The caller owns the accessibility identifier.
+struct KriaAIButton: View {
+    let identifier: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 23))
+                .foregroundStyle(.white)
+                .frame(width: 52, height: 52)
+                .background(KriaColor.ink, in: Circle())
+        }
+        .accessibilityLabel("Open Kria conversation")
+        .accessibilityIdentifier(identifier)
+        .padding(.trailing, 16)
+        .padding(.bottom, 14)
+    }
+}
+
 /// Status row shared by the editor's save and export feedback.
 struct NativeEditorBannerRow: View {
     let title: String

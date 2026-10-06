@@ -775,3 +775,61 @@ def test_reorder_and_remove_keep_every_text_on_its_own_slide(
         "s2": [("text", "two"), ("label", "Moda")],
         "s0": [("text", "zero")],
     }
+
+
+# ------------------------------------------------- facts reach the agent (KRI-305)
+
+
+def test_slide_facts_delegates_to_slide_asset_facts(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[Any] = []
+
+    def _fake(asset: Any) -> list:
+        seen.append(asset)
+        return []
+
+    monkeypatch.setattr("app.services.clip_facts.slide_asset_facts", _fake)
+    asset = _asset(time="2024-07-01T10:00:00Z", place="Kadıköy")
+    assert svc._slide_facts(asset) == []
+    assert seen == [asset]
+
+    def _boom(_a: Any) -> list:
+        raise RuntimeError("x")
+
+    # a raising helper is "no facts", never a failure
+    monkeypatch.setattr("app.services.clip_facts.slide_asset_facts", _boom)
+    assert svc._slide_facts(asset) == []
+
+
+@pytest.mark.asyncio
+async def test_run_passes_capture_facts_to_agent_and_orders_and_labels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assets = _dated_assets(monkeypatch)
+    draft = _draft(assets)
+    snap = build_slide_post_snapshot(draft, _by_id(assets), user_id=USER_ID)
+    parsed = _parse(snap, [CHRONO, LABEL_PLACE])
+    recorded: list[dict] = []
+
+    class _Recorder:
+        def run(self, agent_input: EditCopilotInput, ctx: Any = None) -> EditCopilotOutput:
+            recorded.append(agent_input.variant_snapshot)
+            return parsed
+
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: object())
+    monkeypatch.setattr(svc, "EditCopilotAgent", lambda _client: _Recorder())
+
+    result = await _run(draft, assets)
+
+    slots = recorded[0]["slots"]
+    kinds = {i: {f["kind"] for f in slot.get("facts", [])} for i, slot in enumerate(slots)}
+    assert {"capture_time", "place"} <= kinds[0]
+    assert kinds[1] == set()  # untimed, unplaced slide carries no facts
+    assert result.outcome == "edited" and result.draft is not None
+    slides = result.draft.slides
+    assert [s.id for s in slides] == ["s2", "s1", "s3", "s0"]
+    place_labels = {
+        s.id: [t.text for t in s.edits.effective_texts() if t.role == "label"] if s.edits else []
+        for s in slides
+    }
+    assert place_labels["s2"] == ["Kadıköy"]
+    assert place_labels["s0"] and place_labels["s0"][0].startswith("Beşiktaş")

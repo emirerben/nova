@@ -783,9 +783,9 @@ class Settings(BaseSettings):
     # `nova.compose.narrated_clip_alignment` agent choose the voiceover word at
     # which each clip comes on screen, so a clip plays when the voice describes
     # it. Legacy unbound jobs retain their bucket fallback. Bound requests
-    # require an explicit choice before losing alignment. Enable separately
-    # after compatible readers and exported-media verification.
-    narrated_clip_alignment_enabled: bool = False
+    # require an explicit choice before losing alignment. Keep the existing
+    # KRI-456 rollout default; request-binding writers are gated separately.
+    narrated_clip_alignment_enabled: bool = True
 
     # Kill switch for the terminal-job stuck-variant watchdog
     # (`reconcile_stuck_variants`). This sweep WRITES user-visible state — it

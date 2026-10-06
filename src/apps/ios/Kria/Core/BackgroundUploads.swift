@@ -635,6 +635,15 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     func dismissFailure(id: UUID) {
         failures.removeAll { $0.id == id }
         intakeRetries[id] = nil
+        forgetCaptureIfFinal(id)
+    }
+
+    /// A failure line is the end of the road for the clip's remembered date/place unless a record
+    /// is still listed for Retry (retrying keeps the filming context). Without this, the coarse
+    /// location of a photo that failed to attach lingers for `ClipCaptureStore.maxAge`.
+    private func forgetCaptureIfFinal(_ recordID: UUID) {
+        guard !records.contains(where: { $0.id == recordID }) else { return }
+        ClipCaptureStore.shared.remove(recordID)
     }
 
     /// Drops a project's "couldn't be read" lines once a message went out without those files. Lines
@@ -644,7 +653,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     }
 
     func clearFailures(projectID: UUID, role: CreationMediaRole) {
+        let dropped = failures.filter { $0.projectID == projectID && $0.role == role }
         failures.removeAll { $0.projectID == projectID && $0.role == role }
+        for failure in dropped { forgetCaptureIfFinal(failure.id) }
     }
 
     /// One line per failed clip: a repeat of the same asset replaces its earlier line (matched by

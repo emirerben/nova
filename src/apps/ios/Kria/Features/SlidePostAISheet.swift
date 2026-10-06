@@ -41,22 +41,17 @@ struct SlidePostAISheet: View {
     @State private var prompt = ""
     @FocusState private var composerFocused: Bool
 
-    private static let noteFill = Color(red: 0xFD / 255, green: 0xF1 / 255, blue: 0xDC / 255)
-
     var body: some View {
         ChatConversationScroll(isLoaded: true, updateToken: updateToken, scrollRequest: 0, dismissKeyboard: { composerFocused = false }) {
             conversation
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 0) {
-                actionRow
-                ChatComposer(
-                    text: $prompt, isSending: session.isBusy || session.isChatting, canAttach: false,
-                    blocksSubmission: !chatEnabled && !canRequestProposal,
-                    placeholder: chatEnabled ? "Ask Kria to edit your slides…" : "Describe the post…",
-                    isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
-                )
-            }
+            ChatComposer(
+                text: $prompt, isSending: session.isBusy || session.isChatting, canAttach: false,
+                blocksSubmission: !chatEnabled && !canRequestProposal,
+                placeholder: chatEnabled ? "Ask Kria to edit your slides…" : "Describe the post…",
+                isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
+            )
         }
         .background(KriaColor.paper)
         .onAppear { prompt = session.instruction }
@@ -97,16 +92,16 @@ struct SlidePostAISheet: View {
                         ForEach(message.changes, id: \.self) { change in
                             let note = SlidePostChatMessage.isNote(change)
                             Text(change).font(KriaFont.body(12).weight(.semibold))
-                                .foregroundStyle(note ? SlidePostTone.warning : KriaColor.success)
+                                .foregroundStyle(note ? KriaColor.ink : KriaColor.success)
                                 .padding(.horizontal, 12).frame(minHeight: 32)
-                                .background(note ? Self.noteFill : KriaColor.successSoft, in: Capsule())
+                                .background(note ? KriaColor.butter : KriaColor.successSoft, in: Capsule())
                                 .accessibilityIdentifier(note ? "slidepost-ai-note" : "slidepost-ai-change")
                         }
                     }
                 }
                 if message.retryText != nil {
                     Button("Try again") { if let itemID { Task { await session.retryChat(api: api, itemID: itemID, bubble: message) } } }
-                        .buttonStyle(CanonicalSecondaryButtonStyle()).frame(width: 140)
+                        .buttonStyle(KriaPrimaryButtonStyle(fill: KriaColor.softZinc, minHeight: 44)).fixedSize()
                         .accessibilityIdentifier("slidepost-ai-retry")
                 }
             }
@@ -120,7 +115,7 @@ struct SlidePostAISheet: View {
                 Text(proposal.draft.caption).font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
             }
             Button("Apply proposal") { Task { await apply() } }
-                .buttonStyle(CanonicalPrimaryButtonStyle()).disabled(session.isBusy)
+                .buttonStyle(KriaPrimaryButtonStyle(minHeight: 44)).fixedSize().disabled(session.isBusy)
                 .accessibilityIdentifier("slidepost-apply")
         }
         .id("slidepost-apply")
@@ -129,34 +124,6 @@ struct SlidePostAISheet: View {
     // MARK: Actions
 
     private var hasText: Bool { !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-
-    @ViewBuilder private var actionRow: some View {
-        if chatEnabled ? (session.hasUnsavedChanges || session.canUndoEdit) : session.canUndo {
-            HStack(spacing: 10) {
-                if chatEnabled, session.hasUnsavedChanges {
-                    HStack(spacing: 6) {
-                        Circle().fill(SlidePostTone.warning).frame(width: 7, height: 7)
-                        Text("Unsaved").font(KriaFont.body(12).weight(.semibold)).foregroundStyle(SlidePostTone.warning)
-                    }
-                    .padding(.horizontal, 12).frame(minHeight: 32).background(Self.noteFill, in: Capsule())
-                    .accessibilityElement(children: .combine).accessibilityIdentifier("slidepost-ai-unsaved")
-                }
-                Spacer(minLength: 4)
-                if chatEnabled {
-                    Button("Undo") { session.undoEdit() }.buttonStyle(CanonicalSecondaryButtonStyle()).frame(width: 96)
-                        .disabled(!session.canUndoEdit || session.isChatting).accessibilityIdentifier("slidepost-ai-undo")
-                    Button("Save") { Task { if let itemID { await session.save(api: api, itemID: itemID) } } }
-                        .buttonStyle(CanonicalPrimaryButtonStyle()).frame(width: 96)
-                        .disabled(!session.hasUnsavedChanges || session.isBusy || session.isChatting).accessibilityIdentifier("slidepost-ai-save")
-                } else {
-                    Button("Undo applied change") { Task { await undo() } }
-                        .buttonStyle(CanonicalSecondaryButtonStyle()).frame(width: 190).disabled(session.isBusy)
-                        .accessibilityIdentifier("slidepost-ai-undo-applied")
-                }
-            }
-            .padding(.horizontal, 14).padding(.top, 6)
-        }
-    }
 
     private func send() async {
         guard hasText, !session.isBusy, !session.isChatting, let itemID else { return }
@@ -173,5 +140,4 @@ struct SlidePostAISheet: View {
         }
     }
     private func apply() async { guard let itemID else { return }; await session.applyProposal(api: api, itemID: itemID); if session.error == nil && session.proposal == nil { dismiss() } }
-    private func undo() async { guard let itemID else { return }; await session.undo(api: api, itemID: itemID) }
 }

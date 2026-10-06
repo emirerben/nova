@@ -29,7 +29,7 @@ import XCTest
     /// New chat -> Photo & video post lands straight in the one slide layout (no "Start your post"
     /// screen): preview, strip, AI button and Save/Create, then Create and the contextual Kria sheet.
     func testSlidePostCreationIsTheRichLayoutThenCreateThenKriaPropose() {
-        let app = openRichWorkspace(save: false)
+        let app = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1"])
         let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
         XCTAssertTrue(preview.waitForExistence(timeout: 5))
         let viewport = app.windows.firstMatch.frame
@@ -40,11 +40,15 @@ import XCTest
         attach(app, "Native slide draft preview")
         let save = app.buttons["slidepost-save"]
         XCTAssertTrue(save.isEnabled, "a fresh draft is unsaved"); save.tap()
-        let create = app.buttons["slidepost-create"]
-        XCTAssertTrue(create.waitForExistence(timeout: 8)); create.tap()
-        let share = app.buttons["slidepost-share"]
-        XCTAssertTrue(share.waitForExistence(timeout: 8)); XCTAssertTrue(share.isEnabled)
-        attach(app, "Native slide post ready")
+        expectation(for: NSPredicate(format: "isEnabled == false"), evaluatedWith: save); waitForExpectations(timeout: 10)
+        // There is no Create step: exporting a saved-but-unrendered post renders it first.
+        let export = app.buttons["slidepost-export"]
+        XCTAssertTrue(export.waitForExistence(timeout: 5)); XCTAssertTrue(export.isEnabled); export.tap()
+        XCTAssertTrue(app.buttons["slidepost-share-files"].waitForExistence(timeout: 3))
+        app.buttons["slidepost-save-photos"].tap()
+        let banner = app.descendants(matching: .any)["slidepost-export-state"]
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "Saved 3 slides"), evaluatedWith: banner); waitForExpectations(timeout: 25)
+        attach(app, "Native slide post exported")
         app.buttons["slidepost-openkria"].tap()
         let input = app.textFields["Message Kria"]
         XCTAssertTrue(input.waitForExistence(timeout: 5))
@@ -383,30 +387,37 @@ import XCTest
         XCTAssertTrue(app.staticTexts["Reordered 3"].exists)
         XCTAssertTrue(app.staticTexts["1 photo has no location"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["slidepost-ai-note"].firstMatch.exists, "a missing location reads as a note")
-        XCTAssertTrue(app.descendants(matching: .any)["slidepost-ai-unsaved"].firstMatch.waitForExistence(timeout: 3))
         attach(app, "AI sheet: staged edit")
-        // Undo inside the sheet returns the page to the saved draft; the transcript stays.
-        app.buttons["slidepost-ai-undo"].tap()
-        XCTAssertFalse(app.descendants(matching: .any)["slidepost-ai-unsaved"].firstMatch.waitForExistence(timeout: 2))
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: Done.")).firstMatch.exists)
-        input.tap(); input.typeText("Again please")
-        app.buttons["chat-send-message"].tap()
-        let save = app.buttons["slidepost-ai-save"]
-        expectation(for: NSPredicate(format: "isEnabled == true"), evaluatedWith: save); waitForExpectations(timeout: 10)
-        // Leave it staged: the edit is visible on the page behind the sheet.
+        // The sheet has no Undo/Save of its own: the page behind carries the staged edit.
+        XCTAssertFalse(app.buttons["slidepost-ai-undo"].exists)
+        XCTAssertFalse(app.buttons["slidepost-ai-save"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["slidepost-ai-unsaved"].exists)
         app.swipeDown(velocity: .fast) // same dismissal as the video editor's Kria sheet
         XCTAssertTrue(app.buttons["slidepost-tool-text"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes", "the AI edit is staged on the page")
+        XCTAssertTrue(app.buttons["slidepost-save"].isEnabled, "the header Save is armed by the staged edit")
+        XCTAssertTrue(app.buttons["slidepost-undo"].isEnabled, "the transport Undo can revert it")
         app.buttons["slidepost-tile-1"].tap()
         XCTAssertEqual(canvasText(app).label, "Athens", "the staged edit labelled the first slide")
         attach(app, "AI edit staged on the page")
-        // Save from the sheet quotes the server's version (a wrong one would 409 and show an error).
+        // Undo on the page returns to the saved draft; the transcript stays in the sheet.
+        app.buttons["slidepost-undo"].tap()
+        let clean = NSPredicate(format: "label != %@", "Unsaved changes")
+        expectation(for: clean, evaluatedWith: app.staticTexts["slidepost-subtitle"]); waitForExpectations(timeout: 5)
         app.buttons["slidepost-openkria"].tap()
-        XCTAssertTrue(app.buttons["slidepost-ai-save"].waitForExistence(timeout: 5))
-        app.buttons["slidepost-ai-save"].tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Kria: Done.")).firstMatch.waitForExistence(timeout: 5))
+        let again = app.textFields["Message Kria"]
+        XCTAssertTrue(again.waitForExistence(timeout: 5)); again.tap(); again.typeText("Again please")
+        app.buttons["chat-send-message"].tap()
+        let restaged = app.staticTexts["Reordered 3"]
+        XCTAssertTrue(restaged.waitForExistence(timeout: 8))
         app.swipeDown(velocity: .fast)
-        let saved = NSPredicate(format: "label != %@", "Unsaved changes")
-        expectation(for: saved, evaluatedWith: app.staticTexts["slidepost-subtitle"]); waitForExpectations(timeout: 8)
+        XCTAssertTrue(app.buttons["slidepost-tool-text"].waitForExistence(timeout: 5))
+        // Save from the header quotes the server's version (a wrong one would 409 and show an error).
+        let save = app.buttons["slidepost-save"]
+        expectation(for: NSPredicate(format: "isEnabled == true"), evaluatedWith: save); waitForExpectations(timeout: 10)
+        save.tap()
+        expectation(for: clean, evaluatedWith: app.staticTexts["slidepost-subtitle"]); waitForExpectations(timeout: 8)
         XCTAssertFalse(app.descendants(matching: .any)["slidepost-error"].firstMatch.exists)
     }
 
@@ -649,13 +660,18 @@ import XCTest
         addText(app, words)
         let save = app.buttons["slidepost-save"]
         XCTAssertTrue(save.waitForExistence(timeout: 5)); if save.isEnabled { save.tap() }
-        let create = app.buttons["slidepost-create"]
-        XCTAssertTrue(create.waitForExistence(timeout: 10)); create.tap()
-        XCTAssertTrue(app.buttons["slidepost-share"].waitForExistence(timeout: 12), "the post is created and exportable")
+        // There is no Create step: exporting renders the post first (KRI-305). Needs KRIA_SLIDE_POST_FIXTURE_PHOTOS=1.
+        let export = app.buttons["slidepost-export"]
+        XCTAssertTrue(export.waitForExistence(timeout: 10)); export.tap()
+        app.buttons["slidepost-save-photos"].tap()
+        let banner = app.descendants(matching: .any)["slidepost-export-state"]
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "Saved"), evaluatedWith: banner); waitForExpectations(timeout: 25)
+        // The "Saved" banner auto-dismisses; wait it out so it can't shift or cover the preview under the next tap.
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: banner); waitForExpectations(timeout: 10)
     }
 
     func testTappingTextOnACreatedPostOpensEditTextWithKeyboard() {
-        let app = openRichWorkspace()
+        let app = openRichWorkspace(extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1"])
         openReadyPostWithText(app, "Athens")
         let text = canvasText(app)
         XCTAssertTrue(text.waitForExistence(timeout: 5), "a created post still shows its live, editable text")
@@ -669,7 +685,7 @@ import XCTest
     }
 
     func testHoldAndDragTextOnACreatedPostMovesItDirectly() {
-        let app = openRichWorkspace()
+        let app = openRichWorkspace(extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1"])
         openReadyPostWithText(app, "Athens")
         let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
         let text = canvasText(app)
@@ -828,6 +844,55 @@ import XCTest
         attach(app, "Text panel style chips")
     }
 
+    /// KRI-305: on a small phone the keyboard used to hide the Add text / Apply row (and the stage kept
+    /// growing past the KRI-185 120pt rule). Run on an iPhone SE class simulator for the real constraint.
+    func testAddTextStaysHittableWithKeyboardUpAndStagePinnedTo120() {
+        let app = openRichWorkspace()
+        app.buttons["slidepost-tool-text"].tap()
+        let field = app.textViews["slidepost-text-field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        sleep(1) // layout animation
+        let add = app.buttons["slidepost-add-text"]
+        XCTAssertTrue(add.waitForExistence(timeout: 3), "Add text is on screen with the keyboard up")
+        XCTAssertTrue(add.isHittable, "Add text is hittable with the keyboard up")
+        XCTAssertLessThanOrEqual(add.frame.maxY, keyboard.frame.minY + 1, "Add text sits above the keyboard")
+        XCTAssertTrue(field.isHittable, "the edit field stays usable too")
+        XCTAssertLessThanOrEqual(field.frame.maxY, keyboard.frame.minY + 1, "the whole edit field sits above the keyboard")
+        let preview = app.descendants(matching: .any)["slidepost-preview"].firstMatch
+        XCTAssertTrue(preview.exists)
+        XCTAssertEqual(preview.frame.height, 120, accuracy: 2, "typing pins the stage to 120pt (shrink, never cover)")
+        attach(app, "Small phone: keyboard up")
+        let canvasTexts = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'slidepost-canvas-text-'"))
+        let before = canvasTexts.count
+        add.tap()
+        expectation(for: NSPredicate(format: "count > %d", before), evaluatedWith: canvasTexts); waitForExpectations(timeout: 5)
+    }
+
+    /// KRI-305: one pass over the slide screens at an accessibility Dynamic Type size (only accessibility5 is
+    /// honoured by the app-level UI-test override, so that is the size used).
+    func testSlideScreensAtAccessibilityTypeSizeStayReachable() {
+        let app = openRichWorkspace(dynamicType: "accessibility5")
+        XCTAssertTrue(app.buttons["slidepost-tile-1"].isHittable, "strip tile")
+        XCTAssertTrue(app.buttons["slidepost-tool-text"].isHittable, "tool dock")
+        attach(app, "A11y type: browse")
+        app.buttons["slidepost-tool-text"].tap()
+        let field = app.textViews["slidepost-text-field"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["slidepost-done"].waitForExistence(timeout: 3) || app.buttons["slidepost-add-text"].exists)
+        attach(app, "A11y type: text panel, no keyboard")
+        field.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        sleep(1)
+        let add = app.buttons["slidepost-add-text"]
+        XCTAssertTrue(add.exists, "Add text exists at large type")
+        XCTAssertTrue(add.isHittable, "Add text is hittable at large type with the keyboard up")
+        XCTAssertLessThanOrEqual(add.frame.maxY, app.keyboards.firstMatch.frame.minY + 1)
+        attach(app, "A11y type: text panel, keyboard up")
+    }
+
     // MARK: One layout in every entry path and capability state
 
     /// The slide editor, whatever loaded or didn't: tool dock, "+ Add" LAST in the strip with the tiles'
@@ -922,6 +987,47 @@ import XCTest
         }
     }
 
+    /// KRI-305: a post opened from the gallery shows exactly one back control (the workspace's own circle,
+    /// never the system bar's second one) and a post that already has a saved server draft is not
+    /// "Unsaved changes" just because it was opened.
+    func testGalleryOpenedPostHasOneBackButtonAndNoUnsavedChanges() {
+        let app = launchRich(readyThread: true, extraEnv: ["KRIA_SLIDE_POST_READY_DRAFT": "1"])
+        XCTAssertTrue(app.buttons["Back to creation"].waitForExistence(timeout: 15)); app.buttons["Back to creation"].tap()
+        let gallery = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Gallery'")).firstMatch
+        XCTAssertTrue(gallery.waitForExistence(timeout: 5)); gallery.tap()
+        let card = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Open post'")).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 10), "gallery lists the slide post"); card.tap()
+        XCTAssertTrue(app.buttons["slidepost-tool-text"].firstMatch.waitForExistence(timeout: 20))
+        let subtitles = app.staticTexts.matching(identifier: "slidepost-subtitle")
+        let visible = NSPredicate(format: "isHittable == true")
+        expectation(for: visible, evaluatedWith: subtitles.firstMatch); waitForExpectations(timeout: 10)
+        // Let the first refresh land before judging the status line.
+        sleep(2)
+        for subtitle in subtitles.allElementsBoundByIndex {
+            XCTAssertNotEqual(subtitle.label, "Unsaved changes", "a saved post must not read as unsaved on open")
+        }
+        let backs = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Back'")).allElementsBoundByIndex.filter { $0.isHittable }
+        XCTAssertEqual(backs.count, 1, "exactly one visible back button: \(backs.map(\.label))")
+        XCTAssertTrue(app.navigationBars.buttons.allElementsBoundByIndex.filter { $0.isHittable }.isEmpty, "no system navigation-bar buttons")
+        attach(app, "Gallery-opened post")
+    }
+
+    /// KRI-305: export is available from any state. An unsaved, unrendered post saves, renders and then
+    /// reports the Photos save in the banner (the fixture writer stands in for Photos).
+    func testExportMenuSavesAnUnsavedPostToPhotosAndShowsTheBanner() {
+        let app = openRichWorkspace(save: false, extraEnv: ["KRIA_SLIDE_POST_FIXTURE_PHOTOS": "1"])
+        XCTAssertEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes")
+        let export = app.buttons["slidepost-export"]
+        XCTAssertTrue(export.waitForExistence(timeout: 5)); export.tap()
+        XCTAssertTrue(app.buttons["slidepost-share-files"].waitForExistence(timeout: 3), "Share files sits beside Save to Photos")
+        app.buttons["slidepost-save-photos"].tap()
+        let banner = app.descendants(matching: .any)["slidepost-export-state"]
+        XCTAssertTrue(banner.waitForExistence(timeout: 10), "export reports progress in the banner")
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "Saved 3 slides"), evaluatedWith: banner); waitForExpectations(timeout: 25)
+        attach(app, "Export banner: saved to Photos")
+        XCTAssertNotEqual(app.staticTexts["slidepost-subtitle"].label, "Unsaved changes", "exporting saved the draft first")
+    }
+
     /// Back -> drawer -> tap the project again (and via a second project switch): always the slide editor.
     func testReEnteringAfterBackAlwaysLandsInTheSlideEditor() {
         let app = launchRich(readyThread: true)
@@ -1001,11 +1107,34 @@ import XCTest
             let started = Date()
             app.buttons[tile].tap()
             XCTAssertFalse(loading.exists, "no loading indicator right after selecting \(tile)")
+            XCTAssertFalse(app.descendants(matching: .any)["slidepost-preview-blurred"].exists, "no blur state right after selecting \(tile)")
             XCTAssertTrue(image.exists, "the photo is on screen immediately")
             switches.append(Date().timeIntervalSince(started))
         }
         attach(app, "After switching slides")
         print("KRIA_SLIDE_TIMING first-visible=\(String(format: "%.3f", firstVisible))s switch-taps=\(switches.map { String(format: "%.3f", $0) })")
+    }
+
+    /// KRI-305: after adding text, the next slide used to flash its blurred thumbnail because the NSCache had
+    /// dropped the previews under text-mode memory pressure. `EVICT_ON_TEXT` reproduces that eviction
+    /// deterministically; the media delay makes any async fallback (network or disk) visible.
+    func testSwitchingSlidesAfterAddingTextNeverShowsTheBlur() {
+        let app = openRichWorkspace(save: false, extraEnv: [
+            "KRIA_SLIDE_POST_REMOTE_MEDIA": "1", "KRIA_SLIDE_POST_MEDIA_DELAY_MS": "900", "KRIA_SLIDE_POST_EVICT_ON_TEXT": "1",
+        ])
+        let image = app.descendants(matching: .any)["slidepost-preview-image"]
+        let blurred = app.descendants(matching: .any)["slidepost-preview-blurred"]
+        XCTAssertTrue(image.waitForExistence(timeout: 10))
+        expectation(for: NSPredicate(format: "value ENDSWITH '|full'"), evaluatedWith: image); waitForExpectations(timeout: 15)
+        sleep(4) // neighbours + disk copies are written in the background
+        addText(app, "Athens")
+        for tile in ["slidepost-tile-3", "slidepost-tile-1", "slidepost-tile-3", "slidepost-tile-1"] {
+            app.buttons[tile].tap()
+            let value = image.value as? String ?? "<none>"
+            XCTAssertTrue(value.hasSuffix("|full"), "right after \(tile) the full preview is showing, not the blur (\(value))")
+            XCTAssertFalse(blurred.exists, "no blurred thumbnail right after \(tile)")
+        }
+        attach(app, "After add text then switching slides")
     }
 
     private func scrollTo(_ element: XCUIElement, app: XCUIApplication) {

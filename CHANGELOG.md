@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.96.0] - 2026-10-06
+
+### Changed
+- fix(narrated): align phone voiceover clips to the words that describe them (KRI-456) (#1404) <!-- release-pr: 1404 -->
+
+## [0.78.95.0] - 2026-10-06
+
+### Changed
+- feat(ios): save all slides to Photos from the header, no blur on slide switch, cleaner AI sheet (KRI-305) (#1412) <!-- release-pr: 1412 -->
+
 ## [0.78.94.0] - 2026-10-06
 
 ### Changed
