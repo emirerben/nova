@@ -2876,3 +2876,24 @@ follows what's left of your take" receipt at draft time, so the approved summary
 agree. Guards: `tests/services/test_creator_render_contract.py::test_a_take_length_format_never_pins_a_requested_length`,
 `::test_the_sourdough_talking_recipe_passes_its_pinned_contract`, `::test_a_montage_still_pins_its_requested_length`.
 
+## [2026-10-07] Speech-cleanup preflight pads audio that ends before the picture (items 50004c29, cc5f9715)
+
+Both sourdough Talking chats scheduled a preflight analysis on `media_added`; both failed
+`snapshot_mismatch` 1.5 s later and, since that code is non-retryable, were never retried. The
+iPhone's approval card then showed "The speech check couldn't finish" with "Create without
+cleanup" as the primary button, so the creator's "cut out the long pauses" rendered uncut
+(`speech_cleanup_contract: off_v1`, `bypassed_unchecked`). Measured on the speech machine: the
+68.0 s proxy's AAC track runs 66.13 s; every other recent phone proxy was within 25 ms of its
+picture. `_read_pcm_duration` compared the decoded audio (66.13 s) with the picture window
+(68.0 s) under a 0.25 s tolerance and called the clip a changed source.
+
+Decision: audio that ends before the picture is the clip, not a changed source. The window
+stays the picture's (the render-time `require_source` fence keeps comparing it to the clip
+duration) and the decoded PCM is padded with silence to the window, which the engine may cut
+like any other pause. Audio LONGER than the window is still `snapshot_mismatch`. The failure
+log now carries the private detail code (`detail=source_duration`), which was neither logged
+nor persisted before. Guards: `tests/tasks/test_speech_cleanup_analysis.py::test_audio_that_ends_before_the_picture_is_padded_to_the_window`
+and siblings. Not changed: the iOS card still offers a dead "Retry speech check" for a
+non-retryable failure and makes "Create without cleanup" primary while the brief asks for
+cleanup -- an iOS follow-up.
+

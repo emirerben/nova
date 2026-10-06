@@ -165,6 +165,50 @@ def test_extract_streams_exact_window_to_bounded_16khz_mono_pcm(
     assert duration == pytest.approx(work.duration_s)
 
 
+def test_audio_that_ends_before_the_picture_is_padded_to_the_window(tmp_path: Path) -> None:
+    """Items 50004c29 / cc5f9715 (2026-10-06): a 68.0 s take whose AAC track runs
+    66.13 s failed `snapshot_mismatch` and was never retried, so the creator's
+    "cut out the long pauses" rendered uncut. The picture's window stands; the
+    missing tail is silence."""
+    import wave
+
+    output_path = tmp_path / "short.wav"
+    _write_pcm_wav(output_path, 1.0)
+
+    duration = task_module._read_pcm_duration(output_path, requested_duration_s=2.0)
+
+    assert duration == pytest.approx(2.0)
+    with wave.open(str(output_path), "rb") as artifact:
+        assert artifact.getnframes() == 2 * task_module.SPEECH_CLEANUP_SAMPLE_RATE_HZ
+        assert artifact.getnchannels() == task_module.SPEECH_CLEANUP_CHANNELS
+        assert artifact.getframerate() == task_module.SPEECH_CLEANUP_SAMPLE_RATE_HZ
+        artifact.readframes(task_module.SPEECH_CLEANUP_SAMPLE_RATE_HZ)
+        tail = artifact.readframes(task_module.SPEECH_CLEANUP_SAMPLE_RATE_HZ)
+    assert tail == b"\0" * len(tail)
+
+
+def test_audio_within_tolerance_is_left_exactly_as_decoded(tmp_path: Path) -> None:
+    output_path = tmp_path / "close.wav"
+    _write_pcm_wav(output_path, 1.9)
+    before = output_path.read_bytes()
+
+    assert task_module._read_pcm_duration(output_path, requested_duration_s=2.0) == pytest.approx(
+        1.9
+    )
+    assert output_path.read_bytes() == before
+
+
+def test_audio_longer_than_the_window_is_still_a_source_mismatch(tmp_path: Path) -> None:
+    output_path = tmp_path / "long.wav"
+    _write_pcm_wav(output_path, 2.5)
+
+    with pytest.raises(SpeechCleanupOperationalError) as raised:
+        task_module._read_pcm_duration(output_path, requested_duration_s=2.0)
+
+    assert raised.value.code == "snapshot_mismatch"
+    assert raised.value.private_detail == "source_duration"
+
+
 def test_extraction_timeout_cleans_process_group_and_redacts_url(
     monkeypatch, tmp_path: Path
 ) -> None:
