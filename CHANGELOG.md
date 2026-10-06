@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.118.0] - 2026-10-06
+
+### Changed
+- fix(kria): hook titles on iPhone Talking edits, editable in the editor (KRI-467) (#1433) <!-- release-pr: 1433 -->
+
 ## [0.78.117.0] - 2026-10-06
 
 ### Changed
