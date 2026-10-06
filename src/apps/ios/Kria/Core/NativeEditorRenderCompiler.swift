@@ -438,7 +438,9 @@ enum NativeEditorRenderError: Error, Equatable {
             guard item.start.isFinite, item.end.isFinite else { throw RecipeError.invalidTimeline }
             if item.start >= total { continue }
             guard item.end > item.start else { throw RecipeError.invalidTimeline }
-            let family = element.raw["font_family"]?.stringValue ?? "Inter"
+            // Placement and the default face match the server burn (cloud and
+            // phone recipes alike); see `EditorTextElement.anchor(of:)`.
+            let family = element.fontFamily
             let font = try resolveFont(family)
             let fontID = try registerFont(font)
             let raw = element.raw
@@ -467,14 +469,10 @@ enum NativeEditorRenderError: Error, Equatable {
                         alpha: (alpha * min(1, strength)).rounded(.toNearestOrEven) / 255), sigma: sigma, dx: 0, dy: 0))
                 }
             }
-            let y: Double = switch raw["position"]?.stringValue {
-            case "top": 0.2
-            case "bottom": 0.8
-            default: 0.5
-            }
+            let anchor = element.anchor
             let style = AuthoredTextLayout.Style(fontAssetID: fontID, size: NativeEditorSession.textSize(for: element),
                 widthFraction: raw["max_width_frac"]?.numberValue ?? 0.9,
-                xFraction: raw["x_frac"]?.numberValue ?? 0.5, yFraction: raw["y_frac"]?.numberValue ?? y,
+                xFraction: anchor.x, yFraction: anchor.y,
                 rotation: raw["rotation_deg"]?.numberValue ?? 0,
                 alignment: AuthoredTextLayout.Alignment(rawValue: raw["alignment"]?.stringValue ?? "center") ?? .center,
                 color: try ink(raw["color"], fallback: "#FFFFFF"),

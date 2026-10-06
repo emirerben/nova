@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.106.0] - 2026-10-06
+
+### Changed
+- fix(ios): preview server text rows where and how the burn draws them (#1424) <!-- release-pr: 1424 -->
+
+## [0.78.105.0] - 2026-10-06
+
+### Changed
+- fix(slides): re-render pre-fix slide posts so exports pick up the decode fix (KRI-462) (#1420) <!-- release-pr: 1420 -->
+
+## [0.78.104.0] - 2026-10-06
+
+### Changed
+- fix(slides): header shadow no longer clipped into a grey band (KRI-462) (#1422) <!-- release-pr: 1422 -->
+
+## [0.78.103.0] - 2026-10-06
+
+### Changed
+- fix(text): keep "Slide down" intros animated on render and text Save (#1421) <!-- release-pr: 1421 -->
+
+## [0.78.102.0] - 2026-10-06
+
+### Changed
+- fix(text): burn legacy font aliases in their face; project the intro's resolved look (#1418) <!-- release-pr: 1418 -->
+
 ## [0.78.101.0] - 2026-10-06
 
 ### Changed

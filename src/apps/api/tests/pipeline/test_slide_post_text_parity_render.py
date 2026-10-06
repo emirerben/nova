@@ -47,15 +47,19 @@ def _h(img: Image.Image) -> str:
 # --- legacy byte-identity -------------------------------------------------------------
 # Hashes were computed from the renderer on origin/main BEFORE the parity change
 # (raw RGBA raster hash). An element using only pre-parity fields must not move.
+# Re-pinned 2026-10-06 for the cases on the default face: `DEFAULT_SLIDE_TEXT_FONT`
+# ("Inter-Bold") used to miss the registry and burn Playfair Display Bold; it now
+# resolves to Inter Bold like the legacy drawtext path and the client previews
+# (tests/pipeline/test_font_aliases.py). custom_box sets its face and is unchanged.
 LEGACY_GOLDEN = {
-    (1920, "default"): "53f4e75f62aeafba",
-    (1920, "top_left_stroke"): "85ffb089d3637b9a",
+    (1920, "default"): "de3a103332ebaee0",
+    (1920, "top_left_stroke"): "bb4108ba7ed27e6b",
     (1920, "custom_box"): "12e288fcc5614eb8",
-    (1920, "center_right"): "8f41671debb43196",
-    (1350, "default"): "3da33b559012c032",
-    (1350, "top_left_stroke"): "0ec67de71caf2ee7",
+    (1920, "center_right"): "dced6cf557e4a64c",
+    (1350, "default"): "4090836053087e06",
+    (1350, "top_left_stroke"): "90edf92f2a7e18c8",
     (1350, "custom_box"): "4955f68d1cb9cd33",
-    (1350, "center_right"): "52fa8caa30d8f700",
+    (1350, "center_right"): "fa48df085f3275cb",
 }
 LEGACY_CASES = {
     "default": dict(text="Hello world"),

@@ -44,6 +44,7 @@ from app.agents._schemas.text_animation_phases import TextAnimationPhases
 # Dependency-free (dataclasses only), so it is safe at module scope unlike the
 # heavier `app.pipeline.*` builders this module imports lazily inside functions.
 from app.pipeline.canvas import PORTRAIT, canvas_for_orientation
+from app.pipeline.font_aliases import LEGACY_FONT_ALIASES
 
 log = logging.getLogger(__name__)
 
@@ -52,15 +53,9 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Allowed font families (same set as existing burn dict; reject unknown per
-# eng review A19 — user-controlled strings reach the Skia renderer).
-_LEGACY_FONT_ALIASES: frozenset[str] = frozenset(
-    {
-        "PlayfairDisplay-Bold",
-        "PlayfairDisplay-Regular",
-        "Inter-Bold",
-        "Inter-Regular",
-    }
-)
+# eng review A19 — user-controlled strings reach the Skia renderer). Every
+# renderer resolves the legacy aliases to registry faces (see font_aliases).
+_LEGACY_FONT_ALIASES: frozenset[str] = frozenset(LEGACY_FONT_ALIASES)
 
 
 def _load_registry_font_names() -> frozenset[str]:
@@ -198,6 +193,7 @@ _BURN_EFFECT_TO_TEXT_ELEMENT: dict[str, str] = {
     "static": "static",
     "fade-in": "fade-in",
     "slide-up": "slide-up",
+    "slide-down": "slide-down",
     "karaoke-line": "karaoke-line",
     "staggered-slice": "staggered-slice",
     "ink-reveal": "ink-reveal",
@@ -1307,6 +1303,71 @@ def text_elements_for_variant(
     )
 
 
+def _intro_look_for_variant(v: dict) -> dict:
+    """The intro look the render resolved, rebuilt from persisted variant fields.
+
+    Mirrors the precedence of `generative_build._resolve_intro_overlay_params`
+    (creator override > user-style knob > curated style set > default) for the
+    face, effect, colors and stroke. Only the creator overrides persist as
+    `intro_*` fields; the curated set's look (every generative set pins its own
+    intro face, effect and stroke) lived only in the render params, so the
+    editor projected a Playfair karaoke intro and the next text Save burned
+    that instead of the set's look. Read path only — the render is unchanged.
+
+    Returns `effect`, `text_color` and `shadow_enabled` always, plus
+    `font_family`, `highlight_color` and `stroke_width` when resolved (builder
+    kwargs).
+    Guard: tests/tasks/test_intro_look_parity.py.
+    """
+    style: dict = {}
+    style_set_id = v.get("style_set_id")
+    if isinstance(style_set_id, str) and style_set_id:
+        try:
+            from app.pipeline.style_sets import resolve_overlay_style  # noqa: PLC0415
+
+            style = resolve_overlay_style(style_set_id, "intro")
+        except Exception as exc:  # noqa: BLE001 — a read must never fail on a style set
+            log.warning("text_elements_adapter_style_set_failed", error=str(exc))
+    raw_knobs = v.get("user_style_knobs")
+    knobs: dict = raw_knobs if isinstance(raw_knobs, dict) else {}
+
+    look: dict = {
+        "effect": v.get("intro_effect") or style.get("effect") or "karaoke-line",
+        "text_color": (
+            v.get("intro_text_color") or knobs.get("text_color") or style.get("text_color")
+        )
+        or "#FFFFFF",
+        # The resolver always burns the intro without a shadow. Unset, the saved
+        # element compiles to the renderer default (shadow on).
+        "shadow_enabled": False,
+    }
+    font_family = next(
+        (
+            face
+            for face in (
+                v.get("intro_font_family"),
+                knobs.get("font_family"),
+                style.get("font_family"),
+            )
+            if face
+        ),
+        None,
+    )
+    if font_family in _ALLOWED_FONTS:
+        look["font_family"] = font_family
+    highlight_color = knobs.get("highlight_color") or style.get("highlight_color")
+    if highlight_color:
+        look["highlight_color"] = highlight_color
+    stroke_width = (
+        knobs["stroke_width"]
+        if knobs.get("stroke_width") is not None
+        else style.get("stroke_width")
+    )
+    if stroke_width is not None:
+        look["stroke_width"] = stroke_width
+    return look
+
+
 def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
     """Lazily synthesize a TextElement list from whichever legacy shape a variant has.
 
@@ -1349,16 +1410,12 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
     intro_layout: str | None = v.get("intro_layout")
     intro_word_roles: list[str] | None = v.get("intro_word_roles")
     intro_text_size_px: int | None = v.get("intro_text_size_px")
-    intro_effect: str = v.get("intro_effect") or "karaoke-line"
-    intro_text_color: str = v.get("intro_text_color") or "#FFFFFF"
-    # Exact chat intent is persisted on the variant separately from the legacy
-    # intro fields.  Thread it into the read adapter so the editable timeline
-    # receives the same face/color that the renderer burned.  Only pass a
-    # validated registry key; unset/unknown values preserve the legacy
-    # style-set/default resolution.
-    intro_font_family = v.get("intro_font_family")
-    if intro_font_family not in _ALLOWED_FONTS:
-        intro_font_family = None
+    # The face/effect/colors/stroke the render resolved (creator override >
+    # user-style knob > curated style set), so the editable timeline receives
+    # the look the renderer burned and a text Save keeps it.
+    intro_look = _intro_look_for_variant(v)
+    intro_effect: str = intro_look.pop("effect")
+    intro_text_color: str = intro_look.pop("text_color")
     intro_start_s, intro_end_s = _text_window(v)
     # Canvas parity: every render path resolves the output canvas from the
     # variant's orientation and threads it into the overlay builders, which
@@ -1491,9 +1548,7 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
 
     layout = intro_layout or "linear"
 
-    style_kwargs: dict = {}
-    if intro_font_family is not None:
-        style_kwargs["font_family"] = intro_font_family
+    style_kwargs: dict = dict(intro_look)
     if intro_text_size_px is not None:
         style_kwargs["text_size_px"] = int(intro_text_size_px)
     placement = v.get("intro_placement")
@@ -1541,13 +1596,10 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
         # `cluster_style` never affects the linear path, so it is passed
         # unconditionally.
         #
-        # KNOWN GAP (pre-existing, not closed here): this adapter still does not
-        # thread `font_family`/`language`, so a LEGACY-profile cluster projects
-        # the default face pairing regardless of the variant's pinned font (and
-        # Turkish loses its safe pairing). Closing it means replicating the
-        # style-set resolution `_resolve_intro_overlay_params` does, which would
-        # change what unmarked legacy variants project — a separate change from
-        # this snapshot. See TODOS.md.
+        # KNOWN GAP (pre-existing): `language` is not persisted on the variant,
+        # so a Turkish LEGACY-profile cluster still projects the default pairing
+        # instead of its safe one. The face is threaded (`_intro_look_for_variant`).
+        # See TODOS.md.
         burn_dicts_list = build_persistent_intro_overlays(
             text=intro_text,
             effect=intro_effect,

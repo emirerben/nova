@@ -533,11 +533,13 @@ private struct NativeSelectedTextInspector: View {
                 }
                 .onChange(of: alignment) { _, value in session.setTextAlignment(id: selection.id, alignment: value) }
                 .accessibilityIdentifier("native-editor-selected-text-alignment")
+                // Seeded from where the row burns; only a real step moves it, so
+                // opening the inspector never rewrites a named preset as "custom".
                 Stepper("X \(Int(x * 100))%", value: $x, in: 0...1, step: 0.05)
-                    .onChange(of: x) { _, _ in session.setTextPosition(id: selection.id, x: x, y: y) }
+                    .onChange(of: x) { _, value in if layer.map({ Double($0.anchor.x) }) != value { session.moveText(id: selection.id, x: value) } }
                     .accessibilityIdentifier("native-editor-selected-text-position-x")
                 Stepper("Y \(Int(y * 100))%", value: $y, in: 0...1, step: 0.05)
-                    .onChange(of: y) { _, _ in session.setTextPosition(id: selection.id, x: x, y: y) }
+                    .onChange(of: y) { _, value in if layer.map({ Double($0.anchor.y) }) != value { session.moveText(id: selection.id, y: value) } }
                     .accessibilityIdentifier("native-editor-selected-text-position-y")
                 Picker("Animation", selection: $animation) {
                     ForEach(NativeEditorWireContract.textAnimations, id: \.self) { value in
@@ -600,13 +602,13 @@ private struct NativeSelectedTextInspector: View {
         }
         .onAppear {
             content = layer?.text ?? ""
-            style = nativeString(layer?.raw["font_family"]) ?? "Fraunces"
+            style = layer?.fontFamily ?? EditorTextElement.defaultFontFamily
             if let record = session.document.textElements.first(where: { $0.id == selection.id }) {
                 start = record.startS; end = max(record.startS + 0.1, record.endS)
                 size = nativeNumber(record.raw["size_px"]) ?? 48
                 width = nativeNumber(record.raw["max_width_frac"]) ?? 1
-                x = nativeNumber(record.raw["x_frac"]) ?? 0.5
-                y = nativeNumber(record.raw["y_frac"]) ?? 0.5
+                x = record.anchor.x
+                y = record.anchor.y
                 alignment = nativeString(record.raw["alignment"]) ?? "center"
                 animation = nativeString(record.raw["effect"]) ?? "none"
                 shadow = nativeBool(record.raw["shadow_enabled"]) ?? false

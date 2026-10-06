@@ -13,6 +13,7 @@ import uuid
 import pytest
 from pydantic import ValidationError
 
+from app.pipeline.slide_post.build import SLIDE_IMAGE_NORMALIZER_VERSION
 from app.routes.plan_items import _slide_post_export_is_current
 from app.schemas.slide_post import (
     MAX_SLIDE_TEXT_LENGTH,
@@ -103,9 +104,18 @@ def test_export_freshness_requires_complete_unique_rendered_assets() -> None:
             {"asset_id": str(draft.slides[0].asset_id), "asset_gcs_path": "private/a.jpg"},
             {"asset_id": str(draft.slides[1].asset_id), "asset_gcs_path": "private/b.jpg"},
         ],
-        "slide_post": {"validation": {"errors": []}},
+        "slide_post": {
+            "validation": {"errors": []},
+            "normalizer_version": SLIDE_IMAGE_NORMALIZER_VERSION,
+        },
     }
     assert _slide_post_export_is_current(draft, valid)
+    # Rendered by an older decode recipe (or before the stamp existed) => stale.
+    for stale in (SLIDE_IMAGE_NORMALIZER_VERSION - 1, None):
+        assert not _slide_post_export_is_current(
+            draft,
+            {**valid, "slide_post": {**valid["slide_post"], "normalizer_version": stale}},
+        )
     assert not _slide_post_export_is_current(
         draft, {**valid, "slides": [valid["slides"][0], valid["slides"][0]]}
     )

@@ -193,6 +193,44 @@ struct EditorTextElement: Codable, Equatable, Sendable {
     init(id: String, text: String, startS: Double = 0, endS: Double = 0, role: String? = nil, raw: [String: JSONValue] = [:]) {
         self.id = id; self.text = text; self.startS = startS; self.endS = endS; self.role = role; self.raw = raw
     }
+
+    /// Where a burn of this row draws it on the 0–1 canvas (see `anchor(of:)`).
+    var anchor: CGPoint { Self.anchor(of: raw) }
+    /// The face a burn of this row draws it in. An empty name counts as none,
+    /// as on the server (an unknown one would fail the whole preview compile).
+    var fontFamily: String { Self.fontFamily(of: raw) }
+}
+
+/// How the server burns a `text_elements` row: cloud re-burns and phone
+/// recipes (compiled on the server) share `build_overlays_from_text_elements`
+/// → `text_overlay._POSITION_Y`, and the font registry's display face when the
+/// row names none. The preview, the drag start and the position controls all
+/// read placement from here, so they show a row where that burn puts it. (An
+/// untouched AI render's first burn can differ where the server's read adapter
+/// flattens its legacy params, e.g. "center-below" or a sans `font_style`.)
+/// Drift guard: `test_ios_text_row_look_parity.py`.
+extension EditorTextElement {
+    /// `_POSITION_Y["center"]`, where "middle" and a row with no vertical value burn.
+    static let centerY = 0.45
+    /// Named vertical presets ("middle" burns as "center").
+    static let presetY: [String: Double] = ["top": 0.15, "middle": centerY, "center": centerY, "bottom": 0.85]
+    /// The face a row without `font_family` burns in (the registry's `style_defaults.display`).
+    static let defaultFontFamily = "Playfair Display"
+
+    /// A named-position row burns at its preset whatever `x_frac`/`y_frac` it
+    /// carries (older app builds wrote y 0.5 onto such rows on load), so the
+    /// fracs are ignored there; a drag makes the row "custom". A row with no
+    /// `position` keeps its fracs: server rows always carry one, and the
+    /// editor's own rows without one have always been placed by their fracs.
+    static func anchor(of raw: [String: JSONValue]) -> CGPoint {
+        if let y = raw["position"]?.stringValue.flatMap({ presetY[$0] }) { return CGPoint(x: 0.5, y: y) }
+        return CGPoint(x: raw["x_frac"]?.numberValue ?? 0.5, y: raw["y_frac"]?.numberValue ?? centerY)
+    }
+
+    static func fontFamily(of raw: [String: JSONValue]) -> String {
+        guard let name = raw["font_family"]?.stringValue?.trimmingCharacters(in: .whitespaces), !name.isEmpty else { return defaultFontFamily }
+        return name
+    }
 }
 
 /// KRI-240 (plan 026 D6, R1, R11): a caption cue's per-word timings
