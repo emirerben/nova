@@ -7,13 +7,16 @@ import json
 import shutil
 import subprocess
 import zipfile
+from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageStat
 
 from app.config import settings
 from app.pipeline.slide_post.build import (
+    _WATERMARK_PNG,
     SLIDE_IMAGE_NORMALIZER_VERSION,
+    SLIDE_WATERMARK_VERSION,
     BundleSlideFile,
     SlideBuildError,
     build_bundle_zip,
@@ -39,7 +42,20 @@ def _make_image(path, width: int, height: int, color=(255, 0, 0)) -> None:
     Image.new("RGB", (width, height), color=color).save(path)
 
 
-def _make_video(path, *, duration_s: float = 1.0, width: int = 640, height: int = 360) -> None:
+def _make_video(
+    path,
+    *,
+    duration_s: float = 1.0,
+    width: int = 640,
+    height: int = 360,
+    color: str = "blue",
+    audio: bool = False,
+) -> None:
+    audio_args = (
+        ["-f", "lavfi", "-i", f"sine=frequency=440:duration={duration_s}", "-c:a", "aac"]
+        if audio
+        else []
+    )
     subprocess.run(
         [
             "ffmpeg",
@@ -49,7 +65,8 @@ def _make_video(path, *, duration_s: float = 1.0, width: int = 640, height: int 
             "-f",
             "lavfi",
             "-i",
-            f"color=c=blue:s={width}x{height}:d={duration_s}",
+            f"color=c={color}:s={width}x{height}:d={duration_s}",
+            *audio_args,
             "-c:v",
             "libx264",
             "-preset",
@@ -511,6 +528,155 @@ class TestNormalizeImageDecode:
         assert _decode_image_for_ffmpeg(str(bad)) == str(bad)
 
 
+# ---- Kria watermark (KRI-472) ---------------------------------------------------------
+
+# The mark's own box (shadow pad excluded) on the 1080x1920 reference: left
+# edge 60, 133px wide, bottom edge 445px above the bottom of the frame.
+_MARK_LEFT, _MARK_W, _MARK_H, _MARK_BOTTOM_INSET = 60, 133, 59, 445
+
+
+def _mark_box(canvas, *, scale: float = 1.0) -> tuple[int, int, int, int]:
+    _, ch = canvas
+    bottom = ch - _MARK_BOTTOM_INSET * scale
+    return (
+        round(_MARK_LEFT * scale),
+        round(bottom - _MARK_H * scale),
+        round((_MARK_LEFT + _MARK_W) * scale),
+        round(bottom),
+    )
+
+
+def _brightest(path, box) -> int:
+    with Image.open(path) as img:
+        return ImageStat.Stat(img.convert("L").crop(box)).extrema[0][1]
+
+
+def _ffprobe_stream_count(path, kind: str) -> int:
+    out = subprocess.check_output(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            kind,
+            "-show_entries",
+            "stream=index",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ],
+        text=True,
+    )
+    return len([line for line in out.splitlines() if line.strip()])
+
+
+def test_bundled_watermark_matches_the_brand_kit():
+    """The API's copy is written by brand/social/build.py; this stops it
+    drifting from the kit (iOS has the same guard in BrandingTests)."""
+    kit = (
+        Path(__file__).resolve().parents[5]
+        / "brand/social/dist/watermark/kria-watermark-mist-standard.png"
+    )
+    if not kit.exists():
+        pytest.skip("brand kit not present in this checkout")
+    assert Path(_WATERMARK_PNG).read_bytes() == kit.read_bytes(), (
+        "assets/branding watermark drifted from brand/social/dist; re-run build.py"
+    )
+
+
+def test_watermark_composites_last_and_scales_with_the_canvas():
+    from app.pipeline.slide_post.build import _overlay_filter_complex
+
+    tall = _overlay_filter_complex("scale=1080:1920", 2, canvas=(1080, 1920))
+    # Text PNGs are inputs 1-2; the watermark is input 3 and lands last, on
+    # [vout], at the reference placement with no rescale.
+    assert tall.endswith("[b2][3:v]overlay=30:main_h-overlay_h-415:format=auto[vout]")
+    assert "scale=iw" not in tall
+
+    carousel = _overlay_filter_complex("scale=1080:1350", 0, canvas=(1080, 1350))
+    # 4:5: one scale (height-bound, 1350/1920) for both the mark and its insets.
+    assert "[1:v]scale=iw*0.703125:ih*0.703125" in carousel
+    assert carousel.endswith("[b0][wm]overlay=21:main_h-overlay_h-292:format=auto[vout]")
+
+
+@pytest.mark.skipif(not _HAS_FFMPEG, reason="ffmpeg not installed")
+class TestSlideWatermark:
+    def test_image_slide_carries_the_mark_bottom_left(self, tmp_path):
+        src = tmp_path / "black.png"
+        out = tmp_path / "out.jpg"
+        _make_image(src, 1080, 1920, color=(0, 0, 0))
+        normalize_image_slide(str(src), str(out), canvas=CANVAS)
+        assert _brightest(out, _mark_box(CANVAS)) > 60
+        # Nowhere else: the mirrored bottom-right box and the top stay black.
+        left, top, right, bottom = _mark_box(CANVAS)
+        assert _brightest(out, (1080 - right, top, 1080 - left, bottom)) < 20
+        assert _brightest(out, (left, 200, right, 300)) < 20
+
+    def test_carousel_slide_gets_a_proportional_mark_in_the_same_corner(self, tmp_path):
+        canvas = (1080, 1350)
+        src = tmp_path / "black.png"
+        out = tmp_path / "out.jpg"
+        _make_image(src, 1080, 1350, color=(0, 0, 0))
+        normalize_image_slide(str(src), str(out), canvas=canvas)
+        scaled = _mark_box(canvas, scale=1350 / 1920)
+        assert _brightest(out, scaled) > 60
+        # Not at the unscaled 9:16 inset either.
+        left, _, right, _ = scaled
+        assert _brightest(out, (left, 1350 - 445 - 59, right, 1350 - 445)) < 20
+
+    def test_mark_stays_on_top_of_slide_text(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(settings, "slide_post_rich_text_enabled", True)
+        src = tmp_path / "black.png"
+        out = tmp_path / "out.jpg"
+        _make_image(src, 1080, 1920, color=(0, 0, 0))
+        # An opaque black box behind the text, placed over the mark's corner:
+        # if the text were composited last, it would hide the mark.
+        element = SlideTextElement(
+            id="t",
+            text="COVER",
+            position="custom",
+            x_frac=0.02,
+            y_frac=0.75,
+            alignment="left",
+            color="#000000",
+            background_color="#000000",
+            size_px=200,
+        )
+        # Precondition: the text layer alone is opaque over the whole mark box.
+        from app.pipeline.slide_post.build import render_text_element_png
+
+        layer = tmp_path / "layer.png"
+        render_text_element_png(element, str(layer), canvas=CANVAS)
+        with Image.open(layer) as img:
+            alpha = img.getchannel("A").crop(_mark_box(CANVAS))
+            assert ImageStat.Stat(alpha).extrema[0][0] == 255
+        normalize_image_slide(str(src), str(out), canvas=CANVAS, edits=SlideEdits(texts=[element]))
+        assert _brightest(out, _mark_box(CANVAS)) > 60
+
+    def test_video_slide_carries_the_mark_and_keeps_one_audio_track(self, tmp_path):
+        src = tmp_path / "src.mp4"
+        out = tmp_path / "out.mp4"
+        frame = tmp_path / "frame.png"
+        _make_video(src, duration_s=1.5, color="black", audio=True)
+        normalize_video_slide(str(src), str(out), canvas=CANVAS)
+        assert _ffprobe_stream_count(out, "a") == 1
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-ss", "0.5", "-i", str(out)]
+            + ["-frames:v", "1", str(frame)],
+            check=True,
+            capture_output=True,
+        )
+        assert _brightest(frame, _mark_box(CANVAS)) > 60
+
+    def test_silent_video_slide_still_renders(self, tmp_path):
+        src = tmp_path / "src.mp4"
+        out = tmp_path / "out.mp4"
+        _make_video(src, duration_s=1.0)
+        normalize_video_slide(str(src), str(out), canvas=CANVAS)
+        assert _ffprobe_stream_count(out, "a") == 0
+        assert probe_dimensions(str(out)) == CANVAS
+
+
 def test_normalizer_version_is_part_of_image_cache_key():
     import inspect
 
@@ -519,3 +685,14 @@ def test_normalizer_version_is_part_of_image_cache_key():
     assert SLIDE_IMAGE_NORMALIZER_VERSION == 2
     src = inspect.getsource(generative_build)
     assert "SLIDE_IMAGE_NORMALIZER_VERSION" in src
+
+
+def test_watermark_version_is_part_of_every_slide_cache_key():
+    import inspect
+
+    from app.tasks import generative_build
+
+    assert SLIDE_WATERMARK_VERSION == 1
+    src = inspect.getsource(generative_build._build_slide_post_result)
+    assert "_wm{slide_build.SLIDE_WATERMARK_VERSION}" in src
+    assert '"watermark_version": slide_build.SLIDE_WATERMARK_VERSION' in src

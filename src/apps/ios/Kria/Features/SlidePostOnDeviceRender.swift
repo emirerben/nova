@@ -1,11 +1,13 @@
 import ImageIO
+import KriaMediaEngine
 import SwiftUI
 import UIKit
 
 /// Renders an image-only slide post on the phone from the ORIGINAL photos: cover-fit centre-crop into the
-/// profile canvas at 2x, then the same `SlidePostTextLayerView` the editor shows, drawn at real pixel size.
-/// No server render, no polling. Anything it cannot reproduce faithfully (video, looks, unknown fonts,
-/// no photo URL) is `supports == false` and takes the server path instead.
+/// profile canvas at 2x, then the same `SlidePostTextLayerView` the editor shows, drawn at real pixel size,
+/// then the Kria watermark the server render also puts on every slide (KRI-472). No server render, no
+/// polling. Anything it cannot reproduce faithfully (video, looks, unknown fonts, no photo URL) is
+/// `supports == false` and takes the server path instead.
 @MainActor enum SlidePostOnDeviceRender {
     typealias Fetch = SlidePostImageCache.Fetcher
     enum RenderError: Error { case undecodable, encodeFailed }
@@ -43,16 +45,30 @@ import UIKit
         guard let photo = decode(data, maxPixel: max(pixels.width, pixels.height)) else { throw RenderError.undecodable }
         let texts = slide.edits?.effectiveTexts ?? []
         let overlay = texts.isEmpty ? nil : textLayer(texts, pixels: pixels)
+        let mark = try watermark()
 
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1; format.opaque = true; format.preferredRange = .standard
-        let image = UIGraphicsImageRenderer(size: pixels, format: format).image { _ in
+        let image = UIGraphicsImageRenderer(size: pixels, format: format).image { context in
             UIColor.black.setFill(); UIRectFill(CGRect(origin: .zero, size: pixels))
             photo.draw(in: coverRect(image: photo.size, in: pixels))
             overlay?.draw(in: CGRect(origin: .zero, size: pixels))
+            // Last, so no text buries it: the stacking the video engine and the server render use.
+            context.cgContext.interpolationQuality = .high
+            mark.draw(in: KriaBranding.watermarkTileRect(canvas: pixels, tileSize: mark.size))
         }
         guard let jpeg = image.jpegData(compressionQuality: jpegQuality) else { throw RenderError.encodeFailed }
         return jpeg
+    }
+
+    /// The phone's default mark, with its opacity and shadow baked in. Missing from the bundle is a build
+    /// defect, so it fails the export instead of saving unbranded slides (as `KriaBranding.preflight` does).
+    private static func watermark() throws -> UIImage {
+        let variant = KriaBranding.Variant.mist
+        guard let url = KriaBranding.watermarkURL(variant), let image = UIImage(contentsOfFile: url.path) else {
+            throw MediaEngineError.missingBrandingResource(KriaBranding.watermarkFileName(variant))
+        }
+        return image
     }
 
     /// Cover-fit, centre-crop: the photo scaled to fill `canvas`, centred (the overflow is clipped by the bitmap).

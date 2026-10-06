@@ -8434,13 +8434,16 @@ def _build_slide_post_result(
             # unchanged from before this feature existed.
             edits_digest = slide_build.edits_cache_digest(edits)
             # Image slides carry the decode-recipe version so a normalizer
-            # fix rebuilds stale derivatives; videos keep their key.
+            # fix rebuilds stale derivatives. Every slide carries the
+            # watermark version, so a derivative cached before the watermark
+            # (or before a change to it) is never reused unbranded.
             norm_suffix = (
                 f"_n{slide_build.SLIDE_IMAGE_NORMALIZER_VERSION}" if kind == "image" else ""
             )
+            wm_suffix = f"_wm{slide_build.SLIDE_WATERMARK_VERSION}"
             normalized_key = (
                 f"generative-jobs/{job_id}/slides/normalized/"
-                f"{fingerprint}_{canvas[0]}x{canvas[1]}_{edits_digest}{norm_suffix}.{ext}"
+                f"{fingerprint}_{canvas[0]}x{canvas[1]}_{edits_digest}{norm_suffix}{wm_suffix}.{ext}"
             )
             normalized_local = os.path.join(tmpdir, f"norm_{index:02d}.{ext}")
             if storage.object_exists(normalized_key):
@@ -8546,6 +8549,9 @@ def _build_slide_post_result(
             # Exports rendered by an older image-decode recipe (raw HEIC/EXIF
             # ignored by ffmpeg) are reported stale so clients re-render them.
             "normalizer_version": slide_build.SLIDE_IMAGE_NORMALIZER_VERSION,
+            # Same for exports rendered before the current watermark: they
+            # re-render rather than download without it.
+            "watermark_version": slide_build.SLIDE_WATERMARK_VERSION,
             "validation": {
                 "ok": validation.ok,
                 "errors": [

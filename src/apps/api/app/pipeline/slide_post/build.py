@@ -60,6 +60,27 @@ MAX_PREVIEW_VIDEO_SLICE_S = 4.0
 _FINAL_PRESET = "fast"
 _FINAL_CRF = "20"
 
+# Every slide carries the Kria watermark (KRI-472): the same mark, tone and
+# anchor the iOS engine burns into phone-made videos (`KriaBranding` in
+# KriaMediaEngine/Branding.swift; placement rationale in
+# brand/social/README.md). The PNG is a copy that brand/social/build.py writes
+# from brand/social/dist, and a test fails if it drifts. Opacity and shadow
+# are baked into the file, so it is composited as-is.
+_WATERMARK_PNG = str(
+    Path(__file__).resolve().parents[3] / "assets" / "branding" / "kria-watermark-mist-standard.png"
+)
+# Authored on 1080x1920. The PNG carries a 30px transparent pad for its
+# shadow, so the tile's origin sits 30px left of and below the mark's: mark
+# left edge at x=60, mark bottom edge 445px above the bottom of the frame.
+_WATERMARK_REF_CANVAS: Canvas = (1080, 1920)
+_WATERMARK_TILE_LEFT = 30
+_WATERMARK_TILE_BOTTOM_INSET = 415
+# Part of every normalized derivative's cache key and stamped on the rendered
+# variant. Bump it when the mark, its placement, or how it is composited
+# changes, so cached derivatives rebuild and older exports are re-rendered
+# before they can be downloaded.
+SLIDE_WATERMARK_VERSION = 1
+
 
 class SlideBuildError(Exception):
     """Raised when FFmpeg fails to normalize, stitch, or extract a slide."""
@@ -322,12 +343,39 @@ def _text_pngs(edits: SlideEdits | None, *, canvas: Canvas, out_path: str) -> It
             Path(png).unlink(missing_ok=True)
 
 
-def _overlay_filter_complex(base_vf: str, n_overlays: int) -> str:
-    """`[0:v]<base>[b0]; [b0][1:v]overlay[b1]; ...` ending on `[vout]`."""
+def _watermark_filter(canvas: Canvas, *, base: str, mark: str, out: str) -> str:
+    """Composite the watermark input `mark` over `base` into `out`.
+
+    One scale for both the mark and its insets, taken from whichever axis is
+    more constrained -- the rule `KriaBranding.tileTransform` uses -- so a 4:5
+    carousel slide gets a proportionally smaller mark in the same corner and a
+    9:16 slide gets exactly the reference placement.
+    """
+    cw, ch = canvas
+    ref_w, ref_h = _WATERMARK_REF_CANVAS
+    scale = min(cw / ref_w, ch / ref_h)
+    x = round(_WATERMARK_TILE_LEFT * scale)
+    bottom = round(_WATERMARK_TILE_BOTTOM_INSET * scale)
+    sized, prefix = mark, ""
+    if scale != 1:
+        sized = "wm"
+        prefix = f"[{mark}]scale=iw*{scale:.6f}:ih*{scale:.6f}:flags=lanczos[{sized}];"
+    return f"{prefix}[{base}][{sized}]overlay={x}:main_h-overlay_h-{bottom}:format=auto[{out}]"
+
+
+def _overlay_filter_complex(base_vf: str, n_overlays: int, *, canvas: Canvas) -> str:
+    """`[0:v]<base>[b0]; [b0][1:v]overlay[b1]; ...` then the watermark, ending on `[vout]`.
+
+    Inputs 1..n are the canvas-sized text PNGs and input n+1 is the watermark.
+    The watermark goes on last so no text can bury it, the same stacking the
+    iOS engine uses.
+    """
     parts = [f"[0:v]{base_vf}[b0]"]
     for i in range(n_overlays):
-        label = "vout" if i == n_overlays - 1 else f"b{i + 1}"
-        parts.append(f"[b{i}][{i + 1}:v]overlay=0:0:format=auto[{label}]")
+        parts.append(f"[b{i}][{i + 1}:v]overlay=0:0:format=auto[b{i + 1}]")
+    parts.append(
+        _watermark_filter(canvas, base=f"b{n_overlays}", mark=f"{n_overlays + 1}:v", out="vout")
+    )
     return ";".join(parts)
 
 
@@ -397,13 +445,19 @@ def normalize_image_slide(
         if edit_fragment:
             vf = f"{vf},{edit_fragment}"
         cmd = ["ffmpeg", "-y", "-loglevel", "warning", "-nostats", "-i", decoded_path]
-        for png in pngs:
+        for png in [*pngs, _WATERMARK_PNG]:
             cmd += ["-i", png]
-        if pngs:
-            cmd += ["-filter_complex", _overlay_filter_complex(vf, len(pngs)), "-map", "[vout]"]
-        else:
-            cmd += ["-vf", vf]
-        cmd += ["-frames:v", "1", "-q:v", "2", out_path]
+        cmd += [
+            "-filter_complex",
+            _overlay_filter_complex(vf, len(pngs), canvas=canvas),
+            "-map",
+            "[vout]",
+            "-frames:v",
+            "1",
+            "-q:v",
+            "2",
+            out_path,
+        ]
         _run_ffmpeg(cmd, context="normalize_image_slide")
 
 
@@ -428,20 +482,18 @@ def normalize_video_slide(
         if edit_fragment:
             vf = f"{vf},{edit_fragment}"
         cmd = ["ffmpeg", "-y", "-loglevel", "warning", "-nostats", "-i", src_path]
-        for png in pngs:
+        for png in [*pngs, _WATERMARK_PNG]:
             cmd += ["-i", png]
-        if pngs:
-            cmd += [
-                "-filter_complex",
-                _overlay_filter_complex(vf, len(pngs)),
-                "-map",
-                "[vout]",
-                "-map",
-                "0:a?",
-            ]
-        else:
-            cmd += ["-vf", vf]
         cmd += [
+            "-filter_complex",
+            _overlay_filter_complex(vf, len(pngs), canvas=canvas),
+            "-map",
+            "[vout]",
+            # One audio track, as ffmpeg's own stream selection kept before
+            # every slide went through a filtergraph; mapping all of them
+            # would carry every extra track a phone recorded into the export.
+            "-map",
+            "0:a:0?",
             "-c:v",
             "libx264",
             "-preset",

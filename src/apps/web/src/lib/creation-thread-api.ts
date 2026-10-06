@@ -443,7 +443,7 @@ export function creationFormat(value: unknown): CreationFormat | null {
 export function creationFormatLabel(value: CreationFormat | null): string {
   if (value === "narrated_planned") return "Narrated";
   if (value === "subtitled") return "Talking to camera";
-  if (value === "slides") return "Photo & video post";
+  if (value === "slides") return "Slider";
   return "Montage";
 }
 

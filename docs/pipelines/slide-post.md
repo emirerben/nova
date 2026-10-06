@@ -12,6 +12,10 @@ mechanics.
 *into* a video (`app/pipeline/carousel/`, `variant["carousel_moment"]`,
 `_editor/CarouselPanel.tsx`). The new domain noun is `slides` / "slide post".
 
+Users see it as **"Slider"** (KRI-472; it was "Photo & video post"). Only the
+copy changed: code, routes, schemas and `edit_format = "slides"` keep the
+`slides` / slide-post names.
+
 ## Platform profiles
 
 `app/pipeline/slide_post/profiles.py` is the single source of truth for
@@ -42,8 +46,7 @@ photo mode is the images-only degenerate case.
 - `edit_format = "slides"` on the item. Added to `EditFormat`
   (`app/agents/_schemas/edit_format.py`) but kept **out** of
   `GUIDED_EDIT_FORMATS`/`AUDIO_LED_EDIT_FORMATS` — the content-plan generator
-  never proposes it; the user picks it via `SetupPicker`'s "Photo & video
-  post" card.
+  never proposes it; the user picks it via `SetupPicker`'s "Slider" card.
 
 ## Dispatch
 
@@ -77,12 +80,14 @@ download/upload. Per slide:
    unreadable reference is **dropped**, not fatal — same best-effort posture
    as a deleted clip elsewhere.
 2. **Content-addressed reuse**: the normalized derivative's GCS key is
-   `generative-jobs/{job_id}/slides/normalized/{content_fingerprint}_{canvas}.{ext}`.
+   `generative-jobs/{job_id}/slides/normalized/{content_fingerprint}_{canvas}_{edits_digest}[_n{SLIDE_IMAGE_NORMALIZER_VERSION}]_wm{SLIDE_WATERMARK_VERSION}.{ext}`
+   (the `_n` part is image slides only).
    If it already exists, download and reuse it — skip re-encoding entirely.
    A pure reorder/caption/cover edit therefore re-encodes nothing.
 3. Otherwise normalize: `normalize_image_slide`/`normalize_video_slide`
    (cover-fit scale+crop to the profile's canvas, `setsar=1` — required, not
-   cosmetic, for the concat filter below). **Encoder policy**: these are
+   cosmetic, for the concat filter below), then the Kria watermark (see
+   below). **Encoder policy**: these are
    FINAL-output bytes (they ship in the export bundle), `preset="fast"` or
    stricter — a direct implementation, not `reframe._encoding_args` (that
    helper is coupled to the main HDR/canvas reframe pipeline this doesn't
@@ -96,6 +101,40 @@ download/upload. Per slide:
    copy for an image slide, a single ffmpeg frame grab for video).
 6. Build `post.json` + `caption.txt` + `bundle.zip` (`build_post_manifest` /
    `build_bundle_zip`, stdlib `zipfile`, index-ordered filenames).
+
+## Watermark (KRI-472)
+
+Every slide, photo or video, carries the same Kria mark the iOS engine burns
+into phone-made videos: the `mist` standard tile, bottom-left, mark bottom
+edge 445px above the bottom of a 1080×1920 frame (`brand/social/README.md`
+has the placement rationale). It is composited **last**, above any slide
+text, so text can never bury it. Because it is in the normalized derivative,
+the export bundle, the stitched preview and the cover all carry it.
+
+- **Scale rule:** one scale for the mark and its insets,
+  `min(w/1080, h/1920)` — `KriaBranding.tileTransform`'s rule. A 4:5
+  carousel slide therefore gets a 0.703× mark in the same relative corner.
+- **Server:** `_watermark_filter` / `_overlay_filter_complex` in
+  `app/pipeline/slide_post/build.py`. The PNG is
+  `src/apps/api/assets/branding/kria-watermark-mist-standard.png`, written by
+  `brand/social/build.py` (`RUNTIME_ASSETS`);
+  `test_bundled_watermark_matches_the_brand_kit` fails if it drifts.
+- **Phone (image-only posts rendered on device):**
+  `SlidePostOnDeviceRender.renderSlide` draws the bundled PNG at
+  `KriaBranding.watermarkTileRect(canvas:tileSize:)` after the text layer. A
+  missing PNG fails the export (`MediaEngineError.missingBrandingResource`)
+  rather than saving unbranded slides.
+- **Re-render of older posts:** `SLIDE_WATERMARK_VERSION` is in every
+  normalized key and is stamped on the variant as
+  `slide_post.watermark_version`. `_slide_post_export_is_current`
+  (`routes/plan_items.py`) reports a render without the current version as
+  stale, so the next export re-renders instead of downloading an unbranded
+  bundle. Bump it when the mark, its placement, or the composite changes.
+- Video slides map one audio track (`0:a:0?`), as ffmpeg's own stream
+  selection did before every slide went through a filtergraph.
+- The slide editor canvases draw the original media and do not show the
+  mark; only rendered output (bundle, preview MP4, cover, on-device JPEGs)
+  carries it.
 
 ## Rich per-slide text (KRI-298 / KRI-299)
 
@@ -256,7 +295,7 @@ pool order / first slide as cover / no caption rather than blocking assembly.
 - **Uploading a brand-new file from inside the slide-post panel** is
   deferred — `SlidePostPanel`'s "Add" offers already-uploaded, ready pool
   assets only; attach new media via the item's Assets pool first.
-- **No dedicated type-poster loop** for the "Photo & video post" SetupPicker
+- **No dedicated type-poster loop** for the "Slider" SetupPicker
   card yet — it reuses the "Photo wall" style tile as a visual stand-in.
 
 ## Chat editing (KRI-301, flag `slide_post_chat_edit_enabled`, default off)
