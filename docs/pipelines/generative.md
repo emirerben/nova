@@ -550,16 +550,24 @@ agent fails, phrase segmentation/upload order remains the deterministic fallback
 The backend-only flag defaults false and must be set on API and worker together.
 
 Editor read path: the variant stores these bars as presets ("top"/"bottom", a
-size class, no face; `text_elements_materialized_from == "narrated_storyboard"`)
+size class, no face; `text_elements_materialized_from == "narrated_storyboard"`;
+a long title fitted by `narrated_title_placement` is custom y + px, no face)
 and nothing re-projects them, so the saved list is their only copy and a Save
-that omits one deletes it. `merge_projected_text_elements_for_variant` serves
-them through `resolve_narrated_storyboard_look`: centred custom position, px
-size and the display face the Skia burn resolves the presets to, so the iOS
-editor (which otherwise loads a missing `y_frac`/`font_family` as 0.5 /
-Fraunces and saves that face back) and the web editor preview them where the
-cloud burns them. The burn is pixel-identical
-(`tests/pipeline/test_narrated_storyboard_look.py`); editor round trip and
-reburn: `tests/routes/test_narrated_storyboard_editor.py`.
+that omits one deletes it. Every editor-facing read spells out the look the
+Skia burn resolves the presets to (centred custom position, px size, display
+face): `merge_projected_text_elements_for_variant` via
+`resolve_narrated_storyboard_look`, and `resolve_narrated_storyboard_rows` for
+the status route's authored timelines, the Kria chat snapshot and compile
+(re-applied after its ops, so a chat move to a named spot drops the old
+`y_frac`) and the Kria draft bootstrap. The iOS editor otherwise loads a
+missing `y_frac`/`font_family` as 0.5 / Fraunces and saves that face back. The
+burn is pixel-identical (`tests/pipeline/test_narrated_storyboard_look.py`),
+so a Save that persists the spelled-out look changes nothing on video, but it
+freezes that look against later preset or default-face changes. Known gap:
+Kria draft revisions and empty-editor drafts saved before this change are
+served as stored, so they can still carry preset rows until the next render
+or Save. Editor round trip, every reader and reburn:
+`tests/routes/test_narrated_storyboard_editor.py`.
 
 ### Narrated clip alignment (KRI-456)
 

@@ -34,6 +34,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    ValidationError,
     field_validator,
     model_serializer,
     model_validator,
@@ -1100,31 +1101,26 @@ NARRATED_STORYBOARD_SOURCE = "narrated_storyboard"
 
 
 def is_narrated_storyboard_element(raw: TextElement | dict) -> bool:
-    """True for a bar authored by the cloud narrated storyboard.
+    """True for a narrated storyboard bar.
 
-    `_narrated_storyboard_text_elements` marks its bars with a
+    `_narrated_storyboard_text_elements` marks its cloud bars with a
     ``source_params["narrated_storyboard"]`` key (no ``source``/``identity``, so
-    they have no projection identity: they live only in the saved list).
+    they have no projection identity: they live only in the saved list). The
+    phone Narrated title row carries the same marker and is already explicit.
     """
     params = raw.source_params if isinstance(raw, TextElement) else raw.get("source_params")
     return isinstance(params, dict) and NARRATED_STORYBOARD_SOURCE in params
 
 
-def resolve_narrated_storyboard_look(elem: TextElement) -> TextElement:
-    """A storyboard bar with the look the cloud burn gives it spelled out.
+def _narrated_storyboard_look_updates(elem: TextElement) -> dict:
+    """The look fields the cloud burn resolves a storyboard bar's presets to.
 
-    Storyboard bars are authored with presets: a named ``position``, a
+    Storyboard bars are stored with presets: a named ``position``, a
     ``size_class`` and no face. The Skia burn resolves those through
     `text_overlay._POSITION_Y` ("top" 0.15, "bottom" 0.85, "middle" via
     "center" 0.45, ignoring any x/y fracs), `_FONT_SIZE_MAP` and the
-    registry's "display" face (Playfair Display). The iOS editor has none of
-    those defaults: it loads a row without ``y_frac``/``font_family`` at
-    y 0.5 in Fraunces, and its Save writes that face back, so the next burn
-    changed font. The editor therefore gets the resolved values: centred
-    custom position, explicit px size, explicit face. The burn is
-    pixel-identical either way (`test_storyboard_resolved_look_burns_identically`),
-    so a Save that persists the resolved bar changes nothing on video, and a
-    later drag is honoured (a named position ignores ``y_frac``).
+    registry's "display" face (Playfair Display). Empty when nothing is left
+    to spell out (a bar the creator moved, resized or restyled keeps it).
     """
     from app.pipeline.generative_overlays import _DEFAULT_SIZE_CLASS  # noqa: PLC0415
     from app.pipeline.text_overlay import (  # noqa: PLC0415
@@ -1143,6 +1139,23 @@ def resolve_narrated_storyboard_look(elem: TextElement) -> TextElement:
         display_face = (_FONT_REGISTRY.get("style_defaults") or {}).get("display")
         if display_face in _ALLOWED_FONTS:
             updates["font_family"] = display_face
+    return updates
+
+
+def resolve_narrated_storyboard_look(elem: TextElement) -> TextElement:
+    """A storyboard bar with the look the cloud burn gives it spelled out.
+
+    The iOS editor has none of the cloud's preset defaults: it loads a row
+    without ``y_frac``/``font_family`` at y 0.5 in Fraunces, and its Save writes
+    that face back, so the next burn changed font. Editors therefore get the
+    resolved values (`_narrated_storyboard_look_updates`): centred custom
+    position, explicit px size, explicit face. The burn is pixel-identical
+    either way (`test_storyboard_resolved_look_burns_identically`), so a Save
+    that persists the resolved bar changes nothing on video, and a later drag
+    is honoured (a named position ignores ``y_frac``). Stored rows keep their
+    presets until such a Save; only editor-facing reads resolve them.
+    """
+    updates = _narrated_storyboard_look_updates(elem)
     return elem.model_copy(update=updates) if updates else elem
 
 
@@ -1150,30 +1163,35 @@ def _editor_saved_element(elem: TextElement) -> TextElement:
     return resolve_narrated_storyboard_look(elem) if is_narrated_storyboard_element(elem) else elem
 
 
-_STORYBOARD_LOOK_FIELDS = ("position", "x_frac", "y_frac", "size_px", "font_family")
+def narrated_storyboard_row_updates(row: object) -> dict:
+    """Look fields to spell out on one stored row; ``{}`` for any other row.
+
+    A storyboard row that does not validate is left alone (``{}``): it is
+    served as stored rather than failing the whole read.
+    """
+    if not isinstance(row, dict) or not is_narrated_storyboard_element(row):
+        return {}
+    try:
+        elem = TextElement.model_validate(row)
+    except ValidationError:
+        return {}
+    return _narrated_storyboard_look_updates(elem)
 
 
 def resolve_narrated_storyboard_rows(rows: list | None) -> list:
-    """Stored ``text_elements`` rows with each storyboard bar's look resolved.
+    """Stored ``text_elements`` rows with each storyboard bar's look spelled out.
 
-    The row-level twin of `resolve_narrated_storyboard_look` for readers that
-    hand stored rows to an editor without going through
-    `merge_projected_text_elements_for_variant` (authored-timeline status
-    reads, Kria chat drafts). Only the look fields of storyboard-marked rows
-    change; every other row and key is returned as stored. A row that does
-    not validate is left alone.
+    The row-level twin of `resolve_narrated_storyboard_look`, for every
+    editor-facing reader that hands stored rows over without
+    `merge_projected_text_elements_for_variant`: the status route's authored
+    timelines, the Kria chat snapshot and compile, and the Kria draft
+    bootstrap. Only the look fields that change are written; every other row
+    and key is returned as stored.
     """
-    out: list = []
-    for row in rows or []:
-        if isinstance(row, dict) and is_narrated_storyboard_element(row):
-            try:
-                resolved = resolve_narrated_storyboard_look(TextElement.model_validate(row))
-            except Exception:  # noqa: BLE001 — a malformed row is served as stored
-                out.append(row)
-                continue
-            row = {**row, **{key: getattr(resolved, key) for key in _STORYBOARD_LOOK_FIELDS}}
-        out.append(row)
-    return out
+    return [
+        {**row, **updates} if (updates := narrated_storyboard_row_updates(row)) else row
+        for row in rows or []
+    ]
 
 
 def merge_projected_text_elements_for_variant(

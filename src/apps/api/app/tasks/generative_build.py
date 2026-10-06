@@ -22166,15 +22166,6 @@ def _render_narrated_variant(
                     explicit_opening_title=explicit_opening_title,
                     storyboard=storyboard,
                 )
-                # Persist the look the burn gives the presets (pixel-identical,
-                # test_narrated_storyboard_look) so every reader of the row (the
-                # editors, Kria chat, authored timelines) shows the bars where
-                # they burn; the iOS editor has no cloud preset defaults.
-                from app.agents._schemas.text_element import (  # noqa: PLC0415
-                    resolve_narrated_storyboard_rows,
-                )
-
-                storyboard_elements = resolve_narrated_storyboard_rows(storyboard_elements)
 
         # Keep the exact visual assignment (including an agent-selected source
         # window) beside the canonical voiceover timeline. Bed-level reburns must

@@ -9,8 +9,9 @@ face). Its captions ride the separate ``caption_cues`` lane (``text_mode`` is
 
 The iOS editor fills a missing ``y_frac``/``font_family`` with 0.5 / Fraunces,
 so it previewed the title mid-frame and its Save wrote Fraunces into the next
-burn. New renders now persist the look the cloud burns, and every
-editor-facing read resolves rows stored before that (these fixtures).
+burn. Rows stay stored as presets; every editor-facing read (status merge,
+authored timelines, Kria chat, Kria draft bootstrap) spells out the look the
+cloud burns.
 """
 
 from __future__ import annotations
@@ -60,8 +61,8 @@ def _storyboard_rows() -> list[dict]:
 
 
 def _storyboard_variant(**extra) -> dict:
-    """The variant row `_render_narrated_variant` persists with the storyboard on
-    (field for field what prod job 1f51a6e2 carries)."""
+    """The stored row of a storyboard render, presets and all (field for field
+    what prod job 1f51a6e2 carries; `_render_narrated_variant` persists them)."""
     return {
         "variant_id": "narrated",
         "resolved_archetype": "narrated",
@@ -441,3 +442,40 @@ def test_kria_draft_bootstrap_carries_the_resolved_look() -> None:
     sections = _editor_snapshot(_storyboard_variant(), "gen-1")["sections"]
 
     assert _look(_by_text(sections["text_elements"])[_TITLE]) == _TITLE_LOOK
+
+
+def test_kria_chat_named_position_previews_where_it_burns(monkeypatch) -> None:
+    """A chat move to a named spot must not keep the bar's old y_frac."""
+    from app.services.kria_editor_ops import compile_editor_ops
+
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda _job, _variant: {"text_elements": True},
+    )
+    variant = _storyboard_variant(render_generation_id="gen-1")
+    title_index = _texts(variant["text_elements"]).index(_TITLE)
+
+    compiled = compile_editor_ops(
+        _job(variant),
+        variant,
+        [{"op": "patch_text_style", "bar_index": title_index, "patch": {"position": "bottom"}}],
+    )
+
+    # The cloud burns a named "bottom" at 0.85 and ignores y_frac; iOS draws y_frac.
+    title = _by_text(compiled.payload.text_elements)[_TITLE]
+    assert _look(title) == ("custom", 0.5, 0.85, 120.0, "Playfair Display")
+
+
+def test_unvalidatable_storyboard_rows_are_served_as_stored() -> None:
+    """One bad row must not fail the whole read, nor vanish (its Save would delete it)."""
+    from app.agents._schemas.text_element import resolve_narrated_storyboard_rows
+
+    rows = _storyboard_rows()
+    bad = {**rows[0], "font_family": "NotAFont"}  # rejected by the font allowlist
+
+    out = resolve_narrated_storyboard_rows([bad, rows[1], "junk"])
+
+    assert len(out) == 3
+    assert out[0] is bad
+    assert _look(out[1]) == _PLAYER_LOOK
+    assert out[2] == "junk"

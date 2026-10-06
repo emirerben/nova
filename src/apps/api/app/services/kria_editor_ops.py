@@ -21,6 +21,7 @@ from typing import Any, NamedTuple
 from app.agents._schemas.text_element import (
     _ALLOWED_FONTS,
     CAPTION_CUE_SOURCE,
+    narrated_storyboard_row_updates,
     resolve_narrated_storyboard_rows,
 )
 from app.config import settings
@@ -1954,6 +1955,12 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         handler(state, op)
         state.changes.append(state.summary or _summary(op))
         state.summary = None
+
+    if "text" in state.changed:
+        # An op may set a named position (or clear the size/face) on a storyboard
+        # bar; spell its burned look out again so the draft previews where it burns.
+        for row in state.text:
+            row.update(narrated_storyboard_row_updates(row))
 
     changed = state.changed
     guided = _guided_v2_revision(job, variant)
