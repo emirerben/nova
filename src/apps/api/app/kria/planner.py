@@ -168,6 +168,21 @@ def adapt_creator_action(
     server_owned_intents = (
         server_clip_intents is not None or server_resolved_clip_intents is not None
     )
+    unplaced = [
+        intent.attribute
+        for intent in server_resolved_clip_intents or []
+        if intent.op == "order"
+        and intent.status == "resolved"
+        and not intent.assignments
+        and intent.order_by is None
+        and intent.attribute
+    ]
+    if unplaced:
+        # KRI-458: the draft must not claim an order the footage cannot back.
+        summary = (
+            f"{summary} I found no clips of {', '.join(unplaced)}, "
+            "so I can't place them where you asked."
+        )
     requested_intents = (
         server_clip_intents
         if server_owned_intents

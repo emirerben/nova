@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.91.0] - 2026-10-06
+
+### Changed
+- fix(ios): retry uploads on 429 and stop calling them unreadable (#1408) <!-- release-pr: 1408 -->
+
+## [0.78.90.0] - 2026-10-06
+
+### Changed
+- fix(kria): honor a revised ordering request after a denied plan (KRI-458) (#1405) <!-- release-pr: 1405 -->
+
+## [0.78.89.0] - 2026-10-06
+
+### Changed
+- fix(api): stop 429s on big clip picks (upload-urls/media 30/min -> 240/min) (#1407) <!-- release-pr: 1407 -->
+
 ## [0.78.88.0] - 2026-10-05
 
 ### Changed
