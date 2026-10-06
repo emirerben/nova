@@ -239,11 +239,65 @@ def test_no_evidence_runs_stack_end_to_end_between_their_neighbours():
     assert s2.delta_ms + 6_000 <= 40_000 + 600  # ends where B's cover begins
 
 
-def test_a_gap_too_small_overlaps_both_neighbours_evenly():
+def test_a_gap_too_small_runs_on_past_the_previous_take_into_the_next():
     takes = [spec("A", 10, cand(0, 0.9)), spec("S", 8), spec("B", 10, cand(12, 0.9))]
     out = _resolve(takes, ["A", "S", "B"])
     assert out["S"].place == "stack"
-    assert out["S"].delta_ms < 9_700  # starts inside A's cover; the tiler trims the overlap
+    # It hugs A's last trusted frame and overlaps B (the tiler trims), never starts
+    # before A.
+    assert out["S"].delta_ms == 9_400
+
+
+def test_a_stacked_run_never_lands_on_the_wrong_side_of_its_anchors():
+    # Probe: anchors a (10 s) and b (14 s), two 8 s stacked takes between them.
+    takes = [
+        spec("a", 4, cand(10, 0.9)),
+        spec("n1", 8),
+        spec("n2", 8),
+        spec("b", 4, cand(14, 0.9)),
+    ]
+    out = _resolve(takes, ["a", "n1", "n2", "b"])
+    a_end = 10_000 + 4_000
+    assert out["n1"].place == "stack" and out["n1"].delta_ms >= a_end - 700
+    # n2 would start past b's footage: it cannot precede b in the song, so B-roll.
+    assert out["n2"].place == "broll" and out["n2"].reason == "no_room"
+    for m in ("n1", "n2"):
+        d = out[m].delta_ms
+        assert d is None or d >= 10_000
+
+
+def test_the_order_pass_prefers_a_candidate_that_keeps_the_cluster_inside_the_cap():
+    # X's likelier candidate (200 s) is >120 s from the cluster; the in-cap one wins.
+    takes = [spec("A", 10, cand(0, 0.9)), spec("X", 10, cand(200, 0.3), cand(40, 0.25))]
+    out = _resolve(takes, ["A", "X"])
+    assert out["X"].delta_ms == 40_000
+    # With nothing in cap, fall back to every fit (likelihood decides).
+    far = [spec("A", 10, cand(0, 0.9)), spec("X", 10, cand(200, 0.3), cand(180, 0.25))]
+    assert _resolve(far, ["A", "X"])["X"].delta_ms == 200_000
+
+
+def test_a_single_candidate_or_no_neighbours_is_not_claimed_by_the_creator():
+    # Only one candidate exists: the aligner decided, not the creator's order.
+    out = _resolve([spec("A", 10, cand(0, 0.9)), spec("W", 10, cand(40, 0.2))], ["A", "W"])
+    assert (out["W"].basis, out["W"].confirmed) == ("aligner", False)
+    # Two candidates but no known neighbour at all: the order decided nothing.
+    out = _resolve([spec("W", 10, cand(40, 0.2), cand(90, 0.15))], ["W"])
+    assert (out["W"].basis, out["W"].confirmed) == ("aligner", False)
+
+
+def test_the_node_budget_keeps_the_best_assignment_found_so_far():
+    # Two decisions where greedy is suboptimal; a budget that lets the DFS finish
+    # one leaf must keep that better answer rather than reverting to greedy.
+    takes = [
+        spec("S", 40, cand(10, 0.9)),
+        spec("P", 18, cand(10, 0.85), cand(60, 0.84)),
+        spec("Q", 18, cand(32, 0.85)),
+    ]
+    exact = assign_takes(takes, SONG_MS)
+    partial = assign_takes(takes, SONG_MS, node_cap=12)
+    greedy = assign_takes(takes, SONG_MS, exact=False)
+    assert len(partial.placed) >= len(greedy.placed)
+    assert len(exact.placed) >= len(partial.placed)
 
 
 def test_all_no_evidence_stack_from_the_first_lyric_line():

@@ -2247,7 +2247,10 @@ Flow:
    background). A missing `song_sync` is repaired to `background` with a notice.
 4. **Gate (lip-sync only).** `kria/planner._song_order_gate` waits up to
    `SONG_ALIGNMENT_TURN_DEADLINE_S` (45 s) for the alignment, then replies "still
-   checking your clips". Placement is by likelihood (KRI-471), not by status: the
+   checking your clips". It does NOT ask when the song analysis is not `ready`
+   (failed analysis => every take is no-evidence and the worker declines to sync
+   anyway), nor when the song has no lyric lines and no take has any candidate. The
+   assignment calls run in `asyncio.to_thread`. Placement is by likelihood (KRI-471), not by status: the
    gate runs `assign_takes` (`takes_needing_order`) and asks only where the creator
    could usefully decide, i.e. the assignment's `ask` set: a **tie** (a repeated
    chorus; the tie-break guessed), a **weak** match (likelihood under
@@ -2261,8 +2264,12 @@ Flow:
    takes the aligner was sure of keep their position (`aligner`, not confirmed); an
    uncertain take with candidates takes the one strictly between its neighbours
    (one fit = `creator_position`, confirmed; several tied fits = `tie_break`, not
-   confirmed); a take with no candidate that fits is **stacked**: laid end to end in
-   the creator's order in the gap between its placed neighbours (`creator_stack`,
+   confirmed; with one candidate in total, or no placed neighbour at all, the
+   aligner decided: `aligner`, not confirmed); fits are ranked in-cap (the cluster
+   stays within 120 s), then likelihood, then distance to the cluster hull; a take
+   with no candidate that fits is **stacked**: laid end to end in the creator's
+   order starting where the take before it ends (it may overlap the take after it;
+   a stacked take that would start past that take is `broll`) (`creator_stack`,
    likelihood 0, approximate sync), or `broll` with `reason="no_room"`.
    `confirmed_by_creator` is True ONLY when the answer decided the position. Rows
    written before KRI-471 have no `place`: a confirmed `delta_s` pins, `None` is
@@ -2408,7 +2415,10 @@ Flags and rollout:
   `confirmed_by_creator`. `position_basis`: `aligner` (clear winner), `tie_break`
   (equal candidates, layout chose), `creator_position` (the creator's order picked
   the one fitting candidate), `creator_stack` (laid by the creator's order in a gap:
-  approximate sync, expect slight drift). `low_confidence_ids` = placed with
+  approximate sync, expect slight drift). When stacked takes split the montage into
+  several spans, the layout is retried once with them as muted B-roll
+  (`stack_as_broll`) so they can fill the gaps; the retry is kept only if its best
+  span covers more or strands fewer takes. `low_confidence_ids` = placed with
   likelihood under the ask floor, or `tie_break` / `creator_stack`; the chat note
   says "placed by my best guess and may be slightly off". `placed_outside_ids` = real
   placements that fell outside the 120 s / best-span window ("sit later in the song

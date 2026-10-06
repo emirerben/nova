@@ -242,18 +242,42 @@ async def test_a_take_whose_only_candidate_cannot_fit_the_order_is_stacked(monke
     assert stacked["confirmed_by_creator"] is True and stacked["delta_s"] is not None
 
 
-async def test_failed_song_analysis_asks_about_every_take() -> None:
-    # Every take has no evidence: the creator can still order them (stacked on answer).
+READY = {
+    "status": "ready",
+    "duration_s": 120.0,
+    "lines": [{"start_s": 2.0, "end_s": 5.0, "text": "la la"}],
+}
+
+
+async def test_failed_song_analysis_does_not_ask() -> None:
+    # A failed analysis aligns nothing (every take would be "no evidence") and the
+    # worker declines to sync anyway: the question would be pointless.
     db = _Db(_item(None, analysis={"status": "failed"}))
     result = await _gate(db, _manifest("a", "b"), _strategy())
-    q = result.plan.song_order_question
-    assert [i.reason for i in q.items] == ["no_evidence", "no_evidence"]
-    assert all(i.status == "ambiguous" and i.song_start_s is None for i in q.items)
+    assert result.plan is None and result.resolved_takes is None
+
+
+async def test_an_unfinished_song_analysis_does_not_ask() -> None:
+    unmatched = [TakeAlignment(media_id=m, status="unmatched") for m in ("a", "b")]
+    item = _item(_alignment(*unmatched), analysis={**READY, "status": "analyzing"})
+    result = await _gate(_Db(item), _manifest("a", "b"), _strategy())
+    assert result.plan is None and result.resolved_takes is None
+
+
+async def test_no_lyric_lines_and_no_candidates_does_not_ask() -> None:
+    unmatched = [TakeAlignment(media_id=m, status="unmatched") for m in ("a", "b")]
+    item = _item(_alignment(*unmatched), analysis={**READY, "lines": []})
+    result = await _gate(_Db(item), _manifest("a", "b"), _strategy())
+    assert result.plan is None and result.resolved_takes is None
 
 
 async def test_only_no_evidence_takes_are_asked_about() -> None:
     unmatched = [TakeAlignment(media_id=m, status="unmatched") for m in ("a", "b", "c")]
-    result = await _gate(_Db(_item(_alignment(*unmatched))), _manifest("a", "b", "c"), _strategy())
+    result = await _gate(
+        _Db(_item(_alignment(*unmatched), analysis=READY)), _manifest("a", "b", "c"), _strategy()
+    )
+    q = result.plan.song_order_question
+    assert all(i.status == "ambiguous" and i.song_start_s is None for i in q.items)
     assert result.plan is not None
     assert result.plan.song_order_question.proposed_order == ["a", "b", "c"]
     assert "3 of your clips" in result.plan.response
@@ -278,7 +302,7 @@ async def test_an_answered_no_evidence_only_set_resolves_to_stacks(monkeypatch) 
     manifest = _manifest("a", "b")
     for media in manifest.media:
         media.duration_s = 6.0
-    result = await _gate(_Db(_item(alignment)), manifest, _strategy())
+    result = await _gate(_Db(_item(alignment, analysis=READY)), manifest, _strategy())
     assert result.plan is None
     assert [r["media_id"] for r in result.resolved_takes] == ["b", "a"]
     assert {r["place"] for r in result.resolved_takes} == {"stack"}

@@ -384,7 +384,7 @@ def assign_takes(
             dfs(0, {}, dict(placed_claims), 0.0)
             best_choice = found
         except _Budget:
-            best_choice = greedy()
+            best_choice = found  # best complete assignment so far (>= the greedy one)
 
     # ── build claims and the ask set ─────────────────────────────────────────
     for entry in entries:
@@ -519,23 +519,31 @@ def resolve_with_order(
             fits.append(cand)
         if not fits:
             continue
+        hull: tuple[int, int] | None = None
+        for _d, other in known.values():
+            hull = _grow(hull, other)
+        if hull is not None:
+            # Prefer a candidate that keeps the cluster inside the window cap.
+            within = [
+                c for c in fits if _tie_key(claim_range(spec, c), hull, c.delta_ms, cap_ms)[0] == 0
+            ]
+            fits = within or fits
         top = max(c.likelihood for c in fits)
         tied = [c for c in fits if c.likelihood >= tie_ratio * top - _EPS]
-        ref = lo if lo is not None else hi
-
-        def contiguity(c: CandidateSpec, ref: int | None = ref) -> tuple[int, int]:
-            return (abs(c.delta_ms - ref) if ref is not None else 0, c.delta_ms)
-
-        pick = min(tied, key=contiguity)
+        pick = min(
+            tied,
+            key=lambda c: _tie_key(claim_range(spec, c), hull, c.delta_ms, cap_ms),
+        )
         known[media_id] = (pick.delta_ms, claim_range(spec, pick))
+        if len(tied) > 1:
+            basis, confirmed = "tie_break", False
+        elif (lo is None and hi is None) or len(spec.candidates) < 2:
+            # The order did not decide this: the aligner's only option stands.
+            basis, confirmed = "aligner", False
+        else:
+            basis, confirmed = "creator_position", True
         choices[media_id] = Choice(
-            media_id,
-            index,
-            pick.delta_ms,
-            "pinned",
-            "creator_position" if len(tied) == 1 else "tie_break",
-            len(tied) == 1,
-            pick.likelihood,
+            media_id, index, pick.delta_ms, "pinned", basis, confirmed, pick.likelihood
         )
 
     # ── pass 2: stack the rest in the creator's order ────────────────────────
@@ -570,15 +578,12 @@ def resolve_with_order(
             # Runs meet their neighbours at the cover margins (A's last trusted frame
             # == the run's first), so the tiler can join them without a filler.
             gap_start = _cover_end(before) - cover_margin_ms
-            gap_end = _cover_start(after) + cover_margin_ms if after is not None else song_ms
-            slack = gap_end - gap_start - total
-            # Negative slack overlaps both neighbours evenly (the tiler trims); spare
-            # room is NOT centred (a take adrift in a long gap joins nothing): it hugs
-            # the previous take with at most STACK_LEAD_MS of lead.
-            if after is None:
-                cursor = gap_start  # nothing to share an overlap with: no room => B-roll
-            else:
-                cursor = gap_start + (slack // 2 if slack < 0 else min(slack // 2, STACK_LEAD_MS))
+            # The run always starts where the previous take's trusted footage ends
+            # (never before it: that would put it on the wrong side of its anchor).
+            # Negative slack lets the run overlap the take after it; a run take that
+            # would start at/after that take's footage becomes B-roll below. Spare
+            # room is NOT centred (a take adrift in a long gap joins nothing).
+            cursor = gap_start + STACK_LEAD_MS
         else:
             assert after is not None
             gap_end = _cover_start(after) + cover_margin_ms
@@ -591,6 +596,7 @@ def resolve_with_order(
             rng = claim_range(spec, cand)
             if (
                 cover_ms(spec, cand, song_ms, cover_margin_ms) < min_cover_ms
+                or (after is not None and before is not None and cursor >= _cover_start(after))
                 or span_with(rng, (before if before is not None else after,)) > cap_ms
             ):
                 choices[media_id] = Choice(

@@ -699,3 +699,48 @@ def test_lyric_placed_take_compiles_on_the_song_clock():
         assert clip.source_start - clip.timeline_start == pytest.approx(
             song_plan.window_start_s - pinned.delta_s, abs=0.001
         )
+
+
+def _stack_choice(delta_s: float) -> dict:
+    return {
+        "S": {
+            "delta_s": delta_s,
+            "place": "stack",
+            "position_basis": "creator_stack",
+            "confirmed_by_creator": True,
+        }
+    }
+
+
+def test_a_stacked_take_that_splits_the_montage_is_retried_as_gap_filler():
+    # A covers 10.3-21.7, B 34.3-45.7 (a 12.6 s hole); S is a guessed (stacked) take
+    # far away. As a pinned take it strands A and B; as muted B-roll it fills the hole.
+    result = plan_lipsync_montage(
+        [take("A", 12), take("B", 12), take("S", 15)],
+        alignment(confident("A", 10), confident("B", 34), unmatched("S")),
+        analysis(),
+        plan_item_id=SONG_ITEM_ID,
+        creator_choices=_stack_choice(80),
+    )
+    assert [b["media_id"] for b in blocks(result)] == ["A", "B"]
+    assert result.song_receipt["broll_ids"] == ["S"]
+    assert result.song_receipt["placed_outside_ids"] == []
+    assert set(result.user_song.takes) == {"A", "B"}
+    assert result.user_song.window_start_s == pytest.approx(10.3)
+    assert result.user_song.window_end_s == pytest.approx(45.7)
+    assert_in_sync(result, compiled_plan(result))
+
+
+def test_the_stack_retry_is_dropped_when_it_does_not_help():
+    # Nothing can fill the hole (S is only 3 s): the original layout stands and S
+    # keeps its stacked position.
+    result = plan_lipsync_montage(
+        [take("A", 12), take("B", 12), take("S", 3)],
+        alignment(confident("A", 10), confident("B", 34), unmatched("S")),
+        analysis(),
+        plan_item_id=SONG_ITEM_ID,
+        creator_choices=_stack_choice(80),
+    )
+    assert "S" not in result.song_receipt["broll_ids"]
+    reasons = {row["media_id"]: row["reason"] for row in result.song_receipt["dropped"]}
+    assert "stack_as_broll" not in reasons.values()

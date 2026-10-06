@@ -311,14 +311,27 @@ def test_several_tied_fits_are_a_tie_break_not_a_creator_confirmation() -> None:
 def test_a_take_with_no_fitting_candidate_is_stacked_in_the_gap() -> None:
     alignment = _alignment(
         _cands("a", (10.0, 0.9)),
-        _cands("x", (20.0, 0.7), (30.0, 0.7)),
-        _cands("b", (15.0, 0.9)),
+        _cands("x", (5.0, 0.7), (60.0, 0.7)),
+        _cands("b", (35.0, 0.9)),
     )
-    # x must sit between a (10) and b (15): neither repeat fits, so it is stacked, not dropped.
+    # x must sit between a (10) and b (35): neither repeat fits, so it is stacked, not dropped.
     out = resolve_uncertain_takes(alignment, ["a", "x", "b"], {"a": 8.0, "x": 6.0, "b": 8.0})
     delta, place, basis, confirmed = _row(out, "x")
     assert (place, basis, confirmed) == ("stack", "creator_stack", True)
     assert delta is not None and delta > 10.0  # after a's last trusted frame (10 + 8 - margin)
+
+
+def test_a_stacked_take_never_lands_after_the_take_it_must_precede() -> None:
+    alignment = _alignment(
+        _cands("a", (10.0, 0.9)),
+        _cands("x", (20.0, 0.7), (30.0, 0.7)),
+        _cands("b", (15.0, 0.9)),
+    )
+    # a and b already overlap: no room for x between them, so it is B-roll (not
+    # stacked on the wrong side of b).
+    out = resolve_uncertain_takes(alignment, ["a", "x", "b"], {"a": 8.0, "x": 6.0, "b": 8.0})
+    delta, place, _basis, _confirmed = _row(out, "x")
+    assert place == "broll" and delta is None
 
 
 def test_no_evidence_takes_stack_between_their_neighbours_in_creator_order() -> None:

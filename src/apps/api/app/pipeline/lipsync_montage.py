@@ -692,73 +692,104 @@ def plan_lipsync_montage(
     if not placed:
         raise LipsyncPlanError("no_synced_takes", "None of the takes could be placed on the song.")
 
-    islands, switches, redundant = _tile_islands(placed, line_starts, beats)
-    for media_id in redundant:
-        reasons[media_id] = "overlapped"
+    def layout(
+        placed: dict[str, _Placed], reasons: dict[str, str]
+    ) -> tuple[list[list[_Block]], list[dict[str, Any]], int]:
+        """Tile ``placed`` and join the islands; returns (spans, switches, bridged)."""
+        islands, switches, redundant = _tile_islands(placed, line_starts, beats)
+        for media_id in redundant:
+            reasons[media_id] = "overlapped"
 
-    # ── B-roll pool: takes we could not place, then the Visuals pool ─────────
-    pool_clips = [
-        c for c in takes if c.media_id not in placed and reasons.get(c.media_id) != "too_short"
-    ]  # a placed take is never filler: it only plays in sync at its own delta
-    pool_clips += others
-    pool = _Pool(
-        [(c, cap) for c in pool_clips if (cap := _broll_capacity_ms(c)) >= MIN_BROLL_PIECE_MS]
-    )
+        # ── B-roll pool: takes we could not place, then the Visuals pool ─────────
+        pool_clips = [
+            c for c in takes if c.media_id not in placed and reasons.get(c.media_id) != "too_short"
+        ]  # a placed take is never filler: it only plays in sync at its own delta
+        pool_clips += others
+        pool = _Pool(
+            [(c, cap) for c in pool_clips if (cap := _broll_capacity_ms(c)) >= MIN_BROLL_PIECE_MS]
+        )
 
-    # ── join islands: bridge a small gap, fill a bigger one, else split ──────
-    # Per consecutive pair with gap g: (1) even split into both margins; (2) the
-    # neighbours' own footage bridges it (cut on a lyric line, else a beat);
-    # (3) the same, dipping into the 300 ms cover margins; (4) muted Visuals /
-    # unplaced-take B-roll; (5) irreducible: split, the best span wins.
-    def own_footage(previous: _Block, nxt: _Block, margin_left: int) -> tuple[int, int]:
-        assert previous.placed is not None and nxt.placed is not None
-        if margin_left == COVER_MARGIN_MS:
-            prev_limit, next_limit = previous.placed.full_end, nxt.placed.full_start
-        else:
-            prev_limit = min(song_ms, previous.placed.true_end - margin_left)
-            next_limit = max(0, nxt.placed.delta_ms + margin_left)
-        return max(0, prev_limit - previous.end), max(0, nxt.start - next_limit)
+        # ── join islands: bridge a small gap, fill a bigger one, else split ──────
+        # Per consecutive pair with gap g: (1) even split into both margins; (2) the
+        # neighbours' own footage bridges it (cut on a lyric line, else a beat);
+        # (3) the same, dipping into the 300 ms cover margins; (4) muted Visuals /
+        # unplaced-take B-roll; (5) irreducible: split, the best span wins.
+        def own_footage(previous: _Block, nxt: _Block, margin_left: int) -> tuple[int, int]:
+            assert previous.placed is not None and nxt.placed is not None
+            if margin_left == COVER_MARGIN_MS:
+                prev_limit, next_limit = previous.placed.full_end, nxt.placed.full_start
+            else:
+                prev_limit = min(song_ms, previous.placed.true_end - margin_left)
+                next_limit = max(0, nxt.placed.delta_ms + margin_left)
+            return max(0, prev_limit - previous.end), max(0, nxt.start - next_limit)
 
-    spans: list[list[_Block]] = [list(islands[0])]
-    bridged = 0
-    for island in islands[1:]:
-        previous = spans[-1][-1]
-        gap = island[0].start - previous.end
-        assert previous.placed is not None and island[0].placed is not None
-        if gap <= 2 * COVER_MARGIN_MS:
-            first = gap // 2
-            previous.end += first
-            island[0].start -= gap - first
-            bridged += 1
-            spans[-1].extend(island)
-            continue
-        joined = False
-        for margin_left in (COVER_MARGIN_MS, DIP_MARGIN_MS):
-            avail_prev, avail_next = own_footage(previous, island[0], margin_left)
-            if gap > avail_prev + avail_next:
+        spans: list[list[_Block]] = [list(islands[0])]
+        bridged = 0
+        for island in islands[1:]:
+            previous = spans[-1][-1]
+            gap = island[0].start - previous.end
+            assert previous.placed is not None and island[0].placed is not None
+            if gap <= 2 * COVER_MARGIN_MS:
+                first = gap // 2
+                previous.end += first
+                island[0].start -= gap - first
+                bridged += 1
+                spans[-1].extend(island)
                 continue
-            low = max(island[0].start - avail_next, previous.end)
-            high = min(previous.end + avail_prev, island[0].start)
-            at, kind = _pick_switch(low, high, line_starts, beats)
-            switches.append({"at_s": at / 1000, "snapped_to": kind})
-            previous.end = at
-            island[0].start = at
-            bridged += 1
+            joined = False
+            for margin_left in (COVER_MARGIN_MS, DIP_MARGIN_MS):
+                avail_prev, avail_next = own_footage(previous, island[0], margin_left)
+                if gap > avail_prev + avail_next:
+                    continue
+                low = max(island[0].start - avail_next, previous.end)
+                high = min(previous.end + avail_prev, island[0].start)
+                at, kind = _pick_switch(low, high, line_starts, beats)
+                switches.append({"at_s": at / 1000, "snapped_to": kind})
+                previous.end = at
+                island[0].start = at
+                bridged += 1
+                spans[-1].extend(island)
+                joined = True
+                break
+            if joined:
+                continue
+            pieces = pool.fill(gap)
+            if pieces is None:
+                spans.append(list(island))
+                continue
+            pool.take(pieces)
+            offset = previous.end
+            spans[-1].extend(_Block(p.clip, p.start + offset, p.end + offset) for p in pieces)
             spans[-1].extend(island)
-            joined = True
-            break
-        if joined:
-            continue
-        pieces = pool.fill(gap)
-        if pieces is None:
-            spans.append(list(island))
-            continue
-        pool.take(pieces)
-        offset = previous.end
-        spans[-1].extend(_Block(p.clip, p.start + offset, p.end + offset) for p in pieces)
-        spans[-1].extend(island)
 
+        return spans, switches, bridged
+
+    def placed_outside(span: list[_Block], among: Mapping[str, _Placed]) -> int:
+        in_span = {blk.clip.media_id for blk in span}
+        return sum(1 for m in among if m not in in_span)
+
+    spans, switches, bridged = layout(placed, reasons)
     best_span = max(spans, key=lambda span: (_covered_ms(span), -span[0].start))
+    stacked = {m: p for m, p in placed.items() if p.position_basis == "creator_stack"}
+    if len(spans) > 1 and stacked:
+        # Stacked takes are approximate-sync guesses: when they split the montage,
+        # try once with them as muted B-roll so they can fill a gap instead. Keep
+        # that layout only if it covers more of the song or strands fewer takes.
+        alt_placed = {m: p for m, p in placed.items() if m not in stacked}
+        if alt_placed:
+            alt_reasons = {**reasons, **{m: "stack_as_broll" for m in stacked}}
+            alt_spans, alt_switches, alt_bridged = layout(alt_placed, alt_reasons)
+            alt_best = max(alt_spans, key=lambda span: (_covered_ms(span), -span[0].start))
+            if _covered_ms(alt_best) > _covered_ms(best_span) or placed_outside(
+                alt_best, placed
+            ) < placed_outside(best_span, placed):
+                placed, reasons = alt_placed, alt_reasons
+                spans, switches, bridged, best_span = (
+                    alt_spans,
+                    alt_switches,
+                    alt_bridged,
+                    alt_best,
+                )
     blocks, trimmed = _window_blocks(best_span)
     while blocks and blocks[0].placed is None:
         blocks.pop(0)

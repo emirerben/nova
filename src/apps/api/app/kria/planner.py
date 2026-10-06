@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import copy
+import functools
 import json
 import re
 import time
@@ -464,11 +465,25 @@ async def _song_order_gate(
         events = await _load_thread_events(db, thread_id)
     folded = fold_song_orders(events, song_generation)
     answered = bool(folded and folded.covers(take_ids))
-    if not takes_needing_order(alignment, take_ids, durations, song_duration_s):
+    if analysis_status is not None and analysis_status != "ready":
+        # A failed (or unfinished) song analysis aligns nothing: every take would be
+        # "no evidence" and the worker declines to sync anyway. Asking is pointless.
+        return _SongGateResult(strategy=kept_strategy)
+    if first_line_s is None and not any(
+        alignment.takes[m].candidates_or_legacy() for m in take_ids if m in alignment.takes
+    ):
+        # No lyric lines to anchor on and nothing matched any take: no question
+        # could place a take by the song.
+        return _SongGateResult(strategy=kept_strategy)
+    needing = await asyncio.to_thread(
+        takes_needing_order, alignment, take_ids, durations, song_duration_s
+    )
+    if not needing:
         # Every take has a clear, strong position: nothing the creator could decide.
         return _SongGateResult(strategy=kept_strategy)
     if answered:
-        resolved = resolve_uncertain_takes(
+        resolved = await asyncio.to_thread(
+            resolve_uncertain_takes,
             alignment,
             folded.ordered_media_ids,
             durations,
@@ -478,12 +493,15 @@ async def _song_order_gate(
         return _SongGateResult(
             resolved_takes=resolved_song_takes_payload(resolved), strategy=kept_strategy
         )
-    question = build_song_order_question(
-        alignment,
-        take_ids,
-        song_generation=song_generation,
-        durations=durations,
-        song_duration_s=song_duration_s,
+    question = await asyncio.to_thread(
+        functools.partial(
+            build_song_order_question,
+            alignment,
+            take_ids,
+            song_generation=song_generation,
+            durations=durations,
+            song_duration_s=song_duration_s,
+        )
     )
     return _SongGateResult(
         plan=KriaTurnPlan(
