@@ -193,6 +193,7 @@ _BURN_EFFECT_TO_TEXT_ELEMENT: dict[str, str] = {
     "static": "static",
     "fade-in": "fade-in",
     "slide-up": "slide-up",
+    "slide-down": "slide-down",
     "karaoke-line": "karaoke-line",
     "staggered-slice": "staggered-slice",
     "ink-reveal": "ink-reveal",
