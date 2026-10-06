@@ -2268,19 +2268,34 @@ The cluster-style snapshot PR closed the `cluster_style` desync between the
 render and `_base_text_elements_for_variant`, and closed the adjacent `canvas`
 gap found in the same review (landscape variants used to project on the portrait
 canvas; pinned by `test_landscape_variant_projects_on_the_landscape_canvas`).
-One parity gap in that adapter remains — it PRE-DATES that PR and is not made
-worse by it.
+The gaps below remain (the last two were found 2026-10-06 while threading the
+intro face).
 
-- **P3 Adapter never threads `font_family` / `language` for the LEGACY profile.**
-  `style_kwargs` carries only `text_size_px` plus the placement fracs. On the
-  legacy cluster path the faces come from the registry pairing keyed on
-  `font_family` (and Turkish takes a different safe pairing at
-  `intro_cluster.py` `needs_safe_pairing = language == "tr"`), so an unpinned
-  projection resolves `_DEFAULT_HERO_FAMILY` + the English pairing. The
-  editorial profile is unaffected (its faces come from the style dict), which
-  is why the snapshot PR fixed sizes/positions but not legacy faces. Fix:
-  resolve the variant's intro font the way `_resolve_intro_overlay_params`
-  does and pass it plus the job language.
+- **P3 Adapter never threads `language` for the LEGACY profile.** The intro
+  face/effect/colors/stroke are now resolved the way
+  `_resolve_intro_overlay_params` does (`_intro_look_for_variant`, 2026-10-06;
+  guard `tests/tasks/test_intro_look_parity.py`), so the legacy cluster pairs
+  off the variant's real face. Turkish still takes a different safe pairing
+  at render (`intro_cluster.py` `needs_safe_pairing = language == "tr"`), and
+  the job language is not persisted on the variant, so a Turkish legacy
+  cluster projects the English pairing. Fix: persist the render's `language`
+  on the variant and pass it.
+- **P3 Projected intro/sequence elements lose pop-in, typewriter, stream-in,
+  bounce and slide-in.** `_BURN_EFFECT_TO_TEXT_ELEMENT` (text_element.py)
+  predates those effects joining `_ALLOWED_EFFECTS`, so a burn dict with one
+  projects as `effect="static"`. Nine of the 18 generative style sets use one
+  for the intro: after any text Save the settled frame is pixel-identical but
+  the entrance animation is gone. Fix: extend the map, and prove each effect
+  round-trips (element → `build_overlays_from_text_elements`) to the render's
+  burn dict (pop-in `pop_animated_suffix`, typewriter `reveal_schedule_s`).
+- **P3 `_text_element_burn_dicts` has no caption-cue guard.** Rows with
+  `source_params.source == "caption_cue"` burn through Skia like any row; on
+  narrated/subtitled the libass captions burn the same cues. Not reachable
+  today (cloud caption variants are `text_mode: "none"` so no mirror rows
+  project; web strips them; phone caption variants refuse text saves), but an
+  iOS authored-timeline commit that echoes mirrors would double captions in
+  `phone_authored_timeline.compile_phone_authored_timeline`. Fix: drop
+  caption_cue rows before the Skia burn for non-guided archetypes.
 
 ## Fly cost-cut plan follow-ups (from /plan-eng-review, 2026-08-02)
 

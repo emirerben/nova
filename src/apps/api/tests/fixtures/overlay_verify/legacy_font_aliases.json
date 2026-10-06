@@ -1,0 +1,67 @@
+{
+  "overlays": [
+    {
+      "text": "and this is where we stopped for coffee before the long walk up",
+      "effect": "static",
+      "font_family": "Inter-Bold",
+      "text_size_px": 58,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.82,
+      "max_width_frac": 0.84,
+      "text_color": "#FFFFFF",
+      "stroke_width": 6,
+      "text_anchor": "center",
+      "start_s": 0.0,
+      "end_s": 2.5
+    },
+    {
+      "text": "Three days in Lisbon",
+      "effect": "fade-in",
+      "font_family": "Inter-Bold",
+      "text_size_px": 84,
+      "position": "top",
+      "max_width_frac": 0.86,
+      "text_color": "#FFFFFF",
+      "stroke_width": 5,
+      "text_anchor": "center",
+      "start_s": 0.0,
+      "end_s": 2.5
+    },
+    {
+      "text": "quiet mornings by the river",
+      "effect": "static",
+      "font_family": "Inter-Regular",
+      "text_size_px": 60,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.6,
+      "text_color": "#FFFFFF",
+      "text_anchor": "center",
+      "start_s": 0.0,
+      "end_s": 2.5
+    },
+    {
+      "text": "The best pastel de nata",
+      "effect": "fade-in",
+      "font_family": "PlayfairDisplay-Bold",
+      "text_size_px": 88,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.3,
+      "text_color": "#FFD24A",
+      "text_anchor": "center",
+      "start_s": 0.0,
+      "end_s": 2.5
+    },
+    {
+      "text": "slow travel, softer days",
+      "effect": "static",
+      "font_family": "PlayfairDisplay-Regular",
+      "text_size_px": 72,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.45,
+      "text_color": "#F5F5DC",
+      "text_anchor": "center",
+      "start_s": 0.0,
+      "end_s": 2.5
+    }
+  ]
+}
