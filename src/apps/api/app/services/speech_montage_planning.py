@@ -24,7 +24,7 @@ was not actually said is never rendered.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -53,6 +53,8 @@ log = structlog.get_logger()
 _MAX_SPEECH_CLIPS = 6
 _MAX_OTHER_CLIPS = 60
 _MIN_EXCERPT_S = 0.8
+# A voice-pinned plan under this share of the target is reported, not passed silently.
+_SHORT_RENDER_RATIO = 0.5
 
 # Only used when NO clip has speech: with speech present the planner (open
 # vocabulary) decides whether the creator asked for it. Without any speech
@@ -163,23 +165,13 @@ def _describe(candidate: SpeechCandidate, index: int) -> str:
     return f"clip {index}"
 
 
-def plan_speech_montage(
-    *,
-    creator_request: str,
-    candidates: Sequence[SpeechCandidate],
-    run_planner: PlannerRunner,
-    load_words: WordLoader,
-    target_duration_s: float | None = None,
-) -> SpeechMontageResolution:
-    """See the module docstring. Never raises for planner/transcription trouble."""
-    request = (creator_request or "").strip()
-    videos = [c for c in candidates if c.kind == "video"]
-    claimed = [c for c in videos if c.has_speech]
-    if not speech_montage_possible(request, any_clip_has_speech=bool(claimed)):
-        return SpeechMontageResolution("not_requested")
+def _load_speech(
+    claimed: Sequence[SpeechCandidate], load_words: WordLoader
+) -> list[SpeechCandidate]:
+    """Word timings for each clip that claims speech.
 
-    # Word timings for each clip that claims speech. A clip whose transcript is
-    # too thin (music, a few words) is not a speech source.
+    A clip whose transcript is too thin (music, a few words) is not a speech source.
+    """
     speech: list[SpeechCandidate] = []
     for candidate in claimed[: _MAX_SPEECH_CLIPS * 2]:
         try:
@@ -192,6 +184,39 @@ def plan_speech_montage(
             continue
         candidate.words, candidate.language = words, language
         speech.append(candidate)
+    return speech
+
+
+def plan_speech_montage(
+    *,
+    creator_request: str,
+    candidates: Sequence[SpeechCandidate],
+    run_planner: PlannerRunner,
+    load_words: WordLoader,
+    target_duration_s: float | None = None,
+    voice_media_ids: Collection[str] = (),
+) -> SpeechMontageResolution:
+    """See the module docstring. Never raises for planner/transcription trouble.
+
+    ``voice_media_ids`` are the clips the creator's strategy already named as THE
+    voice (``montage_audio.source_media_ids``). When one of them has usable speech
+    it is the only speech source the planner sees: every other clip is plain
+    footage, so no excerpt can come from a different speaker.
+    """
+    request = (creator_request or "").strip()
+    videos = [c for c in candidates if c.kind == "video"]
+    claimed = [c for c in videos if c.has_speech]
+    if not speech_montage_possible(request, any_clip_has_speech=bool(claimed)):
+        return SpeechMontageResolution("not_requested")
+
+    voice_ids = set(voice_media_ids)
+    speech: list[SpeechCandidate] = []
+    pinned = [c for c in claimed if c.media_id in voice_ids]
+    if pinned:
+        speech = _load_speech(pinned, load_words)
+    voice_pinned = bool(speech)
+    if not speech:
+        speech = _load_speech(claimed, load_words)
     speech.sort(key=lambda c: (not c.to_camera, -spoken_word_count(c.words)))
     speech = speech[:_MAX_SPEECH_CLIPS]
     speech_ids = {c.media_id for c in speech}
@@ -202,6 +227,7 @@ def plan_speech_montage(
     planner_input = SpeechExcerptPlannerInput(
         creator_request=request,
         target_duration_s=target_duration_s,
+        voice_clip_ref=next(iter(speech_refs), None) if voice_pinned else None,
         speech_clips=[
             SpeechClipView(
                 ref=ref,
@@ -248,7 +274,23 @@ def plan_speech_montage(
         return SpeechMontageResolution("needs_creator", question=plan.question)
     if not speech:
         return SpeechMontageResolution("needs_creator", question=NO_SPEECH_QUESTION)
-    return _ground(plan, speech_refs, others)
+    resolution = _ground(plan, speech_refs, others)
+    if voice_pinned and target_duration_s and resolution.status == "ready":
+        total = sum(
+            (s.source_end_s - s.source_start_s) if s.kind == "speech" else s.duration_s
+            for s in resolution.sections
+        )
+        if total < _SHORT_RENDER_RATIO * target_duration_s:
+            log.warning(
+                "speech_montage_short_render",
+                planned_s=round(total, 1),
+                target_s=round(target_duration_s, 1),
+            )
+            resolution.adjustments.append(
+                f"came out about {round(total)}s, shorter than the ~{round(target_duration_s)}s "
+                "you asked for"
+            )
+    return resolution
 
 
 def _reraise_if_timeout(exc: BaseException) -> None:

@@ -409,9 +409,11 @@ enum NativeEditorRenderError: Error, Equatable {
             }
             let element = rawElement.isCaption
                 ? Self.applyingCaptionMeta(captionMeta, to: rawElement) : rawElement
-            // Read-only text (a phone Voiceover title, KRI-455) has no timeline
-            // item, since nothing may select or move it: it draws over its own
-            // window, exactly where the server pinned it in the export.
+            // Read-only text (the server's kill-switch shape for a phone
+            // Voiceover title, KRI-455/465) has no timeline item, since nothing
+            // may select or move it: it draws over its own window, exactly where
+            // the server pinned it in the export. An editable title has a
+            // timeline item and takes the ordinary branch.
             guard let authoredItem = rawElement.isReadOnly
                 ? NativeEditorTimelineItem(selection: EditorSelection(kind: .text, id: element.id),
                     start: element.startS, end: min(element.endS, total))

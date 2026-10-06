@@ -312,6 +312,22 @@ class Settings(BaseSettings):
     # PHONE_SUBTITLED_TITLE_ENABLED=false --app nova-video` + `fly machine
     # restart <id>` (api + worker).
     phone_subtitled_title_enabled: bool = True
+    # KRI-465 (editable title on phone Voiceover edits): the opening title the
+    # status route shows (`narrated_title_text_elements`) opens as an ordinary
+    # editable text element: the capability map opens `text_elements` and a
+    # text Save recompiles the pinned recipe's `title-` layers
+    # (`phone_narrated_plan.replace_narrated_title`). Requires the same
+    # "positionedText" + "animatedText" device features as the captions and
+    # an app build at `phone_narrated_title_preview_min_client_protocol` -- see
+    # `app.services.phone_rollout.phone_narrated_title_edits_supported`. It
+    # does not depend on `phone_narrated_title_enabled` (the planner's gate):
+    # an already-rendered title stays editable. False: byte-identical to
+    # KRI-455 -- the title is shown `read_only`, `text_elements` stays closed
+    # and a `text_elements` Save 422s. Rollback: `fly secrets set
+    # PHONE_NARRATED_TITLE_EDITS_ENABLED=false --app nova-video` + `fly machine
+    # restart <id>` (api). No NEXT_PUBLIC twin (the iOS editor follows the
+    # server's capability map and the title's `read_only` marker).
+    phone_narrated_title_edits_enabled: bool = True
     # KRI-290 (free clip edits on phone Voiceover videos): a phone `narrated`
     # or montage `voiceover` variant's timeline opens (trim, extend, reorder,
     # split, delete) instead of being locked to the voiceover. A Save swaps the
@@ -585,6 +601,17 @@ class Settings(BaseSettings):
     # ~1, a chorus with 85% shared material ~0.85). Alternates below this are
     # coincidental peaks and are dropped; a take left with none is "unmatched".
     song_align_repeat_similarity_min: float = Field(default=0.5, ge=0, le=1)
+    # KRI-466: a take sung over earbuds carries the creator's voice but not the song,
+    # so no audio peak exists. A lyrics-only placement is accepted when the take's words
+    # match the song's words closely: enough words, tightly consistent per-word offsets,
+    # and most of the take's words inside the matched span. Kill switch = false.
+    song_align_lyrics_enabled: bool = True
+    song_align_lyrics_min_words: int = Field(default=6, ge=3)
+    song_align_lyrics_min_density: float = Field(default=0.6, ge=0, le=1)
+    song_align_lyrics_max_spread_s: float = Field(default=0.35, gt=0)
+    song_align_lyrics_confidence: float = Field(default=0.5, ge=0, le=1)
+    # Padding (seconds) around the matched words when trimming a take to its match.
+    song_align_match_pad_s: float = Field(default=0.5, ge=0)
     # Fixed offset (seconds) added to every aligned delta to absorb a measured
     # analysis-proxy vs original audio timing difference (AAC priming / edit
     # lists). 0.0 until the device fixture measures one.

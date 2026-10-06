@@ -25,7 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # Bump when the analysis / alignment shape or algorithm changes so cached rows
 # on PlanItem recompute instead of being trusted.
 SONG_ANALYSIS_VERSION = 1
-SONG_ALIGNMENT_VERSION = 1
+SONG_ALIGNMENT_VERSION = 2
 
 SongSync = Literal["background", "lipsync"]
 TakeStatus = Literal["confident", "ambiguous", "unmatched"]
@@ -109,11 +109,22 @@ class TakeAlignment(BaseModel):
     peak_z: float = 0.0
     peak_ratio: float = 0.0
     alternates: list[AlignmentAlternate] = Field(default_factory=list)
+    # KRI-466: how the placement was found, and the stretch of the take (take
+    # seconds) that actually matches the song. Rows stored before v2 omit all three.
+    method: Literal["audio", "lyrics"] | None = Field(default=None, exclude_if=lambda v: v is None)
+    match_start_s: float | None = Field(default=None, ge=0, exclude_if=lambda v: v is None)
+    match_end_s: float | None = Field(default=None, ge=0, exclude_if=lambda v: v is None)
 
     @model_validator(mode="after")
     def _confident_has_delta(self) -> TakeAlignment:
         if self.status == "confident" and self.delta_s is None:
             raise ValueError("a confident take must carry delta_s")
+        if (
+            self.match_start_s is not None
+            and self.match_end_s is not None
+            and self.match_end_s <= self.match_start_s
+        ):
+            raise ValueError("match_end_s must be after match_start_s")
         return self
 
 

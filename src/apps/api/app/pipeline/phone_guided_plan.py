@@ -68,6 +68,14 @@ class UnsupportedPhonePlan(ValueError):
         self.reason = reason
 
 
+class UserSongPlanDeclined(UnsupportedPhonePlan):
+    """The creator's own song could not be planned into an edit (KRI-466).
+
+    The message is creator-facing copy (what to do next), stored on the job's
+    ``error_detail`` and shown verbatim in chat under ``user_song_plan_declined``.
+    """
+
+
 # Plan lane -> the MediaCapability it would require once the recipe schema
 # carries its content. Kept next to the reject loop so a new plan lane and
 # its capability name are added together.

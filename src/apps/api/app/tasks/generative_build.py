@@ -2367,7 +2367,10 @@ def _run_generative_job_impl(
             except Exception as exc:  # noqa: BLE001 — mapped to a stable failure taxonomy below
                 from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
 
-                from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+                from app.pipeline.phone_guided_plan import (  # noqa: PLC0415
+                    UnsupportedPhonePlan,
+                    UserSongPlanDeclined,
+                )
 
                 if isinstance(exc, SoftTimeLimitExceeded | SpeechCleanupFailure):
                     # Let the outer handlers own messaging/failure_reason. A
@@ -2387,6 +2390,10 @@ def _run_generative_job_impl(
                 # own code BEFORE the deterministic `phone_plan_unsupported` branch.
                 if isinstance(exc, PhoneCapabilityUnavailable):
                     failure_reason = "phone_capability_unavailable"
+                elif isinstance(exc, UserSongPlanDeclined):
+                    # KRI-466: error_detail is creator-facing copy; its own code so
+                    # chat shows it instead of "your iPhone can't render".
+                    failure_reason = "user_song_plan_declined"
                 elif isinstance(exc, (UnsupportedPhonePlan, ValueError)):
                     failure_reason = "phone_plan_unsupported"
                 else:
@@ -5003,7 +5010,8 @@ _LIPSYNC_PLAN_ERROR_MESSAGES = {
     ),
     "no_synced_takes": (
         "I couldn't find where any of your clips sit in the song. Film each take with "
-        "the song playing out loud next to you, then try again."
+        "the song playing out loud, or sing along clearly so I can match the words, "
+        "then try again."
     ),
     "span_too_short": (
         "The clips I could match to the song cover less than three seconds of it. "
@@ -5040,14 +5048,14 @@ def _plan_phone_user_song_montage(
     Lip-sync: ``plan_lipsync_montage`` over the take alignment, computed inline if the
     background tasks have not left a current one. An uncertain take that the creator
     did not confirm is never placed (the planner guarantees it; the alignment fed here
-    only ever narrows positions to the ones the creator chose). Every failure is an
-    ``UnsupportedPhonePlan`` with a message the creator can act on.
+    only ever narrows positions to the ones the creator chose). Every failure is a
+    ``UserSongPlanDeclined`` with a message the creator can act on.
     """
     from app.pipeline.lipsync_montage import (  # noqa: PLC0415
         LipsyncPlanError,
         plan_lipsync_montage,
     )
-    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
+    from app.pipeline.phone_guided_plan import UserSongPlanDeclined  # noqa: PLC0415
     from app.pipeline.unified_montage import plan_unified_montage  # noqa: PLC0415
     from app.services.song_order import apply_resolved_song_takes  # noqa: PLC0415
     from app.tasks.user_song import (  # noqa: PLC0415
@@ -5057,11 +5065,11 @@ def _plan_phone_user_song_montage(
 
     item_id = _job_plan_item_id(job_id)
     if item_id is None:
-        raise UnsupportedPhonePlan(_SONG_MISSING_MESSAGE, capability="musicBed")
+        raise UserSongPlanDeclined(_SONG_MISSING_MESSAGE, capability="musicBed")
     try:
         generation = int(user_song.get("generation"))
     except (TypeError, ValueError) as exc:
-        raise UnsupportedPhonePlan(_SONG_MISSING_MESSAGE, capability="musicBed") from exc
+        raise UserSongPlanDeclined(_SONG_MISSING_MESSAGE, capability="musicBed") from exc
     sync = "lipsync" if user_song.get("sync") == "lipsync" else "background"
 
     if sync == "lipsync":
@@ -5069,13 +5077,13 @@ def _plan_phone_user_song_montage(
     else:
         analysis, alignment = ensure_song_analysis(item_id), None
     if analysis is None:
-        raise UnsupportedPhonePlan(_SONG_MISSING_MESSAGE, capability="musicBed")
+        raise UserSongPlanDeclined(_SONG_MISSING_MESSAGE, capability="musicBed")
     if analysis.generation != generation:
-        raise UnsupportedPhonePlan(_SONG_REPLACED_MESSAGE, capability="musicBed")
+        raise UserSongPlanDeclined(_SONG_REPLACED_MESSAGE, capability="musicBed")
     if analysis.status != "ready" or analysis.duration_s <= 0:
-        raise UnsupportedPhonePlan(_SONG_UNREADABLE_MESSAGE, capability="musicBed")
+        raise UserSongPlanDeclined(_SONG_UNREADABLE_MESSAGE, capability="musicBed")
 
-    if sync == "background":
+    def _background_plan() -> Any:
         return plan_unified_montage(
             clips,
             view,
@@ -5091,6 +5099,9 @@ def _plan_phone_user_song_montage(
             song_generation=generation,
             output_orientation=output_orientation,
         )
+
+    if sync == "background":
+        return _background_plan()
 
     if alignment is None or alignment.song_generation != generation:
         # No alignment could be produced even inline: every take is "unmatched",
@@ -5127,8 +5138,41 @@ def _plan_phone_user_song_montage(
             output_orientation=output_orientation,
         )
     except LipsyncPlanError as exc:
+        if exc.code in ("no_synced_takes", "span_too_short"):
+            # Nothing could be placed by the song: still give the creator an edit
+            # with their song as the beat-cut music bed instead of failing (KRI-466).
+            log.warning(
+                "lipsync_fallback_to_background",
+                job_id=job_id,
+                code=exc.code,
+                error=str(exc),
+            )
+            try:
+                plan = _background_plan()
+            except Exception as fallback_exc:  # noqa: BLE001
+                log.warning(
+                    "lipsync_fallback_failed",
+                    job_id=job_id,
+                    error=str(fallback_exc),
+                    exc_info=True,
+                )
+                raise UserSongPlanDeclined(
+                    _LIPSYNC_PLAN_ERROR_MESSAGES["no_synced_takes"], capability="musicBed"
+                ) from fallback_exc
+            unmatched_ids = [
+                clip.media_id
+                for clip in clips
+                if getattr(alignment.takes.get(clip.media_id), "status", "unmatched") != "confident"
+            ]
+            plan.song_receipt = {
+                **plan.song_receipt,
+                "requested_mode": "lipsync",
+                "fallback_reason": exc.code,
+                "unmatched_ids": unmatched_ids,
+            }
+            return plan
         log.warning("lipsync_plan_declined", job_id=job_id, code=exc.code, error=str(exc))
-        raise UnsupportedPhonePlan(
+        raise UserSongPlanDeclined(
             _LIPSYNC_PLAN_ERROR_MESSAGES.get(exc.code, str(exc)), capability="musicBed"
         ) from exc
 

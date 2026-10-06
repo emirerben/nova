@@ -139,8 +139,114 @@ def test_device_narrated_is_editable_like_phone_talking(monkeypatch):
     assert device["caption_cues"] == {"editable": True, "reason": None}
     assert device["caption_meta"] == {"editable": True, "reason": None}
     assert device["caption_editor_style"] is True
-    # Only the caption lane opens: the narrated compiler still has no text lane.
+    # Only the caption lane opens here: the title lane (KRI-465) also needs an
+    # app build that declares it (see the next tests).
     assert device["text_elements"] is False
+
+
+_TITLE_PROTOCOL = 4
+
+
+@pytest.fixture
+def _reset_client_protocol():
+    from app.services.client_protocol import clear_request_context
+
+    clear_request_context()
+    yield
+    clear_request_context()
+
+
+def test_device_narrated_opens_text_for_a_title_aware_build(monkeypatch, _reset_client_protocol):
+    """KRI-465: the opening title is an editable text element, behind its own
+    flag and the app-build gate."""
+    from app.services.client_protocol import set_client_protocol
+
+    job, variant = _narrated_device_job(
+        monkeypatch, enabled=True, verified=["positionedText", "animatedText"]
+    )
+    set_client_protocol(_TITLE_PROTOCOL)
+
+    device = gj._editor_capabilities(job, variant)
+
+    assert device["text_elements"] is True
+    if "text_elements_reason" in device:
+        assert device["text_elements_reason"] is None
+    # The title lane does not open anything else.
+    assert (
+        device["sfx"] is False and device["overlays"] is False and device["visual_blocks"] is False
+    )
+
+
+@pytest.mark.parametrize("protocol", [3, None], ids=["protocol-3-build", "no-header"])
+def test_device_narrated_text_stays_closed_for_older_builds(
+    monkeypatch, _reset_client_protocol, protocol
+):
+    from app.services.client_protocol import set_client_protocol
+
+    job, variant = _narrated_device_job(
+        monkeypatch, enabled=True, verified=["positionedText", "animatedText"]
+    )
+    set_client_protocol(protocol)
+
+    assert gj._editor_capabilities(job, variant)["text_elements"] is False
+
+
+@pytest.mark.parametrize(
+    "off",
+    [
+        ("phone_narrated_title_edits_enabled", False),
+        ("phone_render_verified_features", ["positionedText"]),
+    ],
+    ids=["kill-switch", "unverified-animated-text"],
+)
+def test_device_narrated_text_kill_switch_and_device_gate(monkeypatch, _reset_client_protocol, off):
+    from app.services.client_protocol import set_client_protocol
+
+    job, variant = _narrated_device_job(
+        monkeypatch, enabled=True, verified=["positionedText", "animatedText"]
+    )
+    set_client_protocol(_TITLE_PROTOCOL)
+    monkeypatch.setattr(gj.settings, *off)
+
+    device = gj._editor_capabilities(job, variant)
+
+    assert device["text_elements"] is False
+    assert device.get("text_elements_reason", "phone_edit_unsupported") == "phone_edit_unsupported"
+
+
+def test_title_edits_do_not_depend_on_the_planner_title_flag(monkeypatch, _reset_client_protocol):
+    """`phone_narrated_title_enabled` gates NEW titles; one already rendered
+    stays editable."""
+    from app.services.client_protocol import set_client_protocol
+
+    job, variant = _narrated_device_job(
+        monkeypatch, enabled=True, verified=["positionedText", "animatedText"]
+    )
+    set_client_protocol(_TITLE_PROTOCOL)
+    monkeypatch.setattr(gj.settings, "phone_narrated_title_enabled", False)
+
+    assert gj._editor_capabilities(job, variant)["text_elements"] is True
+
+
+def test_clamp_keeps_a_closed_base_text_map_closed():
+    """The global TEXT_ELEMENTS_ENABLED kill switch closes the base map; the
+    narrated title lane never re-opens it."""
+    clamped = gj._clamp_phone_editor_capabilities(
+        {"text_elements": False, "text_elements_reason": "text_elements_disabled"},
+        narrated=True,
+        narrated_text=True,
+    )
+
+    assert clamped["text_elements"] is False
+    assert clamped["text_elements_reason"] == "phone_edit_unsupported"
+
+
+def test_clamp_preserves_the_key_set_when_opening_text():
+    clamped = gj._clamp_phone_editor_capabilities(
+        {"text_elements": True}, narrated=True, narrated_text=True
+    )
+
+    assert clamped == {"text_elements": True}
 
 
 def test_device_narrated_rollout_off_is_not_editable(monkeypatch):

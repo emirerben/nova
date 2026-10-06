@@ -12,10 +12,12 @@ from app.pipeline.phone_narrated_plan import (
     TITLE_LAYER_PREFIX,
     NarratedPhoneStep,
     compile_phone_narrated_plan,
+    narrated_authored_text_elements,
     narrated_title_element,
     narrated_title_end_s,
     narrated_title_text_elements,
     replace_narrated_captions,
+    replace_narrated_title,
 )
 from app.pipeline.phone_recipe_shared import PhoneNarrationBed
 from app.services.phone_rollout import validate_phone_pilot_recipe
@@ -699,7 +701,8 @@ def test_persisted_title_element_is_the_one_behind_the_pinned_layers():
     assert (row["position"], row["x_frac"], row["y_frac"]) == ("custom", 0.5, 0.15)
     assert row["size_px"] == 120
     assert row["effect"] == "fade-in"
-    assert row["source_params"]["read_only"] is True
+    # No `read_only` marker (KRI-465): the status route decides per request.
+    assert row["source_params"] == {"narrated_storyboard": "intro"}
     assert _compile_elements([TextElement.model_validate(row)], recipe.canvas) == _title_layers(
         recipe
     )
@@ -763,3 +766,128 @@ def test_untitled_recipe_persists_no_title_element(title):
     assert narrated_title_text_elements(recipe, title, end_s=1.6) == []
     # A recipe without title layers never gains an element, whatever the title.
     assert narrated_title_text_elements(recipe, _TITLE, end_s=1.6) == []
+
+
+# --- editing the title (KRI-465) ---------------------------------------------------
+
+
+def _title_rows(recipe, title=_TITLE, end_s=1.6) -> list[dict]:
+    return narrated_title_text_elements(recipe, title, end_s=end_s)
+
+
+def test_replacing_the_title_with_its_own_element_is_a_no_op():
+    pinned = _titled_recipe()
+
+    swapped = replace_narrated_title(pinned, _title_rows(pinned))
+
+    assert recipe_digest(swapped) == recipe_digest(pinned)
+
+
+def test_replacing_the_title_recompiles_only_the_title_layers():
+    pinned = _titled_recipe()
+    [row] = _title_rows(pinned)
+    edited = {**row, "text": "Pasta in ten", "start_s": 0.4, "end_s": 2.2, "y_frac": 0.3}
+
+    swapped = replace_narrated_title(pinned, [edited])
+
+    from app.agents._schemas.text_element import TextElement
+
+    [title] = _title_layers(swapped)
+    assert _layer_text(title) == "Pasta in ten"
+    assert (title.start, title.end) == (0.4, pytest.approx(2.2))
+    assert [title] == _compile_elements([TextElement.model_validate(edited)], swapped.canvas)
+    # Captions, clips, narration bed and mix stay exactly as pinned, and still
+    # draw above the title.
+    assert swapped.text_layers[0] is title
+    assert swapped.text_layers[1:] == pinned.text_layers[1:]
+    assert swapped.tracks == pinned.tracks
+    assert swapped.audio == pinned.audio
+    assert {run.font_asset_id for run in title.runs} <= _font_ids(swapped)
+
+
+def test_replacing_the_title_clamps_it_to_a_short_voiceover():
+    pinned = compile_phone_narrated_plan(
+        [_step("s0", "c0", start_s=0.0, end_s=1.2)],
+        (_binding("c0"),),
+        _narration(duration_s=1.2),
+        voiceover_duration_s=1.2,
+        caption_cues=[{"text": "hi", "start_s": 0.0, "end_s": 1.0}],
+    )
+    [row] = _title_rows(_titled_recipe())
+
+    swapped = replace_narrated_title(pinned, [{**row, "end_s": 5.0}])
+
+    [title] = _title_layers(swapped)
+    assert title.end <= swapped.duration
+    assert [layer.id.startswith("caption") for layer in swapped.text_layers[1:]] == [True]
+
+
+def test_a_title_that_starts_after_the_video_ends_is_dropped():
+    pinned = _titled_recipe(title=None)
+    [row] = _title_rows(_titled_recipe())
+
+    swapped = replace_narrated_title(pinned, [{**row, "start_s": 13.0, "end_s": 15.0}])
+
+    assert not _title_layers(swapped)
+    assert recipe_digest(swapped) == recipe_digest(pinned)
+
+
+def test_an_empty_list_removes_the_title_but_not_the_captions():
+    pinned = _titled_recipe()
+
+    swapped = replace_narrated_title(pinned, [])
+
+    assert not _title_layers(swapped)
+    assert swapped.text_layers == pinned.text_layers[1:]
+    assert recipe_digest(swapped) == recipe_digest(_titled_recipe(title=None))
+
+
+def test_removed_rows_are_not_compiled():
+    pinned = _titled_recipe()
+    [row] = _title_rows(pinned)
+
+    assert not _title_layers(replace_narrated_title(pinned, [{**row, "removed": True}]))
+
+
+def test_added_text_compiles_as_the_next_title_layer_before_the_captions():
+    pinned = _titled_recipe()
+    [row] = _title_rows(pinned)
+    extra = {**row, "id": "added", "text": "Part two", "start_s": 3.0, "end_s": 5.0}
+
+    swapped = replace_narrated_title(pinned, [row, extra])
+
+    assert [layer.id for layer in swapped.text_layers[:2]] == ["title-0", "title-1"]
+    assert [_layer_text(layer) for layer in swapped.text_layers[:2]] == [_TITLE, "Part two"]
+    assert swapped.text_layers[2:] == pinned.text_layers[1:]
+
+
+def test_replacing_the_title_needs_a_narrated_video_track():
+    pinned = _titled_recipe()
+    montage = pinned.model_copy(
+        update={
+            "tracks": [
+                track.model_copy(update={"id": "montage"}) if track.id == "narrated" else track
+                for track in pinned.tracks
+            ]
+        }
+    )
+
+    with pytest.raises(UnsupportedPhonePlan, match="no video track"):
+        replace_narrated_title(montage, [])
+
+
+def test_authored_text_elements_drop_caption_mirrors_lyrics_and_tombstones():
+    from app.agents._schemas.text_element import CAPTION_CUE_SOURCE
+
+    title = {"id": "narrated-title", "text": "t", "source_params": {"narrated_storyboard": "intro"}}
+    plain = {"id": "added", "text": "a"}
+    rows = [
+        title,
+        {"id": "c1", "text": "cue", "source_params": {"source": CAPTION_CUE_SOURCE}},
+        {"id": "l1", "text": "lyric", "role": "lyric_line"},
+        {"id": "gone", "text": "x", "removed": True},
+        plain,
+    ]
+
+    assert narrated_authored_text_elements(rows) == [title, plain]
+    assert narrated_authored_text_elements(None) == []

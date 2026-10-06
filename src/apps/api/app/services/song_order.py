@@ -74,6 +74,20 @@ def uncertain_media_ids(alignment: SongAlignment, media_ids: Sequence[str]) -> l
     return [m for m in media_ids if _take_for(alignment, m).status != "confident"]
 
 
+def takes_needing_order(alignment: SongAlignment, media_ids: Sequence[str]) -> list[str]:
+    """Takes worth asking the creator about: ambiguous with at least one candidate.
+
+    A confident take is placed; an unmatched take has no position to choose, so an
+    order question could not change anything for it (it renders as B-roll).
+    """
+    out: list[str] = []
+    for media_id in media_ids:
+        take = _take_for(alignment, media_id)
+        if take.status == "ambiguous" and (take.delta_s is not None or take.alternates):
+            out.append(media_id)
+    return out
+
+
 def load_ready_alignment(
     raw_alignment: Any,
     *,
@@ -173,7 +187,7 @@ def build_song_order_question(
 
 def song_order_question_text(question: SongOrderQuestion) -> str:
     """Self-sufficient copy (the app also renders the video widgets)."""
-    uncertain = sum(1 for i in question.items if i.status != "confident")
+    uncertain = sum(1 for i in question.items if i.status == "ambiguous")
     if uncertain == 1:
         return (
             "I couldn't tell where one of your takes sits in the song. "

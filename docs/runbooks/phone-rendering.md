@@ -2140,27 +2140,68 @@ guided-story media imports). Saved media keeps rendering either way.
 Tests: `tests/routes/test_phone_voiceover_editor_media.py`; iOS
 `NativeEditorSessionTests.testPhoneVoiceoverEdit*`.
 
-**Opening title in the preview (KRI-455).** A confirmed `opening_title` burns as
-`title-*` layers in the pinned recipe (`phone_narrated_plan`, "Opening title"),
-but the editor preview compiles text from the variant, never from the recipe.
-So `_run_phone_narrated_job` also persists the element it compiled
-(`narrated_title_text_elements`, from `narrated_title_text_elements()`), and the
-status route prepends it to `text_elements` (`_with_phone_narrated_title`). It
-is read-only: `source_params.read_only`, `text_elements` stays closed, no Save
-lane carries it, and it is not in the deletion baseline (a hand-made `text`
-deletion is a 409). Only builds declaring `X-Kria-Client-Protocol` >=
-`PHONE_NARRATED_TITLE_PREVIEW_MIN_CLIENT_PROTOCOL` (default 4) get it: protocol
-4 keeps a `read_only` element off the timeline, out of the Text list and out of
-every mutation (`EditorTextElement.isReadOnly`); older builds would offer
-Delete and 422. The element spells out the cloud's "top"/"large"/default face
-(custom y 0.15, 120 px, Playfair Display), pinned to the cloud layers by
+**Opening title in the preview (KRI-455) and its edit lane (KRI-465).** A
+confirmed `opening_title` burns as `title-*` layers in the pinned recipe
+(`phone_narrated_plan`, "Opening title"), but the editor preview compiles text
+from the variant, never from the recipe. So `_run_phone_narrated_job` also
+persists the element it compiled (`narrated_title_text_elements`, from
+`narrated_title_text_elements()`), and the status route prepends it to
+`text_elements` (`_with_phone_narrated_title`). Only builds declaring
+`X-Kria-Client-Protocol` >= `PHONE_NARRATED_TITLE_PREVIEW_MIN_CLIENT_PROTOCOL`
+(default 4) get it; older builds would offer Delete on a title they don't know.
+The element spells out the cloud's "top"/"large"/default face (custom y 0.15,
+120 px, Playfair Display), pinned to the cloud layers by
 `test_title_element_spells_out_exactly_the_cloud_intro`. Cloud narrated
 storyboard bars (`text_elements_materialized_from == "narrated_storyboard"`) are
 editable and get the same spelled-out look on every editor read; see "Editor
 read path" in `docs/pipelines/generative.md`. They share this title's
 `source_params.narrated_storyboard` marker; the phone title is already explicit,
-so resolving it changes nothing. Tests:
-`tests/routes/test_phone_narrated_title_preview.py`; iOS
+so resolving it changes nothing.
+
+KRI-465 makes that title editable (and deletable), behind
+`PHONE_NARRATED_TITLE_EDITS_ENABLED` (default true; also needs
+`positionedText` + `animatedText` verified, and does NOT depend on the planner's
+`PHONE_NARRATED_TITLE_ENABLED`: a rendered title stays editable). Gate:
+`phone_rollout.phone_narrated_title_edits_supported(require_client=...)`; the
+status route and capability map judge the request's protocol (>= 4), Save
+passes `require_client=False` like the lanes do.
+
+- **Read path decides.** The persisted element carries no `read_only` marker
+  (rows the KRI-455 worker wrote still do). `_with_phone_narrated_title`
+  normalizes every row on the way out: editable drops `read_only` from a copy,
+  otherwise it sets `read_only: true` (protocol-4 iOS keeps such a row off the
+  timeline and out of every mutation, `EditorTextElement.isReadOnly`). The stored
+  row is never touched. `_clamp_phone_editor_capabilities(narrated_text=...)`
+  keeps `text_elements` open for a phone Voiceover variant only while the same
+  gate holds (a base map closed by the global `TEXT_ELEMENTS_ENABLED` stays
+  closed).
+- **One store.** `narrated_title_text_elements` is the title's only copy. A text
+  Save (`phone_editor._compile_narrated_editor_commit`) takes the staged
+  `text_elements` (already validated by `validate_text_elements_payload`),
+  keeps the authored rows (`narrated_authored_text_elements`: not caption-cue
+  mirrors, not `lyric_line`, not `removed`), recompiles exactly the `title-*`
+  layers (`replace_narrated_title`: ends clamped to the video, empty window
+  dropped, ids `title-{index}`, titles before captions), writes the rows back to
+  `narrated_title_text_elements` (key removed when empty) and removes the staged
+  `text_elements` / `text_elements_user_edited`, so the status route can never
+  show the title twice. A text-only Save is not a caption Save. The document the
+  app sends carries one caption mirror per cue, so phone Narrated variants use
+  `MAX_GUIDED_EDITOR_TEXT_ELEMENTS` instead of the cloud's 50.
+- **Deletion.** The deletion baseline adds the title like the status route does,
+  so deleting `narrated-title` is no longer `deletion_target_stale`; the Save
+  removes every `title-` layer. (Pre-existing: a `text` deletion also
+  materializes an empty `visual_blocks` lane, which 404s while
+  `VISUAL_BLOCKS_ENABLED` is off.)
+- **Caption and cut Saves** keep the edited title: `replace_narrated_captions`
+  and the cut swap leave `title-` layers as pinned.
+- **Rollback:** `fly secrets set PHONE_NARRATED_TITLE_EDITS_ENABLED=false --app
+  nova-video` + `fly machine restart <id>` (api). The title shows `read_only`
+  again, `text_elements` closes and a `text_elements` Save 422s
+  (`unsupported_phone_edit`); an edited title keeps rendering.
+
+Tests: `tests/routes/test_phone_narrated_title_preview.py`,
+`tests/pipeline/test_phone_narrated_plan.py` (`replace_narrated_title`),
+`tests/routes/test_caption_capabilities.py`; iOS
 `NativeEditorRenderCompilerTests.testReadOnlyTitle*`,
 `NativeEditorSessionTests.testReadOnlyTitle*`.
 
@@ -2267,8 +2308,10 @@ Flow:
    `SONG_ALIGNMENT_TURN_DEADLINE_S` (45 s) for the alignment, then replies "still
    checking your clips". Any take that is not `confident` produces a
    `song_order_question` (video widgets in a proposed order); the creator's answer
-   is written onto the strategy as server-owned `resolved_song_takes`. All takes
-   confident means no question.
+   is written onto the strategy as server-owned `resolved_song_takes`. Only
+   `ambiguous` takes with candidate positions are asked about (`takes_needing_order`):
+   all takes confident or unmatched means no question. A missing or stale
+   (`SONG_ALIGNMENT_VERSION`) alignment is re-enqueued once per gate call.
 5. **Render.** `_run_phone_unified_montage_job` branches on
    `all_candidates["user_song"]` (`gcs_path, generation, duration_s, sync`):
    - `background`: `plan_unified_montage(song_*)`. The total is capped at the song
@@ -2375,7 +2418,27 @@ Flags and rollout:
 - Thresholds (settings, `song_align_*`): confident = `peak_z >= 8` and
   `peak_ratio >= 1.5` and the drift check (`song_align_drift_tolerance_s` 0.04
   s) passes and (text anchors agree within 0.15 s, or `peak_z >= 12` and
-  `peak_ratio >= 2`). Text alone never makes a take confident.
+  `peak_ratio >= 2`).
+  **Lyrics-only placement (KRI-466):** a creator singing along over earbuds leaves no
+  song in the take, so no audio peak exists. When no audio placement is valid, a take
+  whose words match the song's (`song_align_lyrics_min_words` 6, per-word offset
+  spread <= `song_align_lyrics_max_spread_s` 0.35 s, `song_align_lyrics_min_density`
+  0.6) is `confident` with `method="lyrics"` if exactly one placement qualifies, and
+  `ambiguous` (song-order question) when several do (a chorus). Audio always wins when
+  valid. Kill switch: `SONG_ALIGN_LYRICS_ENABLED=false`. Lyric sync is "close"
+  (+-~0.1 s), not frame-exact. Every placed row carries `method` and
+  `match_start_s/match_end_s` (the part of the take that matches); the planner trims
+  the take to that range but keeps the full source, so the editor can extend the tail
+  (the FIRST cut's head stays locked: `USER_SONG_LIPSYNC_LOCKED`).
+- **Unplaced takes are never dropped silently.** They are appended after the last sung
+  take as short (3 s) muted B-roll (`kept_broll_ids`; dropped reason `kept_as_broll`)
+  and every take stays in the editor's media list (`media_scope="selected"`).
+- **Nothing placeable falls back, it does not fail.** On `no_synced_takes` /
+  `span_too_short` the worker plans a background-style song edit
+  (`lipsync_fallback_to_background`; receipt `requested_mode`, `fallback_reason`,
+  `unmatched_ids`) and the chat tells the creator how to film for lip-sync.
+- **Deploy order:** API before worker (`TakeAlignment` is `extra="forbid"`; an old API
+  rejects rows with the new fields and the gate keeps saying "still checking").
   `SONG_ALIGNMENT_PROXY_OFFSET_S` (default 0) is added to every delta to absorb a
   measured analysis-proxy vs original audio offset (AAC priming, `.mov` edit
   lists); measure it with the device fixture before relying on frame-exact sync.
@@ -2387,11 +2450,16 @@ Troubleshooting:
   is not rendering on the phone (cloud destination, no analysis-proxy footage), or
   `phone_user_song_supported()` is false: check the flag and
   `PHONE_RENDER_VERIFIED_FEATURES` contains `musicBed` and `audioMix`.
-- **`phone_plan_unsupported` with "couldn't find where any of your clips...".**
-  `LipsyncPlanError.no_synced_takes`: nothing aligned. Check the job's
-  `unified_montage.user_song` receipt and `PlanItem.song_alignment` (statuses,
-  `peak_z`, `peak_ratio`). A take filmed without the song audible, or a silent
-  take, is `unmatched`. The planner never places a guess.
+- **Lip-sync edit came out as a plain background-song edit.** Expected when nothing
+  could be placed: check `unified_montage.user_song.fallback_reason` and
+  `PlanItem.song_alignment` (`status`, `method`, `peak_z`, `text_score`). A take with
+  neither audible song nor clearly sung words is `unmatched`; the planner never places
+  a guess.
+- **`user_song_plan_declined`.** A real decline (song missing/replaced/unreadable, or
+  fallback impossible). The chat shows `Job.error_detail` verbatim for this code
+  (`CREATOR_FACING_DETAIL_CODES`), so keep those strings creator-facing. Before
+  KRI-466 these surfaced as `phone_plan_unsupported` with the generic "your iPhone
+  can't render yet" copy.
 - **"Your song was replaced after this edit was approved".** The item's
   `song_generation` or duration no longer matches the approved plan; the creator
   must ask for the edit again.

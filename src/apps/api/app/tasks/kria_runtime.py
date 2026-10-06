@@ -2310,7 +2310,7 @@ def _device_render_state(job: Job, execution: CreatorAgentExecution) -> str | No
     return "failed" if "failed" in states else "ready"
 
 
-_DETERMINISTIC_JOB_FAILURE_CODES = {"phone_plan_unsupported"}
+_DETERMINISTIC_JOB_FAILURE_CODES = {"phone_plan_unsupported", "user_song_plan_declined"}
 
 
 def _phone_gate_refusal_copy(reason: str) -> str:
@@ -2833,6 +2833,44 @@ def _unified_montage_review(
     )
 
 
+def _user_song_note(job: Job) -> str:
+    """Plain-language account of how the creator's song was used (KRI-466).
+
+    Reads the plan's ids-only song receipt (`unified_montage.user_song`); empty when
+    nothing noteworthy happened. One sentence per applicable case.
+    """
+    record = (job.assembly_plan or {}).get("unified_montage")
+    receipt = record.get("user_song") if isinstance(record, dict) else None
+    if not isinstance(receipt, dict):
+        return ""
+    notes: list[str] = []
+    if receipt.get("fallback_reason"):
+        notes.append(
+            "I couldn't find where your takes sit in the song, so I used it as "
+            "background music cut to the beat. To lip-sync, play the song out loud "
+            "while filming, or sing along clearly so I can match your words "
+            "(earbuds work, but the sync is a bit looser)."
+        )
+    broll = receipt.get("kept_broll_ids")
+    if isinstance(broll, list) and broll:
+        count = len(broll)
+        notes.append(
+            f"{count} take{' didn' if count == 1 else 's didn'}'t match the song, so "
+            f"{'it is' if count == 1 else 'they are'} in as short muted "
+            f"clip{'' if count == 1 else 's'}. Trim or remove "
+            f"{'it' if count == 1 else 'them'} in the editor."
+        )
+    placed = receipt.get("placed")
+    by_lyrics = (
+        sum(1 for row in placed if isinstance(row, dict) and row.get("method") == "lyrics")
+        if isinstance(placed, list)
+        else 0
+    )
+    if by_lyrics:
+        notes.append(f"I matched {by_lyrics} take{'' if by_lyrics == 1 else 's'} by your singing.")
+    return " ".join(notes)
+
+
 def _approved_generation_review(
     db: Any,
     thread: CreationThread,
@@ -3065,6 +3103,9 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                     "The approved render finished; review the opening, pacing, and text, "
                     "then tell me what you want changed.",
                 )
+                song_note = _user_song_note(job)
+                if song_note:
+                    review_text = f"{review_text} {song_note}"
                 review = _append_sync_event(
                     db,
                     thread,
@@ -3113,7 +3154,10 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         turn.error = execution.error
         session.status = "awaiting_feedback"
         session.last_error = execution.error
-        from app.tasks.content_plan_build import humanize_job_failure_reason  # noqa: PLC0415
+        from app.tasks.content_plan_build import (  # noqa: PLC0415
+            CREATOR_FACING_DETAIL_CODES,
+            job_failure_message,
+        )
 
         recovery_receipts: list[dict[str, Any]] = []
         recovery_message: str | None = None
@@ -3176,9 +3220,13 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             )
         elif recovery_message is not None:
             failure_content = recovery_message
-        elif deterministic or failure_code == "phone_capability_unavailable":
+        elif deterministic or failure_code in {
+            "phone_capability_unavailable",
+            *CREATOR_FACING_DETAIL_CODES,
+        }:
             # Retryable, but the generic "didn't finish" copy would hide WHY (KRI-286).
-            failure_content = humanize_job_failure_reason(failure_code)
+            # Creator-facing codes (KRI-466) show the job's own actionable detail.
+            failure_content = job_failure_message(failure_code, getattr(job, "error_detail", None))
         else:
             failure_content = (
                 "That render didn't finish. Your approved draft is still saved, "
