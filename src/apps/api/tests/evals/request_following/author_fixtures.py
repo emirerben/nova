@@ -1532,6 +1532,33 @@ def p6b_briefs() -> list[dict[str, Any]]:
             "Left out the cliff path and cut it to about 16 seconds with quick shots.",
         )
     )
+    # 30. KRI-458 (prod 2026-10-06): after a denied plan the creator re-asks for an order
+    # described by ACTIVITY ("start with the goals, then the warm-up, finish on the
+    # handshakes"). The groups come from clip facts, not capture time; the cut follows them.
+    m0 = "Suggest an edit."
+    m1 = "Start with the goals, then the warm-up, and finish on the handshakes."
+    out.append(
+        _thread(
+            "sport_activity_sequence_after_denied_plan",
+            "sport",
+            "A revised, activity-described order after a denied plan must be honored.",
+            [_turn("t0", m0), _turn("t1", m1)],
+            [
+                _req(
+                    "goals-warmup-handshakes",
+                    "order_explicit",
+                    "order",
+                    "order_explicit",
+                    {"sequence": ["S3", "S4", "S7", "S1", "S8"]},
+                    m1,
+                    turn=1,
+                )
+            ],
+            _plan("sport", ["S3", "S4", "S7", "S1", "S2", "S5", "S6", "S8"], title="Five-a-side"),
+            "Opened on the goals, then the warm-up, and closed on the handshakes.",
+        )
+    )
+
     return out
 
 

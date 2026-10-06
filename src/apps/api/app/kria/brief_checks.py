@@ -114,6 +114,9 @@ class PlanFacts:
     ordering_fallback_clip_ids: tuple[str, ...] = ()
     # KRI-282: the creator's answer to a chronological-vs-grouped conflict, if any.
     ordering_choice: str | None = None
+    # KRI-458: how each described group ("start with the football, end at the pub")
+    # landed in a unified montage: one status per sequence intent. Empty = none asked.
+    sequence_statuses: tuple[str, ...] = ()
     texts: tuple[str, ...] = ()
     # Where the title came from: "creator" (their words), "brief" (written from the
     # brief's facts), "default" (nothing to title with), None = unknown.
@@ -385,6 +388,11 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
             str(c) for c in record.get("ordering_fallback_clip_ids") or []
         ),
         ordering_choice=str(record["ordering_choice"]) if record.get("ordering_choice") else None,
+        sequence_statuses=tuple(
+            str(row.get("status"))
+            for row in record.get("intent_outcomes") or []
+            if isinstance(row, Mapping) and row.get("op") == "order"
+        ),
         texts=tuple(
             str(text) for text in (title, record.get("closing_title"), *per_clip.values()) if text
         ),
@@ -775,6 +783,10 @@ def _route_reversed_reason(req: BriefRequirement, facts: PlanFacts) -> str | Non
 # does), so a draft-time order check can only say it couldn't tell.
 _CANT_CONFIRM_ORDER = "I can't confirm the order this draft uses."
 _CANT_CHECK_ORDER_RULE = "I can't verify this ordering automatically."
+_ARRIVAL_BASES = frozenset({"attachment", "creator_order"})
+_ORDER_NOT_APPLIED = (
+    "I couldn't match your description to the clips, so they stay in the order you attached them."
+)
 
 
 def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -792,6 +804,15 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
                 "partial",
                 f"This draft is ordered by {basis.replace('_', ' ')}, not the order you asked for.",
             )
+    elif facts.sequence_statuses:
+        # The creator described the order in their own words; the plan placed (or
+        # failed to place) each group and recorded which (KRI-458).
+        if any(status != "met" for status in facts.sequence_statuses):
+            return _receipt(req, "partial", "some of the groups you named are not where you said")
+    elif basis in _ARRIVAL_BASES and key != basis:
+        # An order only the creator's words describe, and nothing in the plan applied
+        # it: say so, never let a silent attachment order read as "done" (KRI-458).
+        return _receipt(req, "partial", _ORDER_NOT_APPLIED)
     elif not key or key != basis:
         # Nothing here can confirm an ordering this checker has no rule for.
         return _receipt(req, "partial", _CANT_CHECK_ORDER_RULE)
