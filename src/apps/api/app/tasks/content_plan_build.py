@@ -1302,6 +1302,106 @@ def _creator_selected_clip_paths(
     return [path_by_id[media_id] for media_id in selected if media_id in path_by_id]
 
 
+def order_paths_by_resolved_intents(
+    clip_paths: list[str],
+    path_by_media_id: dict[str, str],
+    resolved_intents: object,
+) -> tuple[list[str], int]:
+    """Reorder ``clip_paths`` by the creator's resolved ``order`` intents.
+
+    Returns ``(ordered_paths, placed_count)``; ``placed_count == 0`` means no
+    order intent placed anything and the list is returned unchanged.
+
+    Rule (the same seating ``unified_montage._apply_sequence`` uses for cloud
+    montage): walk the resolved ``op == "order"`` intents in their listed
+    order. Intents with ``position`` null form the MAIN sequence in that order,
+    ``"first"`` intents lead it, ``"last"`` intents close everything. Clips no
+    intent names keep their relative order between the main sequence and the
+    ``last`` group. Within one intent the clips keep the relative order they
+    already had. A clip named by two intents belongs to the first one. Skipped:
+    intents with ``order_by`` set (capture-time ordering is a basis order,
+    handled elsewhere), a status other than ``resolved``, or no assignments;
+    media ids that map to no clip in ``clip_paths``. Paths are never dropped
+    or duplicated.
+    """
+
+    if not isinstance(resolved_intents, list) or not clip_paths:
+        return clip_paths, 0
+    known = set(clip_paths)
+    claimed: set[str] = set()
+    buckets: dict[str, list[str]] = {"first": [], "mid": [], "last": []}
+    for intent in resolved_intents:
+        if not isinstance(intent, dict) or intent.get("op") != "order":
+            continue
+        if intent.get("order_by") or intent.get("status", "resolved") != "resolved":
+            continue
+        position = intent.get("position")
+        if position not in (None, "first", "last"):
+            continue
+        members: set[str] = set()
+        for assignment in intent.get("assignments") or []:
+            if not isinstance(assignment, dict):
+                continue
+            path = path_by_media_id.get(str(assignment.get("media_id") or ""))
+            if path and path in known and path not in claimed:
+                members.add(path)
+        if not members:
+            continue
+        claimed |= members
+        buckets[position or "mid"].extend(p for p in clip_paths if p in members)
+    if not claimed:
+        return clip_paths, 0
+    rest = [p for p in clip_paths if p not in claimed]
+    return buckets["first"] + buckets["mid"] + rest + buckets["last"], len(claimed)
+
+
+def _creator_intent_clip_order(
+    item: PlanItem,
+    clip_paths: list[str],
+    creator_strategy: dict | None,
+) -> tuple[list[str], int]:
+    """Native renders: apply the server-resolved ``order`` intents to ``clip_paths``.
+
+    The Main Creator lists ``selected_media_ids`` in whatever order the model
+    chose (often upload order), so the creator's "match every step I say to the
+    clip that shows it" would otherwise play in upload order. The resolved
+    intents are the verified statement of that order; this makes it
+    deterministic. Native program only. Precedence, applied by the caller: an
+    explicit preserved ``creator_clip_order`` revision fence skips this, and a
+    filming-guide order (``_narrative_clip_order``) still runs afterwards, so
+    guide shot clips lead in guide order and the pool follows in the order set here.
+    """
+
+    if not creator_strategy or creator_strategy.get("render_program") != "native":
+        return clip_paths, 0
+    resolved = creator_strategy.get("resolved_clip_intents")
+    if not resolved:
+        return clip_paths, 0
+    path_by_media_id: dict[str, str] = {}
+    for index, assignment in enumerate(
+        value for value in (item.clip_assignments or []) if isinstance(value, dict)
+    ):
+        path = str(assignment.get("gcs_path") or "")
+        if not path or path not in clip_paths:
+            continue
+        media_id = str(assignment.get("media_id") or "")
+        if media_id:
+            path_by_media_id[media_id] = path
+        path_by_media_id.setdefault(path.rsplit("/", 1)[-1], path)
+    for path in clip_paths:
+        path_by_media_id.setdefault(path.rsplit("/", 1)[-1], path)
+    ordered, placed = order_paths_by_resolved_intents(clip_paths, path_by_media_id, resolved)
+    if placed:
+        log.info(
+            "plan_item_render.intent_order",
+            plan_item_id=str(item.id),
+            placed_clips=placed,
+            total_clips=len(ordered),
+            reordered=ordered != clip_paths,
+        )
+    return ordered, placed
+
+
 def _phone_unrenderable_reason(approved_snapshot: dict, owner_id: uuid.UUID) -> str | None:
     """Why the phone would refuse a visuals-only item's approved plan, if it would.
 
@@ -1801,6 +1901,14 @@ def _dispatch_item_render(
             return DispatchResult("proposal_stale")
     clip_paths = item_clip_paths
     clip_paths = _creator_selected_clip_paths(item, clip_paths, creator_strategy)
+    intent_order_placed = 0
+    if not creator_clip_order:
+        # An explicit preserved-order revision fence wins; otherwise the resolved
+        # `order` intents fix the sequence (the model's selected_media_ids order
+        # is not a statement of intent). A filming guide still wins below.
+        clip_paths, intent_order_placed = _creator_intent_clip_order(
+            item, clip_paths, creator_strategy
+        )
     if creator_clip_order:
         creator_clip_order = [
             clip_paths.index(item_clip_paths[index])
@@ -2198,6 +2306,11 @@ def _dispatch_item_render(
             **({"render_on_device": True} if visuals_only_device else {}),
             **({"phone_subtitled_lanes": phone_subtitled_lanes} if phone_subtitled_lanes else {}),
         )
+        if intent_order_placed and not narrative_shot_count:
+            job.all_candidates = {
+                **(job.all_candidates or {}),
+                "clip_order_source": "resolved_order_intents",
+            }
         if has_user_song:
             # The exact object generation attach verified: the worker re-reads
             # the CURRENT row/generation at render time and fails closed on a

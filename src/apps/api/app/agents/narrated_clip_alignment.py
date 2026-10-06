@@ -58,7 +58,7 @@ class NarratedClipAlignmentAgent(Agent[NarratedClipAlignmentInput, NarratedClipA
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.narrated_clip_alignment",
         prompt_id="narrated_clip_alignment",
-        prompt_version="2026-10-06.1",
+        prompt_version="2026-10-06.2",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         timeout_s=45.0,
@@ -127,6 +127,11 @@ class NarratedClipAlignmentAgent(Agent[NarratedClipAlignmentInput, NarratedClipA
                 raise SchemaError(f"narrated_clip_alignment: duplicate clip {clip_id!r}")
             if not _WORD_ID_RE.fullmatch(word_id) or word_id not in word_index:
                 raise SchemaError(f"narrated_clip_alignment: unknown start word {word_id!r}")
+            if input.order_locked and position == 0:
+                # In a LOCKED order the first clip owns the opening of the voiceover: the
+                # worker pins the first step to 0.0 anyway, and a model that placed it
+                # later (its subject is narrated later) must not trip the monotonic check.
+                word_id = str(input.words[0]["word_id"])
             index = word_index[word_id]
             start = word_start[word_id]
             if index <= previous_index or start <= previous_start:

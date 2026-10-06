@@ -216,6 +216,104 @@ def test_render_without_a_stage_callback_is_unchanged(tmp_path) -> None:
 # ── best-effort helper ───────────────────────────────────────────────────────
 
 
+def _phone_recipe(*, clips=3, sfx=0, overlays=0, cutaway=0, duration_hint=None):
+    def clip(i, asset):
+        return SimpleNamespace(
+            source_asset_id=asset,
+            timeline_start=float(i * 4),
+            source_duration=4.0,
+            rate=1.0,
+            hold_duration=None,
+        )
+
+    tracks = [
+        SimpleNamespace(
+            id="narrated", kind="video", clips=[clip(i, f"a{i}") for i in range(clips)]
+        ),
+        SimpleNamespace(id="narration", kind="audio", clips=[clip(0, "voice")]),
+    ]
+    if sfx:
+        tracks.append(
+            SimpleNamespace(id="sfx", kind="audio", clips=[clip(i, "s") for i in range(sfx)])
+        )
+    if overlays:
+        tracks.append(
+            SimpleNamespace(
+                id="subtitled-overlays",
+                kind="overlay",
+                clips=[clip(i, "o") for i in range(overlays)],
+            )
+        )
+    if cutaway:
+        tracks.append(
+            SimpleNamespace(
+                id="talking-head-cutaways",
+                kind="overlay",
+                clips=[clip(i, "c") for i in range(cutaway)],
+            )
+        )
+    duration = max(c.timeline_start + c.source_duration for t in tracks for c in t.clips)
+    return SimpleNamespace(tracks=tracks, duration=duration)
+
+
+def test_blocks_from_phone_recipe_reports_seven_decided_sections_from_the_recipe() -> None:
+    recipe = _phone_recipe(clips=3, sfx=2, overlays=1, cutaway=2)
+    blocks = plan_blocks.blocks_from_phone_recipe(
+        recipe, title="Cacio e pepe", captions=5, music="Your voiceover", look="editorial_clean"
+    )
+    assert [b["section_id"] for b in blocks] == list(plan_blocks.SECTION_ORDER)
+    assert {b["state"] for b in blocks} == {"decided"}
+    assert all(b["decided_at"] for b in blocks)
+    by_id = {b["section_id"]: b for b in blocks}
+    assert by_id["title"]["summary"] == "Cacio e pepe"
+    assert by_id["clips"]["summary"] == "3 clips \u00b7 12s"
+    assert by_id["captions"]["summary"] == "5 captions"
+    assert by_id["music"]["summary"] == "Your voiceover"
+    assert by_id["sfx"]["summary"] == "2 sound effects"
+    # Talking cutaways count as clips, not overlays.
+    assert by_id["overlays"]["summary"] == "1 overlay"
+    assert by_id["look"]["summary"] == "Editorial clean"
+    assert not any(b["skipped"] for b in blocks)
+
+
+def test_blocks_from_phone_recipe_marks_unused_sections_not_used() -> None:
+    blocks = plan_blocks.blocks_from_phone_recipe(_phone_recipe(clips=1))
+    by_id = {b["section_id"]: b for b in blocks}
+    assert len(blocks) == 7 and {b["state"] for b in blocks} == {"decided"}
+    assert by_id["clips"]["summary"] == "1 clip \u00b7 4s" and not by_id["clips"]["skipped"]
+    for section in ("title", "captions", "music", "sfx", "overlays", "look"):
+        assert by_id[section]["skipped"] is True and by_id[section]["summary"] == "Not used"
+
+
+def test_blocks_from_phone_recipe_clip_count_override_and_music_detail() -> None:
+    blocks = plan_blocks.blocks_from_phone_recipe(
+        _phone_recipe(clips=5),
+        clip_count=2,
+        music="Some Track \u00b7 Artist",
+        music_detail="Under your voiceover",
+    )
+    by_id = {b["section_id"]: b for b in blocks}
+    assert by_id["clips"]["summary"].startswith("2 clips")
+    assert by_id["music"]["detail"] == "Under your voiceover"
+
+
+def test_emit_phone_recipe_blocks_never_raises_and_is_silent_with_the_flag_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent = MagicMock()
+    monkeypatch.setattr(plan_blocks, "emit_plan_blocks", sent)
+    monkeypatch.setattr(settings, "live_plan_review_enabled", False)
+    plan_blocks.emit_phone_recipe_blocks("job", _phone_recipe())
+    sent.assert_not_called()
+
+    monkeypatch.setattr(settings, "live_plan_review_enabled", True)
+    plan_blocks.emit_phone_recipe_blocks("job", object(), captions=2)  # no tracks -> still 7 blocks
+    assert len(sent.call_args.args[1]) == 7
+    sent.side_effect = RuntimeError("feed down")
+    plan_blocks.emit_phone_recipe_blocks("job", _phone_recipe())
+    plan_blocks.emit_phone_recipe_blocks("job", _phone_recipe(), captions="not-a-number")
+
+
 def test_emit_is_a_noop_when_flag_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "live_plan_review_enabled", False)
     boom = MagicMock(side_effect=AssertionError("must not open a session"))

@@ -4573,3 +4573,135 @@ def test_guided_v1_black_bars_choice_reaches_the_job_and_the_phone_compile() -> 
         "landscape_fit": "fit",
     }
     assert gb._creator_landscape_fit(job.all_candidates) == "fit"
+
+
+# --- Resolved `order` intents decide the native clip order (KRI-456) ---------
+
+
+def _order_intent(media_ids, *, position=None, **extra):
+    return {
+        "op": "order",
+        "status": "resolved",
+        "attribute": "step",
+        "intent_id": "o",
+        **({"position": position} if position else {}),
+        "assignments": [{"media_id": m, "confidence": 0.9} for m in media_ids],
+        **extra,
+    }
+
+
+def _ids_to_paths(names):
+    paths = [f"users/u/plan/i/{n}.mp4" for n in names]
+    return paths, {n: f"users/u/plan/i/{n}.mp4" for n in names}
+
+
+def test_intent_order_main_sequence_first_last_and_unmentioned() -> None:
+    from app.tasks.content_plan_build import order_paths_by_resolved_intents
+
+    paths, by_id = _ids_to_paths(["a", "b", "c", "d", "e", "f"])
+    intents = [
+        _order_intent(["d"], position="last"),
+        _order_intent(["c"]),
+        _order_intent(["a"]),
+        _order_intent(["f"], position="first"),
+    ]
+
+    ordered, placed = order_paths_by_resolved_intents(paths, by_id, intents)
+
+    # first -> main (listed order) -> unmentioned (b, e keep relative order) -> last
+    assert [p.rsplit("/", 1)[-1][:-4] for p in ordered] == ["f", "c", "a", "b", "e", "d"]
+    assert placed == 4
+    assert sorted(ordered) == sorted(paths)
+
+
+def test_intent_order_ignores_unknown_media_unresolved_order_by_and_other_ops() -> None:
+    from app.tasks.content_plan_build import order_paths_by_resolved_intents
+
+    paths, by_id = _ids_to_paths(["a", "b", "c"])
+    intents = [
+        _order_intent(["ghost"]),
+        _order_intent(["c"], status="needs_creator"),
+        _order_intent(["c"], order_by="capture_time"),
+        {"op": "caption", "status": "resolved", "assignments": [{"media_id": "c"}]},
+        _order_intent([]),
+        "not-a-dict",
+    ]
+
+    assert order_paths_by_resolved_intents(paths, by_id, intents) == (paths, 0)
+
+
+def test_intent_order_duplicate_claims_first_wins_and_never_duplicates() -> None:
+    from app.tasks.content_plan_build import order_paths_by_resolved_intents
+
+    paths, by_id = _ids_to_paths(["a", "b", "c"])
+    intents = [
+        _order_intent(["c", "c"]),
+        _order_intent(["c", "a"], position="last"),
+    ]
+
+    ordered, placed = order_paths_by_resolved_intents(paths, by_id, intents)
+
+    assert [p.rsplit("/", 1)[-1][:-4] for p in ordered] == ["c", "b", "a"]
+    assert len(ordered) == len(set(ordered)) == 3
+    assert placed == 2
+
+
+def test_intent_order_no_intents_is_noop() -> None:
+    from app.tasks.content_plan_build import order_paths_by_resolved_intents
+
+    paths, by_id = _ids_to_paths(["a", "b"])
+    assert order_paths_by_resolved_intents(paths, by_id, None) == (paths, 0)
+    assert order_paths_by_resolved_intents(paths, by_id, []) == (paths, 0)
+
+
+def _intent_item(names):
+    item = MagicMock()
+    item.id = uuid.uuid4()
+    item.clip_assignments = [
+        {
+            "media_id": f"analysis-proxy-ios-{n}.mp4",
+            "gcs_path": f"users/u/plan/i/analysis-proxy-ios-{n}.mp4",
+        }
+        for n in names
+    ]
+    return item
+
+
+def test_creator_intent_clip_order_on_prod_shaped_strategy() -> None:
+    from app.tasks.content_plan_build import _creator_intent_clip_order
+
+    upload = ["pw", "pep", "toss", "boil", "eat", "grate", "plate"]
+    item = _intent_item(upload)
+    clip_paths = [a["gcs_path"] for a in item.clip_assignments]
+    steps = ["boil", "grate", "pep", "pw", "toss", "plate"]
+    strategy = {
+        "render_program": "native",
+        "resolved_clip_intents": [
+            *[_order_intent([f"analysis-proxy-ios-{n}.mp4"]) for n in steps],
+            _order_intent(["analysis-proxy-ios-eat.mp4"], position="last"),
+        ],
+    }
+
+    ordered, placed = _creator_intent_clip_order(item, clip_paths, strategy)
+
+    assert [p.rsplit("-", 1)[-1][:-4] for p in ordered] == [*steps, "eat"]
+    assert placed == 7
+
+
+def test_creator_intent_clip_order_basename_fallback_and_guided_noop() -> None:
+    from app.tasks.content_plan_build import _creator_intent_clip_order
+
+    item = MagicMock()
+    item.id = uuid.uuid4()
+    item.clip_assignments = []  # legacy rows: media id is the basename
+    paths = ["users/u/i/a.mp4", "users/u/i/b.mp4"]
+    intents = [_order_intent(["b.mp4"], position="first")]
+
+    native = {"render_program": "native", "resolved_clip_intents": intents}
+    assert _creator_intent_clip_order(item, paths, native) == (
+        ["users/u/i/b.mp4", "users/u/i/a.mp4"],
+        1,
+    )
+    guided = {"render_program": "guided", "resolved_clip_intents": intents}
+    assert _creator_intent_clip_order(item, paths, guided) == (paths, 0)
+    assert _creator_intent_clip_order(item, paths, None) == (paths, 0)
