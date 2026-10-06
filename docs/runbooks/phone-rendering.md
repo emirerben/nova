@@ -2247,28 +2247,54 @@ Flow:
    background). A missing `song_sync` is repaired to `background` with a notice.
 4. **Gate (lip-sync only).** `kria/planner._song_order_gate` waits up to
    `SONG_ALIGNMENT_TURN_DEADLINE_S` (45 s) for the alignment, then replies "still
-   checking your clips". Any take that is not `confident` produces a
-   `song_order_question` (video widgets in a proposed order); the creator's answer
-   is written onto the strategy as server-owned `resolved_song_takes`. Only
-   `ambiguous` takes with candidate positions are asked about (`takes_needing_order`):
-   all takes confident or unmatched means no question. A missing or stale
-   (`SONG_ALIGNMENT_VERSION`) alignment is re-enqueued once per gate call.
+   checking your clips". Placement is by likelihood (KRI-471), not by status: the
+   gate runs `assign_takes` (`takes_needing_order`) and asks only where the creator
+   could usefully decide, i.e. the assignment's `ask` set: a **tie** (a repeated
+   chorus; the tie-break guessed), a **weak** match (likelihood under
+   `SONG_ALIGN_ASK_LIKELIHOOD`), or **no_evidence** (no usable singing or words).
+   Each question item carries `reason` and `likelihood`; no-evidence takes are sent
+   as `status="ambiguous"` with no `song_start_s` (so the app lets them be dragged;
+   no iOS change) and ride after the nearest preceding take in capture order. The
+   creator's answer is resolved by `resolve_with_order` into server-owned
+   `resolved_song_takes` rows `{media_id, order_index, delta_s|None, place:
+   "pinned"|"stack"|"broll", position_basis, confirmed_by_creator, likelihood}`:
+   takes the aligner was sure of keep their position (`aligner`, not confirmed); an
+   uncertain take with candidates takes the one strictly between its neighbours
+   (one fit = `creator_position`, confirmed; several tied fits = `tie_break`, not
+   confirmed); a take with no candidate that fits is **stacked**: laid end to end in
+   the creator's order in the gap between its placed neighbours (`creator_stack`,
+   likelihood 0, approximate sync), or `broll` with `reason="no_room"`.
+   `confirmed_by_creator` is True ONLY when the answer decided the position. Rows
+   written before KRI-471 have no `place`: a confirmed `delta_s` pins, `None` is
+   B-roll. A missing or stale (`SONG_ALIGNMENT_VERSION`) alignment is re-enqueued
+   once per gate call.
 5. **Render.** `_run_phone_unified_montage_job` branches on
    `all_candidates["user_song"]` (`gcs_path, generation, duration_s, sync`):
    - `background`: `plan_unified_montage(song_*)`. The total is capped at the song
      length, the window is `auto_best_section`, and cuts are pre-snapped to the
      window's beats.
-   - `lipsync`: `plan_lipsync_montage`. Takes are tiled in song order (a take
-     covers `delta + 0.3 s ... delta + duration - 0.3 s`; switches only inside an
-     overlap, on a lyric line or beat; segments of at least 1.0 s), and the window
-     is the covered span, capped at 120 s. Gaps are bridged (up to 0.6 s), filled
-     with muted B-roll (unmatched takes, then Visuals), or split. The receipt on
-     `unified_montage.user_song` lists what was left out and why.
+   - `lipsync`: `plan_lipsync_montage`. `take_assignment.assign_takes` places every
+     take that has a non-conflicting candidate at its best-likelihood position (ties
+     broken toward the cluster of placed takes); nothing is gated on `status`.
+     Takes are tiled in song order (a take covers `delta + 0.3 s ... delta +
+     duration - 0.3 s`, trimmed to the matched range; switches only inside an
+     overlap, on a lyric line or beat; segments of at least 1.0 s). Gaps follow a
+     ladder: even split (<= 0.6 s), bridge with the neighbours' own footage (cut on a
+     lyric line or beat), the same dipping into the margins, muted Visuals / unplaced
+     takes, else split. The window is the best span by likelihood-weighted coverage,
+     capped at 120 s; takes outside it ride as unused media with receipt reasons
+     (`gap_unfillable`, `outside_window`) and `placed_outside_ids`. A placed take is
+     NEVER reused as filler (it only plays in sync at its own delta).
    Stale or missing analysis/alignment is computed inline
    (`user_song.ensure_song_alignment`), and a take whose proxy generation changed
-   since it was aligned is dropped to unmatched. `apply_resolved_song_takes` folds
-   the creator's answer back onto the alignment so an uncertain take is only ever
-   placed at a position the creator confirmed; otherwise it is B-roll.
+   since it was aligned is dropped to unmatched. `apply_resolved_song_takes`
+   returns `(alignment, confirmed_order, creator_choices)`: the alignment is never
+   rewritten; `creator_choices` pin each answered take (`pinned`/`stack`) or keep it
+   as B-roll. Without an answer (worker re-run, regenerate, editor path) the
+   deterministic assignment runs alone: takes with candidates are placed at their
+   best position (low likelihood, `tie_break`/`aligner`, flagged in the receipt),
+   no-evidence takes stay short muted B-roll after the last sung take. The job never
+   fails for this: nothing placeable falls back to the background song.
 6. **Compile.** `_run_phone_guided_job` rechecks `phone_user_song_supported()`,
    re-reads the item (`_resolve_phone_song_bed`: audio mode, exact generation and
    duration), pins and hashes the generation (`inspect_song_asset`), and
@@ -2356,21 +2382,38 @@ Flags and rollout:
 - The affordance is offered only to clients at or above
   `KRIA_MINIMUM_CLIENT_PROTOCOL`, because older builds cannot decode the `"song"`
   asset.
-- Thresholds (settings, `song_align_*`): confident = `peak_z >= 8` and
-  `peak_ratio >= 1.5` and the drift check (`song_align_drift_tolerance_s` 0.04
-  s) passes and (text anchors agree within 0.15 s, or `peak_z >= 12` and
-  `peak_ratio >= 2`).
-  **Lyrics-only placement (KRI-466):** a creator singing along over earbuds leaves no
-  song in the take, so no audio peak exists. When no audio placement is valid, a take
-  whose words match the song's (`song_align_lyrics_min_words` 6, per-word offset
-  spread <= `song_align_lyrics_max_spread_s` 0.35 s, `song_align_lyrics_min_density`
-  0.6) is `confident` with `method="lyrics"` if exactly one placement qualifies, and
-  `ambiguous` (song-order question) when several do (a chorus). Audio always wins when
-  valid. Kill switch: `SONG_ALIGN_LYRICS_ENABLED=false`. Lyric sync is "close"
-  (+-~0.1 s), not frame-exact. Every placed row carries `method` and
-  `match_start_s/match_end_s` (the part of the take that matches); the planner trims
-  the take to that range but keeps the full source, so the editor can extend the tail
-  (the FIRST cut's head stays locked: `USER_SONG_LIPSYNC_LOCKED`).
+- Thresholds (settings, `song_align_*`): no hard gate decides placement. The
+  aligner emits every plausible `PlacementCandidate` with a 0..1 `likelihood`
+  (`song_alignment`): lyric candidates need >= `SONG_ALIGN_LYRICS_MIN_WORDS` (3)
+  matched words and score by long-word count (`..._WORDS_SCALE` 3.0), take/song word
+  density, inlier fraction and per-word offset spread (`..._SPREAD_SCALE_S` 0.35);
+  audio candidates reuse the z/ratio confidence (a drift-check failure scales the
+  likelihood x0.4); lyric and audio candidates within 0.75 s merge (noisy-OR). Only
+  candidates under `SONG_ALIGN_CANDIDATE_FLOOR` (0.05) are dropped, so a take with
+  garbled words and a noise-only audio peak ends up with ZERO candidates
+  (`no_evidence`). `TakeAlignment.margin` is how far the best leads the runner-up
+  (~0 for exact chorus repeats). `status`/`delta_s`/`alternates` are derived legacy
+  views, never gates. Candidates within `SONG_ALIGN_TIE_RATIO` (0.85) of the best are
+  interchangeable (a tie); two claims overlapping more than
+  `SONG_ALIGN_MAX_OVERLAP_S` (1.0) conflict. Kill switches:
+  `SONG_ALIGN_LYRICS_ENABLED=false` (no lyric candidates). `SONG_ALIGN_ASSIGN_ENABLED`
+  and `SONG_ALIGN_STACK_UNASKED` (default false; would stack unanswered no-evidence
+  takes by capture order) are defined but NOT wired yet.
+  Lyric sync is "close" (+-~0.1 s), not frame-exact. Every placed row carries
+  `method` and `match_start_s/match_end_s` (the part of the take that matches); the
+  planner trims the take to that range but keeps the full source, so the editor can
+  extend the tail (the FIRST cut's head stays locked: `USER_SONG_LIPSYNC_LOCKED`).
+- **How to read the receipt** (`unified_montage.user_song`). `placed[*]` carries
+  `likelihood` (evidence, 0 for a stacked take), `margin`, `position_basis` and
+  `confirmed_by_creator`. `position_basis`: `aligner` (clear winner), `tie_break`
+  (equal candidates, layout chose), `creator_position` (the creator's order picked
+  the one fitting candidate), `creator_stack` (laid by the creator's order in a gap:
+  approximate sync, expect slight drift). `low_confidence_ids` = placed with
+  likelihood under the ask floor, or `tie_break` / `creator_stack`; the chat note
+  says "placed by my best guess and may be slightly off". `placed_outside_ids` = real
+  placements that fell outside the 120 s / best-span window ("sit later in the song
+  than a 2-minute video can hold"). `kept_broll_ids` = takes with no usable singing
+  or words.
 - **Unplaced takes are never dropped silently.** They are appended after the last sung
   take as short (3 s) muted B-roll (`kept_broll_ids`; dropped reason `kept_as_broll`)
   and every take stays in the editor's media list (`media_scope="selected"`).
@@ -2379,7 +2422,8 @@ Flags and rollout:
   (`lipsync_fallback_to_background`; receipt `requested_mode`, `fallback_reason`,
   `unmatched_ids`) and the chat tells the creator how to film for lip-sync.
 - **Deploy order:** API before worker (`TakeAlignment` is `extra="forbid"`; an old API
-  rejects rows with the new fields and the gate keeps saying "still checking").
+  rejects v3 rows (`candidates`, `likelihood`, `margin`) and the gate keeps saying
+  "still checking"; v2 rows are re-enqueued once for the v3 aligner).
   `SONG_ALIGNMENT_PROXY_OFFSET_S` (default 0) is added to every delta to absorb a
   measured analysis-proxy vs original audio offset (AAC priming, `.mov` edit
   lists); measure it with the device fixture before relying on frame-exact sync.
@@ -2394,8 +2438,9 @@ Troubleshooting:
 - **Lip-sync edit came out as a plain background-song edit.** Expected when nothing
   could be placed: check `unified_montage.user_song.fallback_reason` and
   `PlanItem.song_alignment` (`status`, `method`, `peak_z`, `text_score`). A take with
-  neither audible song nor clearly sung words is `unmatched`; the planner never places
-  a guess.
+  neither audible song nor clearly sung words has no candidates (`unmatched`) and
+  stays B-roll unless the creator's answer stacked it; a take WITH candidates is always
+  placed (check `position_basis` / `likelihood` in the receipt).
 - **`user_song_plan_declined`.** A real decline (song missing/replaced/unreadable, or
   fallback impossible). The chat shows `Job.error_detail` verbatim for this code
   (`CREATOR_FACING_DETAIL_CODES`), so keep those strings creator-facing. Before

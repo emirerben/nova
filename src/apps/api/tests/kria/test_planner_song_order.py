@@ -16,6 +16,7 @@ from app.kria.strategy_policy import CheckedStrategy
 from app.models import PlanItem
 from app.schemas.user_song import (
     AlignmentAlternate,
+    PlacementCandidate,
     SongAlignment,
     SongOrderQuestion,
     TakeAlignment,
@@ -167,11 +168,15 @@ async def test_answer_resolves_uncertain_takes_onto_the_strategy_payload(monkeyp
     monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=events))
     result = await _gate(_Db(_item(alignment)), _manifest("a", "b", "c"), _strategy())
     assert result.plan is None
-    assert result.resolved_takes == [
-        {"media_id": "a", "delta_s": 10.0, "status": "confident", "confirmed_by_creator": False},
-        {"media_id": "c", "delta_s": 60.0, "status": "confident", "confirmed_by_creator": False},
-        {"media_id": "b", "delta_s": 80.0, "status": "confident", "confirmed_by_creator": True},
-    ]
+    rows = result.resolved_takes
+    assert [r["media_id"] for r in rows] == ["a", "c", "b"]
+    assert [r["order_index"] for r in rows] == [0, 1, 2]
+    by_id = {r["media_id"]: r for r in rows}
+    assert (by_id["a"]["delta_s"], by_id["a"]["confirmed_by_creator"]) == (10.0, False)
+    assert (by_id["c"]["delta_s"], by_id["c"]["confirmed_by_creator"]) == (60.0, False)
+    # Only the 80 s repeat fits after c: the creator's order decided it.
+    assert by_id["b"]["delta_s"] == 80.0 and by_id["b"]["confirmed_by_creator"] is True
+    assert by_id["b"]["place"] == "pinned" and by_id["b"]["position_basis"] == "creator_position"
 
 
 async def test_answer_for_a_previous_song_generation_is_asked_again(monkeypatch) -> None:
@@ -192,7 +197,7 @@ async def test_answer_for_a_previous_song_generation_is_asked_again(monkeypatch)
 
 
 async def test_answer_for_a_different_take_set_is_asked_again(monkeypatch) -> None:
-    alignment = _alignment(_conf("a", 10.0), _amb("b", 30.0, [(30.0, 0.9)]))
+    alignment = _alignment(_conf("a", 10.0), _amb("b", 30.0, [(30.0, 0.9), (80.0, 0.8)]))
     old = build_song_order_question(
         SongAlignment.model_validate(_alignment(_amb("a", 1.0, []), _amb("z", 2.0, []))),
         ["a", "z"],
@@ -207,9 +212,22 @@ async def test_answer_for_a_different_take_set_is_asked_again(monkeypatch) -> No
     assert result.plan is not None and result.plan.song_order_question is not None
 
 
-async def test_uncertain_take_with_no_fitting_alternate_becomes_broll(monkeypatch) -> None:
-    alignment = _alignment(_conf("a", 10.0), _amb("b", 90.0, [(90.0, 0.9)]), _conf("c", 20.0))
+def _weak(mid: str, delta: float) -> TakeAlignment:
+    return TakeAlignment(
+        media_id=mid,
+        status="ambiguous",
+        delta_s=delta,
+        confidence=0.2,
+        likelihood=0.2,
+        margin=1.0,
+        candidates=[PlacementCandidate(delta_s=delta, likelihood=0.2, method="lyrics")],
+    )
+
+
+async def test_a_take_whose_only_candidate_cannot_fit_the_order_is_stacked(monkeypatch) -> None:
+    alignment = _alignment(_conf("a", 10.0), _weak("b", 90.0), _conf("c", 20.0))
     q = build_song_order_question(SongAlignment.model_validate(alignment), ["a", "b", "c"])
+    assert {i.media_id: i.reason for i in q.items if i.reason} == {"b": "weak"}
     events = [
         ("assistant", {"song_order_question": q.model_dump(mode="json")}),
         (
@@ -219,30 +237,56 @@ async def test_uncertain_take_with_no_fitting_alternate_becomes_broll(monkeypatc
     ]
     monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=events))
     result = await _gate(_Db(_item(alignment)), _manifest("a", "b", "c"), _strategy())
-    broll = next(t for t in result.resolved_takes if t["media_id"] == "b")
-    assert broll["delta_s"] is None and broll["status"] == "unmatched"
+    stacked = next(t for t in result.resolved_takes if t["media_id"] == "b")
+    assert stacked["place"] == "stack" and stacked["position_basis"] == "creator_stack"
+    assert stacked["confirmed_by_creator"] is True and stacked["delta_s"] is not None
 
 
-async def test_failed_song_analysis_proceeds_without_asking() -> None:
-    # Every take is unmatched: an order question could not place anything.
+async def test_failed_song_analysis_asks_about_every_take() -> None:
+    # Every take has no evidence: the creator can still order them (stacked on answer).
     db = _Db(_item(None, analysis={"status": "failed"}))
     result = await _gate(db, _manifest("a", "b"), _strategy())
-    assert result.plan is None and result.resolved_takes is None
+    q = result.plan.song_order_question
+    assert [i.reason for i in q.items] == ["no_evidence", "no_evidence"]
+    assert all(i.status == "ambiguous" and i.song_start_s is None for i in q.items)
 
 
-async def test_only_unmatched_takes_ask_nothing_and_proceed() -> None:
+async def test_only_no_evidence_takes_are_asked_about() -> None:
     unmatched = [TakeAlignment(media_id=m, status="unmatched") for m in ("a", "b", "c")]
     result = await _gate(_Db(_item(_alignment(*unmatched))), _manifest("a", "b", "c"), _strategy())
-    assert result.plan is None and result.resolved_takes is None
+    assert result.plan is not None
+    assert result.plan.song_order_question.proposed_order == ["a", "b", "c"]
+    assert "3 of your clips" in result.plan.response
 
 
-async def test_confident_plus_unmatched_asks_nothing() -> None:
+async def test_a_no_evidence_take_next_to_a_confident_one_is_asked_about() -> None:
     rows = [_conf("a", 5.0), TakeAlignment(media_id="b", status="unmatched")]
     result = await _gate(_Db(_item(_alignment(*rows))), _manifest("a", "b"), _strategy())
+    q = result.plan.song_order_question
+    assert [(i.media_id, i.reason) for i in q.items] == [("a", None), ("b", "no_evidence")]
+
+
+async def test_an_answered_no_evidence_only_set_resolves_to_stacks(monkeypatch) -> None:
+    unmatched = [TakeAlignment(media_id=m, status="unmatched") for m in ("a", "b")]
+    alignment = _alignment(*unmatched)
+    q = build_song_order_question(SongAlignment.model_validate(alignment), ["a", "b"])
+    events = [
+        ("assistant", {"song_order_question": q.model_dump(mode="json")}),
+        ("user", {"song_order": {"question_id": q.question_id, "ordered_media_ids": ["b", "a"]}}),
+    ]
+    monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=events))
+    manifest = _manifest("a", "b")
+    for media in manifest.media:
+        media.duration_s = 6.0
+    result = await _gate(_Db(_item(alignment)), manifest, _strategy())
     assert result.plan is None
+    assert [r["media_id"] for r in result.resolved_takes] == ["b", "a"]
+    assert {r["place"] for r in result.resolved_takes} == {"stack"}
+    first, second = result.resolved_takes
+    assert second["delta_s"] == pytest.approx(first["delta_s"] + 6.0, abs=0.01)
 
 
-async def test_mixed_ambiguous_and_unmatched_asks_with_every_take_listed() -> None:
+async def test_mixed_tied_and_no_evidence_asks_with_every_take_listed() -> None:
     rows = [
         _conf("a", 5.0),
         _amb("b", 30.0, [(30.0, 0.9), (80.0, 0.8)]),
@@ -251,7 +295,8 @@ async def test_mixed_ambiguous_and_unmatched_asks_with_every_take_listed() -> No
     result = await _gate(_Db(_item(_alignment(*rows))), _manifest("a", "b", "c"), _strategy())
     q = result.plan.song_order_question
     assert set(q.proposed_order) == {"a", "b", "c"}
-    assert "one of your takes" in result.plan.response
+    assert "2 of your clips" in result.plan.response
+    assert {i.media_id: i.reason for i in q.items if i.reason} == {"b": "tie", "c": "no_evidence"}
 
 
 async def test_stale_alignment_version_enqueues_one_realignment(monkeypatch) -> None:
@@ -265,6 +310,20 @@ async def test_stale_alignment_version_enqueues_one_realignment(monkeypatch) -> 
     result = await _gate(db, _manifest("a"), _strategy())
     assert result.plan is not None and result.plan.turn_value == "recovery"
     assert db.gets >= 2  # polled repeatedly, yet enqueued once
+    enqueue.assert_called_once_with(ITEM)
+
+
+async def test_a_v2_alignment_is_re_enqueued_once_for_the_v3_aligner(monkeypatch) -> None:
+    from app.tasks import user_song
+
+    enqueue = Mock()
+    monkeypatch.setattr(user_song, "enqueue_user_song_alignment", enqueue)
+    monkeypatch.setattr(settings, "song_alignment_turn_deadline_s", 0.05)
+    stale = {**_alignment(_conf("a", 1.0)), "version": 2}
+    result = await _gate(
+        _Db(_item(stale, analysis={"status": "ready"})), _manifest("a"), _strategy()
+    )
+    assert result.plan is not None and result.plan.turn_value == "recovery"
     enqueue.assert_called_once_with(ITEM)
 
 

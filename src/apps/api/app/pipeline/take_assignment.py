@@ -41,6 +41,8 @@ DEFAULT_MIN_COVER_MS = 1000
 DEFAULT_NODE_CAP = 200_000
 # Two candidate deltas this close are the same position.
 SAME_POSITION_MS = 50
+# Spare room left before a stacked run (it hugs the take before it).
+STACK_LEAD_MS = 0
 # Candidates this far apart are distinct positions when computing the margin.
 DISTINCT_POSITION_MS = 250
 
@@ -416,6 +418,194 @@ def assign_takes(
     return result
 
 
+@dataclass(frozen=True)
+class Choice:
+    """Where one take sits once the creator has ordered the takes.
+
+    ``place``: ``pinned`` (a candidate position), ``stack`` (laid by the creator's
+    order inside a gap, approximate sync) or ``broll`` (no room; muted footage).
+    """
+
+    media_id: str
+    order_index: int
+    delta_ms: int | None
+    place: str
+    basis: str
+    confirmed: bool
+    likelihood: float = 0.0
+    reason: str | None = None
+
+
+def resolve_with_order(
+    takes: Sequence[TakeSpec],
+    order: Sequence[str],
+    song_ms: int,
+    *,
+    first_line_ms: int = 0,
+    overlap_ms: int = DEFAULT_OVERLAP_MS,
+    cap_ms: int = DEFAULT_CAP_MS,
+    tie_ratio: float | None = None,
+    ask_likelihood: float | None = None,
+    cover_margin_ms: int = DEFAULT_COVER_MARGIN_MS,
+    min_cover_ms: int = DEFAULT_MIN_COVER_MS,
+) -> dict[str, Choice]:
+    """Positions for every take given the creator's confirmed ``order``.
+
+    Takes the assignment was sure about (not in ``ask``) stay where it put them.
+    An uncertain take with candidates takes the candidate strictly between its
+    neighbours' starts that conflicts with nothing (likelihood, then contiguity,
+    then earliest): one fit -> ``creator_position`` (the creator's answer decided
+    it); several tied fits -> ``tie_break`` (not confirmed). A take with no
+    candidates, or none that fits, is STACKED: the maximal run of such takes
+    between the nearest placed neighbours is laid end to end in the creator's
+    order, hugging the take before the gap with overlap shared evenly when the gap is
+    too small (``creator_stack``, likelihood 0, approximate sync).
+    A take with no room left is ``broll``.
+    """
+    if tie_ratio is None or ask_likelihood is None:
+        from app.config import settings
+
+        tie_ratio = settings.song_align_tie_ratio if tie_ratio is None else tie_ratio
+        ask_likelihood = (
+            settings.song_align_ask_likelihood if ask_likelihood is None else ask_likelihood
+        )
+    by_id = {t.media_id: t for t in takes}
+    ids = [m for m in dict.fromkeys(order) if m in by_id]
+    ids += [t.media_id for t in takes if t.media_id not in set(ids)]
+    base = assign_takes(
+        takes,
+        song_ms,
+        overlap_ms=overlap_ms,
+        cap_ms=cap_ms,
+        tie_ratio=tie_ratio,
+        ask_likelihood=ask_likelihood,
+        cover_margin_ms=cover_margin_ms,
+        min_cover_ms=min_cover_ms,
+    )
+    uncertain = {m for m in ids if m in base.ask}
+    choices: dict[str, Choice] = {}
+    known: dict[str, tuple[int, tuple[int, int]]] = {}  # id -> (delta, claim range)
+    anchors: set[str] = set()
+    for index, media_id in enumerate(ids):
+        claim = base.placed.get(media_id)
+        if media_id in uncertain or claim is None:
+            continue
+        known[media_id] = (claim.delta_ms, (claim.claim_start_ms, claim.claim_end_ms))
+        anchors.add(media_id)
+        choices[media_id] = Choice(
+            media_id, index, claim.delta_ms, "pinned", claim.basis, False, claim.likelihood
+        )
+
+    def conflicts(rng: tuple[int, int]) -> bool:
+        return any(_conflict(rng, other, overlap_ms, min_cover_ms) for _d, other in known.values())
+
+    # ── pass 1: uncertain takes that have a candidate fitting the order ─────
+    for index, media_id in enumerate(ids):
+        if media_id not in uncertain:
+            continue
+        spec = by_id[media_id]
+        lo = next((known[m][0] for m in reversed(ids[:index]) if m in known), None)
+        hi = next((known[m][0] for m in ids[index + 1 :] if m in anchors), None)
+        fits: list[CandidateSpec] = []
+        for cand in spec.candidates:
+            if lo is not None and cand.delta_ms <= lo:
+                continue
+            if hi is not None and cand.delta_ms >= hi:
+                continue
+            if cover_ms(spec, cand, song_ms, cover_margin_ms) < min_cover_ms:
+                continue
+            if conflicts(claim_range(spec, cand)):
+                continue
+            fits.append(cand)
+        if not fits:
+            continue
+        top = max(c.likelihood for c in fits)
+        tied = [c for c in fits if c.likelihood >= tie_ratio * top - _EPS]
+        ref = lo if lo is not None else hi
+
+        def contiguity(c: CandidateSpec, ref: int | None = ref) -> tuple[int, int]:
+            return (abs(c.delta_ms - ref) if ref is not None else 0, c.delta_ms)
+
+        pick = min(tied, key=contiguity)
+        known[media_id] = (pick.delta_ms, claim_range(spec, pick))
+        choices[media_id] = Choice(
+            media_id,
+            index,
+            pick.delta_ms,
+            "pinned",
+            "creator_position" if len(tied) == 1 else "tie_break",
+            len(tied) == 1,
+            pick.likelihood,
+        )
+
+    # ── pass 2: stack the rest in the creator's order ────────────────────────
+    def span_with(rng: tuple[int, int], neighbours: Sequence[str | None]) -> int:
+        ranges = [rng] + [known[m][1] for m in neighbours if m is not None and m in known]
+        return max(r[1] for r in ranges) - min(r[0] for r in ranges)
+
+    def _cover_end(m: str) -> int:
+        # Last frame the tiler will show of a placed take (margins, matched range).
+        return min(known[m][0] + by_id[m].duration_ms - cover_margin_ms, known[m][1][1])
+
+    def _cover_start(m: str) -> int:
+        return max(known[m][0] + cover_margin_ms, known[m][1][0])
+
+    index = 0
+    while index < len(ids):
+        if ids[index] in choices:
+            index += 1
+            continue
+        end = index
+        while end < len(ids) and ids[end] not in choices:
+            end += 1
+        run = ids[index:end]
+        before = next((m for m in reversed(ids[:index]) if m in known), None)
+        after = next((m for m in ids[end:] if m in known), None)
+        if after is not None and before is not None and known[after][0] <= known[before][0]:
+            after = None  # the creator's order contradicts the song order: ignore it
+        total = sum(by_id[m].duration_ms for m in run)
+        if before is None and after is None:
+            cursor = max(0, first_line_ms)
+        elif before is not None:
+            # Runs meet their neighbours at the cover margins (A's last trusted frame
+            # == the run's first), so the tiler can join them without a filler.
+            gap_start = _cover_end(before) - cover_margin_ms
+            gap_end = _cover_start(after) + cover_margin_ms if after is not None else song_ms
+            slack = gap_end - gap_start - total
+            # Negative slack overlaps both neighbours evenly (the tiler trims); spare
+            # room is NOT centred (a take adrift in a long gap joins nothing): it hugs
+            # the previous take with at most STACK_LEAD_MS of lead.
+            if after is None:
+                cursor = gap_start  # nothing to share an overlap with: no room => B-roll
+            else:
+                cursor = gap_start + (slack // 2 if slack < 0 else min(slack // 2, STACK_LEAD_MS))
+        else:
+            assert after is not None
+            gap_end = _cover_start(after) + cover_margin_ms
+            slack = gap_end - max(0, first_line_ms) - total
+            cursor = gap_end - total - (0 if slack < 0 else min(slack // 2, STACK_LEAD_MS))
+        cursor = max(0, cursor)
+        for offset, media_id in enumerate(run):
+            spec = by_id[media_id]
+            cand = CandidateSpec(cursor, 0.0)
+            rng = claim_range(spec, cand)
+            if (
+                cover_ms(spec, cand, song_ms, cover_margin_ms) < min_cover_ms
+                or span_with(rng, (before if before is not None else after,)) > cap_ms
+            ):
+                choices[media_id] = Choice(
+                    media_id, index + offset, None, "broll", "creator_stack", True, 0.0, "no_room"
+                )
+                continue
+            known[media_id] = (cursor, rng)
+            choices[media_id] = Choice(
+                media_id, index + offset, cursor, "stack", "creator_stack", True, 0.0
+            )
+            cursor += spec.duration_ms
+        index = end
+    return {m: choices[m] for m in ids}
+
+
 def with_basis(claim: Claim, basis: str) -> Claim:
     return replace(claim, basis=basis)
 
@@ -423,12 +613,14 @@ def with_basis(claim: Claim, basis: str) -> Claim:
 __all__ = [
     "Assignment",
     "CandidateSpec",
+    "Choice",
     "Claim",
     "TakeSpec",
     "assign_takes",
     "claim_range",
     "cover_ms",
     "margin_of",
+    "resolve_with_order",
     "spec_from_alignment_row",
     "with_basis",
 ]

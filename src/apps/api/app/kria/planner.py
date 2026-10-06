@@ -107,7 +107,6 @@ from app.services.song_order import (
     song_order_question_text,
     takes_needing_order,
     thread_keeps_lipsync,
-    uncertain_media_ids,
 )
 
 log = structlog.get_logger()
@@ -386,9 +385,10 @@ async def _song_order_gate(
 
     1. alignment missing/stale/incomplete -> bounded wait
        (`song_alignment_turn_deadline_s`), then the "still checking" pending reply;
-    2. any ambiguous/unmatched take and no folded creator answer -> `song_order_question`;
+    2. the likelihood assignment wants the creator's say on some take (tie, weak match
+       or no evidence) and no folded creator answer -> `song_order_question`;
     3. answered -> `resolve_uncertain_takes` -> `resolved_takes`;
-    4. all takes confident -> proceed untouched.
+    4. every take clearly placed -> proceed untouched.
     """
     if not settings.user_song_montage_enabled:
         return _SongGateResult()
@@ -431,6 +431,7 @@ async def _song_order_gate(
             and raw_alignment.get("version", 1) != SONG_ALIGNMENT_VERSION
         )
         raw_analysis = getattr(item, "song_analysis", None)
+        item_song_analysis = raw_analysis
         analysis_status = (
             raw_analysis.get("status")
             if isinstance(raw_analysis, dict)
@@ -457,22 +458,33 @@ async def _song_order_gate(
         if not thread_keeps_lipsync(events, song_generation):
             return _SongGateResult()
 
-    if not uncertain_media_ids(alignment, take_ids):
-        return _SongGateResult(strategy=kept_strategy)
+    durations = _song_take_durations(manifest, take_ids)
+    song_duration_s, first_line_s = _song_timing(item_song_analysis)
     if events is None:
         events = await _load_thread_events(db, thread_id)
     folded = fold_song_orders(events, song_generation)
-    if not (folded and folded.covers(take_ids)) and not takes_needing_order(alignment, take_ids):
-        # Only confident/unmatched takes: an order question could not change any
-        # position. Proceed; unmatched takes render as muted B-roll or the
-        # background fallback.
+    answered = bool(folded and folded.covers(take_ids))
+    if not takes_needing_order(alignment, take_ids, durations, song_duration_s):
+        # Every take has a clear, strong position: nothing the creator could decide.
         return _SongGateResult(strategy=kept_strategy)
-    if folded and folded.covers(take_ids):
-        resolved = resolve_uncertain_takes(alignment, folded.ordered_media_ids)
+    if answered:
+        resolved = resolve_uncertain_takes(
+            alignment,
+            folded.ordered_media_ids,
+            durations,
+            song_duration_s,
+            first_line_s,
+        )
         return _SongGateResult(
             resolved_takes=resolved_song_takes_payload(resolved), strategy=kept_strategy
         )
-    question = build_song_order_question(alignment, take_ids, song_generation=song_generation)
+    question = build_song_order_question(
+        alignment,
+        take_ids,
+        song_generation=song_generation,
+        durations=durations,
+        song_duration_s=song_duration_s,
+    )
     return _SongGateResult(
         plan=KriaTurnPlan(
             mode="respond",
@@ -483,10 +495,37 @@ async def _song_order_gate(
     )
 
 
+def _song_take_durations(manifest: Any, take_ids: list[str]) -> dict[str, float]:
+    wanted = set(take_ids)
+    out: dict[str, float] = {}
+    for media in getattr(manifest, "media", None) or ():
+        value = getattr(media, "duration_s", None)
+        if media.media_id in wanted and isinstance(value, (int, float)) and value > 0:
+            out[media.media_id] = float(value)
+    return out
+
+
+def _song_timing(raw_analysis: Any) -> tuple[float | None, float | None]:
+    """``(song duration, first lyric line start)`` in seconds from the item's analysis."""
+    if isinstance(raw_analysis, dict):
+        duration = raw_analysis.get("duration_s")
+        lines = raw_analysis.get("lines") or []
+    else:
+        duration = getattr(raw_analysis, "duration_s", None)
+        lines = getattr(raw_analysis, "lines", None) or []
+    first = None
+    for line in lines:
+        start = line.get("start_s") if isinstance(line, dict) else getattr(line, "start_s", None)
+        if isinstance(start, (int, float)) and (first is None or start < first):
+            first = float(start)
+    ok = isinstance(duration, (int, float)) and duration > 0
+    return (float(duration) if ok else None), first
+
+
 def _with_resolved_song_takes(strategy: Any, takes: list[dict[str, Any]]) -> Any:
     """Write the server-owned `resolved_song_takes`:
-    `[{media_id, delta_s: float | None, status: "confident"|"unmatched",
-    confirmed_by_creator: bool}]` (delta_s None => B-roll, never placed by song time)."""
+    `[{media_id, order_index, delta_s: float | None, place: "pinned"|"stack"|"broll",
+    position_basis, confirmed_by_creator, ...}]` (place broll => muted B-roll)."""
     if hasattr(strategy, "model_copy"):
         return strategy.model_copy(update={"resolved_song_takes": takes})
     clone = copy.copy(strategy)

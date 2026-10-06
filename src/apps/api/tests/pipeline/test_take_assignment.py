@@ -9,6 +9,7 @@ from app.pipeline.take_assignment import (
     TakeSpec,
     assign_takes,
     margin_of,
+    resolve_with_order,
 )
 
 SONG_MS = 240_000
@@ -184,3 +185,83 @@ def test_excluded_takes_stay_unplaced_with_the_callers_reason():
         [spec("X", 20, cand(10, 0.9))], SONG_MS, exclude={"X": "no_fitting_position"}
     )
     assert result.unplaced == {"X": "no_fitting_position"}
+
+
+# ── resolve_with_order (the creator's answer) ────────────────────────────────
+
+
+def _resolve(takes, order, **kw):
+    return resolve_with_order(takes, order, SONG_MS, **kw)
+
+
+def test_sure_takes_keep_their_positions_and_are_not_creator_confirmed():
+    out = _resolve([spec("A", 20, cand(10, 0.9)), spec("B", 20, cand(60, 0.9))], ["A", "B"])
+    assert (out["A"].delta_ms, out["A"].basis, out["A"].confirmed) == (10_000, "aligner", False)
+    assert out["B"].place == "pinned"
+
+
+def test_one_fitting_candidate_is_decided_by_the_creator():
+    takes = [
+        spec("A", 10, cand(10, 0.9)),
+        spec("X", 10, cand(30, 0.7), cand(80, 0.7)),
+        spec("B", 10, cand(60, 0.9)),
+    ]
+    first = _resolve(takes, ["A", "X", "B"])
+    assert (first["X"].delta_ms, first["X"].basis, first["X"].confirmed) == (
+        30_000,
+        "creator_position",
+        True,
+    )
+    after = _resolve(takes, ["A", "B", "X"])
+    assert after["X"].delta_ms == 80_000 and after["X"].basis == "creator_position"
+
+
+def test_several_tied_fits_choose_the_nearest_unconfirmed():
+    takes = [spec("A", 10, cand(10, 0.9)), spec("X", 10, cand(30, 0.7), cand(50, 0.7))]
+    out = _resolve(takes, ["A", "X"])
+    assert (out["X"].delta_ms, out["X"].basis, out["X"].confirmed) == (30_000, "tie_break", False)
+
+
+def test_no_evidence_runs_stack_end_to_end_between_their_neighbours():
+    takes = [
+        spec("A", 10, cand(0, 0.9)),
+        spec("S1", 5),
+        spec("S2", 6),
+        spec("B", 10, cand(40, 0.9)),
+    ]
+    out = _resolve(takes, ["A", "S1", "S2", "B"])
+    s1, s2 = out["S1"], out["S2"]
+    assert s1.place == s2.place == "stack" and s1.basis == "creator_stack" and s1.confirmed
+    assert s1.likelihood == 0.0
+    # A's last trusted frame is 9.7 s; the run starts where A's cover ends.
+    assert 9_000 <= s1.delta_ms < 11_000
+    assert s2.delta_ms == s1.delta_ms + 5_000
+    assert s2.delta_ms + 6_000 <= 40_000 + 600  # ends where B's cover begins
+
+
+def test_a_gap_too_small_overlaps_both_neighbours_evenly():
+    takes = [spec("A", 10, cand(0, 0.9)), spec("S", 8), spec("B", 10, cand(12, 0.9))]
+    out = _resolve(takes, ["A", "S", "B"])
+    assert out["S"].place == "stack"
+    assert out["S"].delta_ms < 9_700  # starts inside A's cover; the tiler trims the overlap
+
+
+def test_all_no_evidence_stack_from_the_first_lyric_line():
+    out = _resolve([spec("X", 6), spec("Y", 6)], ["X", "Y"], first_line_ms=12_000)
+    assert (out["X"].delta_ms, out["Y"].delta_ms) == (12_000, 18_000)
+
+
+def test_a_stack_with_no_room_is_broll():
+    out = resolve_with_order([spec("A", 8, cand(0, 0.9)), spec("X", 6)], ["A", "X"], 8_500)
+    assert out["X"].place == "broll" and out["X"].delta_ms is None and out["X"].reason == "no_room"
+
+
+def test_the_stack_cap_ignores_far_away_tied_takes():
+    # A late chorus repeat far from the cluster must not starve the stack of room.
+    takes = [
+        spec("A", 8, cand(0, 0.9)),
+        spec("S", 6),
+        spec("Z", 8, cand(150, 0.5), cand(180, 0.5)),
+    ]
+    out = _resolve(takes, ["A", "S", "Z"])
+    assert out["S"].place == "stack"

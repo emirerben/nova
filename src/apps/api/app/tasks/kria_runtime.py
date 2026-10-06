@@ -2855,10 +2855,24 @@ def _user_song_note(job: Job) -> str:
     if isinstance(broll, list) and broll:
         count = len(broll)
         notes.append(
-            f"{count} take{' didn' if count == 1 else 's didn'}'t match the song, so "
-            f"{'it is' if count == 1 else 'they are'} in as short muted "
+            f"{count} take{' has' if count == 1 else 's have'} no usable singing or "
+            f"words, so {'it is' if count == 1 else 'they are'} in as short muted "
             f"clip{'' if count == 1 else 's'}. Trim or remove "
             f"{'it' if count == 1 else 'them'} in the editor."
+        )
+    low = receipt.get("low_confidence_ids")
+    if isinstance(low, list) and low:
+        count = len(low)
+        notes.append(
+            f"{count} take{' is' if count == 1 else 's are'} placed by my best guess and "
+            f"may be slightly off; check {'it' if count == 1 else 'them'} in the editor."
+        )
+    outside = receipt.get("placed_outside_ids")
+    if isinstance(outside, list) and outside:
+        count = len(outside)
+        notes.append(
+            f"{count} take{' sits' if count == 1 else 's sit'} later in the song than a "
+            "2-minute video can hold."
         )
     placed = receipt.get("placed")
     by_lyrics = (

@@ -316,6 +316,7 @@ def _place_takes(
     alignment: SongAlignment,
     confirmed_order: Sequence[str] | None,
     song_ms: int,
+    creator_choices: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[dict[str, _Placed], dict[str, str]]:
     """Where each take sits on the song (by likelihood), and why the others do not.
 
@@ -356,10 +357,27 @@ def _place_takes(
             min_cover_ms=MIN_SEGMENT_MS,
         )
 
-    assignment = run()
     pinned: dict[str, int] = {}
     exclude: dict[str, str] = {}
     creator_choice: dict[str, str] = {}  # media_id -> position_basis
+    creator_confirmed: dict[str, bool] = {}
+    if creator_choices:
+        # The creator's answer (``resolve_with_order``) already decided these takes:
+        # pin a candidate / stacked position, or keep the take as B-roll.
+        for media_id, choice in creator_choices.items():
+            if media_id not in specs:
+                continue
+            delta = choice.get("delta_s")
+            if choice.get("place") == "broll" or delta is None:
+                exclude[media_id] = str(choice.get("reason") or "no_fitting_position")
+                continue
+            pinned[media_id] = _ms(delta)
+            creator_choice[media_id] = str(choice.get("position_basis") or "creator_position")
+            creator_confirmed[media_id] = bool(choice.get("confirmed_by_creator"))
+        assignment = run(pinned, exclude)
+        confirmed_order = None
+    else:
+        assignment = run()
     if confirmed_order:
         order = [m for m in confirmed_order if m in specs]
         uncertain = {
@@ -403,6 +421,7 @@ def _place_takes(
             pinned[media_id] = fits[0].delta_ms
             delta_of[media_id] = fits[0].delta_ms
             creator_choice[media_id] = "creator_position" if len(tied) == 1 else "tie_break"
+            creator_confirmed[media_id] = len(tied) == 1
         if pinned or exclude:
             assignment = run(pinned, exclude)
 
@@ -422,7 +441,7 @@ def _place_takes(
             clip,
             claim.delta_ms,
             status,
-            creator_choice.get(clip.media_id) == "creator_position",
+            creator_confirmed.get(clip.media_id, False),
             likelihood=claim.likelihood,
             margin=claim.margin,
             position_basis=basis,
@@ -636,15 +655,18 @@ def plan_lipsync_montage(
     plan_item_id: str,
     font_covers: Callable[[str, str], bool] | None = None,
     output_orientation: str | None = None,
+    creator_choices: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan that lays ``clips`` on the song's clock.
 
     ``clips`` are the item's phone-bound takes (``lane="clip"``) and its Visuals
     (``lane="asset"``). ``alignment`` must be for ``song_analysis``' generation.
     ``confirmed_order`` is the creator's answer to the song-order question: the
-    media ids in the order they confirmed. It is the only thing that lets an
-    ambiguous take be placed, and only at one of its own candidate positions that
-    fits between its confirmed neighbours. ``strategy``/``view`` supply only the
+    media ids in the order they confirmed; with no ``creator_choices`` it re-decides
+    the takes the assignment was unsure about (candidate between neighbours).
+    ``creator_choices`` (``apply_resolved_song_takes``) carries the positions that
+    answer already resolved, including stacked takes (``place="stack"``,
+    ``position_basis="creator_stack"``) and B-roll. ``strategy``/``view`` supply only the
     creator's title, closing title and typography. ``output_orientation`` is the
     creator's explicit finished-video shape (KRI-306); without it the snapshot
     infers one from the footage.
@@ -666,7 +688,7 @@ def plan_lipsync_montage(
     beats = sorted({_ms(b) for b in song_analysis.beats_s if b >= 0})
     line_starts = sorted({_ms(line.start_s) for line in song_analysis.lines})
 
-    placed, reasons = _place_takes(takes, alignment, confirmed_order, song_ms)
+    placed, reasons = _place_takes(takes, alignment, confirmed_order, song_ms, creator_choices)
     if not placed:
         raise LipsyncPlanError("no_synced_takes", "None of the takes could be placed on the song.")
 
