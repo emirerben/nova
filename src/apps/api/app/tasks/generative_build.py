@@ -25763,15 +25763,33 @@ def _fresh_variant_snapshot(job_id: str, variant_id: str) -> dict | None:
 
 
 def _text_element_burn_dicts(variant: dict) -> list[dict]:
-    from app.agents._schemas.text_element import coerce_text_elements  # noqa: PLC0415
+    from app.agents._schemas.text_element import (  # noqa: PLC0415
+        CAPTION_CUE_SOURCE,
+        coerce_text_elements,
+    )
     from app.pipeline.generative_overlays import build_overlays_from_text_elements  # noqa: PLC0415
 
+    is_guided = variant.get("resolved_archetype") == "guided_story"
     text_elements = (
-        _guided_text_editor_elements(variant)
-        if variant.get("resolved_archetype") == "guided_story"
-        else variant.get("text_elements") or []
+        _guided_text_editor_elements(variant) if is_guided else variant.get("text_elements") or []
     )
     elements = coerce_text_elements(text_elements) or []
+    if not is_guided:
+        # Caption-cue mirrors: `_base_text_elements_for_variant` projects every
+        # narrated/subtitled `caption_cues` row as a caption_cue-tagged element
+        # for the editor's text lane, and a dirty iOS text save or an authored
+        # timeline snapshot can persist those projections into `text_elements`.
+        # The cue lane (libass `_burn_persisted_captions_onto_base`, phone
+        # `compile_caption_layers`) owns caption pixels, so burning mirrors here
+        # draws every sentence twice — the server twin of the iOS
+        # `isCaptionCueMirror` skip (KRI-172 render 1aff3f03). Guided-story
+        # captions are the exception: they exist ONLY as caption_cue elements
+        # and burn through this Skia path.
+        elements = [
+            elem
+            for elem in elements
+            if (elem.source_params or {}).get("source") != CAPTION_CUE_SOURCE
+        ]
     # Lyrics-as-optional-elements: on a `lyrics_baked=False` variant, saved
     # `role=lyric_line` elements are ordinary burnable elements (they were
     # accepted at write time by `validate_text_elements_payload`), so burn
