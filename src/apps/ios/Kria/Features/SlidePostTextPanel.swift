@@ -162,8 +162,10 @@ struct SlidePostLookPanel: View {
     @ObservedObject var session: SlidePostSession
     let slideID: String
     let onDone: () -> Void
-    private static let looks: [(String, String)] = [
-        ("none", "Original"), ("stadium_diffusion", "Stadium Diffusion"), ("olive_film", "Olive Film"),
+    /// stadium_diffusion / olive_film are retired from the picker (web parity); drafts that already
+    /// use them still render.
+    static let looks: [(String, String)] = [
+        ("none", "Original"),
         ("smoky_split_tone", "Smoky Split-Tone"), ("golden_hour", "Golden Hour"), ("faded_analog", "Faded Analog"),
     ]
     private var current: String { session.draft?.slides.first { $0.id == slideID }?.edits?.lookPreset ?? "none" }

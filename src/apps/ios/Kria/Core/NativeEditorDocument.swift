@@ -180,6 +180,15 @@ struct EditorTextElement: Codable, Equatable, Sendable {
         guard case .object(let params) = raw["source_params"] else { return false }
         return params["source"] == .string("caption_cue")
     }
+    /// Drawn by the preview, never offered for editing: the server marks text
+    /// it shows but cannot Save back with `source_params.read_only` (KRI-455:
+    /// a phone Voiceover edit's opening title, whose editor has no text lane).
+    /// It stays off the timeline, out of the Text list and out of every
+    /// mutation, so the `text_elements` section never goes dirty because of it.
+    var isReadOnly: Bool {
+        guard case .object(let params) = raw["source_params"] else { return false }
+        return params["read_only"] == .bool(true)
+    }
 
     init(id: String, text: String, startS: Double = 0, endS: Double = 0, role: String? = nil, raw: [String: JSONValue] = [:]) {
         self.id = id; self.text = text; self.startS = startS; self.endS = endS; self.role = role; self.raw = raw

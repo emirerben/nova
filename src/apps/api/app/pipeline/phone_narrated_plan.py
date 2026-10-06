@@ -108,6 +108,18 @@ guided compiler uses, so the device draws it where the cloud would. Title
 layers carry the ``title-`` id prefix; `replace_narrated_captions` keeps them
 (and their fonts) when it swaps the caption layers.
 
+The element spells out what "top" / "large" resolve to on the cloud (y 0.15,
+120 px, Playfair Display) and compiles to exactly the same layers. That is for
+the iOS editor preview, which draws text from the variant's ``text_elements``
+rather than the pinned recipe and has no cloud defaults of its own:
+`narrated_title_text_elements` is what the worker persists, and the status
+route shows it read-only to app builds that know the marker.
+
+Both the cloud and the phone element take that look from
+`narrated_title.narrated_title_placement`, which also fits a long title into
+the top band of the frame (smaller font, top below the safe margin) instead of
+letting its centred block run off the top.
+
 Audio mix approximation (documented divergence, accepted for v1)
 ------------------------------------------------------------------
 
@@ -162,6 +174,7 @@ from app.pipeline.phone_recipe_shared import (
 from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
 
 if TYPE_CHECKING:
+    from app.agents._schemas.text_element import TextElement
     from app.pipeline.phone_captions import PhoneCaptionLook
     from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes
 
@@ -179,6 +192,7 @@ _TITLE_MIN_S = 0.5
 _TITLE_MAX_S = 3.0
 _TITLE_AFTER_FIRST_WORD_S = 1.0
 _TITLE_MAX_CHARS = 80
+NARRATED_TITLE_ELEMENT_ID = "narrated-title"
 
 # Mirrors `app.pipeline.narrated_assembler._MIN_USABLE_S` / `_EOF_GUARD_S` --
 # see the module docstring for why they're reimplemented here rather than
@@ -281,29 +295,67 @@ def narrated_title_end_s(first_word_end_s: float | None) -> float:
     return max(_TITLE_MIN_S, min(_TITLE_MAX_S, float(first_word_end_s) + _TITLE_AFTER_FIRST_WORD_S))
 
 
-def _compile_title_layers(
-    opening_title: str, *, canvas: Canvas, end_s: float, timeline_duration_s: float
-) -> list[Any]:
-    from app.agents._schemas.text_element import TextElement
-    from app.pipeline.generative_overlays import build_overlays_from_text_elements
-    from app.pipeline.portable_text_layout import compile_text_overlay
+def narrated_title_element(
+    opening_title: str | None, *, end_s: float | None, timeline_duration_s: float, canvas: Canvas
+) -> TextElement | None:
+    """The opening title as one TextElement, or ``None`` when there is none.
 
-    text = " ".join(opening_title.split())[:_TITLE_MAX_CHARS]
-    end_s = min(float(end_s), timeline_duration_s)
+    The cloud narrated intro element with its look spelled out (see "Opening
+    title"), fitted to ``canvas`` like the cloud's: the recipe compiles it, and
+    the variant row carries it for the editor preview, so the two can't drift.
+    ``end_s`` ``None`` holds the title the full 3 s (`narrated_title_end_s`).
+    """
+    from app.agents._schemas.text_element import TextElement
+    from app.pipeline.narrated_title import narrated_title_placement
+
+    text = " ".join((opening_title or "").split())[:_TITLE_MAX_CHARS]
+    end_s = min(
+        float(end_s if end_s is not None else narrated_title_end_s(None)), timeline_duration_s
+    )
     if not text or end_s <= 0:
-        return []
-    # The cloud narrated intro element, field for field.
-    element = TextElement(
-        id="narrated-title",
+        return None
+    return TextElement(
+        id=NARRATED_TITLE_ELEMENT_ID,
         text=text,
         start_s=0.0,
         end_s=end_s,
         role="generative_intro",
-        position="top",
-        size_class="large",
+        **narrated_title_placement(text, canvas=canvas, explicit=True),
         effect="fade-in",
-        source_params={"narrated_storyboard": "intro"},
+        # `read_only`: the editor draws it but offers no control for it; the
+        # narrated editor has no text lane to Save it through.
+        source_params={"narrated_storyboard": "intro", "read_only": True},
     )
+
+
+def narrated_title_text_elements(
+    recipe: EditRecipeV2, opening_title: str | None, *, end_s: float | None
+) -> list[dict]:
+    """The title element behind ``recipe``'s title layers, as variant-row JSON.
+
+    The editor preview compiles text from the variant, never from the pinned
+    recipe, so the phone worker persists this beside the recipe it compiled
+    with the same ``opening_title`` / ``end_s``. Empty when the recipe has no
+    title layer.
+    """
+    video = next((track for track in recipe.tracks if track.id == "narrated"), None)
+    if video is None or not any(_is_title_layer(layer) for layer in recipe.text_layers):
+        return []
+    element = narrated_title_element(
+        opening_title,
+        end_s=end_s,
+        timeline_duration_s=timeline_end_s(video.clips),
+        canvas=recipe.canvas,
+    )
+    return [element.model_dump(mode="json", exclude_none=True)] if element is not None else []
+
+
+def _compile_title_layers(
+    element: TextElement, *, canvas: Canvas, timeline_duration_s: float
+) -> list[Any]:
+    from app.pipeline.generative_overlays import build_overlays_from_text_elements
+    from app.pipeline.portable_text_layout import compile_text_overlay
+
     try:
         overlays = build_overlays_from_text_elements(
             [element], video_duration_s=timeline_duration_s, independent_box_alignment=True
@@ -605,18 +657,17 @@ def compile_phone_narrated_plan(
         audio=audio,
         required_capabilities=required_capabilities,
     )
-    if opening_title:
+    title = narrated_title_element(
+        opening_title,
+        end_s=opening_title_end_s,
+        timeline_duration_s=timeline_end_s(clips),
+        canvas=story_canvas,
+    )
+    if title is not None:
         recipe = _with_text_layers(
             recipe,
             _compile_title_layers(
-                opening_title,
-                canvas=story_canvas,
-                end_s=(
-                    opening_title_end_s
-                    if opening_title_end_s is not None
-                    else narrated_title_end_s(None)
-                ),
-                timeline_duration_s=timeline_end_s(clips),
+                title, canvas=story_canvas, timeline_duration_s=timeline_end_s(clips)
             ),
         )
     if caption_cues:

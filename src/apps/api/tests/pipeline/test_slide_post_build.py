@@ -13,6 +13,7 @@ from PIL import Image
 
 from app.config import settings
 from app.pipeline.slide_post.build import (
+    SLIDE_IMAGE_NORMALIZER_VERSION,
     BundleSlideFile,
     SlideBuildError,
     build_bundle_zip,
@@ -461,3 +462,60 @@ class TestEditsCacheDigest:
         off = edits_cache_digest(edits)
         monkeypatch.setattr(settings, "slide_post_rich_text_enabled", True)
         assert edits_cache_digest(edits) != off
+
+
+def _mean_rgb(path):
+    img = Image.open(path).convert("RGB").resize((8, 8))
+    px = list(img.getdata())
+    return tuple(sum(p[i] for p in px) / len(px) for i in range(3))
+
+
+@pytest.mark.skipif(not _HAS_FFMPEG, reason="ffmpeg not installed")
+class TestNormalizeImageDecode:
+    def test_heic_renders_colourful_at_canvas(self, tmp_path):
+        pillow_heif = pytest.importorskip("pillow_heif")
+        pillow_heif.register_heif_opener()
+        src = tmp_path / "src.heic"
+        try:
+            Image.new("RGB", (800, 600), (220, 40, 40)).save(src, format="HEIF")
+        except Exception as exc:  # noqa: BLE001
+            pytest.skip(f"HEIF encode unavailable: {exc}")
+        out = tmp_path / "out.jpg"
+        normalize_image_slide(str(src), str(out), canvas=CANVAS)
+        assert probe_dimensions(str(out)) == CANVAS
+        r, g, b = _mean_rgb(out)
+        assert r > 150 and g < 100 and b < 100  # still red, not B&W
+
+    def test_exif_orientation_is_applied(self, tmp_path):
+        src = tmp_path / "src.jpg"
+        img = Image.new("RGB", (400, 200), (0, 0, 255))
+        # Left half red; orientation 6 (rotate 90 CW) puts it on top.
+        img.paste((255, 0, 0), (0, 0, 200, 200))
+        exif = Image.Exif()
+        exif[0x0112] = 6
+        img.save(src, exif=exif)
+        out = tmp_path / "out.jpg"
+        normalize_image_slide(str(src), str(out), canvas=(200, 400))
+        im = Image.open(out).convert("RGB")
+        assert im.size == (200, 400)
+        top = im.getpixel((100, 50))
+        bottom = im.getpixel((100, 350))
+        assert top[0] > 200 and top[2] < 80
+        assert bottom[2] > 200 and bottom[0] < 80
+
+    def test_undecodable_source_falls_back_to_original_path(self, tmp_path):
+        from app.pipeline.slide_post.build import _decode_image_for_ffmpeg
+
+        bad = tmp_path / "bad.bin"
+        bad.write_bytes(b"not an image")
+        assert _decode_image_for_ffmpeg(str(bad)) == str(bad)
+
+
+def test_normalizer_version_is_part_of_image_cache_key():
+    import inspect
+
+    from app.tasks import generative_build
+
+    assert SLIDE_IMAGE_NORMALIZER_VERSION == 2
+    src = inspect.getsource(generative_build)
+    assert "SLIDE_IMAGE_NORMALIZER_VERSION" in src

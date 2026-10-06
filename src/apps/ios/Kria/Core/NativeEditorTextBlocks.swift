@@ -58,13 +58,14 @@ extension EditorDocument {
 
     /// The on-screen text a creator can edit, in the order it appears.
     ///
-    /// Left out on purpose: captions (they have their own tab and list), blocks the
-    /// renderer skips (`removed`, `enabled == false`), and zero-length blocks that
-    /// cannot be selected on the timeline either.
+    /// Left out on purpose: captions (they have their own tab and list), read-only
+    /// text (`isReadOnly`), blocks the renderer skips (`removed`, `enabled == false`),
+    /// and zero-length blocks that cannot be selected on the timeline either.
     var textBlocks: [EditorTextBlock] {
         var seen = Set<String>()
         let authored = textElements.filter { element in
             !element.isCaption
+                && !element.isReadOnly
                 && element.raw["removed"] != .bool(true)
                 && element.raw["enabled"] != .bool(false)
                 && element.endS > element.startS
