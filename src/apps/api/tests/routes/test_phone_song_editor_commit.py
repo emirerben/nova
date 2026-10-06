@@ -25,6 +25,7 @@ from app.pipeline.lipsync_montage import lipsync_sync_error_s, plan_lipsync_mont
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
 from app.pipeline.unified_montage import plan_unified_montage
 from app.routes import generative_jobs as gj
+from app.schemas.user_song import MIN_PLAYABLE_SONG_S
 from app.services.device_render import device_status, pin_device_request
 from app.services.kria_editor_ops import compile_editor_ops
 from app.services.phone_editor import (
@@ -56,7 +57,7 @@ def _phone_profile(monkeypatch):
     monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True)
 
 
-def _job(result):
+def _job(result, *, song_duration_s=SONG_DURATION_S):
     guided = result.guided_edit()
     plan = compile_execution_plan(guided, track=None)
     bindings, _visuals = bindings_for(result)
@@ -99,7 +100,7 @@ def _job(result):
             recipe=compile_phone_guided_plan(
                 GuidedStoryExecutionPlan.model_validate(plan),
                 bindings,
-                song=song_bed(),
+                song=song_bed(duration_s=song_duration_s),
             ),
         ),
         base_generation="first",
@@ -424,11 +425,137 @@ def test_a_background_start_move_follows_into_the_recipe():
     assert cuts(after) == cuts(before)
 
 
-def test_a_start_that_runs_past_the_end_of_the_song_is_refused():
+def _set_total(job, target_s):
+    variant = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, variant)
+    compiled = compile_editor_ops(
+        job,
+        variant,
+        [{"op": "set_total_duration", "target_s": target_s, "strategy": "proportional"}],
+    )
+    compiled.payload.guided_revision_number = revision["revision_number"]
+    return gj.prepare_editor_commit(job, "guided_story", compiled.payload)
+
+
+def _saved_song(job):
+    return job.assembly_plan["variants"][0][PHONE_EDITOR_SAVED_PLAN_FIELD]["user_song"]
+
+
+def test_a_start_that_leaves_under_a_second_of_song_is_refused():
     job, _result = background_job()
     before = device_status(job, "guided_story").request
     with pytest.raises(HTTPException) as caught:
-        _song_save(job, window_start_s=SONG_DURATION_S - 1.0)
+        _song_save(job, window_start_s=SONG_DURATION_S - 0.5)
+    assert caught.value.status_code == 422
+    assert caught.value.detail == {
+        "code": "user_song_window_out_of_range",
+        "reason": "That start point leaves less than a second of your song. Slide it earlier.",
+    }
+    assert device_status(job, "guided_story").request == before
+
+
+def test_a_start_leaving_exactly_the_minimum_plays_that_last_second():
+    job, _result = background_job()
+    _song_save(job, window_start_s=SONG_DURATION_S - MIN_PLAYABLE_SONG_S)
+    clip = _song_clip(_recipe(job))
+    assert clip.source_duration == pytest.approx(MIN_PLAYABLE_SONG_S)
+    assert _projection(job)["window_end_s"] == pytest.approx(SONG_DURATION_S)
+
+
+def test_extending_past_the_remaining_song_is_accepted_and_the_song_stops_at_its_end():
+    job, _result = background_job()
+    length = _video_length(job)
+    start = SONG_DURATION_S - length  # the song exactly fits today
+    _song_save(job, window_start_s=start)
+    _set_total(job, length + 5)
+    recipe = _recipe(job)
+    clip = _song_clip(recipe)
+    assert recipe.duration == pytest.approx(length + 5, abs=0.1)
+    assert clip.source_start == pytest.approx(start)
+    assert clip.source_duration == pytest.approx(SONG_DURATION_S - start)
+    assert clip.source_duration < recipe.duration
+    # It fades out at its REAL end (the clip length), not at the video's end.
+    assert clip.audio_fade_out > 0
+    song = _saved_song(job)
+    assert song["window_end_s"] == pytest.approx(SONG_DURATION_S)
+    assert song["window_end_s"] - song["window_start_s"] < _video_length(job)
+    assert _projection(job)["window_end_s"] == pytest.approx(SONG_DURATION_S)
+
+
+def test_extending_within_the_song_grows_the_song_with_the_video():
+    job, _result = background_job()
+    length = _video_length(job)
+    start = _song_clip(_recipe(job)).source_start
+    assert start + length + 3 < SONG_DURATION_S
+    _set_total(job, length + 3)
+    clip = _song_clip(_recipe(job))
+    assert clip.source_start == pytest.approx(start)
+    assert clip.source_duration == pytest.approx(_recipe(job).duration, abs=0.05)
+    assert _saved_song(job)["window_end_s"] == pytest.approx(start + length + 3, abs=0.1)
+
+
+def test_shortening_then_extending_recomputes_the_window_from_the_start():
+    job, _result = background_job()
+    length = _video_length(job)
+    start = SONG_DURATION_S - length
+    _song_save(job, window_start_s=start)
+    _set_total(job, length - 3)
+    assert _song_clip(_recipe(job)).source_duration == pytest.approx(length - 3, abs=0.1)
+    assert _saved_song(job)["window_end_s"] == pytest.approx(start + length - 3, abs=0.1)
+    _set_total(job, length + 4)
+    clip = _song_clip(_recipe(job))
+    # Grew back up to the song end, then stopped: never from the previous window end.
+    assert clip.source_duration == pytest.approx(SONG_DURATION_S - start)
+    assert _saved_song(job)["window_end_s"] == pytest.approx(SONG_DURATION_S)
+    _set_total(job, length - 2)
+    assert _song_clip(_recipe(job)).source_duration == pytest.approx(length - 2, abs=0.1)
+
+
+def test_a_video_longer_than_the_whole_song_plays_it_to_the_end_without_error():
+    info = analysis(duration_s=40.0, line_starts=tuple(float(i) for i in range(2, 38, 4)))
+    result = plan_unified_montage(
+        [take(f"c{i}", 20.0) for i in range(1, 6)],
+        song_beats=info.beats_s,
+        song_lines=info.lines,
+        song_duration_s=40.0,
+        song_plan_item_id=SONG_ITEM_ID,
+        song_generation=SONG_GENERATION,
+    )
+    job = _job(result, song_duration_s=40.0)
+    _song_save(job, window_start_s=0.0)
+    _set_total(job, 50)
+    clip = _song_clip(_recipe(job))
+    assert _recipe(job).duration == pytest.approx(50, abs=0.1)
+    assert clip.source_start == 0.0
+    assert clip.source_duration == pytest.approx(40.0)
+    assert _saved_song(job)["window_end_s"] == pytest.approx(40.0)
+
+
+def _lipsync_job_with_song_ending_at_the_cut():
+    """A lip-sync montage whose song ends exactly where its cut does."""
+    first = plan_lipsync_montage(
+        [take("A"), take("B")],
+        alignment(confident("A", 10), confident("B", 25)),
+        analysis(),
+        plan_item_id=SONG_ITEM_ID,
+    )
+    end = round(first.user_song.window_end_s, 3)
+    short = analysis(duration_s=end, line_starts=tuple(float(i) for i in range(2, int(end), 4)))
+    result = plan_lipsync_montage(
+        [take("A"), take("B")],
+        alignment(confident("A", 10), confident("B", 25)),
+        short,
+        plan_item_id=SONG_ITEM_ID,
+    )
+    assert result.user_song.window_end_s == pytest.approx(result.user_song.duration_s, abs=0.01)
+    return _job(result, song_duration_s=result.user_song.duration_s), result
+
+
+def test_a_lipsync_video_that_outruns_the_song_keeps_the_strict_song_error():
+    job, _result = _lipsync_job_with_song_ending_at_the_cut()
+    before = device_status(job, "guided_story").request
+    with pytest.raises(HTTPException) as caught:
+        _set_total(job, _video_length(job) + 3)
     assert caught.value.status_code == 422
     assert caught.value.detail == {
         "code": "user_song_window_out_of_range",
@@ -437,23 +564,14 @@ def test_a_start_that_runs_past_the_end_of_the_song_is_refused():
     assert device_status(job, "guided_story").request == before
 
 
-def test_extending_the_cut_past_an_already_set_start_is_the_same_song_error():
-    job, _result = background_job()
-    length = _video_length(job)
-    _song_save(job, window_start_s=SONG_DURATION_S - length)  # exactly fits
+def test_a_lipsync_extension_inside_the_song_is_refused_by_the_resync_instead():
+    job, _result = lipsync_job()  # a 120 s song: the +3 s stays inside it
     before = device_status(job, "guided_story").request
-    variant = job.assembly_plan["variants"][0]
-    revision = gj._guided_v2_revision(job, variant)
-    compiled = compile_editor_ops(
-        job,
-        variant,
-        [{"op": "set_total_duration", "target_s": length + 5, "strategy": "proportional"}],
-    )
-    compiled.payload.guided_revision_number = revision["revision_number"]
     with pytest.raises(HTTPException) as caught:
-        gj.prepare_editor_commit(job, "guided_story", compiled.payload)
+        _set_total(job, _video_length(job) + 3)
     assert caught.value.status_code == 422
-    assert caught.value.detail["code"] == "user_song_window_out_of_range"
+    assert caught.value.detail["code"] == "unsupported_phone_edit"
+    assert "runs past its end" in caught.value.detail["reason"]
     assert device_status(job, "guided_story").request == before
 
 

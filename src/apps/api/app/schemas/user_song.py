@@ -40,6 +40,11 @@ USER_SONG_TRACK_ID = "song"
 SONG_ORDER_QUESTION_KEY = "song_order_question"
 SONG_ORDER_ANSWER_KEY = "song_order"
 
+# KRI-457: the least song a background start point may leave playable. The editor clamps
+# its start slider to `duration - MIN_PLAYABLE_SONG_S` (shared concept with iOS); a
+# shorter remainder is `user_song_window_out_of_range`.
+MIN_PLAYABLE_SONG_S = 1.0
+
 # Device capabilities the song lane needs; both are already verified in prod.
 USER_SONG_REQUIRED_CAPABILITIES = frozenset({"musicBed", "audioMix"})
 
