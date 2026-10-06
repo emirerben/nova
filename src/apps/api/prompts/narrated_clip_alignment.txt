@@ -42,5 +42,8 @@ Rules:
   sentence or across several; give a clip the whole stretch of narration about its subject.
 - When the order is LOCKED, list the clips in exactly the given order and only choose their
   start words. When it is FREE, list them in the order they should appear on screen.
+- When the order is LOCKED, the first listed clip always starts at the very first word of
+  the voiceover (the video opens on it), even if its subject is narrated later; choose the
+  other clips' start words after it, strictly increasing in the listed order.
 - Keep every clip on screen for at least about two seconds when the voiceover length allows
   it, and avoid starting two clips on neighbouring words.

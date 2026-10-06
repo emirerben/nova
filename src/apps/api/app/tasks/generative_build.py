@@ -71,6 +71,9 @@ from app.kria.plan_blocks import (
     blocks_from_guided_plan as _blocks_from_guided_plan,
 )
 from app.kria.plan_blocks import (
+    emit_phone_recipe_blocks as _emit_phone_plan_blocks,
+)
+from app.kria.plan_blocks import (
     emit_plan_blocks as _emit_plan_blocks,
 )
 from app.kria.plan_blocks import (
@@ -4363,6 +4366,15 @@ def _resolve_phone_voiceover_bed(
     )
 
 
+def _emit_phone_blocks_best_effort(job_id: str, recipe: Any, facts: Callable[[], dict]) -> None:
+    """KRI-443 live feed for a phone writer, after its device request is pinned and
+    committed. `facts` is a thunk so even deriving the sections can never fail a render."""
+    try:
+        _emit_phone_plan_blocks(job_id, recipe, **facts())
+    except Exception as exc:  # noqa: BLE001 - the feed must never fail a render
+        log.warning("plan_blocks_phone_failed", job_id=job_id, error=str(exc)[:200])
+
+
 def _run_phone_voiceover_montage_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> None:
@@ -4714,6 +4726,26 @@ def _run_phone_voiceover_montage_job(
         job.error_detail = None
         job.failure_reason = None
         db.commit()
+
+    # KRI-443: the device request is pinned and committed and no Job/PlanItem lock is
+    # held, so the live feed may report the seven decided sections (the render itself
+    # runs on the iPhone). Early `return`s above (stale/cancelled) skip this.
+    has_text_layers = bool(getattr(recipe, "text_layers", None))
+    matched_track_title = getattr(best_track, "title", None) if decision.music_track_id else None
+    _emit_phone_blocks_best_effort(
+        job_id,
+        recipe,
+        lambda: {
+            "title": (
+                getattr(agent_text, "text", None)
+                if has_text_layers and spec.get("text_mode") == "agent_text"
+                else None
+            ),
+            "music": matched_track_title or "Your voiceover",
+            "music_detail": "Under your voiceover" if matched_track_title else None,
+            "look": style_set_id if has_text_layers else None,
+        },
+    )
 
 
 def _load_unified_montage_inputs(job_id: str) -> tuple[Any, list[dict], Any]:
@@ -6722,6 +6754,16 @@ def _run_phone_subtitled_job(
         job.failure_reason = None
         db.commit()
 
+    # KRI-443: pinned + committed, no lock held: report the decided sections.
+    _emit_phone_blocks_best_effort(
+        job_id,
+        recipe,
+        lambda: {
+            "clip_count": 1 + len({cutaway.binding.media_id for cutaway in cutaways}),
+            "captions": len(cues or []),
+        },
+    )
+
 
 def _phone_narrated_cleaned_narration(job_id: str, snapshot: dict) -> NarrationTrack:
     """Apply this Job's accepted CutPlan to the item's CURRENT recorded
@@ -7294,6 +7336,22 @@ def _run_phone_narrated_job(
         job.error_detail = None
         job.failure_reason = None
         db.commit()
+
+    # KRI-443: pinned + committed, no lock held: report the decided sections. The
+    # voiceover is the soundtrack; the title counts only when the recipe carries it.
+    _emit_phone_blocks_best_effort(
+        job_id,
+        recipe,
+        lambda: {
+            "title": (
+                opening_title
+                if narrated_title_text_elements(recipe, opening_title, end_s=opening_title_end_s)
+                else None
+            ),
+            "captions": len(cues or []),
+            "music": "Your voiceover",
+        },
+    )
 
 
 def _guided_execution_plan(
