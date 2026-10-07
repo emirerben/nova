@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.137.0] - 2026-10-07
+
+### Changed
+- fix(ios): Add-text typing + reply reveal smoothness (KRI-484) (#1453) <!-- release-pr: 1453 -->
+
 ## [0.78.136.0] - 2026-10-07
 
 ### Changed
