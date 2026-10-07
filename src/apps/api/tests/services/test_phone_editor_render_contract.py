@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import copy
+
+import pytest
+from fastapi import HTTPException
+
+from app.routes import generative_jobs as gj
 from app.services.creator_render_contract import (
     CONTRACT_FIELD,
     REQUIREMENT_VERSION_FIELD,
@@ -49,3 +55,65 @@ def test_new_talking_title_worker_satisfies_approved_contract(monkeypatch) -> No
 
     assert job.status == "awaiting_device"
     assert device_record(job, "subtitled")["contract_digest"] == contract.digest
+
+
+# --- KRI-470 PR-G: the editor keeps each approved text's role ---------------------
+
+
+def _opening_contract(job, text="Before"):
+    contract = build_render_contract({"opening_title": text}, generation_id="first")
+    assert contract is not None
+    job.assembly_plan[CONTRACT_FIELD] = contract.model_dump(mode="json")
+    return contract
+
+
+def _revised(job):
+    return read_render_contract(
+        {CONTRACT_FIELD: job.assembly_plan[CONTRACT_REVISIONS_FIELD]["guided_story"]}
+    )
+
+
+def test_an_edit_that_keeps_the_opening_text_in_the_opening_window_is_accepted(monkeypatch):
+    job = phone_job(monkeypatch)
+    _opening_contract(job)
+
+    save(job, text="After", start_s=0, end_s=3)
+
+    revised = _revised(job)
+    assert [(item.role, item.text) for item in revised.exact_texts] == [("opening", "After")]
+    assert device_status(job, "guided_story").request.identity.recipe_revision == 2
+
+
+def test_an_edit_that_moves_the_opening_text_out_of_the_opening_window_is_refused(monkeypatch):
+    job = phone_job(monkeypatch)
+    _opening_contract(job)
+    before = device_status(job, "guided_story").request
+    variants_before = copy.deepcopy(job.assembly_plan["variants"])
+
+    with pytest.raises(HTTPException) as caught:
+        save(job, text="Before", start_s=1.0, end_s=3.0)  # text unchanged, moved later
+
+    assert caught.value.status_code == 422
+    assert caught.value.detail["code"] == "unsupported_phone_edit"
+    # The refusal leaves the approved edit exactly as it was.
+    assert device_status(job, "guided_story").request == before
+    assert job.assembly_plan["variants"] == variants_before
+    assert CONTRACT_REVISIONS_FIELD not in job.assembly_plan
+
+
+def test_an_element_that_was_never_a_requirement_stays_unplaced(monkeypatch):
+    job = phone_job(monkeypatch)
+    _opening_contract(job)
+    first = job.assembly_plan["variants"][0]["text_elements"][0]
+    extra = {**first, "id": "added", "text": "Added later", "start_s": 1.0, "end_s": 2.0}
+
+    gj.prepare_editor_commit(
+        job,
+        "guided_story",
+        gj.EditorCommitRequest(
+            base_generation="first", text_elements=[{**first, "text": "After"}, extra]
+        ),
+    )
+
+    roles = {item.text: item.role for item in _revised(job).exact_texts}
+    assert roles == {"After": "opening", "Added later": "any"}

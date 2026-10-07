@@ -195,12 +195,55 @@ class _StagedJob:
         return getattr(self._job, name)
 
 
+def _text_requirements_for_save(
+    rows: list,
+    prior: tuple[TextRequirement, ...],
+    prior_elements: dict[str, str],
+    *,
+    keep_shot_roles: bool,
+) -> tuple[TextRequirement, ...]:
+    """The saved text lane as requirements, each keeping the role it was approved with.
+
+    A row inherits the role of the requirement it carried before the Save: matched by
+    element id (so an edited opening title is still the opening title), else by the
+    exact text. Anything the contract never asked for stays ``any``. An opening or
+    closing role is verified against the recompiled recipe, so an edit that moves the
+    opening text out of the opening window is refused instead of silently accepted.
+    A shot-scoped role is kept only while the timeline is untouched: a reorder
+    invalidates the shot it was pinned to.
+    """
+
+    by_text = {_normal_text(item.text): item for item in prior}
+    out: list[TextRequirement] = []
+    for row in rows:
+        if not (isinstance(row, dict) and isinstance(row.get("text"), str) and row["text"].strip()):
+            continue
+        before = prior_elements.get(str(row.get("id")))
+        source = by_text.get(_normal_text(before)) if before else None
+        if source is None:
+            source = by_text.get(_normal_text(row["text"]))
+        role = "any"
+        shot: dict[str, Any] = {}
+        if source is not None and source.role in {"opening", "closing"}:
+            role = source.role
+        elif source is not None and source.role == "clip" and keep_shot_roles:
+            role = "clip"
+            shot = {"media_id": source.media_id, "shot_index": source.shot_index}
+        out.append(TextRequirement(role=role, text=row["text"], **shot))
+    return tuple(out)
+
+
+def _normal_text(value: object) -> str:
+    return " ".join(str(value or "").split()).casefold()
+
+
 def _rebind_editor_render_contract(
     staged: _StagedJob,
     variant_id: str,
     prep: dict,
     *,
     brief_binding: dict | None = None,
+    previous_variant: dict | None = None,
 ) -> None:
     """Carry creator requirements into the editor's next approved generation.
 
@@ -242,14 +285,20 @@ def _rebind_editor_render_contract(
     if sections.get("text_elements"):
         # The staged variant is the accepted editor state.  Do not inspect the
         # generated recipe here: compiler output is proof, not edit authority.
-        texts = []
         canonical_text = (prep.get("guided_revision") or {}).get(
             "text_elements", variant.get("text_elements") or []
         )
-        for row in canonical_text:
-            if isinstance(row, dict) and isinstance(row.get("text"), str) and row["text"].strip():
-                texts.append(TextRequirement(role="any", text=row["text"]))
-        changes["exact_texts"] = tuple(texts)
+        prior_elements = {
+            str(row.get("id")): row["text"]
+            for row in (previous_variant or {}).get("text_elements") or []
+            if isinstance(row, dict) and isinstance(row.get("text"), str)
+        }
+        changes["exact_texts"] = _text_requirements_for_save(
+            canonical_text,
+            contract.exact_texts,
+            prior_elements,
+            keep_shot_roles=not sections.get("timeline"),
+        )
     if sections.get("timeline"):
         # `_prepare_editor_commit` has already validated and projected this
         # number from the submitted slots (or guided revision); the prior
@@ -295,7 +344,18 @@ def prepare_phone_editor_commit(
         raise HTTPException(422, detail={"code": "phone_rendering_unavailable"})
     try:
         _rebind_editor_render_contract(
-            staged, variant_id, prep, brief_binding=creator_brief_binding
+            staged,
+            variant_id,
+            prep,
+            brief_binding=creator_brief_binding,
+            previous_variant=next(
+                (
+                    v
+                    for v in (job.assembly_plan or {}).get("variants", [])
+                    if isinstance(v, dict) and v.get("variant_id") == variant_id
+                ),
+                None,
+            ),
         )
         previous = device_status(job, variant_id).request
         assembly = staged.assembly_plan
