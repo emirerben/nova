@@ -34,6 +34,8 @@
 #          release command's 143 in its log but exits 1 itself)
 #
 # Env:
+#   EXPECTED_SHA                    — exact checked-out main commit; required
+#                                     by the durable guard/revision proof
 #   FLY_DEPLOY_RETRY_DELAY_SECONDS — seconds to sleep before the retry
 #                                    (default 5; tests set 0)
 #   GITHUB_STEP_SUMMARY            — if set, a retry appends a summary block
@@ -41,9 +43,10 @@
 #                                    automatically; unset locally is fine —
 #                                    no crash)
 #
-# Usage:
-#   scripts/fly-deploy-with-retry.sh --remote-only
-#   (all args are forwarded verbatim to `flyctl deploy`)
+# Usage: invoked by the Fly Deploy workflow after it acquires the durable
+# deploy guard. Before every attempt this wrapper verifies the checkout,
+# origin/main ancestry, live production ancestry, and its unexpired guard.
+# All supplied arguments are forwarded verbatim to `flyctl deploy`.
 
 set -uo pipefail
 
@@ -60,6 +63,15 @@ run_deploy() {
   shift
   flyctl deploy "$@" 2>&1 | tee "$log_file"
   return "${PIPESTATUS[0]}"
+}
+
+# Re-run the durable guard and commit-graph proof immediately before every
+# mutation.  In particular, a #834 retry must not deploy after another runner
+# has advanced production while this runner was waiting.
+check_deploy_revision() {
+  local minimum_lease_s="${1:-0}"
+  DEPLOY_GUARD_MIN_REMAINING_S="$minimum_lease_s" \
+    bash scripts/run-video-poster-backfill.sh --check-deploy-revision
 }
 
 # is_release_machine_startup_kill LOG_FILE
@@ -135,6 +147,9 @@ emit_retry_notice() {
 }
 
 attempt1_log="$work_dir/attempt1.log"
+# The outer workflow gives flyctl 2100 seconds plus a 60-second TERM grace.
+# Do not start an attempt that cannot remain covered for that full window.
+check_deploy_revision 2160 || exit $?
 run_deploy "$attempt1_log" "$@"
 exit_code=$?
 [[ $exit_code -eq 0 ]] && exit 0
@@ -144,6 +159,7 @@ if is_release_machine_startup_kill "$attempt1_log"; then
   sleep "${FLY_DEPLOY_RETRY_DELAY_SECONDS:-5}"
 
   attempt2_log="$work_dir/attempt2.log"
+  check_deploy_revision || exit $?
   run_deploy "$attempt2_log" "$@"
   exit_code=$?
   exit "$exit_code"

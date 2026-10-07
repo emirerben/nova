@@ -2,6 +2,8 @@
 # Serialize Fly deploys and the one-time poster repair with one app-unique,
 # unmanaged Machine name. Fly enforces Machine-name uniqueness, so even two
 # runners that both observed an empty list cannot both acquire the guard.
+# `--check-deploy-revision` is read-only: it proves Git and live-image
+# ancestry plus the owned guard lease immediately before a deploy attempt.
 
 set -euo pipefail
 
@@ -21,6 +23,7 @@ max_wait_s="${POSTER_BACKFILL_MAX_WAIT_S:-18600}"
 guard_resolve_attempts="${FLY_GUARD_RESOLVE_ATTEMPTS:-5}"
 production_settle_attempts="${FLY_PRODUCTION_SETTLE_ATTEMPTS:-20}"
 guard_reclaim_grace_s="${FLY_GUARD_RECLAIM_GRACE_S:-300}"
+minimum_deploy_guard_lease_s="${DEPLOY_GUARD_MIN_REMAINING_S:-0}"
 deploy_guard_lease_s=2700
 backfill_guard_lease_s=18900
 mode="${1:-run}"
@@ -39,14 +42,15 @@ fail() {
 }
 
 case "$mode" in
-  run|--reconcile-only|--acquire-deploy-guard|--release-deploy-guard) ;;
-  *) fail "Usage: $0 [--reconcile-only|--acquire-deploy-guard|--release-deploy-guard]" ;;
+  run|--reconcile-only|--acquire-deploy-guard|--release-deploy-guard|--check-deploy-revision) ;;
+  *) fail "Usage: $0 [--reconcile-only|--acquire-deploy-guard|--release-deploy-guard|--check-deploy-revision]" ;;
 esac
 [[ "$poll_interval_s" =~ ^[0-9]+$ && "$max_wait_s" =~ ^[1-9][0-9]*$ ]] || \
   fail "Poster backfill poll timing must use non-negative integer seconds."
 [[ "$guard_resolve_attempts" =~ ^[1-9][0-9]*$ \
   && "$production_settle_attempts" =~ ^[1-9][0-9]*$ \
-  && "$guard_reclaim_grace_s" =~ ^[0-9]+$ ]] || \
+  && "$guard_reclaim_grace_s" =~ ^[0-9]+$ \
+  && "$minimum_deploy_guard_lease_s" =~ ^[0-9]+$ ]] || \
   fail "Fly guard timing must use non-negative integer values."
 [[ "$run_id" == "manual" || "$run_id" =~ ^[0-9]+$ ]] || \
   fail "GITHUB_RUN_ID must be numeric when present."
@@ -69,6 +73,21 @@ if [[ "$mode" != "--reconcile-only" ]]; then
   [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]] || \
     fail "EXPECTED_SHA must be the exact lowercase 40-character commit SHA."
 fi
+
+# A deploy is allowed to advance production only along the repository's real
+# commit graph.  This intentionally accepts a docs-only main advance and a
+# new revert commit, while refusing a delayed ancestor or an unrelated ref.
+check_checkout_is_deployable() {
+  local checkout_sha
+  checkout_sha="$(git rev-parse HEAD 2>/dev/null)" || \
+    fail "Could not read the checked-out Git revision; refusing deploy."
+  [[ "$checkout_sha" == "$expected_sha" ]] || \
+    fail "Checked-out Git revision $checkout_sha does not match EXPECTED_SHA $expected_sha; refusing deploy."
+  git fetch --quiet origin +refs/heads/main:refs/remotes/origin/main || \
+    fail "Could not fetch origin/main for deploy revision validation."
+  git merge-base --is-ancestor "$expected_sha" origin/main || \
+    fail "Expected deploy revision $expected_sha is not an ancestor of origin/main; refusing deploy."
+}
 
 machine_list() {
   flyctl machine list --app "$app_name" --json
@@ -765,6 +784,9 @@ resolve_production_image() {
   )"
   image_json="$(flyctl image show --app "$app_name" --json)" || \
     fail "Could not read Fly production image metadata."
+  # Kept globally for the deploy-order proof immediately following this
+  # resolver; all image/digest parsing still happens from this one response.
+  production_image_json="$image_json"
   image_match_count="$(jq --arg digest "$digest" '[.[] | select(.Digest == $digest)] | length' <<<"$image_json")" || \
     fail "Fly image metadata is not JSON."
   registry="$(jq -r --arg digest "$digest" '[.[] | select(.Digest == $digest)][0].Registry // empty' <<<"$image_json")"
@@ -791,23 +813,65 @@ resolve_production_image() {
   # image_ref.digest exactly matches `digest` below.
   image_ref="${registry}/${repository}:${image_tag}"
   if [[ "$require_expected_revision" == "true" ]]; then
-    if ! deployed_sha="$(
-      jq -er --arg label "$revision_label" --arg digest "$digest" '
-        [.[]
-          | select(.Digest == $digest)
-          | .Labels
-          | if type == "string" then fromjson else . end
-          | .[$label]]
-        | unique
-        | if length == 1 then .[0] else empty end
-        | select(type == "string" and test("^[0-9a-f]{40}$"))
-      ' <<<"$image_json"
-    )"; then
+    if ! deployed_sha="$(image_revision_for_digest "$image_json")"; then
       fail "Could not resolve one deployed image revision label."
     fi
     [[ "$deployed_sha" == "$expected_sha" ]] || \
       fail "Fly image SHA $deployed_sha does not match expected deploy $expected_sha."
   fi
+}
+
+image_revision_for_digest() {
+  local source_json="$1"
+  jq -er --arg label "$revision_label" --arg digest "$digest" '
+      [.[] | select(.Digest == $digest)
+        | .Labels
+        | if type == "string" then fromjson else . end
+        | .[$label]]
+      | unique
+      | if length == 1 then .[0] else empty end
+      | select(type == "string" and test("^[0-9a-f]{40}$"))
+    ' <<<"$source_json"
+}
+
+resolve_live_production_revision() {
+  local live_sha
+  resolve_production_image false
+  if ! live_sha="$(image_revision_for_digest "$production_image_json")"; then
+    fail "Could not resolve one deployed image revision label."
+  fi
+  production_sha="$live_sha"
+}
+
+check_owned_deploy_guard() {
+  local list_json machine_json owner revision deadline now
+  list_json="$(machine_list)" || fail "Could not list Fly Machines while validating deploy guard."
+  validate_reserved_inventory "$list_json"
+  machine_json="$(machine_by_guard_name <<<"$list_json")" || \
+    fail "No exact dormant deploy guard exists for this deploy; refusing deploy."
+  deploy_guard_contract_is_valid "$machine_json" || \
+    fail "Stable deploy guard violates its exact dormant contract; refusing deploy."
+  owner="$(jq -r '(.config.metadata // .incomplete_config.metadata).nova_guard_owner' <<<"$machine_json")"
+  revision="$(jq -r '(.config.metadata // .incomplete_config.metadata).nova_revision' <<<"$machine_json")"
+  deadline="$(jq -r '(.config.metadata // .incomplete_config.metadata).nova_guard_deadline_epoch' <<<"$machine_json")"
+  now="$(date -u +%s)" || fail "Could not read current UTC epoch for deploy guard validation."
+  [[ "$owner" == "$guard_owner" && "$revision" == "$expected_sha" \
+    && "$now" -le "$deadline" \
+    && $((deadline - now)) -ge "$minimum_deploy_guard_lease_s" ]] || \
+    fail "Deploy guard is not currently owned by this workflow and revision with an unexpired lease; refusing deploy."
+}
+
+check_deploy_revision_order() {
+  check_checkout_is_deployable
+  resolve_live_production_revision
+  git merge-base --is-ancestor "$production_sha" "$expected_sha" || \
+    fail "Live production revision $production_sha is not an ancestor of expected deploy $expected_sha; refusing deploy."
+}
+
+check_deploy_revision() {
+  check_deploy_revision_order
+  check_owned_deploy_guard
+  echo "Validated deploy revision order and durable guard for $expected_sha."
 }
 
 resolve_guard_after_create() {
@@ -884,8 +948,13 @@ acquire_deploy_guard() {
   local -a create_args
   ACQUIRED_DEPLOY_GUARD=false
   for ((attempt = 1; attempt <= guard_resolve_attempts; attempt++)); do
+    # Validate the candidate before touching the durable mutex.  A delayed
+    # runner must not acquire it merely to discover that it would roll prod
+    # backwards.
+    check_deploy_revision_order
     inspect_existing_reservations "acquire-deploy"
     if [[ "$ACQUIRED_DEPLOY_GUARD" == "true" ]]; then
+      check_deploy_revision
       return 0
     fi
     resolve_production_image false
@@ -926,6 +995,7 @@ acquire_deploy_guard() {
           && "$actual_digest" == "$digest" \
           && ( "$state" == "created" || "$state" == "stopped" ) ]]; then
           echo "Acquired dormant deploy guard $machine_id for $guard_owner at revision $expected_sha."
+          check_deploy_revision
           return 0
         fi
       fi
@@ -1048,6 +1118,9 @@ case "$mode" in
     ;;
   --release-deploy-guard)
     release_deploy_guard
+    ;;
+  --check-deploy-revision)
+    check_deploy_revision
     ;;
   --reconcile-only)
     inspect_existing_reservations "reconcile"
