@@ -41,6 +41,13 @@ The `reframe` stage also carries the heavy-source downscale guard's events
 (`app/pipeline/source_guard.py`, v0.12.2.0): `source_guard_downscaled`,
 `source_guard_downscale_failed`, `source_guard_budget_exhausted`.
 
+The `assembly` stage also carries `route_mismatch` (KRI-470 PR-D, shadow mode): a job
+stamped with `creator_plan_authority_version` records it when the plan's resolved route
+(`app/services/render_route.py`) differs from the route the legacy dispatcher took. Fields:
+`point`, `platform`, `legacy_route`, `resolver_outcome`/`resolver_route`, `decline_reason`,
+`field_path`, `choice_kind`, `stamped_route`, `contract_digest`, `drivers`. The legacy
+route still rendered; see "Route resolution" in `docs/pipelines/creator-render-contract.md`.
+
 The `silence_cut` stage (emitted from the tasks layer, `generative_build.py`)
 carries the speech-cleanup engine's decisions: `silence_cut_config`,
 `silence_cut_plan`, `silence_cut_bailout`, `silence_cut_clamped`,
