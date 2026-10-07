@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.146.0] - 2026-10-07
+
+### Fixed
+- fix: prevent older Fly deployments (KRI-505) (#1464) <!-- release-pr: 1464 -->
+
 ## [0.78.145.0] - 2026-10-07
 
 ### Changed
