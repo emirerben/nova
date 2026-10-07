@@ -238,6 +238,27 @@ def _creator_decline_payload(exc: BaseException) -> dict[str, str]:
     return decline_payload(exc)
 
 
+def _plan_decline(
+    reason: str, message: str, *, field_path: str | None, alternative: str
+) -> BaseException:
+    """KRI-470 PR-F: the typed refusal a plan-authority job raises where a legacy heuristic
+    would have silently rendered a different kind of edit.
+
+    A ``CloudRenderContractError`` so the cloud handler persists it (failure code
+    ``creator_render_contract_unsupported`` + ``creator_decline``) and the phone fork maps it
+    through ``_creator_decline_payload``; either way the creator sees the reason and the
+    alternative instead of a different edit.
+    """
+    from app.services.cloud_render_contract import CloudRenderContractError  # noqa: PLC0415
+
+    return CloudRenderContractError(
+        message,
+        decline_reason=reason,  # type: ignore[arg-type]
+        field_path=field_path,
+        alternative=alternative,
+    )
+
+
 _CLIP_METADATA_CACHE_VERSION = 1
 _PREPROCESSED_SOURCE_CACHE_VERSION = 1
 _HDR_PRETONEMAP_CACHE_VERSION = 1
@@ -2948,6 +2969,27 @@ def _run_generative_job_impl(
         # narration bed and the job renders voiceover variants instead of song/original
         # — resolved in _resolve_archetype below, ahead of the footage-speech logic.
         voiceover_gcs_path: str | None = all_candidates.get("voiceover_gcs_path") or None
+        # KRI-470 PR-F: a plan-authority job follows the approved contract, not the mere
+        # presence of an attached file. A stray recording no longer turns a montage into
+        # a voiceover/narrated edit or skips a guided snapshot, and a required voice with
+        # no recording asks for it BEFORE any ingest or model spend (the same typed
+        # `needs_choice` the phone dispatcher raises). Unstamped jobs keep the file test.
+        from app.services.creator_render_contract import (  # noqa: PLC0415
+            REQUIREMENT_FIELD_PATHS,
+            plan_voiceover_path,
+            stamped_plan_contract,
+        )
+
+        plan_contract = stamped_plan_contract(immutable_job_plan, all_candidates)
+        if plan_contract is not None:
+            voiceover_gcs_path = plan_voiceover_path(plan_contract, voiceover_gcs_path)
+            if plan_contract.require_voiceover and voiceover_gcs_path is None:
+                raise _plan_decline(
+                    "needs_choice",
+                    "This edit needs your confirmed recorded voice.",
+                    field_path=REQUIREMENT_FIELD_PATHS["require_voiceover"],
+                    alternative="Record or upload your voice, or tell me to use music instead.",
+                )
         # Original-audio bed level for the narrated archetype (0..1; None → Kria's
         # default). Plumbed into the narrated spec; ignored by other archetypes.
         _raw_bed = all_candidates.get("voiceover_bed_level")

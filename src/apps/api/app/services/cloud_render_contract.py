@@ -27,7 +27,9 @@ from app.services.creator_render_contract import (
     CreatorRenderContractError,
     Decline,
     DeclineReason,
+    plan_voiceover_path,
     read_render_contract,
+    stamped_plan_contract,
     text_field_path,
 )
 
@@ -215,7 +217,15 @@ def cloud_adapter_for_job(assembly: Mapping[str, Any], candidates: Mapping[str, 
     from app.services.creator_execution_contract import validate_execution_binding  # noqa: PLC0415
 
     render_intent = candidates.get("declared_edit_format", candidates.get("edit_format"))
-    voiceover = candidates.get("voiceover_gcs_path") or None
+    try:
+        # KRI-470 PR-F: a plan-authority job's voice is the approved contract's, exactly as
+        # the dispatcher reads it (a stray attached recording does not pick the adapter).
+        voiceover = plan_voiceover_path(
+            stamped_plan_contract(assembly, candidates),
+            candidates.get("voiceover_gcs_path") or None,
+        )
+    except CreatorRenderContractError:
+        return None  # the preflight reports the unreadable contract with its own typed decline
     snapshot = assembly.get("guided_edit")
     try:
         applicable = guided_edit_applicable(render_intent, has_voiceover=bool(voiceover))
