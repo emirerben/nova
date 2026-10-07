@@ -87,7 +87,8 @@ verifies) and which it `declines`, with a typed reason. Every requirement
 `exact_texts`, `order_required`, `unresolved`) must be consumed or declined
 exactly once. Today only the phone speech montage routes from the audio, duration
 and order requirements; every other phone path is verified at pin time
-(`verify_phone_recipe`); the cloud paths decline what no receipt can prove.
+(`verify_phone_recipe`). The cloud adapters consume exactly what their renderer
+emits receipt evidence for (see "Cloud evidence"); the rest stay declined.
 Behaviour tests drive the real entry points (`verify_phone_recipe`,
 `check_phone_dispatch_contract`, `preflight_cloud_contract`,
 `verify_cloud_variant`) and assert the declared reason, not the table.
@@ -139,17 +140,86 @@ branches on it yet.
 | Requirement | Phone evidence | Cloud evidence | Current rule |
 | --- | --- | --- | --- |
 | Duration | Compiled recipe duration within the accepted tolerance | Renderer measured duration (`actual_duration_s` or measured `duration_s`) | Compare actual output; never compare desired metadata |
-| Recorded voice | Audible `VoiceoverRenderAsset` on an audio track | Verified receipt with `narration_applied` | Missing evidence declines |
-| Camera audio | Audible original assets, source IDs, and complete mute-window coverage | Not provable by current cloud receipts | Preserve/mute requests decline before cloud work |
-| Chronological order | Every selected clip has capture evidence; recipe picture sequence matches resolved IDs | No current standardized evidence; preflight declines | Missing chronology evidence declines |
-| Exact text | Normalized text layers, role/clip placement, and timing | No structured role/timing proof in current receipts | Cloud preflight and verification decline |
+| Recorded voice | Audible `VoiceoverRenderAsset` on an audio track | Receipt `narration_applied`, set only when the mixer reports the recording is in the output file | Missing evidence declines |
+| Camera audio (require / forbid) | Audible original assets, source IDs, and complete mute-window coverage | Receipt `source_audio_ids` + `source_audio_state`, from the audio graph actually mixed | Guided and classic prove it; named sources still decline everywhere |
+| Chronological order | Every selected clip has capture evidence; recipe picture sequence matches resolved IDs | Receipt `actual_clip_order` / `picture_timeline` from the rendered moments or assembled slots | Guided and classic prove it; unmet order is `evidence_missing`, never a pass |
+| Exact text | Normalized text layers, role/clip placement, and timing | Receipt `text_evidence` rows (role, text, window, media id) from the burned, pixel-checked layers | Guided proves it; classic and slides decline |
 
 Audio intent copied into a receipt or field such as
 `source_audio_preserved` is not proof that camera audio survived the render.
-The phone verifier needs actual recipe track/gain/mute evidence. Cloud currently
-cannot prove camera-audio source IDs or preservation, so it declines early.
-Likewise, a loose cloud list of text strings cannot prove opening, closing, or
-per-clip placement.
+The phone verifier needs actual recipe track/gain/mute evidence; the cloud
+verifier needs the receipt's own `source_audio_ids`. Likewise, a loose list of
+text strings cannot prove opening, closing, or per-clip placement: only rows
+that carry a role and window, measured on the burned output, can.
+
+### Cloud evidence (KRI-470 PR-E)
+
+Cloud renderers report what they produced; the verifier checks it; declines are
+lifted per adapter only where the adapter's declaration lists the requirement as
+consumed AND its receipt emits the evidence. Evidence is derived from the timeline
+the renderer built, the audio graph it mixed and the layers it burned -- never
+copied from the contract or the plan. Models and pure helpers:
+`app/pipeline/cloud_render_evidence.py`.
+
+| Evidence key | Meaning |
+| --- | --- |
+| `actual_clip_order` | Source media ids in output order (immediate repeats merged) |
+| `picture_timeline` | `{media_id, start_s, end_s}` per segment of the output picture |
+| `source_audio_ids` / `source_audio_state` / `source_audio_reason` | Sources whose own sound is audible; `muted` carries why (`replaced_by_narration`, `replaced_by_music`, `not_preserved`, `level_zero`, `no_source_audio`) |
+| `text_evidence` | `{role, text, start_s, end_s, media_id?}` per text layer measured visible |
+| `narration_applied` | The recording is in the output file (the voiceover mixer copies the video through on failure, so intent is never proof) |
+| `actual_duration_s` | Probed length of the output |
+
+`None`/absent means "this renderer did not produce it" and the verifier reports
+`evidence_missing`; `[]` means "produced, and there was nothing". Receipts written
+before this change have no evidence keys, still validate, and are never failed
+retroactively for requirements they never had to prove; a stored receipt asked to
+prove order/text/audio is `evidence_missing`. Evidence is only emitted for jobs that
+carry the contract marker (`_cloud_evidence_context`), so every other job keeps its
+exact stored receipt; there is no new flag (the contract marker / plan-authority stamp
+gates behaviour).
+
+| Requirement | `cloud_guided_story` | `cloud_classic` | `cloud_slides` |
+| --- | --- | --- | --- |
+| `duration_s` | consumed (probed `actual_duration_s`) | consumed (`actual_duration_s`; was `duration_s`) | declined (stills) |
+| `require_voiceover` | consumed (`narration_applied`) | consumed (`narration_applied`; **was declined, rendered then rejected**) | declined |
+| `original_audio` | consumed (`source_audio_ids`, from `_mux_guided_source_audio`) | consumed (slot clips with an audio stream, minus replaced/ducked) | declined |
+| `order_required` | consumed (rendered moments) | consumed (assembled slots via the approved gcs->media map) | declined |
+| `exact_texts` | consumed (burned layers, role by compiler id, window) | declined | declined |
+| `audio_source_ids` | declined (mixes every clip's sound) | declined | declined |
+
+Before this PR every cloud adapter declined `exact_texts`, `audio_source_ids`,
+`original_audio` and `order_required`, and classic voiceover/narrated jobs rendered
+and were then rejected at publication for lack of a receipt.
+
+How each adapter evidences a requirement and where it stops:
+
+- **Guided story** (`GuidedStoryRenderReceipt`, extra optional fields omitted when
+  `None`): order and picture windows come from the moments actually rendered;
+  camera audio from the branches `_mux_guided_source_audio` mixed (replaced by a
+  narration or a song when one is applied, 0 when the creator's level is 0); text from
+  `burn_text_overlays_skia_with_evidence`'s per-element pixel check, with the role
+  taken from the compiler's own element ids (`guided-title` opening,
+  `guided-closing-title` closing, `clip-label-*` / `montage-text-*` per shot, bound to
+  the segment they overlap). A text reburn re-derives `text_evidence` from the edited
+  elements. Order is verified, not routed: the guided builder does not order by capture
+  time, so a mismatching plan fails visibly after render until the route work (PR-D/F).
+- **Classic** (`classic_render_receipt`, `render_receipt` on the variant): emitted by
+  the montage/voiceover/day-vlog/single-hero renderer (`_process_generative_variant`)
+  and the narrated renderer. A collage (masonry) cut or a spliced carousel moment
+  withholds picture/audio evidence rather than guessing. Talking-head and subtitled
+  renders emit no receipt, so `check_classic_archetype` refuses a receipt-only
+  requirement (`require_voiceover`, `original_audio`, `order_required`) as
+  `capability_unavailable` once the archetype is known, before any variant renders.
+  Exact text stays declined: the intro is composed from agent blocks whose exact words
+  are not evidenced separately.
+- **Slides**: stills, no length, no voice, no camera audio, no order: everything stays
+  declined with `capability_unavailable`.
+
+Preflight takes the dispatched adapter (`cloud_adapter_for_job`); without a named
+adapter it keeps the pre-PR conservative refusal, so nothing is lifted on an unknown
+route. `verify_cloud_variant` picks the adapter from the variant
+(`cloud_adapter_for_variant`).
 
 ## Routing and failure behavior
 
@@ -161,10 +231,10 @@ contract requires speech. Unsupported combinations decline with a
 creator-facing reason before pinning; missing evidence is a contract failure,
 not an invitation to accept a one-off raw-text override.
 
-Cloud preflight declines unresolved order facts, exact text, camera-audio
-source/preservation requirements, and other requirements for which the current
-cloud compiler has no standardized proof. For supported duration and narration
-checks, publication uses measured duration or renderer-produced narration receipts.
+Cloud preflight declines unresolved order facts and every requirement the
+dispatched adapter's declaration lists as declined (see "Cloud evidence"). For
+consumed requirements, publication checks measured duration and the
+renderer-produced receipt evidence.
 Contracts with no objective requirements do not require receipts. A replacement
 cannot reuse its predecessor's receipt or duration as proof of the new file.
 
@@ -206,7 +276,9 @@ The evidence uses synthetic fixtures with the real speech worker and native
 recipe compiler. It does not claim production replay, iPhone export, native
 pixel inspection, or listening to a rendered artifact. Cloud receipt limits are
 intentional: exact text, camera-audio source identity/preservation, and order
-are declined until the cloud path emits proof that can establish them.
+are declined per adapter until that adapter's renderer emits proof that can
+establish them (guided: order, exact text, camera-audio presence; classic: order,
+camera-audio presence, voice; named audio sources: no cloud adapter).
 
 Required speech cleanup also has a private winner stage. The accepted speech
 snapshot and its upload generation are verified before the staged result is

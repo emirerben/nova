@@ -81,7 +81,11 @@ def refusal_message(record: IncidentRecord, contract: CreatorRenderContract) -> 
     if record.inputs.cloud_preflight:
         assembly = {CONTRACT_FIELD: contract.model_dump(mode="json")}
         try:
-            preflight_cloud_contract(assembly, candidates={REQUIREMENT_VERSION_FIELD: 1})
+            preflight_cloud_contract(
+                assembly,
+                candidates={REQUIREMENT_VERSION_FIELD: 1},
+                adapter=record.inputs.cloud_adapter,
+            )
         except Exception as exc:  # the verifier's own typed error
             return exc
     else:
@@ -91,6 +95,42 @@ def refusal_message(record: IncidentRecord, contract: CreatorRenderContract) -> 
         except Exception as exc:
             return exc
     raise AssertionError("the verifier accepted the recorded plan; a refusal was expected")
+
+
+def cloud_verdicts(record: IncidentRecord, contract: CreatorRenderContract) -> dict:
+    """Run the real cloud preflight and publication verifier for the recorded adapter/receipt.
+
+    Returns ``{"preflight": exc|None, "publication": exc|None}``: the typed error each real
+    entry point raised, or ``None`` when it let the plan / receipt through.
+    """
+    from app.services.cloud_render_contract import CloudRenderContractError, verify_cloud_variant
+
+    adapter = record.inputs.cloud_adapter
+    assert adapter, "a cloud expectation needs inputs.cloud_adapter"
+    assembly = {CONTRACT_FIELD: contract.model_dump(mode="json")}
+    candidates = {REQUIREMENT_VERSION_FIELD: 1}
+    archetype = {
+        "cloud_guided_story": "guided_story",
+        "cloud_classic": "montage",
+        "cloud_slides": "slides",
+    }[adapter]
+    out: dict = {"preflight": None, "publication": None}
+    try:
+        preflight_cloud_contract(assembly, candidates=candidates, adapter=adapter)
+    except CloudRenderContractError as exc:
+        out["preflight"] = exc
+    variant = {
+        "ok": True,
+        "render_status": "ready",
+        "video_path": "incident/output.mp4",
+        "resolved_archetype": archetype,
+        **({"render_receipt": record.inputs.cloud_receipt} if record.inputs.cloud_receipt else {}),
+    }
+    try:
+        verify_cloud_variant(assembly, variant, candidates=candidates)
+    except CloudRenderContractError as exc:
+        out["publication"] = exc
+    return out
 
 
 def _intent_clips(record: IncidentRecord) -> list[IntentClip]:

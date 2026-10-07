@@ -1,0 +1,136 @@
+{
+  "id": "kri470-cloud-guided-order-reversed",
+  "incident": {
+    "ticket": "KRI-470",
+    "summary": "KRI-470 PR-E: the same guided plan whose renderer reports the clips in upload order instead of the order they were run is refused at publication, typed."
+  },
+  "kind": "contract_pin",
+  "approved": {
+    "strategy": {
+      "pacing": "fast",
+      "archetype": "day_vlog",
+      "direction": "fast_montage",
+      "rationale": "(redacted)",
+      "edit_format": "montage",
+      "media_scope": "all",
+      "ordering_choice": "chronological",
+      "opening_title": "Arnavutkoy to Eminonu",
+      "opening_title_duration_s": 2.0,
+      "target_duration_s": 15,
+      "target_duration_requested": true,
+      "selected_media_ids": [
+        "run-1",
+        "run-2",
+        "run-3"
+      ],
+      "video_reuse_policy": "once"
+    },
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "order",
+          "scope": "global",
+          "description": "in the order I ran it",
+          "facts": {
+            "key": "capture_time"
+          },
+          "source_turn_id": "turn-1"
+        },
+        {
+          "id": "r2",
+          "kind": "timing",
+          "scope": "global",
+          "description": "keep 15 seconds",
+          "facts": {
+            "duration_s": 15
+          },
+          "source_turn_id": "turn-1"
+        }
+      ]
+    },
+    "creator_request": "Show the run in the order I ran it, keep 15 seconds, open with the title.",
+    "provenance": "Synthetic plan shaped like the east_run thread (KRI-185): chronological order, a 15s length and an exact opening title. Not a prod capture."
+  },
+  "inputs": {
+    "media": [
+      {
+        "id": "run-1",
+        "kind": "video",
+        "duration_s": 6.0,
+        "capture_time": "2026-10-04T11:00:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "run-2",
+        "kind": "video",
+        "duration_s": 6.0,
+        "capture_time": "2026-10-04T10:00:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "run-3",
+        "kind": "video",
+        "duration_s": 6.0,
+        "capture_time": "2026-10-04T12:00:00Z",
+        "has_audio": true
+      }
+    ],
+    "cloud_preflight": false,
+    "cloud_adapter": "cloud_guided_story",
+    "cloud_receipt": {
+      "verified": true,
+      "actual_duration_s": 15.0,
+      "actual_clip_order": [
+        "run-1",
+        "run-2",
+        "run-3"
+      ],
+      "picture_timeline": [
+        {
+          "media_id": "run-1",
+          "start_s": 0,
+          "end_s": 5
+        },
+        {
+          "media_id": "run-2",
+          "start_s": 5,
+          "end_s": 10
+        },
+        {
+          "media_id": "run-3",
+          "start_s": 10,
+          "end_s": 15
+        }
+      ],
+      "text_evidence": [
+        {
+          "role": "opening",
+          "text": "Arnavutkoy to Eminonu",
+          "start_s": 0.0,
+          "end_s": 2.5
+        }
+      ]
+    },
+    "notes": [
+      "Contract pin, not incident replay: it drives the real cloud preflight and publication verifier on a RECORDED receipt. The receipts are hand-built to the shape the renderer emits; real renderer output is proven by tests/tasks/test_cloud_render_receipts.py, tests/pipeline/test_guided_cloud_evidence.py and the PR-E local-render evidence.",
+      "The receipt is the KRI-185 failure shape (order unmet). Publication must refuse it: unmet order is evidence_missing on ordering_choice, never a pass."
+    ]
+  },
+  "expect": {
+    "cloud": {
+      "preflight": "passes",
+      "publication": "declines",
+      "reason": "evidence_missing",
+      "field_path": "ordering_choice"
+    }
+  },
+  "repro": {
+    "command": "pytest tests/incidents/test_incident_corpus.py -k kri470-cloud-guided-order-reversed",
+    "status": "available"
+  },
+  "sources": [
+    "tests/fixtures/request_following/threads/east_run.json"
+  ]
+}

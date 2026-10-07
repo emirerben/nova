@@ -110,6 +110,10 @@ class Inputs(_Strict):
     synthetic: list[SyntheticClip] = []
     phone_recipe: PhoneRecipeSpec | None = None
     cloud_preflight: bool = False
+    # KRI-470 / PR-E: the cloud adapter that would render the plan (preflight consults its
+    # declaration) and the receipt its renderer reported (the publication verifier's input).
+    cloud_adapter: Literal["cloud_guided_story", "cloud_classic", "cloud_slides"] | None = None
+    cloud_receipt: dict[str, Any] | None = None
     notes: list[str] = []
 
 
@@ -156,6 +160,20 @@ class RefusalExpect(_Strict):
     message_advisory: str | None = None
 
 
+class CloudExpect(_Strict):
+    """KRI-470 / PR-E: the real cloud preflight + publication verifier, on the recorded receipt.
+
+    ``preflight`` is whether the named adapter lets the plan through before any work;
+    ``publication`` is the verdict on ``inputs.cloud_receipt`` (``None`` = not asserted).
+    A declining publication may pin the typed ``reason`` / ``field_path``.
+    """
+
+    preflight: Literal["passes", "declines"]
+    publication: Literal["accepts", "declines"] | None = None
+    reason: str | None = None
+    field_path: str | None = None
+
+
 class QuestionExpect(_Strict):
     kind: str | None = None
     option_keys: list[str] = []
@@ -195,6 +213,7 @@ class Expect(_Strict):
     )
     contract: ContractExpect | None = None
     refusal: RefusalExpect | None = None
+    cloud: CloudExpect | None = None
     question: QuestionExpect | None = None
     output_facts: OutputFacts | None = None
 

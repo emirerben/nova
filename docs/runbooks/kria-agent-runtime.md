@@ -160,8 +160,9 @@ is noticed. Route assertions (`route`) are deliberately absent until PR-D's reso
 line), `kind`, `approved` (strategy + brief as persisted, validated against
 `CreativeStrategy`/`CreativeBrief`), `inputs` (redacted media: opaque id, duration,
 capture time, speech facts; the conversation `turns`; optional `phone_recipe`,
-`cloud_preflight`, `synthetic` clips), `expect` (`contract`, `refusal`, `question` or
-`no_question`, `output_facts`; structured facts only, never copy), `observations`,
+`cloud_preflight`, `cloud_adapter` + `cloud_receipt`, `synthetic` clips), `expect`
+(`contract`, `refusal`, `cloud`, `question` or `no_question`, `output_facts`; structured
+facts only, never copy), `observations`,
 `xfail` (`{reason: "KRI-47x / PR-x", scope: contract|refusal|question|output}`; the
 scope must be something the record really asserts), and `repro` (resolved against the
 repo by `test_repro_command_points_at_something_real`, including the `::test` part and
@@ -169,6 +170,14 @@ repo by `test_repro_command_points_at_something_real`, including the `::test` pa
 regenerated on demand (`tests/incidents/synthetic.py`); generated media is never
 committed. `refusal.reason`/`field_path` are the typed decline (KRI-476 / PR-A) and are
 asserted unconditionally, so a record can stage them as a strict xfail.
+
+**Cloud evidence records (KRI-470 / PR-E).** `expect.cloud` runs the real
+`preflight_cloud_contract(adapter=inputs.cloud_adapter)` and `verify_cloud_variant` on the
+recorded `inputs.cloud_receipt` (`preflight: passes|declines`, `publication:
+accepts|declines` with the typed `reason`/`field_path`). The receipts are hand-built to the
+shape the renderer emits, so these records pin the verdict per adapter; whether a renderer
+really emits that evidence is proven by `tests/tasks/test_cloud_render_receipts.py`,
+`tests/pipeline/test_guided_cloud_evidence.py` and the PR-E `make local-render` evidence.
 
 **Clarification harness.** It calls the planner like `plan_live_turn` does today (the
 capture-order flag is read off the brief, the brief request rides along, target length
