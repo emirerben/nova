@@ -417,3 +417,40 @@ async def test_planner_snapshot_goes_through_the_resolver(monkeypatch) -> None:
     state = _state(_moved())
     assert await _planner_target(monkeypatch, None, state) is not None
     assert calls == [state]
+
+
+@pytest.mark.asyncio
+async def test_unsupported_editor_refusal_offers_a_redo_that_routes_to_a_replan(
+    monkeypatch,
+) -> None:
+    """A re-sent request on a limited draft got a dead-end refusal (KRI-473)."""
+    from app.kria.brief import wants_full_replan
+
+    target = SimpleNamespace(job_id=uuid.uuid4(), snapshot={}, conversation=[], variant={})
+    monkeypatch.setattr(planner, "_load_editor_target", AsyncMock(return_value=target))
+    refusal = "That kind of edit isn't available for this draft yet."
+    reply = SimpleNamespace(ops=[], outcome="unsupported", reply=refusal)
+    monkeypatch.setattr(planner, "run_copilot_turn", AsyncMock(return_value=reply))
+    db = SimpleNamespace(rollback=AsyncMock())
+    item = SimpleNamespace(id=uuid.uuid4())
+
+    plan = await planner._plan_editor_revision(
+        db, thread_id=uuid.uuid4(), item=item, user_message="same prompt again but longer"
+    )
+    assert plan.mode == "respond" and plan.turn_value == "recovery"
+    assert plan.response.startswith(refusal) and '"redo"' in plan.response
+    # The word the offer asks for is the deterministic re-plan trigger.
+    assert wants_full_replan("redo")
+
+    # Other refusals (and a reply that already carries the offer) are not touched.
+    for outcome in ("failed", "stale", "no_effect"):
+        reply.outcome = outcome
+        plan = await planner._plan_editor_revision(
+            db, thread_id=uuid.uuid4(), item=item, user_message="x"
+        )
+        assert plan.response == refusal
+    reply.outcome, reply.reply = "unsupported", plan.response + planner._REDO_OFFER
+    plan = await planner._plan_editor_revision(
+        db, thread_id=uuid.uuid4(), item=item, user_message="x"
+    )
+    assert plan.response.count('"redo"') == 1

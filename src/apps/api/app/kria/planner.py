@@ -925,6 +925,14 @@ async def _load_editor_target(
     )
 
 
+# The editor can refuse an edit the draft has no lane for (a spoken-excerpt montage
+# only has text/title), and a re-sent request adds nothing new for the planner to
+# act on. A bare refusal is a dead end, so it carries the way out: "redo" is a
+# `wants_full_replan` phrase, which routes the next turn to a full re-plan.
+_REDO_OFFER = (
+    ' If you want a fresh version built from your whole request, reply "redo" and I\'ll '
+    "render it again."
+)
 _WEB_PROPOSED_REPLY = "I prepared this edit for the editor to validate and stage."
 _PHONE_STAGED_REPLY = (
     "Updated your edit \u2014 it's in the editor now. Save when you're happy with it."
@@ -1004,10 +1012,13 @@ async def _plan_editor_revision(
         log.info("kria_copilot_deferred_overlay_display", thread_id=str(thread_id))
         return None
     if response.outcome in {"clarification", "unsupported", "stale", "failed", "no_effect"}:
+        reply = response.reply
+        if response.outcome == "unsupported" and _REDO_OFFER not in reply:
+            reply = f"{reply}{_REDO_OFFER}"
         return KriaTurnPlan(
             mode="respond",
             turn_value=("question" if response.outcome == "clarification" else "recovery"),
-            response=response.reply,
+            response=reply,
         )
     return None
 
