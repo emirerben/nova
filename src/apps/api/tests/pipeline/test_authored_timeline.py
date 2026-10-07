@@ -10,6 +10,7 @@ from app.pipeline.phone_authored_timeline import compile_phone_authored_timeline
 from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
 from app.routes.generative_jobs import TimelineSlotEdit
 from app.services.authored_editor import explicit_authored_slots, resolve_authored_phone_slots
+from app.services.creator_render_contract import doubled_soundtrack_assets
 from app.services.phone_editor_sources import EDITOR_SOURCES_FIELD, phone_editor_source_revision
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
 
@@ -498,9 +499,14 @@ def test_phone_restore_keeps_independent_music_treatment(treatment_key):
     variant[treatment_key] = {"track_id": "track"}
     variant["mix"] = 0.2
     recipe = compile_phone_authored_timeline(job, variant, previous)
-    assert recipe.audio.music_asset_id == "bed"
-    assert recipe.audio.music_volume == 0.2
-    assert next(track for track in recipe.tracks if track.id == "bed").clips[0].source_duration == 3
+    clip = next(track for track in recipe.tracks if track.id == "bed").clips[0]
+    assert clip.source_duration == 3
+    # KRI-470 PR-G: the bed plays through its track clip, at the creator's mix. Naming the
+    # asset in `audio.music_asset_id` too would make the device play it a second time from
+    # source 0 (the KRI-481 double play), which the contract verifier now refuses.
+    assert clip.volume == 0.2
+    assert recipe.audio.music_asset_id is None
+    assert doubled_soundtrack_assets(recipe) == []
 
 
 def test_authored_prepare_runs_normal_validation_and_stamps_new_generation(monkeypatch):

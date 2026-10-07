@@ -486,6 +486,11 @@ PHONE_VERIFIER_DECLINES: dict[str, Decline] = {
     "order_required": Decline("evidence_missing", _PHONE_REPAIR),
 }
 _UNRESOLVED_DECLINE = Decline("needs_choice", _ASK_FOR_CHOICE)
+# The mix would play one source twice (a track clip and the separate music bed).
+_SOUNDTRACK_TWICE = Decline(
+    "requirement_conflict",
+    "I can rebuild the edit with that soundtrack playing once, or you can pick a different one.",
+)
 
 
 def _phone(adapter: str, consumes: set[str], **overrides: Decline) -> AdapterDeclaration:
@@ -928,6 +933,61 @@ def speech_edit_not_built() -> CreatorRenderContractError:
     )
 
 
+def _clip_audible(recipe: EditRecipeV2, track, clip) -> bool:  # noqa: ANN001
+    """True when this track clip reaches the mix (gain, original volume, mute windows)."""
+
+    if clip.volume <= 0 or (track.kind == "video" and recipe.audio.original_volume <= 0):
+        return False
+    # Mute windows use timeline time. Covering only part of a clip cannot
+    # prove silence; adjacent windows can together cover the whole clip.
+    start = clip.timeline_start
+    end = start + clip.source_duration / clip.rate
+    for window in sorted(recipe.audio.mute_windows, key=lambda item: item.start):
+        if clip.id not in window.clip_ids or window.end <= start:
+            continue
+        if window.start > start:
+            return True
+        start = max(start, window.end)
+        if start >= end:
+            return False
+    return start < end
+
+
+def music_bed_audible(recipe: EditRecipeV2) -> str | None:
+    """The asset id of the separate music bed when it reaches the mix, else None.
+
+    The device plays ``audio.music_asset_id`` as its OWN bed (from source 0, at
+    ``music_volume``) in addition to every audio-track clip. A track clip is not
+    the only way a source becomes audible.
+    """
+
+    asset_id = recipe.audio.music_asset_id
+    if asset_id is None or recipe.audio.music_volume <= 0 or recipe.duration <= 0:
+        return None
+    return asset_id
+
+
+def doubled_soundtrack_assets(recipe: EditRecipeV2) -> list[str]:
+    """Assets the mix plays twice: audible through a track clip AND the music bed.
+
+    KRI-481 (prod job 934811f3): the song lane put the creator's song on a track
+    clip at the chosen window and left the bed at its default volume, so the
+    device also played it from source 0. Neither copy is "wrong" alone, which is
+    why a per-clip check could not see it.
+    """
+
+    bed = music_bed_audible(recipe)
+    if bed is None:
+        return []
+    for track in recipe.tracks:
+        if track.kind not in {"video", "audio"}:
+            continue
+        for clip in track.clips:
+            if clip.source_asset_id == bed and _clip_audible(recipe, track, clip):
+                return [bed]
+    return []
+
+
 def verify_phone_recipe(
     contract: CreatorRenderContract,
     recipe: EditRecipeV2,
@@ -945,24 +1005,19 @@ def verify_phone_recipe(
         raise _phone_decline("duration_s", "This edit couldn't keep the confirmed length.")
 
     def audible(track, clip) -> bool:
-        if clip.volume <= 0 or (track.kind == "video" and recipe.audio.original_volume <= 0):
-            return False
-        # Mute windows use timeline time. Covering only part of a clip cannot
-        # prove silence; adjacent windows can together cover the whole clip.
-        start = clip.timeline_start
-        end = start + clip.source_duration / clip.rate
-        for window in sorted(recipe.audio.mute_windows, key=lambda item: item.start):
-            if clip.id not in window.clip_ids or window.end <= start:
-                continue
-            if window.start > start:
-                return True
-            start = max(start, window.end)
-            if start >= end:
-                return False
-        return start < end
+        return _clip_audible(recipe, track, clip)
 
+    doubled = doubled_soundtrack_assets(recipe)
+    if doubled:
+        raise CreatorRenderContractError(
+            "This edit would play its soundtrack twice at once.",
+            decline_reason=_SOUNDTRACK_TWICE.reason,
+            field_path=REQUIREMENT_FIELD_PATHS["require_voiceover"],
+            alternative=_SOUNDTRACK_TWICE.alternative,
+        )
+    bed_asset = manifest.get(music_bed_audible(recipe) or "")
     if contract.require_voiceover:
-        voice_is_audible = any(
+        voice_is_audible = isinstance(bed_asset, VoiceoverRenderAsset) or any(
             track.kind == "audio"
             and audible(track, clip)
             and isinstance(manifest.get(clip.source_asset_id), VoiceoverRenderAsset)
@@ -993,6 +1048,11 @@ def verify_phone_recipe(
             for clip in track.clips
         )
     }
+    if isinstance(bed_asset, OriginalRenderAsset) and (
+        source_audio is None or source_audio.get(bed_asset.media_id) is True
+    ):
+        # A bed that names the camera's file plays the camera audio too.
+        original_ids.add(bed_asset.media_id)
     if contract.original_audio == "forbid" and original_ids:
         raise _phone_decline(
             "original_audio", "This edit can't use the camera audio you turned off."
