@@ -116,7 +116,7 @@ logs `kria_turn_claims_exhausted`. Look for the kills (`TimeLimitExceeded`,
 ### Rendered follow-up routing
 
 Once a draft has a rendered snapshot, the planner first runs the narrow
-`nova.creator.brief_extractor` prompt (`2026-10-07-v1`) to turn the follow-up into
+`nova.creator.brief_extractor` prompt (`2026-10-07-v2`) to turn the follow-up into
 typed brief requirements. Text and style changes, plus timing scoped to a
 title, can stay on the current snapshot through editor operations. Broad clip
 timing, stale or unsupported targets, and clarifying outcomes remain in the

@@ -1,0 +1,34 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-06.1",
+  "input": {
+    "creator_request": "Creative brief v0 (everything the creator has asked for, still in force):\n- [r1] [timing/global] 8 second fast montage facts={\"duration_s\":8}\n- [r2] [select/global] using all my clips\nLatest message: Make an 8 second fast montage using all my clips.",
+    "latest_user_message": "Make an 8 second fast montage using all my clips.",
+    "generated_brief": "Creative brief v0 (everything the creator has asked for, still in force):\n- [r1] [timing/global] 8 second fast montage facts={\"duration_s\":8}\n- [r2] [select/global] using all my clips\nLatest message: Make an 8 second fast montage using all my clips.",
+    "candidate_intents": null,
+    "clip_facts": true
+  },
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"include_all_clips\",\n      \"op\": \"include\",\n      \"attribute\": \"all clips\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"using all my clips\"\n    }\n  ],\n  \"question\": null\n}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "include_all_clips",
+        "op": "include",
+        "attribute": "all clips",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "using all my clips"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "live_recorded 2026-10-07 prompt 2026-10-06.1",
+    "ticket": "KRI-470",
+    "gate_case": "a",
+    "expect_any": true,
+    "contract": "Contract: 'using all my clips' => one include intent 'all clips'.",
+    "note": "Recorded from the real model in the owner-approved KRI-470 gate experiment (test_run_id kri470-gate-20261007). Replay is structural only; the cassette ignores the prompt text."
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-06.1",
+  "input": {
+    "creator_request": "Creative brief v0 (everything the creator has asked for, still in force):\n- [r1] [audio/global] Use the voice from the talk to camera video behind the montage\n- [r2] [select/global] the remaining clips (excluding the talk to camera video)\n- [r3] [order/global] chronological order facts={\"key\":\"capture_time\"}\nLatest message: Use the voice from the talk to camera video behind a fast montage of the remaining clips, in chronological order.",
+    "latest_user_message": "Use the voice from the talk to camera video behind a fast montage of the remaining clips, in chronological order.",
+    "generated_brief": "Creative brief v0 (everything the creator has asked for, still in force):\n- [r1] [audio/global] Use the voice from the talk to camera video behind the montage\n- [r2] [select/global] the remaining clips (excluding the talk to camera video)\n- [r3] [order/global] chronological order facts={\"key\":\"capture_time\"}\nLatest message: Use the voice from the talk to camera video behind a fast montage of the remaining clips, in chronological order.",
+    "candidate_intents": null,
+    "clip_facts": true
+  },
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"select_remaining_clips\",\n      \"op\": \"include\",\n      \"attribute\": \"the remaining clips (excluding the talk to camera video)\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"the remaining clips (excluding the talk to camera video)\"\n    },\n    {\n      \"intent_id\": \"order_chronological\",\n      \"op\": \"order\",\n      \"attribute\": \"clips\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": \"capture_time\",\n      \"source_quote\": \"chronological order\"\n    }\n  ],\n  \"question\": null\n}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "select_remaining_clips",
+        "op": "include",
+        "attribute": "the remaining clips (excluding the talk to camera video)",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "the remaining clips (excluding the talk to camera video)"
+      },
+      {
+        "intent_id": "order_chronological",
+        "op": "order",
+        "attribute": "clips",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "order_by": "capture_time",
+        "source_quote": "chronological order"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "live_recorded 2026-10-07 prompt 2026-10-06.1",
+    "ticket": "KRI-470",
+    "gate_case": "d",
+    "expect_any": true,
+    "contract": "Contract: 'remaining clips (excluding the talk to camera video)' include intent + chronological order intent.",
+    "note": "Recorded from the real model in the owner-approved KRI-470 gate experiment (test_run_id kri470-gate-20261007). Replay is structural only; the cassette ignores the prompt text."
+  }
+}

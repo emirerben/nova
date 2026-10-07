@@ -133,6 +133,24 @@ turn.
 requirement. The Creator model must always emit `target_duration_s` and the server stamps
 `target_duration_requested` whenever it did, so neither is evidence of a stated length.
 
+**The gate depends on the model emitting the `timing` requirement.** `duration_vs_count` can only
+compare a length the live brief carries. Main Creator prompt `2026-10-06-v44` emitted it for
+"8 second ... all my clips" and "20 second ... 6 best clips" but dropped "60 second montage of all
+my clips" (`brief_updates` empty), so a lost number meant a silent gate. Prompt `2026-10-07-v45`
+(and `brief_extractor` `2026-10-07-v2`, which shares the brief section) tells the model to emit a
+`timing` requirement with `duration_s` in the same turn for ANY stated length, alongside
+`target_duration_s`, and never to invent one when none was stated. Verified by a live re-record
+(2026-10-07, 6 Main Creator calls, real spend about $0.24): "60 second montage of all my clips"
+now yields `timing{duration_s: 60}` (v44 returned nothing), "8 second" and "20 second" keep
+their timing, and "chronological order" / the talk-to-camera request invent no length. One
+recording per case, so treat it as evidence, not a guarantee. The same run showed two
+side effects: the model now often drops the `select` requirement ("all my clips", "6 best
+clips") and, on 12-clip montages, picks `archetype: day_vlog`, which EXEMPTS the length question
+(the 8 s request no longer asks). The committed cassettes
+(`tests/fixtures/agent_evals/main_creator/kri470_gate_*`, with `_v44` before-pictures) replay
+structurally and ignore the prompt text; `tests/kria/test_creator_gate_live_cassettes.py` pins the
+model-output -> gate chain, including the archetype exemption.
+
 | Kind | Evidence required | Detector | Options (all executable today) | Persisted field | Exempt (never asks) |
 | --- | --- | --- | --- | --- | --- |
 | `duration_vs_count` | A live brief `timing` requirement with `duration_s` (quoted in the question) | N clips (the selection the draft carries when it has one, else the snapshot; minus clips outside a resolved `include` intent) cannot each get the readable-shot floor (`unified_montage.MIN_READABLE_SHOT_S`, 0.8 s) in that length | `extend` (the length N x floor needs, if within the 120 s cap), `fewer` (the clips that fit, evenly spaced WITHIN the selection, never re-adding an excluded clip); flash-cutting is never offered | `target_duration_s` + requested flag (extend), or `selected_media_ids` + `media_scope=selected` + the length (fewer); the pinned brief timing requirement is updated to match | Strategy-only lengths; non-montage formats; a live `select` requirement with no resolved subset; a selection whose clips fit; `montage_cadence`, `mixed_media_timing`, `montage_audio`, `archetype`, `execution_contract`; `audio_strategy` voiceover / user_song, `song_sync` (those planners never read the strategy length) |
@@ -210,6 +228,14 @@ picks the recommended option, recorded as `source="creator_delegated"` and discl
 * `group_first` is not yet an explicit contract order basis: the arrangement is computed at
   render time (visual scatter, sequence intents), so pinning it needs the route resolver
   (PR-D).
+* A `timing` requirement the model fails to emit keeps `duration_vs_count` silent ("30 clips in
+  15 s" passes if the 15 never reached the brief), and a length question also needs a resolved
+  clip set (a resolved `include` intent or a selection on the strategy): no include intent from the
+  clip-request resolver means no count to compare. `montage_audio` and the other archetype
+  exemptions in the table keep BOTH questions silent (including an archetype the model picks on
+  its own for a plain "N second montage"); the KRI-469 route gap on those plans (cloud
+  declines `montage_audio.source_media_ids[]`, phone renders `speech_montage`) is pinned in
+  `test_montage_audio_route_shape_is_the_documented_kri469_gap` until the PR-H slice changes it.
 * Questions render through the generic v1 `ChoiceQuestionCard` on iOS; web has no question
   card and shows the plain-text list.
 

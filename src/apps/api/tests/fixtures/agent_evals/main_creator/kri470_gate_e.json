@@ -1,0 +1,362 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-10-07-v45",
+  "input": {
+    "user_message": "Make a 20 second montage of my 6 best clips.",
+    "creator_context": "City-break creator who posts short travel montages.",
+    "item_context": "Untitled video; montage; no recorded voiceover.",
+    "media_context": [
+      {
+        "media_id": "clip-1",
+        "kind": "video",
+        "duration_s": 6.0,
+        "creator_note": "walk by the river",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T07:00:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-2",
+        "kind": "video",
+        "duration_s": 8.5,
+        "creator_note": "coffee on the terrace",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T07:25:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-3",
+        "kind": "video",
+        "duration_s": 4.5,
+        "creator_note": "old tram passing",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T07:50:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-4",
+        "kind": "video",
+        "duration_s": 7.0,
+        "creator_note": "market stalls",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T08:15:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-5",
+        "kind": "video",
+        "duration_s": 5.5,
+        "creator_note": "sunset on the bridge",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T08:40:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-6",
+        "kind": "video",
+        "duration_s": 9.0,
+        "creator_note": "street musician",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T09:05:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-7",
+        "kind": "video",
+        "duration_s": 4.0,
+        "creator_note": "park bench",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T09:30:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-8",
+        "kind": "video",
+        "duration_s": 6.5,
+        "creator_note": "ferry crossing",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T09:55:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-9",
+        "kind": "video",
+        "duration_s": 7.5,
+        "creator_note": "bakery window",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T10:20:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-10",
+        "kind": "video",
+        "duration_s": 5.0,
+        "creator_note": "rooftop view",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T10:45:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-11",
+        "kind": "video",
+        "duration_s": 8.0,
+        "creator_note": "night lights",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T11:10:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-12",
+        "kind": "video",
+        "duration_s": 6.0,
+        "creator_note": "train platform",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T11:35:00Z",
+            "provenance": "exif"
+          }
+        ]
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-gate-1",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "has_voiceover": false,
+      "media": [
+        {
+          "media_id": "clip-1",
+          "kind": "video",
+          "duration_s": 6.0,
+          "label": "walk by the river"
+        },
+        {
+          "media_id": "clip-2",
+          "kind": "video",
+          "duration_s": 8.5,
+          "label": "coffee on the terrace"
+        },
+        {
+          "media_id": "clip-3",
+          "kind": "video",
+          "duration_s": 4.5,
+          "label": "old tram passing"
+        },
+        {
+          "media_id": "clip-4",
+          "kind": "video",
+          "duration_s": 7.0,
+          "label": "market stalls"
+        },
+        {
+          "media_id": "clip-5",
+          "kind": "video",
+          "duration_s": 5.5,
+          "label": "sunset on the bridge"
+        },
+        {
+          "media_id": "clip-6",
+          "kind": "video",
+          "duration_s": 9.0,
+          "label": "street musician"
+        },
+        {
+          "media_id": "clip-7",
+          "kind": "video",
+          "duration_s": 4.0,
+          "label": "park bench"
+        },
+        {
+          "media_id": "clip-8",
+          "kind": "video",
+          "duration_s": 6.5,
+          "label": "ferry crossing"
+        },
+        {
+          "media_id": "clip-9",
+          "kind": "video",
+          "duration_s": 7.5,
+          "label": "bakery window"
+        },
+        {
+          "media_id": "clip-10",
+          "kind": "video",
+          "duration_s": 5.0,
+          "label": "rooftop view"
+        },
+        {
+          "media_id": "clip-11",
+          "kind": "video",
+          "duration_s": 8.0,
+          "label": "night lights"
+        },
+        {
+          "media_id": "clip-12",
+          "kind": "video",
+          "duration_s": 6.0,
+          "label": "train platform"
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Warm acoustic bed"
+        }
+      ],
+      "capabilities": {
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "media_overlays": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "edit_format:montage": {
+          "available": true
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "brief_enabled": true
+  },
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"timing\",\n      \"scope\": \"global\",\n      \"literal\": \"20 second\",\n      \"description\": null,\n      \"facts\": {\n        \"duration_s\": 20\n      }\n    }\n  ],\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"archetype\": null,\n      \"hero_media_id\": null,\n      \"audio_strategy\": \"licensed_music\",\n      \"execution_contract\": null,\n      \"media_scope\": \"selected\",\n      \"clip_intents\": [],\n      \"story_structure\": [\n        \"Vibrant morning atmosphere with coffee and market scenes\",\n        \"Engaging local culture with street music and ferry rides\",\n        \"Scenic evening views from rooftops to night lights\"\n      ],\n      \"caption_style\": \"none\",\n      \"intro_hook\": null,\n      \"opening_title\": null,\n      \"closing_title\": null,\n      \"font_family\": null,\n      \"text_color\": null,\n      \"pacing\": \"balanced\",\n      \"target_duration_s\": 20,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [\n        \"clip-2\",\n        \"clip-4\",\n        \"clip-6\",\n        \"clip-8\",\n        \"clip-10\",\n        \"clip-11\"\n      ],\n      \"optional_treatments\": [],\n      \"rationale\": \"Selected a mix of 6 visually distinct and engaging clips to capture a full day's progression in the city. A 20-second duration allows for comfortable, balanced holds on each shot while maintaining an upbeat montage feel set to an acoustic track.\",\n      \"overlay_display\": null\n    },\n    \"summary\": \"I'll create a 20-second montage using 6 of your most cinematic clips, set to a warm acoustic track to capture the city break vibe.\",\n    \"render_intent_evidence\": {}\n  }\n}",
+  "output": {
+    "action": {
+      "kind": "propose_strategy",
+      "strategy": {
+        "direction": "fast_montage",
+        "edit_format": "montage",
+        "archetype": null,
+        "hero_media_id": null,
+        "audio_strategy": "licensed_music",
+        "execution_contract": null,
+        "media_scope": "selected",
+        "story_structure": [
+          "Vibrant morning atmosphere with coffee and market scenes",
+          "Engaging local culture with street music and ferry rides",
+          "Scenic evening views from rooftops to night lights"
+        ],
+        "caption_style": "none",
+        "intro_hook": null,
+        "opening_title": null,
+        "font_family": null,
+        "text_color": null,
+        "clip_intents": [],
+        "image_layout": null,
+        "pacing": "balanced",
+        "target_duration_s": 20,
+        "target_duration_requested": true,
+        "render_program": "guided",
+        "selected_media_ids": [
+          "clip-2",
+          "clip-4",
+          "clip-6",
+          "clip-8",
+          "clip-10",
+          "clip-11"
+        ],
+        "optional_treatments": [],
+        "licensed_sfx": null,
+        "mixed_media_timing": null,
+        "montage_audio": null,
+        "video_reuse_policy": "once",
+        "rationale": "Selected a mix of 6 visually distinct and engaging clips to capture a full day's progression in the city. A 20-second duration allows for comfortable, balanced holds on each shot while maintaining an upbeat montage feel set to an acoustic track."
+      },
+      "summary": "I'll create a 20-second montage using 6 of your most cinematic clips, set to a warm acoustic track to capture the city break vibe.",
+      "render_intent_evidence": {
+        "opening_title": null,
+        "font_family": null,
+        "text_color": null
+      }
+    },
+    "brief_updates": [
+      {
+        "operation": "add",
+        "target_requirement_id": null,
+        "expected_version": null,
+        "kind": "timing",
+        "scope": "global",
+        "literal": "20 second",
+        "description": null,
+        "facts": {
+          "duration_s": 20
+        }
+      }
+    ]
+  },
+  "meta": {
+    "source": "live_recorded 2026-10-07 prompt 2026-10-07-v45",
+    "ticket": "KRI-470",
+    "gate_case": "e",
+    "dated": true,
+    "contract": "Contract (v45): '20 second montage of my 6 best clips' => timing(duration_s 20) kept, select dropped, 6 selected clips fit 20 s so the gate stays silent.",
+    "note": "Re-recorded from the real model under prompt 2026-10-07-v45 (owner-approved run, real spend ~$0.24). Replay is structural only; the cassette ignores the prompt text.",
+    "test_run_id": "kri470-v45-rerecord-20261007"
+  }
+}

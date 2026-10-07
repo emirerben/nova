@@ -1,0 +1,229 @@
+{
+  "agent": "nova.plan.clip_request_resolver",
+  "prompt_version": "2026-10-05.1",
+  "input": {
+    "creator_request": "Creative brief v0 (everything the creator has asked for, still in force):\n- [r1] [audio/global] Use the voice from the talk to camera video behind the montage\n- [r2] [select/global] the remaining clips (excluding the talk to camera video)\n- [r3] [order/global] chronological order facts={\"key\":\"capture_time\"}\nLatest message: Use the voice from the talk to camera video behind a fast montage of the remaining clips, in chronological order.",
+    "intents": [
+      {
+        "intent_id": "select_remaining_clips",
+        "op": "include",
+        "attribute": "the remaining clips (excluding the talk to camera video)",
+        "creator_text": null,
+        "position": null
+      }
+    ],
+    "clips": [
+      {
+        "alias": "m001",
+        "kind": "video",
+        "record": {
+          "subject": "creator talking directly to the camera",
+          "setting": "street",
+          "activity": "talking directly to the camera",
+          "speech": {
+            "has_speech": true,
+            "to_camera": true,
+            "transcript": "so this is how our day in the city went and what we saw"
+          },
+          "summary": "The creator talks straight to the camera about the plan for the day."
+        }
+      },
+      {
+        "alias": "m002",
+        "kind": "video",
+        "record": {
+          "subject": "coffee on the terrace",
+          "summary": "Footage of coffee on the terrace.",
+          "setting": "city",
+          "activity": "coffee on the terrace"
+        }
+      },
+      {
+        "alias": "m003",
+        "kind": "video",
+        "record": {
+          "subject": "old tram passing",
+          "summary": "Footage of old tram passing.",
+          "setting": "city",
+          "activity": "old tram passing"
+        }
+      },
+      {
+        "alias": "m004",
+        "kind": "video",
+        "record": {
+          "subject": "market stalls",
+          "summary": "Footage of market stalls.",
+          "setting": "city",
+          "activity": "market stalls"
+        }
+      },
+      {
+        "alias": "m005",
+        "kind": "video",
+        "record": {
+          "subject": "sunset on the bridge",
+          "summary": "Footage of sunset on the bridge.",
+          "setting": "city",
+          "activity": "sunset on the bridge"
+        }
+      },
+      {
+        "alias": "m006",
+        "kind": "video",
+        "record": {
+          "subject": "street musician",
+          "summary": "Footage of street musician.",
+          "setting": "city",
+          "activity": "street musician"
+        }
+      },
+      {
+        "alias": "m007",
+        "kind": "video",
+        "record": {
+          "subject": "park bench",
+          "summary": "Footage of park bench.",
+          "setting": "city",
+          "activity": "park bench"
+        }
+      },
+      {
+        "alias": "m008",
+        "kind": "video",
+        "record": {
+          "subject": "ferry crossing",
+          "summary": "Footage of ferry crossing.",
+          "setting": "city",
+          "activity": "ferry crossing"
+        }
+      },
+      {
+        "alias": "m009",
+        "kind": "video",
+        "record": {
+          "subject": "bakery window",
+          "summary": "Footage of bakery window.",
+          "setting": "city",
+          "activity": "bakery window"
+        }
+      },
+      {
+        "alias": "m010",
+        "kind": "video",
+        "record": {
+          "subject": "rooftop view",
+          "summary": "Footage of rooftop view.",
+          "setting": "city",
+          "activity": "rooftop view"
+        }
+      },
+      {
+        "alias": "m011",
+        "kind": "video",
+        "record": {
+          "subject": "night lights",
+          "summary": "Footage of night lights.",
+          "setting": "city",
+          "activity": "night lights"
+        }
+      },
+      {
+        "alias": "m012",
+        "kind": "video",
+        "record": {
+          "subject": "train platform",
+          "summary": "Footage of train platform.",
+          "setting": "city",
+          "activity": "train platform"
+        }
+      }
+    ]
+  },
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"select_remaining_clips\",\n      \"assignments\": [\n        {\n          \"media\": \"m002\",\n          \"value\": \"\",\n          \"evidence\": \"This is a clip other than the 'talk to camera' video.\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m003\",\n          \"value\": \"\",\n          \"evidence\": \"This is a clip other than the 'talk to camera' video.\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m004\",\n          \"value\": \"\",\n          \"evidence\": \"This is a clip other than the 'talk to camera' video.\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m005\",\n          \"value\": \"\",\n          \"evidence\": \"This is a clip other than the 'talk to camera' video.\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m006\",\n          \"value\": \"\",\n          \"evidence\": \"This is a clip other than the 'talk to camera' video.\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m007\",\n          \"value\": \"\",\n          \"evidence\": \"This is a clip other than the 'talk to camera' video.\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m008\",\n          \"value\": \"\",\n          \"evidence\": \"This is a clip other than the 'talk to camera' video.\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m009\",\n          \"value\": \"\",\n          \"evidence\": \"This is a clip other than the 'talk to camera' video.\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m010\",\n          \"value\": \"\",\n          \"evidence\": \"This is a clip other than the 'talk to camera' video.\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m011\",\n          \"value\": \"\",\n          \"evidence\": \"This is a clip other than the 'talk to camera' video.\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m012\",\n          \"value\": \"\",\n          \"evidence\": \"This is a clip other than the 'talk to camera' video.\",\n          \"confidence\": 1.0\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    }\n  ]\n}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "select_remaining_clips",
+        "assignments": [
+          {
+            "media": "m002",
+            "value": null,
+            "evidence": "This is a clip other than the 'talk to camera' video.",
+            "confidence": 1.0
+          },
+          {
+            "media": "m003",
+            "value": null,
+            "evidence": "This is a clip other than the 'talk to camera' video.",
+            "confidence": 1.0
+          },
+          {
+            "media": "m004",
+            "value": null,
+            "evidence": "This is a clip other than the 'talk to camera' video.",
+            "confidence": 1.0
+          },
+          {
+            "media": "m005",
+            "value": null,
+            "evidence": "This is a clip other than the 'talk to camera' video.",
+            "confidence": 1.0
+          },
+          {
+            "media": "m006",
+            "value": null,
+            "evidence": "This is a clip other than the 'talk to camera' video.",
+            "confidence": 1.0
+          },
+          {
+            "media": "m007",
+            "value": null,
+            "evidence": "This is a clip other than the 'talk to camera' video.",
+            "confidence": 1.0
+          },
+          {
+            "media": "m008",
+            "value": null,
+            "evidence": "This is a clip other than the 'talk to camera' video.",
+            "confidence": 1.0
+          },
+          {
+            "media": "m009",
+            "value": null,
+            "evidence": "This is a clip other than the 'talk to camera' video.",
+            "confidence": 1.0
+          },
+          {
+            "media": "m010",
+            "value": null,
+            "evidence": "This is a clip other than the 'talk to camera' video.",
+            "confidence": 1.0
+          },
+          {
+            "media": "m011",
+            "value": null,
+            "evidence": "This is a clip other than the 'talk to camera' video.",
+            "confidence": 1.0
+          },
+          {
+            "media": "m012",
+            "value": null,
+            "evidence": "This is a clip other than the 'talk to camera' video.",
+            "confidence": 1.0
+          }
+        ],
+        "needs_vision": [],
+        "question": null,
+        "caption": null
+      }
+    ]
+  },
+  "meta": {
+    "source": "live_recorded 2026-10-07 prompt 2026-10-05.1",
+    "ticket": "KRI-470",
+    "gate_case": "d",
+    "contract": "Contract: 'remaining clips' resolves to m002..m012, excluding the talk-to-camera clip m001.",
+    "note": "Recorded from the real model in the owner-approved KRI-470 gate experiment (test_run_id kri470-gate-20261007). Replay is structural only; the cassette ignores the prompt text."
+  }
+}
