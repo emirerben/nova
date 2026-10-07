@@ -101,16 +101,20 @@ A refusal carries a `DeclineReason` and a `field_path` (matrix path, or
 | Reason | Meaning | Creator recovery (`tasks/kria_runtime.py`) |
 | --- | --- | --- |
 | `capability_unavailable` | The path can never honour or prove it. | Refusal naming the limit and a supported alternative. |
-| `evidence_missing` | Supported, but the output did not demonstrate it. | Repair / retry. |
-| `requirement_conflict` | Two approved requirements cannot both hold. | Existing ask behaviour (real questions arrive with the clarification gate). |
+| `evidence_missing` | Supported, but the output did not demonstrate it. | Repair / retry, only where the evidence can appear on a re-run (cloud publication verification, `creator_render_contract_unverified`; cloud preflight). A phone `phone_plan_unsupported` stays deterministic: it asks, with the original copy plus the typed alternative. |
+| `requirement_conflict` | Two approved requirements cannot both hold. | Existing ask behaviour (real questions arrive with the clarification gate); a typed alternative is appended to phone copy. |
 | `needs_choice` | Ambiguous until the creator decides (includes `unresolved`). | Existing ask behaviour. |
 
 The reason is persisted beside, never in place of, the existing failure strings:
 `phone_plan_unsupported`, `creator_render_contract_unsupported` and
 `creator_render_contract_unverified` are unchanged. Phone and cloud-preflight
 declines land in `Job.assembly_plan["creator_decline"]`
-(`{"decline_reason", "field_path"?, "alternative"?}`); a cloud publication decline
-lands on the failed variant next to `error_class`. `unresolved` stays a tuple of
+(`{"decline_reason", "field_path"?, "alternative"?, "failure_reason"}`), stamped with
+the failure code they belong to; recovery honours it only when it matches the
+job's current failure code, and a new worker run or a successful finalization
+clears it, so a later unrelated failure never inherits an old refusal. A cloud
+publication decline lands on the failed variant next to `error_class`, and
+recovery reads only the targeted variant's own decline. `unresolved` stays a tuple of
 strings; it is reported as `needs_choice` without a field path.
 
 ## Stored-contract compatibility
