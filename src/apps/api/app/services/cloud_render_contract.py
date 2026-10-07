@@ -8,10 +8,14 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from app.pipeline.cloud_render_evidence import (
+    CLOUD_EVIDENCE_KEY,
     TEXT_WINDOW_TOLERANCE_S,
     CloudPictureSegment,
     CloudTextEvidence,
+    collapse_adjacent,
+    duration_tolerance_s,
     normalize_text,
+    order_satisfied,
 )
 from app.services.creator_render_contract import (
     CONTRACT_FIELD,
@@ -106,30 +110,44 @@ def _cloud(
     return AdapterDeclaration(adapter, frozenset(consumes), declines)
 
 
+_ASK_CHRONOLOGICAL = (
+    "Ask for it to be rendered on your iPhone, which renders clips in the order you confirmed, "
+    "or tell me to drop that requirement."
+)
+_ASK_CAMERA_AUDIO = (
+    "Ask for a spoken-excerpt montage on your iPhone, which keeps or mutes camera audio as you "
+    "confirmed, or tell me to drop that requirement."
+)
+
+# What the cloud adapters HONOUR (``consumes``, and so lift at preflight) is not what
+# their receipts can REPORT.  A requirement is lifted only where the renderer follows
+# it by construction (or a cheap pre-render gate proves the plan already does), so a
+# default contracted job never renders everything and then fails publication.  The
+# post-render verifier stays the last line of defence, never the first.
+#
+#   guided  honours: exact text (typed copy flows into the snapshot), camera audio
+#                    (``montage_audio`` is in the snapshot), recorded voice (execution
+#                    contract + pinned narration mix).  Order is GATED: the builder only
+#                    covers a media set, so ``check_guided_plan_order`` compares the
+#                    pinned plan's timeline with the contract before any render.
+#   classic honours: the recorded voice only (by archetype).  Its matcher is greedy and
+#                    never reads the contract's order, and its song variants replace
+#                    camera audio while track-less ones keep it.
 CLOUD_ADAPTER_DECLARATIONS: dict[str, AdapterDeclaration] = {
     declaration.adapter: declaration
     for declaration in (
-        # Guided story (``GuidedStoryRenderReceipt``): the receipt carries the
-        # measured duration, whether the narration was mixed, the picture order
-        # actually rendered, the camera-audio sources actually mixed and every
-        # text layer's role/window as burned (pixel-checked).  It mixes every
-        # clip's own sound, so it can restrict to a *named* set of sources no
-        # better than it can promise one: that stays declined.
         _cloud(
             "cloud_guided_story",
             {"duration_s", "require_voiceover", "original_audio", "exact_texts", "order_required"},
+            # It mixes every clip's own sound, so it cannot restrict to a *named* set.
             audio_source_ids=Decline("capability_unavailable", _ASK_SPEECH_MONTAGE),
         ),
-        # Classic montage/voiceover/narrated renders (``classic_render_receipt``):
-        # measured duration, narration actually mixed, picture order and audible
-        # camera-audio sources from the timeline/mix the renderer built.  Their
-        # intro text is composed from agent blocks whose exact words are not
-        # evidenced separately, so exact text stays declined; talking-head and
-        # subtitled renders emit no receipt (see ``check_classic_archetype``).
         _cloud(
             "cloud_classic",
-            {"duration_s", "require_voiceover", "original_audio", "order_required"},
+            {"duration_s", "require_voiceover"},
             audio_source_ids=Decline("capability_unavailable", _ASK_SPEECH_MONTAGE),
+            order_required=Decline("capability_unavailable", _ASK_CHRONOLOGICAL),
+            original_audio=Decline("capability_unavailable", _ASK_CAMERA_AUDIO),
         ),
         # Slide posts are stills: no length, no voice, no camera audio, no order.
         _cloud(
@@ -140,12 +158,25 @@ CLOUD_ADAPTER_DECLARATIONS: dict[str, AdapterDeclaration] = {
     )
 }
 
+# What each adapter's receipts can REPORT (a superset of what it honours): the
+# evidence is emitted for the verifier, the corpus and the editor, but only honoured
+# requirements are lifted.
+CLOUD_EVIDENCES: dict[str, frozenset[str]] = {
+    "cloud_guided_story": frozenset(
+        {"duration_s", "require_voiceover", "original_audio", "exact_texts", "order_required"}
+    ),
+    "cloud_classic": frozenset(
+        {"duration_s", "require_voiceover", "original_audio", "order_required"}
+    ),
+    "cloud_slides": frozenset(),
+}
+
 # Classic archetypes whose renderers emit ``classic_render_receipt`` evidence.
 CLASSIC_EVIDENCE_ARCHETYPES = frozenset(
     {"montage", "day_vlog", "single_hero", "voiceover", "narrated"}
 )
-# The requirements only the receipt can prove for a classic render.
-_CLASSIC_RECEIPT_REQUIREMENTS = ("require_voiceover", "original_audio", "order_required")
+# The honoured classic requirements only a receipt can prove.
+_CLASSIC_RECEIPT_REQUIREMENTS = ("require_voiceover",)
 
 _MESSAGE_PREFLIGHT = {
     "exact_texts": "This cloud renderer can't verify confirmed on-screen text yet.",
@@ -302,8 +333,8 @@ def check_classic_archetype(
 ) -> None:
     """Decline a classic archetype that emits no receipt for a receipt-only requirement.
 
-    The classic adapter is declared as proving voice, camera audio and order, but
-    only the montage/voiceover/narrated renderers emit that receipt.  The
+    The classic adapter honours the recorded voice, but only the
+    montage/voiceover/narrated renderers emit the receipt that proves it.  The
     archetype is known once the footage is analysed; this runs before any variant
     renders so a talking-head or subtitled edit is refused up front instead of
     rendering and then failing publication for lack of evidence.
@@ -328,15 +359,33 @@ def check_classic_archetype(
             )
 
 
-def _actual_receipt(variant: Mapping[str, Any]) -> Mapping[str, Any]:
-    receipt = variant.get("render_receipt")
-    if not isinstance(receipt, Mapping) or receipt.get("verified") is not True:
-        raise CloudRenderContractError(
-            "This edit has no verified render evidence.",
-            decline_reason="evidence_missing",
-            alternative=_RETRY,
-        )
-    return receipt
+def check_guided_plan_order(
+    assembly: Mapping[str, Any],
+    *,
+    candidates: Mapping[str, Any] | None,
+    plan: Mapping[str, Any],
+) -> None:
+    """Decline, before any render spend, a guided plan that cannot satisfy a confirmed order.
+
+    The guided builder covers a media set but does not order it by the contract, so
+    this compares the collapsed media order of the pinned plan's own timeline with
+    ``contract.order_ids`` (restricted to the media the plan uses).  Equal passes;
+    anything else is a typed ``capability_unavailable`` with a supported alternative
+    -- the route resolver (PR-D/F) is what will eventually route it.
+    """
+
+    contract = _pinned_contract(assembly, candidates)
+    if contract is None or not contract.order_required:
+        return
+    planned = collapse_adjacent(str(row["media_id"]) for row in plan.get("story_timeline") or [])
+    if order_satisfied(contract.order_ids, planned):
+        return
+    raise CloudRenderContractError(
+        "This guided edit's plan doesn't follow the clip order you confirmed.",
+        decline_reason="capability_unavailable",
+        field_path=REQUIREMENT_FIELD_PATHS.get("order_required"),
+        alternative=_ASK_CHRONOLOGICAL,
+    )
 
 
 def _numbers_match(actual: object, required: float) -> bool:
@@ -408,7 +457,10 @@ def _verify_text(
         elif requirement.role == "closing":
             if not isinstance(duration_s, int | float) or isinstance(duration_s, bool):
                 raise refuse("This edit couldn't measure where its closing text sits.")
-            matches = [row for row in matches if row.end_s >= float(duration_s) - tolerance]
+            # The planned end sits against a MEASURED duration, which the renderer itself
+            # accepts within ``duration_tolerance_s``: use the same slack.
+            slack = max(tolerance, duration_tolerance_s(len(timeline or [])))
+            matches = [row for row in matches if row.end_s >= float(duration_s) - slack]
         elif requirement.role == "clip":
             if timeline is None:
                 raise refuse("This edit couldn't verify which shot carries confirmed text.")
@@ -501,9 +553,15 @@ def verify_cloud_variant(
     # additionally carry `actual_duration_s`.  Neither desired timeline nor the
     # requested target is consulted here.
     receipt = variant.get("render_receipt")
+    receipt_ok = isinstance(receipt, Mapping) and receipt.get("verified") is True
+    evidence = variant.get(CLOUD_EVIDENCE_KEY)
+    evidence = evidence if isinstance(evidence, Mapping) else None
+    # The strict receipt (guided) and the sibling evidence together are the renderer's
+    # proof; evidence is never read from anywhere else.
+    proof: Mapping[str, Any] = {**(receipt if receipt_ok else {}), **(evidence or {})}
     actual_duration = (
-        receipt.get("actual_duration_s")
-        if isinstance(receipt, Mapping) and receipt.get("verified") is True
+        proof.get("actual_duration_s")
+        if (receipt_ok or evidence is not None)
         else variant.get("duration_s")
     )
     if contract.duration_s is not None:
@@ -524,7 +582,13 @@ def verify_cloud_variant(
         )
     ):
         return contract
-    receipt = _actual_receipt(variant)
+    if not (receipt_ok or evidence is not None):
+        raise CloudRenderContractError(
+            "This edit has no verified render evidence.",
+            decline_reason="evidence_missing",
+            alternative=_RETRY,
+        )
+    receipt = proof
     if contract.require_voiceover and receipt.get("narration_applied") is not True:
         raise _decline(
             "require_voiceover",
@@ -552,7 +616,7 @@ def verify_cloud_variant(
         _verify_text(contract, receipt, actual_duration)
     if contract.order_required:
         actual_order = _strings(receipt, "actual_clip_order")
-        if actual_order is None or actual_order != contract.order_ids:
+        if actual_order is None or not order_satisfied(contract.order_ids, actual_order):
             raise _decline(
                 "order_required",
                 "This edit couldn't verify the confirmed clip order.",

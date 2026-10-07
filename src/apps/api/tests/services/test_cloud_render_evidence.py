@@ -31,6 +31,7 @@ from app.pipeline.cloud_render_evidence import (
 from app.services.cloud_render_contract import (
     CLASSIC_EVIDENCE_ARCHETYPES,
     CLOUD_ADAPTER_DECLARATIONS,
+    CLOUD_EVIDENCES,
     CloudRenderContractError,
     check_classic_archetype,
     cloud_adapter_for_job,
@@ -69,13 +70,28 @@ def _assembly(strategy: dict[str, Any], *, media_snapshot: dict | None = None) -
     return {CONTRACT_FIELD: contract.model_dump(mode="json")}
 
 
+_EVIDENCE_KEYS = {
+    "actual_clip_order",
+    "picture_timeline",
+    "source_audio_ids",
+    "source_audio_state",
+    "source_audio_reason",
+    "text_evidence",
+}
+
+
 def _variant(adapter: str, receipt: dict[str, Any] | None, **extra: Any) -> dict[str, Any]:
+    """A published variant: evidence keys live in the sibling ``cloud_evidence``, never in
+    the strict guided receipt (KRI-470 P2-1); the rest stays on ``render_receipt``."""
+    evidence = {k: v for k, v in (receipt or {}).items() if k in _EVIDENCE_KEYS}
+    plain = {k: v for k, v in (receipt or {}).items() if k not in _EVIDENCE_KEYS}
     return {
         "ok": True,
         "render_status": "ready",
         "video_path": "jobs/x/output.mp4",
         "resolved_archetype": _ARCHETYPE[adapter],
-        **({"render_receipt": receipt} if receipt is not None else {}),
+        **({"render_receipt": plain} if receipt is not None else {}),
+        **({"cloud_evidence": {"schema_version": 1, **evidence}} if evidence else {}),
         **extra,
     }
 
@@ -133,9 +149,14 @@ def test_declarations_lift_only_what_each_adapter_evidences():
     assert CLOUD_ADAPTER_DECLARATIONS[GUIDED].consumes == frozenset(
         {"duration_s", "require_voiceover", "original_audio", "exact_texts", "order_required"}
     )
+    # Classic HONOURS only the recorded voice (by archetype): its matcher never reads
+    # the contract's order and its song variants replace camera audio, so those decline
+    # up front even though its receipts can report them.
     assert CLOUD_ADAPTER_DECLARATIONS[CLASSIC].consumes == frozenset(
-        {"duration_s", "require_voiceover", "original_audio", "order_required"}
+        {"duration_s", "require_voiceover"}
     )
+    for adapter, declaration in CLOUD_ADAPTER_DECLARATIONS.items():
+        assert declaration.consumes <= CLOUD_EVIDENCES[adapter], adapter
     assert CLOUD_ADAPTER_DECLARATIONS[SLIDES].consumes == frozenset()
     # Named camera-audio sources cannot be isolated by any cloud renderer.
     for declaration in CLOUD_ADAPTER_DECLARATIONS.values():
@@ -169,15 +190,36 @@ def test_adapter_is_identified_from_the_variant_and_the_job():
 _ORDER = {"ordering_choice": "chronological", "selected_media_ids": ["a", "b", "c"]}
 
 
-@pytest.mark.parametrize("adapter", [GUIDED, CLASSIC])
-def test_order_is_proven_by_the_rendered_picture_sequence(adapter):
+def test_guided_order_is_proven_by_the_rendered_picture_sequence():
     assembly = _assembly(_ORDER, media_snapshot=_SNAPSHOT)
-    _passes(adapter, assembly, _receipt(actual_clip_order=["a", "b", "c"]))
-    # reversed, partial, repeated-later and absent evidence all fail visibly
-    for wrong in (["c", "b", "a"], ["a", "b"], ["a", "b", "a", "c"], None):
+    _passes(GUIDED, assembly, _receipt(actual_clip_order=["a", "b", "c"]))
+    # a subset that keeps the relative order is a coverage choice, not an order failure
+    _passes(GUIDED, assembly, _receipt(actual_clip_order=["a", "c"]))
+    # reversed, interleaved repeats, foreign clips and absent evidence all fail visibly
+    for wrong in (["c", "b", "a"], ["a", "b", "a", "c"], ["a", "x", "b"], None):
         receipt = _receipt(**({"actual_clip_order": wrong} if wrong is not None else {}))
-        error = _fails(adapter, assembly, receipt, path="ordering_choice")
+        error = _fails(GUIDED, assembly, receipt, path="ordering_choice")
         assert error.alternative
+
+
+def test_classic_declines_order_up_front_even_with_matching_evidence():
+    """The classic matcher never reads the contract's order, so a default contracted job
+    must not render everything and then fail publication."""
+    assembly = _assembly(_ORDER, media_snapshot=_SNAPSHOT)
+    with pytest.raises(CloudRenderContractError) as exc:
+        preflight_cloud_contract(assembly, candidates=_CANDIDATES, adapter=CLASSIC)
+    assert (exc.value.decline_reason, exc.value.field_path) == (
+        "capability_unavailable",
+        "ordering_choice",
+    )
+    assert exc.value.alternative
+    with pytest.raises(CloudRenderContractError) as exc:
+        verify_cloud_variant(
+            assembly,
+            _variant(CLASSIC, _receipt(actual_clip_order=["a", "b", "c"])),
+            candidates=_CANDIDATES,
+        )
+    assert exc.value.decline_reason == "capability_unavailable"
 
 
 def test_slides_still_decline_order_before_any_work():
@@ -213,32 +255,50 @@ _REQUIRE_AUDIO = {"audio_strategy": "original_audio"}
 _FORBID_AUDIO = {"montage_audio": {"source_media_ids": [], "preserve_source_audio": False}}
 
 
-@pytest.mark.parametrize("adapter", [GUIDED, CLASSIC])
-def test_original_audio_required_needs_audible_sources_in_the_output(adapter):
+def test_guided_original_audio_required_needs_audible_sources_in_the_output():
     assembly = _assembly(_REQUIRE_AUDIO)
     _passes(
-        adapter,
+        GUIDED,
         assembly,
         _receipt(source_audio_ids=["a", "b"], source_audio_state="audible"),
     )
     # muted output, no evidence, and a copied intent flag are not proof
-    _fails(adapter, assembly, _receipt(source_audio_ids=[], source_audio_state="muted"))
-    _fails(adapter, assembly, _receipt())
-    _fails(adapter, assembly, _receipt(source_audio_preserved=True))
+    _fails(GUIDED, assembly, _receipt(source_audio_ids=[], source_audio_state="muted"))
+    _fails(GUIDED, assembly, _receipt())
+    _fails(GUIDED, assembly, _receipt(source_audio_preserved=True))
 
 
-@pytest.mark.parametrize("adapter", [GUIDED, CLASSIC])
-def test_original_audio_forbidden_needs_a_muted_output(adapter):
+def test_guided_original_audio_forbidden_needs_a_muted_output():
     assembly = _assembly(_FORBID_AUDIO)
     _passes(
-        adapter,
+        GUIDED,
         assembly,
         _receipt(
-            source_audio_ids=[], source_audio_state="muted", source_audio_reason="replaced_by_music"
+            source_audio_ids=[],
+            source_audio_state="muted",
+            source_audio_reason="replaced_by_music",
         ),
     )
-    _fails(adapter, assembly, _receipt(source_audio_ids=["a"], source_audio_state="audible"))
-    _fails(adapter, assembly, _receipt())
+    _fails(GUIDED, assembly, _receipt(source_audio_ids=["a"], source_audio_state="audible"))
+    _fails(GUIDED, assembly, _receipt())
+
+
+@pytest.mark.parametrize("strategy", [_REQUIRE_AUDIO, _FORBID_AUDIO])
+def test_classic_declines_camera_audio_up_front(strategy):
+    """Classic never reads audio_strategy/montage_audio; song variants replace camera
+    audio and track-less ones keep it, so one variant always disagrees."""
+    assembly = _assembly(strategy)
+    with pytest.raises(CloudRenderContractError) as exc:
+        preflight_cloud_contract(assembly, candidates=_CANDIDATES, adapter=CLASSIC)
+    assert exc.value.decline_reason == "capability_unavailable"
+    assert exc.value.alternative
+    with pytest.raises(CloudRenderContractError) as exc:
+        verify_cloud_variant(
+            assembly,
+            _variant(CLASSIC, _receipt(source_audio_ids=[], source_audio_state="muted")),
+            candidates=_CANDIDATES,
+        )
+    assert exc.value.decline_reason == "capability_unavailable"
 
 
 def test_slides_decline_camera_audio():
@@ -481,7 +541,7 @@ def test_old_guided_receipt_cannot_satisfy_evidence_requirements_retroactively()
 
 
 @pytest.mark.parametrize("archetype", ["talking_head", "subtitled"])
-@pytest.mark.parametrize("strategy", [_VOICE, _REQUIRE_AUDIO])
+@pytest.mark.parametrize("strategy", [_VOICE])
 def test_receiptless_archetypes_refuse_receipt_only_requirements_before_rendering(
     archetype, strategy
 ):
@@ -538,3 +598,25 @@ def test_slot_evidence_withholds_everything_it_cannot_attribute():
         [("c1", 2.0)], **{**kwargs, "probe_map": {"/a": types.SimpleNamespace()}}
     )
     assert unknown["slot_audio_media_ids"] is None and unknown["actual_clip_order"] == ["a"]
+
+
+# ── closing text uses the renderer's own duration tolerance (P2-3) ───────────────
+
+
+def test_closing_text_tolerance_matches_the_guided_duration_check():
+    """Guided accepts max(0.2, 0.04 * moments) of duration drift; a valid closing title
+    that ends inside that drift must not be false-declined."""
+    from app.pipeline.cloud_render_evidence import duration_tolerance_s
+
+    assert duration_tolerance_s(1) == pytest.approx(0.2)
+    assert duration_tolerance_s(12) == pytest.approx(0.48)
+    assembly = _assembly({"closing_title": "See you soon"})
+    twelve = [_seg("a", float(i), float(i + 1)) for i in range(12)]
+    row = [_text("closing", "See you soon", 10.0, 11.7)]  # 0.3s short of the 12.0 output
+    _passes(GUIDED, assembly, _receipt(picture_timeline=twelve, text_evidence=row))
+    _fails(
+        GUIDED,
+        assembly,
+        _receipt(picture_timeline=[_seg("a", 0.0, 12.0)], text_evidence=row),
+        path="closing_title",
+    )

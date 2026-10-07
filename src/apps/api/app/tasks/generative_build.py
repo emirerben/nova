@@ -156,7 +156,7 @@ def _rendered_duration_s(path: str) -> float | None:
         return None
 
 
-def _classic_cloud_receipt(
+def _classic_cloud_evidence(
     cloud_ctx: Mapping[str, Any],
     final_path: str,
     *,
@@ -168,7 +168,7 @@ def _classic_cloud_receipt(
     voice_outcome: Any = None,
     attributable: bool = True,
 ) -> dict[str, Any] | None:
-    """The ``render_receipt`` a classic render reports for a contract-bound job.
+    """The ``cloud_evidence`` a classic render reports for a contract-bound job.
 
     Everything comes from what the renderer built: the post-resolution slots it
     assembled, the mixer's own outcome (the voiceover mixer copies the video
@@ -183,7 +183,7 @@ def _classic_cloud_receipt(
 
     from app.pipeline.cloud_render_evidence import (  # noqa: PLC0415
         audio_evidence,
-        classic_render_receipt,
+        classic_cloud_evidence,
         classic_slot_evidence,
     )
     from app.tasks.template_orchestrate import VoiceoverMixOutcome  # noqa: PLC0415
@@ -215,7 +215,7 @@ def _classic_cloud_receipt(
                 audio = audio_evidence(slot["slot_audio_media_ids"])
     elif slot["slot_audio_media_ids"] is not None:
         audio = audio_evidence(slot["slot_audio_media_ids"])
-    return classic_render_receipt(
+    return classic_cloud_evidence(
         actual_duration_s=duration_s,
         narration_applied=narration_applied,
         evidence={**slot, **audio},
@@ -3525,7 +3525,7 @@ def _run_generative_job_impl(
             variant_id = spec["variant_id"]
             if cloud_evidence_ctx is not None:
                 # Contract-bound job: the renderer reports receipt evidence.
-                spec = {**spec, "cloud_evidence": cloud_evidence_ctx}
+                spec = {**spec, "cloud_evidence_ctx": cloud_evidence_ctx}
             # Per-variant render_started_at timestamp (D6 tile clock).
             # First render only. Re-renders stamp this at DISPATCH instead
             # (`stamp_variant_attempt` in services/job_phases.py) so the tile
@@ -8338,6 +8338,9 @@ def _run_guided_story_job(
 
     compile_t0 = time.monotonic()
     plan, track = _guided_execution_plan(job_id, guided_snapshot, emit_decided=False)
+    # KRI-470 PR-E: a confirmed order the pinned plan does not follow is declined here,
+    # before the attempt is claimed and before any media is touched.
+    _guided_plan_contract_gate(job_id, plan)
     record_phase(
         job_id,
         "analyze_clips",
@@ -13241,6 +13244,27 @@ def _reburn_text_on_base(
                     local_base,
                 )
                 guided_receipt_patch = {"render_receipt": guided_receipt}
+                from app.agents._schemas.text_element import (  # noqa: PLC0415
+                    TextElement as _EvidenceTextElement,
+                )
+                from app.pipeline.guided_story import (  # noqa: PLC0415
+                    rederive_guided_text_evidence,
+                )
+
+                fresh_evidence = rederive_guided_text_evidence(
+                    existing.get("cloud_evidence"),
+                    [
+                        _EvidenceTextElement.model_validate(row)
+                        for row in existing.get("text_elements") or []
+                    ],
+                    {
+                        str(row.get("element_id"))
+                        for row in guided_text_evidence
+                        if row.get("visible")
+                    },
+                )
+                if fresh_evidence is not None:
+                    guided_receipt_patch["cloud_evidence"] = fresh_evidence
             elif existing.get("resolved_archetype") == "guided_story":
                 from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
 
@@ -13261,11 +13285,10 @@ def _reburn_text_on_base(
                         "size": output_metadata.size,
                         "md5_hash": output_metadata.md5_hash,
                     }
-                    guided_receipt_patch = {
-                        "render_receipt": GuidedStoryRenderReceipt.model_validate(
-                            guided_receipt
-                        ).model_dump(mode="json")
-                    }
+                    validated_receipt = GuidedStoryRenderReceipt.model_validate(guided_receipt)
+                    guided_receipt_patch["render_receipt"] = validated_receipt.model_dump(
+                        mode="json"
+                    )
                 except Exception:
                     from app.storage import delete_object_best_effort  # noqa: PLC0415
 
@@ -16756,7 +16779,7 @@ def _run_regenerate_variant(
         regen_cloud_evidence = _cloud_evidence_context(job_id)
         if regen_cloud_evidence is not None:
             # Contract-bound job: the re-render reports receipt evidence too.
-            spec["cloud_evidence"] = regen_cloud_evidence
+            spec["cloud_evidence_ctx"] = regen_cloud_evidence
 
         variant_dir = os.path.join(tmpdir, f"variant_{rank}")
         os.makedirs(variant_dir, exist_ok=True)
@@ -17522,8 +17545,34 @@ def _cloud_evidence_context(job_id: str) -> dict[str, Any] | None:
             from app.pipeline.cloud_render_evidence import media_ids_by_gcs_path  # noqa: PLC0415
 
             return {"media_ids_by_gcs": media_ids_by_gcs_path(plan)}
-    except Exception:  # noqa: BLE001 - never fail a render on the evidence gate
+    except Exception as exc:  # noqa: BLE001 - never fail a render on the evidence gate
+        # Without the context the renderer emits no evidence, so a contracted
+        # publication will later refuse with ``evidence_missing``: say why.
+        log.warning("cloud_evidence_context_unreadable", job_id=job_id, error=str(exc)[:200])
         return None
+
+
+def _guided_plan_contract_gate(job_id: str, plan: dict[str, Any]) -> None:
+    """Refuse, before render spend, a guided plan that cannot satisfy a confirmed order.
+
+    The guided builder covers a media set but does not order it by the contract, so
+    the pinned plan's own timeline is compared with the contract's order here.  A
+    read failure skips the gate (logged); the publication verifier still checks the
+    rendered order.  ``CloudRenderContractError`` propagates to the orchestrator.
+    """
+    from app.services.cloud_render_contract import check_guided_plan_order  # noqa: PLC0415
+
+    try:
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            if job is None:
+                return
+            assembly = copy.deepcopy(job.assembly_plan or {})
+            candidates = dict(getattr(job, "all_candidates", None) or {})
+    except Exception as exc:  # noqa: BLE001 - the verifier remains the last line of defence
+        log.warning("guided_plan_gate_unreadable", job_id=job_id, error=str(exc)[:200])
+        return
+    check_guided_plan_order(assembly, candidates=candidates, plan=plan)
 
 
 def _job_contract_bound(job_id: str) -> bool:
@@ -17878,6 +17927,9 @@ def _update_variant_entry(
                             updated_variant.pop("error", None)
                     if "render_receipt" not in patch:
                         updated_variant.pop("render_receipt", None)
+                    if "cloud_evidence" not in patch:
+                        # Evidence describes one artifact: never let it vouch for the next.
+                        updated_variant.pop("cloud_evidence", None)
                     if "duration_s" not in patch:
                         updated_variant.pop("duration_s", None)
                     verification_candidate = {**updated_variant, "render_status": "ready"}
@@ -21200,9 +21252,9 @@ def _process_generative_variant(
         variant_t0,
         detail={"variant_id": variant_id, "ok": True},
     )
-    cloud_ctx = spec.get("cloud_evidence")
+    cloud_ctx = spec.get("cloud_evidence_ctx")
     cloud_receipt = (
-        _classic_cloud_receipt(
+        _classic_cloud_evidence(
             cloud_ctx,
             final_path,
             slots=[
@@ -21237,7 +21289,7 @@ def _process_generative_variant(
             if settings.visual_blocks_enabled
             else {}
         ),
-        **({"render_receipt": cloud_receipt} if cloud_receipt is not None else {}),
+        **({"cloud_evidence": cloud_receipt} if cloud_receipt is not None else {}),
     }
 
 
@@ -22945,7 +22997,7 @@ def _render_narrated_variant(
                 storage_generation,
             )
             upload_public_read(base_path, base_gcs)
-        cloud_ctx = spec.get("cloud_evidence")
+        cloud_ctx = spec.get("cloud_evidence_ctx")
         cloud_receipt = None
         if cloud_ctx is not None:
             from app.pipeline.probe import probe_video  # noqa: PLC0415
@@ -22968,7 +23020,7 @@ def _render_narrated_variant(
                     )
                 except Exception:  # noqa: BLE001 - unknown audio => evidence absent
                     pass
-            cloud_receipt = _classic_cloud_receipt(
+            cloud_receipt = _classic_cloud_evidence(
                 cloud_ctx,
                 final_path,
                 slots=narrated_slots,
@@ -22992,7 +23044,7 @@ def _render_narrated_variant(
                 if settings.visual_blocks_enabled
                 else {}
             ),
-            **({"render_receipt": cloud_receipt} if cloud_receipt is not None else {}),
+            **({"cloud_evidence": cloud_receipt} if cloud_receipt is not None else {}),
             "base_video_path": base_gcs,
             "caption_cues": caption_cues or None,
             "text_elements": storyboard_elements,
@@ -29703,6 +29755,9 @@ def _update_required_speech_staged_variant(
             if "render_receipt" not in enriched_patch:
                 enriched_patch["render_receipt"] = None
                 merged["render_receipt"] = None
+            if "cloud_evidence" not in enriched_patch:
+                enriched_patch["cloud_evidence"] = None
+                merged["cloud_evidence"] = None
             if "duration_s" not in enriched_patch:
                 enriched_patch["duration_s"] = None
                 merged["duration_s"] = None
@@ -30369,6 +30424,13 @@ def _finalize_job_decision(
                     "proposal_version": r.get("proposal_version"),
                     "media_digest": r.get("media_digest"),
                     "render_receipt": r.get("render_receipt"),
+                    # KRI-470 cloud evidence (beside the strict receipt). Only written
+                    # when the render produced it, so legacy variants keep their shape.
+                    **(
+                        {"cloud_evidence": r["cloud_evidence"]}
+                        if r.get("cloud_evidence") is not None
+                        else {}
+                    ),
                     # Slide post (mixed-media carousel/photo post, plans/024).
                     # MUST survive finalization — this whitelist silently
                     # strips anything not re-listed here (see the comment on
@@ -30672,9 +30734,10 @@ def _merge_finalized_variants(
                 merged.append(live)
             else:
                 row = {**live, **finalized}
-                for key in _DECLINE_VARIANT_FIELDS:
+                for key in (*_DECLINE_VARIANT_FIELDS, "cloud_evidence"):
                     if key not in finalized:
-                        # A typed decline belongs to the result that produced it.
+                        # A typed decline (and the evidence behind a verdict) belongs
+                        # to the result that produced it.
                         row.pop(key, None)
                 merged.append(row)
         if isinstance(variant_id, str):

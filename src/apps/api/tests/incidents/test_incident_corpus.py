@@ -165,6 +165,16 @@ def test_cloud_adapter_proves_or_declines_as_recorded(record: IncidentRecord) ->
         assert verdicts["preflight"] is None, f"preflight declined: {verdicts['preflight']}"
     else:
         assert verdicts["preflight"] is not None, "preflight accepted a plan it must decline"
+    if want.plan_gate is not None:
+        gate = verdicts["plan_gate"]
+        if want.plan_gate == "passes":
+            assert gate is None, f"the plan gate declined: {gate}"
+        else:
+            assert gate is not None, "the plan gate accepted a plan it must decline pre-render"
+            if want.gate_reason:
+                assert gate.decline_reason == want.gate_reason
+            if want.gate_field_path:
+                assert gate.field_path == want.gate_field_path
     if want.publication is None:
         return
     error = verdicts["publication"]

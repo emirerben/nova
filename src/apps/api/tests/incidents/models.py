@@ -101,6 +101,12 @@ class PhoneRecipeSpec(_Strict):
     sections: list[PhoneSection]
 
 
+class GuidedPlanSpec(_Strict):
+    order: list[str] = Field(description="Media ids in the order the plan's timeline shows them")
+    opening_title: str | None = None
+    closing_title: str | None = None
+
+
 class Inputs(_Strict):
     media: list[MediaFact] = []
     voiceover_id: str | None = None
@@ -114,6 +120,12 @@ class Inputs(_Strict):
     # declaration) and the receipt its renderer reported (the publication verifier's input).
     cloud_adapter: Literal["cloud_guided_story", "cloud_classic", "cloud_slides"] | None = None
     cloud_receipt: dict[str, Any] | None = None
+    # The sibling ``cloud_evidence`` the renderer reported (hand-built records only).
+    cloud_evidence: dict[str, Any] | None = None
+    # A guided plan compiled by the REAL compiler from this media order; the pre-render
+    # gate runs on it and (unless ``cloud_evidence`` is given) the evidence is derived
+    # from its timeline by the real evidence builder.
+    guided_plan: GuidedPlanSpec | None = None
     notes: list[str] = []
 
 
@@ -164,14 +176,20 @@ class CloudExpect(_Strict):
     """KRI-470 / PR-E: the real cloud preflight + publication verifier, on the recorded receipt.
 
     ``preflight`` is whether the named adapter lets the plan through before any work;
-    ``publication`` is the verdict on ``inputs.cloud_receipt`` (``None`` = not asserted).
-    A declining publication may pin the typed ``reason`` / ``field_path``.
+    ``plan_gate`` is the pre-render verdict on ``inputs.guided_plan``; ``publication`` is the
+    verdict on the recorded/derived evidence (``None`` = not asserted).  A declining
+    verdict may pin the typed ``reason`` / ``field_path`` (the gate's decline is checked
+    against them when no publication verdict is asserted).
     """
 
     preflight: Literal["passes", "declines"]
+    # The pre-render guided plan gate (needs ``inputs.guided_plan``): declined plans never render.
+    plan_gate: Literal["passes", "declines"] | None = None
     publication: Literal["accepts", "declines"] | None = None
     reason: str | None = None
     field_path: str | None = None
+    gate_reason: str | None = None
+    gate_field_path: str | None = None
 
 
 class QuestionExpect(_Strict):

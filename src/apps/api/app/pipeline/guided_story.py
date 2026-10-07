@@ -23,14 +23,16 @@ from app.agents._schemas.text_element import CAPTION_CUE_SOURCE, TextElement
 from app.config import settings
 from app.pipeline.canvas import LANDSCAPE, PORTRAIT, Canvas
 from app.pipeline.cloud_render_evidence import (
-    CloudPictureSegment,
-    CloudTextEvidence,
-    SourceAudioState,
+    CLOUD_EVIDENCE_KEY,
+    EVIDENCE_SCHEMA_VERSION,
     TextRole,
     audio_evidence,
     collapse_adjacent,
     picture_timeline,
     text_evidence_row,
+)
+from app.pipeline.cloud_render_evidence import (
+    duration_tolerance_s as render_duration_tolerance_s,
 )
 from app.pipeline.duration_contract import (
     STRICT_MIXED_MEDIA_DURATION_TOLERANCE_S,
@@ -450,22 +452,6 @@ class GuidedStoryRenderReceipt(BaseModel):
     )
     narration_applied: bool = False
     narration_label_receipt: dict[str, Any] | None = None
-    # KRI-470 cloud evidence (None = this render predates it / did not emit it;
-    # omitted from the dump so stored receipts keep their exact shape).
-    actual_clip_order: list[str] | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-    picture_timeline: list[CloudPictureSegment] | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-    source_audio_ids: list[str] | None = Field(default=None, exclude_if=lambda value: value is None)
-    source_audio_state: SourceAudioState | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
-    source_audio_reason: str | None = Field(default=None, exclude_if=lambda value: value is None)
-    text_evidence: list[CloudTextEvidence] | None = Field(
-        default=None, exclude_if=lambda value: value is None
-    )
 
     @model_validator(mode="after")
     def validate_strict_equality(self) -> GuidedStoryRenderReceipt:
@@ -489,14 +475,6 @@ class GuidedStoryRenderReceipt(BaseModel):
             raise ValueError("receipt cannot carry both mixed music and an external reference")
         if self.narration_applied != (self.narration is not None):
             raise ValueError("receipt narration identity does not match application state")
-        if self.picture_timeline is not None and self.actual_clip_order is not None:
-            if self.actual_clip_order != collapse_adjacent(
-                segment.media_id for segment in self.picture_timeline
-            ):
-                raise ValueError("receipt clip order does not match its picture timeline")
-        if self.source_audio_ids is not None and self.source_audio_state is not None:
-            if (self.source_audio_state == "audible") != bool(self.source_audio_ids):
-                raise ValueError("receipt camera-audio state does not match its sources")
         if self.music is not None and self.music_window_applied is not None:
             expected_window = max(
                 0.0,
@@ -4136,6 +4114,62 @@ def guided_text_evidence(
     return rows
 
 
+def guided_cloud_evidence(
+    plan: Mapping[str, Any],
+    moment_receipts: list[dict],
+    text_receipts: list[dict],
+    text_elements: list[TextElement],
+    mixed_source_audio_ids: list[str],
+    *,
+    narration_applied: bool,
+    music_applied: bool,
+    actual_duration_s: float,
+) -> dict[str, Any]:
+    """The ``cloud_evidence`` a guided render persists beside its (unchanged) receipt.
+
+    Everything is derived from what the renderer built: the moments it rendered, the
+    audio graph it mixed and the text layers the pixel check found visible.
+    """
+
+    timeline = guided_picture_timeline(plan, moment_receipts)
+    visible = {str(row["element_id"]) for row in text_receipts if row.get("visible")}
+    return {
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
+        "adapter": "cloud_guided_story",
+        "actual_duration_s": round(float(actual_duration_s), 3),
+        "narration_applied": bool(narration_applied),
+        "picture_timeline": timeline,
+        "actual_clip_order": collapse_adjacent(str(row["media_id"]) for row in timeline),
+        **_guided_source_audio_evidence(
+            plan,
+            mixed_source_audio_ids,
+            narration_applied=narration_applied,
+            music_applied=music_applied,
+        ),
+        "text_evidence": guided_text_evidence(text_elements, visible, timeline),
+    }
+
+
+def rederive_guided_text_evidence(
+    evidence: Mapping[str, Any] | None,
+    text_elements: list[TextElement],
+    visible_ids: set[str],
+) -> dict[str, Any] | None:
+    """Evidence after a text reburn: the edited words, the untouched picture and audio.
+
+    A variant that never carried evidence stays without it (``None``): an artifact
+    change must never leave the old words vouching for the new ones.
+    """
+
+    if not isinstance(evidence, Mapping):
+        return None
+    timeline = list(evidence.get("picture_timeline") or [])
+    return {
+        **evidence,
+        "text_evidence": guided_text_evidence(text_elements, visible_ids, timeline),
+    }
+
+
 def _verify_receipt(
     plan: dict[str, Any],
     media_receipts: list[dict],
@@ -4147,8 +4181,6 @@ def _verify_receipt(
     narration_applied: bool = False,
     text_stage_input_path: str | None = None,
     text_stage_output_path: str | None = None,
-    source_audio: dict[str, Any] | None = None,
-    text_elements: list[TextElement] | None = None,
 ) -> dict[str, Any]:
     expected_beats = [row["beat_id"] for row in plan["beat_windows"]]
     expected_moments = [row["moment_id"] for row in plan["story_timeline"]]
@@ -4186,7 +4218,7 @@ def _verify_receipt(
     duration_tolerance_s = (
         STRICT_MIXED_MEDIA_DURATION_TOLERANCE_S
         if uses_quick_photo_long_video_timing(mixed_timing)
-        else max(0.2, len(moment_receipts) * 0.04)
+        else render_duration_tolerance_s(len(moment_receipts))
     )
     actual_video_duration_s = float(
         getattr(probe, "video_stream_duration_s", None) or probe.duration_s
@@ -4280,17 +4312,6 @@ def _verify_receipt(
             plan_preserves_source_audio(plan) if plan.get("compiler_version", 0) >= 6 else None
         ),
     }
-    if source_audio is not None:
-        # KRI-470 evidence: derived from the timeline and audio graph just built.
-        timeline = guided_picture_timeline(plan, moment_receipts)
-        receipt_data["picture_timeline"] = timeline
-        receipt_data["actual_clip_order"] = collapse_adjacent(
-            str(row["media_id"]) for row in timeline
-        )
-        receipt_data.update(source_audio)
-        receipt_data["text_evidence"] = guided_text_evidence(
-            list(text_elements or []), set(visible_text), timeline
-        )
     if plan.get("editor_revision_number") is not None:
         receipt_data["approved_text_ids"] = list(
             plan.get("editor_approved_text_ids") or expected_text
@@ -4387,14 +4408,6 @@ def verify_guided_text_reburn(
             "guided_story_receipt_mismatch", "The edited video no longer matches the story."
         )
     updated = previous.model_dump(mode="json")
-    if previous.text_evidence is not None:
-        # The edited words replace the rendered ones: re-derive what is on screen
-        # from the elements that were just burned, against the unchanged picture.
-        updated["text_evidence"] = guided_text_evidence(
-            elements,
-            set(actual_ids),
-            list(updated.get("picture_timeline") or []),
-        )
     updated.update(
         {
             "verified": True,
@@ -5288,8 +5301,9 @@ def render_execution_plan(
     """Render and verify one strict guided-story variant.
 
     ``emit_cloud_evidence`` (KRI-470) adds the clip-order, camera-audio and
-    text-layer evidence to the receipt.  Only contract-bound jobs ask for it so
-    every other job keeps its exact stored receipt.
+    text-layer evidence as a sibling ``cloud_evidence`` dict of the result; the
+    strict receipt itself is unchanged.  Only contract-bound jobs ask for it, so
+    other jobs add no key to their variant.
 
     ``on_stage(sections, state)`` (KRI-443 live feed) is called from this thread at the
     real stage boundaries: a section is ``deciding`` when its work starts and ``decided``
@@ -5570,17 +5584,21 @@ def render_execution_plan(
         text_stage_output_path=(
             os.path.join(tmpdir, "guided_story_final.mp4") if render_elements else None
         ),
-        source_audio=(
-            _guided_source_audio_evidence(
-                plan,
-                mixed_source_audio_ids,
-                narration_applied=narration_applied,
-                music_applied=music_applied,
-            )
-            if emit_cloud_evidence
-            else None
-        ),
-        text_elements=render_elements,
+    )
+
+    cloud_evidence = (
+        guided_cloud_evidence(
+            plan,
+            moment_receipts,
+            text_receipts,
+            render_elements,
+            mixed_source_audio_ids,
+            narration_applied=narration_applied,
+            music_applied=music_applied,
+            actual_duration_s=float(receipt["actual_duration_s"]),
+        )
+        if emit_cloud_evidence
+        else None
     )
 
     attempt_suffix = hashlib.sha256(str(attempt_id or "preview").encode()).hexdigest()[:16]
@@ -5638,6 +5656,7 @@ def render_execution_plan(
         "proposal_version": plan["proposal_version"],
         "media_digest": plan["media_digest"],
         "render_receipt": receipt,
+        **({CLOUD_EVIDENCE_KEY: cloud_evidence} if cloud_evidence is not None else {}),
         "source_audio_mix": "interleaved" if plan.get("source_audio_options") else None,
         "source_audio_options": list(plan.get("source_audio_options") or []),
         "ok": True,

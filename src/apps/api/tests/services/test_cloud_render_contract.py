@@ -960,36 +960,38 @@ def test_finalize_merge_does_not_resurrect_a_live_rows_old_decline() -> None:
 # --- KRI-470 PR-E: per-adapter lift at the worker ----------------------------------
 
 
-def test_classic_worker_no_longer_declines_camera_audio_before_ingest(
+def test_classic_worker_lifts_the_recorded_voice_but_not_camera_audio_or_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The classic adapter evidences camera audio, so the early decline is lifted: the
-    job proceeds toward ingest (publication then checks the renderer's receipt)."""
+    """Classic HONOURS the recorded voice (by archetype), so that early decline is lifted and
+    the job proceeds toward ingest. Camera audio and order are not honoured by its matcher
+    and song variants, so they still decline before any spend."""
     job_id = "11111111-1111-1111-1111-111111111111"
-    job = FakeJob(
-        job_id=job_id,
-        assembly_plan=_assembly({"audio_strategy": "original_audio"}),
-        all_candidates={"clip_paths": ["slot-uploads/clip.mp4"], REQUIREMENT_VERSION_FIELD: 1},
-        status="queued",
-    )
-    patch_job_session(monkeypatch, job)
 
-    class _ReachedIngest(Exception):
-        pass
+    def run(strategy: dict) -> FakeJob:
+        job = FakeJob(
+            job_id=job_id,
+            assembly_plan=_assembly(strategy),
+            all_candidates={"clip_paths": ["slot-uploads/clip.mp4"], REQUIREMENT_VERSION_FIELD: 1},
+            status="queued",
+        )
+        patch_job_session(monkeypatch, job)
+        monkeypatch.setattr(generative_build, "_ingest_clips", lambda *a, **k: 1 / 0, raising=False)
+        try:
+            generative_build._run_generative_job(job_id)
+        except Exception:  # noqa: BLE001 - a later stage proves preflight passed
+            pass
+        return job
 
-    def _ingest(*_args, **_kwargs):
-        raise _ReachedIngest
-
-    monkeypatch.setattr(generative_build, "_ingest_clips", _ingest, raising=False)
-    outcome: list[BaseException] = []
-    try:
-        generative_build._run_generative_job(job_id)
-    except Exception as exc:  # noqa: BLE001 - recorded below
-        outcome.append(exc)
+    voice = run({"audio_strategy": "voiceover"})
     # The run got past preflight (the FakeJob then lacks fields a later stage reads).
-    assert not any(isinstance(e, CloudRenderContractError) for e in outcome)
-    assert getattr(job, "failure_reason", None) != "creator_render_contract_unsupported"
-    assert "creator_decline" not in job.assembly_plan
+    assert getattr(voice, "failure_reason", None) != "creator_render_contract_unsupported"
+    assert "creator_decline" not in voice.assembly_plan
+
+    audio = run({"audio_strategy": "original_audio"})
+    assert audio.failure_reason == "creator_render_contract_unsupported"
+    assert audio.assembly_plan["creator_decline"]["decline_reason"] == "capability_unavailable"
+    assert audio.assembly_plan["creator_decline"]["alternative"]
 
 
 def test_classic_worker_still_declines_exact_text_for_its_own_adapter(
@@ -1048,3 +1050,101 @@ def test_a_decline_raised_once_the_archetype_is_known_keeps_the_typed_failure(
     assert failed["failure_reason"] == "creator_render_contract_unsupported"
     assert failed["decline"]["decline_reason"] == "capability_unavailable"
     assert failed["decline"]["field_path"] == "montage_audio.preserve_source_audio"
+
+
+# --- KRI-470 PR-E review: evidence lives beside the receipt, never stale ------------
+
+
+def _evidence_variant(**fields) -> dict:
+    return {
+        "variant_id": "guided_story",
+        "resolved_archetype": "guided_story",
+        "ok": True,
+        "render_status": "ready",
+        "video_path": "generative-jobs/job/last-good.mp4",
+        "render_receipt": {"verified": True, "actual_duration_s": 12.0},
+        "cloud_evidence": {"schema_version": 1, "actual_clip_order": ["a", "b"]},
+        **fields,
+    }
+
+
+def test_a_new_artifact_without_fresh_evidence_never_passes_on_the_old_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = {
+        "clip_assignments": [
+            {"media_id": "b", "capture": {"capture_time": "2026-10-06T12:00:00Z"}},
+            {"media_id": "a", "capture": {"capture_time": "2026-10-06T10:00:00Z"}},
+        ]
+    }
+    contract = build_render_contract(
+        {"ordering_choice": "chronological"}, generation_id="g", media_snapshot=snapshot
+    )
+    job = FakeJob(
+        assembly_plan={
+            CONTRACT_FIELD: contract.model_dump(mode="json"),
+            "variants": [_evidence_variant()],
+        },
+        all_candidates={REQUIREMENT_VERSION_FIELD: 1},
+    )
+    patch_job_session(monkeypatch, job)
+    monkeypatch.setattr(
+        generative_build, "_attach_variant_posters", lambda result, **_kw: (dict(result), [])
+    )
+    # a replacement artifact whose patch carries a receipt but no evidence
+    assert not generative_build._update_variant_entry(
+        "11111111-1111-1111-1111-111111111111",
+        "guided_story",
+        {
+            "video_path": "generative-jobs/job/new.mp4",
+            "render_status": "ready",
+            "render_receipt": {"verified": True, "actual_duration_s": 12.0},
+        },
+    )
+    stored = job.assembly_plan["variants"][0]
+    assert stored["render_status"] == "failed"
+    assert stored["decline_reason"] == "evidence_missing"
+    assert "cloud_evidence" not in stored
+    # ...while a replacement that brings its own evidence is accepted
+    job.assembly_plan["variants"] = [_evidence_variant()]
+    assert generative_build._update_variant_entry(
+        "11111111-1111-1111-1111-111111111111",
+        "guided_story",
+        {
+            "video_path": "generative-jobs/job/new2.mp4",
+            "render_status": "ready",
+            "render_receipt": {"verified": True, "actual_duration_s": 12.0},
+            "cloud_evidence": {"schema_version": 1, "actual_clip_order": ["a", "b"]},
+        },
+    )
+    assert job.assembly_plan["variants"][0]["cloud_evidence"]["actual_clip_order"] == ["a", "b"]
+
+
+def test_finalization_keeps_fresh_evidence_and_drops_a_stale_live_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = FakeJob(assembly_plan={"variants": []})
+    patch_job_session(monkeypatch, job)
+    fresh = {
+        "variant_id": "v",
+        "rank": 1,
+        "text_mode": "none",
+        "ok": True,
+        "render_status": "ready",
+        "video_path": "jobs/x/new.mp4",
+        "cloud_evidence": {"schema_version": 1, "actual_clip_order": ["a"]},
+    }
+    generative_build._finalize_job("11111111-1111-1111-1111-111111111111", [fresh])
+    assert job.assembly_plan["variants"][0]["cloud_evidence"]["actual_clip_order"] == ["a"]
+    # legacy shape: no evidence key is invented for a variant that never had one
+    legacy = {k: v for k, v in fresh.items() if k != "cloud_evidence"}
+    job2 = FakeJob(assembly_plan={"variants": []})
+    patch_job_session(monkeypatch, job2)
+    generative_build._finalize_job("11111111-1111-1111-1111-111111111111", [legacy])
+    assert "cloud_evidence" not in job2.assembly_plan["variants"][0]
+    # a live row's stale evidence does not survive a finalized result that has none
+    merged = generative_build._merge_finalized_variants(
+        [{"variant_id": "v", "cloud_evidence": {"actual_clip_order": ["stale"]}}],
+        [legacy],
+    )
+    assert "cloud_evidence" not in merged[0]

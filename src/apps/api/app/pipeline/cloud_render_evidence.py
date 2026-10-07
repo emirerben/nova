@@ -23,6 +23,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 EVIDENCE_SCHEMA_VERSION = 1
+# Variant key that carries the evidence.  It is a plain dict BESIDE ``render_receipt``
+# (never inside the strict guided receipt model), so an older worker that validates
+# the receipt during a rolling deploy or rollback never meets a field it forbids.
+CLOUD_EVIDENCE_KEY = "cloud_evidence"
 
 TextRole = Literal["opening", "closing", "clip", "any"]
 SourceAudioState = Literal["audible", "muted"]
@@ -155,29 +159,54 @@ def media_ids_by_gcs_path(assembly: Mapping[str, Any]) -> dict[str, str]:
     return out
 
 
-def classic_render_receipt(
+def duration_tolerance_s(segment_count: int) -> float:
+    """How far a rendered duration may sit from its plan, by the renderer's own rule.
+
+    The guided renderer accepts ``max(0.2, 0.04 * moments)`` of drift before it
+    refuses its own output; a text window measured against that duration must be
+    allowed the same slack or a valid closing title would be declined.
+    """
+
+    return max(0.2, max(0, int(segment_count)) * 0.04)
+
+
+def order_satisfied(order_ids: Sequence[str], observed: Sequence[str]) -> bool:
+    """Whether the rendered picture order follows the contract's order.
+
+    ``observed`` is the collapsed order the output actually shows.  The contract
+    order is restricted to the media that appear (a coverage choice is not an
+    ordering failure), but the output must show nothing the contract does not
+    know and must never return to a clip it already left.
+    """
+
+    shown = list(observed)
+    if not shown or not set(shown) <= set(order_ids):
+        return False
+    return shown == [media_id for media_id in order_ids if media_id in set(shown)]
+
+
+def classic_cloud_evidence(
     *,
     actual_duration_s: float,
     narration_applied: bool,
     evidence: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """The receipt a classic cloud renderer persists as ``render_receipt``.
+    """The ``cloud_evidence`` a classic cloud renderer persists on its variant.
 
-    ``verified`` here means only that the renderer measured its own output and
-    is reporting what it found; the contract verifier decides what that proves.
+    Classic slots are SOURCE-time windows, so no per-clip output timing is
+    claimed: only the picture order and camera-audio facts, which do not need it.
     """
 
-    receipt: dict[str, Any] = {
+    out: dict[str, Any] = {
         "schema_version": EVIDENCE_SCHEMA_VERSION,
         "adapter": "cloud_classic",
-        "verified": True,
         "actual_duration_s": round(float(actual_duration_s), 3),
         "narration_applied": bool(narration_applied),
     }
     for key in EVIDENCE_RECEIPT_KEYS:
-        if evidence.get(key) is not None:
-            receipt[key] = evidence[key]
-    return receipt
+        if key != "picture_timeline" and evidence.get(key) is not None:
+            out[key] = evidence[key]
+    return out
 
 
 def classic_slot_evidence(

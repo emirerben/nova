@@ -1,8 +1,8 @@
 {
-  "id": "kri470-cloud-guided-order-text-lifted",
+  "id": "kri470-cloud-classic-order-declined",
   "incident": {
     "ticket": "KRI-470",
-    "summary": "KRI-470 PR-E: a guided plan whose timeline already follows the confirmed order passes the pre-render gate, and its evidence satisfies exact text, order and length at publication."
+    "summary": "KRI-470 PR-E: classic's greedy matcher never reads the confirmed order, so a chronological request is declined up front (not rendered then failed)."
   },
   "kind": "contract_pin",
   "approved": {
@@ -14,8 +14,6 @@
       "edit_format": "montage",
       "media_scope": "all",
       "ordering_choice": "chronological",
-      "opening_title": "Arnavutkoy to Eminonu",
-      "opening_title_duration_s": 2.0,
       "target_duration_s": 9,
       "target_duration_requested": true,
       "selected_media_ids": [
@@ -50,7 +48,7 @@
         }
       ]
     },
-    "creator_request": "Show the run in the order I ran it, keep 9 seconds, open with the title.",
+    "creator_request": "Show the run in the order I ran it, keep 9 seconds.",
     "provenance": "Synthetic plan shaped like the east_run thread (KRI-185): chronological order, a short length and an exact opening title. Not a prod capture."
   },
   "inputs": {
@@ -77,44 +75,21 @@
         "has_audio": true
       }
     ],
-    "cloud_preflight": false,
-    "cloud_adapter": "cloud_guided_story",
+    "cloud_preflight": true,
+    "cloud_adapter": "cloud_classic",
     "notes": [
       "Contract pin, not incident replay: drives the real cloud preflight, the real pre-render plan gate on a plan compiled by the real guided compiler from the recorded media order, and the real publication verifier on evidence the real evidence builder derives from that plan's timeline.",
-      "Lifted for cloud_guided_story: exact text is honoured (typed copy flows into the snapshot), order is GATED on the pinned plan before any render."
-    ],
-    "guided_plan": {
-      "order": [
-        "run-2",
-        "run-1",
-        "run-3"
-      ],
-      "opening_title": "Arnavutkoy to Eminonu",
-      "closing_title": "Eminonu, finally"
-    }
+      "Without a text requirement the first blocker is the order: capability_unavailable on ordering_choice with an iPhone alternative."
+    ]
   },
   "expect": {
-    "contract": {
-      "duration_s": 9,
-      "order_required": true,
-      "order_ids": "capture_time",
-      "order_basis": "capture_time",
-      "exact_texts": [
-        {
-          "role": "opening",
-          "text": "Arnavutkoy to Eminonu"
-        }
-      ],
-      "resolved": true
-    },
-    "cloud": {
-      "preflight": "passes",
-      "plan_gate": "passes",
-      "publication": "accepts"
+    "refusal": {
+      "reason": "capability_unavailable",
+      "field_path": "ordering_choice"
     }
   },
   "repro": {
-    "command": "pytest tests/incidents/test_incident_corpus.py -k kri470-cloud-guided-order-text-lifted",
+    "command": "pytest tests/incidents/test_incident_corpus.py -k kri470-cloud-classic-order-declined",
     "status": "available"
   },
   "sources": [
