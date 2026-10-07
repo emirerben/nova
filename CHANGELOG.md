@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.144.0] - 2026-10-07
+
+### Changed
+- fix(kria): ask for the title's words before approval; failed first render re-plans; one failure message (#1462) <!-- release-pr: 1462 -->
+
 ## [0.78.143.0] - 2026-10-07
 
 ### Changed
