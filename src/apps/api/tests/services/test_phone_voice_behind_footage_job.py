@@ -333,3 +333,51 @@ def test_the_runner_never_reads_request_text():
     source = inspect.getsource(job_module.run_phone_voice_behind_footage_job)
     for forbidden in ("creator_request", "_first_user_message", "_request_text", "mentions_speech"):
         assert forbidden not in source
+
+
+# --- review fixes: implicit length arithmetic and model-picked lengths ---------------------
+
+
+def _implicit_strategy(**update):
+    strategy = _strategy(target_duration_s=24, **update)
+    strategy.pop("target_duration_requested", None)
+    return strategy
+
+
+def test_the_reviewers_repro_two_short_clips_and_no_stated_length_renders(monkeypatch):
+    world = _world(monkeypatch, voice_s=60.0, count=2, clip_s=5.51, strategy=_implicit_strategy())
+    assert world.contract.duration_s is None
+    world.words = _words(count=110)
+    assert _run(world) is True
+    recipe = _recipe(world)
+    assert recipe.duration == pytest.approx(10.9, abs=0.1)
+    adjustments = world.job.assembly_plan["speech_montage"]["adjustments"]
+    assert any("footage you gave me" in note for note in adjustments)
+    assert not any("7 seconds" in note for note in adjustments)
+
+
+def test_forty_one_clips_and_a_model_picked_length_extend_instead_of_declining(monkeypatch):
+    world = _world(monkeypatch, voice_s=147.7, count=41, clip_s=10.0, strategy=_implicit_strategy())
+    world.words = _words(count=290)
+    assert _run(world) is True
+    recipe = _recipe(world)
+    assert recipe.duration == pytest.approx(32.8, abs=0.04)
+    picture = next(t for t in recipe.tracks if t.id == "voice-footage").clips
+    assert len(picture) == 41 and all(c.source_duration >= 0.8 - 1e-3 for c in picture)
+    assert (
+        "Extended the edit to 32.8 seconds so every clip is shown."
+        in (world.job.assembly_plan["speech_montage"]["adjustments"])
+    )
+
+
+def test_a_creator_stated_length_is_never_stretched_to_fit_the_clips(monkeypatch):
+    world = _world(
+        monkeypatch, voice_s=147.7, count=41, clip_s=10.0, strategy=_strategy(target_duration_s=30)
+    )
+    assert world.contract.duration_s == 30
+    world.words = _words(count=290)
+    with pytest.raises(CreatorRenderContractError) as info:
+        _run(world)
+    exc = _decline(info)
+    assert (exc.decline_reason, exc.field_path) == ("requirement_conflict", "target_duration_s")
+    assert world.db.commits == 0

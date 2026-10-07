@@ -29,9 +29,16 @@ from app.kria.render_assets import RenderAssetManifest, RenderFingerprint
 EXPORT_SAFETY_MARGIN_S = 0.05
 
 # KRI-479: a continuous voice cut on a sentence end may stop up to this long before the
-# picture ends. The composer (`phone_speech_montage_plan`) and the verifier
-# (`creator_render_contract.verify_phone_recipe`, `voice_covers_timeline`) share this one value.
+# picture ends. At most 3 s and at most 15 % of the picture (a 6 s edit may not lose 3 s of
+# voice). The composer (`phone_speech_montage_plan`) and the verifier
+# (`creator_render_contract.verify_phone_recipe`, `voice_covers_timeline`) share this one rule.
 VOICE_TAIL_SLACK_S = 3.0
+VOICE_TAIL_SLACK_FRACTION = 0.15
+
+
+def voice_tail_slack_s(picture_s: float) -> float:
+    return min(VOICE_TAIL_SLACK_S, VOICE_TAIL_SLACK_FRACTION * max(0.0, float(picture_s)))
+
 
 # Mirrors `phone_guided_plan._TIMING_ROUNDING_TOLERANCE_S` -- two
 # independently millisecond-rounded timing quantities can legitimately differ

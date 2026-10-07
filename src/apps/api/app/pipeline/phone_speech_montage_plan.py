@@ -57,6 +57,7 @@ cannot re-decide what the approved plan already decided.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -81,6 +82,7 @@ from app.pipeline.phone_recipe_shared import (
     PhoneMusicBed,
     audio_fade,
     refit_source_window,
+    voice_tail_slack_s,
 )
 from app.services.phone_sources import PhoneSourceBinding
 
@@ -513,8 +515,10 @@ def _music_clips(
 
 VOICE_FOOTAGE_TRACK_ID = "voice-footage"
 VOICE_AUDIO_TRACK_ID = "voice"
-# `VOICE_TAIL_SLACK_S` (phone_recipe_shared): how long before the picture ends the voice may
+# `voice_tail_slack_s` (phone_recipe_shared): how long before the picture ends the voice may
 # stop when cut on a sentence end instead of mid-word; the verifier allows exactly this slack.
+_SENTENCE_END = re.compile(r"[.!?\u2026]+[\"')\]]*$")
+_PAUSE_BREAK_S = 0.8  # mirrors `speech_segments._PAUSE_BREAK_S`
 _FPS = 30
 _VOICE_HARD_CUT_FADE_S = 0.5
 _VOICE_LEAD_S = 0.06  # mirrors `speech_segments.EXCERPT_LEAD_S`
@@ -540,7 +544,16 @@ def _decline(
 
 
 def _seconds(value: float) -> str:
+    """Seconds for a creator: a whole number when it is one, else one honest decimal."""
     return f"{value:.0f}" if abs(value - round(value)) < 0.05 else f"{value:.1f}"
+
+
+def _seconds_pair(first: float, second: float) -> tuple[str, str]:
+    """Two lengths that never read the same when they are not (``10.9`` vs ``10.9``)."""
+    a, b = _seconds(first), _seconds(second)
+    if a == b and abs(first - second) > 1e-6:
+        return f"{first:.2f}", f"{second:.2f}"
+    return a, b
 
 
 @dataclass(frozen=True)
@@ -565,11 +578,9 @@ def select_voice_window(
 
     Starts a hair before the first spoken word. Plays all of the speech when it fits
     ``max_length_s``; otherwise ends at the last sentence end inside the cap when that is
-    within ``VOICE_TAIL_SLACK_S`` of it, else at the last word that fits (``hard_cut``).
+    within ``voice_tail_slack_s`` of it (else a pause, else the last word) that fits (``hard_cut``).
     Never runs past the source. Raises a typed decline when the clip has next to no speech.
     """
-    from app.services.speech_segments import words_to_segments  # noqa: PLC0415
-
     rows = [
         w
         for w in (
@@ -597,17 +608,24 @@ def select_voice_window(
     last_end = float(rows[-1]["end_s"]) + _VOICE_TAIL_S
     if last_end <= cap_end:
         return VoiceWindow(start_s=round(start, 3), end_s=round(last_end, 3))
-    # More speech than room: cut it at the cap and say so.
-    sentence_ends = [
-        seg.end_s + _VOICE_TAIL_S
-        for seg in words_to_segments(rows)
-        if seg.end_s + _VOICE_TAIL_S <= cap_end
-    ]
-    word_ends = [
-        float(w["end_s"]) + _VOICE_TAIL_S
-        for w in rows
-        if float(w["end_s"]) + _VOICE_TAIL_S <= cap_end
-    ]
+    # More speech than room: cut it at the cap and say so. A cut is called a sentence end
+    # only when the last word really ends one (never a word-count or length break).
+    slack = voice_tail_slack_s(cap_end - start)
+    sentence_ends: list[float] = []
+    pause_ends: list[float] = []
+    word_ends: list[float] = []
+    for index, word in enumerate(rows):
+        end = float(word["end_s"]) + _VOICE_TAIL_S
+        if end > cap_end:
+            break
+        word_ends.append(end)
+        following = rows[index + 1] if index + 1 < len(rows) else None
+        if _SENTENCE_END.search(str(word["text"]).strip()):
+            sentence_ends.append(end)
+        elif following is not None and float(following["start_s"]) - float(word["end_s"]) >= (
+            _PAUSE_BREAK_S
+        ):
+            pause_ends.append(end)
     if not word_ends or word_ends[-1] - start < _MIN_EXCERPT_S:
         raise _decline(
             "The speech in the voice clip starts too late to fit this edit.",
@@ -615,16 +633,19 @@ def select_voice_window(
             field_path=_VOICE_FIELD_PATH,
             alternative=_ALT_PICK_VOICE,
         )
-    if sentence_ends and cap_end - sentence_ends[-1] <= VOICE_TAIL_SLACK_S:
-        end, hard = sentence_ends[-1], False
+    hard, label = False, ""
+    if sentence_ends and cap_end - sentence_ends[-1] <= slack:
+        end, label = sentence_ends[-1], ", ending on a full sentence"
+    elif pause_ends and cap_end - pause_ends[-1] <= slack:
+        end, label = pause_ends[-1], ", ending at a natural pause"
     else:
         end, hard = word_ends[-1], True
-    note = f"used the first {_seconds(end - start)} seconds of your voice"
+    note = f"used the first {_seconds(end - start)} seconds of your voice{label}"
     return VoiceWindow(
         start_s=round(start, 3),
         end_s=round(end, 3),
         hard_cut=hard,
-        adjustments=(note + ("" if hard else ", ending on a full sentence"),),
+        adjustments=(note,),
     )
 
 
@@ -674,6 +695,67 @@ def _allocate_frames(usable: list[int], total: int, floor: int) -> list[int] | N
             remaining -= give
         active = [i for i in active if alloc[i] < usable[i]]
     return alloc if remaining == 0 else None
+
+
+_FOOTAGE_CLAMP_FRAMES = 2  # the verifier's duration tolerance is 3 frames; stay inside it
+_SILENT_GAP_DISCLOSE_S = 1.0
+
+
+def _usable_frames(picture: Sequence[PhoneSourceBinding]) -> list[int]:
+    """Whole frames each clip can give: its length less the export safety margin."""
+    return [
+        max(0, int(math.floor((float(b.original.duration_s) - EXPORT_SAFETY_MARGIN_S) * _FPS)))
+        for b in picture
+    ]
+
+
+def picture_frame_bounds(
+    picture: Sequence[PhoneSourceBinding], *, min_shot_s: float | None = None
+) -> tuple[int, int]:
+    """(fewest, most) frames an edit over these clips can have, exactly as the composer allocates.
+
+    Fewest: every clip at the readable floor (or whole, when shorter). Most: every clip all it
+    has. Both are sums of per-clip whole frames, never of seconds.
+    """
+    from app.pipeline.unified_montage import MIN_READABLE_SHOT_S  # noqa: PLC0415
+
+    floor = max(
+        1, math.ceil((MIN_READABLE_SHOT_S if min_shot_s is None else min_shot_s) * _FPS - 1e-9)
+    )
+    usable = _usable_frames(picture)
+    return sum(min(u, floor) for u in usable), sum(usable)
+
+
+@dataclass(frozen=True)
+class ImplicitLength:
+    duration_s: float
+    adjustments: list[str]
+
+
+def implicit_picture_duration(
+    picture: Sequence[PhoneSourceBinding],
+    *,
+    speech_s: float,
+    target_s: float,
+    min_shot_s: float | None = None,
+) -> ImplicitLength:
+    """The length for an edit whose length the creator never stated (the plan's own pick).
+
+    The pick is capped by the voice and by the footage, and EXTENDED up to what every clip needs
+    to be seen (KRI-129: a model-picked number is never a reason to refuse). Computed in whole
+    frames, so what it returns is always something ``compile_phone_voice_behind_footage_plan``
+    can allocate. A creator-stated length never comes through here.
+    """
+    lo, hi = picture_frame_bounds(picture, min_shot_s=min_shot_s)
+    notes: list[str] = []
+    want = int(math.floor(min(float(target_s), float(speech_s)) * _FPS + 1e-9))
+    if want < lo and lo <= int(math.floor(float(speech_s) * _FPS + 1e-9)):
+        want = lo
+        notes.append(f"Extended the edit to {_seconds(lo / _FPS)} seconds so every clip is shown.")
+    if want > hi:
+        want = hi
+        notes.append(f"Kept the edit to the {_seconds(hi / _FPS)} seconds of footage you gave me.")
+    return ImplicitLength(duration_s=max(1, want) / _FPS, adjustments=notes)
 
 
 def compile_phone_voice_behind_footage_plan(
@@ -732,12 +814,22 @@ def compile_phone_voice_behind_footage_plan(
         )
 
     total_frames = max(1, round(float(duration_s) * _FPS))
-    duration = total_frames / _FPS
     floor_frames = max(1, math.ceil(floor_s * _FPS - 1e-9))
-    usable = [
-        max(0, int(math.floor((float(b.original.duration_s) - EXPORT_SAFETY_MARGIN_S) * _FPS)))
-        for b in shots_in
-    ]
+    usable = _usable_frames(shots_in)
+    if any(u < 1 for u in usable):
+        raise _decline(
+            "One of the clips is too short to show.",
+            reason="capability_unavailable",
+            field_path="ordering_choice",
+            alternative="Remove the very short clip, or ask for a different edit.",
+        )
+    notes: list[str] = []
+    over = total_frames - sum(usable)
+    if 0 < over <= _FOOTAGE_CLAMP_FRAMES:
+        # Within the verifier's own tolerance of the footage there is: use all of it.
+        total_frames = sum(usable)
+        notes.append(f"kept the edit to the {_seconds(total_frames / _FPS)} seconds of footage")
+    duration = total_frames / _FPS
     if sum(min(u, floor_frames) for u in usable) > total_frames:
         needed = math.ceil(sum(min(u, floor_frames) for u in usable) / _FPS * 10 - 1e-9) / 10
         raise _decline(
@@ -753,9 +845,9 @@ def compile_phone_voice_behind_footage_plan(
     frames = _allocate_frames(usable, total_frames, floor_frames)
     if frames is None:
         available = sum(usable) / _FPS
+        asked, have = _seconds_pair(duration, available)
         raise _decline(
-            f"The other clips add up to {_seconds(available)} seconds, not "
-            f"{_seconds(duration)}, and I won't loop them.",
+            f"The other clips add up to {have} seconds, not {asked}, and I won't loop them.",
             reason="requirement_conflict",
             field_path="target_duration_s",
             alternative=(
@@ -767,6 +859,7 @@ def compile_phone_voice_behind_footage_plan(
     receipt = VoiceBehindFootageReceipt(
         voice_media_id=voice.media_id, duration_s=duration, min_shot_s=floor_frames / _FPS
     )
+    receipt.adjustments.extend(notes)
     registry = _Assets()
     footage: list[TimelineClip] = []
     cursor = 0
@@ -801,21 +894,20 @@ def compile_phone_voice_behind_footage_plan(
     if voice_window.length_s > cap + 1e-6:
         hard_cut = True
         receipt.adjustments.append(f"used the first {_seconds(voice_len)} seconds of your voice")
-    if voice_len < duration - VOICE_TAIL_SLACK_S - 1e-6:
-        if not allow_silent_tail:
-            raise _decline(
-                f"Your voice runs {_seconds(voice_len)} seconds but the edit is "
-                f"{_seconds(duration)}.",
-                reason="requirement_conflict",
-                field_path="target_duration_s",
-                alternative=(
-                    f"End the edit when your voice ends ({_seconds(voice_len)} seconds), or keep "
-                    "the length and let the last seconds play without voice."
-                ),
-            )
-        receipt.adjustments.append(
-            f"the last {_seconds(duration - voice_len)} seconds play without voice"
+    gap = duration - voice_len
+    if gap > voice_tail_slack_s(duration) + 1e-6 and not allow_silent_tail:
+        raise _decline(
+            f"Your voice runs {_seconds(voice_len)} seconds but the edit is {_seconds(duration)}.",
+            reason="requirement_conflict",
+            field_path="target_duration_s",
+            alternative=(
+                f"End the edit when your voice ends ({_seconds(voice_len)} seconds), or keep "
+                "the length and let the last seconds play without voice."
+            ),
         )
+    if gap > _SILENT_GAP_DISCLOSE_S:
+        # A silent stretch the creator can hear: say so, chosen or not.
+        receipt.adjustments.append(f"the last {_seconds(gap)} seconds play without voice")
     fade_in = min(EXCERPT_FADE_IN_S, voice_len / 4)
     fade_out = min(_VOICE_HARD_CUT_FADE_S if hard_cut else EXCERPT_FADE_OUT_S, voice_len / 3)
     voice_asset = registry.add_video(voice)
@@ -872,6 +964,10 @@ __all__ = [
     "VOICE_FOOTAGE_TRACK_ID",
     "VOICE_TAIL_SLACK_S",
     "VoiceBehindFootageReceipt",
+    "ImplicitLength",
+    "implicit_picture_duration",
+    "picture_frame_bounds",
+    "voice_tail_slack_s",
     "VoiceWindow",
     "compile_phone_voice_behind_footage_plan",
     "select_voice_window",

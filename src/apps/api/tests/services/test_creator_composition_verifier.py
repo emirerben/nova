@@ -268,3 +268,13 @@ def test_a_wrapped_or_reordered_picture_is_caught_by_the_existing_order_check():
     with pytest.raises(CreatorRenderContractError) as info:
         _verify(_replace_clips(recipe, VOICE_FOOTAGE_TRACK_ID, clips))
     _expect(info, reason="evidence_missing", field_path="ordering_choice")
+
+
+def test_a_text_layer_held_past_the_picture_is_refused():
+    recipe = _recipe()
+    layer = recipe.text_layers[0].model_copy(update={"end": recipe.duration + 1.0})
+    broken = recipe.model_copy(update={"text_layers": [layer]})
+    with pytest.raises(CreatorRenderContractError) as info:
+        _verify(broken)
+    _expect(info, reason="evidence_missing", field_path="opening_title_duration_s")
+    assert _verify(recipe)  # the composed title is fine

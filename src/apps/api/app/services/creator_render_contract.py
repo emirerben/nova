@@ -23,7 +23,7 @@ from app.kria.brief import CreativeBrief
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
-from app.pipeline.phone_recipe_shared import VOICE_TAIL_SLACK_S
+from app.pipeline.phone_recipe_shared import voice_tail_slack_s
 from app.services.choice_questions import (
     ATTACHMENT_ORDER_KEY,
     CAPTURE_ORDER_KEYS,
@@ -1361,6 +1361,13 @@ def _verify_composition(
         )
 
     picture_end = max((c.timeline_start + c.source_duration / c.rate for c in picture), default=0.0)
+    if any(layer.end > picture_end + frame for layer in recipe.text_layers):
+        # A title held past the last shot would sit over black (or stretch the video).
+        raise _phone_decline(
+            "exact_texts",
+            "This edit keeps confirmed text on screen after the picture has ended.",
+            field_path="opening_title_duration_s",
+        )
     if recipe.duration > picture_end + frame:
         raise _phone_decline(
             "duration_s",
@@ -1405,7 +1412,7 @@ def _verify_composition(
                 "This edit's voice has a gap or starts late instead of playing straight through.",
             )
         covered = max(covered, clip.timeline_start + clip.source_duration / clip.rate)
-    if not voice or covered < expected - VOICE_TAIL_SLACK_S - frame:
+    if not voice or covered < expected - voice_tail_slack_s(expected) - frame:
         raise _phone_decline(
             "audio_source_ids", "This edit's voice stops before the end of the picture."
         )

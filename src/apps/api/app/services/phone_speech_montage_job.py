@@ -443,6 +443,7 @@ def run_phone_voice_behind_footage_job(
     from app.pipeline.phone_recipe_shared import EXPORT_SAFETY_MARGIN_S  # noqa: PLC0415
     from app.pipeline.phone_speech_montage_plan import (  # noqa: PLC0415
         compile_phone_voice_behind_footage_plan,
+        implicit_picture_duration,
         select_voice_window,
     )
     from app.services.device_render import (  # noqa: PLC0415
@@ -530,15 +531,19 @@ def run_phone_voice_behind_footage_job(
         if contract.duration_s is not None:
             duration_s = float(contract.duration_s)
         else:
-            # No length was asked for: the voice's own length, capped at the plan's pick.
+            # No length was stated (the plan's own pick, or the voice's): the voice's length
+            # capped at the pick, EXTENDED so every clip is shown and kept to the footage there
+            # is, all in whole frames exactly as the composer allocates them. A creator-stated
+            # length never comes through here (it is pinned in the contract).
             full = select_voice_window(words, source_duration_s=source_s, max_length_s=None)
-            duration_s = min(full.length_s + margin, _strategy_target_s(strategy) or 24.0)
-            usable = sum(max(0.0, float(b.original.duration_s) - margin) for b in picture)
-            if usable < duration_s:
-                duration_s = max(0.8, usable - 1 / 30)
-                adjustments.append(
-                    f"kept the edit to the {duration_s:.0f} seconds of footage you gave me"
-                )
+            length = implicit_picture_duration(
+                picture,
+                speech_s=full.length_s + margin,
+                target_s=_strategy_target_s(strategy) or 24.0,
+                min_shot_s=composition.min_shot_s,
+            )
+            duration_s = length.duration_s
+            adjustments.extend(length.adjustments)
         window = select_voice_window(
             words, source_duration_s=source_s, max_length_s=duration_s - margin
         )
