@@ -47,8 +47,12 @@ def _record(**changes) -> dict:
     return {"clip_ids": ["a", "b", "c"], "duration_s": 12.0, **changes}
 
 
-def _verdict(req, facts, *, include_unchecked=False):
-    (receipt,) = build_receipts([req], facts, include_unchecked=include_unchecked) or [None]
+def _verdict(req, facts, *, include_unchecked=False, strict=True):
+    """The receipt for one order requirement. ``strict`` is the order authority being bound
+    (a contract-stamped job or a brief-binding cohort); legacy jobs pass ``strict=False``."""
+    (receipt,) = build_receipts(
+        [req], facts, include_unchecked=include_unchecked, strict_order=strict
+    ) or [None]
     return receipt
 
 
@@ -76,7 +80,7 @@ def test_a_required_order_the_plan_did_not_apply_is_a_failed_verdict(req, record
 def test_a_rendered_plan_with_no_recorded_order_fails_instead_of_vanishing():
     facts = plan_facts_from_speech_montage({"duration_s": 9.0})  # a render, no ordering_basis
     req = _order()
-    assert build_receipts([req], facts) != []  # not dropped
+    assert build_receipts([req], facts, strict_order=True) != []  # not dropped
     receipt = _verdict(req, facts)
     assert receipt.status == "not_possible"
     assert "confirm the order" in receipt.reason
@@ -89,7 +93,7 @@ def test_a_rendered_plan_with_no_recorded_order_fails_instead_of_vanishing():
 def test_a_draft_that_has_not_rendered_yet_is_not_judged_on_an_order_it_cannot_record():
     draft = plan_facts_from_strategy({"edit_format": "montage"}, clip_ids=["a", "b"])
     req = _order()
-    assert build_receipts([req], draft) == []
+    assert build_receipts([req], draft, strict_order=True) == []
     unchecked = _verdict(req, draft, include_unchecked=True)
     assert unchecked.verification == "unchecked"  # still open: the render's receipts decide
 
@@ -100,10 +104,10 @@ def test_a_draft_that_has_not_rendered_yet_is_not_judged_on_an_order_it_cannot_r
 def test_an_optional_order_preference_keeps_the_unchecked_path(preference):
     req = _order("alphabetical", **preference)
     facts = plan_facts_from_unified_montage(_record(ordering_basis="capture_time"))
-    assert build_receipts([req], facts) == []
+    assert build_receipts([req], facts, strict_order=True) == []
     assert _verdict(req, facts, include_unchecked=True).verification == "unchecked"
     no_order = plan_facts_from_speech_montage({"duration_s": 9.0})
-    assert build_receipts([_order(**preference)], no_order) == []
+    assert build_receipts([_order(**preference)], no_order, strict_order=True) == []
 
 
 def test_a_met_order_and_an_honest_fallback_are_not_made_to_fail():
@@ -157,6 +161,52 @@ def test_a_lip_sync_montage_keeps_the_song_placement_as_the_order_authority():
     """#1451: "Use this order: clips ..." is a keyless order requirement and the song
     placement owns it. It must stay unjudged here, not become a blocking failure."""
     facts = plan_facts_from_unified_montage(_record(ordering_basis="song_time"))
-    assert build_receipts([_order(None)], facts) == []
+    assert build_receipts([_order(None)], facts, strict_order=True) == []
     # ...but an explicit ask for filming order on a song-time cut is still unmet.
     assert _verdict(_order("capture_time"), facts).status == "not_possible"
+
+
+# --- the stricter verdict applies only where an authority can verify the order --------------
+
+
+def _unified(basis):
+    return plan_facts_from_unified_montage(_record(ordering_basis=basis))
+
+
+@pytest.mark.parametrize(
+    ("req", "facts", "main_status"),
+    [
+        # Each row: what main (before PR-G) returned, byte for byte, for an unbound job.
+        (_order(), _unified("attachment"), "partial"),
+        (_order(), _unified("song_time"), "partial"),
+        (_order(None), _unified("attachment"), "partial"),
+        (_order("alphabetical"), _unified("capture_time"), "partial"),
+        (_order(), plan_facts_from_speech_montage({"duration_s": 9.0}), "partial"),
+    ],
+)
+def test_a_legacy_unbound_job_keeps_main_verdict_semantics(req, facts, main_status):
+    receipt = _verdict(req, facts, strict=False, include_unchecked=False)
+    if receipt is None:  # main dropped the neutral receipt entirely
+        assert main_status == "partial"
+        return
+    assert receipt.status == main_status != "not_possible"
+
+
+def test_legacy_neutral_receipts_are_still_dropped_for_an_unbound_job():
+    no_order = plan_facts_from_speech_montage({"duration_s": 9.0})
+    assert build_receipts([_order()], no_order) == []
+    unknown_rule = plan_facts_from_unified_montage(_record(ordering_basis="capture_time"))
+    assert build_receipts([_order("alphabetical")], unknown_rule) == []
+    # Strictness follows the writer's binding by default, exactly like `include_unchecked`.
+    assert build_receipts([_order()], no_order, include_unchecked=True)[0].status == "not_possible"
+
+
+def test_an_attachment_ordered_speech_montage_is_not_a_false_couldnt():
+    """The job now records the order it used. An unstamped brief that asked for attachment
+    order is MET; a rule the plan cannot show is judged only when an authority is bound."""
+    facts = plan_facts_from_speech_montage({"duration_s": 9.0, "ordering_basis": "attachment"})
+    attachment = _order("attachment")
+    assert _verdict(attachment, facts, strict=False).status == "met"
+    assert _verdict(attachment, facts, strict=True).status == "met"
+    keyless = _order(None)
+    assert _verdict(keyless, facts, strict=False).status != "not_possible"

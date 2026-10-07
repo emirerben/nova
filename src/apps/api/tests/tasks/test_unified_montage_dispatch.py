@@ -293,10 +293,9 @@ def test_without_capture_times_the_order_stays_attachment_and_says_so(harness):
     assert record["ordering_basis"] == "attachment"
     assert record["clip_ids"] == [f"clip-{i}" for i in range(CLIPS)]
     receipts = {row["requirement_id"]: row for row in record["requirement_receipts"]}
-    # KRI-470 PR-G: filming order was asked for and the plan is in attachment order, so the
-    # required order is NOT met ("Couldn't"), not "partly".
-    assert receipts["r4"]["status"] == "not_possible"
-    assert "attachment" in receipts["r4"]["reason"]
+    # An unbound job keeps its original verdict ("partly"); the stricter "Couldn't" applies only
+    # where an authority is bound (see the bound-job tests at the end of this file).
+    assert receipts["r4"]["status"] == "partial"
 
 
 def test_no_brief_still_produces_a_plain_guided_montage(harness):
@@ -1070,3 +1069,33 @@ def test_an_optional_order_preference_the_plan_cannot_follow_does_not_block(harn
     }
     assert receipts["r5"]["verification"] == "unchecked"
     assert receipts["r4"]["status"] == "met"
+
+
+def test_a_bound_job_without_capture_times_fails_the_required_filming_order(harness):
+    """The same shape as the unbound test above, but bound: "Couldn't", and it blocks."""
+    from app.kria.brief_binding import BriefBinding
+
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(
+                id="r4",
+                kind="order",
+                scope="global",
+                description="in the order I filmed",
+                facts={"key": "capture_time"},
+            )
+        ],
+    )
+    job, *_ = harness(brief=brief, capture=False)
+    job.assembly_plan["creator_brief_binding"] = BriefBinding.create(
+        uuid.uuid4(), brief
+    ).model_dump(mode="json")
+
+    with pytest.raises(UnsupportedPhonePlan):
+        gb._run_phone_unified_montage_job(
+            str(job.id), copy.deepcopy(job.assembly_plan), job.all_candidates, ownership_epoch=3
+        )
+
+    failed = job.assembly_plan["request_recovery"]["requirement_receipts"]
+    assert [(row["requirement_id"], row["status"]) for row in failed] == [("r4", "not_possible")]

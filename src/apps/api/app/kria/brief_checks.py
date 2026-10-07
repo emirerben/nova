@@ -15,6 +15,7 @@ closing shot on a phone Talking edit.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -146,6 +147,10 @@ class PlanFacts:
     # spoken-excerpt montage record), not a draft that has not been laid out yet. A
     # required order a rendered plan cannot show is a failure; a draft's is pending.
     rendered_output: bool = False
+    # True only where the order requirement is bound to an authority that can verify it
+    # (a contract-stamped job, or a brief-binding cohort: `build_receipts` sets it from the
+    # writer's binding). Legacy / unbound jobs keep the original, softer order verdicts.
+    strict_order: bool = False
     # KRI-218: True when the editor facts carry a per-clip text diff (`per_clip_text`,
     # `clip_ids` filled from what the turn actually changed), so per-clip text can be
     # judged for real instead of "can't verify".
@@ -857,7 +862,7 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     (unchecked) is only for an optional preference, and for a draft that has not been
     laid out yet (its order is judged when it renders)."""
     key = str(req.facts.get("key") or req.facts.get("by") or "").casefold()
-    required = _order_is_required(req)
+    required = facts.strict_order and _order_is_required(req)
     unmet = "not_possible" if required else "partial"
     if not facts.ordering_basis:
         if required and facts.rendered_output:
@@ -1637,7 +1642,11 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
 
 
 def build_receipts(
-    requirements: Iterable[BriefRequirement], facts: PlanFacts, *, include_unchecked: bool = False
+    requirements: Iterable[BriefRequirement],
+    facts: PlanFacts,
+    *,
+    include_unchecked: bool = False,
+    strict_order: bool | None = None,
 ) -> list[RequirementReceipt]:
     """Build receipts without changing legacy omission or serialization by default.
 
@@ -1645,7 +1654,13 @@ def build_receipts(
     live requirement: determinate receipts are ``checked`` at the ``checked``
     stage, while unavailable evidence is ``unchecked`` at ``understood`` (or
     ``matched`` when a clip target is known).
+
+    ``strict_order`` (default: ``include_unchecked``, i.e. the writer is bound) turns on the
+    stricter verdicts for a required order (see ``_check_order``). A contract-stamped job
+    passes it explicitly; a legacy / unbound job keeps the original semantics.
     """
+    if (include_unchecked if strict_order is None else strict_order) and not facts.strict_order:
+        facts = dataclasses.replace(facts, strict_order=True)
     checked = ((req, check_requirement(req, facts)) for req in requirements if req.live)
     receipts: list[RequirementReceipt] = []
     for req, receipt in checked:
