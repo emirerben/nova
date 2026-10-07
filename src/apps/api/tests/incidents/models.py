@@ -296,9 +296,11 @@ class Repro(_Strict):
         if self.status == "pending" and not self.owner:
             raise ValueError("a pending repro names its owning ticket")
         if self.status == "available" and not (
-            self.command.startswith(("pytest ", "make kria-replay FIXTURE="))
+            self.command.startswith(("pytest ", "make kria-replay FIXTURE=", "python scripts/"))
         ):
-            raise ValueError("an available repro must be a pytest id or make kria-replay")
+            raise ValueError(
+                "an available repro must be a pytest id, make kria-replay or a repo script"
+            )
         return self
 
 

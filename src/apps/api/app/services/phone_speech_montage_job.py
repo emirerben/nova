@@ -262,7 +262,10 @@ def run_phone_speech_montage_job(
     broll_ids = [
         c.media_id for c in candidates if c.kind == "video" and c.media_id not in speaker_candidates
     ]
-    ordering_basis = None
+    # The order actually used is ALWAYS recorded (attachment order is a basis too): a
+    # receipt can only verify an order the record states, and "nothing recorded" read as a
+    # failure for an unstamped brief that simply followed the order the clips were added in.
+    ordering_basis = "attachment"
     if contract and contract.order_required:
         if not contract.order_ids or any(
             media_id not in broll_ids for media_id in contract.order_ids
@@ -271,7 +274,7 @@ def run_phone_speech_montage_job(
                 "I can't prove the confirmed picture order for this audio edit."
             )
         broll_ids = list(contract.order_ids)
-        ordering_basis = contract.order_basis
+        ordering_basis = contract.order_basis or ordering_basis
     elif order_by_capture:
         from app.services.clip_facts import (  # noqa: PLC0415
             assignment_facts,
@@ -318,7 +321,13 @@ def run_phone_speech_montage_job(
 
         record["requirement_receipts"] = [
             r.model_dump(mode="json")
-            for r in build_receipts(brief.live(), plan_facts_from_speech_montage(record))
+            for r in build_receipts(
+                brief.live(),
+                plan_facts_from_speech_montage(record),
+                # The stricter order verdicts need an authority that can verify the order:
+                # a contract-stamped job or a brief-binding cohort. Legacy jobs keep theirs.
+                strict_order=contract is not None or bool(snapshot.get("creator_brief_binding")),
+            )
         ]
 
     request_obj = make_device_request(

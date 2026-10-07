@@ -617,12 +617,102 @@ Edit duration excludes the fixed, declared brand outro, matching
 server-known tail. A picture order that includes a source used only as a speech
 bed is unsupported; it is refused rather than silently dropping that source.
 
+## Honest verdicts and phone output proof (KRI-470 PR-G)
+
+What a "success" now has to survive on the phone side.
+
+**What the phone verifier proves about audio.** `verify_phone_recipe` counts the separate
+music bed (`audio.music_asset_id` at `music_volume > 0`) as an audible source, not just
+track clips. The device plays that bed from source 0 on top of every audio-track clip, so:
+
+- an asset audible through a track clip AND the bed is refused (`requirement_conflict`,
+  `audio_strategy`; `doubled_soundtrack_assets` is the single check). This is the KRI-481
+  double play, which a clip-only check could not see;
+- a bed that names the camera's own file counts as camera audio (so `original_audio:
+  forbid` / `audio_source_ids` apply to it);
+- a bed with `music_volume == 0` is the silenced legacy reference and is not audible.
+
+The contract has no music-policy field, so an unrequested music bed of a catalog track is
+not refused by the contract (adding one is a route-resolver / composition decision). Two
+other writers could have produced the same double play and were fixed: the speech-montage
+compiler (music clips AND bed) and the authored editor timeline (a Save re-enabled the bed
+for voiceover+music variants; the music level now lives on the clip: for a voiceover variant,
+`mix` is the voice slider and the level is the compiler's `voiceover_music_gain(mix)`, for other
+variants `mix` is the editor's music level).
+
+**Order verdicts.** Where an authority can verify the order (a brief-binding cohort, i.e.
+`build_receipts(include_unchecked=True)`, or a contract-stamped speech job:
+`strict_order`), a brief `order` requirement is REQUIRED, exactly as `order_required`
+pins it; legacy / unbound jobs keep the original softer verdicts byte for byte; only a requirement explicitly marked a preference (`facts.strength` of
+`preference` / `optional`, or `facts.required: false`) may stay unchecked.
+`brief_checks._check_order` therefore returns (strict jobs):
+
+| Situation | Verdict |
+| --- | --- |
+| plan in the asked order | `met` |
+| some clips had no capture time (honest fallback), some groups of a sequence landed | `partial` |
+| plan in another order (attachment, song time, ...), or the creator's rule was not applied, or none of its groups landed | `not_possible` ("Couldn't") |
+| a rendered plan (unified / spoken-excerpt montage record) that recorded no order | `not_possible` |
+| a draft (nothing rendered yet) with no recorded order; an optional preference | unchecked (judged when it renders / never) |
+| a rule the checker has no key for, where another authority owns and verifies the order (a lip-sync montage's song placement, #1451; the contract's confirmed / editor / answered order ids) | unchecked (it is not judged here, and does not block) |
+
+A `not_possible` receipt blocks a bound unified montage exactly as any other unmet
+receipt does (`ask_before_simplifying`), so "Partly" order lines become "Couldn't" and two
+shapes that used to render silently now ask first: an order rule the checker has no key
+for (alongside one it can follow), and a render record with no order. The key set is the
+shared `clip_facts.CAPTURE_ORDER_KEYS`. The spoken-excerpt montage job always records the
+order it used (attachment included), so an unstamped brief that followed attachment order is
+`met` rather than a false "couldn't confirm".
+
+**Last good artifact.** A contract refusal never replaces the last accepted artifact. At
+the editor Save / `pin_device_request` the check runs before any mutation; at the retry
+re-pin and at publication the refusal is written beside the intact state
+(`record["contract_decline"]`: typed reason, field path, alternative, stage) and a record
+still waiting on the phone moves to `needs_attention`. The variant's video, poster, URL
+and `ok`, and the record's pinned request, receipts and published attempt are not touched.
+Cloud publication is unchanged here.
+
+**Refusal copy.** Recovery reads the recorded decline (`kria_runtime._device_contract_decline`)
+and promises only what exists. It states what could not be confirmed, that the edit was NOT
+applied, that the last good version is still available (or "Nothing was published." for a first
+render), and a next step that works: for `evidence_missing`, "tell me to redo it and I'll make a
+new version from what you already approved" (the brief persists across turns); for `needs_choice`
+/ `requirement_conflict`, the typed alternative as the question; for `capability_unavailable`, the
+way forward. Nothing re-runs a refused phone render and chat retry does not exist for device jobs,
+so the execution error is `ask_user`, `retryable: false`. A refused FIRST render (no accepted
+artifact) also fails the variant and job (`creator_render_contract_unverified`, typed decline
+beside it) so it is visible and the reaper does not rescan it; an edit leaves everything alone.
+Phone-side failures with no recorded refusal keep the "tap Retry on your iPhone" copy.
+
+**Deploy note.** `verify_device_record_contract` re-runs `verify_phone_recipe`, so an already
+pinned, contract-STAMPED record whose recipe plays one soundtrack twice (a song-lane or
+speech-montage-with-music job compiled before these fixes) is refused from now on with a
+permanent 409 on GET, asset downloads and uploads (and, on a refused publication, a typed
+`contract_decline`). Before merging, check production for in-flight stamped phone jobs of those
+two shapes (`_device_render_v1` records in `awaiting_device` / `syncing`) and let them finish or
+re-render them first. Unstamped (legacy) records are not affected.
+
+**Editor text roles.** An editor Save rebinds the contract's exact texts keeping every
+requirement a text carried (the standard shape is `[opening X (2.0 s), any X]`; matched by element
+id, else exact text) with its approved `duration_s`; an opening or closing text that the
+edit moves out of its window is refused. Unknown elements stay `any`; a shot-scoped role
+survives only while the timeline is untouched (it degrades to `any`, never to nothing).
+
+**Real-export proof.** `scripts/ios/phone-audio-parity.py` (see
+`docs/runbooks/ios-development.md`, "Phone export proof") exports a user-song montage
+compiled by the real server compiler through the production exporter and measures the MP4:
+the song once from its chosen window, no second copy from source time 0, camera audio
+silent, cuts in order, the opening text present only in its window, and a negative control
+(the bed switched back on) that must be detected. Recipe validation and file metadata are
+not proof. A physical iPhone is still the end-of-train human check.
+
 ## Offline checks
 
 From the repository root:
 
 ```sh
-bash scripts/check-api.sh test tests/services/test_creator_render_contract.py tests/services/test_creator_render_binding.py tests/services/test_cloud_render_contract.py tests/services/test_device_render_contract.py tests/services/test_phone_editor_render_contract.py tests/services/test_phone_speech_montage_job.py tests/services/test_speech_montage_planning.py -q
+bash scripts/check-api.sh test tests/services/test_creator_render_contract.py tests/services/test_creator_render_binding.py tests/services/test_cloud_render_contract.py tests/services/test_device_render_contract.py tests/services/test_phone_editor_render_contract.py tests/services/test_phone_speech_montage_job.py tests/services/test_speech_montage_planning.py tests/services/test_phone_music_bed_audible.py -q
+bash scripts/check-api.sh test tests/kria/test_order_verdicts.py tests/routes/test_device_render_last_good.py tests/kria/test_runtime_phone_v2.py -q
 bash scripts/check-api.sh test tests/tasks/test_unified_montage_dispatch.py tests/tasks/test_phone_format_matrix.py tests/tasks/test_generative_build.py tests/tasks/test_guided_story_build.py tests/routes/test_device_render.py tests/routes/test_phone_editor_commit.py -q
 bash scripts/preship-check.sh
 ```

@@ -92,6 +92,60 @@ root (CI also runs these before the full gate):
 python3 -m unittest discover -s scripts/ios/tests -v
 ```
 
+## Phone export proof (KRI-139, KRI-470 PR-G)
+
+Recipe validation and file metadata do not prove what a creator hears or sees.
+`scripts/ios/phone-audio-parity.py` renders recipes written by the REAL server compilers
+through `KriaMediaEngine`'s production exporter (`AudioParityFixtureTests`, opt-in via
+`KRIA_AUDIO_PARITY_DIR`; it is not part of PR CI) and measures the exported MP4 with ffmpeg.
+It needs ffmpeg on PATH (and macOS `say` for the cloud-parity cases).
+
+```bash
+OUT=$(mktemp -d)
+src/apps/api/.venv/bin/python scripts/ios/phone-audio-parity.py prepare "$OUT"   # or --cases user_song
+(cd src/apps/ios/Packages/KriaMediaEngine && \
+  KRIA_AUDIO_PARITY_DIR="$OUT" swift test --filter AudioParityFixtureTests)
+src/apps/api/.venv/bin/python scripts/ios/phone-audio-parity.py compare "$OUT"
+```
+
+`compare` writes `$OUT/report.json` (every measurement) and `$OUT/montage.png` (a frame per
+cut, then the opening-text frame beside its no-text twin) and exits non-zero on a failed
+check. `swift test` on macOS runs the same AVFoundation code as the phone; the simulator
+variant is in the script docstring. Cases:
+
+- `voiceover_music`, `voiceover_footage`, `narrated_ducked`: phone vs the cloud mixer (loudness
+  within 1 LU, true peak under -1 dBFS).
+- `user_song`: a creator-song montage (`plan_unified_montage` -> `compile_phone_guided_plan`
+  song lane, window opening at 11.5 s). The song is a staircase of one pure tone per source
+  second and every camera clip is a unique colour with its own tone. Checks: the export
+  length; every cut's centre frame is that cut's colour (order); each window tone sounds
+  once at the song's level with no other tone above -30 dB (a second copy from 0 s would
+  show the opening tones); camera tones silent; the opening text differs from the
+  `user_song_notext` twin inside its window and not after it.
+- `voiceover_music_authored`: a voiceover + music edit restored through the authored editor
+  path (`compile_phone_authored_timeline`). Voice is a 523 Hz tone, the music the same tone
+  staircase starting at source second 10. Checks: the voice and each music tone sound at the
+  COMPILER's level (music at `min(1 - mix, 0.5)`, 0.3 for mix 0.7), no tone from the music's
+  first seconds (a second copy from 0 s), footage audio silent. Controls that must fail:
+  `voiceover_music_authored_loud` (`music_level`: music at the voice-slider value, +7.4 dB)
+  and `voiceover_music_authored_doubled` (`music_once`: clip + `music_asset_id` bed).
+- `speech_music`: the real spoken-excerpt compiler with a music bed. Music is audible only
+  under the montage runs (continuing where it left off), the speaker's tone alone under the
+  speech, b-roll silent. Control `speech_music_doubled_bed` must fail `music_once`.
+- `user_song_doubled_bed`: the NEGATIVE CONTROL, the same recipe with `music_volume = 1.0`
+  (the KRI-481 failure). `compare` requires it to FAIL `tone_a_absent` and `song_once`;
+  a harness that cannot see the double play fails loudly.
+
+**Cadence.** This proof is opt-in and not in CI, so it only protects what someone re-runs.
+Re-run the full cycle (`prepare`, `swift test`, `compare`; all controls detected, exit 0)
+on every PR that touches `pipeline/phone_guided_plan.py`, `pipeline/phone_authored_timeline.py`,
+`pipeline/phone_speech_montage_plan.py`, `pipeline/phone_voiceover_montage_plan.py`,
+`services/phone_editor.py` audio handling, or `Composition.swift`, and attach `report.json`
+and `montage.png` to the PR.
+
+A physical iPhone remains a human check (listening on speaker and headphones, HEVC/HDR
+sources, the hardware encoder).
+
 ## Architecture boundaries
 
 - Creation threads, runtime-v2 drafts, approvals, editor commits, and jobs remain
