@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.123.0] - 2026-10-07
+
+### Changed
+- test(incidents): permanent regression corpus for request-following failures (KRI-480) (#1444) <!-- release-pr: 1444 -->
+
 ## [0.78.122.0] - 2026-10-06
 
 ### Changed
