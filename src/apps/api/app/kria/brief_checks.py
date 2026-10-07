@@ -841,6 +841,7 @@ _ORDER_NOT_RECORDED = "I couldn't confirm the order your edit used."
 _ORDER_RULE_NOT_APPLIED = (
     "I can't verify this ordering rule, and the clips are not in an order I can show matches it."
 )
+_ORDER_VERIFIED_ELSEWHERE = frozenset({"song_time", "confirmed", "editor", "attachment_order"})
 _PREFERENCE_STRENGTHS = frozenset({"preference", "prefer", "optional", "soft", "nice_to_have"})
 
 
@@ -890,8 +891,13 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     elif not key or key != basis:
         # Nothing here can confirm an ordering this checker has no rule for. When the
         # order is required, "can't confirm" is not a pass: the plan is in some other
-        # order than the one asked for.
-        if required:
+        # order than the one asked for. Except where another authority owns the order and
+        # verifies it: a lip-sync montage's song placement (the contract skips a creator's
+        # "use this order" answer there, #1451, and the lip-sync receipts verify the
+        # takes) and the contract's own confirmed / editor / answered order ids. A rule
+        # the checker has no key for stays unjudged there instead of blocking a render
+        # that placed it.
+        if required and basis not in _ORDER_VERIFIED_ELSEWHERE:
             return _receipt(req, "not_possible", _ORDER_RULE_NOT_APPLIED)
         return _receipt(req, "partial", _CANT_CHECK_ORDER_RULE)
     if facts.ordering_fallback_clip_ids:

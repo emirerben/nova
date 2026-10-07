@@ -650,6 +650,7 @@ pins it; only a requirement explicitly marked a preference (`facts.strength` of
 | plan in another order (attachment, song time, ...), or the creator's rule was not applied, or none of its groups landed | `not_possible` ("Couldn't") |
 | a rendered plan (unified / spoken-excerpt montage record) that recorded no order | `not_possible` |
 | a draft (nothing rendered yet) with no recorded order; an optional preference | unchecked (judged when it renders / never) |
+| a rule the checker has no key for, where another authority owns and verifies the order (a lip-sync montage's song placement, #1451; the contract's confirmed / editor / answered order ids) | unchecked (it is not judged here, and does not block) |
 
 A `not_possible` receipt blocks a bound unified montage exactly as any other unmet
 receipt does (`ask_before_simplifying`), so "Partly" order lines become "Couldn't" and two

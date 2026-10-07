@@ -151,3 +151,12 @@ def test_the_receipts_share_the_contracts_capture_order_keys():
 
 def test_plan_facts_default_is_not_a_rendered_output():
     assert PlanFacts().rendered_output is False
+
+
+def test_a_lip_sync_montage_keeps_the_song_placement_as_the_order_authority():
+    """#1451: "Use this order: clips ..." is a keyless order requirement and the song
+    placement owns it. It must stay unjudged here, not become a blocking failure."""
+    facts = plan_facts_from_unified_montage(_record(ordering_basis="song_time"))
+    assert build_receipts([_order(None)], facts) == []
+    # ...but an explicit ask for filming order on a song-time cut is still unmet.
+    assert _verdict(_order("capture_time"), facts).status == "not_possible"
