@@ -1,10 +1,15 @@
 """One route resolver for an approved creator plan (KRI-470 PR-D).
 
-``resolve_route`` is a pure function of the APPROVED plan: the pinned render
-contract, the strategy fields the dispatchers branch on, media facts already in
-the approval snapshot, and the platform.  It reads no request text -- no chat
-message, no ``creator_request``, no brief prose -- so rewording a message can
-never change a route.  ``tests/services/test_render_route.py`` guards that.
+``resolve_route`` is a pure function of the APPROVED plan.  Its inputs are a typed
+projection (``RouteInputs``): booleans and enumerated values lifted from the pinned
+render contract (``ContractFacts``) and from the strategy fields the dispatchers branch
+on (``PlanFacts``: audio strategy, song sync, render program, execution contract),
+the declared edit format, what is attached (recording, song, guided snapshot), per-clip
+speech facts from the approval snapshot, the clip count, rollout capabilities and the
+platform.  No string a creator or model wrote -- chat, ``creator_request``, brief prose,
+strategy prose, exact-text content -- is reachable from the resolver, so rewording
+cannot change a route.  ``tests/services/test_render_route_invariance.py`` rewrites every
+such string and asserts the resolution is identical.
 
 PR-D ships it SHADOW-FIRST.  For jobs carrying the plan-authority stamp the
 dispatchers (``tasks/generative_build.py``) compute the same resolution from the
@@ -13,7 +18,9 @@ disagrees with the legacy decision; the LEGACY decision still renders.  PR-F
 retires the legacy gates one at a time, using that log.
 
 Three parts, top to bottom: the pure resolver; the job adapter that reads the
-persisted job shape (and the stamp); and the shadow comparison.
+persisted job shape (and writes the route stamp, a plain-dict sibling key on the job:
+the strict contract model is never touched, so older workers keep reading it); and the
+shadow comparison.
 """
 
 from __future__ import annotations
@@ -21,14 +28,16 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 import structlog
 
+from app.agents._schemas.creator_agent import AudioStrategy, SongSyncMode
 from app.agents._schemas.edit_format import (
     GUIDED_EDIT_FORMATS,
     NARRATED_EDIT_FORMATS,
     PHONE_RENDER_SUPPORTED_FORMATS,
+    RenderProgram,
     coerce_edit_format,
     render_program_for_intent,
 )
@@ -52,9 +61,9 @@ Platform = Literal["phone", "cloud"]
 class Route(StrEnum):
     """Every route the dispatchers can take today.
 
-    Values are stable: they are stored in the contract (``route``) and in
+    Values are stable: they are stored in the ``creator_route`` stamp and in
     ``route_mismatch`` events.  ``subtitled`` / ``talking_head`` / ``narrated`` /
-    ``guided_story`` exist on both platforms; the contract also stores the platform.
+    ``guided_story`` exist on both platforms; the stamp also stores the platform.
     """
 
     # Shared
@@ -93,13 +102,18 @@ class RouteCapabilities:
     day_vlog: bool = True
     single_hero: bool = True
     phone_talking_head: bool = True
+    # `phone_render_supported_formats()` (settings-aware), never the static allowlist.
+    phone_supported_formats: frozenset[str] = PHONE_RENDER_SUPPORTED_FORMATS
 
 
 def route_capabilities_from_settings() -> RouteCapabilities:
     """The live rollout flags the legacy dispatchers consult (read per call)."""
 
     from app.config import settings  # noqa: PLC0415
-    from app.services.phone_rollout import phone_talking_head_supported  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_render_supported_formats,
+        phone_talking_head_supported,
+    )
 
     return RouteCapabilities(
         narrated=bool(settings.narrated_archetype_enabled),
@@ -109,7 +123,35 @@ def route_capabilities_from_settings() -> RouteCapabilities:
         day_vlog=bool(settings.edit_format_day_vlog_enabled),
         single_hero=bool(settings.edit_format_single_hero_enabled),
         phone_talking_head=bool(phone_talking_head_supported()),
+        phone_supported_formats=frozenset(phone_render_supported_formats()),
     )
+
+
+@dataclass(frozen=True)
+class ContractFacts:
+    """What the resolver may know about the pinned contract: presence and kind only.
+
+    Exact-text content, media ids and unresolved messages are deliberately absent.
+    """
+
+    duration_set: bool = False
+    require_voiceover: bool = False
+    has_audio_sources: bool = False
+    original_audio: Literal["forbid", "require"] | None = None
+    # Matrix field path of the first exact-text requirement (from its ROLE), or None.
+    text_field_path: str | None = None
+    order_required: bool = False
+    unresolved: bool = False
+
+
+@dataclass(frozen=True)
+class PlanFacts:
+    """The strategy fields the dispatchers branch on -- every one an enumerated value."""
+
+    audio_strategy: str | None = None
+    song_sync: str | None = None
+    render_program: str | None = None
+    guided_voiceover: bool = False
 
 
 @dataclass(frozen=True)
@@ -117,16 +159,18 @@ class RouteInputs:
     """Everything the resolver may read.  There is no free-text field, on purpose."""
 
     platform: Platform
-    contract: CreatorRenderContract
+    contract: ContractFacts
     edit_format: str | None
-    strategy: Mapping[str, Any] | None = None
+    plan: PlanFacts = PlanFacts()
     guided_snapshot_present: bool = False
     voiceover_present: bool = False
     song_present: bool = False
     clip_count: int | None = None
-    # Per clip in the approval snapshot: True / False, or None when never analysed.
+    # Per clip in the approval snapshot: True / False, or None when speech is unknown.
     clip_has_speech: tuple[bool | None, ...] = ()
     capabilities: RouteCapabilities = RouteCapabilities()
+    # Opaque digest of the contract these facts came from (stamp/event correlation only).
+    contract_digest: str = ""
 
 
 @dataclass(frozen=True)
@@ -221,27 +265,27 @@ def _declaration(platform: Platform, adapter: str) -> AdapterDeclaration:
     return CLOUD_ADAPTER_DECLARATIONS[adapter]
 
 
-def _present_requirements(contract: CreatorRenderContract) -> list[tuple[str, str | None]]:
+def _present_requirements(contract: ContractFacts) -> list[tuple[str, str | None]]:
     """(requirement, field path) for each requirement this contract actually carries."""
 
     rows: list[tuple[str, str | None]] = []
-    if contract.duration_s is not None:
+    if contract.duration_set:
         rows.append(("duration_s", REQUIREMENT_FIELD_PATHS["duration_s"]))
     if contract.require_voiceover:
         rows.append(("require_voiceover", REQUIREMENT_FIELD_PATHS["require_voiceover"]))
-    if contract.audio_source_ids:
+    if contract.has_audio_sources:
         rows.append(("audio_source_ids", REQUIREMENT_FIELD_PATHS["audio_source_ids"]))
     if contract.original_audio is not None:
         rows.append(("original_audio", REQUIREMENT_FIELD_PATHS["original_audio"]))
-    if contract.exact_texts:
-        rows.append(("exact_texts", text_field_path(contract.exact_texts[0])))
+    if contract.text_field_path is not None:
+        rows.append(("exact_texts", contract.text_field_path))
     if contract.order_required:
         rows.append(("order_required", REQUIREMENT_FIELD_PATHS["order_required"]))
     return rows
 
 
 def _adapter_gate(
-    platform: Platform, route: Route, contract: CreatorRenderContract, drivers: list[str]
+    platform: Platform, route: Route, contract: ContractFacts, drivers: list[str]
 ) -> RouteResolution:
     """The chosen route, unless its adapter structurally declines a pinned requirement."""
 
@@ -317,20 +361,20 @@ def _resolve_phone(inp: RouteInputs, fmt: str, drivers: list[str]) -> RouteResol
         drivers.append("guided_edit")
         return _adapter_gate("phone", Route.GUIDED_STORY, contract, drivers)
     drivers.append("edit_format")
-    if fmt not in PHONE_RENDER_SUPPORTED_FORMATS:
+    if fmt not in inp.capabilities.phone_supported_formats:
         return _refuse(
             "capability_unavailable",
             "edit_format",
             "Ask for a montage, a subtitled clip, or a narrated edit.",
-            drivers,
+            [*drivers, "capabilities.phone_supported_formats"],
         )
     if fmt in GUIDED_EDIT_FORMATS:
         if voice:
             return _adapter_gate("phone", Route.VOICEOVER_MONTAGE, contract, drivers)
-        if contract.audio_source_ids:
+        if contract.has_audio_sources:
             return _adapter_gate("phone", Route.SPEECH_MONTAGE, contract, drivers)
-        if (inp.strategy or {}).get("audio_strategy") == "user_song":
-            lipsync = (inp.strategy or {}).get("song_sync") == "lipsync"
+        if inp.plan.audio_strategy == "user_song":
+            lipsync = inp.plan.song_sync == "lipsync"
             drivers.append("song_sync")
             route = Route.LIPSYNC_MONTAGE if lipsync else Route.USER_SONG_MONTAGE
             return _adapter_gate("phone", route, contract, drivers)
@@ -354,17 +398,14 @@ def _resolve_cloud(inp: RouteInputs, fmt: str, drivers: list[str]) -> RouteResol
     contract = inp.contract
     caps = inp.capabilities
     voice = contract.require_voiceover
-    strategy = inp.strategy or {}
     drivers.append("edit_format")
     if fmt == "slides":
         return _adapter_gate("cloud", Route.SLIDES, contract, drivers)
     if inp.guided_snapshot_present:
         drivers.append("guided_edit")
-        program = strategy.get("render_program") or render_program_for_intent(
-            fmt, has_voiceover=voice
-        )
+        program = inp.plan.render_program or render_program_for_intent(fmt, has_voiceover=voice)
         drivers.append("render_program")
-        if program == "guided" or requests_guided_voiceover(strategy):
+        if program == "guided" or inp.plan.guided_voiceover:
             return _adapter_gate("cloud", Route.GUIDED_STORY, contract, drivers)
         return _refuse(
             "requirement_conflict",
@@ -454,12 +495,11 @@ def resolve_route(inp: RouteInputs) -> RouteResolution:
             "Tell me which option you want and I'll continue.",
             ["contract.unresolved"],
         )
-    strategy = inp.strategy or {}
     fmt = coerce_edit_format(inp.edit_format)
-    song_strategy = strategy.get("audio_strategy") == "user_song"
+    song_strategy = inp.plan.audio_strategy == "user_song"
     if song_strategy:
         drivers.append("audio_strategy")
-    if contract.audio_source_ids and (contract.require_voiceover or song_strategy):
+    if contract.has_audio_sources and (contract.require_voiceover or song_strategy):
         return _refuse(
             "requirement_conflict",
             REQUIREMENT_FIELD_PATHS["audio_source_ids"],
@@ -478,7 +518,7 @@ def resolve_route(inp: RouteInputs) -> RouteResolution:
                 "Record or upload your voice, or tell me to use music instead.",
                 [*drivers, "media.voiceover"],
             )
-    if contract.audio_source_ids:
+    if contract.has_audio_sources:
         drivers.append("contract.audio_source_ids")
     if song_strategy and not inp.song_present:
         return _choice(
@@ -502,8 +542,14 @@ def resolve_route(inp: RouteInputs) -> RouteResolution:
 # --- Job adapter -------------------------------------------------------------------
 #
 # Reads the persisted job shape (assembly_plan + all_candidates) -- the same inputs the
-# dispatchers hold -- and nothing else.  The only strategy keys read are the plan keys
-# named below; the approval snapshot contributes per-clip speech facts.
+# dispatchers hold -- and lifts ONLY enumerated values and booleans out of it.  Strategy
+# prose, exact-text content and request text never leave this function.
+
+ROUTE_STAMP_FIELD = "creator_route"
+
+_AUDIO_STRATEGIES = frozenset(get_args(AudioStrategy))
+_SONG_SYNCS = frozenset(get_args(SongSyncMode))
+_RENDER_PROGRAMS = frozenset(get_args(RenderProgram))
 
 
 def platform_for(assembly: Mapping[str, Any]) -> Platform:
@@ -512,8 +558,39 @@ def platform_for(assembly: Mapping[str, Any]) -> Platform:
     return "phone" if PHONE_SOURCES_FIELD in assembly else "cloud"
 
 
+def _enum(value: object, allowed: frozenset[str]) -> str | None:
+    return value if isinstance(value, str) and value in allowed else None
+
+
+def contract_facts(contract: CreatorRenderContract) -> ContractFacts:
+    return ContractFacts(
+        duration_set=contract.duration_s is not None,
+        require_voiceover=bool(contract.require_voiceover),
+        has_audio_sources=bool(contract.audio_source_ids),
+        original_audio=contract.original_audio,
+        text_field_path=text_field_path(contract.exact_texts[0]) if contract.exact_texts else None,
+        order_required=bool(contract.order_required),
+        unresolved=bool(contract.unresolved),
+    )
+
+
+def plan_facts(strategy: object) -> PlanFacts:
+    if not isinstance(strategy, Mapping):
+        return PlanFacts()
+    return PlanFacts(
+        audio_strategy=_enum(strategy.get("audio_strategy"), _AUDIO_STRATEGIES),
+        song_sync=_enum(strategy.get("song_sync"), _SONG_SYNCS),
+        render_program=_enum(strategy.get("render_program"), _RENDER_PROGRAMS),
+        guided_voiceover=requests_guided_voiceover(strategy),
+    )
+
+
 def _clip_speech_facts(assembly: Mapping[str, Any]) -> tuple[bool | None, ...]:
-    from app.services.clip_understanding import clip_record  # noqa: PLC0415
+    """True/False only when the clip's ``understanding.speech`` block exists; else None.
+
+    A legacy-shaped analysis (no ``understanding`` block) reads as "no transcript" through
+    ``clip_record`` -- that is absence of evidence, not evidence of silence, so it is unknown.
+    """
 
     binding = assembly.get("creator_brief_binding")
     snapshot = binding.get("media_snapshot") if isinstance(binding, Mapping) else None
@@ -523,10 +600,12 @@ def _clip_speech_facts(assembly: Mapping[str, Any]) -> tuple[bool | None, ...]:
         if not isinstance(row, Mapping):
             continue
         analysis = row.get("analysis")
-        if not isinstance(analysis, Mapping) or not analysis:
+        understanding = analysis.get("understanding") if isinstance(analysis, Mapping) else None
+        speech = understanding.get("speech") if isinstance(understanding, Mapping) else None
+        if not isinstance(speech, Mapping):
             facts.append(None)
             continue
-        facts.append(bool(clip_record(dict(analysis), kind="video").speech.has_speech))
+        facts.append(bool(speech.get("has_speech") or speech.get("transcript")))
     return tuple(facts)
 
 
@@ -543,58 +622,116 @@ def route_inputs_from_job(
     contract = contract or read_render_contract(assembly)
     if contract is None:
         return None
-    strategy = candidates.get("creator_strategy")
     song = candidates.get("user_song")
-    song_dict = song if isinstance(song, Mapping) and song.get("gcs_path") else None
     return RouteInputs(
         platform=platform or platform_for(assembly),
-        contract=contract,
-        edit_format=candidates.get("declared_edit_format", candidates.get("edit_format")),
-        strategy=strategy if isinstance(strategy, Mapping) else None,
+        contract=contract_facts(contract),
+        edit_format=coerce_edit_format(
+            candidates.get("declared_edit_format", candidates.get("edit_format"))
+        ),
+        plan=plan_facts(candidates.get("creator_strategy")),
         guided_snapshot_present=isinstance(assembly.get("guided_edit"), Mapping),
         voiceover_present=bool(candidates.get("voiceover_gcs_path")),
-        song_present=song_dict is not None,
+        song_present=isinstance(song, Mapping) and bool(song.get("gcs_path")),
         clip_count=len(candidates.get("clip_paths") or []),
         clip_has_speech=_clip_speech_facts(assembly),
         capabilities=capabilities or RouteCapabilities(),
+        contract_digest=contract.digest,
     )
 
 
 def stamp_route(assembly: Mapping[str, Any], candidates: Mapping[str, Any]) -> dict[str, Any]:
-    """``assembly`` with the contract's ``route`` recorded -- plan-authority jobs only.
+    """``assembly`` with its ``creator_route`` stamp (re)computed -- plan-authority jobs only.
 
-    Called where the contract is stamped (``generative_jobs``) and again once the
-    guided snapshot is attached at dispatch (``content_plan_build``).  A job without
-    the plan-authority stamp comes back as the SAME object (byte-identical).  Only a
-    resolved route is recorded: a refusal or open choice leaves ``route`` unset, and
-    the dispatcher's shadow check reports it.  Never raises: a resolver fault must not
-    stop a job from being created, so it leaves the job unstamped.
+    The stamp is a plain-dict sibling key ``{"route", "platform", "contract_digest"}``,
+    never a field of the strict contract model (older workers reject unknown contract
+    keys).  Call it ONCE, at dispatch, after every input is attached (contract, guided
+    snapshot, creator song).  A refusal or open choice REMOVES a previous stamp rather than
+    keeping a route the plan no longer resolves to.  A job without the plan-authority stamp
+    comes back as the SAME object.  Never raises: a resolver fault leaves the job as it was.
     """
 
-    from app.services.creator_render_contract import CONTRACT_FIELD  # noqa: PLC0415
-
     unchanged = assembly if isinstance(assembly, dict) else dict(assembly)
-    if candidates.get(PLAN_AUTHORITY_FIELD) is None or CONTRACT_FIELD not in assembly:
+    if candidates.get(PLAN_AUTHORITY_FIELD) is None:
         return unchanged
     try:
         inputs = route_inputs_from_job(assembly, candidates)
-        if inputs is None:
-            return unchanged
-        resolution = resolve_route(inputs)
-        if resolution.route is None:
-            return unchanged
-        stamped = inputs.contract.rebind(
-            route=resolution.route.value, route_platform=inputs.platform
-        )
-        return {**assembly, CONTRACT_FIELD: stamped.model_dump(mode="json")}
-    except Exception as exc:  # noqa: BLE001 -- the stamp is advisory; never block job creation
+        resolution = resolve_route(inputs) if inputs is not None else None
+        if resolution is None or resolution.route is None:
+            if ROUTE_STAMP_FIELD not in assembly:
+                return unchanged
+            return {k: v for k, v in assembly.items() if k != ROUTE_STAMP_FIELD}
+        return {
+            **assembly,
+            ROUTE_STAMP_FIELD: {
+                "route": resolution.route.value,
+                "platform": inputs.platform,
+                "contract_digest": inputs.contract_digest,
+            },
+        }
+    except Exception as exc:  # noqa: BLE001 -- the stamp is advisory; never block dispatch
         log.warning("route_stamp_failed", error_class=type(exc).__name__)
         return unchanged
+
+
+def read_route_stamp(assembly: Mapping[str, Any], contract_digest: str) -> Mapping[str, str] | None:
+    """The stamp, or None when absent, malformed or stale (resolved against another contract)."""
+
+    stamp = assembly.get(ROUTE_STAMP_FIELD)
+    if not isinstance(stamp, Mapping):
+        return None
+    if stamp.get("contract_digest") != contract_digest or not contract_digest:
+        return None
+    if not isinstance(stamp.get("route"), str) or not isinstance(stamp.get("platform"), str):
+        return None
+    return stamp
 
 
 # --- Shadow comparison -------------------------------------------------------------
 
 ROUTE_MISMATCH_EVENT = "route_mismatch"
+_DEDUPE_KEYS = (
+    "point",
+    "legacy_route",
+    "resolver_outcome",
+    "resolver_route",
+    "decline_reason",
+    "contract_digest",
+)
+
+
+def _already_recorded(job_id: str, data: Mapping[str, Any]) -> bool:
+    """Whether this exact mismatch is already in the job's trace (a redelivered task).
+
+    One indexed-by-primary-key JSONB containment probe, run only when a mismatch is about to
+    be written.  Any failure reads as "not recorded": a duplicate beats a lost event.
+    """
+
+    import json  # noqa: PLC0415
+    import uuid  # noqa: PLC0415
+
+    try:
+        from sqlalchemy import text  # noqa: PLC0415
+
+        from app.database import sync_engine  # noqa: PLC0415
+
+        probe = [
+            {
+                "stage": "assembly",
+                "event": ROUTE_MISMATCH_EVENT,
+                "data": {key: data.get(key) for key in _DEDUPE_KEYS},
+            }
+        ]
+        with sync_engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT 1 FROM jobs WHERE id = :id AND pipeline_trace @> CAST(:probe AS jsonb)"
+                ),
+                {"id": str(uuid.UUID(str(job_id))), "probe": json.dumps(probe)},
+            ).first()
+        return row is not None
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def shadow_route_check(
@@ -611,7 +748,8 @@ def shadow_route_check(
     Shadow only: never raises, never changes control flow.  Unstamped jobs return
     before reading anything.  Callers must hold no ``FOR UPDATE`` on the jobs row:
     ``record_pipeline_event`` writes that row from a separate connection.  The event
-    carries typed values and field paths only (no request text, URLs or user ids).
+    carries typed values and field paths only (no request text, URLs or user ids), and an
+    identical event already in the job's trace (task redelivery) is not appended again.
     """
 
     if candidates.get(PLAN_AUTHORITY_FIELD) is None:
@@ -628,25 +766,25 @@ def shadow_route_check(
         resolution = resolve_route(inputs)
         if resolution.outcome == "route" and resolution.route.value == legacy_route:
             return
+        stamp = read_route_stamp(assembly, inputs.contract_digest)
+        data = {
+            "point": point,
+            "platform": platform,
+            "legacy_route": legacy_route,
+            "resolver_outcome": resolution.outcome,
+            "resolver_route": resolution.route.value if resolution.route else None,
+            "decline_reason": resolution.reason,
+            "field_path": resolution.field_path,
+            "choice_kind": resolution.choice_kind,
+            "stamped_route": stamp["route"] if stamp else None,
+            "contract_digest": inputs.contract_digest,
+            "drivers": list(resolution.drivers),
+        }
+        if _already_recorded(job_id, data):
+            return
         from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
-        record_pipeline_event(
-            "assembly",
-            ROUTE_MISMATCH_EVENT,
-            {
-                "point": point,
-                "platform": platform,
-                "legacy_route": legacy_route,
-                "resolver_outcome": resolution.outcome,
-                "resolver_route": resolution.route.value if resolution.route else None,
-                "decline_reason": resolution.reason,
-                "field_path": resolution.field_path,
-                "choice_kind": resolution.choice_kind,
-                "stamped_route": inputs.contract.route,
-                "contract_digest": inputs.contract.digest,
-                "drivers": list(resolution.drivers),
-            },
-        )
+        record_pipeline_event("assembly", ROUTE_MISMATCH_EVENT, data)
     except Exception as exc:  # noqa: BLE001 -- shadow mode must never affect a render
         log.warning(
             "route_shadow_check_failed",

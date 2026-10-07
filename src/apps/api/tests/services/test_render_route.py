@@ -361,40 +361,49 @@ def test_the_resolver_module_never_names_request_text_helpers() -> None:
     assert not seen, f"render_route.py references request-text helpers: {seen}"
 
 
-def test_the_resolver_inputs_carry_no_free_text_field() -> None:
+def test_the_resolver_inputs_are_a_typed_projection_without_prose() -> None:
+    """Every string-typed field of the resolver's inputs is enumerated or an opaque id: a new
+    free-text field has to be added to this allowlist on purpose."""
     from dataclasses import fields
 
-    from app.services.render_route import RouteInputs
+    from app.services.render_route import ContractFacts, PlanFacts, RouteInputs
 
-    free_text = [
-        f.name
-        for f in fields(RouteInputs)
-        if f.type in ("str", "str | None") and f.name != "edit_format"
-    ]
-    assert not free_text, f"RouteInputs gained string fields: {free_text}"
+    allowed = {
+        # enumerated (coerced to a known vocabulary before the resolver sees it)
+        ("RouteInputs", "edit_format"),
+        ("RouteInputs", "platform"),
+        ("PlanFacts", "audio_strategy"),
+        ("PlanFacts", "song_sync"),
+        ("PlanFacts", "render_program"),
+        ("ContractFacts", "original_audio"),
+        # a matrix field path derived from the exact text's ROLE, never its content
+        ("ContractFacts", "text_field_path"),
+        # an opaque digest, only echoed into stamps/events
+        ("RouteInputs", "contract_digest"),
+    }
+    seen = {
+        (cls.__name__, f.name)
+        for cls in (RouteInputs, PlanFacts, ContractFacts)
+        for f in fields(cls)
+        if "str" in str(f.type) or "Literal" in str(f.type) or "Platform" in str(f.type)
+    }
+    assert seen == allowed, f"resolver inputs changed: {sorted(seen ^ allowed)}"
 
 
-def _wording_variants(job: tuple[dict, dict]) -> list[tuple[dict, dict]]:
-    """The same approved plan with every raw-text carrier rewritten, shuffled or blanked."""
-    assembly, candidates = job
-    out = []
-    for text in (
-        "",
-        "make it fast",
-        "USE MY VOICE and do NOT use the clip audio",
-        "ünïcode — 20k 🏃",
-    ):
-        a = json.loads(json.dumps(assembly))
-        c = json.loads(json.dumps(candidates))
-        c["creator_request"] = text
-        c["brief"] = {"creator_request": text, "description": text}
-        a["creator_brief_binding"] = {
-            **(a.get("creator_brief_binding") or {}),
-            "creator_request": text,
-            "latest_message": text,
-        }
-        out.append((a, c))
-    return out
+def test_the_resolver_never_reads_the_contract_digest() -> None:
+    import dataclasses
+
+    assembly, candidates = _job("phone", strategy=_strategy(**_SPEECH_IDS))
+    inputs = route_inputs_from_job(assembly, candidates, platform="phone")
+    assert resolve_route(inputs) == resolve_route(dataclasses.replace(inputs, contract_digest="x"))
+
+
+def test_every_free_text_strategy_field_is_classified_for_the_rewording_tests() -> None:
+    from tests.services.route_prose import unclassified_string_fields
+
+    assert unclassified_string_fields() == [], (
+        "a CreativeStrategy field can hold prose but the invariance rewrite does not cover it"
+    )
 
 
 @pytest.mark.parametrize(
@@ -402,27 +411,149 @@ def _wording_variants(job: tuple[dict, dict]) -> list[tuple[dict, dict]]:
     ROUTE_TABLE,
     ids=[f"{p}-{r.value}-{i}" for i, (p, _, r) in enumerate(ROUTE_TABLE)],
 )
-def test_rewording_the_request_never_changes_the_route(platform, job, expected) -> None:
+def test_rewording_everything_a_creator_or_model_wrote_never_changes_the_route(
+    platform, job, expected
+) -> None:
+    """Request text, brief prose, strategy prose (rationale, titles, labels, story), the
+    contract's exact texts, unresolved messages and clip transcripts all rewritten."""
+    from tests.services.route_prose import reword_job
+
     baseline = _resolve(platform, **job)
-    for assembly, candidates in _wording_variants(_job(platform, **job)):
-        inputs = route_inputs_from_job(assembly, candidates, platform=platform)
-        assert resolve_route(inputs) == baseline
+    assembly, candidates = _job(platform, **job)
+    for text in (
+        "",
+        "make it fast",
+        "USE MY VOICE and do NOT use the clip audio",
+        "ünï 20k 🏃",
+        "talking head narrated subtitled voiceover song speech chronological captions slides",
+    ):
+        a, c = reword_job(assembly, candidates, text)
+        inputs = route_inputs_from_job(a, c, platform=platform)
+        assert resolve_route(inputs) == baseline, text
+
+
+def test_the_rewording_actually_rewrites_something() -> None:
+    """Guards the guard: the variants must differ from the original in the places that matter."""
+    from tests.services.route_prose import reword_job
+
+    strategy = _strategy(opening_title="Exact title", shot_labels=["One", "Two"])
+    assembly, candidates = _job("cloud", strategy=strategy)
+    a, c = reword_job(assembly, candidates, "different")
+    assert c["creator_strategy"]["opening_title"] != "Exact title"
+    assert c["creator_strategy"]["shot_labels"] != ["One", "Two"]
+    assert c["creator_strategy"]["rationale"] and c["creator_strategy"]["story_structure"]
+    original = read_render_contract(assembly).exact_texts
+    changed = read_render_contract(a).exact_texts
+    assert [t.text for t in changed] != [t.text for t in original]
+    assert [t.role for t in changed] == [t.role for t in original]
+
+
+# --- Phone formats come from the settings-aware set ----------------------------------------
+
+
+def test_a_phone_format_flag_off_refuses_instead_of_routing(monkeypatch) -> None:
+    from app.config import settings
+    from app.services.render_route import route_capabilities_from_settings
+
+    monkeypatch.setattr(settings, "phone_subtitled_rendering_enabled", False)
+    caps = route_capabilities_from_settings()
+    assert "subtitled" not in caps.phone_supported_formats
+    off = _resolve("phone", edit_format="subtitled", clips=1, capabilities=caps)
+    assert (off.outcome, off.reason, off.field_path) == (
+        "refusal",
+        "capability_unavailable",
+        "edit_format",
+    )
+    assert "capabilities.phone_supported_formats" in off.drivers
+    # the same plan routes when the capability is on
+    monkeypatch.setattr(settings, "phone_subtitled_rendering_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    on = _resolve(
+        "phone", edit_format="subtitled", clips=1, capabilities=route_capabilities_from_settings()
+    )
+    assert on.route is Route.SUBTITLED
+
+
+# --- Speech facts ----------------------------------------------------------------------------
+
+
+def _legacy_shaped_rows(count: int) -> dict:
+    # Analysis with no `understanding` block: what older analyses stored.
+    return {
+        "creator_brief_binding": {
+            "media_snapshot": {
+                "clip_assignments": [
+                    {"media_id": f"c{i}", "analysis": {"description": "a run", "subject": "x"}}
+                    for i in range(count)
+                ]
+            }
+        }
+    }
+
+
+def test_legacy_shaped_analysis_is_unknown_speech_not_no_speech() -> None:
+    assembly, candidates = _job("phone", edit_format="narrated_ready", clips=2)
+    assembly.update(_legacy_shaped_rows(2))
+    inputs = route_inputs_from_job(assembly, candidates, platform="phone")
+    assert inputs.clip_has_speech == (None, None)
+    resolution = resolve_route(inputs)
+    assert resolution.outcome == "route" and resolution.route is Route.TALKING_HEAD
+
+
+def test_a_real_no_speech_analysis_still_refuses() -> None:
+    resolution = _resolve("phone", edit_format="narrated_ready", clips=2, speech=[False, False])
+    assert (resolution.outcome, resolution.reason) == ("refusal", "capability_unavailable")
+    assert "media.speech" in resolution.drivers
 
 
 # --- Stamp ---------------------------------------------------------------------------------
 
 
-def test_a_plan_authority_job_gets_its_route_and_platform_stamped() -> None:
+def test_a_plan_authority_job_gets_a_sibling_route_stamp_and_an_untouched_contract() -> None:
+    from app.services.render_route import ROUTE_STAMP_FIELD, read_route_stamp
+
     assembly, candidates = _job("phone", strategy=_strategy(**_SPEECH_IDS))
     stamped = stamp_route(assembly, candidates)
     contract = read_render_contract(stamped)
     assert contract is not None
-    assert (contract.route, contract.route_platform) == ("speech_montage", "phone")
-    # the integrity digest covers the stamp: it reads back, and tampering is rejected
-    tampered = json.loads(json.dumps(stamped))
-    tampered[CONTRACT_FIELD]["route"] = "montage"
-    with pytest.raises(Exception, match="changed"):
-        read_render_contract(tampered)
+    # the strict contract dict is byte-identical: older workers read it unchanged
+    assert stamped[CONTRACT_FIELD] == assembly[CONTRACT_FIELD]
+    assert stamped[ROUTE_STAMP_FIELD] == {
+        "route": "speech_montage",
+        "platform": "phone",
+        "contract_digest": contract.digest,
+    }
+    assert read_route_stamp(stamped, contract.digest) == stamped[ROUTE_STAMP_FIELD]
+
+
+def test_a_stamp_for_another_contract_is_stale_and_ignored() -> None:
+    from app.services.render_route import read_route_stamp
+
+    assembly, candidates = _job("phone", strategy=_strategy(**_SPEECH_IDS))
+    stamped = stamp_route(assembly, candidates)
+    rebound = read_render_contract(stamped).rebind(duration_s=15)  # e.g. an editor revision
+    assert read_route_stamp(stamped, rebound.digest) is None
+    assert read_route_stamp({}, rebound.digest) is None
+    assert read_route_stamp({"creator_route": "junk"}, rebound.digest) is None
+
+
+def test_a_job_stamped_by_new_code_is_readable_by_the_unchanged_strict_contract() -> None:
+    """The reviewer's rolling-deploy scenario: main's strict model, new code's stamped job."""
+    import json
+    from pathlib import Path
+
+    from app.services.creator_render_contract import CreatorRenderContract
+
+    golden = json.loads(
+        (Path(__file__).parents[1] / "fixtures" / "creator_render_contract.schema.json").read_text()
+    )
+    assembly, candidates = _job("phone", strategy=_strategy(**_SPEECH_IDS))
+    stamped = stamp_route(assembly, candidates)
+    assert "creator_route" in stamped
+    assert set(stamped[CONTRACT_FIELD]) <= set(golden["properties"])  # no key main's model lacks
+    assert golden["additionalProperties"] is False
+    assert CreatorRenderContract.model_json_schema() == golden
+    assert read_render_contract(stamped) is not None
 
 
 def test_an_unstamped_job_is_returned_untouched() -> None:
@@ -430,20 +561,37 @@ def test_an_unstamped_job_is_returned_untouched() -> None:
     before = json.dumps(assembly, sort_keys=True)
     assert stamp_route(assembly, candidates) is assembly
     assert json.dumps(assembly, sort_keys=True) == before
-    # no new key at all: an older worker's extra="forbid" reader still accepts the contract
-    assert "route" not in assembly[CONTRACT_FIELD]
-    assert "route_platform" not in assembly[CONTRACT_FIELD]
+    assert "creator_route" not in assembly
 
 
-def test_a_refusal_or_open_choice_stamps_no_route() -> None:
+def test_a_refusal_or_open_choice_stamps_nothing() -> None:
     assembly, candidates = _job("cloud", strategy=_strategy(**_SPEECH_IDS))
-    stamped = stamp_route(assembly, candidates)
-    assert stamped == assembly
+    assert stamp_route(assembly, candidates) is assembly
     assembly, candidates = _job("phone", contract={"unresolved": ("x",)})
-    assert read_render_contract(stamp_route(assembly, candidates)).route is None  # type: ignore[union-attr]
+    assert stamp_route(assembly, candidates) is assembly
 
 
-def test_the_stamp_never_raises_into_job_creation(monkeypatch) -> None:
+def test_a_stamp_that_no_longer_resolves_is_removed_not_kept() -> None:
+    """Build-time inputs said montage; once a guided snapshot lands on a native plan the
+    resolver refuses -- the old route must not survive."""
+    assembly, candidates = _job("cloud", strategy=_strategy(render_program="native"))
+    first = stamp_route(assembly, candidates)
+    assert first["creator_route"]["route"] == "montage"
+    first["guided_edit"] = {"approved_proposal": {}}
+    second = stamp_route(first, candidates)
+    assert "creator_route" not in second
+    assert second[CONTRACT_FIELD] == first[CONTRACT_FIELD]
+
+
+def test_a_creator_song_attached_after_the_first_look_is_in_the_final_stamp() -> None:
+    song_plan = _strategy(audio_strategy="user_song")
+    assembly, candidates = _job("phone", strategy=song_plan)
+    assert stamp_route(assembly, candidates) is assembly  # no song yet: song_upload choice
+    candidates["user_song"] = {"gcs_path": "song/u/s.mp3", "generation": 1, "sync": "background"}
+    assert stamp_route(assembly, candidates)["creator_route"]["route"] == "user_song_montage"
+
+
+def test_the_stamp_never_raises_into_dispatch(monkeypatch) -> None:
     assembly, candidates = _job("phone")
 
     def boom(_inputs):

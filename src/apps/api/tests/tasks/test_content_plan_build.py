@@ -4789,10 +4789,10 @@ def test_dispatch_keeps_a_factory_stamp_and_never_restamps(monkeypatch):  # noqa
     assert job.all_candidates["creator_plan_authority_version"] == 1
 
 
-# --- KRI-470 PR-D: dispatch re-records the route once the guided snapshot is attached ---
+# --- KRI-470 PR-D: dispatch stamps the route once, after every input is attached ---------
 
 
-def test_dispatch_records_the_route_for_a_stamped_job_and_not_for_an_unstamped_one(monkeypatch):  # noqa: ANN001
+def test_dispatch_stamps_the_route_for_a_stamped_job_and_not_for_an_unstamped_one(monkeypatch):  # noqa: ANN001
     from app.services.creator_render_contract import read_render_contract
 
     stamped = _dispatch_with_binding(monkeypatch, enabled=True, factory_stamped=False)
@@ -4800,8 +4800,14 @@ def test_dispatch_records_the_route_for_a_stamped_job_and_not_for_an_unstamped_o
     contract = read_render_contract(job.assembly_plan)
     assert contract is not None
     assert "guided_edit" in job.assembly_plan, "the route is resolved AFTER the snapshot attaches"
-    assert (contract.route, contract.route_platform) == ("guided_story", "phone")
+    assert job.assembly_plan["creator_route"] == {
+        "route": "guided_story",
+        "platform": "phone",
+        "contract_digest": contract.digest,
+    }
+    # the strict contract is untouched (older workers reject unknown keys)
+    assert not {"route", "route_platform"} & set(job.assembly_plan["creator_render_requirements"])
 
     unstamped = _dispatch_with_binding(monkeypatch, enabled=False, factory_stamped=False)
     job = unstamped.session.add.call_args.args[0]
-    assert "route" not in job.assembly_plan["creator_render_requirements"]
+    assert "creator_route" not in job.assembly_plan

@@ -2331,16 +2331,20 @@ def _shadow_route(
     changes what renders. Call only while holding no row lock on the job (the trace
     write is a separate connection).
     """
-    from app.services.render_route import shadow_route_check  # noqa: PLC0415
+    try:
+        # Imported inside the guard: an import-time fault must not reach any job.
+        from app.services.render_route import shadow_route_check  # noqa: PLC0415
 
-    shadow_route_check(
-        job_id=job_id,
-        assembly=assembly,
-        candidates=candidates,
-        platform=platform,  # type: ignore[arg-type]
-        legacy_route=legacy_route,
-        point=point,
-    )
+        shadow_route_check(
+            job_id=job_id,
+            assembly=assembly,
+            candidates=candidates,
+            platform=platform,  # type: ignore[arg-type]
+            legacy_route=legacy_route,
+            point=point,
+        )
+    except Exception:  # noqa: BLE001 -- shadow mode never changes a render
+        log.warning("route_shadow_unavailable", job_id=job_id, point=point)
 
 
 def _run_generative_job(

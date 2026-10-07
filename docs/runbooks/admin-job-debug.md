@@ -45,7 +45,8 @@ The `assembly` stage also carries `route_mismatch` (KRI-470 PR-D, shadow mode): 
 stamped with `creator_plan_authority_version` records it when the plan's resolved route
 (`app/services/render_route.py`) differs from the route the legacy dispatcher took. Fields:
 `point`, `platform`, `legacy_route`, `resolver_outcome`/`resolver_route`, `decline_reason`,
-`field_path`, `choice_kind`, `stamped_route`, `contract_digest`, `drivers`. The legacy
+`field_path`, `choice_kind`, `stamped_route` (the job's `creator_route` stamp, null when absent
+or stale), `contract_digest`, `drivers`. A redelivered task does not repeat an identical event. The legacy
 route still rendered; see "Route resolution" in `docs/pipelines/creator-render-contract.md`.
 
 The `silence_cut` stage (emitted from the tasks layer, `generative_build.py`)

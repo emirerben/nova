@@ -17,7 +17,10 @@ by the shadow; (4) the event leaks request text, URLs or user ids; (5) the event
 
 from __future__ import annotations
 
+import ast
+import inspect
 import json
+import textwrap
 import uuid
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -33,6 +36,7 @@ from app.services.creator_render_contract import (
     PLAN_AUTHORITY_FIELD,
     REQUIREMENT_VERSION_FIELD,
     build_render_contract,
+    read_render_contract,
 )
 from app.services.generative_jobs import CREATOR_RENDER_CONTRACT_VERSION
 from app.services.phone_sources import PHONE_SOURCES_FIELD
@@ -55,6 +59,7 @@ def _job(
     guided: bool = False,
     clips: int = 3,
     stamped: bool = True,
+    route_stamp: bool = False,
 ) -> SimpleNamespace:
     strategy = strategy if strategy is not None else _strategy(edit_format=edit_format)
     contract = build_render_contract(strategy, generation_id="gen-1", has_voiceover=voiceover)
@@ -87,6 +92,8 @@ def _job(
         candidates["voiceover_gcs_path"] = "voiceover-uploads/u/voice.m4a"
     if song is not None:
         candidates["user_song"] = {"gcs_path": "songs/u/s.mp3", "generation": 1, **song}
+    if route_stamp:
+        assembly = render_route.stamp_route(assembly, candidates)
     return SimpleNamespace(
         id=uuid.uuid4(),
         status="queued",
@@ -121,6 +128,12 @@ class Harness:
         )
         monkeypatch.setattr(
             render_route, "route_capabilities_from_settings", render_route.RouteCapabilities
+        )
+
+        # Hermetic: the redelivery probe reads the jobs table; tests drive it explicitly.
+        self.already_recorded = False
+        monkeypatch.setattr(
+            render_route, "_already_recorded", lambda _job_id, _data: self.already_recorded
         )
 
         def trace(stage: str, event: str, data: dict | None = None) -> None:
@@ -216,7 +229,7 @@ def test_phone_guided_snapshot_subtitled_and_narrated_agree(monkeypatch) -> None
 
 def test_a_stale_song_attachment_records_one_mismatch_and_legacy_still_renders(monkeypatch) -> None:
     # The item still has a creator song attached, but the approved plan says library music.
-    h = _phone(monkeypatch, song={"sync": "background"})
+    h = _phone(monkeypatch, song={"sync": "background"}, route_stamp=True)
     h.run()
     assert h.calls == ["_run_phone_unified_montage_job"], "the legacy entry must still run"
     assert len(h.mismatches) == 1
@@ -225,7 +238,7 @@ def test_a_stale_song_attachment_records_one_mismatch_and_legacy_still_renders(m
     assert event["legacy_route"] == "user_song_montage"
     assert (event["resolver_outcome"], event["resolver_route"]) == ("route", "unified_montage")
     assert event["contract_digest"] == h.job.assembly_plan[CONTRACT_FIELD]["digest"]
-    assert event["stamped_route"] is None
+    assert event["stamped_route"] == "unified_montage"
     assert set(event["drivers"]) >= {"edit_format"}
 
 
@@ -325,16 +338,106 @@ def test_an_unstamped_job_records_nothing_and_reads_nothing(monkeypatch) -> None
     capabilities.assert_not_called()
 
 
-def test_the_trace_is_never_written_while_the_job_row_is_locked() -> None:
-    """The trace write is a separate connection to the same row; every shadow call site sits
-    after the entry transaction released its FOR UPDATE (phone: after ``db.commit()``; cloud:
-    after the ``with _sync_session()`` block). Pinned by source order, not by timing."""
-    import inspect
+def test_a_stale_route_stamp_is_reported_as_absent(monkeypatch) -> None:
+    h = _phone(monkeypatch, song={"sync": "background"}, route_stamp=True)
+    # the contract was rebound after the stamp (e.g. an edited duration): the stamp is stale
+    contract = read_render_contract(h.job.assembly_plan).rebind(duration_s=15)
+    h.job.assembly_plan = {**h.job.assembly_plan, CONTRACT_FIELD: contract.model_dump(mode="json")}
+    h.run()
+    assert len(h.mismatches) == 1
+    assert h.mismatches[0]["stamped_route"] is None
 
-    source = inspect.getsource(gb._run_generative_job_impl)
-    commit_at = source.index("db.commit()")
-    phone_shadow_at = source.index('"phone_dispatch"')
-    assert commit_at < phone_shadow_at
-    with_block_end = source.index("guided_snapshot = copy.deepcopy")
-    for point in ('"cloud_guided"', '"cloud_slides"', '"cloud_archetype"'):
-        assert source.index(point) > with_block_end, point
+
+def test_a_redelivered_task_does_not_append_the_same_mismatch_twice(monkeypatch) -> None:
+    h = _phone(monkeypatch, song={"sync": "background"})
+    h.already_recorded = True
+    h.run()
+    assert h.calls == ["_run_phone_unified_montage_job"]
+    assert h.mismatches == []
+
+
+def test_an_import_time_fault_in_the_shadow_module_cannot_reach_a_job(monkeypatch) -> None:
+    import sys
+
+    for stamped in (True, False):
+        h = _phone(monkeypatch, song={"sync": "background"}, stamped=stamped)
+        monkeypatch.setitem(sys.modules, "app.services.render_route", None)  # import raises
+        h.run()
+        assert h.calls == ["_run_phone_unified_montage_job"]
+
+
+def _is_commit(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Attribute)
+        and node.value.func.attr == "commit"
+    )
+
+
+def shadow_calls_under_a_held_lock(source: str) -> tuple[int, list[int]]:
+    """(number of ``_shadow_route`` calls, lines of those made while the entry lock is held).
+
+    A call is under the lock when it sits inside a ``with _sync_session()`` block and no
+    ``.commit()`` statement precedes it in any enclosing statement list within that block.
+    """
+    tree = ast.parse(textwrap.dedent(source))
+    parents = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "_shadow_route"
+    ]
+    held: list[int] = []
+    for call in calls:
+        node: ast.AST = call
+        released = False
+        while node in parents:
+            parent = parents[node]
+            for field in ("body", "orelse", "finalbody"):
+                block = getattr(parent, field, None)
+                if isinstance(block, list) and node in block:
+                    released = released or any(_is_commit(x) for x in block[: block.index(node)])
+            if isinstance(parent, ast.With) and any(
+                getattr(getattr(item.context_expr, "func", None), "id", None) == "_sync_session"
+                for item in parent.items
+            ):
+                if not released:
+                    held.append(call.lineno)
+                break
+            node = parent
+    return len(calls), held
+
+
+def test_the_trace_is_never_written_while_the_job_row_is_locked() -> None:
+    """``record_pipeline_event`` writes the jobs row on a SEPARATE connection, so a shadow call
+    made while this worker holds the entry ``FOR UPDATE`` would deadlock against itself.
+    Every ``_shadow_route`` call must be outside the ``with _sync_session()`` block or after a
+    ``db.commit()`` in it. Checked on the AST, call site by call site."""
+    total, held = shadow_calls_under_a_held_lock(inspect.getsource(gb._run_generative_job_impl))
+    assert total >= 8, "every dispatcher decision point is shadowed"
+    assert held == [], f"_shadow_route runs while the job lock is held (lines {held})"
+
+
+def test_the_lock_check_itself_can_fail() -> None:
+    locked = """
+def f(job_id):
+    with _sync_session() as db:
+        _shadow_route(job_id)
+"""
+    released = """
+def f(job_id):
+    with _sync_session() as db:
+        db.commit()
+        if x:
+            _shadow_route(job_id)
+"""
+    outside = """
+def f(job_id):
+    with _sync_session() as db:
+        db.commit()
+    _shadow_route(job_id)
+"""
+    assert shadow_calls_under_a_held_lock(locked) == (1, [4])
+    assert shadow_calls_under_a_held_lock(released) == (1, [])
+    assert shadow_calls_under_a_held_lock(outside) == (1, [])

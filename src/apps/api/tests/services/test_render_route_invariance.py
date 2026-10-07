@@ -33,6 +33,7 @@ from app.services.render_route import resolve_route, route_inputs_from_job
 from tests.evals.request_following.runner import THREAD_DIR, load_fixture
 from tests.incidents import loader
 from tests.incidents.models import IncidentRecord
+from tests.services.route_prose import prose, reword_strategy
 
 RECORDS = [r for r in loader.load_records() if r.approved.strategy or r.approved.brief]
 THREADS = sorted(THREAD_DIR.glob("*.json"))
@@ -51,14 +52,19 @@ def _signature(resolution) -> tuple:  # noqa: ANN001
 
 
 def _reworded(record: IncidentRecord, text: str) -> IncidentRecord:
+    """Every string a creator or model wrote: messages, request, brief prose and literals,
+    strategy prose (title, labels, rationale, story), consistently mapped so equalities
+    between them (a shot label that equals a brief literal) survive."""
     data = record.model_dump(mode="json")
     data["approved"]["creator_request"] = text
     for turn in data["inputs"]["turns"]:
         turn["text"] = text
+    data["approved"]["strategy"] = reword_strategy(data["approved"].get("strategy"), text)
     if data["approved"].get("brief"):
         for requirement in data["approved"]["brief"]["requirements"]:
-            if requirement.get("description"):
-                requirement["description"] = f"{text or 'x'} (reworded)"
+            for key in ("description", "literal"):
+                if requirement.get(key):
+                    requirement[key] = prose(requirement[key], text)
     data["incident"]["summary"] = text or "blank"
     return IncidentRecord.model_validate(data)
 
@@ -73,7 +79,13 @@ def _incident_signature(record: IncidentRecord, platform: str) -> tuple:
     return _signature(resolve_route(inputs))
 
 
-WORDINGS = ("", "completely different words", "USE MY VOICE, not the clip audio. 30 seconds!")
+WORDINGS = (
+    "",
+    "completely different words",
+    "USE MY VOICE, not the clip audio. 30 seconds!",
+    # route vocabulary in every prose carrier: a resolver that keyed on words would move
+    "talking head narrated subtitled voiceover song speech chronological captions slides",
+)
 
 
 @pytest.mark.parametrize("platform", PLATFORMS)
@@ -111,8 +123,12 @@ def _thread_plan(path) -> tuple[dict, CreativeBrief | None]:  # noqa: ANN001
     return strategy, None
 
 
-def _thread_signature(path, platform: str, messages: list[str]) -> tuple:  # noqa: ANN001
+def _thread_signature(  # noqa: ANN001
+    path, platform: str, messages: list[str], *, reword: bool = False
+) -> tuple:
     strategy, _brief = _thread_plan(path)
+    if reword:
+        strategy = reword_strategy(strategy, "talking head narrated subtitled voiceover")
     contract = build_render_contract(strategy, generation_id="gen-1")
     assert contract is not None
     assembly: dict = {
@@ -153,3 +169,19 @@ def test_request_following_threads_route_the_same_whatever_was_said(path, platfo
     ]
     for messages in variants:
         assert _thread_signature(path, platform, messages) == baseline
+        assert _thread_signature(path, platform, messages, reword=True) == baseline
+
+
+def test_the_incident_rewording_really_rewrites_the_plan_prose() -> None:
+    changed = 0
+    for record in RECORDS:
+        if not record.approved.strategy:
+            continue
+        reworded = _reworded(record, "different")
+        before, after = record.approved.strategy, reworded.approved.strategy
+        assert after["rationale"] != before.get("rationale")
+        assert after.get("opening_title") != before.get("opening_title") or not before.get(
+            "opening_title"
+        )
+        changed += 1
+    assert changed >= 10

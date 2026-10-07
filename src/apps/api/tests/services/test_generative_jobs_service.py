@@ -812,37 +812,19 @@ def test_stamp_helper_never_mutates_its_input_and_respects_the_flag() -> None:
     assert stamp_plan_authority(original, enabled=False) == {"a": 1}
 
 
-# --- KRI-470 PR-D: the resolved route rides the stamped contract -----------------------
+# --- KRI-470 PR-D: the route is stamped at dispatch, never at job build -----------------
 #
-# Failure modes: the route is stamped on a job without the plan-authority stamp; flag-off
-# changes any persisted byte (an older worker's strict reader would reject a new key);
-# the route is recorded without its platform.
+# Failure modes: a build-time route (before the creator song, guided snapshot and the
+# brief-bound contract are attached) goes stale; the route lands inside the strict contract
+# model where older workers reject it.
 
 
-def test_route_is_stamped_into_the_contract_on_plan_authority_jobs(monkeypatch) -> None:
-    from app.services.creator_render_contract import CONTRACT_FIELD, read_render_contract
-
-    job = _stamp_job(monkeypatch, enabled=True, strategy={"pacing": "fast"})
-    contract = read_render_contract(job.assembly_plan)
-    assert contract is not None
-    assert (contract.route, contract.route_platform) == ("montage", "cloud")
-    assert job.assembly_plan[CONTRACT_FIELD]["route"] == "montage"
-
-
-def test_flag_off_persists_no_route_and_nothing_else_differs(monkeypatch) -> None:
+def test_build_never_stamps_a_route_or_touches_the_contract_shape(monkeypatch) -> None:
     from app.services.creator_render_contract import CONTRACT_FIELD
 
     on = _stamp_job(monkeypatch, enabled=True, strategy={"pacing": "fast"})
     off = _stamp_job(monkeypatch, enabled=False, strategy={"pacing": "fast"})
-    assert "route" not in off.assembly_plan[CONTRACT_FIELD]
-    assert "route_platform" not in off.assembly_plan[CONTRACT_FIELD]
-
-    def without_route(plan: dict) -> dict:
-        contract = {
-            k: v
-            for k, v in plan[CONTRACT_FIELD].items()
-            if k not in {"route", "route_platform", "digest"}
-        }
-        return {**plan, CONTRACT_FIELD: contract}
-
-    assert without_route(on.assembly_plan) == without_route(off.assembly_plan)
+    assert "creator_route" not in on.assembly_plan
+    assert on.assembly_plan == off.assembly_plan
+    assert set(on.assembly_plan[CONTRACT_FIELD]) == set(off.assembly_plan[CONTRACT_FIELD])
+    assert "route" not in on.assembly_plan[CONTRACT_FIELD]
