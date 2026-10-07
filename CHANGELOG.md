@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.140.0] - 2026-10-07
+
+### Changed
+- fix(creator): Talking edits render with a named length, and the speech check accepts audio that ends before the picture (#1445) <!-- release-pr: 1445 -->
+
 ## [0.78.139.0] - 2026-10-07
 
 ### Changed
