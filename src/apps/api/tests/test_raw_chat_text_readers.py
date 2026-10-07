@@ -43,6 +43,10 @@ RAW_TEXT_NAMES = frozenset(
         "_first_user_message",
         "latest_message",
         "latest_user_message",
+        # Helpers whose argument IS raw request prose: calling one is reading it.
+        "_creator_requests_narrated_treatment",
+        "speech_montage_possible",
+        "mentions_speech",
     }
 )
 # ``Requirement.text()`` is the brief's prose one-liner (zero-arg method call).
@@ -78,7 +82,11 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
     "kria/brief.py": ("plan_time", "brief extraction and rendering of live requirements", None),
     "kria/brief_binding.py": ("plan_time", "binds the approved request digest to the brief", None),
     "kria/planner.py": ("plan_time", "the planner turns the request into the strategy", None),
-    "kria/runtime.py": ("carry", "approval decision forwards the request to the claim", None),
+    "kria/runtime.py": (
+        "carry",
+        "approval decision forwards the request to the claim",
+        frozenset({"_validated_render_shape", "decide_approval"}),
+    ),
     "kria/brief_checks.py": (
         "plan_time",
         "receipt wording for the approved brief requirements",
@@ -107,10 +115,25 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         "carry",
         "stores creator_request on the job; derives the caption LANGUAGE request from it "
         "(content: which language the captions use). Not route, duration, voice, order or text.",
-        None,
+        frozenset({"build_generative_job"}),
     ),
-    "tasks/content_plan_build.py": ("carry", "forwards the request into the job at dispatch", None),
-    "tasks/kria_runtime.py": ("carry", "approval claims / dispatch carry the request", None),
+    "tasks/content_plan_build.py": (
+        "carry",
+        "forwards the request into the job at dispatch",
+        frozenset({"_dispatch_item_render", "dispatch_item_render_for"}),
+    ),
+    "tasks/kria_runtime.py": (
+        "carry",
+        "approval claims / dispatch carry the request",
+        frozenset(
+            {
+                "_ApprovalDispatchClaim",
+                "_claim_approval_dispatch",
+                "_complete_draft_turn",
+                "execute_kria_approval",
+            }
+        ),
+    ),
     "services/guided_narration_labels.py": (
         "content_only",
         "narration label wording for the approved guided plan",
@@ -121,19 +144,21 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         "legacy_unstamped",
         "`speech_montage_possible` over request words runs only when the job has no contract "
         "(`contract is None`); a contracted job's lane is its contract audio_source_ids",
-        None,
+        frozenset({"_request_text", "run_phone_speech_montage_job"}),
     ),
     "services/speech_montage_planning.py": (
         "legacy_unstamped",
         "`mentions_speech` / `speech_montage_possible` run only when speech is not required by a "
         "contract; the request text is also the planner's prompt context",
-        None,
+        frozenset(
+            {"<module>", "mentions_speech", "plan_speech_montage", "speech_montage_possible"}
+        ),
     ),
     "services/render_shape.py": (
         "legacy_unstamped",
         "the creation offer's speech-lane predicate reads request words only with "
         "KRIA_PLAN_AUTHORITY_ENABLED off",
-        None,
+        frozenset({"_may_route_to_speech_montage", "creation_offer", "offer_for_item"}),
     ),
     "tasks/generative_build.py": (
         "content_only",
@@ -155,9 +180,16 @@ WORKER_FUNCTIONS: dict[str, tuple[str, str]] = {
     "_guided_execution_plan": ("content_only", "guided plan label wording"),
     "_narrated_clip_alignment_steps": ("content_only", "alignment agent context"),
     "_narrated_storyboard_plan": ("content_only", "storyboard agent context"),
+    "_creator_requests_narrated_treatment": (
+        "content_only",
+        "OUTPUT-AFFECTING, content-carrying: regexes over the request add intro / player / score "
+        "text. Stays for stamped and unstamped jobs alike until a typed treatment carrier exists "
+        "(CreativeStrategy has none; dropping it would silently remove treatments the creator "
+        "asked for). Never route, duration, voice, order or contract text.",
+    ),
     "_narrated_storyboard_text_elements": (
-        "legacy_unstamped",
-        "intro/player/score regexes run only for unstamped jobs (plan_authority bypasses them)",
+        "content_only",
+        "caller of _creator_requests_narrated_treatment (see above)",
     ),
     "_process_generative_variant": ("content_only", "forwards the request to the variant render"),
     "_render_narrated_variant": ("content_only", "forwards the request to the storyboard agent"),
@@ -174,25 +206,27 @@ WORKER_FUNCTIONS: dict[str, tuple[str, str]] = {
     "_run_regenerate_variant": ("content_only", "forwards the saved request to the re-render"),
 }
 
-# Each legacy gate must be proven bypassed for plan-authority jobs by a test that still exists.
+# Each legacy gate must be proven bypassed for plan-authority jobs by a test that still exists,
+# is collected (module-level ``test_*`` function) and is not skipped or xfailed.
 LEGACY_GATE_PROOFS: dict[str, tuple[str, str]] = {
     "services/phone_speech_montage_job.py": (
-        "test_route_override_flips.py",
+        "tasks/test_route_override_flips.py",
         "test_a_contracted_phone_montage_ignores_speech_words_in_the_request",
     ),
     "services/speech_montage_planning.py": (
-        "test_route_override_flips.py",
+        "tasks/test_route_override_flips.py",
         "test_a_contracted_phone_montage_ignores_speech_words_in_the_request",
     ),
     "services/render_shape.py": (
         "services/test_render_shape.py",
         "test_plan_authority_offers_a_shape_however_the_request_talks_about_speech",
     ),
-    "tasks/generative_build.py": (
-        "test_route_override_flips.py",
-        "test_stamped_narrated_text_comes_from_the_plan_not_from_request_words",
-    ),
 }
+
+# Known limits: a reader that builds the name dynamically (getattr / string concatenation /
+# an alias) or takes the prose under another parameter name is not seen; the helper names in
+# RAW_TEXT_NAMES narrow that gap for the known prose-taking helpers. Reviewers still read new
+# worker code that touches request text.
 
 
 def _readers() -> set[tuple[str, str]]:
@@ -303,7 +337,22 @@ def test_every_entry_has_a_known_category_and_a_reason() -> None:
         assert reason.strip(), function
 
 
-def test_each_legacy_raw_text_gate_names_a_test_proving_plan_authority_bypasses_it() -> None:
+def _proof_is_a_live_collected_test(test_file: str, test_name: str) -> bool:
+    tree = ast.parse((TESTS / test_file).read_text())
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets
+        ):
+            if re.search(r"skip|xfail", ast.unparse(node.value)):
+                return False
+        if isinstance(node, ast.FunctionDef) and node.name == test_name:
+            if not node.name.startswith("test_"):
+                return False
+            return not any(re.search(r"skip|xfail", ast.unparse(d)) for d in node.decorator_list)
+    return False
+
+
+def test_each_legacy_raw_text_gate_names_a_live_test_proving_plan_authority_bypasses_it() -> None:
     legacy_modules = {m for m, (c, _r, _f) in ALLOWED.items() if c == "legacy_unstamped"}
     legacy_modules |= {
         "tasks/generative_build.py"
@@ -312,7 +361,28 @@ def test_each_legacy_raw_text_gate_names_a_test_proving_plan_authority_bypasses_
     }
     assert legacy_modules <= set(LEGACY_GATE_PROOFS), legacy_modules - set(LEGACY_GATE_PROOFS)
     for module, (test_file, test_name) in LEGACY_GATE_PROOFS.items():
-        source = (
-            TESTS / "tasks" / test_file if "/" not in test_file else TESTS / test_file
-        ).read_text()
-        assert re.search(rf"def {re.escape(test_name)}\(", source), (module, test_name)
+        assert _proof_is_a_live_collected_test(test_file, test_name), (module, test_name)
+
+
+def test_carry_and_legacy_modules_are_pinned_per_function() -> None:
+    """A new reader inside an already-allowed carry/legacy module must be a conscious entry."""
+    for module, (category, _reason, functions) in ALLOWED.items():
+        if category in {"carry", "legacy_unstamped"}:
+            assert functions, f"{module}: {category} entries list their functions"
+
+
+def test_the_proof_check_rejects_a_skipped_or_missing_test(tmp_path) -> None:
+    sample = tmp_path / "test_sample.py"
+    sample.write_text(
+        "import pytest\n\n\n@pytest.mark.skip\ndef test_skipped():\n    pass\n\n\n"
+        "@pytest.mark.xfail\ndef test_xfailed():\n    pass\n\n\n"
+        "def test_live():\n    pass\n"
+    )
+    globals()["TESTS"], saved = tmp_path, TESTS
+    try:
+        assert _proof_is_a_live_collected_test("test_sample.py", "test_live")
+        assert not _proof_is_a_live_collected_test("test_sample.py", "test_skipped")
+        assert not _proof_is_a_live_collected_test("test_sample.py", "test_xfailed")
+        assert not _proof_is_a_live_collected_test("test_sample.py", "test_missing")
+    finally:
+        globals()["TESTS"] = saved

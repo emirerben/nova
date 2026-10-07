@@ -64,6 +64,7 @@ Platform = Literal["phone", "cloud"]
 ALT_DIFFERENT_FORMAT = "Ask for a different format."
 ALT_NARRATED_UNAVAILABLE = "Ask for a montage with your voice, or a different format."
 ALT_SELF_NARRATION_UNAVAILABLE = "Record your voice for this edit, or ask for a different format."
+ALT_PHONE_FORMAT_UNAVAILABLE = "Ask for a montage, a subtitled clip, or a narrated edit."
 ALT_GUIDED_AUDIO_LED = (
     "This plan has a guided story but the edit format is audio-led. "
     "Pick one: the guided story, or the spoken/narrated edit."
@@ -377,7 +378,7 @@ def _resolve_phone(inp: RouteInputs, fmt: str, drivers: list[str]) -> RouteResol
         return _refuse(
             "capability_unavailable",
             "edit_format",
-            "Ask for a montage, a subtitled clip, or a narrated edit.",
+            ALT_PHONE_FORMAT_UNAVAILABLE,
             [*drivers, "capabilities.phone_supported_formats"],
         )
     if fmt in GUIDED_EDIT_FORMATS:

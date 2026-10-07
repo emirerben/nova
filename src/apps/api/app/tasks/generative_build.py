@@ -254,7 +254,7 @@ _SPEECH_FALLBACK_DECLINES = {
     ),
     "spine_extraction_failed": (
         "I couldn't read the speech in your clip.",
-        "I can try again, or you can ask for a montage.",
+        "Try a different clip of you talking, or ask for a montage.",
     ),
 }
 
@@ -287,6 +287,7 @@ def _flag_decline(kind: str, message: str) -> BaseException:
 
     alternative = {
         "different_format": render_route.ALT_DIFFERENT_FORMAT,
+        "phone_format": render_route.ALT_PHONE_FORMAT_UNAVAILABLE,
         "narrated": render_route.ALT_NARRATED_UNAVAILABLE,
         "self_narration": render_route.ALT_SELF_NARRATION_UNAVAILABLE,
     }[kind]
@@ -2505,6 +2506,7 @@ def _run_generative_job_impl(
                 # shape fails loudly instead of silently entering the wrong (or a cloud)
                 # renderer.
                 from app.services.creator_render_contract import (  # noqa: PLC0415
+                    PLAN_AUTHORITY_FIELD,
                     REQUIREMENT_VERSION_FIELD,
                     CreatorRenderContractError,
                     check_phone_dispatch_contract,
@@ -2549,6 +2551,11 @@ def _run_generative_job_impl(
                         landscape_fit=_creator_landscape_fit(candidates),
                     )
                 elif declared_format not in phone_render_supported_formats():
+                    if contract is not None and candidates.get(PLAN_AUTHORITY_FIELD) is not None:
+                        # KRI-470 PR-F: the resolver's typed refusal, not a bare ValueError.
+                        raise _flag_decline(
+                            "phone_format", "This kind of edit isn't available on your iPhone yet."
+                        )
                     raise ValueError("No phone renderer is registered for this edit")
                 elif declared_format in GUIDED_EDIT_FORMATS:
                     if has_voiceover_candidate:
@@ -3628,9 +3635,16 @@ def _run_generative_job_impl(
             narrative_shot_count=narrative_shot_count,
             plan_authority=plan_contract is not None,
         )
-        _shadow_route(
-            job_id, immutable_job_plan, all_candidates, "cloud", archetype, "cloud_archetype"
-        )
+        # KRI-470 PR-F: a plan-authority speech edit that lost its speech is declined below,
+        # never rendered as the montage this label names, so it is not a route disagreement.
+        if not (
+            plan_contract is not None
+            and archetype == "montage"
+            and _speech_fallback_decline(archetype_fallback_reason) is not None
+        ):
+            _shadow_route(
+                job_id, immutable_job_plan, all_candidates, "cloud", archetype, "cloud_archetype"
+            )
         # KRI-470 PR-E: talking-head/subtitled renders emit no receipt, so a
         # receipt-only requirement is refused before any variant renders.
         from app.services.cloud_render_contract import check_classic_archetype  # noqa: PLC0415
@@ -3829,7 +3843,6 @@ def _run_generative_job_impl(
                         speech_cleanup_snapshot=speech_cleanup_snapshot,
                         speech_cleanup_uses_preflight=speech_cleanup_snapshot_contract,
                         clip_id_to_gcs=clip_id_to_gcs,
-                        plan_authority=plan_contract is not None,
                     )
                 elif spec.get("archetype") == "subtitled":
                     result = _render_subtitled_variant(
@@ -6172,8 +6185,16 @@ def _run_phone_subtitled_job(
         # checked this via `phone_render_supported_formats()`, but a
         # redelivered message or a flag flipped mid-flight must still fail
         # closed here rather than compile an edit the rollout disabled.
+        if plan_contract is not None:
+            raise _flag_decline(
+                "different_format", "Talking-to-camera edits aren't available on your iPhone yet."
+            )
         raise ValueError("Phone rendering does not yet support talking-to-camera edits")
     if self_narrated and not settings.narrated_self_narration_enabled:
+        if plan_contract is not None:
+            raise _flag_decline(
+                "self_narration", "Edits narrated by your own footage aren't available yet."
+            )
         raise ValueError(
             f"Phone rendering does not yet support self-narrated '{edit_format}' edits"
         )
@@ -22836,14 +22857,8 @@ def _render_narrated_variant(
     speech_cleanup_snapshot: HydratedSpeechCleanupSnapshot | None = None,
     speech_cleanup_uses_preflight: bool | None = None,
     clip_id_to_gcs: Mapping[str, str] | None = None,
-    plan_authority: bool = False,
 ) -> dict[str, Any]:
     """Render one narrated walkthrough variant.
-
-    ``plan_authority`` (KRI-470 PR-F): the storyboard's intro / player / score text comes from
-    the approved plan (``explicit_opening_title``, the transcript, the storyboard agent), never
-    from regex matches over the raw request prose. The request still reaches the storyboard
-    agent as context.
 
     New ``required_v1`` Jobs consume the immutable voiceover snapshot: its exact
     CutPlan produces the audio fed to the assembler and its exact timed words
@@ -23184,9 +23199,7 @@ def _render_narrated_variant(
                     # copy. Exact creator-supplied title text remains safe to
                     # materialize without the planner.
                     creator_request=(
-                        creator_request
-                        if storyboard.get("status") == "ready" and not plan_authority
-                        else ""
+                        creator_request if storyboard.get("status") == "ready" else ""
                     ),
                     explicit_opening_title=explicit_opening_title,
                     storyboard=storyboard,

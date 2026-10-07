@@ -639,12 +639,17 @@ def test_unstamped_phone_self_narration_without_speech_keeps_the_untyped_failure
     assert _decline_of(raised.value) == {}
 
 
-# --- Flip 7a: request prose no longer decides narrated storyboard text ---------------------
+# --- Flip 7a (reverted): request-asked narrated treatments still apply to stamped jobs -------
+#
+# `_creator_requests_narrated_treatment` reads the request to add intro / player / score
+# text. That changes OUTPUT, and the typed plan has no carrier for players or scores, so
+# dropping it for stamped jobs would silently remove treatments the creator asked for
+# (KRI-129: the creator's prompt wins). Stamped and unstamped jobs behave the same here until a
+# typed treatment carrier exists.
 
 
-def _narrated_render(monkeypatch, tmp_path, *, plan_authority: bool, opening_title=None):
+def _narrated_render(monkeypatch, tmp_path, *, opening_title=None):
     """The real narrated renderer with the creator's words asking for intro/players/scores."""
-
     from app.pipeline.transcribe import Transcript, Word
 
     transcript = Transcript(
@@ -703,39 +708,24 @@ def _narrated_render(monkeypatch, tmp_path, *, plan_authority: bool, opening_tit
         creator_request="Add intro texts, player names, and scores",
         explicit_opening_title=opening_title,
         variant_dir=str(tmp_path),
-        plan_authority=plan_authority,
     )
     assert result["ok"] is True
     return {item["text"] for item in result["text_elements"]}
 
 
-def test_stamped_narrated_text_comes_from_the_plan_not_from_request_words(
+def test_a_narrated_job_still_gets_the_intro_players_and_scores_the_creator_asked_for(
     monkeypatch, tmp_path
 ) -> None:
-    texts = _narrated_render(
-        monkeypatch, tmp_path, plan_authority=True, opening_title="Match Story"
-    )
-    assert texts == {"Match Story"}  # the approved opening title; no regex-added players/scores
-
-
-def test_stamped_narrated_without_an_approved_title_adds_no_request_derived_text(
-    monkeypatch, tmp_path
-) -> None:
-    assert _narrated_render(monkeypatch, tmp_path, plan_authority=True) == set()
-
-
-def test_unstamped_narrated_still_reads_intro_players_and_scores_from_the_request(
-    monkeypatch, tmp_path
-) -> None:
-    texts = _narrated_render(
-        monkeypatch, tmp_path, plan_authority=False, opening_title="Match Story"
-    )
+    texts = _narrated_render(monkeypatch, tmp_path, opening_title="Match Story")
     assert texts >= {"Match Story", "PLAYER 1", "six four"}
 
 
-def _render_kwargs_of_the_narrated_dispatch(monkeypatch, *, stamped: bool) -> dict:
+def test_the_cloud_dispatcher_renders_a_stamped_narrated_edit_with_the_requests_words(
+    monkeypatch,
+) -> None:
+    """Stamped or not, the request reaches the narrated renderer that reads it for treatments."""
     run = _cloud(
-        monkeypatch, stamped=stamped, edit_format="narrated_ready", audio_strategy="voiceover"
+        monkeypatch, stamped=True, edit_format="narrated_ready", audio_strategy="voiceover"
     )
     run.job.all_candidates["voiceover_gcs_path"] = VOICE_FILE
     seen: dict = {}
@@ -755,19 +745,8 @@ def _render_kwargs_of_the_narrated_dispatch(monkeypatch, *, stamped: bool) -> di
 
     monkeypatch.setattr(gb, "_render_narrated_variant", narrated)
     gb._run_generative_job(str(run.job.id))
-    return seen
-
-
-def test_the_cloud_dispatcher_marks_a_stamped_narrated_render_as_plan_authority(
-    monkeypatch,
-) -> None:
-    assert _render_kwargs_of_the_narrated_dispatch(monkeypatch, stamped=True)["plan_authority"]
-
-
-def test_the_cloud_dispatcher_leaves_an_unstamped_narrated_render_on_the_legacy_text_rules(
-    monkeypatch,
-) -> None:
-    assert not _render_kwargs_of_the_narrated_dispatch(monkeypatch, stamped=False)["plan_authority"]
+    assert seen["creator_request"] == "USE-MY-WORDS"
+    assert "plan_authority" not in seen
 
 
 # --- Flip 7b: request words never route a contracted phone montage to the speech lane -----
@@ -801,7 +780,7 @@ def test_a_pre_contract_phone_montage_still_tries_the_speech_lane_first(monkeypa
 # --- The shadow comparison keeps working ---------------------------------------------------
 
 
-def _mismatches_of(monkeypatch, run: CloudRun) -> list[dict]:
+def _mismatches_of(monkeypatch, run: CloudRun, expect=_StopAfterResolution) -> list[dict]:
     from app.services import render_route
 
     events: list[tuple[str, str, dict]] = []
@@ -813,7 +792,7 @@ def _mismatches_of(monkeypatch, run: CloudRun) -> list[dict]:
         render_route, "route_capabilities_from_settings", render_route.RouteCapabilities
     )
     monkeypatch.setattr(render_route, "_already_recorded", lambda *_a: False)
-    run.run()
+    run.run(expect)
     return [data for _s, event, data in events if event == "route_mismatch"]
 
 
@@ -830,3 +809,90 @@ def test_a_remaining_override_is_still_recorded_as_a_mismatch(monkeypatch) -> No
     run.job.all_candidates["voiceover_gcs_path"] = VOICE_FILE
     [event] = _mismatches_of(monkeypatch, run)
     assert (event["legacy_route"], event["resolver_route"]) == ("narrated", "voiceover")
+
+
+def test_a_speech_decline_does_not_record_a_route_mismatch_for_the_same_row(monkeypatch) -> None:
+    from app.services.cloud_render_contract import CloudRenderContractError
+
+    run = _cloud(monkeypatch, stamped=True, edit_format="talking_head", clips=2)
+    _no_speech(monkeypatch)
+    assert _mismatches_of(monkeypatch, run, CloudRenderContractError) == []
+    assert _decline_of(run.raised)["decline_reason"] == "evidence_missing"
+
+
+# --- Phone flag-off / unsupported format is typed for stamped jobs -------------------------
+
+
+def test_stamped_phone_self_narration_flag_off_is_the_resolvers_typed_refusal(monkeypatch) -> None:
+    from app.services import render_route
+    from app.services.cloud_render_contract import CloudRenderContractError
+
+    job, snapshot, _s, _b = _setup_subtitled(monkeypatch, edit_format="narrated_ready")
+    _stamp(job, strategy=_strategy(edit_format="narrated_ready"))
+    snapshot[CONTRACT_FIELD] = job.assembly_plan[CONTRACT_FIELD]
+    monkeypatch.setattr(gb.settings, "narrated_self_narration_enabled", False)
+    with pytest.raises(CloudRenderContractError) as raised:
+        gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+    inputs = render_route.route_inputs_from_job(
+        snapshot,
+        job.all_candidates,
+        platform="phone",
+        capabilities=render_route.RouteCapabilities(self_narration=False),
+    )
+    refusal = render_route.resolve_route(inputs)
+    decline = _decline_of(raised.value)
+    assert (decline["decline_reason"], decline["field_path"], decline["alternative"]) == (
+        refusal.reason,
+        refusal.field_path,
+        refusal.alternative,
+    )
+
+
+def test_unstamped_phone_self_narration_flag_off_keeps_the_value_error(monkeypatch) -> None:
+    job, snapshot, _s, _b = _setup_subtitled(monkeypatch, edit_format="narrated_ready")
+    monkeypatch.setattr(gb.settings, "narrated_self_narration_enabled", False)
+    with pytest.raises(ValueError, match="self-narrated") as raised:
+        gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+    assert _decline_of(raised.value) == {}
+
+
+def test_stamped_phone_subtitled_flag_off_is_typed_and_unstamped_keeps_the_value_error(
+    monkeypatch,
+) -> None:
+    from app.services.cloud_render_contract import CloudRenderContractError
+
+    job, snapshot, _s, _b = _setup_subtitled(monkeypatch)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_rendering_enabled", False)
+    with pytest.raises(ValueError, match="talking-to-camera") as legacy:
+        gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+    assert _decline_of(legacy.value) == {}
+    _stamp(job, strategy=_strategy(edit_format="subtitled"))
+    snapshot[CONTRACT_FIELD] = job.assembly_plan[CONTRACT_FIELD]
+    with pytest.raises(CloudRenderContractError) as stamped:
+        gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+    assert _decline_of(stamped.value)["decline_reason"] == "capability_unavailable"
+
+
+@pytest.mark.parametrize("stamped", [True, False])
+def test_a_phone_format_without_a_renderer_is_typed_only_for_a_stamped_job(
+    monkeypatch, stamped
+) -> None:
+    from tests.tasks.test_route_shadow_dispatch import Harness, _job
+
+    job = _job(platform="phone", stamped=stamped)
+    h = Harness(monkeypatch, job)
+    monkeypatch.setattr(
+        "app.services.phone_rollout.phone_render_supported_formats", lambda: frozenset()
+    )
+    failed = []
+    monkeypatch.setattr(gb, "_fail_job", lambda *a, **k: failed.append((a, k)) or True)
+    monkeypatch.setattr(gb, "mark_failed_phase", lambda _id: None)
+    h.run()
+    [(args, kwargs)] = failed
+    assert kwargs["failure_reason"] == "phone_plan_unsupported"
+    if stamped:
+        assert kwargs["decline"]["decline_reason"] == "capability_unavailable"
+        assert "subtitled clip" in kwargs["decline"]["alternative"]
+    else:
+        assert "decline" not in kwargs
+        assert "No phone renderer is registered" in args[1]
