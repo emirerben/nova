@@ -40,8 +40,20 @@ Repeatable commands (macOS, ffmpeg on PATH; the parity cases also need macOS `sa
       KRIA_AUDIO_PARITY_DIR=OUT swift test --filter AudioParityFixtureTests)
     src/apps/api/.venv/bin/python scripts/ios/phone-audio-parity.py compare OUT
 
-`prepare OUT --cases user_song` builds only the song proof (no `say` needed);
-`--cases parity` only the cloud-parity cases. `compare` judges whatever is in OUT.
+`prepare OUT --cases user_song` builds only the song proof (no `say` needed); the other
+values are `parity`, `voiceover_music_authored` and `speech_music`. `compare` judges whatever
+is in OUT.
+
+3. Music level and once (KRI-470 PR-G review). `voiceover_music_authored`: a voiceover + music
+   edit compiled by `compile_phone_voiceover_montage_plan`, then restored through
+   `compile_phone_authored_timeline` (the editor Save path). `speech_music`: the real spoken-
+   excerpt compiler given a music bed. Every source is a pure tone at a known amplitude, so
+   each window of the export must hold exactly the tones the COMPILED recipe says, at that
+   level (music at the compiler's `min(1 - mix, 0.5)`, voice at full), music silent under
+   speech, camera audio silent, no second copy of the music from source 0. NEGATIVE CONTROLS
+   (compare requires each to fail its named check): `voiceover_music_authored_loud` (music
+   at the voice-slider value, the wrong authored level), `voiceover_music_authored_doubled`
+   (clip + `music_asset_id` bed, the old authored shape), `speech_music_doubled_bed`.
 
 On a simulator, run the package scheme instead of `swift test`:
     TEST_RUNNER_KRIA_AUDIO_PARITY_DIR=OUT xcodebuild test -scheme KriaMediaEngine \
@@ -235,7 +247,7 @@ def _narration(voice: Path) -> PhoneNarrationBed:
 
 
 def _montage_decision(
-    duration: float, *, mix: float, music: bool
+    duration: float, *, mix: float, music: bool, music_start_s: float = MUSIC_START_S
 ) -> GenerativeVariantDecision:
     return GenerativeVariantDecision(
         variant_id="voiceover_music" if music else "voiceover_only",
@@ -249,7 +261,7 @@ def _montage_decision(
             )
         ],
         music_track_id="track" if music else None,
-        music_start_s=MUSIC_START_S if music else None,
+        music_start_s=music_start_s if music else None,
         mix=mix,
         extras={
             "base": {},
@@ -500,7 +512,10 @@ def compare(out: Path) -> int:
             proof = json.loads(proof_file.read_text())
             if proof["kind"] == "text_twin":
                 continue  # only a reference frame source for its parent case
-            row, failed = _compare_user_song(out, directory, proof)
+            if proof["kind"] == "audio_levels":
+                row, failed = _compare_audio_levels(directory, proof)
+            else:
+                row, failed = _compare_user_song(out, directory, proof)
         else:
             row, failed = _compare_parity(directory)
         if row is not None:
@@ -983,11 +998,409 @@ def _compare_user_song(out: Path, directory: Path, proof: dict) -> tuple[dict, b
     return row, bool(failed_checks)
 
 
+# ------------------------------------------------- music level + once (authored, speech)
+#
+# KRI-470 PR-G changed what two writers emit for a music bed: the authored editor restore
+# (the music level lives on the bed's track clip, `music_asset_id=None`) and the spoken-
+# excerpt montage (music clips only, no second bed). Both are judged on the EXPORT with
+# tone-tagged inputs: every source is a pure tone at a known amplitude, so each window of
+# the exported audio must contain exactly the tones the compiled recipe says, at the level
+# it says, and nothing else (a second copy of the music from source 0 is a different tone).
+
+VOICE_HZ = 523.0
+SPEAKER_HZ = 440.0
+FOOTAGE_HZ = 330.0
+BROLL_HZ = [250.0, 270.0, 290.0]
+LEVELS_MUSIC_START_S = 10.0
+LEVELS_VOICE_AMPLITUDE = 0.4
+LEVELS_CAMERA_AMPLITUDE = 0.25
+LEVELS_SECONDS = 12.0
+VOICEOVER_MIX = 0.7
+
+
+def _write_tone_audio(path: Path, hz: float, amplitude: float, seconds: float) -> None:
+    import numpy as np  # noqa: PLC0415
+    import wave  # noqa: PLC0415
+
+    rate = 48000
+    t = np.arange(int(seconds * rate)) / rate
+    samples = amplitude * np.sin(2 * np.pi * hz * t)
+    wav = path.with_suffix(".wav")
+    with wave.open(str(wav), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes((samples * 32767).astype("<i2").tobytes())
+    _ffmpeg("-i", str(wav), "-ac", "2", "-c:a", "aac", "-b:a", "192k", str(path))
+
+
+def _write_tone_clip(
+    path: Path, rgb: tuple[int, int, int], hz: float, seconds: float
+) -> None:
+    audio = path.with_suffix(".m4a")
+    _write_tone_audio(audio, hz, LEVELS_CAMERA_AMPLITUDE, seconds)
+    colour = "0x{:02x}{:02x}{:02x}".format(*rgb)
+    _ffmpeg(
+        "-f", "lavfi", "-i", f"color=c={colour}:s=1080x1920:r=30:d={seconds}",
+        "-i", str(audio), "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+        "-c:a", "copy", "-shortest", str(path),
+    )  # fmt: skip
+
+
+def _binding_for(media_id: str, clip: Path) -> PhoneSourceBinding:
+    fp = _fingerprint(clip)
+    return PhoneSourceBinding(
+        media_id=media_id,
+        proxy_path=f"user/analysis-proxy-{media_id}.mp4",
+        generation="1",
+        original=OriginalMediaDescriptor(
+            sha256=fp.sha256,
+            byte_count=fp.byte_count,
+            duration_s=_duration(clip),
+            width=1080,
+            height=1920,
+            has_audio=True,
+        ),
+    )
+
+
+def _tone_amp(path: Path, hz: float, at_s: float = 2.5) -> float:
+    """The amplitude of one pure tone in a source file, measured like the export is."""
+    return _goertzel(_pcm(path), 48000, at_s, 0.2, hz)
+
+
+def _write_levels_case(
+    out: Path, case: str, recipe, files: dict[str, Path], proof: dict
+) -> None:
+    directory = out / "cases" / case
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "recipe.json").write_text(recipe.model_dump_json())
+    assets = {}
+    for asset in recipe.asset_manifest.assets:
+        if asset.kind == "original":
+            assets[asset.id] = str(files[asset.media_id])
+        elif asset.kind == "library":
+            assets[asset.id] = str(files["music"])
+        else:
+            assets[asset.id] = str(files["voice"])
+    (directory / "assets.json").write_text(json.dumps(assets, indent=2))
+    (directory / "proof.json").write_text(json.dumps(proof, indent=2))
+
+
+def _music_windows(
+    recipe, music_amp_by_second: dict[int, float], *, skip_s: float = 0.6
+) -> list[dict]:
+    """One window per source second of every music clip, at that second's centre."""
+    windows = []
+    for track in recipe.tracks:
+        if track.id != "music":
+            continue
+        for clip in track.clips:
+            end = clip.timeline_start + clip.source_duration
+            second = math.floor(clip.source_start + skip_s)
+            while True:
+                t = clip.timeline_start + (second + 0.5 - clip.source_start)
+                if t > end - skip_s:
+                    break
+                if t >= clip.timeline_start + skip_s:
+                    windows.append(
+                        {"t": round(t, 3), "expect": [
+                            {"hz": _song_freq(second), "group": "music",
+                             "amp": music_amp_by_second[second] * clip.volume}
+                        ]}
+                    )  # fmt: skip
+                second += 1
+    return windows
+
+
+def _levels_groups() -> dict[str, list[float]]:
+    return {
+        "music": [_song_freq(k) for k in range(SONG_SECONDS)],
+        "voice": [VOICE_HZ, SPEAKER_HZ],
+        "camera": [FOOTAGE_HZ, *BROLL_HZ],
+    }
+
+
+def prepare_voiceover_music_authored(out: Path) -> None:
+    """A voiceover + music edit restored through the authored editor path."""
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    from app.pipeline.phone_authored_timeline import compile_phone_authored_timeline  # noqa: PLC0415
+    from app.services.phone_sources import PHONE_SOURCES_FIELD  # noqa: PLC0415
+
+    out.mkdir(parents=True, exist_ok=True)
+    sources = out / "voiceover_music_inputs"
+    sources.mkdir(exist_ok=True)
+    files = {
+        "voice": sources / "voice.m4a",
+        "music": sources / "music.m4a",
+        "footage": sources / "footage.mp4",
+    }
+    _write_tone_audio(files["voice"], VOICE_HZ, LEVELS_VOICE_AMPLITUDE, LEVELS_SECONDS)
+    _write_staircase_song(files["music"])
+    _write_tone_clip(files["footage"], (74, 107, 138), FOOTAGE_HZ, LEVELS_SECONDS + 2)
+    binding = _binding_for("footage", files["footage"])
+    music = PhoneMusicBed(
+        catalog_id="track",
+        generation="1",
+        fingerprint=_fingerprint(files["music"]),
+        duration_s=_duration(files["music"]),
+        start_s=LEVELS_MUSIC_START_S,
+    )
+    decision = _montage_decision(
+        LEVELS_SECONDS,
+        mix=VOICEOVER_MIX,
+        music=True,
+        music_start_s=LEVELS_MUSIC_START_S,
+    )
+    previous = compile_phone_voiceover_montage_plan(
+        decision, (binding,), music=music, narration=_narration(files["voice"])
+    )
+    compiled_gain = next(t for t in previous.tracks if t.id == "music").clips[0].volume
+    job = SimpleNamespace(
+        assembly_plan={PHONE_SOURCES_FIELD: [binding.model_dump(mode="json")]},
+        all_candidates={"clip_paths": [binding.proxy_path]},
+    )
+    variant = {
+        "variant_id": "voiceover_music",
+        "resolved_archetype": "voiceover",
+        "render_destination": "device",
+        "editor_timeline_mode": "authored",
+        "caption_cues": [],
+        "text_elements": [],
+        "text_elements_user_edited": True,
+        "music_track_id": "track",
+        "mix": VOICEOVER_MIX,
+        "user_timeline": {
+            "slots": [
+                {
+                    "slot_id": "s0",
+                    "clip_index": 0,
+                    "in_s": 0,
+                    "duration_s": LEVELS_SECONDS,
+                }
+            ]
+        },
+    }
+    restored = compile_phone_authored_timeline(job, variant, previous)
+
+    staircase = {
+        k: _tone_amp(files["music"], _song_freq(k), k + 0.5)
+        for k in range(SONG_SECONDS)
+    }
+    voice_amp = _tone_amp(files["voice"], VOICE_HZ)
+    # The EXPECTED level is what the COMPILER wrote (previous), not what the restore wrote.
+    reference = previous.model_copy(deep=True)
+    windows = _music_windows(reference, staircase)
+    for window in windows:
+        window["expect"].append({"hz": VOICE_HZ, "group": "voice", "amp": voice_amp})
+    proof = {
+        "kind": "audio_levels",
+        "duration_s": restored.duration,
+        "compiled_music_gain": compiled_gain,
+        "windows": windows,
+        "groups": _levels_groups(),
+    }
+    music_asset = next(
+        a.id for a in restored.asset_manifest.assets if a.kind == "library"
+    )
+    loud = restored.model_copy(deep=True)
+    for track in loud.tracks:
+        if track.id == "music":
+            track.clips[0] = track.clips[0].model_copy(update={"volume": VOICEOVER_MIX})
+    doubled = restored.model_copy(
+        update={
+            "audio": restored.audio.model_copy(
+                update={"music_asset_id": music_asset, "music_volume": VOICEOVER_MIX}
+            )
+        }
+    )
+    _write_levels_case(out, "voiceover_music_authored", restored, files, proof)
+    # NEGATIVE CONTROLS: the old authored shapes. compare must catch both.
+    _write_levels_case(
+        out, "voiceover_music_authored_loud", loud, files,
+        {**proof, "expect_failure": ["music_level"]},
+    )  # fmt: skip
+    _write_levels_case(
+        out, "voiceover_music_authored_doubled", doubled, files,
+        {**proof, "expect_failure": ["music_once"]},
+    )  # fmt: skip
+    print(
+        f"prepared voiceover_music_authored in {out} (music gain {compiled_gain:.2f})"
+    )
+
+
+def prepare_speech_music(out: Path) -> None:
+    """The real spoken-excerpt compiler given a music bed: music under montage runs only."""
+    from app.pipeline.phone_speech_montage_plan import (  # noqa: PLC0415
+        PhoneSpeechSection,
+        compile_phone_speech_montage_plan,
+    )
+
+    out.mkdir(parents=True, exist_ok=True)
+    sources = out / "speech_music_inputs"
+    sources.mkdir(exist_ok=True)
+    files = {"music": sources / "music.m4a", "voice": sources / "voice.m4a"}
+    _write_staircase_song(files["music"])
+    _write_tone_audio(
+        files["voice"], VOICE_HZ, LEVELS_VOICE_AMPLITUDE, 2
+    )  # unused placeholder
+    files["speaker"] = sources / "speaker.mp4"
+    _write_tone_clip(files["speaker"], (120, 120, 120), SPEAKER_HZ, 12)
+    broll = []
+    for index, hz in enumerate(BROLL_HZ):
+        name = f"broll{index + 1}"
+        files[name] = sources / f"{name}.mp4"
+        _write_tone_clip(files[name], list(PALETTE.values())[index], hz, 9)
+        broll.append(_binding_for(name, files[name]))
+    speaker = _binding_for("speaker", files["speaker"])
+    music = PhoneMusicBed(
+        catalog_id="track",
+        generation="1",
+        fingerprint=_fingerprint(files["music"]),
+        duration_s=_duration(files["music"]),
+        start_s=LEVELS_MUSIC_START_S,
+        volume=0.4,
+    )
+    recipe, receipt = compile_phone_speech_montage_plan(
+        (
+            PhoneSpeechSection(kind="montage", duration_s=4.0),
+            PhoneSpeechSection(
+                kind="speech", speaker=speaker, source_start_s=1.0, source_end_s=6.0,
+                visual="cutaways",
+            ),
+            PhoneSpeechSection(kind="montage", duration_s=4.0),
+        ),
+        (speaker, *broll),
+        music=music,
+    )  # fmt: skip
+    assert receipt.music, "the compiler produced no music for this shape"
+    staircase = {
+        k: _tone_amp(files["music"], _song_freq(k), k + 0.5)
+        for k in range(SONG_SECONDS)
+    }
+    speaker_amp = _tone_amp(files["speaker"], SPEAKER_HZ)
+    windows = _music_windows(recipe, staircase)
+    for track in recipe.tracks:
+        if track.id != "speech-audio":
+            continue
+        for clip in track.clips:
+            mid = clip.timeline_start + clip.source_duration / 2
+            windows.append(
+                {"t": round(mid, 3), "expect": [
+                    {"hz": SPEAKER_HZ, "group": "voice", "amp": speaker_amp * clip.volume}
+                ]}
+            )  # fmt: skip
+    proof = {
+        "kind": "audio_levels",
+        "duration_s": recipe.duration,
+        "windows": windows,
+        "groups": _levels_groups(),
+    }
+    music_asset = next(
+        a.id for a in recipe.asset_manifest.assets if a.kind == "library"
+    )
+    doubled = recipe.model_copy(
+        update={
+            "audio": recipe.audio.model_copy(
+                update={"music_asset_id": music_asset, "music_volume": 0.4}
+            )
+        }
+    )
+    _write_levels_case(out, "speech_music", recipe, files, proof)
+    _write_levels_case(
+        out, "speech_music_doubled_bed", doubled, files,
+        {**proof, "expect_failure": ["music_once"]},
+    )  # fmt: skip
+    print(f"prepared speech_music in {out} ({len(windows)} windows)")
+
+
+def _compare_audio_levels(directory: Path, proof: dict) -> tuple[dict, bool]:
+    import numpy as np  # noqa: PLC0415
+
+    name = directory.name
+    phone = directory / "phone.mp4"
+    row: dict = {"case": name, "kind": "audio_levels", "checks": {}}
+    if not phone.exists():
+        print(f"{name}: phone.mp4 missing -- run AudioParityFixtureTests first")
+        return row, True
+    pcm = np.asarray(_pcm(phone), dtype=np.float64)
+    groups = proof["groups"]
+    level_rows = []
+    worst = {"music": -180.0, "camera": -180.0, "voice": -180.0}
+    level_error = {"music": 0.0, "voice": 0.0}
+    for window in proof["windows"]:
+        expected = {e["hz"]: e for e in window["expect"]}
+        floor_db = min(_amp_db(e["amp"]) for e in expected.values())
+        heard = {}
+        for e in window["expect"]:
+            measured = _goertzel(pcm, 48000, window["t"], 0.2, e["hz"])
+            diff = _amp_db(measured) - _amp_db(e["amp"])
+            heard[str(e["hz"])] = round(diff, 2)
+            level_error[e["group"]] = max(level_error[e["group"]], abs(diff))
+        for group, hzs in groups.items():
+            for hz in hzs:
+                if hz in expected:
+                    continue
+                leak = _amp_db(_goertzel(pcm, 48000, window["t"], 0.2, hz)) - floor_db
+                worst[group] = max(worst[group], leak)
+        level_rows.append({"t": window["t"], "level_vs_expected_db": heard})
+    checks = row["checks"]
+    checks["duration"] = {
+        "expected_s": round(proof["duration_s"], 3),
+        "actual_s": round(_duration(phone), 3),
+        "ok": abs(_duration(phone) - proof["duration_s"]) <= 0.2,
+    }
+    checks["music_level"] = {
+        "windows": len(level_rows),
+        "max_abs_error_db": round(level_error["music"], 2),
+        "tolerance_db": LEVEL_TOLERANCE_DB,
+        "ok": bool(level_rows) and level_error["music"] <= LEVEL_TOLERANCE_DB,
+    }
+    checks["voice_level"] = {
+        "max_abs_error_db": round(level_error["voice"], 2),
+        "tolerance_db": LEVEL_TOLERANCE_DB,
+        "ok": level_error["voice"] <= LEVEL_TOLERANCE_DB,
+    }
+    checks["music_once"] = {
+        "loudest_unexpected_music_tone_db": round(worst["music"], 1),
+        "max_db": LEAK_MAX_DB,
+        "ok": worst["music"] <= LEAK_MAX_DB,
+    }
+    checks["camera_audio_silent"] = {
+        "loudest_camera_tone_db": round(worst["camera"], 1),
+        "max_db": LEAK_MAX_DB,
+        "ok": worst["camera"] <= LEAK_MAX_DB,
+    }
+    row["windows"] = level_rows
+    failed_checks = sorted(k for k, v in checks.items() if not v["ok"])
+    row["failed_checks"] = failed_checks
+    wanted = proof.get("expect_failure")
+    if wanted:
+        caught = set(wanted) <= set(failed_checks)
+        row["expect_failure"] = wanted
+        row["negative_control_detected"] = caught
+        print(
+            f"{name}: negative control {'DETECTED' if caught else 'MISSED'} ({failed_checks})"
+        )
+        return row, not caught
+    row["passed"] = not failed_checks
+    print(f"{name}: {'PASS' if row['passed'] else 'FAIL'} {failed_checks}")
+    return row, bool(failed_checks)
+
+
+CASES = {"all", "parity", "user_song", "voiceover_music_authored", "speech_music"}
+
+
 def prepare(out: Path, cases: str = "all") -> None:
     if cases in {"all", "parity"}:
         prepare_parity(out)
     if cases in {"all", "user_song"}:
         prepare_user_song(out)
+    if cases in {"all", "voiceover_music_authored"}:
+        prepare_voiceover_music_authored(out)
+    if cases in {"all", "speech_music"}:
+        prepare_speech_music(out)
 
 
 if __name__ == "__main__":
@@ -997,16 +1410,7 @@ if __name__ == "__main__":
         at = args.index("--cases")
         cases = args[at + 1] if at + 1 < len(args) else ""
         del args[at : at + 2]
-    if (
-        len(args) != 2
-        or args[0] not in {"prepare", "compare"}
-        or cases
-        not in {
-            "all",
-            "parity",
-            "user_song",
-        }
-    ):
+    if len(args) != 2 or args[0] not in {"prepare", "compare"} or cases not in CASES:
         raise SystemExit(__doc__)
     target = Path(args[1]).resolve()
     if args[0] == "prepare":
