@@ -70,24 +70,30 @@ rejects any recipe with `audio.mute_windows` ("Muted sections aren't supported o
 `gain: recipeTrack.kind == .video ? recipe.audio.originalVolume : 1`). The speech compiler already does this
 (`add_main(..., volume=0.0)`), so the slice reuses it.
 
-### Contract additions [proposed]
+### Plan commitments [proposed]
 
-One post-v1 object, so the digest rule in PR-A (`_POST_V1_FIELD_DEFAULTS`, [PR-A]) keeps stored contracts
-readable (the field is skipped while `None`):
+The commitments live in a **sibling plain-dict key**, not in the strict contract model. The contract model is
+`extra="forbid"`: any new field, even one that is skipped while unset, makes a stamped job unreadable by an older
+worker during a rolling deploy and for every job stamped since a rollback (reproduced for PR-D's route; the same
+reason `cloud_evidence` is a sibling key beside the guided receipt, [PR-E]). So:
 
 ```text
-CreatorRenderContract.composition: CompositionCommitments | None = None
-  route          str | None      # PR-D stamps it here (name to be agreed with PR-D)
-  voice_picture  "hidden" | None # the voice clip's own picture is not in the picture sequence
-  voice_span_s   float | None    # seconds of voice the plan commits to (min(usable voice, duration))
-  min_shot_s     float | None    # readable-shot floor in force (None = policy constant)
+assembly_plan["creator_composition"] = {         # written and read only by new code
+  "contract_digest":  str,                       # the contract it was resolved against; a mismatch means stale/absent
+  "route":            str | None,                # shares PR-D's `assembly_plan["creator_route"]` (one source of truth)
+  "voice_picture":    "hidden" | None,           # the voice clip's own picture is not in the picture sequence
+  "voice_span_s":     float | None,              # seconds of voice the plan commits to (min(usable voice, duration))
+  "min_shot_s":       float | None,              # readable-shot floor in force (None = policy constant)
+}
 ```
 
 These are commitments the verifier checks, not a timeline. `voice_picture="hidden"` is what lets
 `build_render_contract` leave `audio_source_ids` out of `order_ids` (otherwise the speech job's refusal above
-stands, and that case still matters for sources that are both heard and shown). Each new strategy path gets a
-`FIELD_MATRIX` row [PR-A] (`supported`, owner `render_contract:composition`); the PR-A guard
-`test_every_strategy_path_is_assigned` forces it.
+stands, and that case still matters for sources that are both heard and shown): `build_render_contract` takes the
+commitments as an argument, so the contract model itself stays unchanged and `order_ids` is derived without a new
+contract field. Each new strategy path gets a `FIELD_MATRIX` row [PR-A] (`supported`, owner
+`render_contract:composition`); the PR-A guard `test_every_strategy_path_is_assigned` forces it. Wherever this
+document writes `composition.<x>` it means `creator_composition["<x>"]`.
 
 ### Field to element mapping for the slice
 
@@ -381,7 +387,7 @@ Risks.
 
 | Risk | Mitigation |
 | --- | --- |
-| Digest compatibility: any new contract field breaks stored contracts (`extra="forbid"`, digest over `model_dump`) | single post-v1 `composition` object, default `None`, listed in `_POST_V1_FIELD_DEFAULTS` [PR-A]; golden stored-v1 test is PR-A's |
+| Rolling deploy / rollback: any new field in the strict contract model makes stamped jobs unreadable by older workers (`extra="forbid"`) | commitments live in the sibling dict `assembly_plan["creator_composition"]` (plain dict, read only by new code, stale when `contract_digest` differs), the contract model is unchanged; a test compares the model's JSON schema to main's |
 | `generative_build.py` is a hot file (D, F, G, H) | PR-H touches the dispatcher by one branch; sequence per the plan's lane 3 |
 | New composer duplicates the speech compiler | Q5: same file, shared private helpers |
 | Prompt change for `voice_mode` (Q4) | bump `prompt_version`, free replay evals only |
@@ -393,7 +399,7 @@ Open questions for the human reviewer (recommended answer first).
 3. **Long voice, explicit duration: ask which part?** Recommend no: first sentences up to `D`, disclosed on the plan card; "which part" is the excerpts route (`voice_mode`).
 4. **`voice_mode` as a Creator-agent strategy field (prompt change) vs a derived rule?** Recommend the field plus a `prompt_version` bump (free replay evals only); a rule over plan fields would be a new heuristic of the kind this train removes.
 5. **Composer location:** extend `phone_speech_montage_plan.py` (recommended, one owner of speech-over-picture recipes) or a new `phone_voice_behind_footage_plan.py`.
-6. **`composition` object vs separate fields, and who names `route`?** Recommend one object; confirm the `route` field with PR-D before either merges.
+6. **Where do the commitments live, and who names `route`?** Decided by the PR-D review: a sibling key, never the strict contract model. `route` is PR-D's `assembly_plan["creator_route"]`; `creator_composition` holds the rest and reads the route from it.
 7. **Duration tolerance on composer routes.** `verify_phone_recipe` allows 10 %. Recommend `max(0.1 s, 1 frame)` when `composition.route` is set, since the composer sums exact shots; keep 10 % for other routes.
 8. **Editor.** Slice variants cannot be edited on the server (as `speech_montage`). Accept for the slice, file a follow-up to recompile from the composer on text/duration edits.
 9. **Implicit duration (KRI-469 as stated).** Ask "how long" only when voice `> 60 s`; otherwise default to `min(L, D_strategy)` and disclose. Confirm the 60 s ceiling (CLAUDE.md says sub-60 s output; schema max is 120 s).
