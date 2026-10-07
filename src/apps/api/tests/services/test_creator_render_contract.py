@@ -836,7 +836,8 @@ def test_song_order_answer_on_lipsync_item_is_not_an_unresolved_order_rule():
     assert contract.unresolved == ()
     assert contract.order_required is False
     assert contract.order_ids == ()
-    assert contract.duration_s == 62
+    # The model-emitted 62 s is not a creator request (prod jobs 887b683a / 30f1c7d2).
+    assert contract.duration_s is None
     check_phone_dispatch_contract(
         contract, snapshot_generation_id="g", has_voiceover_candidate=False, user_song=object()
     )
@@ -875,6 +876,75 @@ def test_song_order_on_song_item_without_resolved_takes_still_declines():
         strategy, generation_id="g", brief=_order_brief(), media_snapshot={}
     )
     assert contract.unresolved
+
+
+# -- model-chosen target_duration_s is not a creator-requested length ----------
+
+
+def _timing_brief(seconds):
+    from app.kria.brief import BriefRequirement, CreativeBrief
+
+    return CreativeBrief(
+        requirements=[
+            BriefRequirement(
+                id="r1",
+                kind="timing",
+                scope="whole_video",
+                facts={"duration_s": seconds},
+                description=f"{seconds} seconds",
+            )
+        ]
+    )
+
+
+def test_unrequested_model_duration_does_not_gate_a_lipsync_item():
+    """Prod jobs 887b683a (62 s) / 30f1c7d2 (71 s): brief had no timing requirement, the
+    model always emits a target, the 14.5 s / 39.6 s song-window recipe was declined."""
+    contract = build_render_contract(
+        _song_strategy(), generation_id="g", brief=_order_brief(), media_snapshot={}
+    )
+    assert contract is not None and contract.duration_s is None
+    recipe = _speech_recipe()  # 7 s; would fail a 62 s pin by far more than 10%
+    assert verify_phone_recipe(contract, recipe, source_audio={"talk": True}) is not None
+
+
+def test_unrequested_model_duration_does_not_gate_a_subtitled_item_with_a_brief():
+    strategy = {
+        "edit_format": "subtitled",
+        "target_duration_s": 40,
+        "target_duration_requested": True,
+    }
+    contract = build_render_contract(
+        strategy, generation_id="g", brief=_order_brief(facts={}), media_snapshot={}
+    )
+    assert contract is None or contract.duration_s is None
+
+
+def test_explicit_brief_duration_on_non_song_item_is_still_enforced():
+    contract = build_render_contract(
+        {"target_duration_s": 30, "target_duration_requested": True},
+        generation_id="g",
+        brief=_timing_brief(30),
+    )
+    assert contract is not None and contract.duration_s == 30
+    with pytest.raises(CreatorRenderContractError) as exc:
+        verify_phone_recipe(contract, _speech_recipe(), source_audio={"talk": True})
+    assert _typed(exc)[1] == "target_duration_s"
+
+
+def test_brief_less_non_song_strategy_duration_keeps_legacy_behaviour():
+    contract = build_render_contract(
+        {"target_duration_s": 30, "target_duration_requested": True}, generation_id="g"
+    )
+    assert contract is not None and contract.duration_s == 30
+
+
+def test_explicit_brief_duration_on_song_item_is_pinned_from_the_brief():
+    strategy = {**_song_strategy(), "target_duration_s": 30}
+    contract = build_render_contract(
+        strategy, generation_id="g", brief=_timing_brief(30), media_snapshot={}
+    )
+    assert contract is not None and contract.duration_s == 30
 
 
 # --- KRI-470 PR-D: the strict contract model must not change under old workers -----------

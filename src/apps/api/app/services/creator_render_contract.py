@@ -667,7 +667,29 @@ def build_render_contract(
         for index, text in enumerate(typed.shot_labels or ()):
             texts.append(TextRequirement(role="clip", text=text, shot_index=index))
     durations: list[float] = []
-    if raw.get("target_duration_requested") is True and "target_duration_s" in raw:
+    # The Creator model must always emit ``target_duration_s`` (it picks a length from
+    # the footage when the creator named none), and the server marks it
+    # ``target_duration_requested`` either way, so the marker alone is NOT evidence of a
+    # creator-requested length. When a brief exists, its LIVE timing requirements (below)
+    # are the creator's own lengths; a strategy value only counts alongside one (so a
+    # disagreement stays a conflict) or when the creator answered a duration-vs-count
+    # choice (the answer rewrites it). A user-song item's
+    # length is owned by the song window, never by a model-chosen target. Legacy
+    # brief-less non-song strategies keep the marker behaviour unchanged.
+    is_user_song = bool(typed and typed.audio_strategy == "user_song")
+    duration_answered = answers.get(CONFLICT_DURATION_VS_COUNT) is not None
+    brief_names_duration = bool(
+        brief is not None
+        and any(r.kind == "timing" and r.facts.get("duration_s") is not None for r in brief.live())
+    )
+    strategy_duration_is_evidence = duration_answered or (
+        not is_user_song and (brief is None or brief_names_duration)
+    )
+    if (
+        strategy_duration_is_evidence
+        and raw.get("target_duration_requested") is True
+        and "target_duration_s" in raw
+    ):
         durations.append(float(raw["target_duration_s"]))
     order_required = bool(typed and typed.ordering_choice == "chronological")
     attachment_order = False
