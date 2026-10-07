@@ -881,7 +881,9 @@ VOICE_MODE_SHAPE_NOTICE = (
 )
 
 
-def repair_creator_voice_mode(strategy: CreativeStrategy) -> tuple[CreativeStrategy, list[str]]:
+def repair_creator_voice_mode(
+    strategy: CreativeStrategy, *, route_available: bool = True
+) -> tuple[CreativeStrategy, list[str]]:
     """KRI-479: a ``voice_mode`` only means something under a camera-audio montage.
 
     ``voice_mode`` names HOW the creator's chosen camera-audio source is used, so it
@@ -897,7 +899,8 @@ def repair_creator_voice_mode(strategy: CreativeStrategy) -> tuple[CreativeStrat
         return strategy, []
     audio = strategy.montage_audio
     if (
-        audio is None
+        not route_available
+        or audio is None
         or not audio.preserve_source_audio
         or strategy.edit_format != "montage"
         or strategy.audio_strategy in ("voiceover", "user_song")

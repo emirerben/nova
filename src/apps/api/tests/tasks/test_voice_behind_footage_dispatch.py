@@ -71,8 +71,26 @@ def test_several_named_voices_never_pick_one_for_the_creator(monkeypatch) -> Non
     assert h.calls == ["speech"]
 
 
-def test_a_resolver_fault_keeps_the_legacy_lane_instead_of_failing_the_job(monkeypatch) -> None:
+def test_a_resolver_fault_on_a_stamped_voice_plan_is_a_retryable_typed_decline(monkeypatch) -> None:
     h = _harness(monkeypatch)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("resolver down")
+
+    monkeypatch.setattr("app.services.render_route.resolve_route", boom)
+    failures = []
+    monkeypatch.setattr(
+        "app.tasks.generative_build._fail_job", lambda *a, **k: failures.append((a, k)) or True
+    )
+    monkeypatch.setattr("app.tasks.generative_build.mark_failed_phase", lambda *_a: None)
+    h.run()
+    assert h.calls == [], "never the speech lane, which would re-decide the approved plan"
+    decline = failures[0][1]["decline"]
+    assert (decline["decline_reason"], decline["field_path"]) == ("evidence_missing", "voice_mode")
+
+
+def test_a_resolver_fault_on_any_other_plan_keeps_its_legacy_lane(monkeypatch) -> None:
+    h = _harness(monkeypatch, voice_mode="excerpts")
 
     def boom(*_a, **_k):
         raise RuntimeError("resolver down")

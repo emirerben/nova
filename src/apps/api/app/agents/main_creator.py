@@ -58,7 +58,8 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # gate cannot compare a number the brief lost (v45; brief_extractor v2 shares the section).
 # KRI-506: delegated creative copy is proposed for a separate server approval (v46).
 # KRI-479: `voice_mode` (continuous | excerpts) for a montage that keeps one clip's camera
-# audio, taught only when the manifest advertises `phone_source_audio` (v47).
+# audio, taught only when the manifest advertises `phone_source_audio` AND the route can render
+# (`Settings.voice_behind_footage_enabled`) (v47).
 MAIN_CREATOR_PROMPT_VERSION = "2026-10-07-v46"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
@@ -207,8 +208,8 @@ named are added on iPhone. This edit always stays `edit_format: "subtitled"` wit
 
 
 # KRI-374: the creator's own uploaded song on an iPhone montage. Rendered INSIDE
-# the strategy-authoring rules (the `$user_song_section` slot, the last on the
-# `$clip_intents_section` line) ONLY when `manifest.has_user_song`; "" otherwise,
+# the strategy-authoring rules (the `$user_song_section` slot, on the `$clip_intents_section`
+# line, followed by `$voice_mode_section`) ONLY when `manifest.has_user_song`; "" otherwise,
 # so every prompt without a song is byte-identical to before this field existed
 # (pinned by tests/agents/test_main_creator_user_song.py).
 _USER_SONG_PROMPT_SECTION = """
@@ -238,23 +239,28 @@ invent or quote lyrics, and never promise cuts matched to lyrics.
 
 # KRI-479: how a named camera-audio clip is used under a montage. Rendered into the
 # `$voice_mode_section` slot (the last on the `$clip_intents_section` line) ONLY when the
-# manifest advertises `phone_source_audio`; "" otherwise, so every prompt without that
+# manifest advertises `phone_source_audio` and the route can render for new jobs
+# (`Settings.voice_behind_footage_enabled`); "" otherwise, so every prompt without that
 # capability is byte-identical to before this field existed (pinned by
 # tests/agents/test_main_creator_user_song.py).
 _VOICE_MODE_PROMPT_SECTION = """
 VOICE MODE (iPhone montage that keeps a clip's own sound)
-When `montage_audio.preserve_source_audio` is true, also set `voice_mode` inside `strategy`
-to exactly one of:
-- "continuous" -- ONE clip's voice plays straight through under the whole edit while the
-  creator's other clips are the picture. Use it when the creator wants the voice or talk from
-  a particular clip (for example "use the voice from my talk-to-camera video behind a fast
-  montage of the rest") to run over the other footage. `montage_audio.source_media_ids` MUST
-  then name exactly that one clip. That clip's own picture is not shown.
+When `montage_audio.preserve_source_audio` is true you may also set `voice_mode` inside
+`strategy`. Leaving it null is the safe default, and it is the right answer whenever you are
+not sure.
+- "continuous" -- set it ONLY when the creator clearly asks for ONE particular clip's voice to
+  play straight through, under the whole edit, while their other clips are the picture (for
+  example "use the voice from my talk-to-camera video behind a fast montage of the rest").
+  `montage_audio.source_media_ids` MUST then name exactly that one clip. That clip's own
+  picture is not shown.
 - "excerpts" -- chosen lines or quotes from the speaker cut over the footage. Use it when the
   creator asks for particular lines, quotes or moments from what someone says.
-Leave `voice_mode` null when no camera-audio clip is named, and when you are unsure which of
-the two the creator means, choose "excerpts"; never invent a clip as the voice. Say in
-`summary`, in plain words, which clip's voice plays and whether it plays straight through.
+Do NOT set "continuous" when the creator asks you to pick the best quote, line or moment; asks
+for a talking-head or subtitled edit, or to cut to the speaker and back; wants the sound of
+several clips; names no particular clip as the voice; or the request is ambiguous. Leave
+`voice_mode` null in those cases ("excerpts" only for chosen lines). Never invent a clip as the
+voice. Say in `summary`, in plain words, which clip's voice plays and whether it plays straight
+through.
 """.strip("\n")
 
 
@@ -666,6 +672,8 @@ def _voice_mode_available(manifest: ResolvedCreatorManifest) -> bool:
     regardless of whether the model saw this guidance.
     """
 
+    if not settings.voice_behind_footage_enabled:
+        return False  # the route cannot render for new jobs: never advertise it
     capability = manifest.capabilities.get("phone_source_audio")
     return bool(capability is not None and capability.available)
 

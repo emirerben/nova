@@ -996,7 +996,9 @@ def compile_strategy_to_plan(
         ) from exc
     shape_notices = [*shape_notices, *song_notices]
     # KRI-479: a stray `voice_mode` (no camera-audio montage) is dropped; a no-op otherwise.
-    strategy, voice_notices = repair_creator_voice_mode(strategy)
+    strategy, voice_notices = repair_creator_voice_mode(
+        strategy, route_available=settings.voice_behind_footage_enabled
+    )
     shape_notices = [*shape_notices, *voice_notices]
     try:
         strategy = normalize_creator_strategy_media(manifest, strategy)

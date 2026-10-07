@@ -347,12 +347,13 @@ def voice_behind_footage_composition(record: IncidentRecord, monkeypatch: pytest
         compile_phone_voice_behind_footage_plan,
         select_voice_window,
     )
-    from app.services.choice_questions import resolve_choices
+    from app.services.choice_questions import ChoiceCapability, resolve_choices
     from app.services.creator_render_contract import commitments_from_strategy
     from tests.incidents.models import OutputFacts
 
     spec = record.inputs.voice_behind_footage
     assert spec is not None
+    cap = ChoiceCapability(voice_route=True)
     strategy = dict(record.approved.strategy or {})
     binding = binding_for(record)
     if spec.answers:
@@ -360,7 +361,7 @@ def voice_behind_footage_composition(record: IncidentRecord, monkeypatch: pytest
         events: list = []
         for option in spec.answers:
             resolution = resolve_choices(
-                strategy, binding.resolve(), binding.media_snapshot, events
+                strategy, binding.resolve(), binding.media_snapshot, events, cap
             )
             assert resolution.question is not None, f"nothing to answer with {option!r}"
             question = {
@@ -385,7 +386,7 @@ def voice_behind_footage_composition(record: IncidentRecord, monkeypatch: pytest
                 ),
             ]
         strategy = resolve_choices(
-            strategy, binding.resolve(), binding.media_snapshot, events
+            strategy, binding.resolve(), binding.media_snapshot, events, cap
         ).strategy
     original = record.approved.strategy
     record.approved.strategy = strategy

@@ -203,17 +203,19 @@
     ],
     "phone_proxy_media": true,
     "notes": [
-      "Synthetic neutral media: the KRI-469 request shape (a long talk-to-camera voice clip, 12 dated clips with one capture-time tie), no private data."
+      "Synthetic neutral media: the KRI-469 request shape (a long talk-to-camera voice clip, 12 dated clips with one capture-time tie), no private data.",
+      "Lengths are computed from the real constraint: 12 clips need 9.6 s at the 0.8 s floor, so 10 s (rounded up) is the first and recommended option, then 30 and 45 s. Never a fixed 30/60."
     ]
   },
   "expect": {
     "question": {
       "kind": "voice_vs_duration",
       "option_keys": [
+        "length_10",
         "length_30",
-        "length_60"
+        "length_45"
       ],
-      "min_options": 2
+      "min_options": 3
     }
   },
   "repro": {

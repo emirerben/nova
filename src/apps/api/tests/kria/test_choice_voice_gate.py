@@ -225,7 +225,10 @@ async def test_the_answer_survives_a_resent_prompt_and_a_new_voice_reopens_it(mo
 
 
 @pytest.mark.asyncio
-async def test_a_long_voice_with_no_stated_length_asks_how_long(monkeypatch) -> None:
+async def test_a_long_voice_with_no_stated_length_asks_how_long_from_the_real_constraint(
+    monkeypatch,
+) -> None:
+    """6 clips of 12 s need 4.8 s to be seen: 5 s is first and recommended, not a fixed 30/60."""
     result = await _gate(
         monkeypatch,
         _voice_plan(24),
@@ -234,16 +237,17 @@ async def test_a_long_voice_with_no_stated_length_asks_how_long(monkeypatch) -> 
     )
     question = result.plan.choice_question
     assert question["kind"] == CONFLICT_VOICE_VS_DURATION
-    assert [o["key"] for o in question["options"]] == ["length_30", "length_60"]
+    assert [o["key"] for o in question["options"]] == ["length_5", "length_30", "length_45"]
+    assert [o["recommended"] for o in question["options"]] == [True, False, False]
     picked = await _gate(
         monkeypatch,
         _voice_plan(24),
         rows=_voice_rows(voice_s=147.7),
         brief=_brief(_order()),
-        events=(_asked(result), _picked(question, "length_60")),
+        events=(_asked(result), _picked(question, "length_45")),
     )
     strategy = _strategy(picked)
-    assert strategy["target_duration_s"] == 60 and strategy["target_duration_requested"] is True
+    assert strategy["target_duration_s"] == 45 and strategy["target_duration_requested"] is True
     # The answer is the evidence of the length: the contract pins it though the brief has none.
     contract = build_render_contract(
         strategy,
@@ -252,7 +256,7 @@ async def test_a_long_voice_with_no_stated_length_asks_how_long(monkeypatch) -> 
         media_snapshot={"clip_assignments": _voice_rows(voice_s=147.7)},
         composition=commitments_from_strategy(strategy),
     )
-    assert contract is not None and contract.duration_s == 60
+    assert contract is not None and contract.duration_s == 45
 
 
 # --- which_voice -----------------------------------------------------------------------------
@@ -305,9 +309,90 @@ async def test_no_named_voice_with_several_speakers_asks_but_with_one_it_does_no
 # --- the voice clip is not one of the clips that must fit -----------------------------------
 
 
+@pytest.mark.asyncio
+async def test_how_long_offers_the_smallest_length_that_works_first(monkeypatch) -> None:
+    """41 clips need 32.8 s to be seen: 33 s (rounded up) leads, then larger real choices."""
+    result = await _gate(
+        monkeypatch,
+        _voice_plan(24),
+        rows=_voice_rows(voice_s=147.7, pictures=41),
+        brief=_brief(_order()),
+    )
+    question = result.plan.choice_question
+    assert [o["key"] for o in question["options"]] == ["length_33", "length_45", "length_60"]
+    assert question["options"][0]["recommended"] is True
+    assert "33 seconds" in question["options"][0]["label"]
+
+
+@pytest.mark.asyncio
+async def test_how_long_never_offers_more_than_the_footage_can_fill(monkeypatch) -> None:
+    """A 90 s voice over three 5 s clips: 30 and 60 would both end in 'won't loop'."""
+    rows = _voice_rows(voice_s=90.0, pictures=3)
+    for row in rows[1:]:
+        row["duration_s"] = 5.0
+    result = await _gate(monkeypatch, _voice_plan(24), rows=rows, brief=_brief(_order()))
+    keys = [o["key"] for o in result.plan.choice_question["options"]]
+    assert keys == ["length_3", "length_14"]  # all the footage there is, never 30 or 60
+
+
+@pytest.mark.asyncio
+async def test_speech_length_not_clip_length_decides_whether_to_ask(monkeypatch) -> None:
+    """A 150 s clip with 40 s of actual speech is a short voice: no 'how long'."""
+    rows = _voice_rows(voice_s=150.0)
+    rows[0]["analysis"]["understanding"]["speech"]["segments"] = [
+        {"start_s": 2.0, "end_s": 41.0, "text": "x"}
+    ]
+    result = await _gate(monkeypatch, _voice_plan(24), rows=rows, brief=_brief(_order()))
+    assert result.plan.mode == "act", result.plan.response
+
+
+@pytest.mark.asyncio
+async def test_a_changed_picture_set_reopens_a_stale_answer(monkeypatch) -> None:
+    brief, plan = _brief(_order()), _voice_plan(24)
+    rows = _voice_rows(voice_s=147.7)
+    first = await _gate(monkeypatch, plan, rows=rows, brief=brief)
+    history = (_asked(first), _picked(first.plan.choice_question, "length_30"))
+    same = await _gate(monkeypatch, plan, rows=rows, brief=brief, events=history)
+    assert same.plan.mode == "act"
+    longer = _voice_rows(voice_s=147.7, pictures=7)  # a clip was added
+    reopened = await _gate(monkeypatch, plan, rows=longer, brief=brief, events=history)
+    assert reopened.plan.choice_question["kind"] == CONFLICT_VOICE_VS_DURATION
+
+
+@pytest.mark.asyncio
+async def test_a_short_voice_option_is_only_offered_when_the_clips_can_be_cut_to_it(
+    monkeypatch,
+) -> None:
+    """Voice 20 s, asked 30 s, but the clips total only 12 s: 'keep 30 s' ends in 'won't loop'."""
+    rows = _voice_rows(voice_s=20.0, pictures=2)
+    for row in rows[1:]:
+        row["duration_s"] = 6.0
+    result = await _gate(
+        monkeypatch, _voice_plan(30), rows=rows, brief=_brief(_timing(30), _order())
+    )
+    assert result is not None and result.plan.mode == "act"  # neither option can be honoured
+
+
+@pytest.mark.asyncio
+async def test_silent_tail_carries_the_requested_length_with_the_answer(monkeypatch) -> None:
+    brief, rows = _brief(_timing(30), _order()), _voice_rows(voice_s=20.0)
+    first = await _gate(monkeypatch, _voice_plan(30), rows=rows, brief=brief)
+    result = await _gate(
+        monkeypatch,
+        _voice_plan(30),
+        rows=rows,
+        brief=brief,
+        events=(_asked(first), _picked(first.plan.choice_question, "silent_tail")),
+    )
+    strategy = _strategy(result)
+    assert strategy["target_duration_s"] == 30 and strategy["target_duration_requested"] is True
+
+
 def test_the_voice_clip_is_not_counted_against_the_readable_floor() -> None:
     from app.agents._schemas.creator_agent import CreativeStrategy
+    from app.services.choice_questions import ChoiceCapability
 
+    cap = ChoiceCapability(voice_route=True)
     strategy = CreativeStrategy(
         edit_format="montage",
         audio_strategy="original_audio",
@@ -318,29 +403,39 @@ def test_the_voice_clip_is_not_counted_against_the_readable_floor() -> None:
     )
     snapshot = {"clip_assignments": _voice_rows(voice_s=60.0, pictures=30)}
     # 30 pictures x 0.8 s = 24 s fits exactly; counting the voice clip (31) would not.
-    assert collect_conflicts(strategy, _brief(_timing(24)), snapshot) == []
+    assert collect_conflicts(strategy, _brief(_timing(24)), snapshot, cap) == []
     tight = strategy.model_copy(update={"target_duration_s": 20})
-    kinds = [c.kind for c in collect_conflicts(tight, _brief(_timing(20)), snapshot)]
+    kinds = [c.kind for c in collect_conflicts(tight, _brief(_timing(20)), snapshot, cap)]
     assert kinds == ["duration_vs_count"]
 
 
-@pytest.mark.asyncio
-async def test_how_long_never_offers_a_length_the_clips_cannot_be_seen_in(monkeypatch) -> None:
-    """41 clips need 32.8 s at the readable floor: 30 s would be a trap, so only 60 s is offered."""
-    result = await _gate(
-        monkeypatch,
-        _voice_plan(24),
-        rows=_voice_rows(voice_s=147.7, pictures=41),
-        brief=_brief(_order()),
+def test_an_unanswered_which_voice_gets_a_plain_recovery_not_the_excerpts_lane() -> None:
+    """After the question was asked twice, the approval backstop says what to reply."""
+    from app.services.choice_questions import (
+        ChoiceCapability,
+        build_choice_question,
+        open_conflicts,
     )
-    question = result.plan.choice_question
-    assert [o["key"] for o in question["options"]] == ["length_60"]
-    assert "32.8" in result.plan.response  # why only one length is on offer
-    # Not even a minute holds 80 clips: no question here; the composer declines, typed.
-    crowded = await _gate(
-        monkeypatch,
-        _voice_plan(24),
-        rows=_voice_rows(voice_s=147.7, pictures=80),
-        brief=_brief(_order()),
+    from app.tasks.kria_runtime import _unresolved_choice_plan
+
+    rows = _voice_rows(voice_s=40.0, speech={"talk2": "I think that the second take is better"})
+    strategy = (
+        _planned(
+            seconds=30,
+            audio_strategy="original_audio",
+            voice_mode="continuous",
+            montage_audio={"preserve_source_audio": True, "source_media_ids": [VOICE, "talk2"]},
+        )
+        .plan.intents[0]
+        .arguments["strategy"]
     )
-    assert crowded.plan.mode == "act"
+    snapshot = {"clip_assignments": rows}
+    brief = _brief(_timing(30))
+    (conflict,) = open_conflicts(strategy, brief, snapshot, ChoiceCapability(voice_route=True))
+    asked = [("assistant", {"choice_question": build_choice_question(conflict.candidate())})] * 2
+    plan, reason = _unresolved_choice_plan(
+        strategy, brief, snapshot, events=asked, has_draft=True, creator_id=None
+    )
+    assert plan.turn_value == "recovery" and "I won't guess" in plan.response
+    assert "Clip 1" in plan.response and "Clip 2" in plan.response
+    assert "Your current draft is unchanged." in plan.response

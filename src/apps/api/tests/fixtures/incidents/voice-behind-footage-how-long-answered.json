@@ -2,7 +2,7 @@
   "id": "voice-behind-footage-how-long-answered",
   "incident": {
     "ticket": "KRI-479",
-    "summary": "Synthetic: KRI-469 as stated (no length, a 147.7 s voice). The creator answers 'how long' with 60 s; the plan then composes straight through, the voice trimmed to the length and every clip shown once."
+    "summary": "Synthetic: KRI-469 as stated (no length, a 147.7 s voice). The creator answers 'how long' with 45 s; the plan then composes straight through, the voice trimmed to the length and every clip shown once."
   },
   "kind": "output",
   "approved": {
@@ -204,12 +204,12 @@
     "phone_proxy_media": true,
     "notes": [
       "Synthetic neutral media: the KRI-469 request shape (a long talk-to-camera voice clip, 12 dated clips with one capture-time tie), no private data.",
-      "The answer is replayed through the real resolve_choices; the contract then pins 60 s (the answer is evidence of the length).",
-      "expect.contract is the UNANSWERED plan's contract (no length pinned); the answered contract (60 s) is rebuilt and composed by test_voice_behind_footage_record_composes_and_verifies."
+      "The answer is replayed through the real resolve_choices; the contract then pins 45 s (the answer is evidence of the length).",
+      "expect.contract is the UNANSWERED plan's contract (no length pinned); the answered contract (45 s) is rebuilt and composed by test_voice_behind_footage_record_composes_and_verifies."
     ],
     "voice_behind_footage": {
       "answers": [
-        "length_60"
+        "length_45"
       ]
     }
   },
@@ -238,7 +238,7 @@
       "resolved": true
     },
     "output_facts": {
-      "duration_s": 60,
+      "duration_s": 45,
       "duration_basis": "creator_request",
       "voice_source_ids": [
         "v-voice"
@@ -265,7 +265,7 @@
       "source": "real voice-behind-footage composer + verify_phone_recipe(composition=) on the answered plan",
       "proof": "pytest tests/incidents/test_incident_corpus.py::test_voice_behind_footage_record_composes_and_verifies",
       "facts": {
-        "duration_s": 60,
+        "duration_s": 45,
         "voice_source_ids": [
           "v-voice"
         ],

@@ -709,11 +709,12 @@ def _usable_frames(picture: Sequence[PhoneSourceBinding]) -> list[int]:
     ]
 
 
-def picture_frame_bounds(
-    picture: Sequence[PhoneSourceBinding], *, min_shot_s: float | None = None
+def frame_bounds_for_durations(
+    durations_s: Sequence[float], *, min_shot_s: float | None = None
 ) -> tuple[int, int]:
-    """(fewest, most) frames an edit over these clips can have, exactly as the composer allocates.
+    """(fewest, most) frames an edit over clips of these lengths can have.
 
+    Exactly how the composer allocates: per clip, whole frames less the export safety margin.
     Fewest: every clip at the readable floor (or whole, when shorter). Most: every clip all it
     has. Both are sums of per-clip whole frames, never of seconds.
     """
@@ -722,8 +723,18 @@ def picture_frame_bounds(
     floor = max(
         1, math.ceil((MIN_READABLE_SHOT_S if min_shot_s is None else min_shot_s) * _FPS - 1e-9)
     )
-    usable = _usable_frames(picture)
+    usable = [
+        max(0, int(math.floor((float(d) - EXPORT_SAFETY_MARGIN_S) * _FPS))) for d in durations_s
+    ]
     return sum(min(u, floor) for u in usable), sum(usable)
+
+
+def picture_frame_bounds(
+    picture: Sequence[PhoneSourceBinding], *, min_shot_s: float | None = None
+) -> tuple[int, int]:
+    return frame_bounds_for_durations(
+        [float(b.original.duration_s) for b in picture], min_shot_s=min_shot_s
+    )
 
 
 @dataclass(frozen=True)
@@ -965,6 +976,7 @@ __all__ = [
     "VOICE_TAIL_SLACK_S",
     "VoiceBehindFootageReceipt",
     "ImplicitLength",
+    "frame_bounds_for_durations",
     "implicit_picture_duration",
     "picture_frame_bounds",
     "voice_tail_slack_s",

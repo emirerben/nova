@@ -74,6 +74,7 @@ from app.routes.generative_jobs import (
 from app.services.choice_questions import (
     CONFLICT_ORDER_BASIS,
     CONFLICT_TITLE_TEXT,
+    CONFLICT_WHICH_VOICE,
     KEEP_OPEN_REASON,
     MAX_ASKS_PER_QUESTION,
     ChoiceCapability,
@@ -406,7 +407,9 @@ def _unresolved_choice_plan(
         return None
     unchanged = " Your current draft is unchanged." if has_draft else ""
     history = list(events)
-    capability = ChoiceCapability(creator_id=creator_id) if creator_id is not None else None
+    capability = ChoiceCapability(
+        creator_id=creator_id, voice_route=settings.voice_behind_footage_enabled
+    )
     for conflict in open_conflicts(strategy, brief, media_snapshot, capability):
         if count_asks(history, conflict.conflict_id, conflict.input_digest) < (
             MAX_ASKS_PER_QUESTION
@@ -421,7 +424,7 @@ def _unresolved_choice_plan(
                 ),
                 KEEP_OPEN_REASON,
             )
-        if conflict.kind in (CONFLICT_ORDER_BASIS, CONFLICT_TITLE_TEXT):
+        if conflict.kind in (CONFLICT_ORDER_BASIS, CONFLICT_TITLE_TEXT, CONFLICT_WHICH_VOICE):
             ways = " or ".join(f'"{o.label}"' for o in conflict.options)
             if conflict.kind == CONFLICT_TITLE_TEXT:
                 ways = f"{ways}, or type the words you want"

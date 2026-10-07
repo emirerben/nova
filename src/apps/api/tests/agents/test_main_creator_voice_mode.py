@@ -102,8 +102,9 @@ def test_prompt_teaches_voice_mode_only_when_the_phone_can_keep_source_audio() -
     assert "VOICE MODE" not in plain and "voice_mode" not in plain
     assert main_creator_module._VOICE_MODE_PROMPT_SECTION in phone
     assert "$voice_mode_section" not in phone
+    flat = " ".join(phone.split())
     for cue in ('"continuous"', '"excerpts"', "exactly that one clip", "own picture is not shown"):
-        assert cue in phone
+        assert cue in flat
     # The section lives inside the strategy rules, before the JSON envelope.
     assert phone.index("VOICE MODE") < phone.index("Return ONLY JSON in this envelope")
 
@@ -203,3 +204,17 @@ def test_the_cleared_story_shape_reaches_the_creator_through_the_plan_notices() 
         creator_capabilities.settings.guided_edit_capability_enabled = before
     assert plan.strategy.voice_mode == "continuous" and plan.strategy.archetype is None
     assert VOICE_MODE_SHAPE_NOTICE in plan.notices
+
+
+def test_the_prompt_says_plainly_when_not_to_set_continuous() -> None:
+    phone = MainCreatorAgent(None).render_prompt(_phone_input())  # type: ignore[arg-type]
+    phone = " ".join(phone.split())
+    for cue in (
+        "Leaving it null is the safe default",
+        'Do NOT set "continuous"',
+        "pick the best quote, line or moment",
+        "talking-head or subtitled edit",
+        "the request is ambiguous",
+        "Never invent a clip as the voice",
+    ):
+        assert cue in phone, cue

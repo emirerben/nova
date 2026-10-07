@@ -2430,8 +2430,8 @@ def _voice_behind_footage_route(snapshot: dict, candidates: dict) -> bool:
     """KRI-479: does this STAMPED plan resolve to ``voice_behind_footage``?
 
     The same pure resolver the shadow check runs, over the same persisted inputs. Only a
-    plan-authority job (the dispatch-time stamp AND a pinned contract) can answer yes; a
-    resolver fault answers no, so the job keeps its legacy lane rather than failing.
+    plan-authority job (the dispatch-time stamp AND a pinned contract) can answer yes. A resolver
+    fault answers no (legacy lane) except for a stamped continuous-voice plan, which declines.
     """
     try:
         from app.services.creator_render_contract import stamped_plan_contract  # noqa: PLC0415
@@ -2456,9 +2456,27 @@ def _voice_behind_footage_route(snapshot: dict, candidates: dict) -> bool:
             return False
         resolution = resolve_route(inputs)
         return resolution.outcome == "route" and resolution.route is Route.VOICE_BEHIND_FOOTAGE
-    except Exception:  # noqa: BLE001 -- a resolver fault keeps the legacy lane
-        log.warning("voice_route_unavailable")
-        return False
+    except Exception as exc:  # noqa: BLE001
+        log.warning("voice_route_unavailable", error_class=type(exc).__name__)
+        strategy = candidates.get("creator_strategy")
+        if (
+            candidates.get("creator_plan_authority_version") is not None
+            and isinstance(strategy, dict)
+            and strategy.get("voice_mode") == "continuous"
+        ):
+            # A stamped continuous-voice plan must never fall back to the excerpt lane (the lane
+            # that re-decides the approved plan): a retryable typed decline instead.
+            from app.services.creator_render_contract import (  # noqa: PLC0415
+                CreatorRenderContractError,
+            )
+
+            raise CreatorRenderContractError(
+                "I couldn't set up your voice edit just now.",
+                decline_reason="evidence_missing",
+                field_path="voice_mode",
+                alternative="Try again in a moment, or ask me to make the edit again.",
+            ) from exc
+        return False  # anything else keeps its legacy lane
 
 
 def _run_generative_job(
