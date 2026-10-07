@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.149.0] - 2026-10-07
+
+### Changed
+- feat(editor): original-audio volume in Sounds + working per-clip audio button (phone, incl. lip-sync videos) (#1467) <!-- release-pr: 1467 -->
+
 ## [0.78.148.0] - 2026-10-07
 
 ### Changed
