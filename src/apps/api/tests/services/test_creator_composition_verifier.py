@@ -278,3 +278,20 @@ def test_a_text_layer_held_past_the_picture_is_refused():
         _verify(broken)
     _expect(info, reason="evidence_missing", field_path="opening_title_duration_s")
     assert _verify(recipe)  # the composed title is fine
+
+
+def test_the_verifier_slack_scales_with_the_picture_so_a_short_edit_cannot_lose_a_third():
+    """A 10 s edit may lose 1.5 s of voice (15 %), not the flat 3 s a 30 s edit may."""
+    short = _recipe(10.0)
+    voice = _track(short, VOICE_AUDIO_TRACK_ID).clips[0]
+    contract = _contract(duration_s=10.0)
+    near = _replace_clips(
+        short, VOICE_AUDIO_TRACK_ID, [voice.model_copy(update={"source_duration": 8.6})]
+    )
+    assert _verify(near, contract)  # 1.4 s short: inside 15 %
+    far = _replace_clips(
+        short, VOICE_AUDIO_TRACK_ID, [voice.model_copy(update={"source_duration": 8.0})]
+    )
+    with pytest.raises(CreatorRenderContractError) as info:
+        _verify(far, contract)  # 2.0 s short: forgiven by a flat 3 s, not by 15 %
+    _expect(info, reason="evidence_missing", field_path="montage_audio.source_media_ids[]")

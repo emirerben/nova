@@ -439,3 +439,25 @@ def test_an_unanswered_which_voice_gets_a_plain_recovery_not_the_excerpts_lane()
     assert plan.turn_value == "recovery" and "I won't guess" in plan.response
     assert "Clip 1" in plan.response and "Clip 2" in plan.response
     assert "Your current draft is unchanged." in plan.response
+
+
+def test_silent_tail_and_match_voice_effects_carry_the_requested_flag_themselves() -> None:
+    """The answered length must not depend on what the model happened to emit."""
+    from app.agents._schemas.creator_agent import CreativeStrategy
+    from app.services.choice_questions import ChoiceCapability
+
+    strategy = CreativeStrategy(
+        edit_format="montage",
+        audio_strategy="original_audio",
+        voice_mode="continuous",
+        montage_audio={"preserve_source_audio": True, "source_media_ids": [VOICE]},
+    )  # no target_duration_requested at all
+    (conflict,) = collect_conflicts(
+        strategy,
+        _brief(_timing(30), _order()),
+        {"clip_assignments": _voice_rows(voice_s=20.0)},
+        ChoiceCapability(voice_route=True),
+    )
+    for key in ("match_voice", "silent_tail"):
+        assert conflict.effects[key]["strategy"]["target_duration_requested"] is True, key
+    assert conflict.effects["silent_tail"]["strategy"]["target_duration_s"] == 30
