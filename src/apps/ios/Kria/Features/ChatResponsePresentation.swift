@@ -57,9 +57,11 @@ struct ChatResponseText: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @State private var revealedWordCount = 0
+    /// Tokenizing is O(words); do it once per content, not on every reveal tick.
+    @State private var tokenCache = TokenCache()
 
     var body: some View {
-        let tokens = Self.tokenize(content)
+        let tokens = tokenCache.tokens(for: content)
         let shouldReveal = startedAt != nil && !reduceMotion && !voiceOverEnabled
         let revealed = shouldReveal ? revealedWordCount : tokens.wordCount
         Self.attributedText(tokens: tokens, revealedWordCount: revealed)
@@ -86,7 +88,7 @@ struct ChatResponseText: View {
         // Start from the shared response clock so mounting a second surface does
         // not replay a response that is already partly or fully revealed.
         let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
-        revealedWordCount = Self.revealCount(elapsed: elapsed, wordCount: tokens.wordCount)
+        revealedWordCount = Self.steppedCount(Self.revealCount(elapsed: elapsed, wordCount: tokens.wordCount), of: tokens.wordCount)
         let interval = Self.presentationInterval(wordCount: tokens.wordCount)
         while revealedWordCount < tokens.wordCount {
             do {
@@ -99,8 +101,17 @@ struct ChatResponseText: View {
             // backgrounding and prevents a suspended task from extending the
             // reveal beyond its two-second cap.
             let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
-            revealedWordCount = Self.revealCount(elapsed: elapsed, wordCount: tokens.wordCount)
+            // Reveal a few words per render: every state write re-shapes the whole Text.
+            let next = Self.steppedCount(Self.revealCount(elapsed: elapsed, wordCount: tokens.wordCount), of: tokens.wordCount)
+            if next != revealedWordCount { revealedWordCount = next }
         }
+    }
+
+    /// Rounds a reveal count down to a whole step (about 20 renders per reply), except the last word.
+    static func steppedCount(_ count: Int, of wordCount: Int) -> Int {
+        guard count < wordCount else { return wordCount }
+        let step = max(3, wordCount / 20)
+        return count - count % step
     }
 
     static func presentationInterval(wordCount: Int) -> TimeInterval {
@@ -152,19 +163,36 @@ struct ChatResponseText: View {
         })
     }
 
+    /// One AttributedString for the whole text, with everything after the last revealed word
+    /// cleared in a single range write (not one append per token).
     private static func attributedText(tokens: TokenizedText, revealedWordCount: Int) -> Text {
-        var result = AttributedString()
+        var result = AttributedString(tokens.tokens.map(\.text).joined())
+        guard revealedWordCount < tokens.wordCount else { return Text(result) }
+        var visibleCharacters = 0
         var seenWords = 0
         for token in tokens.tokens {
-            var part = AttributedString(token.text)
             if token.isWord {
+                if seenWords == revealedWordCount { break }
                 seenWords += 1
-                if seenWords > revealedWordCount {
-                    part.foregroundColor = .clear
-                }
             }
-            result.append(part)
+            visibleCharacters += token.text.count
         }
+        let boundary = result.characters.index(result.startIndex, offsetBy: visibleCharacters)
+        result[boundary...].foregroundColor = .clear
         return Text(result)
+    }
+
+    /// Reference-typed so filling it during `body` never invalidates the view.
+    final class TokenCache {
+        private var content: String?
+        private var value = TokenizedText(tokens: [], wordCount: 0)
+
+        func tokens(for newContent: String) -> TokenizedText {
+            if content != newContent {
+                value = ChatResponseText.tokenize(newContent)
+                content = newContent
+            }
+            return value
+        }
     }
 }
