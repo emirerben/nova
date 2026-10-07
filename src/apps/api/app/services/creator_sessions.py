@@ -904,11 +904,20 @@ def compile_active_plan(
     return receipt
 
 
+# The runtime-v2 observer posts a failed render's real reason within ~30 s of the failure. The
+# generic failure line is held back only that long: past it (observer never posts: v2 turned
+# off after dispatch, a stuck turn, the sweep's 50-row cap) the line is posted so a failure
+# is never lost (this branch has already moved the session to `failed`).
+OBSERVER_FAILURE_WINDOW = timedelta(minutes=5)
+
+
 async def _failure_settled_by_observer(
     db: AsyncSession, session: CreatorAgentSession, job: Job
 ) -> bool:
-    """True while a runtime-v2 execution for this very Job still awaits its observer."""
+    """True while a FRESH runtime-v2 execution for this very Job still awaits its observer."""
 
+    if not settings.kria_runtime_v2_enabled:
+        return False
     row = (
         await db.execute(
             select(CreatorAgentExecution.id)
@@ -916,6 +925,7 @@ async def _failure_settled_by_observer(
                 CreatorAgentExecution.session_id == session.id,
                 CreatorAgentExecution.target_job_id == job.id,
                 CreatorAgentExecution.status == "dispatched",
+                CreatorAgentExecution.dispatched_at > datetime.now(UTC) - OBSERVER_FAILURE_WINDOW,
             )
             .limit(1)
         )
