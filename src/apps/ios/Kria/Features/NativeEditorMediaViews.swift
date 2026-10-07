@@ -398,8 +398,11 @@ struct NativeVideoPreview: View {
             let start = session.timelineProjection.projectBaseTime(element.startS)
             let end = session.timelineProjection.projectBaseTime(element.endS)
             guard time >= start, time < max(end, start + 0.01) else { return false }
-            let rect = CGRect(x: (bounds.centerX - bounds.width / 2) * size.width, y: (bounds.centerY - bounds.height / 2) * size.height,
-                              width: bounds.width * size.width, height: bounds.height * size.height)
+            let width: CGFloat = CGFloat(bounds.width) * size.width
+            let height: CGFloat = CGFloat(bounds.height) * size.height
+            let minX: CGFloat = CGFloat(bounds.centerX) * size.width - width / 2
+            let minY: CGFloat = CGFloat(bounds.centerY) * size.height - height / 2
+            let rect = CGRect(x: minX, y: minY, width: width, height: height)
             return NativeEditorInteraction.contains(point, in: rect, rotationDegrees: bounds.rotationDegrees)
         }
     }
@@ -702,12 +705,14 @@ struct NativeVideoPreview: View {
     /// The axis-aligned box around a rotated frame (for placing the action pill).
     static func boundingBox(_ frame: CGRect, degrees: Double) -> CGRect {
         guard degrees.truncatingRemainder(dividingBy: 360) != 0 else { return frame }
+        // Half extents of the rotated rectangle, in simple typed steps: CI's
+        // compiler timed out type-checking the corner-mapping version.
         let radians = CGFloat(degrees) * .pi / 180
-        let corners = [CGPoint(x: -frame.width / 2, y: -frame.height / 2), CGPoint(x: frame.width / 2, y: -frame.height / 2),
-                       CGPoint(x: frame.width / 2, y: frame.height / 2), CGPoint(x: -frame.width / 2, y: frame.height / 2)]
-            .map { CGPoint(x: frame.midX + $0.x * cos(radians) - $0.y * sin(radians), y: frame.midY + $0.x * sin(radians) + $0.y * cos(radians)) }
-        let xs = corners.map(\.x), ys = corners.map(\.y)
-        return CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
+        let cosine: CGFloat = abs(cos(radians))
+        let sine: CGFloat = abs(sin(radians))
+        let halfWidth: CGFloat = (frame.width * cosine + frame.height * sine) / 2
+        let halfHeight: CGFloat = (frame.width * sine + frame.height * cosine) / 2
+        return CGRect(x: frame.midX - halfWidth, y: frame.midY - halfHeight, width: halfWidth * 2, height: halfHeight * 2)
     }
 
     private func beginInlineTyping(_ id: String?) {
