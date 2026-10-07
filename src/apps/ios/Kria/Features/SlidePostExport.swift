@@ -10,6 +10,7 @@ import UIKit
     typealias Revalidate = () async throws -> Void
     /// Renders one slide's JPEG on the device (draft slide, its asset, platform profile).
     typealias OnDeviceRender = (SlidePostSlide, SlidePostAsset, String) async throws -> Data
+    typealias OnDeviceVideoRender = (SlidePostSlide, SlidePostAsset, String, URL) async throws -> Void
 
     /// One slide handed to Photos. `creationDate` ascends with slide order so Photos' date sort
     /// (the only order it has; we deliberately create no album) shows the slides in post order.
@@ -53,6 +54,7 @@ import UIKit
     private let writePhotos: AtomicPhotoWrite
     private let now: () -> Date
     private let onDeviceRender: OnDeviceRender
+    private let onDeviceVideoRender: OnDeviceVideoRender
     private var dismissTask: Task<Void, Never>?
 
     /// UI tests (`KRIA_SLIDE_POST_FIXTURE_PHOTOS=1`) save through a stub: no Photos permission prompt,
@@ -85,10 +87,14 @@ import UIKit
         now: @escaping () -> Date = Date.init,
         onDeviceRender: @escaping OnDeviceRender = { slide, asset, profile in
             try await SlidePostOnDeviceRender.renderSlide(slide: slide, asset: asset, profile: profile)
+        },
+        onDeviceVideoRender: @escaping OnDeviceVideoRender = { slide, asset, profile, url in
+            try await SlidePostVideoRender.renderSlide(slide: slide, asset: asset, profile: profile, outputURL: url)
         }
     ) {
         self.downloadFile = downloadFile; self.authorizePhotos = authorizePhotos
         self.writePhotos = writePhotos; self.now = now; self.onDeviceRender = onDeviceRender
+        self.onDeviceVideoRender = onDeviceVideoRender
     }
 
     /// Ascending, one second apart, ending at `now` so nothing is dated in the future.
@@ -112,7 +118,7 @@ import UIKit
     /// exists, wait for the render, then export. Errors land in `status`; nothing throws.
     func export(
         _ destination: Destination, session: SlidePostSession, api: any KriaAPIClient, itemID: String,
-        pollInterval: Duration = .seconds(1.5), maxPolls: Int = 200
+        pollInterval: Duration = .seconds(1.5), maxPolls: Int = 200, extendedOnDevice: Bool = false
     ) async {
         guard !isBusy else { return }
         isFlowActive = true; defer { isFlowActive = false }
@@ -123,9 +129,9 @@ import UIKit
             let permission = await authorizePhotos()
             guard permission == .authorized || permission == .limited else { set(.photosDenied); return }
         }
-        // Image-only posts render on the phone from the original photos: the live draft (unsaved edits
+        // Supported posts render on the phone from original media: the live draft (unsaved edits
         // included) goes straight to Photos / the share sheet, no save, generate or poll.
-        if SlidePostOnDeviceRender.supports(session.draft, assets: session.state?.assets ?? []) {
+        if SlidePostOnDeviceRender.supports(session.draft, assets: session.state?.assets ?? [], extended: extendedOnDevice) {
             await exportOnDevice(destination, session: session, api: api, itemID: itemID)
             return
         }
@@ -175,18 +181,18 @@ import UIKit
             for (index, slide) in draft.slides.enumerated() {
                 if Task.isCancelled { set(.idle); return }
                 set(.preparing(done: index, total: draft.slides.count))
-                let data: Data
+                let file = directory.appending(path: String(format: "%02d", index + 1) + (slide.kind == "video" ? ".mp4" : ".jpg"))
                 do {
-                    data = try await renderOnDevice(slide, session: session, profile: draft.platformProfile)
+                    try await renderOnDevice(slide, session: session, profile: draft.platformProfile, file: file)
                 } catch SlidePostImageCache.LoadError.expired where !refreshed {
                     refreshed = true
                     await session.refresh(api: api, itemID: itemID)
-                    data = try await renderOnDevice(slide, session: session, profile: draft.platformProfile)
+                    try await renderOnDevice(slide, session: session, profile: draft.platformProfile, file: file)
                 }
-                let file = directory.appending(path: String(format: "%02d", index + 1) + ".jpg")
-                try data.write(to: file, options: .atomic)
-                files.append(PhotoResource(url: file, kind: "image", creationDate: dates[index]))
+                files.append(PhotoResource(url: file, kind: slide.kind, creationDate: dates[index]))
             }
+            try Task.checkCancellation()
+            guard session.draft == draft else { throw SlidePostExportError.draftChanged }
             switch destination {
             case .photos:
                 try await writePhotos(files)
@@ -198,12 +204,14 @@ import UIKit
                 retainsDirectoryForShare = true
                 set(.idle)
             }
-        } catch { set(.failed(error.localizedDescription)) }
+        } catch is CancellationError { set(.idle) }
+        catch { set(.failed(error.localizedDescription)) }
     }
 
-    private func renderOnDevice(_ slide: SlidePostSlide, session: SlidePostSession, profile: String) async throws -> Data {
+    private func renderOnDevice(_ slide: SlidePostSlide, session: SlidePostSession, profile: String, file: URL) async throws {
         guard let asset = session.state?.assets.first(where: { $0.id == slide.assetID }) else { throw SlidePostExportError.downloadFailed }
-        return try await onDeviceRender(slide, asset, profile)
+        if slide.kind == "video" { try await onDeviceVideoRender(slide, asset, profile, file) }
+        else { try await onDeviceRender(slide, asset, profile).write(to: file, options: .atomic) }
     }
 
     func saveToPhotos(session: SlidePostSession, revalidate: Revalidate) async {
@@ -307,8 +315,14 @@ import UIKit
     private struct DownloadedFiles { let directory: URL; let ordered: [Downloaded] }
 }
 
-private enum SlidePostExportError: LocalizedError, Equatable { case photosDenied, downloadFailed
-    var errorDescription: String? { self == .photosDenied ? "Allow Photos access to save these slides, or use Share to save them in Files." : "Kria couldn’t download every slide for export." }
+private enum SlidePostExportError: LocalizedError, Equatable { case photosDenied, downloadFailed, draftChanged
+    var errorDescription: String? {
+        switch self {
+        case .photosDenied: "Allow Photos access to save these slides, or use Share to save them in Files."
+        case .downloadFailed: "Kria couldn’t download every slide for export."
+        case .draftChanged: "Your post changed during export. Export again to save the latest edits."
+        }
+    }
 }
 
 /// The export feedback row, in the video editor's `NativeEditorBannerRow` look.

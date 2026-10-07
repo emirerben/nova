@@ -162,6 +162,7 @@ struct SlidePostLookPanel: View {
     @ObservedObject var session: SlidePostSession
     let slideID: String
     let onDone: () -> Void
+    var livePreview = false
     /// stadium_diffusion / olive_film are retired from the picker (web parity); drafts that already
     /// use them still render.
     static let looks: [(String, String)] = [
@@ -197,7 +198,9 @@ struct SlidePostLookPanel: View {
                 }
             }
             .excludesDrawerGesture()
-            Text("Save to apply this look to the rendered slide.").font(KriaFont.body(11)).foregroundStyle(KriaColor.zinc)
+            if !livePreview {
+                Text("Save to apply this look to the preview.").font(KriaFont.body(12)).foregroundStyle(KriaColor.zinc)
+            }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 24).padding(.top, 10).padding(.bottom, 8).frame(maxWidth: .infinity, alignment: .leading)
