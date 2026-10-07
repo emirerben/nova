@@ -1041,7 +1041,11 @@ struct NativeEditorTemporaryVideo {
             for (key, capability) in NativeEditorUITestFixtures.userSongCapabilities(lipSync: userSongLipSync) {
                 document.capabilities[key] = capability
             }
+            // A real creator-song video carries no `original_level` until the creator sets one (the song
+            // plays alone), unlike the generic fixture mix.
+            document.mix.removeValue(forKey: "original_level")
             cleanDocument.capabilities = document.capabilities
+            cleanDocument.mix = document.mix
         }
         // KRI-167: draft-based fixtures never go through `configureCapabilities(from:)`
         // (that only runs off a network-fetched `variant`), so `rendersOnDevice`
@@ -2440,9 +2444,9 @@ struct NativeEditorTemporaryVideo {
             if songRemoved {
                 audio.removeValue(forKey: NativeEditorRenderCompiler.songSourceKey)
                 // The server's recipe falls back to the camera's own level once the song is gone.
-                if snapshot.mix["original_level"]?.numberValue.map({ $0 <= 0 }) == true {
-                    snapshot.mix.removeValue(forKey: "original_level")
-                }
+                // (The creator's own original-audio level was chosen for the mix WITH the song, so the
+                // server drops it too.)
+                snapshot.mix.removeValue(forKey: "original_level")
             }
             #if DEBUG
             NativePreviewDiagnostics.record("prepare-media")
@@ -4556,6 +4560,58 @@ struct NativeEditorTemporaryVideo {
         guard canEditSection(.mix) else { return }
         transactDocument(section: .mix) { $0.mix["original_level"] = .number(min(max(0, level), 1)) }
     }
+
+    // MARK: Original (camera) audio
+
+    /// The server advertises the control (`original_audio`): phone-rendered guided edits, including
+    /// the creator's song videos. Absent on every other variant, where the Sounds tab shows nothing.
+    var hasOriginalAudioControl: Bool { document.capabilities["original_audio"] != nil }
+    var canEditOriginalAudio: Bool { document.capabilities["original_audio"]?.editable == true }
+    var originalAudioLockedReason: String? { document.capabilities["original_audio"]?.reason }
+    var canEditClipAudio: Bool { document.capabilities["clips.audio"]?.editable == true }
+    var clipAudioLockedReason: String? { document.capabilities["clips.audio"]?.reason }
+
+    /// The level the camera audio plays at for the whole video, 0...1. An unset level is what the
+    /// renderer does by default: silent under the creator's song, the clips' own sound otherwise.
+    var originalAudioLevel: Double {
+        let songPlays = (deviceSongBed != nil || baseUserSong != nil) && !userSongRemoved
+        if !userSongRemoved, let value = document.mix["original_level"]?.numberValue, value.isFinite {
+            return min(max(0, value), 1)
+        }
+        if songPlays { return 0 }
+        return sourceAudioPreserved ? 1 : 0
+    }
+
+    func setOriginalAudioLevel(_ level: Double) {
+        guard canEditOriginalAudio, level.isFinite else { return }
+        let clamped = min(max(0, level), 1)
+        transactDocument(section: .mix) { $0.mix["original_level"] = .number((clamped * 100).rounded() / 100) }
+    }
+
+    /// Whether this clip's own sound is heard right now: the whole-video level is up and the clip is not muted.
+    func isClipAudioOn(clipID: String) -> Bool {
+        guard let index = clipSlotIndex(clipID) else { return false }
+        return originalAudioLevel > 0 && document.clips[index].raw["muted"] != .bool(true)
+    }
+
+    /// The per-clip audio button. Turning a clip on while the whole video's original audio is off
+    /// raises it to 100% and mutes the other clips, so exactly this clip's sound is heard (one undo
+    /// step). Otherwise it flips this clip's mute.
+    func toggleClipAudio(clipID: String) {
+        guard canEditClipAudio, canEditOriginalAudio, let target = clipSlotIndex(clipID) else { return }
+        let turningOn = !isClipAudioOn(clipID: clipID)
+        let levelIsOff = originalAudioLevel <= 0
+        transactDocument(sections: [.timeline, .mix]) { doc in
+            if turningOn && levelIsOff {
+                doc.mix["original_level"] = .number(1)
+                for index in doc.clips.indices where !doc.clips[index].removed {
+                    doc.clips[index].raw["muted"] = .bool(index != target)
+                }
+            } else {
+                doc.clips[target].raw["muted"] = .bool(!turningOn)
+            }
+        }
+    }
     func setMusicWindow(startS: Double? = nil, alignment: String? = nil) {
         guard canEditSection(.music), document.music != nil else { return }
         if let alignment, !NativeEditorWireContract.musicAlignments.contains(alignment) { return }
@@ -5301,7 +5357,7 @@ struct NativeEditorTemporaryVideo {
                 ? Self.array(value["text_elements"]) : nil,
             captionCues: array("caption_cues", .captions),
             captionMeta: object("caption_meta", .captionMeta),
-            mix: changedSections.contains(.mix) ? (Self.object(value["mix"]) ?? Self.object(value["audio_mix"]) ?? [:]) : nil,
+            mix: changedSections.contains(.mix) ? commitMix(Self.object(value["mix"]) ?? Self.object(value["audio_mix"]) ?? [:]) : nil,
             musicTrackID: changedSections.contains(.music) ? value["music_track_id"]?.stringValue : nil,
             removeMusic: changedSections.contains(.music) && document.music == nil,
             musicWindow: changedSections.contains(.music) && document.music != nil
@@ -5324,6 +5380,13 @@ struct NativeEditorTemporaryVideo {
             deletions: document.deletions.isEmpty ? nil : document.deletions,
             baseGeneration: baseGeneration
         )
+    }
+
+    /// A guided edit has no catalog-music level to set (the server refuses a `music_level` there), so
+    /// its Save carries only the footage's own `original_level`.
+    private func commitMix(_ mix: [String: JSONValue]) -> [String: JSONValue] {
+        guard document.capabilities["original_audio"] != nil, document.capabilities["mix"]?.editable != true else { return mix }
+        return mix.filter { $0.key == "original_level" }
     }
 
     /// What Save sends for the song: the unsaved edits (or, on a render retry, the acknowledged volume /

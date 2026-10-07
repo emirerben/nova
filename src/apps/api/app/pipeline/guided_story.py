@@ -130,6 +130,9 @@ class GuidedStoryMoment(BaseModel):
     source_end_s: float = Field(gt=0)
     source_crop: dict[str, float] | None = None
     playback_rate: float | None = Field(default=None, ge=0.25, le=4.0)
+    # The creator silenced this moment's own (camera) sound in the editor. Omitted when
+    # unset so every stored plan keeps its exact dump. Honoured by the phone compiler.
+    source_audio_muted: bool | None = Field(default=None, exclude_if=lambda value: not value)
     output_start_s: float = Field(ge=0)
     output_end_s: float = Field(gt=0)
     duration_s: float = Field(gt=0)
@@ -272,6 +275,11 @@ class GuidedStoryExecutionPlan(BaseModel):
     editor_custom_effects: list[dict[str, Any]] = Field(default_factory=list)
     editor_caption_meta: dict[str, Any] | None = None
     editor_audio_level: float = Field(default=1.0, ge=0, le=1)
+    # The creator's own level for the footage's sound, set through the Sounds control.
+    # None keeps the defaults (silent under a creator song, else `editor_audio_level`).
+    editor_original_level: float | None = Field(
+        default=None, ge=0, le=1, exclude_if=lambda value: value is None
+    )
     editor_music_removed: bool = False
     editor_lane_hashes: dict[str, str] = Field(default_factory=dict)
     editor_tombstones: list[dict[str, Any]] = Field(default_factory=list)
@@ -2873,6 +2881,7 @@ def compile_guided_runtime_plan(
                         if segment.get("playback_rate") is not None
                         else {}
                     ),
+                    **({"source_audio_muted": True} if segment.get("source_audio_muted") else {}),
                     "output_start_s": start,
                     "output_end_s": end,
                     "duration_s": float(segment["duration_s"]),
@@ -3022,6 +3031,11 @@ def compile_guided_runtime_plan(
                 "editor_custom_effects": list(normalized_revision.get("custom_effects") or []),
                 "editor_caption_meta": normalized_revision.get("caption_meta"),
                 "editor_audio_level": float(audio.get("level", 1.0)),
+                **(
+                    {"editor_original_level": float(audio["original_level"])}
+                    if audio.get("original_level") is not None
+                    else {}
+                ),
                 "editor_music_removed": bool(audio.get("removed", False)),
                 "editor_lane_hashes": dict(normalized_revision.get("lane_hashes") or {}),
                 "editor_tombstones": list(normalized_revision.get("tombstones") or []),
@@ -3043,6 +3057,8 @@ def compile_guided_runtime_plan(
             # stays at the plan's default so the phone recipe keeps camera audio.
             runtime_payload.pop("user_song", None)
             runtime_payload["editor_audio_level"] = 1.0
+            # The creator's own original-audio level was chosen for the mix WITH the song.
+            runtime_payload.pop("editor_original_level", None)
             if not plan_preserves_source_audio(runtime_payload):
                 # An explicit "no source audio" choice must not outlive the song.
                 runtime_payload["montage_audio"] = {

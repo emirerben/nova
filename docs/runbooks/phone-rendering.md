@@ -2367,7 +2367,8 @@ Flow:
    `compile_phone_guided_plan(song=...)` emits a `SongRenderAsset` plus a
    `TimelineTrack(id="song")` starting at `window_start_s`, with
    `AudioMixRecipe(original_volume=0.0, music_asset_id=song)`. Camera audio is
-   always muted. Fades: background 0.5 s in/out; lip-sync 0.05 s in, 0.3 s out.
+   always muted BY DEFAULT (the creator can opt in: see "Original audio" below). Fades:
+   background 0.5 s in/out; lip-sync 0.05 s in, 0.3 s out.
 7. **Device fetch.** `POST /jobs/{id}/device-render/assets` for a `song` asset
    (`_song_download_url`): the job's own item only (otherwise 404), still in
    `song` mode with the exact pinned generation (otherwise `409 Song changed`).
@@ -2384,6 +2385,27 @@ move a take to a song position before it was filmed is a `422
 unsupported_phone_edit` with a plain-language reason (squeezing or stretching a
 whole lip-sync montage is refused for the same reason). Background clips edit
 normally.
+
+Original audio (debugging a take): Sounds > "Original audio" is one 0-100% level for the
+footage's own sound, and the clip context strip's "Audio" button toggles one clip's sound.
+Defaults never change: a song video stays silent until the creator sets a level above 0.
+Wire: `mix.original_level` in the editor Save (a guided Save sends ONLY that key; a
+`music_level` is still `422 song_added_when_posting` on a reference-only variant) and
+`muted: true|false` per `timeline_slots[]` row (`TimelineSlotEdit.muted`, omitted = keep).
+Both land on the guided revision (`audio.original_level`, `segments[].source_audio_muted`,
+each omitted when unset so older state hashes are unchanged), then on the plan
+(`editor_original_level`, `moments[].source_audio_muted`), and
+`compile_phone_guided_plan` writes `AudioMixRecipe.original_volume = level` (plus the
+`audioMix` capability) and `volume=0` on each muted clip. The song clip's volume and every
+lip-sync take's pinned offset are untouched (audio only; `_pinned_song_bed` still carries the
+song volume). Removing the song drops the level (camera returns at its normal level).
+Capabilities `original_audio` and `clips.audio` are open only when the variant renders on
+the PHONE (`render_destination == "device"`): a cloud render ignores both, so a Save with
+either is `422 original_audio_phone_only`. The iOS preview compiles the same mix
+(`NativeEditorRenderCompiler`: camera plays with the song only when `mix.original_level > 0`),
+and the saved level returns to the editor as `variant.original_audio_level`.
+Rolling deploy: API before worker (the worker reads the new plan fields; an older worker
+ignores them).
 
 Editor song controls (KRI-428): the Sounds tab edits the creator's own song through
 one Save section, `user_song: {volume?, window_start_s?, removed}` (all optional,

@@ -94,6 +94,9 @@ class GuidedEditorSegment(BaseModel):
         default=None, ge=0.25, le=4.0, exclude_if=lambda value: value is None
     )
     duration_s: float = Field(gt=0, le=MAX_GUIDED_EDITOR_DURATION_S)
+    # The creator turned this occurrence's own (camera) sound off. Omitted when
+    # false/None so every revision written before the control keeps its state hash.
+    source_audio_muted: bool | None = Field(default=None, exclude_if=lambda value: not value)
     # Layout is authored per timeline occurrence, not per source media ID.
     # Keep it optional and omit nulls so revisions written before this field
     # existed retain their exact state hash and continue to validate.
@@ -139,6 +142,13 @@ class GuidedEditorAudio(BaseModel):
     start_s: float = Field(default=0.0, ge=0)
     end_s: float | None = Field(default=None, gt=0)
     level: float = Field(default=1.0, ge=0.0, le=1.0)
+    # The creator's level for the footage's own (camera) sound, whole video.
+    # None = never set: the renderer keeps its default (silent under a creator
+    # song, otherwise the plan's own level). Omitted when None so existing
+    # revisions keep their state hash.
+    original_level: float | None = Field(
+        default=None, ge=0.0, le=1.0, allow_inf_nan=False, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def validate_audio(self) -> GuidedEditorAudio:
