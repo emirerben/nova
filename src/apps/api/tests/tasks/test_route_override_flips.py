@@ -503,3 +503,137 @@ def test_stamped_montage_is_not_promoted_to_a_talking_head_by_footage_type_bias(
 def test_unstamped_montage_is_still_promoted_by_footage_type_bias(monkeypatch) -> None:
     run = _montage_with_talking_head_bias(monkeypatch, stamped=False)
     assert run.run() == "talking_head"
+
+
+# --- Flip 4: a speech-spined edit that lost its speech is never silently a montage --------
+
+
+def _no_speech(monkeypatch) -> None:
+    monkeypatch.setattr("app.services.clip_speech.speech_coverage", lambda _p: 0.0)
+
+
+@pytest.mark.parametrize(
+    ("edit_format", "strategy", "clips"),
+    [("talking_head", {}, 2), ("narrated_ready", {}, 1)],
+)
+def test_stamped_speech_edit_with_no_speech_is_a_typed_evidence_decline(
+    monkeypatch, edit_format, strategy, clips
+) -> None:
+    from app.services.cloud_render_contract import CloudRenderContractError
+
+    run = _cloud(monkeypatch, stamped=True, edit_format=edit_format, clips=clips, **strategy)
+    _no_speech(monkeypatch)
+    assert run.run(CloudRenderContractError) == "montage"  # the legacy answer, now refused
+    decline = _decline_of(run.raised)
+    assert decline["decline_reason"] == "evidence_missing"
+    assert decline["field_path"] == "edit_format"
+    assert "montage" in decline["alternative"]
+
+
+@pytest.mark.parametrize(("edit_format", "clips"), [("talking_head", 2), ("narrated_ready", 1)])
+def test_unstamped_speech_edit_with_no_speech_still_falls_back_to_montage(
+    monkeypatch, edit_format, clips
+) -> None:
+    run = _cloud(monkeypatch, stamped=False, edit_format=edit_format, clips=clips)
+    _no_speech(monkeypatch)
+    assert run.run() == "montage"
+    assert run.resolved[-1][2][2] == "no_speech"
+
+
+def test_stamped_self_narration_with_a_too_short_spine_is_a_typed_decline(monkeypatch) -> None:
+    from app.services.cloud_render_contract import CloudRenderContractError
+
+    run = _cloud(monkeypatch, stamped=True, edit_format="narrated_ready", clips=2)
+    monkeypatch.setattr(gb, "_MIN_TALKING_HEAD_SPINE_WITH_BROLL_S", 100.0)
+    assert run.run(CloudRenderContractError) == "montage"
+    assert _decline_of(run.raised)["decline_reason"] == "evidence_missing"
+
+
+def test_unstamped_self_narration_with_a_too_short_spine_still_falls_back(monkeypatch) -> None:
+    run = _cloud(monkeypatch, stamped=False, edit_format="narrated_ready", clips=2)
+    monkeypatch.setattr(gb, "_MIN_TALKING_HEAD_SPINE_WITH_BROLL_S", 100.0)
+    assert run.run() == "montage"
+    assert run.resolved[-1][2][2] == "spine_too_short"
+
+
+def _talking_head_with_a_corrupt_spine(monkeypatch, *, stamped: bool):
+    """A talking head whose chosen spine clip then fails extraction mid-render."""
+    from app.pipeline.talking_head_assembler import SpineExtractionError
+
+    run = _cloud(monkeypatch, stamped=stamped, edit_format="talking_head", clips=2)
+    run.rendered_archetypes = []
+    upserts: list[dict] = []
+    monkeypatch.setattr(gb, "_set_status", lambda *a, **k: True)  # let the render start
+    monkeypatch.setattr(gb, "_existing_variants", lambda *a, **k: [])
+    monkeypatch.setattr(gb, "_persist_archetype_fallback", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_update_variant_entry", lambda *a, **k: True)
+    monkeypatch.setattr(gb, "_upsert_variant_entry", lambda _id, e: (upserts.append(e), True)[1])
+    monkeypatch.setattr(gb, "_maybe_add_text_elements_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_finalize_job", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_maybe_autoplace_after_finalize", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_merge_speech_cut_prior_state", lambda _id, result, **k: result)
+
+    def th(**_kwargs):
+        run.rendered_archetypes.append("talking_head")
+        raise SpineExtractionError("corrupt spine")
+
+    def montage(**kwargs):
+        run.rendered_archetypes.append("montage")
+        return {
+            "ok": True,
+            "variant_id": kwargs["spec"]["variant_id"],
+            "rank": kwargs["rank"],
+            "render_status": "ready",
+            "output_url": "https://signed/out.mp4",
+        }
+
+    monkeypatch.setattr(gb, "_render_talking_head_variant", th)
+    monkeypatch.setattr(gb, "_render_generative_variant", montage)
+    return run
+
+
+def test_stamped_corrupt_spine_is_a_typed_decline_and_never_renders_a_montage(
+    monkeypatch,
+) -> None:
+    from app.services.cloud_render_contract import CloudRenderContractError
+
+    run = _talking_head_with_a_corrupt_spine(monkeypatch, stamped=True)
+    run.run(CloudRenderContractError)
+    assert _decline_of(run.raised)["decline_reason"] == "evidence_missing"
+    assert run.rendered_archetypes == ["talking_head"]
+
+
+def test_unstamped_corrupt_spine_still_degrades_the_job_to_a_montage(monkeypatch) -> None:
+    run = _talking_head_with_a_corrupt_spine(monkeypatch, stamped=False)
+    gb._run_generative_job(str(run.job.id))
+    assert run.rendered_archetypes[0] == "talking_head"
+    assert "montage" in run.rendered_archetypes
+
+
+def _phone_self_narration_without_speech(monkeypatch, *, stamped: bool):
+    job, snapshot, _session, _binding = _setup_subtitled(monkeypatch, edit_format="narrated_ready")
+    monkeypatch.setattr("app.services.clip_speech.speech_coverage", lambda _p: 0.0)
+    if stamped:
+        _stamp(job, strategy=_strategy(edit_format="narrated_ready"))
+        snapshot[CONTRACT_FIELD] = job.assembly_plan[CONTRACT_FIELD]
+    return job, snapshot
+
+
+def test_stamped_phone_self_narration_without_speech_is_a_typed_decline(monkeypatch) -> None:
+    from app.services.cloud_render_contract import CloudRenderContractError
+
+    job, snapshot = _phone_self_narration_without_speech(monkeypatch, stamped=True)
+    with pytest.raises(CloudRenderContractError) as raised:
+        gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+    assert _decline_of(raised.value)["decline_reason"] == "evidence_missing"
+
+
+def test_unstamped_phone_self_narration_without_speech_keeps_the_untyped_failure(
+    monkeypatch,
+) -> None:
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
+
+    job, snapshot = _phone_self_narration_without_speech(monkeypatch, stamped=False)
+    with pytest.raises(UnsupportedPhonePlan, match="unsupported archetype") as raised:
+        gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+    assert _decline_of(raised.value) == {}

@@ -243,6 +243,40 @@ _PLAN_REPAIR = (
 )
 
 
+_SPEECH_FALLBACK_DECLINES = {
+    "no_speech": (
+        "I couldn't find clear speech in your clips to build this edit.",
+        "Pick a clip where you talk, record a voiceover, or ask for a montage.",
+    ),
+    "spine_too_short": (
+        "The clip with your speech is too short to cut other footage into.",
+        "Use a longer clip of you talking, or ask for a montage.",
+    ),
+    "spine_extraction_failed": (
+        "I couldn't read the speech in your clip.",
+        "I can try again, or you can ask for a montage.",
+    ),
+}
+
+
+def _speech_fallback_decline(reason: str | None) -> BaseException | None:
+    """KRI-470 PR-F: the typed decline for a plan-authority job whose speech-spined edit lost
+    its speech, or ``None`` when ``reason`` is not one of those (every other fallback keeps its
+    legacy handling).
+
+    A talking-head / self-narrated edit IS its speech. Legacy renders a montage instead and
+    banners the downgrade; a plan-authority job says what is missing (``evidence_missing``,
+    which recovery maps to a repair or a question), so the creator never gets a different
+    kind of edit than the one they approved.
+    """
+    detail = _SPEECH_FALLBACK_DECLINES.get(reason or "")
+    if detail is None:
+        return None
+    return _plan_decline(
+        "evidence_missing", detail[0], field_path="edit_format", alternative=detail[1]
+    )
+
+
 def _flag_decline(kind: str, message: str) -> BaseException:
     """The resolver's typed refusal for a rollout flag that forbids the approved format.
 
@@ -3629,6 +3663,11 @@ def _run_generative_job_impl(
             # they drain. A marked snapshot already proved a supported speech
             # lane, so losing that lane is a source mismatch, not a no-op.
             raise SpeechCleanupFailure(montage_cleanup_failure)
+        if plan_contract is not None and archetype == "montage":
+            # After the cleanup rule above, which owns its own recovery for marked jobs.
+            speech_decline = _speech_fallback_decline(archetype_fallback_reason)
+            if speech_decline is not None:
+                raise speech_decline
         if (
             archetype == "talking_head"
             and speech_cut_pinned_spine
@@ -4181,6 +4220,9 @@ def _run_generative_job_impl(
                 # the cleanup the user accepted. Leave the private generation
                 # owned so _fail_job terminalizes it with the reanalysis reset.
                 raise SpeechCleanupFailure(runtime_cleanup_failure) from exc
+            if plan_contract is not None:
+                # KRI-470 PR-F: never swap the approved talking-head edit for a montage.
+                raise _speech_fallback_decline("spine_extraction_failed") from exc  # type: ignore[misc]
             # Critical failure mode: a corrupt/unreadable spine clip degrades the whole
             # job to montage rather than hard-failing (best-effort invariant). Any
             # talking_head partials are discarded — _render_spec_set starts montage fresh.
@@ -6360,6 +6402,10 @@ def _run_phone_subtitled_job(
                     clip_durations_s=clip_durations_s,
                     plan_authority=plan_contract is not None,
                 )
+                if plan_contract is not None and archetype == "montage":
+                    speech_decline = _speech_fallback_decline(_fallback_reason)
+                    if speech_decline is not None:
+                        raise speech_decline
                 expected_archetype = "talking_head" if multi_clip else "subtitled"
                 if archetype != expected_archetype or (multi_clip and spine_clip_id is None):
                     raise UnsupportedPhonePlan(
