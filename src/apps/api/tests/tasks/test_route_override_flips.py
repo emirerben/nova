@@ -797,3 +797,37 @@ def test_a_contracted_phone_montage_ignores_speech_words_in_the_request(monkeypa
 def test_a_pre_contract_phone_montage_still_tries_the_speech_lane_first(monkeypatch) -> None:
     h = _phone_speech_words_job(monkeypatch, contracted=False)
     assert h.calls == ["run_phone_speech_montage_job", "_run_phone_unified_montage_job"]
+
+
+# --- The shadow comparison keeps working ---------------------------------------------------
+
+
+def _mismatches_of(monkeypatch, run: CloudRun) -> list[dict]:
+    from app.services import render_route
+
+    events: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.record_pipeline_event",
+        lambda stage, event, data=None: events.append((stage, event, data or {})),
+    )
+    monkeypatch.setattr(
+        render_route, "route_capabilities_from_settings", render_route.RouteCapabilities
+    )
+    monkeypatch.setattr(render_route, "_already_recorded", lambda *_a: False)
+    run.run()
+    return [data for _s, event, data in events if event == "route_mismatch"]
+
+
+def test_a_flipped_override_no_longer_records_a_mismatch(monkeypatch) -> None:
+    run = _cloud(monkeypatch, stamped=True)  # montage plan, stray recording attached
+    run.job.all_candidates["voiceover_gcs_path"] = VOICE_FILE
+    assert _mismatches_of(monkeypatch, run) == []
+
+
+def test_a_remaining_override_is_still_recorded_as_a_mismatch(monkeypatch) -> None:
+    # Out of scope for PR-F (product decision): a content-plan montage with a required voice
+    # renders `narrated` on the legacy path while the resolver says `voiceover`.
+    run = _cloud(monkeypatch, stamped=True, audio_strategy="voiceover")
+    run.job.all_candidates["voiceover_gcs_path"] = VOICE_FILE
+    [event] = _mismatches_of(monkeypatch, run)
+    assert (event["legacy_route"], event["resolver_route"]) == ("narrated", "voiceover")

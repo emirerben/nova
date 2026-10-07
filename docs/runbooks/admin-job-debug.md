@@ -48,6 +48,10 @@ stamped with `creator_plan_authority_version` records it when the plan's resolve
 `field_path`, `choice_kind`, `stamped_route` (the job's `creator_route` stamp, null when absent
 or stale), `contract_digest`, `drivers`. A redelivered task does not repeat an identical event. The legacy
 route still rendered; see "Route resolution" in `docs/pipelines/creator-render-contract.md`.
+Since KRI-470 PR-F several overrides are retired for stamped jobs (a stray recording, rollout-flag
+fallbacks, `footage_type_bias`, speech-coverage fallbacks, the guided skip): a typed decline shows
+up as `creator_decline` on the job instead, and a `route_mismatch` for one of those cases is a
+regression. The cases that remain shadow are listed under "How PR-F uses it" in the same doc.
 
 The `silence_cut` stage (emitted from the tasks layer, `generative_build.py`)
 carries the speech-cleanup engine's decisions: `silence_cut_config`,
