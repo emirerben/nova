@@ -15,6 +15,7 @@ closing shot on a phone Talking edit.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -33,13 +34,14 @@ from app.kria.brief_route import (
 )
 from app.kria.contracts import InferredLabel, RequirementReceipt
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
+from app.services.clip_facts import CAPTURE_ORDER_KEYS
 
 if TYPE_CHECKING:
     from app.agents._schemas.creator_agent import ResolvedCreatorManifest
 
 DURATION_TOLERANCE = 0.10
 MAX_REPLY_CHARS = 1200
-_CAPTURE_ORDER_KEYS = {"capture_time", "chronological", "route", "time", "shot_order"}
+_CAPTURE_ORDER_KEYS = CAPTURE_ORDER_KEYS  # shared with the render contract and planner
 _CAPTURE_BASES = {"capture_time", "route", "capture_order"}
 
 
@@ -141,6 +143,14 @@ class PlanFacts:
     # True when the facts come from an editor payload, which carries literal
     # on-screen text only (no per-clip structure, order or duration).
     editor: bool = False
+    # True when the facts describe a plan the server actually rendered (a unified or
+    # spoken-excerpt montage record), not a draft that has not been laid out yet. A
+    # required order a rendered plan cannot show is a failure; a draft's is pending.
+    rendered_output: bool = False
+    # True only where the order requirement is bound to an authority that can verify it
+    # (a contract-stamped job, or a brief-binding cohort: `build_receipts` sets it from the
+    # writer's binding). Legacy / unbound jobs keep the original, softer order verdicts.
+    strict_order: bool = False
     # KRI-218: True when the editor facts carry a per-clip text diff (`per_clip_text`,
     # `clip_ids` filled from what the turn actually changed), so per-clip text can be
     # judged for real instead of "can't verify".
@@ -394,6 +404,7 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         per_clip_text=per_clip,
         inferred_text=inferred,
         duration_s=float(duration) if isinstance(duration, (int, float)) else None,
+        rendered_output=True,
         ordering_basis=str(basis) if basis else None,
         ordering_fallback_clip_ids=tuple(
             str(c) for c in record.get("ordering_fallback_clip_ids") or []
@@ -450,6 +461,7 @@ def plan_facts_from_speech_montage(record: Mapping[str, Any] | None) -> PlanFact
         speech_sections=sections,
         speech_dropped_quotes=dropped,
         ordering_basis=str(basis) if basis else None,
+        rendered_output=True,
     )
 
 
@@ -829,11 +841,32 @@ _ARRIVAL_BASES = frozenset({"attachment", "creator_order"})
 _ORDER_NOT_APPLIED = (
     "I couldn't match your description to the clips, so they stay in the order you attached them."
 )
+# KRI-470 PR-G: what a required order says when it was not met.
+_ORDER_NOT_RECORDED = "I couldn't confirm the order your edit used."
+_ORDER_RULE_NOT_APPLIED = (
+    "I can't verify this ordering rule, and the clips are not in an order I can show matches it."
+)
+_ORDER_VERIFIED_ELSEWHERE = frozenset({"song_time", "confirmed", "editor", "attachment_order"})
+_PREFERENCE_STRENGTHS = frozenset({"preference", "prefer", "optional", "soft", "nice_to_have"})
+
+
+def _order_is_required(req: BriefRequirement) -> bool:
+    """An order the creator asked for is REQUIRED, exactly as the render contract pins it
+    (`order_required`). Only an order explicitly marked as a preference stays optional."""
+    strength = str(req.facts.get("strength") or req.facts.get("priority") or "").casefold()
+    return req.facts.get("required") is not False and strength not in _PREFERENCE_STRENGTHS
 
 
 def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """A required order is met, partly met (an honest fallback), or FAILED. Neutral
+    (unchecked) is only for an optional preference, and for a draft that has not been
+    laid out yet (its order is judged when it renders)."""
     key = str(req.facts.get("key") or req.facts.get("by") or "").casefold()
+    required = facts.strict_order and _order_is_required(req)
+    unmet = "not_possible" if required else "partial"
     if not facts.ordering_basis:
+        if required and facts.rendered_output:
+            return _receipt(req, "not_possible", _ORDER_NOT_RECORDED)
         return _receipt(req, "partial", _CANT_CONFIRM_ORDER)
     basis = facts.ordering_basis
     reversed_reason = _route_reversed_reason(req, facts)
@@ -843,20 +876,34 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
         if basis not in _CAPTURE_BASES:
             return _receipt(
                 req,
-                "partial",
+                unmet,
                 f"This draft is ordered by {basis.replace('_', ' ')}, not the order you asked for.",
             )
     elif facts.sequence_statuses:
         # The creator described the order in their own words; the plan placed (or
         # failed to place) each group and recorded which (KRI-458).
-        if any(status != "met" for status in facts.sequence_statuses):
-            return _receipt(req, "partial", "some of the groups you named are not where you said")
+        landed = sum(status == "met" for status in facts.sequence_statuses)
+        if landed < len(facts.sequence_statuses):
+            return _receipt(
+                req,
+                "partial" if landed or not required else "not_possible",
+                "some of the groups you named are not where you said",
+            )
     elif basis in _ARRIVAL_BASES and key != basis:
         # An order only the creator's words describe, and nothing in the plan applied
         # it: say so, never let a silent attachment order read as "done" (KRI-458).
-        return _receipt(req, "partial", _ORDER_NOT_APPLIED)
+        return _receipt(req, unmet, _ORDER_NOT_APPLIED)
     elif not key or key != basis:
-        # Nothing here can confirm an ordering this checker has no rule for.
+        # Nothing here can confirm an ordering this checker has no rule for. When the
+        # order is required, "can't confirm" is not a pass: the plan is in some other
+        # order than the one asked for. Except where another authority owns the order and
+        # verifies it: a lip-sync montage's song placement (the contract skips a creator's
+        # "use this order" answer there, #1451, and the lip-sync receipts verify the
+        # takes) and the contract's own confirmed / editor / answered order ids. A rule
+        # the checker has no key for stays unjudged there instead of blocking a render
+        # that placed it.
+        if required and basis not in _ORDER_VERIFIED_ELSEWHERE:
+            return _receipt(req, "not_possible", _ORDER_RULE_NOT_APPLIED)
         return _receipt(req, "partial", _CANT_CHECK_ORDER_RULE)
     if facts.ordering_fallback_clip_ids:
         n = len(facts.ordering_fallback_clip_ids)
@@ -1595,7 +1642,11 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
 
 
 def build_receipts(
-    requirements: Iterable[BriefRequirement], facts: PlanFacts, *, include_unchecked: bool = False
+    requirements: Iterable[BriefRequirement],
+    facts: PlanFacts,
+    *,
+    include_unchecked: bool = False,
+    strict_order: bool | None = None,
 ) -> list[RequirementReceipt]:
     """Build receipts without changing legacy omission or serialization by default.
 
@@ -1603,7 +1654,13 @@ def build_receipts(
     live requirement: determinate receipts are ``checked`` at the ``checked``
     stage, while unavailable evidence is ``unchecked`` at ``understood`` (or
     ``matched`` when a clip target is known).
+
+    ``strict_order`` (default: ``include_unchecked``, i.e. the writer is bound) turns on the
+    stricter verdicts for a required order (see ``_check_order``). A contract-stamped job
+    passes it explicitly; a legacy / unbound job keeps the original semantics.
     """
+    if (include_unchecked if strict_order is None else strict_order) and not facts.strict_order:
+        facts = dataclasses.replace(facts, strict_order=True)
     checked = ((req, check_requirement(req, facts)) for req in requirements if req.live)
     receipts: list[RequirementReceipt] = []
     for req, receipt in checked:

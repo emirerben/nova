@@ -1,8 +1,13 @@
-"""Real-code harnesses the corpus drives: phone recipe, cloud preflight, planner turn."""
+"""Real-code harnesses the corpus drives: phone recipe, cloud preflight, planner turn.
+
+The planner harness runs the real creator-output adapter and then the real clarification
+gate (``planner._gate_unresolved_choices``), exactly as ``plan_live_turn`` does once the
+approved media snapshot is attached."""
 
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -33,7 +38,7 @@ from app.services.creator_render_contract import (
     verify_phone_recipe,
 )
 from app.services.phone_sources import PhoneSourceBinding
-from tests.incidents.loader import binding_for
+from tests.incidents.loader import binding_for, media_snapshot
 from tests.incidents.models import IncidentRecord, MediaFact
 
 
@@ -286,10 +291,9 @@ async def planner_turn(record: IncidentRecord, monkeypatch: pytest.MonkeyPatch):
     )
     # As the real caller does (plan_live_turn): the capture-order flag is read off the live
     # brief and the brief's rendered request rides along. The target length / clip count
-    # reach the planner only through the strategy. NOTE: PR-C (KRI-476) moves the gate into
-    # plan_live_turn AFTER the media snapshot is attached, so it must adapt this harness.
+    # reach the planner only through the strategy.
     binding = binding_for(record)
-    return await planner._plan_from_creator_output(
+    planned = await planner._plan_from_creator_output(
         SimpleNamespace(),
         thread_id=uuid.uuid4(),
         item_id=item_id,
@@ -305,3 +309,26 @@ async def planner_turn(record: IncidentRecord, monkeypatch: pytest.MonkeyPatch):
         brief_request=binding.creator_request,
         wants_capture_order=planner._brief_wants_capture_order(binding.resolve()),
     )
+    # KRI-476 (PR-C): the clarification gate runs in `plan_live_turn` AFTER the approved
+    # media snapshot is attached (the order/length conflicts depend on it), so the
+    # harness attaches the record's snapshot and runs that same gate over the plan.
+    monkeypatch.setattr(planner, "load_latest_brief", AsyncMock(return_value=binding.resolve()))
+    monkeypatch.setattr(type(planner.settings), "creative_brief_for", lambda _self, _id: True)
+    monkeypatch.setattr(type(planner.settings), "brief_binding_for", lambda _self, _id: True)
+    planned = replace(planned, media_snapshot=media_snapshot(record))
+    return await planner._gate_unresolved_choices(
+        SimpleNamespace(), planned, thread_id=uuid.uuid4(), creator_id=uuid.uuid4()
+    )
+
+
+def resolved_route(record: IncidentRecord):
+    """The pure resolver's verdict for the record's approved plan on its expected platform."""
+    from app.services.render_route import resolve_route, route_inputs_from_job
+    from tests.incidents.loader import route_job
+
+    want = record.expect.route
+    assert want is not None
+    assembly, candidates = route_job(record, want.platform)
+    inputs = route_inputs_from_job(assembly, candidates, platform=want.platform)
+    assert inputs is not None
+    return resolve_route(inputs)

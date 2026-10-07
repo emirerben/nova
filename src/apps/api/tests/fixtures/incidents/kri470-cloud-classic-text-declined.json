@@ -88,6 +88,11 @@
     "refusal": {
       "reason": "capability_unavailable",
       "field_path": "opening_title"
+    },
+    "route": {
+      "platform": "cloud",
+      "refusal": "capability_unavailable",
+      "field_path": "opening_title"
     }
   },
   "repro": {

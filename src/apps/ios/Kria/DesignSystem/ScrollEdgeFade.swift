@@ -66,6 +66,22 @@ extension View {
     }
 }
 
+/// `.mask` forces the whole scroll view through an offscreen pass every frame, so it is
+/// applied only for the Reduce Transparency fade; the blur path needs no mask.
+private struct ReducedFadeMask<M: View>: ViewModifier {
+    let active: Bool
+    let mask: M
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if active {
+            content.mask { mask.ignoresSafeArea() }
+        } else {
+            content
+        }
+    }
+}
+
 private struct KriaScrollEdgeFade: ViewModifier {
     /// Thickness of the band at an edge with no floating block (the bottom, or a
     /// top with no inset).
@@ -97,22 +113,17 @@ private struct KriaScrollEdgeFade: ViewModifier {
             }
             // Both a mask and an overlay are laid out inside the safe-area-inset
             // region; the bands belong at the real frame edges (the screen edges).
-            .mask { fadeMask.ignoresSafeArea() }
+            .modifier(ReducedFadeMask(active: reduced, mask: fadeMask))
             .overlay { blurBands.ignoresSafeArea() }
     }
 
     // MARK: Reduce Transparency: plain fade
 
-    @ViewBuilder
     private var fadeMask: some View {
-        if reduced {
-            VStack(spacing: 0) {
-                fadeEdge(strength: metrics.top, height: topHeight, atTop: true)
-                Rectangle().fill(.black)
-                fadeEdge(strength: metrics.bottom, height: length, atTop: false)
-            }
-        } else {
+        VStack(spacing: 0) {
+            fadeEdge(strength: metrics.top, height: topHeight, atTop: true)
             Rectangle().fill(.black)
+            fadeEdge(strength: metrics.bottom, height: length, atTop: false)
         }
     }
 
@@ -134,9 +145,11 @@ private struct KriaScrollEdgeFade: ViewModifier {
     private var blurBands: some View {
         if !reduced {
             VStack(spacing: 0) {
-                blurEdge(strength: metrics.top, height: topHeight, atTop: true)
+                // A band exists only while content is actually past its edge: a live
+                // backdrop blur over scrolling content is not free, even at opacity 0.
+                if metrics.top > 0 { blurEdge(strength: metrics.top, height: topHeight, atTop: true) }
                 Spacer(minLength: 0)
-                blurEdge(strength: metrics.bottom, height: length, atTop: false)
+                if metrics.bottom > 0 { blurEdge(strength: metrics.bottom, height: length, atTop: false) }
             }
             .allowsHitTesting(false)
             .accessibilityHidden(true)

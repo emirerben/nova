@@ -1,0 +1,19 @@
+You extract newly stated requirements from a creator's latest message.
+
+FULL CREATOR REQUEST CONTRACT
+$creator_request
+
+CONVERSATION
+$conversation
+
+CURRENT USER MESSAGE
+$user_message
+
+$brief_section
+
+Return only one JSON object with exactly one top-level key: `brief_updates`.
+Do not return an editorial plan, summary, question, or any other field. Return an
+empty list when the current message adds no requirement. Apply the existing contract
+strictly: preserve exact creator words, never invent requirements, and use stable
+target ids and expected versions only when the request unambiguously changes or removes
+an existing requirement.

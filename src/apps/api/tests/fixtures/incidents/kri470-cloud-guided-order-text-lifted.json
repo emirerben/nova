@@ -111,6 +111,10 @@
       "preflight": "passes",
       "plan_gate": "passes",
       "publication": "accepts"
+    },
+    "route": {
+      "platform": "cloud",
+      "route": "guided_story"
     }
   },
   "repro": {

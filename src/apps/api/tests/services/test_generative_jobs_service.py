@@ -810,3 +810,21 @@ def test_stamp_helper_never_mutates_its_input_and_respects_the_flag() -> None:
     }
     assert original == {"a": 1}
     assert stamp_plan_authority(original, enabled=False) == {"a": 1}
+
+
+# --- KRI-470 PR-D: the route is stamped at dispatch, never at job build -----------------
+#
+# Failure modes: a build-time route (before the creator song, guided snapshot and the
+# brief-bound contract are attached) goes stale; the route lands inside the strict contract
+# model where older workers reject it.
+
+
+def test_build_never_stamps_a_route_or_touches_the_contract_shape(monkeypatch) -> None:
+    from app.services.creator_render_contract import CONTRACT_FIELD
+
+    on = _stamp_job(monkeypatch, enabled=True, strategy={"pacing": "fast"})
+    off = _stamp_job(monkeypatch, enabled=False, strategy={"pacing": "fast"})
+    assert "creator_route" not in on.assembly_plan
+    assert on.assembly_plan == off.assembly_plan
+    assert set(on.assembly_plan[CONTRACT_FIELD]) == set(off.assembly_plan[CONTRACT_FIELD])
+    assert "route" not in on.assembly_plan[CONTRACT_FIELD]

@@ -118,6 +118,19 @@ struct ChatWorkspaceView: View {
     }
 }
 
+/// The chat composer's text, kept out of `@State` so a keystroke does not invalidate the workspace.
+@Observable
+final class ChatPromptDraft {
+    var text = ""
+    @ObservationIgnored var onChange: ((String) -> Void)?
+
+    func set(_ newValue: String) {
+        guard newValue != text else { return }
+        text = newValue
+        onChange?(newValue)
+    }
+}
+
 enum DrawerMotion {
     /// Critically damped, so a release never overshoots the endpoints. `velocity` is in
     /// SwiftUI's unit-relative terms (fraction of the remaining distance per second).
@@ -364,7 +377,16 @@ private struct CreationWorkspaceView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     @FocusState private var composerFocused: Bool
-    @State private var prompt = ""
+    /// Reference-typed and observation-tracked per reader: typing re-renders only
+    /// `ChatComposer`, not this whole workspace (timeline rebuild + every row).
+    @State private var promptDraft = ChatPromptDraft()
+    private var prompt: String {
+        get { promptDraft.text }
+        nonmutating set { promptDraft.set(newValue) }
+    }
+    private var promptBinding: Binding<String> {
+        Binding(get: { promptDraft.text }, set: { promptDraft.set($0) })
+    }
     /// KRI-207: requirement names for the receipt chips; loaded once a reply carries receipts.
     @State private var briefRequirements: [String: CreativeBriefRequirement] = [:]
     /// The brief loaded (or, after one retry, definitively failed): chips can show their final titles.
@@ -419,6 +441,7 @@ private struct CreationWorkspaceView: View {
     @State private var isThinking = false
     /// Highest transcript sequence known when the thinking turn was accepted; only later events can settle it.
     @State private var thinkingAnchor: Int?
+    @State private var thinkingTurnID: String?
     /// Approvals have no reply message, so a terminal job status also ends the wait (KRI-222).
     @State private var thinkingSettlesOnJobStatus = false
     @State private var failure: ChatFailure?
@@ -650,7 +673,7 @@ private struct CreationWorkspaceView: View {
             }
         }
         if (isThinking || isSending) && workspaceStage != .rendering {
-            if showsPlanFeed { planFeedView } else { ThinkingRow().id("thinking") }
+            ThinkingRow().id("thinking")
         }
         if let approvalNotice { Text(approvalNotice).font(KriaFont.body(13)) }
         if let failure {
@@ -961,8 +984,12 @@ private struct CreationWorkspaceView: View {
         // directly on ChatConversationScroll inside genericChatWorkspace (KRI-197
         // floating chat chrome), which also implicitly gates it on
         // !hasDedicatedSlideWorkspace via the if/else above.
-        .onAppear { if prompt.isEmpty { prompt = model.chatDrafts.draft(for: project.id) } }
-        .onChange(of: prompt) { _, text in model.chatDrafts.setDraft(text, for: project.id) }
+        .onAppear {
+            if prompt.isEmpty { prompt = model.chatDrafts.draft(for: project.id) }
+            // Persisted from the holder, not `.onChange(of: prompt)`: reading `prompt` in
+            // this body would subscribe the whole workspace to every keystroke.
+            promptDraft.onChange = { [chatDrafts = model.chatDrafts, id = project.id] in chatDrafts.setDraft($0, for: id) }
+        }
         .onChange(of: renderShapeScope) { _, scope in renderShapePick.reset(scope: scope) }
         .task {
             // History should not wait for the independent capability request. Requested as soon as the
@@ -1093,7 +1120,7 @@ private struct CreationWorkspaceView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatComposer(
-                text: $prompt,
+                text: promptBinding,
                 isSending: isSending || isActing,
                 canAttach: canAttachMedia,
                 canSendWithoutText: readyMediaCount > 0,
@@ -1115,7 +1142,7 @@ private struct CreationWorkspaceView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatComposer(
-                text: $prompt, isSending: isSending || isActing,
+                text: promptBinding, isSending: isSending || isActing,
                 canAttach: false, blocksSubmission: isThinking || pendingUploadCount > 0, isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
             )
         }
@@ -1431,6 +1458,7 @@ private struct CreationWorkspaceView: View {
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
         conversationAcceptedID = UUID()
         thinkingAnchor = afterSequence
+        thinkingTurnID = accepted.turnID
         thinkingSettlesOnJobStatus = false
         isThinking = true
         failure = await acceptedMutationRefreshError(
@@ -1556,7 +1584,7 @@ private struct CreationWorkspaceView: View {
                 // polling it only while it is unsettled or the thread moved.
                 let deviceSettled = deviceRenderKey.flatMap { model.deviceRenders.presentations[$0]?.phase } == .synced
                 if changed || !deviceSettled || currentProject.status == .rendering { await refreshDeviceRender() }
-                delay = changed || isSending || isActing || currentProject.status == .rendering
+                delay = changed || isSending || isActing || isThinking || currentProject.status == .rendering
                     || fullThread?.preparationIsActive == true || speechCleanupIsChecking
                     ? 1_000_000_000 : min(delay * 2, 8_000_000_000)
             } catch is CancellationError {
@@ -1723,9 +1751,10 @@ private struct CreationWorkspaceView: View {
         guard isThinking, let anchor = thinkingAnchor else { return }
         let jobTerminal = thinkingSettlesOnJobStatus
             && ChatThinkingSettlement.isTerminalJobStatus(fullThread?.job?.status)
-        if ChatThinkingSettlement.isSettled(events: events, after: anchor) || jobTerminal {
+        if ChatThinkingSettlement.isSettled(events: events, after: anchor, turnID: thinkingTurnID) || jobTerminal {
             isThinking = false
             thinkingAnchor = nil
+            thinkingTurnID = nil
             thinkingSettlesOnJobStatus = false
         }
     }
@@ -1865,6 +1894,7 @@ private struct CreationWorkspaceView: View {
             }
             self.approval = nil
             thinkingAnchor = decision == "approve" ? afterSequence : nil
+            thinkingTurnID = decision == "approve" ? approval.turnID : nil
             thinkingSettlesOnJobStatus = decision == "approve"
             isThinking = decision == "approve"
             failure = await acceptedMutationRefreshError(
@@ -1983,8 +2013,17 @@ enum ChatThinkingSettlement {
         ChatTranscriptMessage.from(event: event)?.role == .assistant || settledTypes.contains(event.eventType)
     }
 
-    static func isSettled(events: [ThreadEvent], after anchor: Int) -> Bool {
-        events.contains { $0.sequence > anchor && settles($0) }
+    static func isSettled(events: [ThreadEvent], after anchor: Int, turnID: String? = nil) -> Bool {
+        events.contains { event in
+            guard event.sequence > anchor, settles(event) else { return false }
+            guard let turnID else { return true }
+            if let eventTurnID = event.payload?["turn_id"]?.stringValue {
+                return eventTurnID.caseInsensitiveCompare(turnID) == .orderedSame
+            }
+            // Legacy conversation replies have no turn identifier. Unowned plan/render
+            // events cannot settle a known follow-up turn.
+            return ChatTranscriptMessage.from(event: event)?.role == .assistant
+        }
     }
 
     static func isTerminalJobStatus(_ status: String?) -> Bool {

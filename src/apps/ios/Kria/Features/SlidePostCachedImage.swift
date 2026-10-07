@@ -19,18 +19,29 @@ struct SlidePostCachedImage: View {
     /// Exposes `slidepost-preview-image` with value `<assetID>|full` or `<assetID>|blur` so UI tests can see
     /// whether the full picture or the blurred placeholder is on screen.
     var reportsState = false
+    /// Source-only grade. Thumbnails remain ungraded in the shared cache.
+    var lookPreset = "none"
+    var lookCanvas = CGSize(width: 1080, height: 1350)
 
     @State private var tick = 0
     @State private var failed = false
     @State private var expiredRetries = 0
+    @State private var lookedImage: UIImage?
+    @State private var lookedIdentity = ""
+    @State private var lookFailed = false
 
     private var taskID: String { "\(SlidePostImageCache.key(assetID, variant))|\(url == nil)|\(tick)" }
 
     var body: some View {
         let full = resolved()
+        let lookIdentity = "\(assetID)|\(lookPreset)|\(lookCanvas.width)x\(lookCanvas.height)|\(full.map { ObjectIdentifier($0).debugDescription } ?? "missing")"
         ZStack {
             if let full {
-                Image(uiImage: full).resizable().scaledToFill()
+                Image(uiImage: lookedIdentity == lookIdentity ? (lookedImage ?? full) : full).resizable().scaledToFill()
+                if lookFailed, lookPreset != "none" {
+                    Text("Look preview unavailable").font(KriaFont.body(12))
+                        .padding(8).background(KriaColor.paper, in: Capsule())
+                }
             } else if variant == .preview, let thumb = cache.cachedImage(assetID: assetID, variant: .thumb) {
                 Image(uiImage: thumb).resizable().scaledToFill().blur(radius: 10)
             } else if failed {
@@ -47,7 +58,21 @@ struct SlidePostCachedImage: View {
             }
         }
         .task(id: taskID) { await load() }
-        .modifier(PreviewStateReport(enabled: reportsState, value: "\(assetID)|\(full != nil ? "full" : "blur")", blurred: full == nil && variant == .preview && cache.cachedImage(assetID: assetID, variant: .thumb) != nil))
+        .task(id: lookIdentity) {
+            lookedImage = nil; lookedIdentity = lookIdentity; lookFailed = false
+            guard lookPreset != "none", let full else { return }
+            do {
+                let canvas = lookCanvas, preset = lookPreset
+                let image = try await Task.detached(priority: .userInitiated) {
+                    try SlidePostOnDeviceRender.lookedImage(full, pixels: canvas, preset: preset)
+                }.value
+                guard !Task.isCancelled else { return }
+                lookedImage = image
+            } catch { if !Task.isCancelled { lookFailed = true } }
+        }
+        .modifier(PreviewStateReport(enabled: reportsState,
+                                    value: "\(assetID)|\(full != nil ? "full" : "blur")" + (lookedImage != nil && lookedIdentity == lookIdentity ? "|look:\(lookPreset)" : ""),
+                                    blurred: full == nil && variant == .preview && cache.cachedImage(assetID: assetID, variant: .thumb) != nil))
     }
 
     private static let log = Logger(subsystem: "com.kria.app", category: "slidepost-images")

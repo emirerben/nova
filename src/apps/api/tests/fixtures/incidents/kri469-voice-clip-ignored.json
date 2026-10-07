@@ -577,6 +577,10 @@
         "m-1fb3444b"
       ],
       "duration_basis": "strategy_choice"
+    },
+    "route": {
+      "platform": "phone",
+      "route": "speech_montage"
     }
   },
   "observations": [

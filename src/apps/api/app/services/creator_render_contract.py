@@ -22,6 +22,15 @@ from app.kria.brief import CreativeBrief
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
+from app.services.choice_questions import (
+    ATTACHMENT_ORDER_KEY,
+    CAPTURE_ORDER_KEYS,
+    CONFLICT_DURATION_VS_COUNT,
+    CONFLICT_ORDER_BASIS,
+    CONFLICT_TEXT_PLACEMENT,
+    OPT_ATTACHMENT_ORDER,
+    OPT_UNORDERED,
+)
 
 CONTRACT_FIELD = "creator_render_requirements"
 REQUIREMENT_VERSION_FIELD = "creator_render_requirements_version"
@@ -317,6 +326,28 @@ FIELD_MATRIX: dict[str, FieldRule] = {
     ),
     **_rules(
         "upstream_resolved",
+        "choice_questions",
+        "choice_answers[]",
+        *(
+            f"choice_answers[].{leaf}"
+            for leaf in (
+                "conflict",
+                "kind",
+                "option",
+                "input_digest",
+                "requirement_ids[]",
+                "source",
+            )
+        ),
+        note=(
+            "server-owned creator decisions on material conflicts; the planner gate writes "
+            "them, build_render_contract consumes them (order basis, shot placement) and the "
+            "chosen duration/clip subset is already rewritten into target_duration_s / "
+            "selected_media_ids"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
         "user_song_planner",
         "song_sync",
         "resolved_song_takes[]",
@@ -455,6 +486,11 @@ PHONE_VERIFIER_DECLINES: dict[str, Decline] = {
     "order_required": Decline("evidence_missing", _PHONE_REPAIR),
 }
 _UNRESOLVED_DECLINE = Decline("needs_choice", _ASK_FOR_CHOICE)
+# The mix would play one source twice (a track clip and the separate music bed).
+_SOUNDTRACK_TWICE = Decline(
+    "requirement_conflict",
+    "I can rebuild the edit with that soundtrack playing once, or you can pick a different one.",
+)
 
 
 def _phone(adapter: str, consumes: set[str], **overrides: Decline) -> AdapterDeclaration:
@@ -611,6 +647,11 @@ def build_render_contract(
         return None
     typed = _strategy(strategy)
     raw = dict(strategy or {})
+    # KRI-476 (PR-C): the creator's recorded answers to material conflicts. They
+    # resolve the matching requirement; without an answer the legacy behaviour is
+    # unchanged (an unresolved item, never a guess).
+    answers = {a.conflict: a for a in (typed.choice_answers or ())} if typed else {}
+    order_answer = answers.get(CONFLICT_ORDER_BASIS)
     texts: list[TextRequirement] = []
     if typed is not None:
         if typed.opening_title:
@@ -629,12 +670,24 @@ def build_render_contract(
     if raw.get("target_duration_requested") is True and "target_duration_s" in raw:
         durations.append(float(raw["target_duration_s"]))
     order_required = bool(typed and typed.ordering_choice == "chronological")
+    attachment_order = False
     order_ids = tuple(str(item) for item in clip_order if str(item).strip())
     order_basis = "confirmed" if order_ids else None
     unresolved: list[str] = []
+    song_time_owns_order = bool(
+        typed
+        and typed.audio_strategy == "user_song"
+        and typed.song_sync == "lipsync"
+        and typed.resolved_song_takes
+    )
     if brief:
         for requirement in brief.live():
             if requirement.kind == "timing" and requirement.facts.get("duration_s") is not None:
+                answered = answers.get(CONFLICT_DURATION_VS_COUNT)
+                if answered is not None and requirement.id in answered.requirement_ids:
+                    # The creator chose a different length for exactly this requirement;
+                    # the approved strategy carries it (target_duration_s, requested).
+                    continue
                 durations.append(float(requirement.facts["duration_s"]))
             if requirement.kind == "text" and requirement.literal:
                 shot_index = None
@@ -645,8 +698,18 @@ def build_render_contract(
                         for index, text in enumerate(labels)
                         if _normal(text) == _normal(requirement.literal)
                     ]
+                    placed = answers.get(f"{CONFLICT_TEXT_PLACEMENT}:{requirement.id}")
+                    chosen = (
+                        int(placed.option.rsplit("_", 1)[-1]) - 1
+                        if placed is not None
+                        and placed.option.startswith("shot_")
+                        and placed.option.rsplit("_", 1)[-1].isdigit()
+                        else None
+                    )
                     if len(matching) == 1:
                         shot_index = matching[0]
+                    elif chosen is not None and chosen in matching:
+                        shot_index = chosen
                     else:
                         unresolved.append(
                             "I need an explicit shot assignment for the confirmed text."
@@ -667,10 +730,49 @@ def build_render_contract(
                     )
                 )
             if requirement.kind == "order":
+                if song_time_owns_order and requirement.facts.get("key") not in {
+                    "capture_time",
+                    "chronological",
+                }:
+                    # The song-order answer ("Use this order: clips 1, 2, ..."): the
+                    # server-resolved song placement IS the order authority and the
+                    # render verifies it through the lip-sync receipts, so it is not
+                    # an unverifiable media-order rule (and must never pin capture time).
+                    continue
                 order_required = True
-                if requirement.facts.get("key") not in {"capture_time", "chronological"}:
+                key = requirement.facts.get("key")
+                if order_answer is not None and requirement.id in order_answer.requirement_ids:
+                    continue  # the creator's answer decides how this order is met
+                if key == ATTACHMENT_ORDER_KEY and order_answer is not None:
+                    # Only a recorded creator answer makes "attachment" a verifiable
+                    # basis; a bare brief key stays unresolved exactly as before.
+                    attachment_order = True
+                elif key not in CAPTURE_ORDER_KEYS:
                     unresolved.append("I can't verify this ordering rule from the approved media.")
-    if order_required:
+    if order_answer is not None:
+        if order_answer.option == OPT_UNORDERED:
+            # The creator chose to drop the chronological promise: nothing to verify.
+            order_required = False
+        elif order_answer.option == OPT_ATTACHMENT_ORDER:
+            order_required = True
+            attachment_order = True
+    if order_required and attachment_order:
+        # An explicit, verifiable basis: the order the clips were added to the project.
+        rows = (media_snapshot or {}).get("clip_assignments") or []
+        selected = set(typed.selected_media_ids or ()) if typed else set()
+        if selected:
+            rows = [
+                row for row in rows if isinstance(row, Mapping) and row.get("media_id") in selected
+            ]
+        ids = [
+            str(row["media_id"]) for row in rows if isinstance(row, Mapping) and row.get("media_id")
+        ]
+        if not ids or len(ids) != len(rows) or len(set(ids)) != len(ids):
+            unresolved.append("I need to know which clips are in the edit to verify their order.")
+        else:
+            order_ids = tuple(ids)
+            order_basis = "attachment_order"
+    elif order_required:
         from app.services.clip_facts import capture_from_assignment
 
         rows = (media_snapshot or {}).get("clip_assignments") or []
@@ -831,6 +933,61 @@ def speech_edit_not_built() -> CreatorRenderContractError:
     )
 
 
+def _clip_audible(recipe: EditRecipeV2, track, clip) -> bool:  # noqa: ANN001
+    """True when this track clip reaches the mix (gain, original volume, mute windows)."""
+
+    if clip.volume <= 0 or (track.kind == "video" and recipe.audio.original_volume <= 0):
+        return False
+    # Mute windows use timeline time. Covering only part of a clip cannot
+    # prove silence; adjacent windows can together cover the whole clip.
+    start = clip.timeline_start
+    end = start + clip.source_duration / clip.rate
+    for window in sorted(recipe.audio.mute_windows, key=lambda item: item.start):
+        if clip.id not in window.clip_ids or window.end <= start:
+            continue
+        if window.start > start:
+            return True
+        start = max(start, window.end)
+        if start >= end:
+            return False
+    return start < end
+
+
+def music_bed_audible(recipe: EditRecipeV2) -> str | None:
+    """The asset id of the separate music bed when it reaches the mix, else None.
+
+    The device plays ``audio.music_asset_id`` as its OWN bed (from source 0, at
+    ``music_volume``) in addition to every audio-track clip. A track clip is not
+    the only way a source becomes audible.
+    """
+
+    asset_id = recipe.audio.music_asset_id
+    if asset_id is None or recipe.audio.music_volume <= 0 or recipe.duration <= 0:
+        return None
+    return asset_id
+
+
+def doubled_soundtrack_assets(recipe: EditRecipeV2) -> list[str]:
+    """Assets the mix plays twice: audible through a track clip AND the music bed.
+
+    KRI-481 (prod job 934811f3): the song lane put the creator's song on a track
+    clip at the chosen window and left the bed at its default volume, so the
+    device also played it from source 0. Neither copy is "wrong" alone, which is
+    why a per-clip check could not see it.
+    """
+
+    bed = music_bed_audible(recipe)
+    if bed is None:
+        return []
+    for track in recipe.tracks:
+        if track.kind not in {"video", "audio"}:
+            continue
+        for clip in track.clips:
+            if clip.source_asset_id == bed and _clip_audible(recipe, track, clip):
+                return [bed]
+    return []
+
+
 def verify_phone_recipe(
     contract: CreatorRenderContract,
     recipe: EditRecipeV2,
@@ -848,24 +1005,19 @@ def verify_phone_recipe(
         raise _phone_decline("duration_s", "This edit couldn't keep the confirmed length.")
 
     def audible(track, clip) -> bool:
-        if clip.volume <= 0 or (track.kind == "video" and recipe.audio.original_volume <= 0):
-            return False
-        # Mute windows use timeline time. Covering only part of a clip cannot
-        # prove silence; adjacent windows can together cover the whole clip.
-        start = clip.timeline_start
-        end = start + clip.source_duration / clip.rate
-        for window in sorted(recipe.audio.mute_windows, key=lambda item: item.start):
-            if clip.id not in window.clip_ids or window.end <= start:
-                continue
-            if window.start > start:
-                return True
-            start = max(start, window.end)
-            if start >= end:
-                return False
-        return start < end
+        return _clip_audible(recipe, track, clip)
 
+    doubled = doubled_soundtrack_assets(recipe)
+    if doubled:
+        raise CreatorRenderContractError(
+            "This edit would play its soundtrack twice at once.",
+            decline_reason=_SOUNDTRACK_TWICE.reason,
+            field_path=REQUIREMENT_FIELD_PATHS["require_voiceover"],
+            alternative=_SOUNDTRACK_TWICE.alternative,
+        )
+    bed_asset = manifest.get(music_bed_audible(recipe) or "")
     if contract.require_voiceover:
-        voice_is_audible = any(
+        voice_is_audible = isinstance(bed_asset, VoiceoverRenderAsset) or any(
             track.kind == "audio"
             and audible(track, clip)
             and isinstance(manifest.get(clip.source_asset_id), VoiceoverRenderAsset)
@@ -896,6 +1048,11 @@ def verify_phone_recipe(
             for clip in track.clips
         )
     }
+    if isinstance(bed_asset, OriginalRenderAsset) and (
+        source_audio is None or source_audio.get(bed_asset.media_id) is True
+    ):
+        # A bed that names the camera's file plays the camera audio too.
+        original_ids.add(bed_asset.media_id)
     if contract.original_audio == "forbid" and original_ids:
         raise _phone_decline(
             "original_audio", "This edit can't use the camera audio you turned off."

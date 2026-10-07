@@ -66,6 +66,7 @@ from app.schemas.edit_proposal import (
 )
 from app.schemas.user_song import UserSongPlan
 from app.services.clip_facts import (
+    CAPTURE_ORDER_KEYS,
     capture_time_from_facts,
     display_timezone,
     format_capture_hour,
@@ -96,7 +97,7 @@ MAX_CREATOR_LABEL_CHARS = 120
 # exists. Keep its schema placeholder separate from ``opening_title`` so this
 # internal label never becomes an on-screen text layer (KRI-255).
 SNAPSHOT_FALLBACK_TITLE = "Montage"
-_CAPTURE_ORDER_KEYS = frozenset({"capture_time", "chronological", "route", "time", "shot_order"})
+_CAPTURE_ORDER_KEYS = CAPTURE_ORDER_KEYS  # shared with the render contract and receipts
 _START_KEYS = START_KEYS
 _END_KEYS = END_KEYS
 
@@ -467,7 +468,11 @@ def ordered_ids(clips: Sequence[UnifiedClip]) -> list[str]:
     return [clip.media_id for clip in clips]
 
 
-_MIN_UNLABELLED_FRAMES = int(round(0.8 * FPS))
+# The shortest an unlabelled cut may be shrunk to: the readable-shot floor. Public so
+# the clarification gate (``choice_questions.collect_conflicts``) asks about exactly
+# the length the planner can never go below, never about a number of its own.
+MIN_READABLE_SHOT_S = 0.8
+_MIN_UNLABELLED_FRAMES = int(round(MIN_READABLE_SHOT_S * FPS))
 
 
 def _positive_number(value: object) -> float | None:
