@@ -4928,6 +4928,10 @@ def _run_phone_voiceover_montage_job(
                 (user_style.get("footage_type_bias") or []) if user_style else []
             )
             voiceover_gcs_path = all_candidates.get("voiceover_gcs_path")
+            from app.services.creator_render_contract import (  # noqa: PLC0415
+                stamped_plan_contract,
+            )
+
             archetype, _spine, _fallback_reason = _resolve_archetype(
                 edit_format,
                 clip_metas,
@@ -4939,6 +4943,9 @@ def _run_phone_voiceover_montage_job(
                 clip_durations_s=clip_durations_s,
                 prefer_narrated_voiceover=False,
                 narrative_shot_count=narrative_shot_count,
+                # KRI-470 PR-F: the recording wins before any bias is read here, but a
+                # plan-authority job states "no promotion" the same way as every caller.
+                plan_authority=stamped_plan_contract(snapshot, all_candidates) is not None,
             )
             # `_resolve_archetype` returns "voiceover" (never "narrated") for
             # any montage-family edit_format with a recorded voiceover --
@@ -18619,7 +18626,8 @@ def _resolve_archetype(
         # talking_head path only when the flag is on AND speech actually exists.
         # Hard signals already handled above (voiceover) or below (explicit format).
         # This is a tie-breaker only — it NEVER runs if the flag is off.
-        bias = list(footage_type_bias or [])
+        # KRI-470 PR-F: the approved montage stands; a style preference never promotes it.
+        bias = [] if plan_authority else list(footage_type_bias or [])
         if bias:
             record_pipeline_event(
                 "assembly",

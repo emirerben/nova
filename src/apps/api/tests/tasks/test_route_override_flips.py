@@ -481,3 +481,25 @@ def test_the_unstamped_twin_keeps_the_legacy_flag_fallback(
     _flag_off(monkeypatch, flag)
     assert run.run() == legacy[0]
     assert run.resolved[-1][2][2] == legacy[1]
+
+
+# --- Flip 3: a style preference never promotes the approved montage -----------------------
+
+
+def _montage_with_talking_head_bias(monkeypatch, *, stamped: bool) -> CloudRun:
+    run = _cloud(monkeypatch, stamped=stamped, edit_format="montage")
+    run.job.all_candidates["user_style"] = {"footage_type_bias": ["talking_head"]}
+    return run
+
+
+def test_stamped_montage_is_not_promoted_to_a_talking_head_by_footage_type_bias(
+    monkeypatch,
+) -> None:
+    run = _montage_with_talking_head_bias(monkeypatch, stamped=True)
+    assert run.run() == "montage"
+    assert run.resolved[-1][2] == ("montage", None, None)
+
+
+def test_unstamped_montage_is_still_promoted_by_footage_type_bias(monkeypatch) -> None:
+    run = _montage_with_talking_head_bias(monkeypatch, stamped=False)
+    assert run.run() == "talking_head"
