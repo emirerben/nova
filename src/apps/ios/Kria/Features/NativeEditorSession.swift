@@ -3149,8 +3149,26 @@ struct NativeEditorTemporaryVideo {
         transact(section: .text) { $0.text.append(TextLayer(id: UUID(), content: value, position: CGPoint(x: 0.5, y: 0.5), style: "Fraunces")) }
     }
 
+    /// True while this session opened the transaction that coalesces "Add text" keystrokes.
+    private var ownsTextCreationTransaction = false
+
+    /// Typing a new text item republishes `pendingText` per keystroke; inside a transaction the
+    /// preview rebuild is coalesced (80ms) instead of recompiling the composition per character.
+    private func beginTextCreationTransaction() {
+        guard transactionBaseline == nil else { return }
+        beginTransaction()
+        ownsTextCreationTransaction = true
+    }
+
+    private func endTextCreationTransaction() {
+        guard ownsTextCreationTransaction else { return }
+        ownsTextCreationTransaction = false
+        endTransaction()
+    }
+
     func beginTextCreation() {
         guard canEditSection(.text), pendingText == nil, duration > 0 else { return }
+        beginTextCreationTransaction()
         player?.pause()
         isPlaying = false
         let start = min(max(0, currentTime), max(0, duration - 0.1))
@@ -3165,9 +3183,14 @@ struct NativeEditorTemporaryVideo {
 
     func updatePendingText(_ content: String) { pendingText?.text = content }
 
-    func cancelTextCreation() { pendingText = nil }
+    func cancelTextCreation() {
+        pendingText = nil
+        endTextCreationTransaction()
+    }
 
     @discardableResult func finishTextCreation() -> EditorSelection? {
+        // The staged item is added inside the transaction, so ending it records one undo step.
+        defer { endTextCreationTransaction() }
         guard let item = pendingText else { return nil }
         pendingText = nil
         guard !item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, canEditSection(.text) else { return nil }
