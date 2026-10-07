@@ -59,7 +59,11 @@ async def _dispose_async_engine():
 
 
 def _project(
-    monkeypatch: pytest.MonkeyPatch, *, emit_after: int = 15, order: bool = False
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    emit_after: int = 15,
+    order: bool = False,
+    clips: int = CLIPS,
 ) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
     """``emit_after``: the length the (mock) Creator model emits on every turn after the
     first; a model that obeys an option's label emits 24, one that ignores it re-emits 15.
@@ -68,7 +72,7 @@ def _project(
     with sync_session() as db:
         session = db.get(CreatorAgentSession, session_id)
         item = db.get(PlanItem, session.plan_item_id)
-        item.clip_gcs_paths = [f"clips/{i:02d}.mp4" for i in range(CLIPS)]
+        item.clip_gcs_paths = [f"clips/{i:02d}.mp4" for i in range(clips)]
         item.clip_assignments = [
             {
                 "media_id": f"clip-{i:02d}",
@@ -76,7 +80,7 @@ def _project(
                 "storage_generation": "g1",
                 "duration_s": 3.0,
             }
-            for i in range(CLIPS)
+            for i in range(clips)
         ]
         db.commit()
     calls = {"n": 0}
@@ -133,7 +137,7 @@ def _project(
                 else ()
             ),
             brief_route="replan",
-            brief_clip_ids=tuple(f"clip-{i:02d}" for i in range(CLIPS)),
+            brief_clip_ids=tuple(f"clip-{i:02d}" for i in range(clips)),
         )
 
     monkeypatch.setattr(planner, "_plan_live_turn", _model)
@@ -403,7 +407,7 @@ async def test_an_unanswered_order_question_ends_in_one_plain_message_a_typed_re
     last = [e for e in _events(thread_id) if e.role == "assistant"][-1]
     text = last.content or ""
     assert "Use the order you added the clips" in text
-    assert "Continue without chronological order" in text
+    assert "Continue without a fixed order" in text
     assert "draft is unchanged" not in text  # there is no draft to be unchanged
     result = await _say(user_id, thread_id, "Use the order you added the clips")
     assert result["status"] == "awaiting_approval"
@@ -445,3 +449,107 @@ async def test_flag_off_is_byte_identical_to_before(monkeypatch) -> None:
     strategy = _draft_strategy(draft)
     assert "choice_answers" not in strategy and strategy["target_duration_s"] == 15
     assert "choice_answers" not in draft.snapshot_json["brief_binding"]
+
+
+def _append_assistant(thread_id, event_type: str, **payload) -> None:  # noqa: ANN001, ANN003
+    from app.tasks.kria_runtime import _append_sync_event
+
+    with sync_session() as db:
+        thread = db.get(CreationThread, thread_id, with_for_update=True)
+        _append_sync_event(
+            db, thread, role="assistant", event_type=event_type, content="x", payload=payload
+        )
+        db.commit()
+
+
+ASYNC_EVENTS = (
+    ("generation_ready", {"job_id": "j"}),
+    ("assistant_review", {}),
+    ("memory_updated", {}),
+    ("status_update", {}),
+    ("format_prompt", {"kind": "select_format"}),
+    ("draft_applied", {}),
+    ("assistant_render_failed", {}),
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["tap", "typed_number"])
+async def test_async_events_after_the_question_do_not_break_the_tap_or_the_typed_answer(
+    monkeypatch, how: str
+) -> None:
+    """P2-4: an earlier render finishing / a memory write / a status line after the card
+    used to make the tap fail with 'no longer open' and a typed '2' stop converting."""
+    user_id, thread_id, _ = _project(monkeypatch)
+    await _say(user_id, thread_id, PROMPT)
+    (question,) = _questions(thread_id)
+    for event_type, payload in ASYNC_EVENTS:
+        _append_assistant(thread_id, event_type, **payload)
+    if how == "tap":
+        selection = {"question_id": question["question_id"], "option_key": "fewer"}
+        result = await _say(
+            user_id, thread_id, "Keep 15 seconds with 18 clips", selection=selection
+        )
+    else:
+        result = await _say(user_id, thread_id, "2")  # the second listed option: fewer
+    assert result["status"] == "awaiting_approval"
+    assert len(_questions(thread_id)) == 1  # the async events did not burn an ask
+    (answer,) = _draft_strategy(_head_draft(thread_id))["choice_answers"]
+    assert answer["option"] == "fewer"
+
+
+@pytest.mark.asyncio
+async def test_a_later_text_question_stops_a_typed_number_from_answering_the_card(
+    monkeypatch,
+) -> None:
+    from app.tasks.kria_runtime import _append_sync_event
+
+    user_id, thread_id, _ = _project(monkeypatch)
+    await _say(user_id, thread_id, PROMPT)
+    with sync_session() as db:
+        thread = db.get(CreationThread, thread_id, with_for_update=True)
+        _append_sync_event(
+            db, thread, role="user", event_type="user_message", content="hmm", payload={}
+        )
+        _append_sync_event(
+            db,
+            thread,
+            role="assistant",
+            event_type="assistant_response",
+            content="How many clips do you want?",
+            payload={"turn_id": str(uuid.uuid4()), "turn_value": "question"},
+        )
+        db.commit()
+    await _say(user_id, thread_id, "2")  # an answer to the text question, not to the card
+    stored = [
+        e.payload["choice_selection"]
+        for e in _events(thread_id)
+        if e.role == "user" and e.payload and e.payload.get("choice_selection")
+    ]
+    assert stored == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "restatement", ["no I want exactly 15 seconds with all of them", "make it shorter"]
+)
+async def test_a_later_restatement_reopens_the_question_and_is_never_silently_24_8(
+    monkeypatch, restatement: str
+) -> None:
+    user_id, thread_id, _ = _project(monkeypatch, clips=31)
+    await _say(user_id, thread_id, "Keep 15 seconds and use all of my 31 clips")
+    (question,) = _questions(thread_id)
+    selection = {"question_id": question["question_id"], "option_key": "extend"}
+    first = await _say(user_id, thread_id, "Extend it to 24.8 seconds", selection=selection)
+    assert first["status"] == "awaiting_approval"
+    assert _draft_strategy(_head_draft(thread_id))["target_duration_s"] == 24.8
+    await _decide(user_id, thread_id, "deny")
+    revision = _head_draft(thread_id).draft_revision
+    await _say(user_id, thread_id, restatement)  # the model emits 15 again
+    assert len(_questions(thread_id)) == 2  # it asks once more ...
+    assert _head_draft(thread_id).draft_revision == revision  # ... and drafts nothing at 24.8
+    done = await _say(user_id, thread_id, restatement + "!")  # the second ask is spent
+    assert done["status"] == "awaiting_approval"
+    strategy = _draft_strategy(_head_draft(thread_id))
+    assert strategy["target_duration_s"] == 15 and "choice_answers" not in strategy
+    assert len(_questions(thread_id)) == 2

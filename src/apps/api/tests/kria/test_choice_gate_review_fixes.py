@@ -91,11 +91,39 @@ async def test_a_brief_length_that_fits_never_asks(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_models_own_selection_does_not_change_what_is_counted(monkeypatch) -> None:
-    # media_scope selected + 3 ids is the MODEL's choice, not the creator's evidence.
-    planned = _planned(seconds=15, media_scope="selected", selected_media_ids=["c00", "c01", "c02"])
-    result = await _gate(monkeypatch, planned, rows=_rows(30), brief=_brief(_timing(15)))
-    assert result.plan.choice_question["kind"] == "duration_vs_count"
+async def test_the_creators_selection_is_what_is_counted(monkeypatch) -> None:
+    """42 snapshot clips, brief 15 s, 8 selected: 8 x 0.8 s fits, so nothing is asked."""
+    eight = [f"c{i:02d}" for i in range(8)]
+    planned = _planned(seconds=15, media_scope="selected", selected_media_ids=eight)
+    result = await _gate(monkeypatch, planned, rows=_rows(42), brief=_brief(_timing(15)))
+    assert result.plan.mode == "act"
+
+
+@pytest.mark.asyncio
+async def test_fewer_chooses_within_the_selection_and_never_re_adds_excluded_clips(
+    monkeypatch,
+) -> None:
+    """30 selected of 42, brief 15 s: asks about 30 (not 42) and `fewer` keeps to the 30."""
+    selected = [f"c{i:02d}" for i in range(0, 42, 1) if i % 7 != 0][:30]
+    assert len(selected) == 30
+    planned = _planned(seconds=15, media_scope="selected", selected_media_ids=selected)
+    rows, brief = _rows(42), _brief(_timing(15))
+    first = await _gate(monkeypatch, planned, rows=rows, brief=brief)
+    question = first.plan.choice_question
+    assert question["kind"] == "duration_vs_count"
+    assert "uses 30 clips" in first.plan.response and "42" not in first.plan.response
+    assert "24" in question["options"][0]["label"]  # 30 x 0.8 s
+    asked = _asked(first)
+    result = await _gate(
+        monkeypatch,
+        planned,
+        rows=rows,
+        brief=brief,
+        events=(asked, _picked(question, "fewer")),
+    )
+    chosen = _strategy(result)["selected_media_ids"]
+    assert len(chosen) == 18 and set(chosen) <= set(selected)
+    assert not {f"c{i:02d}" for i in range(0, 42, 7)} & set(chosen)
 
 
 @pytest.mark.asyncio
@@ -162,11 +190,7 @@ async def test_fewer_wins_over_what_the_model_emits(monkeypatch, model_value) ->
     asked = _asked(first)
     events = (asked, _picked(asked[1]["choice_question"], "fewer"))
     result = await _gate(
-        monkeypatch,
-        _planned(seconds=model_value, media_scope="selected", selected_media_ids=["c00", "c01"]),
-        rows=rows,
-        brief=brief,
-        events=events,
+        monkeypatch, _planned(seconds=model_value), rows=rows, brief=brief, events=events
     )
     strategy = _strategy(result)
     assert strategy["target_duration_s"] == 15 and len(strategy["selected_media_ids"]) == 18
@@ -228,8 +252,10 @@ def test_the_question_stays_open_while_it_is_the_last_assistant_turn() -> None:
     assert question is not None
     for alias, key in (("longer", "extend"), ("Keep it short", "fewer"), ("2", "fewer")):
         assert match_open_choice(question, alias) == key
-    # ... and stops being convertible once anything else was said.
-    assert latest_open_choice_question([*events, ("assistant", {"turn_value": "action"})]) is None
+    # ... and stops being convertible once the assistant REPLIED to something the creator
+    # said afterwards.
+    reply = ("assistant", {"turn_value": "action"})
+    assert latest_open_choice_question([*events, ("user", {}), reply]) is None
 
 
 def test_after_the_re_ask_cap_a_non_answer_closes_it_but_a_restating_recovery_reopens_it() -> None:
@@ -301,6 +327,7 @@ async def test_plan_live_turn_runs_the_gate_without_a_database(monkeypatch) -> N
     monkeypatch.setattr(planner, "_plan_live_turn", _model)
     monkeypatch.setattr(planner, "load_latest_brief", AsyncMock(return_value=_brief(_timing(15))))
     monkeypatch.setattr(type(planner.settings), "creative_brief_for", lambda _s, _i: True)
+    monkeypatch.setattr(type(planner.settings), "brief_binding_for", lambda _s, _i: True)
     monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=[]))
     monkeypatch.setattr(planner.settings, "kria_choice_questions_enabled", True)
     result = await planner.plan_live_turn(
@@ -462,3 +489,290 @@ def test_backstop_evaluates_the_brief_only_for_the_binding_cohort_and_words_itse
         _unresolved_choice_plan(unresolved_strategy, _brief(bad), snapshot, contract_brief=None)
         is None
     )  # not in the binding cohort: nothing brief-derived to refuse
+
+
+# ── second review ────────────────────────────────────────────────────────────
+
+from app.services.choice_questions import (  # noqa: E402
+    NEVER_CLOSES,
+    QUESTION_EVENT_EFFECT,
+    count_asks,
+    delegated_choice,
+    tag_event,
+)
+
+
+def _ev(role: str, event_type: str, **payload: object) -> tuple[str, dict]:
+    return tag_event(role, payload, event_type, None)
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    sorted(t for t, effect in QUESTION_EVENT_EFFECT.items() if effect == NEVER_CLOSES),
+)
+def test_async_and_non_conversational_events_never_close_a_question(event_type) -> None:
+    """P2-4: a render finishing / a memory write / a status line is not a reply."""
+    asked = _ev("assistant", "assistant_response", choice_question=_q(), turn_value="question")
+    for with_user in (False, True):
+        events = [asked, *([tag_event("user", {}, None, "ok")] if with_user else [])]
+        events.append(_ev("assistant", event_type))
+        question = latest_open_choice_question(events)
+        assert question is not None and question["question_id"] == "q1"
+        assert match_open_choice(question, "2") == "fewer"  # a typed '2' still converts
+
+
+def test_the_denylist_names_every_producer_event_type() -> None:
+    expected = {
+        "assistant_response",
+        "assistant_question",
+        "assistant_error",
+        "assistant_render_failed",
+        "generation_ready",
+        "assistant_review",
+        "memory_updated",
+        "status_update",
+        "format_prompt",
+        "media_prompt",
+        "draft_applied",
+        "draft_undone",
+    }
+    assert set(QUESTION_EVENT_EFFECT) == expected
+
+
+def test_only_a_reply_to_a_later_user_turn_closes_a_question() -> None:
+    asked = _ev("assistant", "assistant_response", choice_question=_q(), turn_value="question")
+    text_question = _ev("assistant", "assistant_response", turn_value="question")
+    user = tag_event("user", {}, None, "how about 12 clips")
+    # No user turn after the question: an assistant_response is not a reply to anything.
+    assert latest_open_choice_question([asked, text_question]) is not None
+    # The P2-3 scenario: [Q, user, assistant text question, user '2'] must NOT convert.
+    assert latest_open_choice_question([asked, user, text_question]) is None
+    plan = _ev("assistant", "assistant_response", turn_value="action")
+    assert latest_open_choice_question([asked, user, plan]) is None
+    voiceover = _ev("assistant", "assistant_question", code="voiceover_required")
+    assert latest_open_choice_question([asked, user, voiceover]) is None
+
+
+def test_async_events_do_not_consume_an_ask() -> None:
+    """P4: the second ask is still available after any number of async events."""
+    strategy = CreativeStrategy(edit_format="montage")
+    rows, brief = {"clip_assignments": _rows(30)}, _brief(_timing(15))
+    first = resolve_choices(strategy, brief, rows, []).question
+    asked = _ev(
+        "assistant",
+        "assistant_response",
+        choice_question={
+            "question_id": "q1",
+            "conflict": first.conflict_id,
+            "input_digest": first.input_digest,
+            "options": [{"key": o.key, "label": o.label} for o in first.options],
+        },
+        turn_value="question",
+    )
+    noise = [_ev("assistant", t) for t in ("generation_ready", "memory_updated", "status_update")]
+    history = [asked, *noise, tag_event("user", {}, None, "hmm?")]
+    assert count_asks(history, first.conflict_id, first.input_digest) == 1
+    again = resolve_choices(strategy, brief, rows, history)
+    assert again.question is not None and not again.exhausted  # the ONE re-ask is intact
+
+
+# key unification ------------------------------------------------------------
+
+
+def test_one_capture_key_set_is_shared_by_contract_planner_and_receipts() -> None:
+    from app.kria import brief_checks
+    from app.pipeline import unified_montage
+    from app.services import choice_questions, clip_facts
+
+    shared = clip_facts.CAPTURE_ORDER_KEYS
+    assert shared >= {"capture_time", "chronological", "route", "time", "shot_order"}
+    assert choice_questions.CAPTURE_ORDER_KEYS is shared
+    assert unified_montage._CAPTURE_ORDER_KEYS is shared
+    assert brief_checks._CAPTURE_ORDER_KEYS is shared
+
+
+@pytest.mark.parametrize("key", ["route", "time", "shot_order", "capture_time"])
+def test_route_time_and_shot_order_are_verified_as_capture_order(key) -> None:
+    rows = _rows(6)
+    brief = _brief(_order(key=key))
+    contract = build_render_contract(
+        {"edit_format": "montage"},
+        generation_id="g",
+        brief=brief,
+        media_snapshot={"clip_assignments": rows},
+    )
+    assert contract.order_required and contract.order_basis == "capture_time"
+    assert contract.order_ids == tuple(r["media_id"] for r in rows) and not contract.unresolved
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["route", "time", "shot_order"])
+async def test_a_dated_route_request_asks_nothing(monkeypatch, key) -> None:
+    result = await _gate(monkeypatch, _planned(), rows=_rows(8), brief=_brief(_order(key=key)))
+    assert result.plan.mode == "act"
+
+
+@pytest.mark.asyncio
+async def test_an_undated_route_request_says_so_and_offers_honest_options(monkeypatch) -> None:
+    result = await _gate(
+        monkeypatch,
+        _planned(),
+        rows=_rows(11, dated=False),
+        brief=_brief(_order(key="route")),
+    )
+    question = result.plan.choice_question
+    assert [o["label"] for o in question["options"]] == [
+        "Use the order you added the clips",
+        "Continue without a fixed order",
+    ]
+    assert "none of your clips have a filming time" in result.plan.response
+    assert "in the order you filmed" not in result.plan.response  # it was a route ask
+
+
+@pytest.mark.asyncio
+async def test_a_keyless_rule_still_asks_even_with_capture_times(monkeypatch) -> None:
+    rule = BriefRequirement(
+        id="r2", kind="order", scope="global", description="clips 1..8 in that sequence"
+    )
+    result = await _gate(monkeypatch, _planned(), rows=_rows(8), brief=_brief(rule))
+    assert result.plan.choice_question["kind"] == "order_basis"
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_sequence_via_selected_ids_is_asked_about_for_now(monkeypatch) -> None:
+    """KNOWN LIMIT, not a false positive (prod thread aed98bf6 shape): the sequence rides
+    in `selected_media_ids` (m001..m008) but no renderer is proven to honour that order, so
+    the contract cannot verify it. It stays on the ask path until the route resolver
+    (PR-D/F) can pin a selected order. The twin record is
+    `clarify-explicit-sequence-via-selection-asks-for-now`."""
+    ids = [f"c{i:02d}" for i in range(8)]
+    rule = BriefRequirement(
+        id="r2", kind="order", scope="global", description="clips 1..8 in that sequence"
+    )
+    planned = _planned(media_scope="selected", selected_media_ids=ids)
+    result = await _gate(monkeypatch, planned, rows=_rows(8), brief=_brief(rule))
+    assert result.plan.choice_question["kind"] == "order_basis"
+    assert "specific order" in result.plan.response
+
+
+# P3 --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("phrase", ["whatever", "I don't care", "i don't mind", "Keep 15 seconds"])
+def test_a_bare_whatever_is_not_a_delegation(phrase) -> None:
+    assert delegated_choice(_q(), phrase) is None
+    assert delegated_choice(_q(), "up to you") is not None
+
+
+@pytest.mark.asyncio
+async def test_a_creator_without_a_brief_binding_is_not_asked_brief_questions(monkeypatch) -> None:
+    monkeypatch.setattr(planner.settings, "kria_choice_questions_enabled", True)
+    planned = replace(_planned(seconds=15), media_snapshot={"clip_assignments": _rows(30)})
+    monkeypatch.setattr(planner, "load_latest_brief", AsyncMock(return_value=_brief(_timing(15))))
+    monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=[]))
+    monkeypatch.setattr(type(planner.settings), "creative_brief_for", lambda _s, _i: True)
+    monkeypatch.setattr(type(planner.settings), "brief_binding_for", lambda _s, _i: False)
+    result = await planner._gate_unresolved_choices(
+        SimpleNamespace(), planned, thread_id=uuid.uuid4(), creator_id=uuid.uuid4()
+    )
+    assert result.plan.mode == "act"  # nothing would refuse it, so nothing is asked
+
+
+def test_a_single_option_is_a_statement_not_a_choice() -> None:
+    from app.services.choice_questions import choice_question_text
+
+    strategy = CreativeStrategy(edit_format="montage")
+    (offered,) = collect_conflicts(
+        strategy,
+        _brief(_timing(15)),
+        {"clip_assignments": _rows(30)},
+        ChoiceCapability(max_duration_s=20),
+    )
+    text = choice_question_text(offered.candidate())
+    assert "Which do you prefer?" not in text and "The most I can do is" in text
+    assert "Keep 15 seconds with 18 clips" in text
+
+
+# P2-5: a later restatement supersedes the answer --------------------------------
+
+
+async def _answered(monkeypatch, *, clips=31, option="extend"):  # noqa: ANN001, ANN202
+    rows, brief = _rows(clips), _brief(_timing(15))
+    first = await _gate(monkeypatch, _planned(seconds=15), rows=rows, brief=brief)
+    asked = _asked(first)
+    answer = _picked(asked[1]["choice_question"], option)
+    return rows, brief, [asked, tag_event("user", answer[1], None, "Extend it")]
+
+
+@pytest.mark.asyncio
+async def test_extend_gives_24_8_and_the_answer_turn_echo_keeps_it(monkeypatch) -> None:
+    rows, brief, events = await _answered(monkeypatch)
+    result = await _gate(
+        monkeypatch, _planned(seconds=15), rows=rows, brief=brief, events=tuple(events)
+    )
+    assert _strategy(result)["target_duration_s"] == 24.8
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message", "model_seconds"),
+    [
+        ("no I want exactly 15 seconds with all of them", 15),
+        ("make it shorter", 20),
+        ("make it shorter", 15),
+    ],
+)
+async def test_a_later_restatement_is_never_silently_overridden(
+    monkeypatch, message, model_seconds
+) -> None:
+    rows, brief, events = await _answered(monkeypatch)
+    events.append(tag_event("user", {}, None, message))
+    result = await _gate(
+        monkeypatch,
+        _planned(seconds=model_seconds),
+        rows=rows,
+        brief=brief,
+        events=tuple(events),
+    )
+    # It asks once more (the old answer is dropped, not re-applied) ...
+    assert result.plan.turn_value == "question" and not result.plan.intents
+    again = _asked(result)
+    # ... and once that second ask is spent the plan goes through UNCHANGED, never 24.8.
+    events += [again, tag_event("user", {}, None, message)]
+    spent = await _gate(
+        monkeypatch,
+        _planned(seconds=model_seconds),
+        rows=rows,
+        brief=brief,
+        events=tuple(events),
+    )
+    strategy = _strategy(spent)
+    assert strategy["target_duration_s"] == model_seconds and "choice_answers" not in strategy
+
+
+@pytest.mark.asyncio
+async def test_a_later_message_that_keeps_the_answered_value_keeps_the_answer(monkeypatch) -> None:
+    rows, brief, events = await _answered(monkeypatch)
+    events.append(tag_event("user", {}, None, "also make the title bigger"))
+    result = await _gate(
+        monkeypatch, _planned(seconds=24.8), rows=rows, brief=brief, events=tuple(events)
+    )
+    assert _strategy(result)["choice_answers"][0]["option"] == "extend"
+
+
+@pytest.mark.asyncio
+async def test_a_verbatim_resend_is_not_a_restatement(monkeypatch) -> None:
+    rows, brief = _rows(31), _brief(_timing(15))
+    original = tag_event("user", {}, None, "Keep 15 seconds, all clips")
+    first = await _gate(monkeypatch, _planned(seconds=15), rows=rows, brief=brief)
+    asked = _asked(first)
+    answer = tag_event("user", _picked(asked[1]["choice_question"], "extend")[1], None, "Extend it")
+    resent = tag_event("user", {}, None, "Keep 15 seconds, all clips")
+    result = await _gate(
+        monkeypatch,
+        _planned(seconds=15),
+        rows=rows,
+        brief=brief,
+        events=(original, asked, answer, resent),
+    )
+    assert _strategy(result)["target_duration_s"] == 24.8

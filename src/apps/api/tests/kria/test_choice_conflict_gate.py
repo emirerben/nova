@@ -107,6 +107,7 @@ async def _gate(
 ) -> PlannedKriaTurn:
     monkeypatch.setattr(planner, "load_latest_brief", AsyncMock(return_value=brief))
     monkeypatch.setattr(type(planner.settings), "creative_brief_for", lambda _s, _i: True)
+    monkeypatch.setattr(type(planner.settings), "brief_binding_for", lambda _s, _i: True)
     monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=list(events)))
     planned = replace(planned, media_snapshot={"clip_assignments": rows})
     return await planner._gate_unresolved_choices(
@@ -220,7 +221,7 @@ async def test_dated_clips_ask_nothing_about_order(monkeypatch) -> None:
     "requirement",
     [
         # The three prod-shaped key-less/non-capture rules (redacted): facts {} and an
-        # explicit "in that sequence" ask, or a route key.
+        # explicit "in that sequence" ask, or a non-capture key.
         BriefRequirement(
             id="r2", kind="order", scope="global", description="clips 1, 2, 3 in that sequence"
         ),
@@ -235,8 +236,8 @@ async def test_dated_clips_ask_nothing_about_order(monkeypatch) -> None:
             id="r2",
             kind="order",
             scope="global",
-            description="along my route",
-            facts={"key": "route"},
+            description="alphabetically",
+            facts={"key": "alphabetical"},
         ),
     ],
 )
@@ -485,7 +486,7 @@ async def test_repeating_the_request_is_not_an_answer_and_never_triggers_a_defau
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("phrase", ["you choose", "Surprise me!", "whatever", "up to you"])
+@pytest.mark.parametrize("phrase", ["you choose", "Surprise me!", "up to you", "you decide"])
 async def test_an_explicit_delegation_picks_the_recommended_option_and_says_so(
     monkeypatch, phrase
 ) -> None:

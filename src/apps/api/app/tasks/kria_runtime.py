@@ -80,6 +80,7 @@ from app.services.choice_questions import (
     choice_question_text,
     count_asks,
     open_conflicts,
+    tag_event,
 )
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
 from app.services.kria_editor_ops import (
@@ -794,15 +795,20 @@ def _complete_draft_turn(
                 )
             blocked = _unresolved_choice_plan(
                 document.strategy,
-                gate_brief,
+                gate_brief if binding_on else None,
                 planned.media_snapshot
                 if planned.media_snapshot is not None
                 else _snapshot_media(item),
                 contract_brief=gate_brief if binding_on else None,
                 events=[
-                    (role, payload)
-                    for role, payload in db.execute(
-                        select(CreationThreadEvent.role, CreationThreadEvent.payload)
+                    tag_event(role, payload, event_type, content)
+                    for role, payload, event_type, content in db.execute(
+                        select(
+                            CreationThreadEvent.role,
+                            CreationThreadEvent.payload,
+                            CreationThreadEvent.event_type,
+                            CreationThreadEvent.content,
+                        )
                         .where(
                             CreationThreadEvent.thread_id == thread.id,
                             CreationThreadEvent.role.in_({"user", "assistant"}),

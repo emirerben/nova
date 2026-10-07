@@ -58,6 +58,7 @@ from app.services.choice_questions import (
     delegated_choice,
     latest_open_choice_question,
     match_open_choice,
+    tag_event,
 )
 from app.services.clip_selection import ClipSelectionIn, latest_open_clip_question
 from app.services.creation_thread_titles import (
@@ -229,7 +230,12 @@ async def _validate_choice_selection(
 
     rows = (
         await db.execute(
-            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            select(
+                CreationThreadEvent.role,
+                CreationThreadEvent.payload,
+                CreationThreadEvent.event_type,
+                CreationThreadEvent.content,
+            )
             .where(
                 CreationThreadEvent.thread_id == thread.id,
                 CreationThreadEvent.role.in_({"user", "assistant"}),
@@ -237,7 +243,9 @@ async def _validate_choice_selection(
             .order_by(CreationThreadEvent.sequence)
         )
     ).all()
-    question = latest_open_choice_question((role, payload) for role, payload in rows)
+    question = latest_open_choice_question(
+        tag_event(role, payload, event_type, content) for role, payload, event_type, content in rows
+    )
     if question is None or question.get("question_id") != selection.question_id:
         raise RuntimeFailure(
             422,
@@ -259,7 +267,7 @@ async def _validate_choice_selection(
 
 # How many of the thread's newest events can still hold an OPEN choice question. A
 # question that old is stale and a plain message is never read as its answer.
-_FREE_TEXT_CHOICE_WINDOW = 12
+_FREE_TEXT_CHOICE_WINDOW = 60
 
 
 async def _free_text_choice_selection(
@@ -279,7 +287,12 @@ async def _free_text_choice_selection(
 
     rows = (
         await db.execute(
-            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            select(
+                CreationThreadEvent.role,
+                CreationThreadEvent.payload,
+                CreationThreadEvent.event_type,
+                CreationThreadEvent.content,
+            )
             .where(
                 CreationThreadEvent.thread_id == thread.id,
                 CreationThreadEvent.role.in_({"user", "assistant"}),
@@ -288,7 +301,10 @@ async def _free_text_choice_selection(
             .limit(_FREE_TEXT_CHOICE_WINDOW)
         )
     ).all()
-    question = latest_open_choice_question((role, payload) for role, payload in reversed(rows))
+    question = latest_open_choice_question(
+        tag_event(role, payload, event_type, content)
+        for role, payload, event_type, content in reversed(rows)
+    )
     if question is None:
         return None
     option_key = match_open_choice(question, message)

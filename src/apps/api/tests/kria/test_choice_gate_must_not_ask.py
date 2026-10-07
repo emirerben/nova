@@ -31,14 +31,11 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
 # fixture id -> why asking is CORRECT (the contract genuinely cannot verify the ask).
 _ROUTE = (
-    "route order: the contract pins only capture-time/chronological order, so a route rule "
-    "is unresolved (it used to be refused at dispatch); it is now ONE question"
+    "route order over footage with NO capture times (0 of 11 clips timed): the contract "
+    "pins capture-time order, so it asks once with the honest options. The other two route "
+    "threads have capture times and ask nothing."
 )
-LEGITIMATE_ASKS: dict[str, str] = {
-    "east_run": _ROUTE,
-    "harbor_route_reversed_then_route_order": _ROUTE,
-    "trip_route_order": _ROUTE,
-}
+LEGITIMATE_ASKS: dict[str, str] = {"east_run": _ROUTE}
 
 THREADS = [pytest.param(path, id=path.stem) for path in discover_fixture_paths()]
 

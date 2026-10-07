@@ -81,6 +81,7 @@ from app.services.choice_questions import (
     detect_order_vs_group,
     fold_choice_answers,
     resolve_choices,
+    tag_event,
 )
 from app.services.clip_intent_answers import persist_clip_intent_vision_answers
 from app.services.clip_intent_planning import plan_and_resolve_clip_intents
@@ -380,7 +381,12 @@ def _with_song_sync(strategy: Any, song_sync: str) -> Any:
 async def _load_thread_events(db: AsyncSession, thread_id: uuid.UUID) -> list[tuple[str, Any]]:
     rows = (
         await db.execute(
-            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            select(
+                CreationThreadEvent.role,
+                CreationThreadEvent.payload,
+                CreationThreadEvent.event_type,
+                CreationThreadEvent.content,
+            )
             .where(
                 CreationThreadEvent.thread_id == thread_id,
                 CreationThreadEvent.role.in_({"user", "assistant"}),
@@ -389,7 +395,11 @@ async def _load_thread_events(db: AsyncSession, thread_id: uuid.UUID) -> list[tu
         )
     ).all()
     await db.rollback()  # no connection pinned across what follows
-    return [(role, payload) for role, payload in rows]
+    # KRI-476: tagged with the event type and a user message's text so a choice question
+    # is closed only by a real reply, never by an async event (see `tag_event`).
+    return [
+        tag_event(role, payload, event_type, content) for role, payload, event_type, content in rows
+    ]
 
 
 async def _song_order_gate(
@@ -1715,7 +1725,10 @@ async def _gate_unresolved_choices(
     if apply_intent.tool_name != "draft.apply_strategy" or not isinstance(strategy, dict):
         return planned
     brief: CreativeBrief | None = None
-    if settings.creative_brief_for(creator_id):
+    # Only a creator with a brief BINDING has a dispatch contract that reads the brief, so
+    # only they can be asked a brief-derived question that anything would later refuse
+    # (the completion backstop applies the same guard).
+    if settings.creative_brief_for(creator_id) and settings.brief_binding_for(creator_id):
         brief = await load_latest_brief(db, thread_id)
         if planned.brief_updates:
             with suppress(BriefUpdateBatchError):

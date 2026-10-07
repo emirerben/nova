@@ -62,6 +62,13 @@ _LANDMARK_CONCURRENCY = 3
 LANDMARK_BUDGET_S = 45.0
 
 
+# Brief order keys that mean "by when the clips were filmed". ONE constant: the render
+# contract (what is pinned and verified), the montage planner (what is rendered) and the
+# requirement receipts (what is reported) must never disagree about it. `route` uses
+# capture-time order today (see `order_by_capture_time`), as do `time` and `shot_order`.
+CAPTURE_ORDER_KEYS = frozenset({"capture_time", "chronological", "route", "time", "shot_order"})
+
+
 def capture_from_assignment(assignment: Mapping[str, Any]) -> ClipCapture | None:
     """The stored capture context for one clip assignment, or None.
 

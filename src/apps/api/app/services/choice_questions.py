@@ -35,7 +35,11 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.services.clip_facts import capture_from_assignment, order_by_capture_time
+from app.services.clip_facts import (
+    CAPTURE_ORDER_KEYS,
+    capture_from_assignment,
+    order_by_capture_time,
+)
 
 CHOICE_QUESTION_VERSION = 1
 MAX_CHOICE_OPTIONS = 6
@@ -216,8 +220,16 @@ def build_choice_question(
 
 def choice_question_text(candidate: ConflictCandidate) -> str:
     """Self-sufficient plain text (old builds show only this)."""
+    options = candidate.options[:MAX_CHOICE_OPTIONS]
+    if len(options) == 1:
+        # One way forward is a statement, not a choice.
+        only = options[0]
+        return (
+            f"{candidate.intro} Unfortunately {candidate.reason} The most I can do is: "
+            f'{only.label}. Reply "{only.label}" to go with that, or change your request.'
+        )
     lines = [f"{candidate.intro} Unfortunately {candidate.reason} Which do you prefer?"]
-    for index, option in enumerate(candidate.options[:MAX_CHOICE_OPTIONS], start=1):
+    for index, option in enumerate(options, start=1):
         mark = " (recommended)" if option.recommended else ""
         lines.append(f"{index}. {option.label}{mark}")
     lines.append("Tap an option, or tell me in your own words.")
@@ -240,6 +252,66 @@ def _option_keys(question: Mapping[str, Any]) -> set[str]:
 # A recovery reply that restates an exhausted question in words keeps it answerable.
 KEEP_OPEN_REASON = "unresolved_choice"
 
+# Thread events can carry tags the loaders add (``tag_event``): the producing event type,
+# and a user message's text. Untagged rows (older callers, tests) fall back to the payload.
+EVENT_TYPE_KEY = "_event_type"
+CONTENT_KEY = "_content"
+
+# What each assistant-role event type does to an OPEN choice question. Only a conversational
+# reply to a user turn taken AFTER the question may supersede it; everything asynchronous or
+# non-conversational must leave it answerable (a render finishing or a memory write used to
+# make a tap fail with "no longer open" and burned one of the two allowed asks). Verified
+# against the producers in tasks/kria_runtime.py, kria/runtime.py, kria/drafts.py,
+# routes/creation_threads.py, routes/creator_agent.py, services/creation_editor_actions.py,
+# services/creator_memory_learning.py and tasks/creator_preparation.py.
+CLOSES_AFTER_USER_REPLY = "closes_after_user_reply"
+NEVER_CLOSES = "never_closes"
+QUESTION_EVENT_EFFECT: dict[str, str] = {
+    # The planner's / editor copilot's reply to a user turn: a text question, plan or
+    # answer that supersedes the open question ("how many clips?" must not turn the next
+    # "2" into this question's answer).
+    "assistant_response": CLOSES_AFTER_USER_REPLY,
+    # A reply that asks something else (voiceover required, dispatch unavailable).
+    "assistant_question": CLOSES_AFTER_USER_REPLY,
+    # The turn failed; the user's reply was not processed, so the question is still the
+    # live ask.
+    "assistant_error": NEVER_CLOSES,
+    # Asynchronous: an earlier render failed, finished, or was reviewed. Not a reply.
+    "assistant_render_failed": NEVER_CLOSES,
+    "generation_ready": NEVER_CLOSES,
+    "assistant_review": NEVER_CLOSES,
+    # Outbox / background workers (creator memory) and thread bookkeeping.
+    "memory_updated": NEVER_CLOSES,
+    "status_update": NEVER_CLOSES,
+    # Format / media prerequisite prompts raised by thread actions, not by a reply.
+    "format_prompt": NEVER_CLOSES,
+    "media_prompt": NEVER_CLOSES,
+    # Draft bookkeeping written by the draft tools themselves.
+    "draft_applied": NEVER_CLOSES,
+    "draft_undone": NEVER_CLOSES,
+}
+
+
+def tag_event(
+    role: str, payload: Mapping[str, Any] | None, event_type: str | None, content: str | None
+) -> tuple[str, dict[str, Any]]:
+    """``(role, payload)`` plus the event type and (for a user message) its text."""
+
+    tagged: dict[str, Any] = dict(payload or {})
+    if event_type:
+        tagged[EVENT_TYPE_KEY] = event_type
+    if role == "user" and content:
+        tagged[CONTENT_KEY] = " ".join(str(content).split())[:400]
+    return role, tagged
+
+
+def _closes_open_question(payload: Mapping[str, Any]) -> bool:
+    event_type = payload.get(EVENT_TYPE_KEY)
+    if event_type is None:
+        # Untagged: only something that looks like a conversational reply may close.
+        event_type = "assistant_response" if "turn_value" in payload else None
+    return QUESTION_EVENT_EFFECT.get(str(event_type)) == CLOSES_AFTER_USER_REPLY
+
 
 def _keeps_question_open(payload: Mapping[str, Any]) -> bool:
     coverage = payload.get("brief_coverage")
@@ -249,18 +321,20 @@ def _keeps_question_open(payload: Mapping[str, Any]) -> bool:
 def latest_open_choice_question(events: Events) -> dict[str, Any] | None:
     """The choice question a plain reply or a tap may still answer, else ``None``.
 
-    ``events`` are ``(role, payload)`` in chronological order. A question is open only
-    while it is the live last assistant turn:
+    ``events`` are ``(role, payload)`` in chronological order. A question stays open
+    until, and only until:
 
-    * a ``choice_selection`` that answers it closes it;
-    * any later assistant event that is not a choice question closes it (a text question
-      such as "how many clips?" must never have its answer read as this one's), except a
-      recovery that restates it in words (``brief_coverage.reason == "unresolved_choice"``);
-    * once it has been asked ``MAX_ASKS_PER_QUESTION`` times, a later user message that is
-      not an answer closes it too.
+    * a ``choice_selection`` answers it;
+    * a newer ``choice_question`` replaces it;
+    * the assistant replies to a user turn taken AFTER it with a text question / plan
+      (``QUESTION_EVENT_EFFECT``; asynchronous events never close it), except a recovery
+      that restates it in words (``brief_coverage.reason == "unresolved_choice"``);
+    * it has been asked ``MAX_ASKS_PER_QUESTION`` times and a user message that is not an
+      answer follows.
     """
     last: dict[str, Any] | None = None
     is_open = False
+    user_since = False
     asked: dict[tuple[Any, Any], int] = {}
     for role, payload in events:
         if not isinstance(payload, dict):
@@ -270,10 +344,10 @@ def latest_open_choice_question(events: Events) -> dict[str, Any] | None:
             if isinstance(question, dict):
                 key = (question.get("conflict"), question.get("input_digest"))
                 asked[key] = asked.get(key, 0) + 1
-                last, is_open = question, True
+                last, is_open, user_since = question, True, False
             elif last is not None and _keeps_question_open(payload):
                 is_open = True
-            else:
+            elif user_since and _closes_open_question(payload):
                 is_open = False
         elif role == "user":
             selection = payload.get("choice_selection")
@@ -281,6 +355,7 @@ def latest_open_choice_question(events: Events) -> dict[str, Any] | None:
                 if last is not None and selection.get("question_id") == last.get("question_id"):
                     last, is_open = None, False
             elif last is not None and is_open:
+                user_since = True
                 key = (last.get("conflict"), last.get("input_digest"))
                 if asked.get(key, 0) >= MAX_ASKS_PER_QUESTION:
                     is_open = False
@@ -329,7 +404,6 @@ OPT_UNORDERED = "unordered"
 OPT_OWN_SEQUENCE = "own_sequence"
 
 # What an "order I filmed them" requirement means to the contract (brief order keys).
-CAPTURE_ORDER_KEYS = frozenset({"capture_time", "chronological"})
 ATTACHMENT_ORDER_KEY = "attachment"
 
 # The most clips a draft names; a hard bound on the evenly-spaced subset.
@@ -512,6 +586,11 @@ def _duration_vs_count(
         return None
     kept = _included_ids(strategy)
     clip_ids = [m for m in ids if kept is None or m in kept]
+    # The selection the draft carries IS the clip set (like `_order_basis`): 8 selected
+    # clips of 42 are not 42, and `fewer` must never re-add a clip that was left out.
+    chosen = {str(m) for m in strategy.get("selected_media_ids") or []}
+    if chosen:
+        clip_ids = [m for m in clip_ids if m in chosen]
     if not clip_ids:
         return None
     floor_s = cap.min_readable_shot_s
@@ -655,11 +734,20 @@ def _order_basis(
             if len(missing) == many
             else f"{len(missing)} of your {many} clips have no filming time"
         )
-        intro = "You asked for the clips in the order you filmed them."
-        reason = f"{some}, so I can't put them in filming order."
-        unordered_label = "Continue without chronological order"
+        filmed = strategy.get("ordering_choice") == "chronological" or any(
+            str((req.facts or {}).get("key") or "").casefold() in ("capture_time", "chronological")
+            for req in _live(brief)
+            if req.kind == "order"
+        )
+        intro = (
+            "You asked for the clips in the order you filmed them."
+            if filmed
+            else "You asked for the clips in a specific order that follows when they were filmed."
+        )
+        reason = f"{some}, so I can't put them in that order."
+        unordered_label = "Continue without a fixed order"
         unordered_text = (
-            "I won't promise or check a filming-time order; the clips still play in a "
+            "I won't promise or check a particular order; the clips still play in a "
             "sensible sequence."
         )
         covered = capture_ids + (rule_ids if ask_rule else [])
@@ -834,6 +922,8 @@ class ScopedAnswer:
     # The creator handed the decision to us ("you choose"): the recommended option,
     # recorded as such and disclosed. Never set for an unanswered question.
     delegated: bool = False
+    # Position of the answering event in the history (later non-answer messages follow it).
+    index: int = -1
 
 
 def _event_list(events: Events) -> list[tuple[str, Any]]:
@@ -845,7 +935,7 @@ def fold_scoped_answers(events: Events) -> dict[str, ScopedAnswer]:
 
     questions: dict[str, dict[str, Any]] = {}
     answers: dict[str, ScopedAnswer] = {}
-    for role, payload in _event_list(events):
+    for position, (role, payload) in enumerate(_event_list(events)):
         if not isinstance(payload, dict):
             continue
         if role == "assistant" and isinstance(payload.get("choice_question"), dict):
@@ -864,6 +954,7 @@ def fold_scoped_answers(events: Events) -> dict[str, ScopedAnswer]:
             str(selection["option_key"]),
             str(digest) if digest else None,
             selection.get("delegated") is True,
+            position,
         )
     return answers
 
@@ -925,28 +1016,16 @@ def match_open_choice(question: Mapping[str, Any], message: object) -> str | Non
     return next(iter(hits)) if len(hits) == 1 else None
 
 
+# Bare "whatever" / "I don't care" are often a non-answer, so they are NOT delegations.
 _DELEGATION_PHRASES = frozenset(
-    normalize_reply(p)
-    for p in (
-        "you choose",
-        "you decide",
-        "your choice",
-        "up to you",
-        "surprise me",
-        "whatever",
-        "whatever you think",
-        "whatever you want",
-        "i don't mind",
-        "i don't care",
-        "dealer's choice",
-    )
+    normalize_reply(p) for p in ("you choose", "you decide", "up to you", "surprise me")
 )
 
 
 def delegated_choice(question: Mapping[str, Any], message: object) -> str | None:
     """The recommended option key when the creator explicitly hands the choice over.
 
-    Only a message that IS a delegation ("you choose", "surprise me", "whatever") counts;
+    Only a message that IS a delegation ("you choose", "up to you", "surprise me") counts;
     repeating the request, or any instruction, never does.
     """
 
@@ -968,6 +1047,9 @@ class ChoiceResolution:
     # Conflicts asked ``MAX_ASKS_PER_QUESTION`` times and still unanswered: the creator's
     # plan goes through UNCHANGED and the honest receipts / refusal say what is unmet.
     exhausted: tuple[UnresolvedChoice, ...] = ()
+    # Answers dropped because the creator restated the requirement on a later turn (kept
+    # as provenance only; a superseded answer never reaches the strategy or the pinned brief).
+    superseded: tuple[str, ...] = ()
 
 
 def _apply_effect(strategy: dict[str, Any], choice: UnresolvedChoice, option_key: str) -> None:
@@ -987,6 +1069,60 @@ _DISCLOSURES = {
 }
 
 
+def _emits_answered_value(
+    data: Mapping[str, Any], choice: UnresolvedChoice, option_key: str
+) -> bool:
+    """Does the model's strategy already carry the answered length / clip subset?"""
+
+    expected = (choice.effects.get(option_key) or {}).get("strategy", {})
+    if "target_duration_s" in expected:
+        seen = _number(data.get("target_duration_s", 24))
+        if seen is None or abs(seen - float(expected["target_duration_s"])) > 0.05:
+            return False
+    if "selected_media_ids" in expected:
+        if {str(m) for m in data.get("selected_media_ids") or []} != {
+            str(m) for m in expected["selected_media_ids"]
+        }:
+            return False
+    return True
+
+
+def _answer_superseded(
+    history: Sequence[tuple[str, Any]],
+    prior: ScopedAnswer,
+    choice: UnresolvedChoice,
+    data: Mapping[str, Any],
+) -> bool:
+    """Did the creator restate the requirement AFTER answering?
+
+    The answer wins on the turn(s) that follow the answer itself (the model may echo the
+    option's label or re-emit the old value). On a LATER turn, a new user message that is
+    not an answer, and not a verbatim re-send of an earlier message, together with a model
+    plan that no longer carries the answered value, is the creator changing their mind:
+    the answer is dropped and the gate evaluates afresh (it asks again, within the cap).
+    """
+
+    if choice.kind != CONFLICT_DURATION_VS_COUNT:
+        return False
+
+    def plain_user_text(payload: Any) -> bool:
+        return isinstance(payload, dict) and not isinstance(payload.get("choice_selection"), dict)
+
+    before = {
+        payload.get(CONTENT_KEY)
+        for role, payload in history[: prior.index]
+        if role == "user" and plain_user_text(payload) and payload.get(CONTENT_KEY)
+    }
+    restated = [
+        payload
+        for role, payload in history[prior.index + 1 :]
+        if role == "user"
+        and plain_user_text(payload)
+        and not (payload.get(CONTENT_KEY) and payload[CONTENT_KEY] in before)
+    ]
+    return bool(restated) and not _emits_answered_value(data, choice, prior.option_key)
+
+
 def resolve_choices(
     strategy: Any,
     brief: Any,
@@ -1002,6 +1138,8 @@ def resolve_choices(
       written over whatever the model emitted on this turn (it may re-emit the old value
       or follow the option's label); the matching brief requirement is superseded in the
       pinned copy (``answered_brief``).
+    * A LATER user message that restates the requirement (and a model plan without the
+      answered value) supersedes the answer: see ``_answer_superseded``.
     * The same question is asked at most twice (``MAX_ASKS_PER_QUESTION``). After that
       nothing is chosen for the creator and nothing is rewritten: the conflict is returned
       in ``exhausted`` and the plan passes through (receipts or the backstop then state the
@@ -1017,17 +1155,26 @@ def resolve_choices(
     answers: list[dict[str, Any]] = []
     notices: list[str] = []
     exhausted: list[UnresolvedChoice] = []
+    superseded: list[str] = []
     for choice in collect_conflicts(data, brief, media_snapshot, capability):
         keys = {o.key for o in choice.options}
         prior = scoped.get(choice.conflict_id)
-        if prior and prior.input_digest == choice.input_digest and prior.option_key in keys:
+        valid = bool(
+            prior and prior.input_digest == choice.input_digest and prior.option_key in keys
+        )
+        if valid and _answer_superseded(history, prior, choice, data):
+            superseded.append(choice.conflict_id)
+            valid = False
+        if valid:
             option_key = prior.option_key
             source = "creator_delegated" if prior.delegated else "creator"
         elif count_asks(history, choice.conflict_id, choice.input_digest) >= MAX_ASKS_PER_QUESTION:
             exhausted.append(choice)
             continue
         else:
-            return ChoiceResolution(data, tuple(answers), choice, tuple(notices), tuple(exhausted))
+            return ChoiceResolution(
+                data, tuple(answers), choice, tuple(notices), tuple(exhausted), tuple(superseded)
+            )
         answers.append(
             {
                 "conflict": choice.conflict_id,
@@ -1044,7 +1191,9 @@ def resolve_choices(
             notices.append(_disclose(note, source))
     if answers:
         data["choice_answers"] = answers
-    return ChoiceResolution(data, tuple(answers), None, tuple(notices), tuple(exhausted))
+    return ChoiceResolution(
+        data, tuple(answers), None, tuple(notices), tuple(exhausted), tuple(superseded)
+    )
 
 
 def _disclose(note: str, source: object) -> str:
