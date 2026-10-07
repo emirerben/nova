@@ -33,13 +33,14 @@ from app.kria.brief_route import (
 )
 from app.kria.contracts import InferredLabel, RequirementReceipt
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
+from app.services.clip_facts import CAPTURE_ORDER_KEYS
 
 if TYPE_CHECKING:
     from app.agents._schemas.creator_agent import ResolvedCreatorManifest
 
 DURATION_TOLERANCE = 0.10
 MAX_REPLY_CHARS = 1200
-_CAPTURE_ORDER_KEYS = {"capture_time", "chronological", "route", "time", "shot_order"}
+_CAPTURE_ORDER_KEYS = CAPTURE_ORDER_KEYS  # shared with the render contract and planner
 _CAPTURE_BASES = {"capture_time", "route", "capture_order"}
 
 
