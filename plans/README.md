@@ -32,6 +32,7 @@ Feature/incident plans written after the June audit (005–017 live alongside; o
 | 024 | Native editor component parity across every timed lane | DONE |
 | 025 | iOS device-only Release 1 rollout qualification | IN PROGRESS (automated qualification; signed-device and production gates remain) |
 | 026 | KRI-240 iPhone caption line editing (one-tap edit bar, Variant A) | IN PROGRESS (iOS edit bar built on branch; server word rewrite, save-banner retry and device check open) |
+| 027 | KRI-508 edit text and titles right on the video (iPhone editor) | TODO (design reviewed, mockup awaiting cofounder review; eng review next) |
 
 ## Dependency notes
 
