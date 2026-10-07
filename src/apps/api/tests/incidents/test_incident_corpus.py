@@ -7,6 +7,8 @@ HONEST SCOPE. This module asserts only what pytest CI can prove with the real co
   ``BriefBinding`` the way dispatch does), and the real verifiers
   (``verify_phone_recipe`` on a recipe compiled by the real speech-montage
   compiler, or ``preflight_cloud_contract``) decline what the record says they must.
+- ``route`` (KRI-470 / PR-D): the pure route resolver maps the approved plan (contract,
+  strategy, media facts, platform) to the recorded route, typed refusal or open choice.
 - ``question``: the real creator-planner turn asks (or does not ask) the recorded
   question over the recorded conversation.
 - ``output``: the recorded output evidence (what the creator actually got, later a
@@ -227,6 +229,25 @@ async def test_planner_asks_or_stays_quiet_as_recorded(
     if want.option_keys:
         assert keys == want.option_keys
     assert len(keys) >= want.min_options
+
+
+@pytest.mark.parametrize("record", _params("route", lambda r: r.expect.route is not None))
+def test_route_resolver_picks_the_recorded_route(record: IncidentRecord) -> None:
+    """KRI-470 / PR-D: the approved plan alone (contract + strategy + media facts) resolves
+    to the recorded route, typed refusal or open choice. Real resolver; no request text."""
+    want = record.expect.route
+    got = harness.resolved_route(record)
+    if want.route is not None:
+        assert got.outcome == "route", f"resolved {got.label}, expected route {want.route}"
+        assert got.route.value == want.route
+    elif want.refusal is not None:
+        assert got.outcome == "refusal", f"resolved {got.label}, expected refusal {want.refusal}"
+        assert got.reason == want.refusal
+    else:
+        assert got.outcome == "needs_choice", f"resolved {got.label}"
+        assert got.choice_kind == want.choice
+    if want.field_path is not None:
+        assert got.field_path == want.field_path
 
 
 def output_mismatches(record: IncidentRecord, want: OutputFacts, seen: Observation) -> list[str]:

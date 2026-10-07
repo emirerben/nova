@@ -104,6 +104,10 @@
         "attachment_order",
         "unordered"
       ]
+    },
+    "route": {
+      "platform": "phone",
+      "choice": "unresolved_requirement"
     }
   },
   "repro": {

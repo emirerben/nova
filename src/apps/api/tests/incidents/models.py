@@ -24,7 +24,7 @@ from app.kria.brief import CreativeBrief
 Kind = Literal["output", "clarification", "routing", "contract_pin"]
 # One dimension per kind of claim the pytest corpus can check. A record's xfail must name
 # a scope it actually asserts (validated below), so a scope can never be silently ignored.
-Scope = Literal["contract", "refusal", "question", "output"]
+Scope = Literal["contract", "refusal", "question", "output", "route"]
 
 
 class _Strict(BaseModel):
@@ -222,8 +222,27 @@ class OutputFacts(_Strict):
     exact_texts: list[str] | None = None
 
 
+class RouteExpect(_Strict):
+    """KRI-470 / PR-D: what the pure route resolver (``services/render_route``) must return.
+
+    Resolved from the record's approved strategy + contract + media facts on ``platform``;
+    no request text is an input.  Exactly one of ``route`` / ``refusal`` / ``choice``.
+    """
+
+    platform: Literal["phone", "cloud"]
+    route: str | None = None
+    refusal: str | None = Field(default=None, description="DeclineReason of a typed refusal")
+    choice: str | None = Field(default=None, description="choice_kind of a needs_choice")
+    field_path: str | None = None
+
+    @model_validator(mode="after")
+    def _one_outcome(self) -> RouteExpect:
+        if sum(value is not None for value in (self.route, self.refusal, self.choice)) != 1:
+            raise ValueError("a route expectation names exactly one of route / refusal / choice")
+        return self
+
+
 class Expect(_Strict):
-    # No route expectation yet: route assertions arrive with PR-D's resolver.
     failure_reason: str | None = Field(
         default=None,
         description="Typed job failure_reason a replay-backed record stands for; the assertion "
@@ -234,6 +253,7 @@ class Expect(_Strict):
     cloud: CloudExpect | None = None
     question: QuestionExpect | None = None
     output_facts: OutputFacts | None = None
+    route: RouteExpect | None = None
 
 
 class Observation(_Strict):
@@ -321,6 +341,7 @@ class IncidentRecord(_Strict):
             ),
             "question": self.expect.question is not None,
             "output": self.expect.output_facts is not None,
+            "route": self.expect.route is not None,
         }
         for scope in scopes:
             if not asserted[scope]:

@@ -537,6 +537,11 @@
       "reason": "capability_unavailable",
       "field_path": "montage_audio.source_media_ids[]",
       "message_advisory": "camera-audio sources"
+    },
+    "route": {
+      "platform": "cloud",
+      "refusal": "capability_unavailable",
+      "field_path": "montage_audio.source_media_ids[]"
     }
   },
   "repro": {

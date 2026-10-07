@@ -594,6 +594,11 @@
       "audio_plays_once": true,
       "order_ids": "chronological",
       "duration_basis": "strategy_choice"
+    },
+    "route": {
+      "platform": "phone",
+      "refusal": "requirement_conflict",
+      "field_path": "montage_audio.source_media_ids[]"
     }
   },
   "observations": [

@@ -147,6 +147,10 @@
         }
       ],
       "resolved": true
+    },
+    "route": {
+      "platform": "phone",
+      "route": "unified_montage"
     }
   },
   "repro": {
