@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.133.0] - 2026-10-07
+
+### Changed
+- feat(phone): honest order verdicts, song-once proof on a real export, last-good guard (KRI-478) (#1458) <!-- release-pr: 1458 -->
+
 ## [0.78.132.0] - 2026-10-07
 
 ### Changed
