@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.134.0] - 2026-10-07
+
+### Changed
+- fix(ios): chat smoothness pass (KRI-484) (#1448) <!-- release-pr: 1448 -->
+
 ## [0.78.133.0] - 2026-10-07
 
 ### Changed
