@@ -17,6 +17,7 @@ struct ChatConversationScroll<Content: View>: View {
     /// scrolling to an end marker anchored to the frame bottom left the last
     /// content under the composer.
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -50,6 +51,11 @@ struct ChatConversationScroll<Content: View>: View {
             userIsScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
             if phase == .idle { followsLatest = nearBottom }
         }
+        .onScrollGeometryChange(for: CGFloat.self) { $0.contentInsets.bottom } action: { old, new in
+            // Keyboard / composer growth changes the bottom inset; keep the end in view for a
+            // reader who is following, so the last message never hides behind them.
+            if old != new, followsLatest, !userIsScrolling { scrollToEnd() }
+        }
         .onChange(of: updateToken) { _, _ in
             if followsLatest && !userIsScrolling { scrollToEnd() }
         }
@@ -59,28 +65,38 @@ struct ChatConversationScroll<Content: View>: View {
         }
         .kriaScrollEdgeFade()
         .overlay(alignment: .bottomTrailing) {
-            if !followsLatest {
-                Button {
-                    followsLatest = true
-                    scrollToEnd()
-                } label: {
-                    Label("Latest", systemImage: "arrow.down")
-                        .font(KriaFont.body(12).weight(.semibold))
-                        .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(KriaColor.paper, in: Capsule())
-                        .overlay(Capsule().stroke(KriaColor.border, lineWidth: 1))
+            ZStack {
+                if !followsLatest {
+                    Button {
+                        followsLatest = true
+                        scrollToEnd(animated: true)
+                    } label: {
+                        Label("Latest", systemImage: "arrow.down")
+                            .font(KriaFont.body(12).weight(.semibold))
+                            .padding(.horizontal, 14).padding(.vertical, 10)
+                            .background(KriaColor.paper, in: Capsule())
+                            .overlay(Capsule().stroke(KriaColor.border, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Jump to latest message")
+                    .accessibilityIdentifier("chat-jump-to-latest")
+                    .padding(16)
+                    .transition(reduceMotion ? .opacity : .scale(scale: 0.85, anchor: .bottomTrailing).combined(with: .opacity))
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Jump to latest message")
-                .accessibilityIdentifier("chat-jump-to-latest")
-                .padding(16)
             }
+            .animation(reduceMotion ? .easeOut(duration: 0.15) : .snappy(duration: 0.22), value: followsLatest)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Conversation history")
     }
 
-    private func scrollToEnd() {
+    /// Streaming auto-follow stays instant (it must not fight the reader); only the
+    /// explicit "Latest" tap glides.
+    private func scrollToEnd(animated: Bool = false) {
+        if animated && !reduceMotion {
+            withAnimation(.smooth(duration: 0.35)) { scrollPosition.scrollTo(edge: .bottom) }
+            return
+        }
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) { scrollPosition.scrollTo(edge: .bottom) }

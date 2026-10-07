@@ -118,6 +118,19 @@ struct ChatWorkspaceView: View {
     }
 }
 
+/// The chat composer's text, kept out of `@State` so a keystroke does not invalidate the workspace.
+@Observable
+final class ChatPromptDraft {
+    var text = ""
+    @ObservationIgnored var onChange: ((String) -> Void)?
+
+    func set(_ newValue: String) {
+        guard newValue != text else { return }
+        text = newValue
+        onChange?(newValue)
+    }
+}
+
 enum DrawerMotion {
     /// Critically damped, so a release never overshoots the endpoints. `velocity` is in
     /// SwiftUI's unit-relative terms (fraction of the remaining distance per second).
@@ -364,7 +377,16 @@ private struct CreationWorkspaceView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     @FocusState private var composerFocused: Bool
-    @State private var prompt = ""
+    /// Reference-typed and observation-tracked per reader: typing re-renders only
+    /// `ChatComposer`, not this whole workspace (timeline rebuild + every row).
+    @State private var promptDraft = ChatPromptDraft()
+    private var prompt: String {
+        get { promptDraft.text }
+        nonmutating set { promptDraft.set(newValue) }
+    }
+    private var promptBinding: Binding<String> {
+        Binding(get: { promptDraft.text }, set: { promptDraft.set($0) })
+    }
     /// KRI-207: requirement names for the receipt chips; loaded once a reply carries receipts.
     @State private var briefRequirements: [String: CreativeBriefRequirement] = [:]
     /// The brief loaded (or, after one retry, definitively failed): chips can show their final titles.
@@ -962,8 +984,12 @@ private struct CreationWorkspaceView: View {
         // directly on ChatConversationScroll inside genericChatWorkspace (KRI-197
         // floating chat chrome), which also implicitly gates it on
         // !hasDedicatedSlideWorkspace via the if/else above.
-        .onAppear { if prompt.isEmpty { prompt = model.chatDrafts.draft(for: project.id) } }
-        .onChange(of: prompt) { _, text in model.chatDrafts.setDraft(text, for: project.id) }
+        .onAppear {
+            if prompt.isEmpty { prompt = model.chatDrafts.draft(for: project.id) }
+            // Persisted from the holder, not `.onChange(of: prompt)`: reading `prompt` in
+            // this body would subscribe the whole workspace to every keystroke.
+            promptDraft.onChange = { [chatDrafts = model.chatDrafts, id = project.id] in chatDrafts.setDraft($0, for: id) }
+        }
         .onChange(of: renderShapeScope) { _, scope in renderShapePick.reset(scope: scope) }
         .task {
             // History should not wait for the independent capability request. Requested as soon as the
@@ -1094,7 +1120,7 @@ private struct CreationWorkspaceView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatComposer(
-                text: $prompt,
+                text: promptBinding,
                 isSending: isSending || isActing,
                 canAttach: canAttachMedia,
                 canSendWithoutText: readyMediaCount > 0,
@@ -1116,7 +1142,7 @@ private struct CreationWorkspaceView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatComposer(
-                text: $prompt, isSending: isSending || isActing,
+                text: promptBinding, isSending: isSending || isActing,
                 canAttach: false, blocksSubmission: isThinking || pendingUploadCount > 0, isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
             )
         }
