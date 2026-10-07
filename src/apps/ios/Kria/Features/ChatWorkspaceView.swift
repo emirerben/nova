@@ -670,6 +670,7 @@ private struct CreationWorkspaceView: View {
                 mediaReceipts(group.entries)
             } else {
                 timelineRow(group.entries[0])
+                    .transition(Self.rowTransition(for: group.entries[0], reduceMotion: reduceMotion))
             }
         }
         if (isThinking || isSending) && workspaceStage != .rendering {
@@ -680,6 +681,20 @@ private struct CreationWorkspaceView: View {
             RecoveryCard(failure: failure) { Task { await refreshCapabilities(); await refreshNow() } }
                 .id("recovery")
         }
+    }
+
+    /// A sent message rises out of the composer like iMessage; every other row keeps its
+    /// existing (instant) insertion. Removal is instant so the pending → confirmed swap
+    /// never replays the motion.
+    private static func rowTransition(for entry: ChatTimelineEntry, reduceMotion: Bool) -> AnyTransition {
+        guard case .message(let message) = entry.content, message.role == .user else { return .identity }
+        if reduceMotion { return .asymmetric(insertion: .opacity, removal: .identity) }
+        return .asymmetric(
+            insertion: .scale(scale: 0.86, anchor: .bottomTrailing)
+                .combined(with: .offset(y: 28))
+                .combined(with: .opacity),
+            removal: .identity
+        )
     }
 
     @ViewBuilder private func timelineRow(_ entry: ChatTimelineEntry) -> some View {
@@ -1392,7 +1407,12 @@ private struct CreationWorkspaceView: View {
                                             afterSequence: afterSequence, localOrder: nextLocalOrder, songOrder: songOrder)
         }
         submissionAnchor = optimistic
-        if !pendingMessages.contains(where: { $0.id == optimistic.id }) { pendingMessages.append(optimistic) }
+        if !pendingMessages.contains(where: { $0.id == optimistic.id }) {
+            // Animated insertion: the bubble springs in instead of appearing.
+            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(duration: 0.42, bounce: 0.18)) {
+                pendingMessages.append(optimistic)
+            }
+        }
         prompt = ""
         scrollRequest += 1
         if currentProject.runtimeVersion != 2 {

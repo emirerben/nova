@@ -56,9 +56,18 @@ struct ChatResponseText: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
-    @State private var revealedWordCount = 0
+    @State private var revealedWordCount: Int
     /// Tokenizing is O(words); do it once per content, not on every reveal tick.
     @State private var tokenCache = TokenCache()
+
+    init(content: String, startedAt: Date?) {
+        self.content = content
+        self.startedAt = startedAt
+        // A row mounted after the reveal window (list recycling, re-entry) starts fully
+        // visible; starting hidden would flash it for a frame.
+        let finished = startedAt.map { Date().timeIntervalSince($0) > 2.1 } ?? true
+        _revealedWordCount = State(initialValue: finished ? .max : 0)
+    }
 
     var body: some View {
         let tokens = tokenCache.tokens(for: content)
@@ -88,8 +97,13 @@ struct ChatResponseText: View {
         // Start from the shared response clock so mounting a second surface does
         // not replay a response that is already partly or fully revealed.
         let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
-        revealedWordCount = Self.steppedCount(Self.revealCount(elapsed: elapsed, wordCount: tokens.wordCount), of: tokens.wordCount)
+        revealedWordCount = Self.revealCount(elapsed: elapsed, wordCount: tokens.wordCount)
         let interval = Self.presentationInterval(wordCount: tokens.wordCount)
+        // One light tick per revealed word, rate-limited so a fast reveal stays a texture
+        // rather than a buzz.
+        let haptic = UIImpactFeedbackGenerator(style: .light)
+        haptic.prepare()
+        var lastTick = Date.distantPast
         while revealedWordCount < tokens.wordCount {
             do {
                 try await Task.sleep(for: .seconds(interval))
@@ -101,18 +115,17 @@ struct ChatResponseText: View {
             // backgrounding and prevents a suspended task from extending the
             // reveal beyond its two-second cap.
             let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
-            // Reveal a few words per render: every state write re-shapes the whole Text.
-            let next = Self.steppedCount(Self.revealCount(elapsed: elapsed, wordCount: tokens.wordCount), of: tokens.wordCount)
-            if next != revealedWordCount { revealedWordCount = next }
+            let next = Self.revealCount(elapsed: elapsed, wordCount: tokens.wordCount)
+            guard next != revealedWordCount else { continue }
+            revealedWordCount = next
+            if Date().timeIntervalSince(lastTick) >= Self.hapticMinimumGap {
+                haptic.impactOccurred(intensity: 0.5)
+                lastTick = Date()
+            }
         }
     }
 
-    /// Rounds a reveal count down to a whole step (about 20 renders per reply), except the last word.
-    static func steppedCount(_ count: Int, of wordCount: Int) -> Int {
-        guard count < wordCount else { return wordCount }
-        let step = max(3, wordCount / 20)
-        return count - count % step
-    }
+    private static let hapticMinimumGap: TimeInterval = 0.06
 
     static func presentationInterval(wordCount: Int) -> TimeInterval {
         guard wordCount > 0 else { return 0 }
