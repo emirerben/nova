@@ -181,6 +181,7 @@ from app.schemas.slide_post import (
     parse_slide_post,
 )
 from app.services.ai_usage_headers import paid_call_headers
+from app.services.authored_editor import USER_SONG_CLIP_EDIT_UNSUPPORTED
 from app.services.content_plan_persona import (
     PLAN_PERSONA_OWNERSHIP_CONFLICT_DETAIL,
     PlanPersonaOwnershipError,
@@ -225,6 +226,7 @@ from app.services.speech_cleanup import (
     renderer_enabled_for_item,
 )
 from app.services.tiktok_style_observations import effective_persona_style
+from app.services.user_song_projection import user_song_for_variant
 from app.services.variant_generation_guard import (
     VariantInitialRenderInProgress,
     assert_variant_generation_editable,
@@ -7118,6 +7120,29 @@ async def editor_commit_item(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> EditorCommitResponse:
+    """Route wrapper: logs every 422 (detail + payload section keys, no content)."""
+    try:
+        return await _editor_commit_item(item_id, variant_id, body, user, db)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY:
+            log.warning(
+                "editor_commit_422",
+                item_id=item_id,
+                variant_id=variant_id,
+                detail=exc.detail,
+                sections=sorted(body.model_fields_set),
+                deletion_kinds=sorted({d.kind for d in body.deletions}),
+            )
+        raise
+
+
+async def _editor_commit_item(
+    item_id: str,
+    variant_id: str,
+    body: EditorCommitRequest,
+    user: CurrentUser,
+    db: AsyncSession,
+) -> EditorCommitResponse:
     """Transactional editor Save (E2): all sections in ONE commit + ONE render kick.
 
     Validates every provided section first (nothing persists on ANY failure),
@@ -7186,9 +7211,22 @@ async def editor_commit_item(
     authored_clip_deletion = any(
         deletion.kind == "clip" for deletion in initial_deletions
     ) and not phone_voiceover_cut_editable(locked_job, locked_variant)
+    # Only CLIP deletions convert a guided story to an authored timeline. A
+    # text-only deletion (e.g. the guided title) takes the normal guided-v2 text
+    # path, which keeps the approved timing program and the creator's song bed.
     needs_authored_deletion_baseline = authored_clip_deletion or (
-        bool(initial_deletions) and locked_variant.get("resolved_archetype") == "guided_story"
+        any(deletion.kind == "clip" for deletion in initial_deletions)
+        and locked_variant.get("resolved_archetype") == "guided_story"
     )
+    if needs_authored_deletion_baseline and user_song_for_variant(
+        locked_job, locked_variant, song_filename=None
+    ):
+        # The authored compiler cannot carry a creator's own song (it would render
+        # silent and drift off the lyrics), so refuse instead of dropping it.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=USER_SONG_CLIP_EDIT_UNSUPPORTED,
+        )
     if is_empty_editor_variant(locked_variant):
         await attach_saved_editor_drafts(db, locked_job)
         draft_baseline = stage_saved_draft_baseline(locked_job, variant_id, body)

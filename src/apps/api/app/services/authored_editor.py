@@ -13,6 +13,10 @@ from fastapi import HTTPException
 
 AUTHORED_TIMELINE_MODE = "authored"
 
+USER_SONG_CLIP_EDIT_UNSUPPORTED = (
+    "Removing clips from a video with your own song isn't supported yet."
+)
+
 
 def is_authored_timeline(variant: dict) -> bool:
     return variant.get("editor_timeline_mode") == AUTHORED_TIMELINE_MODE

@@ -8314,3 +8314,104 @@ def test_endpoint_first_device_restore_checks_staged_source_before_commit(client
     )
     assert response.status_code == 422 and response.json()["detail"] == "stale source"
     db.commit.assert_not_awaited()
+
+
+# ── Guided title delete on a creator-song video (prod 422 follow-up) ────────
+
+
+def _song_guided_endpoint(monkeypatch, *, deletions):
+    from app.routes import plan_items as plan_item_routes
+
+    _arm(monkeypatch)
+    user = _user()
+    job = _job(resolved_archetype="guided_story")
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan, job)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    staged = MagicMock(side_effect=RuntimeError("baseline staged"))
+    monkeypatch.setattr(plan_item_routes, "stage_initial_authored_baseline", staged)
+    monkeypatch.setattr(
+        plan_item_routes,
+        "user_song_for_variant",
+        lambda *_a, **_k: {"mode": "lipsync", "duration_s": 30.0},
+    )
+    return item, staged, deletions
+
+
+def test_text_only_deletion_on_song_guided_story_never_stages_authored_baseline(
+    client: TestClient, monkeypatch
+) -> None:
+    item, staged, deletions = _song_guided_endpoint(
+        monkeypatch, deletions=[{"kind": "text", "id": "guided-title"}]
+    )
+    response = client.post(
+        f"/plan-items/{item.id}/variants/song_text/editor-commit",
+        json={
+            "base_generation": "2026-07-01T00:00:00Z",
+            "editor_state_version": 1,
+            "text_elements": [],
+            "deletions": deletions,
+        },
+    )
+    staged.assert_not_called()
+    detail = response.json().get("detail")
+    assert detail != "Removing clips from a video with your own song isn't supported yet."
+
+
+def test_clip_deletion_on_song_guided_story_is_refused_not_silently_authored(
+    client: TestClient, monkeypatch
+) -> None:
+    item, staged, _ = _song_guided_endpoint(monkeypatch, deletions=None)
+    response = client.post(
+        f"/plan-items/{item.id}/variants/song_text/editor-commit",
+        json={
+            "base_generation": "2026-07-01T00:00:00Z",
+            "editor_state_version": 1,
+            "deletions": [{"kind": "clip", "id": "slot-0"}],
+        },
+    )
+    assert response.status_code == 422
+    assert "your own song" in response.json()["detail"]
+    staged.assert_not_called()
+
+
+def test_clip_deletion_on_guided_story_without_song_still_stages_baseline(
+    client: TestClient, monkeypatch
+) -> None:
+    from app.routes import plan_items as plan_item_routes
+
+    item, staged, _ = _song_guided_endpoint(monkeypatch, deletions=None)
+    monkeypatch.setattr(plan_item_routes, "user_song_for_variant", lambda *_a, **_k: None)
+    client.post(
+        f"/plan-items/{item.id}/variants/song_text/editor-commit",
+        json={
+            "base_generation": "2026-07-01T00:00:00Z",
+            "editor_state_version": 1,
+            "deletions": [{"kind": "clip", "id": "slot-0"}],
+        },
+    )
+    staged.assert_called_once()
+
+
+def test_editor_commit_422_is_logged_with_detail_and_section_keys(
+    client: TestClient, monkeypatch
+) -> None:
+    from app.routes import plan_items as plan_item_routes
+
+    item, _staged, _ = _song_guided_endpoint(monkeypatch, deletions=None)
+    warn = MagicMock()
+    monkeypatch.setattr(plan_item_routes.log, "warning", warn)
+    client.post(
+        f"/plan-items/{item.id}/variants/song_text/editor-commit",
+        json={
+            "base_generation": "2026-07-01T00:00:00Z",
+            "editor_state_version": 1,
+            "deletions": [{"kind": "clip", "id": "slot-0"}],
+        },
+    )
+    event = warn.call_args.args[0]
+    assert event == "editor_commit_422"
+    kwargs = warn.call_args.kwargs
+    assert "your own song" in kwargs["detail"]
+    assert "deletions" in kwargs["sections"] and "text_elements" not in kwargs["sections"]
