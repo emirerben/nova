@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.124.0] - 2026-10-07
+
+### Changed
+- feat(creator): typed field matrix, adapter declarations and decline reasons (KRI-476) (#1446) <!-- release-pr: 1446 -->
+
 ## [0.78.123.0] - 2026-10-07
 
 ### Changed
