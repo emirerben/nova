@@ -2279,6 +2279,16 @@ def _run_generative_job_impl(
         if job.status == _CANCELLED_JOB_STATUS:
             return
         candidates = getattr(job, "all_candidates", None) or {}
+        from app.services.creator_render_contract import CREATOR_DECLINE_FIELD  # noqa: PLC0415
+
+        if isinstance(job.assembly_plan, dict) and CREATOR_DECLINE_FIELD in job.assembly_plan:
+            # A new run starts clean: a decline from an earlier failure of this job
+            # (retry, re-dispatch) must not outlive it. This run re-persists its own.
+            job.assembly_plan = {
+                key: value
+                for key, value in job.assembly_plan.items()
+                if key != CREATOR_DECLINE_FIELD
+            }
         from app.services.phone_sources import PHONE_SOURCES_FIELD  # noqa: PLC0415
 
         if PHONE_SOURCES_FIELD in (job.assembly_plan or {}):
@@ -2503,7 +2513,13 @@ def _run_generative_job_impl(
             job.failure_reason = "creator_render_contract_unsupported"
             decline = _creator_decline_payload(exc)
             if decline:
-                job.assembly_plan = {**assembly, CREATOR_DECLINE_FIELD: decline}
+                job.assembly_plan = {
+                    **assembly,
+                    CREATOR_DECLINE_FIELD: {
+                        **decline,
+                        "failure_reason": "creator_render_contract_unsupported",
+                    },
+                }
             db.commit()
             return
         creator_direction_typed_overrides = _pinned_creator_direction_typed_overrides(assembly)
@@ -17352,7 +17368,7 @@ def _reject_unverified_cloud_variant(
         blocked = {
             key: value
             for key, value in result.items()
-            if key not in set(_PENDING_VARIANT_ASSET_FIELDS)
+            if key not in set(_PENDING_VARIANT_ASSET_FIELDS) | set(_DECLINE_VARIANT_FIELDS)
         }
         return {
             **blocked,
@@ -30447,7 +30463,12 @@ def _merge_finalized_variants(
             if live_generation is not None and live_generation != finalized_generation:
                 merged.append(live)
             else:
-                merged.append({**live, **finalized})
+                row = {**live, **finalized}
+                for key in _DECLINE_VARIANT_FIELDS:
+                    if key not in finalized:
+                        # A typed decline belongs to the result that produced it.
+                        row.pop(key, None)
+                merged.append(row)
         if isinstance(variant_id, str):
             finalized_ids.add(variant_id)
 
@@ -30871,6 +30892,19 @@ def _set_status(
                     **public_plan,
                     "speech_cleanup_outcome": public_outcome,
                 }
+        if status in {"variants_ready", "variants_ready_partial", "done"} and isinstance(
+            job.assembly_plan, dict
+        ):
+            from app.services.creator_render_contract import (  # noqa: PLC0415
+                CREATOR_DECLINE_FIELD,
+            )
+
+            if CREATOR_DECLINE_FIELD in job.assembly_plan:
+                job.assembly_plan = {
+                    key: value
+                    for key, value in job.assembly_plan.items()
+                    if key != CREATOR_DECLINE_FIELD
+                }
         terminal_decision = JobFinalizationResult(
             "accepted",
             variants=tuple(variant_decisions),
@@ -31050,7 +31084,12 @@ def _fail_job(
                             CREATOR_DECLINE_FIELD,
                         )
 
-                        patch[CREATOR_DECLINE_FIELD] = dict(decline)
+                        # Stamped with the failure code it belongs to: a later,
+                        # unrelated failure of the same job must not inherit it.
+                        patch[CREATOR_DECLINE_FIELD] = {
+                            **decline,
+                            **({"failure_reason": failure_reason} if failure_reason else {}),
+                        }
                     if speech_cleanup_failure_reason:
                         patch["speech_cleanup_failure_reason"] = speech_cleanup_failure_reason
                     job.assembly_plan = {**ap, **patch} if patch else ap

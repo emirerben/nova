@@ -2402,13 +2402,26 @@ def _typed_creator_decline(
     plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
     raw = plan.get(CREATOR_DECLINE_FIELD)
     message = getattr(job, "error_detail", None)
-    if not (isinstance(raw, dict) and raw.get("decline_reason") in DECLINE_REASONS):
+    # A job-level decline belongs to the failure code it was stamped with. A job
+    # that failed once with a refusal and later fails for another reason (retry,
+    # re-dispatch) must not inherit the earlier refusal.
+    if not (
+        isinstance(raw, dict)
+        and raw.get("decline_reason") in DECLINE_REASONS
+        and failure_code is not None
+        and raw.get("failure_reason") == failure_code
+    ):
         raw = None
         if failure_code not in _VARIANT_DECLINE_FAILURE_CODES:
             return None
         variants = [row for row in plan.get("variants") or [] if isinstance(row, dict)]
-        ordered = sorted(variants, key=lambda row: row.get("variant_id") != variant_id)
-        for row in ordered:
+        # The target variant only; scan every variant only when none is named.
+        candidates = (
+            [row for row in variants if row.get("variant_id") == variant_id]
+            if variant_id
+            else variants
+        )
+        for row in candidates:
             if (
                 row.get("render_status") == "failed"
                 and row.get("decline_reason") in DECLINE_REASONS
@@ -3292,7 +3305,12 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             )
         )
         if typed_decline is not None and not device_failed:
-            if typed_decline["decline_reason"] == "evidence_missing":
+            if (
+                typed_decline["decline_reason"] == "evidence_missing"
+                and failure_code not in _DETERMINISTIC_JOB_FAILURE_CODES
+            ):
+                # Retry only where the evidence can appear on a re-run (cloud
+                # publication / preflight). A phone plan decline is deterministic.
                 deterministic = False
             elif typed_decline["decline_reason"] == "capability_unavailable":
                 deterministic = True
@@ -3399,6 +3417,16 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 "That render didn't finish. Your approved draft is still saved, "
                 "so you can retry without rebuilding the edit."
             )
+        if (
+            typed_decline is not None
+            and typed_decline.get("alternative")
+            and failure_code in _DETERMINISTIC_JOB_FAILURE_CODES
+            and typed_decline["decline_reason"] != "capability_unavailable"
+            and recovery_message is None
+            and not device_failed
+        ):
+            # A deterministic phone decline keeps its copy and adds the way forward.
+            failure_content = f"{failure_content} {typed_decline['alternative']}"
         event = _append_sync_event(
             db,
             thread,

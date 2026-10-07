@@ -803,10 +803,131 @@ def test_fail_job_persists_a_typed_decline_without_touching_the_failure_code(
         decline={"decline_reason": "needs_choice"},
     )
     assert job.failure_reason == "phone_plan_unsupported"
-    assert job.assembly_plan["creator_decline"] == {"decline_reason": "needs_choice"}
+    assert job.assembly_plan["creator_decline"] == {
+        "decline_reason": "needs_choice",
+        "failure_reason": "phone_plan_unsupported",
+    }
     plain = FakeJob(assembly_plan={"variants": []}, status="processing")
     patch_job_session(monkeypatch, plain)
     assert generative_build._fail_job(
         "11111111-1111-1111-1111-111111111111", "x", failure_reason="phone_plan_unsupported"
     )
     assert "creator_decline" not in plain.assembly_plan
+
+
+# --- KRI-470 PR-A review: job-level decline lifecycle ------------------------------
+
+
+def test_worker_entry_clears_a_stale_job_decline_before_the_run_proceeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_id = "11111111-1111-1111-1111-111111111111"
+    job = FakeJob(
+        job_id=job_id,
+        assembly_plan={
+            **_assembly({"pacing": "fast"}),
+            "creator_decline": {
+                "decline_reason": "capability_unavailable",
+                "failure_reason": "creator_render_contract_unsupported",
+            },
+        },
+        all_candidates={"clip_paths": ["slot-uploads/clip.mp4"]},
+        status="processing_failed",
+    )
+    patch_job_session(monkeypatch, job)
+    monkeypatch.setattr(generative_build.settings, "text_renderer_skia_enabled", False)
+
+    generative_build._run_generative_job(job_id)
+
+    assert job.failure_reason == "skia_disabled"
+    assert "creator_decline" not in job.assembly_plan
+
+
+def test_successful_finalization_clears_the_job_decline(monkeypatch: pytest.MonkeyPatch) -> None:
+    job = FakeJob(
+        assembly_plan={
+            "creator_decline": {"decline_reason": "evidence_missing", "failure_reason": "x"}
+        }
+    )
+    patch_job_session(monkeypatch, job)
+    generative_build._finalize_job(
+        "11111111-1111-1111-1111-111111111111",
+        [
+            {
+                "variant_id": "v",
+                "rank": 1,
+                "text_mode": "none",
+                "ok": True,
+                "render_status": "ready",
+                "video_path": "jobs/x/new.mp4",
+                "duration_s": 24,
+            }
+        ],
+    )
+    assert job.status == "variants_ready"
+    assert "creator_decline" not in job.assembly_plan
+
+
+def test_fail_job_stamps_the_failure_code_the_decline_belongs_to(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = FakeJob(assembly_plan={"variants": []}, status="processing")
+    patch_job_session(monkeypatch, job)
+    assert generative_build._fail_job(
+        "11111111-1111-1111-1111-111111111111",
+        "x",
+        failure_reason="phone_plan_unsupported",
+        decline={"decline_reason": "needs_choice"},
+    )
+    assert job.assembly_plan["creator_decline"] == {
+        "decline_reason": "needs_choice",
+        "failure_reason": "phone_plan_unsupported",
+    }
+
+
+def test_preflight_stamps_its_failure_code_on_the_decline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_id = "11111111-1111-1111-1111-111111111111"
+    job = FakeJob(
+        job_id=job_id,
+        assembly_plan=_assembly({"opening_title": "Exact approved title"}),
+        all_candidates={"clip_paths": ["slot-uploads/clip.mp4"]},
+        status="queued",
+    )
+    patch_job_session(monkeypatch, job)
+    generative_build._run_generative_job(job_id)
+    assert job.assembly_plan["creator_decline"]["failure_reason"] == job.failure_reason
+
+
+def test_a_reverified_variant_does_not_keep_the_old_field_path() -> None:
+    # No receipt at all: the new decline has no field path of its own.
+    assembly = _assembly({"audio_strategy": "voiceover"})
+    stale = {
+        "variant_id": "v",
+        "ok": True,
+        "render_status": "ready",
+        "video_path": "jobs/x/o.mp4",
+        "decline_reason": "capability_unavailable",
+        "field_path": "opening_title",
+        "alternative": "old alternative",
+    }
+    rejected = generative_build._reject_unverified_cloud_variant(assembly, stale)
+    assert rejected["decline_reason"] == "evidence_missing"
+    assert "field_path" not in rejected
+    assert rejected["alternative"] != "old alternative"
+
+
+def test_finalize_merge_does_not_resurrect_a_live_rows_old_decline() -> None:
+    live = [
+        {
+            "variant_id": "v",
+            "render_status": "failed",
+            "decline_reason": "capability_unavailable",
+            "field_path": "opening_title",
+            "alternative": "old",
+        }
+    ]
+    finalized = [{"variant_id": "v", "ok": True, "render_status": "ready"}]
+    merged = generative_build._merge_finalized_variants(live, finalized)
+    assert not {"decline_reason", "field_path", "alternative"} & set(merged[0])

@@ -151,7 +151,12 @@ _CLIP_INTENT_LEAVES = (
 
 FIELD_MATRIX: dict[str, FieldRule] = {
     # Hard requirements projected by build_render_contract.
-    **_rules("supported", "render_contract:duration", "target_duration_s"),
+    **_rules(
+        "supported",
+        "render_contract:duration",
+        "target_duration_s",
+        note="pinned only when target_duration_requested is true; a default is not a requirement",
+    ),
     **_rules(
         "supported",
         "render_contract:duration",
@@ -162,7 +167,10 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "supported",
         "render_contract:audio",
         "audio_strategy",
-        note="voiceover -> require_voiceover; original_audio -> original_audio=require",
+        note=(
+            "only `voiceover` (require_voiceover) and `original_audio` (original_audio=require) "
+            "are projected; licensed_music and the other values pin nothing"
+        ),
     ),
     **_rules(
         "supported",
@@ -170,6 +178,7 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "montage_audio",
         "montage_audio.preserve_source_audio",
         "montage_audio.source_media_ids[]",
+        note="source ids are pinned only while preserve_source_audio is true",
     ),
     **_rules(
         "supported",
@@ -179,12 +188,11 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "shot_labels[]",
         "closing_title",
     ),
-    **_rules("supported", "render_contract:order", "ordering_choice"),
     **_rules(
         "supported",
         "render_contract:order",
-        "selected_media_ids[]",
-        note="scopes the clip set whose capture times pin order_ids",
+        "ordering_choice",
+        note="only `chronological` pins order; `group_first` is resolved upstream, not projected",
     ),
     # Taste: no renderer is held to it.
     **_rules(
@@ -198,7 +206,6 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "caption_style",
         "optional_treatments[]",
         "image_layout",
-        "overlay_display",
         "montage_audio.preview_source_beds",
     ),
     **_rules(
@@ -229,6 +236,24 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "media_scope",
         "render_program",
         note="routing/shape fields repaired by compile_strategy_to_plan; never re-verified",
+    ),
+    **_rules(
+        "upstream_resolved",
+        "creator_capabilities",
+        "selected_media_ids[]",
+        note=(
+            "scopes the clip set whose capture times pin order_ids; that only the selected "
+            "media were used is not verified"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
+        "generative_build",
+        "overlay_display",
+        note=(
+            'flat all_candidates["overlay_display"]="fullscreen" is read by the phone worker, '
+            "gated by the media_overlays:fullscreen capability; the result is not verified"
+        ),
     ),
     **_rules(
         "upstream_resolved",
