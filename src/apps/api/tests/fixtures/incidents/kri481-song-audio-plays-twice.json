@@ -679,7 +679,7 @@
   ],
   "xfail": [
     {
-      "reason": "KRI-481 / PR-G",
+      "reason": "KRI-477 / PR-F",
       "scope": "output"
     }
   ],

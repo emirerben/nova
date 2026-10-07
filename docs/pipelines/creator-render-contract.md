@@ -636,12 +636,16 @@ The contract has no music-policy field, so an unrequested music bed of a catalog
 not refused by the contract (adding one is a route-resolver / composition decision). Two
 other writers could have produced the same double play and were fixed: the speech-montage
 compiler (music clips AND bed) and the authored editor timeline (a Save re-enabled the bed
-for voiceover+music variants; the creator's music level now lives on the clip).
+for voiceover+music variants; the music level now lives on the clip: for a voiceover variant,
+`mix` is the voice slider and the level is the compiler's `voiceover_music_gain(mix)`, for other
+variants `mix` is the editor's music level).
 
-**Order verdicts.** A brief `order` requirement is REQUIRED, exactly as `order_required`
-pins it; only a requirement explicitly marked a preference (`facts.strength` of
+**Order verdicts.** Where an authority can verify the order (a brief-binding cohort, i.e.
+`build_receipts(include_unchecked=True)`, or a contract-stamped speech job:
+`strict_order`), a brief `order` requirement is REQUIRED, exactly as `order_required`
+pins it; legacy / unbound jobs keep the original softer verdicts byte for byte; only a requirement explicitly marked a preference (`facts.strength` of
 `preference` / `optional`, or `facts.required: false`) may stay unchecked.
-`brief_checks._check_order` therefore returns:
+`brief_checks._check_order` therefore returns (strict jobs):
 
 | Situation | Verdict |
 | --- | --- |
@@ -656,7 +660,9 @@ A `not_possible` receipt blocks a bound unified montage exactly as any other unm
 receipt does (`ask_before_simplifying`), so "Partly" order lines become "Couldn't" and two
 shapes that used to render silently now ask first: an order rule the checker has no key
 for (alongside one it can follow), and a render record with no order. The key set is the
-shared `clip_facts.CAPTURE_ORDER_KEYS`.
+shared `clip_facts.CAPTURE_ORDER_KEYS`. The spoken-excerpt montage job always records the
+order it used (attachment included), so an unstamped brief that followed attachment order is
+`met` rather than a false "couldn't confirm".
 
 **Last good artifact.** A contract refusal never replaces the last accepted artifact. At
 the editor Save / `pin_device_request` the check runs before any mutation; at the retry
@@ -666,19 +672,31 @@ still waiting on the phone moves to `needs_attention`. The variant's video, post
 and `ok`, and the record's pinned request, receipts and published attempt are not touched.
 Cloud publication is unchanged here.
 
-**Refusal to question or repair.** Recovery reads the recorded decline
-(`kria_runtime._device_contract_decline`): `evidence_missing` (a clear instruction was
-violated) is repaired from the approved request (`refresh_replan`, never "please restate");
-`needs_choice` / `requirement_conflict` is the specific question carrying the typed
-alternative; `capability_unavailable` is a refusal with the way forward. All say the last
-good version is still available. Phone-side failures with no recorded refusal keep the
-"tap Retry on your iPhone" copy.
+**Refusal copy.** Recovery reads the recorded decline (`kria_runtime._device_contract_decline`)
+and promises only what exists. It states what could not be confirmed, that the edit was NOT
+applied, that the last good version is still available (or "Nothing was published." for a first
+render), and a next step that works: for `evidence_missing`, "tell me to redo it and I'll make a
+new version from what you already approved" (the brief persists across turns); for `needs_choice`
+/ `requirement_conflict`, the typed alternative as the question; for `capability_unavailable`, the
+way forward. Nothing re-runs a refused phone render and chat retry does not exist for device jobs,
+so the execution error is `ask_user`, `retryable: false`. A refused FIRST render (no accepted
+artifact) also fails the variant and job (`creator_render_contract_unverified`, typed decline
+beside it) so it is visible and the reaper does not rescan it; an edit leaves everything alone.
+Phone-side failures with no recorded refusal keep the "tap Retry on your iPhone" copy.
 
-**Editor text roles.** An editor Save rebinds the contract's exact texts keeping each
-text's role (matched by element id, else exact text); an opening or closing text that the
+**Deploy note.** `verify_device_record_contract` re-runs `verify_phone_recipe`, so an already
+pinned, contract-STAMPED record whose recipe plays one soundtrack twice (a song-lane or
+speech-montage-with-music job compiled before these fixes) is refused from now on with a
+permanent 409 on GET, asset downloads and uploads (and, on a refused publication, a typed
+`contract_decline`). Before merging, check production for in-flight stamped phone jobs of those
+two shapes (`_device_render_v1` records in `awaiting_device` / `syncing`) and let them finish or
+re-render them first. Unstamped (legacy) records are not affected.
+
+**Editor text roles.** An editor Save rebinds the contract's exact texts keeping every
+requirement a text carried (the standard shape is `[opening X (2.0 s), any X]`; matched by element
+id, else exact text) with its approved `duration_s`; an opening or closing text that the
 edit moves out of its window is refused. Unknown elements stay `any`; a shot-scoped role
-survives only while the timeline is untouched, and the saved text's own duration is the
-creator's explicit edit, so only the role is enforced.
+survives only while the timeline is untouched (it degrades to `any`, never to nothing).
 
 **Real-export proof.** `scripts/ios/phone-audio-parity.py` (see
 `docs/runbooks/ios-development.md`, "Phone export proof") exports a user-song montage
