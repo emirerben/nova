@@ -22,6 +22,7 @@ strategy fields and returns at most the first still-open question.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import math
@@ -221,6 +222,12 @@ def build_choice_question(
 def choice_question_text(candidate: ConflictCandidate) -> str:
     """Self-sufficient plain text (old builds show only this)."""
     options = candidate.options[:MAX_CHOICE_OPTIONS]
+    if candidate.kind == CONFLICT_TITLE_TEXT and len(options) == 1:
+        # The one option is a way out, not a limit: the typed words are the main path.
+        return (
+            f"{candidate.intro} Type the words you want and I'll use them exactly, "
+            f'or reply "{options[0].label}".'
+        )
     if len(options) == 1:
         # One way forward is a statement, not a choice.
         only = options[0]
@@ -393,15 +400,22 @@ def fold_choice_answers(events: Events) -> dict[str, str]:
 CONFLICT_DURATION_VS_COUNT = "duration_vs_count"
 CONFLICT_ORDER_BASIS = "order_basis"
 CONFLICT_TEXT_PLACEMENT = "text_placement"
+CONFLICT_TITLE_TEXT = "title_text"
 # Fixed priority: an answer can change a later detector's inputs, so exactly one question
 # is asked per turn, in this order.
-CONFLICT_PRIORITY = (CONFLICT_ORDER_BASIS, CONFLICT_TEXT_PLACEMENT, CONFLICT_DURATION_VS_COUNT)
+CONFLICT_PRIORITY = (
+    CONFLICT_ORDER_BASIS,
+    CONFLICT_TEXT_PLACEMENT,
+    CONFLICT_TITLE_TEXT,
+    CONFLICT_DURATION_VS_COUNT,
+)
 
 OPT_EXTEND = "extend"
 OPT_FEWER = "fewer"
 OPT_ATTACHMENT_ORDER = "attachment_order"
 OPT_UNORDERED = "unordered"
 OPT_OWN_SEQUENCE = "own_sequence"
+OPT_NO_TITLE = "no_title"
 
 # What an "order I filmed them" requirement means to the contract (brief order keys).
 ATTACHMENT_ORDER_KEY = "attachment"
@@ -423,6 +437,10 @@ class ChoiceCapability:
     # Whether a creator-typed clip sequence can be received and executed. It cannot
     # today (the tray order is set in the editor, never inside a question).
     creator_sequence_supported: bool = False
+    # Whose draft this is. ``title_text`` needs it to know whether the unified phone
+    # montage will render the draft (its title receipt is only judged at render time);
+    # ``None`` = unknown, so that question is never asked.
+    creator_id: object = None
 
 
 @dataclass(frozen=True)
@@ -855,6 +873,120 @@ def _text_placement(
     return found
 
 
+# Exact (after `normalize_reply`) replies that decline the title: never a substring match, so
+# real words ("No Plans", "none of us slept") are never taken for an answer.
+_NO_TITLE_ALIASES = (
+    "no",
+    "none",
+    "nope",
+    "no thanks",
+    "skip",
+    "skip it",
+    "skip title",
+    "skip the title",
+    "no title",
+    "no title please",
+    "no title thanks",
+    "no hook",
+    "without title",
+    "without a title",
+    "continue without title",
+    "dont add a title",
+    "don t add a title",
+    "do not add a title",
+    "leave it off",
+    "leave the title off",
+    "başlık olmasın",
+    "başlıksız",
+    "başlık yok",
+)
+
+
+def _title_text(
+    strategy: Mapping[str, Any],
+    brief: Any,
+    rows: list[Any],
+    cap: ChoiceCapability,
+    *,
+    clip_paths: Sequence[Any] = (),
+) -> UnresolvedChoice | None:
+    """A title was asked for with no words and nothing the renderer may title with.
+
+    The unified phone montage settles a ``text`` requirement at render time and then
+    BLOCKS the render when the title receipt is not met (a title is never a default, a
+    model-written hook or unrequested place text), so the draft-time receipt check skips
+    it (``UNIFIED_SETTLED_KINDS``) and the creator only learns after approving. Asked
+    here instead, before approval. Whether a title source exists is decided by the
+    renderer's own ``title_source_exists`` so the question and the render cannot disagree.
+    """
+
+    if cap.creator_id is None:
+        return None
+    from app.kria.brief_checks import defers_to_unified_montage  # noqa: PLC0415
+    from app.pipeline.unified_montage import title_source_exists  # noqa: PLC0415
+
+    wanted = [
+        req
+        for req in _live(brief)
+        if req.kind == "text" and req.scope == "title" and not str(req.literal or "").strip()
+    ]
+    if not wanted:
+        return None
+    audio = strategy.get("montage_audio")
+    if (
+        isinstance(audio, Mapping)
+        and audio.get("preserve_source_audio")
+        and audio.get("source_media_ids")
+    ):
+        # `contract.audio_source_ids` takes the speech-excerpt lane
+        # (`run_phone_speech_montage_job`): it has no title handling and never blocks on one.
+        return None
+    if not defers_to_unified_montage(
+        creator_id=cap.creator_id,
+        edit_format=strategy.get("edit_format") or "montage",
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=clip_paths,
+    ):
+        return None  # the draft-time receipts judge this format themselves
+    if title_source_exists(strategy, brief):
+        return None
+    return title_text_choice(str(req.id) for req in wanted)
+
+
+def title_text_choice(requirement_ids: Iterable[str]) -> UnresolvedChoice:
+    """The ``title_text`` question for these wordless title requirements.
+
+    Shared by the draft-time detector and the observer that re-opens the same question
+    after the render-time block, so both carry the same ``conflict_id`` / ``input_digest``
+    and an answer given to either is the answer the gate replays.
+    """
+
+    ids = sorted({str(i) for i in requirement_ids})
+    return UnresolvedChoice(
+        kind=CONFLICT_TITLE_TEXT,
+        conflict_id=CONFLICT_TITLE_TEXT,
+        field_path="opening_title",
+        requirement_ids=tuple(ids),
+        intro=(
+            "You asked for a title on the opening, but you didn't tell me the words, and I "
+            "don't write on-screen text for you."
+        ),
+        reason="I can't add a title without them.",
+        options=(
+            ConflictOption(
+                key=OPT_NO_TITLE,
+                label="Continue without a title",
+                description="The video is made without an opening title.",
+                # Never recommended: a delegation ("you decide") must not drop the title the
+                # creator asked for.
+                recommended=False,
+                aliases=_NO_TITLE_ALIASES,
+            ),
+        ),
+        input_digest=_digest(CONFLICT_TITLE_TEXT, ids),
+    )
+
+
 def collect_conflicts(
     strategy: Any,
     brief: Any,
@@ -874,7 +1006,13 @@ def collect_conflicts(
     cap = capability or ChoiceCapability()
     rows = _rows(media_snapshot)
     found: list[UnresolvedChoice] = []
-    for detector in (_order_basis, _text_placement, _duration_vs_count):
+    clip_paths = list((media_snapshot or {}).get("clip_paths") or [])
+    for detector in (
+        _order_basis,
+        _text_placement,
+        functools.partial(_title_text, clip_paths=clip_paths),
+        _duration_vs_count,
+    ):
         result = detector(data, brief, rows, cap)
         if isinstance(result, list):
             found.extend(result)
@@ -1031,6 +1169,10 @@ def delegated_choice(question: Mapping[str, Any], message: object) -> str | None
 
     if normalize_reply(message) not in _DELEGATION_PHRASES:
         return None
+    if question.get("kind") == CONFLICT_TITLE_TEXT:
+        # Handing over a wordless title would drop the title the creator asked for (and we
+        # never write on-screen words): not a delegation. The gate asks once more.
+        return None
     options = [o for o in question.get("options") or [] if isinstance(o, Mapping) and o.get("key")]
     if not options:
         return None
@@ -1066,6 +1208,9 @@ _DISCLOSURES = {
     ),
     (CONFLICT_ORDER_BASIS, OPT_ATTACHMENT_ORDER): ("I'm using the order you added the clips."),
     (CONFLICT_ORDER_BASIS, OPT_UNORDERED): "I'm not promising a particular order.",
+    (CONFLICT_TITLE_TEXT, OPT_NO_TITLE): (
+        "I'm leaving the title off, since you didn't give me the words."
+    ),
 }
 
 
@@ -1245,6 +1390,13 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                     )
                 elif option == OPT_UNORDERED:
                     changed[req.id] = req.model_copy(update={"status": "superseded"})
+            elif (
+                kind == CONFLICT_TITLE_TEXT
+                and option == OPT_NO_TITLE
+                and req.kind == "text"
+                and req.scope == "title"
+            ):
+                changed[req.id] = req.model_copy(update={"status": "superseded"})
     if not changed:
         return brief
     return brief.model_copy(
@@ -1308,12 +1460,15 @@ __all__ = [
     "CONFLICT_ORDER_BASIS",
     "CONFLICT_PRIORITY",
     "CONFLICT_TEXT_PLACEMENT",
+    "CONFLICT_TITLE_TEXT",
     "KEEP_OPEN_REASON",
     "MAX_ASKS_PER_QUESTION",
     "OPT_ATTACHMENT_ORDER",
     "OPT_EXTEND",
     "OPT_FEWER",
+    "OPT_NO_TITLE",
     "OPT_UNORDERED",
+    "title_text_choice",
     "ChoiceCapability",
     "ChoiceResolution",
     "ScopedAnswer",

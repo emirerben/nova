@@ -315,6 +315,8 @@ async def planner_turn(record: IncidentRecord, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(planner, "load_latest_brief", AsyncMock(return_value=binding.resolve()))
     monkeypatch.setattr(type(planner.settings), "creative_brief_for", lambda _self, _id: True)
     monkeypatch.setattr(type(planner.settings), "brief_binding_for", lambda _self, _id: True)
+    if record.inputs.phone_proxy_media:
+        monkeypatch.setattr(type(planner.settings), "phone_rendering_for", lambda _self, _id: True)
     planned = replace(planned, media_snapshot=media_snapshot(record))
     return await planner._gate_unresolved_choices(
         SimpleNamespace(), planned, thread_id=uuid.uuid4(), creator_id=uuid.uuid4()

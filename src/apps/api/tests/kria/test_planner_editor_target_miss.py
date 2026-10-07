@@ -216,8 +216,24 @@ async def test_render_in_flight_is_a_distinct_miss() -> None:
     assert logs[0]["render_status"] == "rendering"
 
 
-def _wire_real(monkeypatch, *, render_status, copilot=None):  # noqa: ANN001, ANN202
-    """Real `_load_editor_target` / `_plan_editor_revision`; only I/O edges are stubbed."""
+# Pre-routing requirement extractions made by the last `_wire_real` run.
+EXTRACTOR_RUNS: list[int] = []
+
+
+def _wire_real(  # noqa: ANN202
+    monkeypatch,  # noqa: ANN001
+    *,
+    render_status,  # noqa: ANN001
+    copilot=None,  # noqa: ANN001
+    job_status=None,  # noqa: ANN001
+    variant_extra=None,  # noqa: ANN001
+    binding=False,  # noqa: ANN001
+):
+    """Real `_load_editor_target` / `_plan_editor_revision`; only I/O edges are stubbed.
+
+    `render_status=None` = the job carries no variant at all (a first render that
+    failed before producing one); `job_status` is the `Job.status` it ended in.
+    """
     item = _ExpiringItem(
         id=uuid.uuid4(),
         content_plan_id=uuid.uuid4(),
@@ -237,7 +253,14 @@ def _wire_real(monkeypatch, *, render_status, copilot=None):  # noqa: ANN001, AN
     job = SimpleNamespace(
         id=job_id,
         user_id=creator_id,
-        assembly_plan={"variants": [{"variant_id": "v1", "render_status": render_status}]},
+        status=job_status,
+        assembly_plan={
+            "variants": (
+                []
+                if render_status is None
+                else [{"variant_id": "v1", "render_status": render_status, **(variant_extra or {})}]
+            )
+        },
     )
     inner_get = db.get
 
@@ -259,6 +282,8 @@ def _wire_real(monkeypatch, *, render_status, copilot=None):  # noqa: ANN001, AN
     monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
     monkeypatch.setattr(settings, "clip_intents_enabled", False)
     monkeypatch.setattr(settings, "kria_copilot_first_enabled", True)
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", binding)
+    monkeypatch.setattr(settings, "kria_clip_understanding_enabled", False)
     manifest = _MANIFEST.model_copy(update={"item_id": str(item._fields["id"])})
     monkeypatch.setattr(
         planner, "resolve_item_creator_context", AsyncMock(return_value=(manifest, []))
@@ -287,11 +312,14 @@ def _wire_real(monkeypatch, *, render_status, copilot=None):  # noqa: ANN001, AN
 
     monkeypatch.setattr(planner, "MainCreatorAgent", FakeAgent)
 
+    EXTRACTOR_RUNS.clear()
+
     class FakeBriefExtractor:
         def __init__(self, _client) -> None:  # noqa: ANN001
             pass
 
         def run(self, *_args, **_kwargs):  # noqa: ANN002, ANN003
+            EXTRACTOR_RUNS.append(1)
             return SimpleNamespace(brief_updates=[_upd("select", "global")])
 
     monkeypatch.setattr(planner, "BriefExtractorAgent", FakeBriefExtractor)
@@ -390,6 +418,101 @@ async def test_router_path_recovers_when_target_missing_without_copilot_first(
     assert result.plan.turn_value == "recovery"
     assert "still rendering" in result.plan.response
     copilot.assert_not_called()
+
+
+# --- a FAILED first render is not a render: follow-ups re-plan, never dead-end ----------
+
+
+@pytest.mark.parametrize("binding", [True, False])
+@pytest.mark.parametrize("failed_status", ["processing_failed", "variants_failed"])
+async def test_follow_up_after_a_failed_first_render_replans(
+    monkeypatch: pytest.MonkeyPatch, binding: bool, failed_status: str
+) -> None:
+    """Incident shape: the item's only job failed with no variant; the creator then
+    types the missing words. That must reach the planner, not the 'couldn't open your
+    current edit' dead end, and the brief must be extracted exactly once."""
+    db, item, creator_id, runs, copilot = _wire_real(
+        monkeypatch,
+        render_status=None,
+        job_status=failed_status,
+        binding=binding,
+    )
+    result = await _ask(db, item, creator_id, "The hook should say 'Weekend away'")
+    assert result.plan.response != planner._EDITOR_TARGET_RECOVERY_REPLY
+    assert "couldn't open your current edit" not in (result.plan.response or "")
+    assert len(runs) == 1  # the Main Creator planned it
+    assert EXTRACTOR_RUNS == []  # no second, pre-routing extraction of the same message
+    assert len(result.brief_updates) == 1  # the brief update is applied once
+    copilot.assert_not_called()
+
+
+async def test_failed_first_render_miss_is_not_guarded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, item, creator_id, runs, copilot = _wire_real(
+        monkeypatch, render_status=None, job_status="processing_failed"
+    )
+    with capture_logs() as logs:
+        target = await planner._load_editor_target(db, thread_id=uuid.uuid4(), item=item)
+    assert target is None
+    assert planner._editor_target_miss.get() == "no_render"
+    assert not planner._editor_target_miss_guarded()
+    assert [e["reason"] for e in logs if e["event"] == "kria_editor_target_unavailable"] == [
+        "no_render"
+    ]
+
+
+@pytest.mark.parametrize("binding", [True, False])
+async def test_rendering_variant_still_gets_the_in_flight_reply(
+    monkeypatch: pytest.MonkeyPatch, binding: bool
+) -> None:
+    db, item, creator_id, runs, copilot = _wire_real(
+        monkeypatch, render_status="rendering", job_status="processing", binding=binding
+    )
+    result = await _ask(db, item, creator_id, "The hook should say 'Weekend away'")
+    assert result.plan.turn_value == "recovery"
+    assert result.plan.response == planner._EDITOR_TARGET_IN_FLIGHT_REPLY
+    assert runs == []
+
+
+async def test_failed_job_with_a_ready_variant_is_not_a_first_render(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A re-render that failed after a ready variant exists keeps the guarded path."""
+    db, item, creator_id, runs, copilot = _wire_real(
+        monkeypatch, render_status="failed", job_status="processing_failed"
+    )
+    job = (await db.get(Job, item._fields["current_job_id"])).assembly_plan
+    job["variants"].append({"variant_id": "v0", "render_status": "ready"})
+    # The session still points at the failed variant: nothing editable is ready for it.
+    await planner._load_editor_target(db, thread_id=uuid.uuid4(), item=item)
+    assert planner._editor_target_miss.get() == "no_ready_variant"
+    assert planner._editor_target_miss_guarded()
+
+
+async def test_ready_variant_with_stale_editor_state_still_gets_the_stale_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.kria.test_editor_state_turns import _state
+
+    db, item, creator_id, runs, copilot = _wire_real(
+        monkeypatch,
+        render_status="ready",
+        job_status="variants_ready",
+        variant_extra={"render_generation_id": "G2"},
+        binding=True,
+    )
+    result = await planner.plan_live_turn(
+        db,
+        thread_id=uuid.uuid4(),
+        item_id=item._fields["id"],
+        creator_id=creator_id,
+        user_message="The hook should say 'Weekend away'",
+        editor_state=_state({}, base="G1"),
+    )
+    assert result.plan.turn_value == "recovery"
+    assert result.plan.response == planner.EDITOR_STATE_STALE_REPLY
+    assert runs == []
 
 
 # --- conversation cap: MainCreatorInput.conversation is max 20 --------------------------

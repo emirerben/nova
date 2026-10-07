@@ -156,6 +156,7 @@ model-output -> gate chain, including the archetype exemption.
 | `duration_vs_count` | A live brief `timing` requirement with `duration_s` (quoted in the question) | N clips (the selection the draft carries when it has one, else the snapshot; minus clips outside a resolved `include` intent) cannot each get the readable-shot floor (`unified_montage.MIN_READABLE_SHOT_S`, 0.8 s) in that length | `extend` (the length N x floor needs, if within the 120 s cap), `fewer` (the clips that fit, evenly spaced WITHIN the selection, never re-adding an excluded clip); flash-cutting is never offered | `target_duration_s` + requested flag (extend), or `selected_media_ids` + `media_scope=selected` + the length (fewer); the pinned brief timing requirement is updated to match | Strategy-only lengths; non-montage formats; a live `select` requirement with no resolved subset; a selection whose clips fit; `montage_cadence`, `mixed_media_timing`, `montage_audio`, `archetype`, `execution_contract`; `audio_strategy` voiceover / user_song, `song_sync` (those planners never read the strategy length) |
 | `order_basis` | A live brief `order` requirement, or `ordering_choice=chronological` | (a) a capture-order requirement (`capture_time`, `chronological`, `route`, `time`, `shot_order`) and some selected clip has no capture time (the contract's own condition); (b) a key-less or unknown-key rule ("clips 1, 2, 3 in that sequence") the contract cannot verify | `attachment_order` ("Use the order you added the clips"), `unordered` ("Continue without a fixed order"). A creator-typed sequence is NOT offered: nothing can receive one yet | `choice_answers[]`; the contract carries `order_basis="attachment_order"` + `order_ids`, or `order_required=false` | Rule (b) when the server already placed the sequence (a resolved `order` intent with assignments) |
 | `text_placement` | A live brief dictated shot text | The literal appears on two or more draft shots | One `On shot N` option per matching shot | `choice_answers[]`; the contract sets that requirement's `shot_index` | A text with no matching label (a planner miss) |
+| `title_text` | A live brief `text` requirement with `scope=title` and NO literal | The draft renders through the unified phone montage (`brief_checks.defers_to_unified_montage`: phone-proxy clips, enrolled account, montage-family format, non-voiceover audio) and the renderer would burn no title: `unified_montage.title_source_exists` (the SAME `_title` the render calls: `strategy.opening_title`, a title/global literal, or `title_from_facts`) is false. The detector needs `ChoiceCapability.creator_id`; callers that do not pass it never get this question | `no_title` ("Continue without a title", NOT marked recommended; a delegation such as "you decide" is not an answer and re-asks once with the explanation). Matched exactly after normalisation against a broad alias set (`no`, `none`, `skip`, `no title please`, `don't add a title`, `leave it off`, `başlık olmasın`, `başlıksız`, ...) and never by substring, so "No Plans" is a title, not an answer. Typed words are NOT an option, they become the literal through the normal brief extraction. We never offer to write the words (on-screen text is the creator's: KRI-255) | `choice_answers[]`; `answered_brief` supersedes the wordless title requirement in the pinned copy, so the render-time receipt no longer blocks; disclosed ("I'm leaving the title off...") | A title with words; `opening_title`; a global literal or brief facts to title from; any draft the unified montage does not render (cloud, voiceover, non-montage formats; their draft-time receipts judge it); no `creator_id`; a speech-excerpt draft (`strategy.montage_audio` preserving source audio with source ids, which becomes `contract.audio_source_ids` and takes `run_phone_speech_montage_job`: no title handling, never blocks on one). A legacy contract-less draft that the dispatcher sends to the speech lane anyway cannot be known at draft time |
 
 Not questions: a rule no option can fix, a technical failure, and any combination no
 renderer supports (typed declines above).
@@ -214,6 +215,12 @@ receipts state what is unmet; an unverifiable order becomes ONE plain message qu
 two ways forward. Only an explicit delegation ("you choose", "you decide", "up to you", "surprise me"; a bare "whatever" is not one)
 picks the recommended option, recorded as `source="creator_delegated"` and disclosed.
 
+`title_text` is the exception to "the plan goes through": a wordless title cannot render, so
+once it is exhausted the pre-approval backstop (`_unresolved_choice_plan`) answers in words
+("I won't guess, so I haven't made an edit yet ... reply "Continue without a title", or type the
+words you want") and keeps the question open like `order_basis`; the render-time block below is
+the last line, not the plan.
+
 **Known limits.**
 
 * A restatement is detected only for the length conflict (it compares the model's plan with
@@ -238,6 +245,53 @@ picks the recommended option, recorded as `source="creator_delegated"` and discl
   `test_montage_audio_route_shape_is_the_documented_kri469_gap` until the PR-H slice changes it.
 * Questions render through the generic v1 `ChoiceQuestionCard` on iOS; web has no question
   card and shows the plain-text list.
+* **The unified montage settles `text`/`order`/`timing` at render time**
+  (`brief_checks.UNIFIED_SETTLED_KINDS`; `requirements_to_check_at_draft` skips them), and
+  `_run_phone_unified_montage_job` BLOCKS the render when a bound brief has a checked receipt
+  that is not met. A creator therefore only meets such a requirement after approving unless a
+  gate question catches it earlier: `title_text` does for a wordless title (KRI-470); a wordless
+  `text` requirement of another scope or an unmet `order` still blocks at render time. The block
+  raises a bare `UnsupportedPhonePlan` ("Should I try again or simplify this request?") except
+  for a wordless title, which is a typed `needs_choice` decline (`field_path=opening_title`,
+  alternative: tell me the words or say "continue without a title") worded "I couldn't make the
+  video yet: ..." because no video exists. With a second blocker the block stays untyped
+  but its copy ends with the title's way forward. The narrated-alignment recovery at the second
+  `ask_before_simplifying` site is still untyped (no receipt behind it).
+* **The render-time block re-opens the `title_text` question.** The observer
+  (`kria_runtime._blocked_title_question`) puts the same question (same `conflict` and
+  `input_digest` as the draft-time one) on the `assistant_render_failed` event whenever the
+  stored receipts carry the wordless-title reason and choice questions are on. That event type
+  never closes an open question, so "continue without a title" (or any alias) is turned into a
+  `choice_selection` server-side by the existing free-text matcher, the gate replays it from
+  the thread events and `answered_brief` supersedes the requirement for the next render.
+  Pinned end to end on Postgres (`tests/kria/test_title_block_answer_postgres.py`). Without
+  stored receipts (binding mismatch) or with the flag off there is no question: the creator's
+  reply is plain text.
+* **Typed words after the block are NOT verified against the live brief extractor.** A reply
+  that is not an option is never turned into one (deterministic). What it extracts to is the
+  extractor's job: its prompt says `literal` is ONLY text the creator wrote out, so an
+  instruction such as "make it fun" should arrive as a description with no literal and the
+  title stays wordless (the gate re-asks, within the two-ask cap). The repo has no
+  instruction-versus-title heuristic; if the extractor ever returned such a reply as a literal
+  it would be burned verbatim. Known limit; verify with a live eval before relying on it.
+* **A failed first render is not a render.** An item whose only job failed with no variant
+  (`planner._job_never_rendered`) used to answer every follow-up with "I couldn't open your
+  current edit to change it in place" (`no_ready_variant` is a guarded miss), so the typed
+  words never reached the planner. It now records the unguarded `no_render` miss and skips the
+  extract-first rendered-edit path: the follow-up is a normal re-plan (`has_render=False`). An
+  in-flight (`render_in_flight`) or stale (`editor_state_stale`) target keeps its guarded reply.
+  After the render-time block the `title_text` question is open (next bullet), so the reply
+  is answered deterministically.
+* A runtime-v2 render failure is worded once: `reconcile_render_state` holds back the generic
+  "That render didn't finish" line only while runtime v2 is on AND a dispatched execution for that
+  Job is younger than `creator_sessions.OBSERVER_FAILURE_WINDOW` (5 minutes; the observer normally
+  posts within ~30 s). Past that, or with v2 off, or with no execution, the line is posted, so a
+  failure is never lost when the observer never posts (that branch has already set the session
+  to `failed`).
+* `planner._FAILED_JOB_STATUSES` lists `matching_failed` / `no_labeled_tracks` too; they exist only
+  on auto-music jobs (harmless here). #1460's `latest_job_failed` already keeps the bound
+  extract-first path off a failed item; the `no_render` miss covers the copilot-first and
+  editor-revision paths that still reach `_load_editor_target`.
 
 ## Stored-contract compatibility
 

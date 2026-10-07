@@ -1155,6 +1155,7 @@ _CANT_CHECK_SPEECH = "I can't check the spoken parts on this draft yet."
 _CANT_CHECK_TAKE = "I can't confirm this draft keeps your whole take."
 _CANT_CHECK_TITLE = "I can't confirm where this draft's title came from."
 _NO_TITLE = "I didn't add a title because no creator text or grounded brief facts were available."
+NO_TITLE_REASON = _NO_TITLE  # stored on a blocked render's receipts (see `render_block_recovery`)
 _CANT_CONFIRM_LENGTH = "I can't confirm this draft's length yet."
 _TALKING_KEEPS_WHOLE_TAKE = "A Talking edit keeps your whole take, so its length follows your clip"
 _VOICEOVER_SETS_LENGTH = "A voiceover edit runs as long as your voiceover"
@@ -1495,6 +1496,52 @@ def _check_title(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     return _receipt(req, "partial", "I used a plain default title because none was given.")
 
 
+# The render-time block of the unified phone montage (`_run_phone_unified_montage_job`):
+# no video exists when a checked receipt is not met, so the creator-facing copy must not
+# read like a draft summary ("I didn't add a title ...") and a title with no words has one
+# typed way forward.
+NO_TITLE_BLOCKED = "I couldn't make the video yet: you asked for a title but gave no words."
+TITLE_WORDS_ALTERNATIVE = 'Tell me the words for the title, or say "continue without a title".'
+_TITLE_WAY_FORWARD_MIXED = 'For the title, tell me the words or say "continue without a title".'
+_RENDER_BLOCK_SUFFIX = "Your draft is saved. Should I try again or simplify this request?"
+
+
+@dataclass(frozen=True)
+class RenderBlockRecovery:
+    """What the creator is told when checked receipts block a render, and the typed decline."""
+
+    message: str
+    # Set only when every blocker is one the creator resolves with a single answer.
+    decline_reason: str | None = None
+    field_path: str | None = None
+    alternative: str | None = None
+
+
+def render_block_recovery(failures: Sequence[Mapping[str, Any]]) -> RenderBlockRecovery:
+    """Creator copy (+ typed decline) for the receipts that block a unified-montage render.
+
+    A title with no words is the one blocker the creator answers directly (a
+    ``needs_choice`` decline whose alternative is the typed way forward); every other
+    blocker keeps the generic "try again or simplify" copy, untyped. Receipt semantics
+    are untouched: only the wording shown at the block changes.
+    """
+
+    reasons = [str(row.get("reason") or "A requested change is missing.") for row in failures]
+    if reasons and all(reason == _NO_TITLE for reason in reasons):
+        return RenderBlockRecovery(
+            message=f"{NO_TITLE_BLOCKED} Your draft is saved. {TITLE_WORDS_ALTERNATIVE}",
+            decline_reason="needs_choice",
+            field_path="opening_title",
+            alternative=TITLE_WORDS_ALTERNATIVE,
+        )
+    shown = " ".join(dict.fromkeys(NO_TITLE_BLOCKED if r == _NO_TITLE else r for r in reasons))
+    message = f"{shown} {_RENDER_BLOCK_SUFFIX}"
+    if _NO_TITLE in reasons:
+        # Untyped (two blockers), but the title's way forward must not be lost.
+        message = f"{message} {_TITLE_WAY_FORWARD_MIXED}"
+    return RenderBlockRecovery(message=message)
+
+
 def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     wanted = _fold(req.literal or "")
     if req.scope == "title" and facts.title:
@@ -1770,6 +1817,8 @@ def reply_from_receipts(
 __all__ = [
     "UNIFIED_SETTLED_KINDS",
     "BeatFact",
+    "NO_TITLE_REASON",
+    "RenderBlockRecovery",
     "defers_to_unified_montage",
     "requirements_to_check_at_draft",
     "PlanFacts",
@@ -1783,5 +1832,6 @@ __all__ = [
     "plan_facts_from_speech_montage",
     "plan_facts_from_strategy",
     "plan_facts_from_unified_montage",
+    "render_block_recovery",
     "reply_from_receipts",
 ]

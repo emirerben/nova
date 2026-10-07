@@ -413,6 +413,56 @@ def test_observer_keeps_bound_recovery_message_without_extracted_requirements(
     assert "requirement_receipts" not in failed["payload"]
 
 
+def test_a_title_with_no_words_failure_shows_the_typed_copy_and_asks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-470: the unified montage blocked on a wordless title. The creator reads what is
+    missing and the way forward (once), the turn is an ask, and the typed decline rides on
+    the event payload; nothing claims a video exists."""
+    from app.kria.brief_checks import NO_TITLE_BLOCKED, TITLE_WORDS_ALTERNATIVE
+
+    message = f"{NO_TITLE_BLOCKED} Your draft is saved. {TITLE_WORDS_ALTERNATIVE}"
+    job = _device_job(status="processing_failed")
+    job.failure_reason = "phone_plan_unsupported"
+    job.error_detail = message
+    job.assembly_plan.pop("_device_render_v1", None)
+    job.assembly_plan.update(
+        {
+            "creator_generation_id": "edit-gen-2",
+            "creator_brief_binding": {"saved": "binding"},
+            "creator_decline": {
+                "decline_reason": "needs_choice",
+                "field_path": "opening_title",
+                "alternative": TITLE_WORDS_ALTERNATIVE,
+                "failure_reason": "phone_plan_unsupported",
+            },
+            "request_recovery": {
+                "message": message,
+                "requirement_receipts": [],
+                "brief_version": None,
+                "generation_id": "edit-gen-2",
+                "binding_digest": "pinned-digest",
+            },
+        }
+    )
+    binding = SimpleNamespace(digest="pinned-digest", resolve=lambda _thread_id: None)
+    monkeypatch.setattr("app.kria.brief_binding.BriefBinding.model_validate", lambda _raw: binding)
+    _outcome, execution, events = _observe(job, {})
+    failed = events[-1]
+    assert failed["content"] == message
+    assert failed["content"].count(TITLE_WORDS_ALTERNATIVE) == 1
+    assert "I didn't add a title" not in failed["content"]
+    assert execution.error == {
+        "code": "phone_plan_unsupported",
+        "retryable": False,
+        "recovery": "ask_user",
+        "decline_reason": "needs_choice",
+        "field_path": "opening_title",
+    }
+    assert failed["payload"]["decline_reason"] == "needs_choice"
+    assert failed["payload"]["field_path"] == "opening_title"
+
+
 # ---------------------------------------------------------------- dispatch
 
 

@@ -73,8 +73,10 @@ from app.routes.generative_jobs import (
 )
 from app.services.choice_questions import (
     CONFLICT_ORDER_BASIS,
+    CONFLICT_TITLE_TEXT,
     KEEP_OPEN_REASON,
     MAX_ASKS_PER_QUESTION,
+    ChoiceCapability,
     answered_brief,
     build_choice_question,
     choice_question_text,
@@ -366,6 +368,7 @@ def _unresolved_choice_plan(
     contract_brief: Any = None,
     events: Any = (),
     has_draft: bool = False,
+    creator_id: Any = None,
 ) -> tuple[KriaTurnPlan, str] | None:
     """KRI-476 backstop: the reply that replaces a draft an unresolved choice blocks.
 
@@ -394,7 +397,8 @@ def _unresolved_choice_plan(
         return None
     unchanged = " Your current draft is unchanged." if has_draft else ""
     history = list(events)
-    for conflict in open_conflicts(strategy, brief, media_snapshot):
+    capability = ChoiceCapability(creator_id=creator_id) if creator_id is not None else None
+    for conflict in open_conflicts(strategy, brief, media_snapshot, capability):
         if count_asks(history, conflict.conflict_id, conflict.input_digest) < (
             MAX_ASKS_PER_QUESTION
         ):
@@ -408,8 +412,10 @@ def _unresolved_choice_plan(
                 ),
                 KEEP_OPEN_REASON,
             )
-        if conflict.kind == CONFLICT_ORDER_BASIS:
+        if conflict.kind in (CONFLICT_ORDER_BASIS, CONFLICT_TITLE_TEXT):
             ways = " or ".join(f'"{o.label}"' for o in conflict.options)
+            if conflict.kind == CONFLICT_TITLE_TEXT:
+                ways = f"{ways}, or type the words you want"
             return (
                 KriaTurnPlan(
                     mode="respond",
@@ -817,6 +823,7 @@ def _complete_draft_turn(
                     ).all()
                 ],
                 has_draft=head is not None,
+                creator_id=thread.creator_id if binding_on else None,
             )
             if blocked is not None:
                 blocked_plan, blocked_reason = blocked
@@ -3324,6 +3331,29 @@ def _approved_generation_review(
     ]
 
 
+def _blocked_title_question(receipts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The tappable `title_text` question for a render blocked on a wordless title.
+
+    Same conflict and digest as the draft-time question (`title_text_choice`), so the
+    existing free-text / tap machinery answers it and the gate replays the answer; the
+    copy already tells the creator both ways forward. Only for receipts that carry the
+    wordless-title reason, and only while choice questions are on.
+    """
+    from app.kria.brief_checks import NO_TITLE_REASON  # noqa: PLC0415
+    from app.services.choice_questions import title_text_choice  # noqa: PLC0415
+
+    if not settings.kria_choice_questions_enabled:
+        return None
+    ids = [
+        str(r["requirement_id"])
+        for r in receipts
+        if r.get("reason") == NO_TITLE_REASON and r.get("requirement_id")
+    ]
+    if not ids:
+        return None
+    return build_choice_question(title_text_choice(ids).candidate())
+
+
 def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | None]:
     """Settle one dispatched receipt from durable Job truth."""
 
@@ -3703,6 +3733,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         ):
             # A deterministic phone decline keeps its copy and adds the way forward.
             failure_content = f"{failure_content} {typed_decline['alternative']}"
+        title_question = _blocked_title_question(recovery_receipts)
         event = _append_sync_event(
             db,
             thread,
@@ -3716,6 +3747,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 "status": "failed",
                 "code": failure_code,
                 "recovery": recovery,
+                **({"choice_question": title_question} if title_question else {}),
                 "receipt_ids": [str(execution.id)],
                 **(
                     {

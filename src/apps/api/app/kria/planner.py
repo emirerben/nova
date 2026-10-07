@@ -764,6 +764,29 @@ _GUARDED_MISSES = frozenset(
     }
 )
 
+# Job statuses meaning the render pipeline ended without producing anything watchable.
+_FAILED_JOB_STATUSES = frozenset(
+    {"processing_failed", "variants_failed", "matching_failed", "no_labeled_tracks"}
+)
+
+
+def _job_never_rendered(job: Any) -> bool:
+    """The item's current job FAILED and never produced (or started) a variant.
+
+    There is nothing to edit in place and nothing in flight, so a follow-up is a
+    re-plan of the brief, not an "editor target unavailable" dead end. A job with any
+    ready/in-flight variant (or one that is still queued/processing) is NOT this case.
+    """
+    if getattr(job, "status", None) not in _FAILED_JOB_STATUSES:
+        return False
+    variants = (getattr(job, "assembly_plan", None) or {}).get("variants") or []
+    return not any(
+        isinstance(row, dict)
+        and (row.get("render_status") == "ready" or row.get("render_status") in _IN_FLIGHT_STATUSES)
+        for row in variants
+    )
+
+
 # Why the last `_load_editor_target` in this task returned None (None = it did not miss).
 _editor_target_miss: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "kria_editor_target_miss", default=None
@@ -851,6 +874,10 @@ async def _load_editor_target(
             target_variant_id=session.target_variant_id,
             render_status=target_row.get("render_status"),
         )
+        return None
+    if variant is None and _job_never_rendered(job):
+        # Not in _GUARDED_MISSES: nothing exists to edit, so the follow-up re-plans.
+        _miss("no_render", session_id=str(session.id), job_status=job.status)
         return None
     if variant is None:
         _miss(
@@ -1797,7 +1824,7 @@ async def _gate_unresolved_choices(
         brief,
         planned.media_snapshot,
         events,
-        ChoiceCapability(max_duration_s=float(MAX_PROPOSAL_DURATION_S)),
+        ChoiceCapability(max_duration_s=float(MAX_PROPOSAL_DURATION_S), creator_id=creator_id),
     )
     if resolution.question is not None:
         candidate = resolution.question.candidate()
