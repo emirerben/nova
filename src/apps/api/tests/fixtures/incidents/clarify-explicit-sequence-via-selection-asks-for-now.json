@@ -1,0 +1,118 @@
+{
+  "id": "clarify-explicit-sequence-via-selection-asks-for-now",
+  "incident": {
+    "ticket": "KRI-476",
+    "summary": "Must ask FOR NOW (known limit, not a false positive): the creator's explicit sequence rides in selected_media_ids, but no renderer is proven to honour selection order, so the contract cannot verify it. Revisit when the route resolver (PR-D/F) can pin a selected order."
+  },
+  "kind": "clarification",
+  "approved": {
+    "strategy": {
+      "direction": "guided_story",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "pacing": "fast",
+      "media_scope": "selected",
+      "selected_media_ids": [
+        "m001",
+        "m002",
+        "m003",
+        "m004",
+        "m005",
+        "m006",
+        "m007",
+        "m008"
+      ]
+    },
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r2",
+          "kind": "order",
+          "scope": "global",
+          "description": "clips 1 to 8 in that sequence",
+          "facts": {},
+          "source_turn_id": "turn-1"
+        }
+      ]
+    },
+    "creator_request": "Use clips 1 to 8 in that sequence.",
+    "provenance": "Redacted shape of prod thread aed98bf6 (brief order requirement with empty facts, selected_media_ids m001..m008, no resolved order intent). Not a captured turn."
+  },
+  "inputs": {
+    "media": [
+      {
+        "id": "m001",
+        "kind": "video",
+        "duration_s": 3.0,
+        "capture_time": "2026-01-01T10:00:00Z"
+      },
+      {
+        "id": "m002",
+        "kind": "video",
+        "duration_s": 3.0,
+        "capture_time": "2026-01-01T10:01:00Z"
+      },
+      {
+        "id": "m003",
+        "kind": "video",
+        "duration_s": 3.0,
+        "capture_time": "2026-01-01T10:02:00Z"
+      },
+      {
+        "id": "m004",
+        "kind": "video",
+        "duration_s": 3.0,
+        "capture_time": "2026-01-01T10:03:00Z"
+      },
+      {
+        "id": "m005",
+        "kind": "video",
+        "duration_s": 3.0,
+        "capture_time": "2026-01-01T10:04:00Z"
+      },
+      {
+        "id": "m006",
+        "kind": "video",
+        "duration_s": 3.0,
+        "capture_time": "2026-01-01T10:05:00Z"
+      },
+      {
+        "id": "m007",
+        "kind": "video",
+        "duration_s": 3.0,
+        "capture_time": "2026-01-01T10:06:00Z"
+      },
+      {
+        "id": "m008",
+        "kind": "video",
+        "duration_s": 3.0,
+        "capture_time": "2026-01-01T10:07:00Z"
+      }
+    ],
+    "turns": [
+      {
+        "role": "user",
+        "text": "Use clips 1 to 8 in that sequence."
+      }
+    ],
+    "notes": [
+      "KNOWN LIMIT pointing at PR-D (KRI-477): pinning selected_media_ids order as a verified basis needs the renderers to honour it. Until then this asks (attachment order / continue without a fixed order). If this record starts passing as no_question, that is the route resolver landing, not a regression."
+    ]
+  },
+  "expect": {
+    "question": {
+      "kind": "order_basis",
+      "option_keys": [
+        "attachment_order",
+        "unordered"
+      ],
+      "min_options": 2
+    }
+  },
+  "repro": {
+    "command": "pytest tests/incidents/test_incident_corpus.py -k clarify-explicit-sequence-via-selection-asks-for-now",
+    "status": "available"
+  },
+  "sources": []
+}

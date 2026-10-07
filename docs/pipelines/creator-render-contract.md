@@ -103,8 +103,8 @@ A refusal carries a `DeclineReason` and a `field_path` (matrix path, or
 | --- | --- | --- |
 | `capability_unavailable` | The path can never honour or prove it. | Refusal naming the limit and a supported alternative. |
 | `evidence_missing` | Supported, but the output did not demonstrate it. | Repair / retry, only where the evidence can appear on a re-run (cloud publication verification, `creator_render_contract_unverified`; cloud preflight). A phone `phone_plan_unsupported` stays deterministic: it asks, with the original copy plus the typed alternative. |
-| `requirement_conflict` | Two approved requirements cannot both hold. | Existing ask behaviour (real questions arrive with the clarification gate); a typed alternative is appended to phone copy. |
-| `needs_choice` | Ambiguous until the creator decides (includes `unresolved`). | Existing ask behaviour. |
+| `requirement_conflict` | Two approved requirements cannot both hold. | A question for the route-independent conflicts the clarification gate owns (see "Clarification gate"); otherwise the existing ask behaviour, with a typed alternative appended to phone copy. |
+| `needs_choice` | Ambiguous until the creator decides (includes `unresolved`). | The same gate asks before approval; a leftover `unresolved` item is refused at draft time instead of at dispatch. |
 
 The reason is persisted beside, never in place of, the existing failure strings:
 `phone_plan_unsupported`, `creator_render_contract_unsupported` and
@@ -117,6 +117,101 @@ clears it, so a later unrelated failure never inherits an old refusal. A cloud
 publication decline lands on the failed variant next to `error_class`, and
 recovery reads only the targeted variant's own decline. `unresolved` stays a tuple of
 strings; it is reported as `needs_choice` without a field path.
+
+## Clarification gate
+
+An unresolved material choice never becomes an approved plan (KRI-476 / PR-C, flag
+`kria_choice_questions_enabled`; off = the previous behaviour, `unresolved` still refuses
+at dispatch). `services/choice_questions.py:collect_conflicts(strategy, brief,
+media_snapshot, capability)` is the ONLY place that turns an ambiguity into a question.
+It reads the strategy, the brief and the approved media snapshot, never chat text or a
+render route, and returns typed `UnresolvedChoice` items (`kind`, `field_path`,
+`requirement_ids`, `options`, `input_digest`) in a fixed priority order. One question per
+turn.
+
+**Evidence rule.** A question needs something the CREATOR said, i.e. a live brief
+requirement. The Creator model must always emit `target_duration_s` and the server stamps
+`target_duration_requested` whenever it did, so neither is evidence of a stated length.
+
+| Kind | Evidence required | Detector | Options (all executable today) | Persisted field | Exempt (never asks) |
+| --- | --- | --- | --- | --- | --- |
+| `duration_vs_count` | A live brief `timing` requirement with `duration_s` (quoted in the question) | N clips (the selection the draft carries when it has one, else the snapshot; minus clips outside a resolved `include` intent) cannot each get the readable-shot floor (`unified_montage.MIN_READABLE_SHOT_S`, 0.8 s) in that length | `extend` (the length N x floor needs, if within the 120 s cap), `fewer` (the clips that fit, evenly spaced WITHIN the selection, never re-adding an excluded clip); flash-cutting is never offered | `target_duration_s` + requested flag (extend), or `selected_media_ids` + `media_scope=selected` + the length (fewer); the pinned brief timing requirement is updated to match | Strategy-only lengths; non-montage formats; a live `select` requirement with no resolved subset; a selection whose clips fit; `montage_cadence`, `mixed_media_timing`, `montage_audio`, `archetype`, `execution_contract`; `audio_strategy` voiceover / user_song, `song_sync` (those planners never read the strategy length) |
+| `order_basis` | A live brief `order` requirement, or `ordering_choice=chronological` | (a) a capture-order requirement (`capture_time`, `chronological`, `route`, `time`, `shot_order`) and some selected clip has no capture time (the contract's own condition); (b) a key-less or unknown-key rule ("clips 1, 2, 3 in that sequence") the contract cannot verify | `attachment_order` ("Use the order you added the clips"), `unordered` ("Continue without a fixed order"). A creator-typed sequence is NOT offered: nothing can receive one yet | `choice_answers[]`; the contract carries `order_basis="attachment_order"` + `order_ids`, or `order_required=false` | Rule (b) when the server already placed the sequence (a resolved `order` intent with assignments) |
+| `text_placement` | A live brief dictated shot text | The literal appears on two or more draft shots | One `On shot N` option per matching shot | `choice_answers[]`; the contract sets that requirement's `shot_index` | A text with no matching label (a planner miss) |
+
+Not questions: a rule no option can fix, a technical failure, and any combination no
+renderer supports (typed declines above).
+
+**One capture-order key set.** `clip_facts.CAPTURE_ORDER_KEYS` (`capture_time`,
+`chronological`, `route`, `time`, `shot_order`) is the single constant the contract, the
+montage planner (`unified_montage`) and the requirement receipts (`brief_checks`) all import.
+The planner and receipts already rendered and judged `route`/`time`/`shot_order` as
+capture-time order, but the contract treated them as unverifiable, so every such request was
+refused at dispatch. Now they pin `order_basis="capture_time"` exactly like `chronological`.
+This changes semantics for **contracted jobs only** (previously `unresolved`, refused at
+dispatch); legacy unstamped jobs are untouched. With capture times there is no question;
+without them the `order_basis` question applies. A key-less rule stays on the ask path.
+
+**Where it runs.** `planner.plan_live_turn` runs the gate AFTER the media snapshot is
+attached, on the same snapshot approval binds (`_plan_from_creator_output` runs before
+it and would invent "missing capture dates"). `_complete_draft_turn` re-checks as a
+backstop: with an open choice, or (for creators with a brief binding, the only ones whose
+dispatch contract reads the brief) a contract that still has `unresolved` items, it
+rolls back to a respond turn instead of minting an approvable draft. It says "your draft
+is unchanged" only when a draft exists.
+
+**Answers.** A tapped `choice_selection`, or a plain message that normalises (case,
+punctuation, whitespace) to exactly one option key, label, list number or server alias
+(`submit_turn` -> `match_open_choice`), is stored on the thread and replayed on every
+later turn. A question is open until it is answered, replaced by a newer question, or the
+assistant replies to a user turn taken after it (a text question or a draft; the per-event-type
+table is `QUESTION_EVENT_EFFECT`). Asynchronous events (`generation_ready`, `assistant_review`,
+`memory_updated`, `status_update`, `format_prompt`, `media_prompt`, `draft_applied`,
+`draft_undone`, `assistant_error`, `assistant_render_failed`) never close it and never use up
+an ask. Once it has been asked twice a later non-answer closes it too (a recovery that
+restates it in words reopens it).
+`resolve_choices` applies an answer only when the question's `input_digest` still equals
+the digest of the current inputs, so a changed media set or brief length reopens just that
+question and an old answer never answers a different one. **The server-owned answer
+wins:** the chosen length / clip subset is written over whatever the model emitted that
+turn (it may re-emit the old value or follow the option's label), and the matching brief
+requirement is superseded in the PINNED copy (`answered_brief`; the thread's stored brief
+keeps what the creator typed). Applied answers are `CreativeStrategy.choice_answers`
+(server-owned: a model- or client-written value is discarded), link to the brief
+requirement ids they resolve, are part of the `BriefBinding` digest when present, and are
+disclosed in the draft summary.
+
+**A later restatement supersedes the answer.** The answer wins on the turn(s) that follow
+it (the model may echo the option's label or re-emit the old value). On a LATER turn, a new
+user message that is not an answer and not a verbatim re-send of an earlier message, together
+with a model plan that no longer carries the answered length/subset ("no, exactly 15 seconds
+with all of them", "make it shorter"), drops the answer (kept as provenance only: it never
+reaches the strategy or the pinned brief) and the gate asks once more, within the two-ask cap;
+after the cap the plan goes through unchanged and the old answer is never silently
+re-applied.
+
+**Never a default.** The same question is asked at most twice. After that nothing is
+chosen for the creator and no requirement is rewritten: the plan goes through and the
+receipts state what is unmet; an unverifiable order becomes ONE plain message quoting the
+two ways forward. Only an explicit delegation ("you choose", "you decide", "up to you", "surprise me"; a bare "whatever" is not one)
+picks the recommended option, recorded as `source="creator_delegated"` and disclosed.
+
+**Known limits.**
+
+* A restatement is detected only for the length conflict (it compares the model's plan with
+  the answered value); an order or text-placement answer is invalidated only by a digest
+  change (different clips, different brief rule). A verbatim re-send of an earlier message
+  never reopens an answer.
+* An explicit sequence carried in `selected_media_ids` with a key-less order requirement
+  (prod thread aed98bf6) is asked about for now: no renderer is proven to honour selection
+  order, so it cannot be pinned as a verified basis. Corpus record
+  `clarify-explicit-sequence-via-selection-asks-for-now` documents it; the route resolver
+  (PR-D/F) should replace the question with a pinned order.
+* `group_first` is not yet an explicit contract order basis: the arrangement is computed at
+  render time (visual scatter, sequence intents), so pinning it needs the route resolver
+  (PR-D).
+* Questions render through the generic v1 `ChoiceQuestionCard` on iOS; web has no question
+  card and shows the plain-text list.
 
 ## Stored-contract compatibility
 
