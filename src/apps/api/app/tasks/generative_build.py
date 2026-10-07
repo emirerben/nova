@@ -243,6 +243,24 @@ _PLAN_REPAIR = (
 )
 
 
+def _flag_decline(kind: str, message: str) -> BaseException:
+    """The resolver's typed refusal for a rollout flag that forbids the approved format.
+
+    ``kind`` picks the resolver's own alternative wording (``render_route.ALT_*``), imported
+    lazily like every other render_route use in this module.
+    """
+    from app.services import render_route  # noqa: PLC0415
+
+    alternative = {
+        "different_format": render_route.ALT_DIFFERENT_FORMAT,
+        "narrated": render_route.ALT_NARRATED_UNAVAILABLE,
+        "self_narration": render_route.ALT_SELF_NARRATION_UNAVAILABLE,
+    }[kind]
+    return _plan_decline(
+        "capability_unavailable", message, field_path="edit_format", alternative=alternative
+    )
+
+
 def _plan_decline(
     reason: str, message: str, *, field_path: str | None, alternative: str
 ) -> BaseException:
@@ -3574,6 +3592,7 @@ def _run_generative_job_impl(
             clip_durations_s=clip_durations_s,
             prefer_narrated_voiceover=(job.mode == "content_plan"),
             narrative_shot_count=narrative_shot_count,
+            plan_authority=plan_contract is not None,
         )
         _shadow_route(
             job_id, immutable_job_plan, all_candidates, "cloud", archetype, "cloud_archetype"
@@ -6089,11 +6108,9 @@ def _run_phone_subtitled_job(
         stamped_plan_contract,
     )
 
+    plan_contract = stamped_plan_contract(snapshot, all_candidates)
     has_voiceover = bool(
-        plan_voiceover_path(
-            stamped_plan_contract(snapshot, all_candidates),
-            all_candidates.get("voiceover_gcs_path"),
-        )
+        plan_voiceover_path(plan_contract, all_candidates.get("voiceover_gcs_path"))
     )
     self_narrated = edit_format in NARRATED_EDIT_FORMATS and not has_voiceover
     if edit_format != "subtitled" and not self_narrated:
@@ -6334,6 +6351,7 @@ def _run_phone_subtitled_job(
                     job_id=job_id,
                     voiceover_gcs_path=None,
                     clip_durations_s=clip_durations_s,
+                    plan_authority=plan_contract is not None,
                 )
                 expected_archetype = "talking_head" if multi_clip else "subtitled"
                 if archetype != expected_archetype or (multi_clip and spine_clip_id is None):
@@ -18394,8 +18412,15 @@ def _resolve_archetype(
     clip_durations_s: dict[str, float] | None = None,
     prefer_narrated_voiceover: bool = False,
     narrative_shot_count: int | None = None,
+    plan_authority: bool = False,
 ) -> tuple[str, str | None, str | None]:
     """Resolve the declared edit_format against footage → (archetype, spine, fallback_reason).
+
+    ``plan_authority`` (KRI-470 PR-F; a job stamped with ``creator_plan_authority_version``):
+    the approved plan stands. A rollout flag that forbids the plan's format raises the
+    resolver's typed ``capability_unavailable`` decline instead of falling back to a montage,
+    and ``footage_type_bias`` never promotes a montage to a talking head. The caller already
+    derived ``voiceover_gcs_path`` from the contract. Unstamped jobs take every legacy branch.
 
     Default-safe: returns `("montage", None, reason)` for every case except a talking_head
     edit that is enabled AND backed by footage with usable speech, and the narrated
@@ -18448,6 +18473,8 @@ def _resolve_archetype(
             record_pipeline_event("assembly", "archetype_selected", {"archetype": "narrated"})
             log.info("generative_archetype_selected", job_id=job_id, archetype="narrated")
             return "narrated", None, None
+        if plan_authority and edit_format in NARRATED_EDIT_FORMATS:
+            raise _flag_decline("narrated", "The narrated edit is not available.")
         record_pipeline_event(
             "assembly",
             "archetype_fallback",
@@ -18470,6 +18497,17 @@ def _resolve_archetype(
     # is the SOLE gate here — the declared-format kill switches
     # (subtitled_archetype_enabled / edit_format_talking_head_enabled) gate the style
     # picker, not this resolution outcome (see config.py).
+    if (
+        plan_authority
+        and edit_format in NARRATED_EDIT_FORMATS
+        and not voiceover_gcs_path
+        and not settings.narrated_self_narration_enabled
+    ):
+        # Legacy falls through to `archetype_not_implemented` -> montage: a different kind
+        # of edit than the narrated one the creator approved.
+        raise _flag_decline(
+            "self_narration", "Edits narrated by your own footage are not available."
+        )
     if (
         edit_format in NARRATED_EDIT_FORMATS
         and not voiceover_gcs_path
@@ -18525,6 +18563,8 @@ def _resolve_archetype(
     # via a stale/forced token).
     if edit_format == "subtitled":
         if not settings.subtitled_archetype_enabled:
+            if plan_authority:
+                raise _flag_decline("different_format", "The talking-to-camera edit is off.")
             return _fallback("flag_disabled")
         record_pipeline_event("assembly", "archetype_selected", {"archetype": "subtitled"})
         log.info("generative_archetype_selected", job_id=job_id, archetype="subtitled")
@@ -18647,6 +18687,8 @@ def _resolve_archetype(
         # Unknown future formats never enter a renderer.
         return _fallback("archetype_not_implemented")
     if not settings.edit_format_talking_head_enabled:
+        if plan_authority:
+            raise _flag_decline("different_format", "The talking-head edit is off.")
         return _fallback("flag_disabled")
 
     # Pick the highest-speech clip; reject the format if none carries real speech.

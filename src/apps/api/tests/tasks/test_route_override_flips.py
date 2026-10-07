@@ -381,3 +381,103 @@ def test_unstamped_voiceover_execution_binding_that_no_longer_holds_keeps_the_va
     run.run(ValueError)
     assert type(run.raised) is ValueError
     assert "voiceover" in str(run.raised)
+
+
+# --- Flip 2: a rollout flag never silently swaps in a different kind of edit ---------------
+
+
+def _resolver_refusal(run: CloudRun, **capabilities) -> dict:
+    """What the PR-D resolver says about the same persisted job with these capabilities."""
+    from app.services import render_route
+
+    inputs = render_route.route_inputs_from_job(
+        run.job.assembly_plan,
+        run.job.all_candidates,
+        platform="cloud",
+        capabilities=render_route.RouteCapabilities(**capabilities),
+    )
+    resolution = render_route.resolve_route(inputs)
+    assert resolution.outcome == "refusal", resolution
+    return {
+        "decline_reason": resolution.reason,
+        "field_path": resolution.field_path,
+        "alternative": resolution.alternative,
+    }
+
+
+def _flag_off(monkeypatch, flag: str) -> None:
+    monkeypatch.setattr(gb.settings, flag, False, raising=False)
+
+
+# (flag, resolver capability, edit_format, strategy, recording attached, clips, legacy outcome)
+_FLAG_CASES = [
+    (
+        "subtitled_archetype_enabled",
+        "subtitled",
+        "subtitled",
+        {},
+        False,
+        1,
+        ("montage", "flag_disabled"),
+    ),
+    (
+        "edit_format_talking_head_enabled",
+        "talking_head",
+        "talking_head",
+        {},
+        False,
+        2,
+        ("montage", "flag_disabled"),
+    ),
+    (
+        "narrated_archetype_enabled",
+        "narrated",
+        "narrated_ready",
+        {"audio_strategy": "voiceover"},
+        True,
+        2,
+        ("voiceover", None),
+    ),
+    (
+        "narrated_self_narration_enabled",
+        "self_narration",
+        "narrated_ready",
+        {},
+        False,
+        1,
+        ("montage", "archetype_not_implemented"),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("flag", "capability", "edit_format", "strategy", "voice", "clips", "_"), _FLAG_CASES
+)
+def test_flag_off_is_a_typed_decline_for_a_stamped_job(
+    monkeypatch, flag, capability, edit_format, strategy, voice, clips, _
+) -> None:
+    from app.services.cloud_render_contract import CloudRenderContractError
+
+    run = _cloud(monkeypatch, stamped=True, edit_format=edit_format, clips=clips, **strategy)
+    if voice:
+        run.job.all_candidates["voiceover_gcs_path"] = VOICE_FILE
+    _flag_off(monkeypatch, flag)
+    assert run.run(CloudRenderContractError) is None
+    # Exactly the resolver's typed refusal (reason, field path, alternative), persisted as a
+    # creator decline -- never a montage/voiceover the creator did not approve.
+    assert _decline_of(run.raised) == _resolver_refusal(run, **{capability: False})
+    assert run.resolved == []
+
+
+@pytest.mark.parametrize(
+    ("flag", "capability", "edit_format", "strategy", "voice", "clips", "legacy"), _FLAG_CASES
+)
+def test_the_unstamped_twin_keeps_the_legacy_flag_fallback(
+    monkeypatch, flag, capability, edit_format, strategy, voice, clips, legacy
+) -> None:
+    run = _cloud(monkeypatch, stamped=False, edit_format=edit_format, clips=clips, **strategy)
+    if voice:
+        run.job.all_candidates["voiceover_gcs_path"] = VOICE_FILE
+    _flag_off(monkeypatch, flag)
+    assert run.run() == legacy[0]
+    assert run.resolved[-1][2][2] == legacy[1]
