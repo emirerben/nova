@@ -909,7 +909,10 @@ def build_render_contract(
         typed.edit_format in TAKE_LENGTH_EDIT_FORMATS or typed.audio_strategy == "voiceover"
     )
     is_user_song = bool(typed and typed.audio_strategy == "user_song")
-    duration_answered = answers.get(CONFLICT_DURATION_VS_COUNT) is not None
+    duration_answered = (
+        answers.get(CONFLICT_DURATION_VS_COUNT) is not None
+        or answers.get(CONFLICT_VOICE_VS_DURATION) is not None
+    )
     brief_names_duration = bool(
         brief is not None
         and any(r.kind == "timing" and r.facts.get("duration_s") is not None for r in brief.live())
@@ -951,7 +954,9 @@ def build_render_contract(
             if requirement.kind == "timing" and requirement.facts.get("duration_s") is not None:
                 if not length_is_pinnable:
                     continue
-                answered = answers.get(CONFLICT_DURATION_VS_COUNT)
+                answered = answers.get(CONFLICT_DURATION_VS_COUNT) or answers.get(
+                    CONFLICT_VOICE_VS_DURATION
+                )
                 if answered is not None and requirement.id in answered.requirement_ids:
                     # The creator chose a different length for exactly this requirement;
                     # the approved strategy carries it (target_duration_s, requested).
