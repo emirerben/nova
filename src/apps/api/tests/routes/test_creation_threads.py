@@ -287,6 +287,24 @@ def test_slide_posts_default_on_is_present_in_capability_manifest() -> None:
     assert _available_formats()["slides"] == "slides"
 
 
+@pytest.mark.asyncio
+async def test_extended_slide_export_capability_is_fail_closed_and_tracks_kill_switch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.routes.creation_threads import CreationCapabilitiesOut, capabilities  # noqa: PLC0415
+
+    assert (
+        CreationCapabilitiesOut.model_fields["slide_post_extended_device_export"].default is False
+    )
+    monkeypatch.setattr(settings, "slide_post_extended_device_export_enabled", False)
+    user = SimpleNamespace(id=uuid.uuid4())
+    disabled = CreationCapabilitiesOut.model_validate(await capabilities(user, True, 2))
+    assert disabled.slide_post_extended_device_export is False
+    monkeypatch.setattr(settings, "slide_post_extended_device_export_enabled", True)
+    enabled = CreationCapabilitiesOut.model_validate(await capabilities(user, True, 2))
+    assert enabled.slide_post_extended_device_export is True
+
+
 def test_chat_format_clip_limits_match_plan_item_setup() -> None:
     assert _format_clip_limit("montage") == 50
     assert _format_clip_limit("narrated_planned") == 50

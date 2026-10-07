@@ -354,6 +354,7 @@ class CreationCapabilitiesOut(BaseModel):
     # Rich per-slide text (SlideEdits.texts) renders server-side (KRI-298).
     slide_post_rich_text: bool = False
     slide_post_chat_edit: bool = False
+    slide_post_extended_device_export: bool = False
     # KRI-374: the server may ask the creator to confirm the order of takes it
     # could not place against their song (`song_order_question` on a turn plan).
     song_order_questions: bool = False
@@ -3522,6 +3523,9 @@ async def capabilities(
         "clip_selection_questions": bool(settings.kria_clip_selection_questions_enabled),
         "choice_questions": bool(settings.kria_choice_questions_enabled),
         "slide_post_rich_text": bool(settings.slide_post_rich_text_enabled),
+        "slide_post_extended_device_export": bool(
+            settings.slide_post_extended_device_export_enabled
+        ),
         # Chat edit round-trips rich per-slide text, so it needs that flag too.
         "slide_post_chat_edit": bool(
             settings.slide_post_chat_edit_enabled and settings.slide_post_rich_text_enabled

@@ -73,6 +73,25 @@ import XCTest
 
     // MARK: Rendering
 
+    func testWideGamutCachedPreviewAndSRGBExportUseTheSameLookColors() throws {
+        let p3 = try XCTUnwrap(CGColorSpace(name: CGColorSpace.displayP3))
+        let srgb = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+        let source = try XCTUnwrap(CGContext(data: nil, width: 120, height: 150, bitsPerComponent: 8, bytesPerRow: 0,
+                                            space: p3, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        source.setFillColor(try XCTUnwrap(CGColor(colorSpace: p3, components: [0.7, 0.3, 0.15, 1])))
+        source.fill(CGRect(x: 0, y: 0, width: 120, height: 150))
+        let original = try XCTUnwrap(source.makeImage())
+        let converted = try XCTUnwrap(CGContext(data: nil, width: 120, height: 150, bitsPerComponent: 8, bytesPerRow: 0,
+                                               space: srgb, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        converted.draw(original, in: CGRect(x: 0, y: 0, width: 120, height: 150))
+        let exportedSource = try XCTUnwrap(converted.makeImage())
+        let preview = try SlidePostOnDeviceRender.lookedImage(UIImage(cgImage: original), pixels: CGSize(width: 120, height: 150), preset: "golden_hour")
+        let exported = try SlidePostOnDeviceRender.lookedImage(UIImage(cgImage: exportedSource), pixels: CGSize(width: 120, height: 150), preset: "golden_hour")
+        let previewPixels = try decoded(try XCTUnwrap(preview.pngData())).bitmap
+        let exportPixels = try decoded(try XCTUnwrap(exported.pngData())).bitmap
+        XCTAssertEqual(previewPixels, exportPixels, "wide-gamut previews must normalize before the encoded-RGB look")
+    }
+
     func testOutputSizeMatchesProfileAtTwoX() async throws {
         let url = try photo(name: "a.jpg")
         let insta = try decoded(try await render(slide("a"), asset("asset-a", source: url)))
