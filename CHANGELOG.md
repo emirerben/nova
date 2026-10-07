@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.135.0] - 2026-10-07
+
+### Changed
+- fix(creator): an unrequested model duration no longer gates the render contract (lip-sync + subtitled) (#1456) <!-- release-pr: 1456 -->
+
 ## [0.78.134.0] - 2026-10-07
 
 ### Changed
