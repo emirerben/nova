@@ -6085,6 +6085,7 @@ def _run_phone_subtitled_job(
         compile_phone_subtitled_plan,
         sfx_duck_receipt,
     )
+    from app.pipeline.phone_subtitled_title import talking_closing_window  # noqa: PLC0415
     from app.pipeline.probe import probe_video  # noqa: PLC0415
     from app.pipeline.silence_cut import (  # noqa: PLC0415
         CutPlan,
@@ -6098,6 +6099,7 @@ def _run_phone_subtitled_job(
         pin_device_request,
     )
     from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_subtitled_closing_title_supported,
         phone_subtitled_overlays_supported,
         phone_subtitled_reaction_beats_supported,
         phone_subtitled_title_supported,
@@ -6277,6 +6279,21 @@ def _run_phone_subtitled_job(
             talking_title_duration_s = float(_raw_hold)
     title_rows: list[dict] = []
     title_receipt: dict[str, Any] | None = None
+    # KRI-514: the creator's closing text ("a 'MY PICK' badge"), a second row on
+    # the same lane over the ending. Read only while its rollout is on, so the
+    # flag-off recipe and variant stay byte-identical.
+    talking_closing_text: str | None = None
+    if phone_subtitled_closing_title_supported():
+        _closing_strategy = all_candidates.get("creator_strategy")
+        _closing_strategy = _closing_strategy if isinstance(_closing_strategy, dict) else {}
+        _raw_closing_title = _closing_strategy.get("closing_title")
+        talking_closing_text = (
+            _raw_closing_title
+            if isinstance(_raw_closing_title, str) and _raw_closing_title.strip()
+            else None
+        )
+    closing_text_rows: list[dict] = []
+    closing_text_receipt: dict[str, Any] | None = None
 
     # KRI-174 lane state. Kept at these empty defaults when the flag is off
     # (or there is no lane request), so the fences/persistence below become
@@ -6297,6 +6314,10 @@ def _run_phone_subtitled_job(
     beat_cards: list = []
     beat_sfx_requests: list = []
     beat_media_ids: frozenset[str] = frozenset()
+    # KRI-514: which beat card holds the closing photo, so the closing text
+    # can sit on it.
+    beat_closing_card_id: str | None = None
+    beat_closing_aspect: float | None = None
 
     def _demote_grounded_receipt(receipt: dict, media_ids: frozenset[str], reason: str) -> dict:
         """Move ``media_ids`` from ``receipt["placed"]`` to ``unplaced`` with
@@ -6687,6 +6708,14 @@ def _run_phone_subtitled_job(
             )
             cues = resplit_cues_into_sentences(cues)
 
+            # The speaker's span exactly as the compiler plays it: the cleanup
+            # cut, else the phone-measured clip (which can run a hair shorter
+            # than the proxy `probe` measured).
+            speaker_keep_segments = (
+                list(cut_plan.keep_segments)
+                if cut_plan is not None and cut_plan.removed
+                else [(0.0, float(binding.original.duration_s))]
+            )
             if talking_title_text:
                 title_rows, title_receipt = _phone_talking_title_rows(
                     talking_title_text,
@@ -6694,19 +6723,26 @@ def _run_phone_subtitled_job(
                     cues=cues,
                     binding=binding,
                     clip_path=clip_path,
-                    # The speaker's span exactly as the compiler plays it: the
-                    # cleanup cut, else the phone-measured clip (which can run
-                    # a hair shorter than the proxy `probe` measured).
-                    keep_segments=(
-                        list(cut_plan.keep_segments)
-                        if cut_plan is not None and cut_plan.removed
-                        else [(0.0, float(binding.original.duration_s))]
-                    ),
+                    keep_segments=speaker_keep_segments,
+                    landscape_fit=landscape_fit,
+                )
+
+            def _closing_rows_for(photo_card: Any) -> tuple[list[dict], dict[str, Any] | None]:
+                if not talking_closing_text:
+                    return [], None
+                return _phone_talking_closing_rows(
+                    talking_closing_text,
+                    photo_card=photo_card,
+                    photo_aspect=beat_closing_aspect,
+                    binding=binding,
+                    clip_path=clip_path,
+                    keep_segments=speaker_keep_segments,
                     landscape_fit=landscape_fit,
                 )
 
             sfx_duck: dict | None = None
             if not media_lanes_enabled:
+                closing_text_rows, closing_text_receipt = _closing_rows_for(None)
                 recipe = compile_phone_subtitled_plan(
                     speaker_bindings,
                     caption_cues=cues,
@@ -6714,8 +6750,8 @@ def _run_phone_subtitled_job(
                     cut_plan=cut_plan,
                     cutaways=cutaways,
                     landscape_fit=landscape_fit,  # type: ignore[arg-type]
-                    text_elements=title_rows,
-                    text_elements_user_edited=bool(title_rows),
+                    text_elements=title_rows + closing_text_rows,
+                    text_elements_user_edited=bool(title_rows or closing_text_rows),
                 )
             else:
                 raw_lane_request = snapshot.get(PHONE_SUBTITLED_LANES_FIELD)
@@ -6790,6 +6826,8 @@ def _run_phone_subtitled_job(
                             beat_sfx_requests = list(grounded_beats.sound_effects)
                             beat_media_ids = frozenset(card.media_id for card in beat_cards)
                             beat_receipt = grounded_beats.receipt
+                            beat_closing_card_id = grounded_beats.closing_card_id
+                            beat_closing_aspect = grounded_beats.closing_card_aspect
 
                 # KRI-183: the creator's explicit beats direction still wins
                 # its Visuals and its time windows, but no longer silences the
@@ -6806,6 +6844,12 @@ def _run_phone_subtitled_job(
                 beat_windows: list[tuple[float, float]] = [
                     (float(card.start_s), float(card.end_s)) for card in beat_cards
                 ]
+                # KRI-514: closing text with no closing photo to sit on takes
+                # the last 3 s near the top; keep generic cards out of it.
+                if talking_closing_text and not beat_closing_card_id:
+                    beat_windows.append(
+                        talking_closing_window(float(probe.duration_s))  # source seconds
+                    )
 
                 # KRI-176: ground overlay cards from the transcript when nobody
                 # authored a lane request with overlays of their own -- a
@@ -7043,23 +7087,47 @@ def _run_phone_subtitled_job(
                                 reason="speech_cleanup_cut",
                             )
 
+                def _compile_lanes(text_rows: list[dict]) -> Any:
+                    return compile_phone_subtitled_plan(
+                        speaker_bindings,
+                        caption_cues=cues,
+                        caption_style=caption_style,
+                        visuals=visuals,
+                        lanes=lanes,
+                        duck_sfx_under_speech=settings.phone_sfx_speech_duck_enabled,
+                        cut_plan=cut_plan,
+                        cutaways=cutaways,
+                        landscape_fit=landscape_fit,  # type: ignore[arg-type]
+                        text_elements=text_rows,
+                        text_elements_user_edited=bool(text_rows),
+                    )
+
                 recipe = None
                 attempts_remaining = 3
                 while True:
                     try:
-                        recipe = compile_phone_subtitled_plan(
-                            speaker_bindings,
-                            caption_cues=cues,
-                            caption_style=caption_style,
-                            visuals=visuals,
-                            lanes=lanes,
-                            duck_sfx_under_speech=settings.phone_sfx_speech_duck_enabled,
-                            cut_plan=cut_plan,
-                            cutaways=cutaways,
-                            landscape_fit=landscape_fit,  # type: ignore[arg-type]
-                            text_elements=title_rows,
-                            text_elements_user_edited=bool(title_rows),
+                        # KRI-514: the closing text sits on the closing photo
+                        # card that survived every lane drop so far.
+                        closing_text_rows, closing_text_receipt = _closing_rows_for(
+                            next(
+                                (
+                                    card
+                                    for card in lanes.overlays
+                                    if card.id == beat_closing_card_id
+                                ),
+                                None,
+                            )
+                            if lanes is not None and beat_closing_card_id
+                            else None
                         )
+                        recipe = _compile_lanes(title_rows + closing_text_rows)
+                        if closing_text_rows and closing_text_rows[0]["end_s"] < (
+                            recipe.duration - 1e-3
+                        ):
+                            # An ending clip plays after the speaker: closing text
+                            # runs to the very end, which the contract checks.
+                            closing_text_rows = [{**closing_text_rows[0], "end_s": recipe.duration}]
+                            recipe = _compile_lanes(title_rows + closing_text_rows)
                         sfx_duck = sfx_duck_receipt(lanes, recipe)
                         break
                     except SubtitledLaneError as exc:
@@ -7261,14 +7329,20 @@ def _run_phone_subtitled_job(
             new_entry["phone_lane_receipt"] = lane_receipt
         if sfx_duck is not None:
             new_entry[SFX_DUCK_RECEIPT_FIELD] = sfx_duck
-        if title_rows:
+        if title_rows or closing_text_rows:
             # KRI-467: the title is an ordinary saved text row. `user_edited`
             # makes the read path serve it beside the projected caption
             # mirrors (an unedited caption variant serves the mirrors alone).
-            new_entry["text_elements"] = title_rows
+            # KRI-514: the closing text is a second one.
+            new_entry["text_elements"] = title_rows + closing_text_rows
             new_entry["text_elements_user_edited"] = True
-            new_entry["text_elements_materialized_from"] = "opening_title"
+            new_entry["text_elements_materialized_from"] = (
+                "opening_title" if title_rows else "closing_title"
+            )
+        if title_rows:
             new_entry["opening_title_placement"] = title_receipt
+        if closing_text_rows:
+            new_entry["closing_title_placement"] = closing_text_receipt
         if multi_clip:
             # KRI-136: the phone Talking lane (and its editor) owns this
             # variant, so `resolved_archetype` stays "subtitled"; this receipt
@@ -7374,6 +7448,63 @@ def _phone_talking_title_rows(
     )
     try:
         record_pipeline_event("phone", "subtitled_title_placement", receipt)
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return [placed], receipt
+
+
+def _phone_talking_closing_rows(
+    closing_title: str,
+    *,
+    photo_card: Any,
+    photo_aspect: float | None,
+    binding: Any,
+    clip_path: str | None,
+    keep_segments: list[tuple[float, float]],
+    landscape_fit: str,
+) -> tuple[list[dict], dict[str, Any] | None]:
+    """The phone Talking edit's closing text row (KRI-514) plus its placement
+    receipt; ``([], None)`` when the text is empty or the clip has no time for
+    it. ``photo_card`` is the closing photo's `SubtitledOverlayCard` on the cut
+    timeline (``None`` without one): the text appears with it and sits on it.
+    Without one it holds for the last 3 s at the title's top spot, off the
+    speaker's face."""
+    from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_title import (  # noqa: PLC0415
+        ClosingPhoto,
+        place_closing_on_photo,
+        place_talking_title,
+        talking_closing_element,
+        talking_closing_window,
+    )
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    photo = (
+        ClosingPhoto.from_card(photo_card, aspect=photo_aspect) if photo_card is not None else None
+    )
+    start_s, end_s = talking_closing_window(
+        sum(max(0.0, end - start) for start, end in keep_segments),
+        float(photo_card.start_s) if photo_card is not None else None,
+    )
+    row = talking_closing_element(closing_title, start_s=start_s, end_s=end_s, photo=photo)
+    if row is None:
+        return [], None
+    if photo is not None:
+        placed, receipt = place_closing_on_photo(row, photo, canvas=_STORY_CANVAS)
+    else:
+        display_width, display_height = display_dims(binding.original)
+        placed, receipt = place_talking_title(
+            row,
+            clip_path=clip_path,
+            keep_segments=keep_segments,
+            display_width=display_width,
+            display_height=display_height,
+            canvas=_STORY_CANVAS,
+            scale=fit_transform(display_width, display_height, _STORY_CANVAS, landscape_fit).scale,
+        )
+    try:
+        record_pipeline_event("phone", "subtitled_closing_title_placement", receipt)
     except Exception:  # noqa: BLE001 - observability only
         pass
     return [placed], receipt
