@@ -3829,6 +3829,7 @@ def _run_generative_job_impl(
                         speech_cleanup_snapshot=speech_cleanup_snapshot,
                         speech_cleanup_uses_preflight=speech_cleanup_snapshot_contract,
                         clip_id_to_gcs=clip_id_to_gcs,
+                        plan_authority=plan_contract is not None,
                     )
                 elif spec.get("archetype") == "subtitled":
                     result = _render_subtitled_variant(
@@ -22835,8 +22836,14 @@ def _render_narrated_variant(
     speech_cleanup_snapshot: HydratedSpeechCleanupSnapshot | None = None,
     speech_cleanup_uses_preflight: bool | None = None,
     clip_id_to_gcs: Mapping[str, str] | None = None,
+    plan_authority: bool = False,
 ) -> dict[str, Any]:
     """Render one narrated walkthrough variant.
+
+    ``plan_authority`` (KRI-470 PR-F): the storyboard's intro / player / score text comes from
+    the approved plan (``explicit_opening_title``, the transcript, the storyboard agent), never
+    from regex matches over the raw request prose. The request still reaches the storyboard
+    agent as context.
 
     New ``required_v1`` Jobs consume the immutable voiceover snapshot: its exact
     CutPlan produces the audio fed to the assembler and its exact timed words
@@ -23177,7 +23184,9 @@ def _render_narrated_variant(
                     # copy. Exact creator-supplied title text remains safe to
                     # materialize without the planner.
                     creator_request=(
-                        creator_request if storyboard.get("status") == "ready" else ""
+                        creator_request
+                        if storyboard.get("status") == "ready" and not plan_authority
+                        else ""
                     ),
                     explicit_opening_title=explicit_opening_title,
                     storyboard=storyboard,

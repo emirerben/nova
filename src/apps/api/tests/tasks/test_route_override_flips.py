@@ -637,3 +637,135 @@ def test_unstamped_phone_self_narration_without_speech_keeps_the_untyped_failure
     with pytest.raises(UnsupportedPhonePlan, match="unsupported archetype") as raised:
         gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
     assert _decline_of(raised.value) == {}
+
+
+# --- Flip 7a: request prose no longer decides narrated storyboard text ---------------------
+
+
+def _narrated_render(monkeypatch, tmp_path, *, plan_authority: bool, opening_title=None):
+    """The real narrated renderer with the creator's words asking for intro/players/scores."""
+    from types import SimpleNamespace
+
+    from app.pipeline.transcribe import Transcript, Word
+
+    transcript = Transcript(
+        words=[
+            Word("first", 0.0, 0.4, 1.0),
+            Word("play", 0.4, 0.8, 1.0),
+            Word("score", 1.0, 1.2, 1.0),
+            Word("six", 1.2, 1.5, 1.0),
+            Word("four", 1.5, 1.8, 1.0),
+        ],
+        language="en",
+    )
+
+    def download(_gcs_path, local_path):
+        with open(local_path, "wb") as handle:
+            handle.write(b"voice")
+
+    def assemble(step_timings, clip_assignments, _voiceover, output_path, _tmpdir, **kw):
+        for target in (output_path, kw["base_output_path"]):
+            with open(target, "wb") as handle:
+                handle.write(b"x")
+        return [{"text": "first play", "start_s": 0.0, "end_s": 0.8}]
+
+    def compose(_base_path, variant, tmpdir, **_kwargs):
+        out = f"{tmpdir}/composed.mp4"
+        with open(out, "wb") as handle:
+            handle.write(b"composed")
+        return out, None
+
+    monkeypatch.setattr(gb.settings, "narrated_storyboard_enabled", True)
+    monkeypatch.setattr("app.storage.download_to_file", download)
+    monkeypatch.setattr("app.storage.upload_public_read", lambda *_a, **_k: "signed")
+    monkeypatch.setattr("app.pipeline.transcribe.transcribe_whisper", lambda *_a, **_k: transcript)
+    monkeypatch.setattr("app.pipeline.narrated_assembler.assemble_narrated", assemble)
+    monkeypatch.setattr(gb, "_rendered_duration_s", lambda _path: 2.0)
+    monkeypatch.setattr(gb, "_compose_subtitled_final", compose)
+    monkeypatch.setattr(
+        gb,
+        "_narrated_storyboard_plan",
+        lambda **_kwargs: {
+            "enabled": True,
+            "status": "ready",
+            "prompt_version": "test",
+            "matches": [],
+            "overlays": [{"kind": "score", "anchor_word_id": "w000003", "end_word_id": "w000004"}],
+        },
+    )
+    result = gb._render_narrated_variant(
+        job_id="job",
+        rank=1,
+        spec={"variant_id": "narrated", "voiceover_gcs_path": "voiceover/file"},
+        filming_guide=[{"shot_id": "shot_1", "what": "first play"}],
+        narrative_order=["clip_0", "clip_1"],
+        clip_id_to_local={"clip_0": "/a.mp4", "clip_1": "/b.mp4"},
+        clip_durations_s={"clip_0": 4.0, "clip_1": 4.0},
+        creator_request="Add intro texts, player names, and scores",
+        explicit_opening_title=opening_title,
+        variant_dir=str(tmp_path),
+        plan_authority=plan_authority,
+    )
+    assert result["ok"] is True
+    return {item["text"] for item in result["text_elements"]}
+
+
+def test_stamped_narrated_text_comes_from_the_plan_not_from_request_words(
+    monkeypatch, tmp_path
+) -> None:
+    texts = _narrated_render(
+        monkeypatch, tmp_path, plan_authority=True, opening_title="Match Story"
+    )
+    assert texts == {"Match Story"}  # the approved opening title; no regex-added players/scores
+
+
+def test_stamped_narrated_without_an_approved_title_adds_no_request_derived_text(
+    monkeypatch, tmp_path
+) -> None:
+    assert _narrated_render(monkeypatch, tmp_path, plan_authority=True) == set()
+
+
+def test_unstamped_narrated_still_reads_intro_players_and_scores_from_the_request(
+    monkeypatch, tmp_path
+) -> None:
+    texts = _narrated_render(
+        monkeypatch, tmp_path, plan_authority=False, opening_title="Match Story"
+    )
+    assert texts >= {"Match Story", "PLAYER 1", "six four"}
+
+
+def _render_kwargs_of_the_narrated_dispatch(monkeypatch, *, stamped: bool) -> dict:
+    run = _cloud(
+        monkeypatch, stamped=stamped, edit_format="narrated_ready", audio_strategy="voiceover"
+    )
+    run.job.all_candidates["voiceover_gcs_path"] = VOICE_FILE
+    seen: dict = {}
+    monkeypatch.setattr(gb, "_set_status", lambda *a, **k: True)
+    monkeypatch.setattr(gb, "_existing_variants", lambda *a, **k: [])
+    monkeypatch.setattr(gb, "_persist_archetype_fallback", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_update_variant_entry", lambda *a, **k: True)
+    monkeypatch.setattr(gb, "_upsert_variant_entry", lambda *a, **k: True)
+    monkeypatch.setattr(gb, "_maybe_add_text_elements_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_finalize_job", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_maybe_autoplace_after_finalize", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_merge_speech_cut_prior_state", lambda _id, result, **k: result)
+
+    def narrated(**kwargs):
+        seen.update(kwargs)
+        return {"ok": True, "variant_id": "narrated", "rank": 1, "render_status": "ready"}
+
+    monkeypatch.setattr(gb, "_render_narrated_variant", narrated)
+    gb._run_generative_job(str(run.job.id))
+    return seen
+
+
+def test_the_cloud_dispatcher_marks_a_stamped_narrated_render_as_plan_authority(
+    monkeypatch,
+) -> None:
+    assert _render_kwargs_of_the_narrated_dispatch(monkeypatch, stamped=True)["plan_authority"]
+
+
+def test_the_cloud_dispatcher_leaves_an_unstamped_narrated_render_on_the_legacy_text_rules(
+    monkeypatch,
+) -> None:
+    assert not _render_kwargs_of_the_narrated_dispatch(monkeypatch, stamped=False)["plan_authority"]
