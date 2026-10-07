@@ -517,8 +517,13 @@ def assemble_narrated(
     base_output_path: str | None = None,
     caption_style: str = "sentence",
     caption_font: str | None = None,
+    evidence_out: dict | None = None,
 ) -> list[dict]:
     """Hard-cut one visual clip per narrated step, burn captions, lay voice on top.
+
+    ``evidence_out`` (KRI-470) receives what the mix actually did:
+    ``narration_applied`` (the recording is in the output file, not merely
+    requested) and ``footage_audible`` (the clips' own sound is under the voice).
 
     ``landscape_fit`` ("fill" | "fit") picks how a landscape clip fills the 9:16
     frame (resolve_output_fit per probe); a too-short clip is still reflow-slowed.
@@ -617,7 +622,7 @@ def assemble_narrated(
         )
     mix_bed_level = resolved_bed if footage_bed_path else 0.0
 
-    _mix_user_voiceover(
+    outcome = _mix_user_voiceover(
         burned_visuals,
         voiceover_local_path,
         output_path,
@@ -627,6 +632,9 @@ def assemble_narrated(
         footage_bed_path=footage_bed_path,
         bed_level=mix_bed_level,
     )
+    if evidence_out is not None:
+        evidence_out["narration_applied"] = bool(getattr(outcome, "applied", False))
+        evidence_out["footage_audible"] = bool(getattr(outcome, "footage_audible", False))
     # Same voice + bed over the caption-free visuals → the editor/reburn source.
     if base_output_path and base_visuals:
         _mix_user_voiceover(

@@ -410,3 +410,72 @@ def test_strategy_voice_target_and_capture_order_reach_the_plan(world, monkeypat
     assert seen["input"].voice_clip_ref == "c1" and seen["input"].target_duration_s == 30
     record = world.job.assembly_plan["speech_montage"]
     assert record["ordering_basis"] == "capture_time"
+
+
+# --- KRI-470 PR-G: the job records the order it actually used ----------------------------
+
+
+def _order_brief(key: str | None):
+    from app.kria.brief import BriefRequirement, CreativeBrief
+
+    return CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(
+                id="r1",
+                kind="order",
+                scope="global",
+                description="in the order I attached them",
+                facts={"key": key} if key else {},
+                source_turn_id="t1",
+            )
+        ],
+    )
+
+
+def _run_with_brief(world, monkeypatch, brief):
+    monkeypatch.setattr(
+        gb,
+        "_load_unified_montage_inputs",
+        lambda _id: (world.job.user_id, world.assignments, brief),
+    )
+    return _run(
+        world,
+        _plan({"kind": "speech", "clip_ref": "c1", "quote": "never rush a good espresso"}),
+    )
+
+
+def _receipts(world):
+    return {
+        row["requirement_id"]: row
+        for row in world.job.assembly_plan["speech_montage"].get("requirement_receipts", [])
+    }
+
+
+def test_the_attachment_order_it_used_is_always_recorded(world, monkeypatch):
+    assert _run_with_brief(world, monkeypatch, None) is True
+    assert world.job.assembly_plan["speech_montage"]["ordering_basis"] == "attachment"
+
+
+def test_an_unstamped_attachment_order_is_met_not_a_false_couldnt(world, monkeypatch):
+    _run_with_brief(world, monkeypatch, _order_brief("attachment"))
+
+    assert world.job.assembly_plan["speech_montage"]["ordering_basis"] == "attachment"
+    assert _receipts(world)["r1"]["status"] == "met"
+
+
+def test_an_unstamped_unapplied_order_keeps_the_legacy_soft_verdict(world, monkeypatch):
+    _run_with_brief(world, monkeypatch, _order_brief(None))
+
+    assert _receipts(world)["r1"]["status"] != "not_possible"
+
+
+def test_a_bound_job_judges_an_order_the_plan_did_not_apply(world, monkeypatch):
+    world.snapshot["creator_brief_binding"] = {"saved": "binding"}  # a brief-binding cohort
+    world.job.assembly_plan["creator_brief_binding"] = {"saved": "binding"}
+
+    _run_with_brief(world, monkeypatch, _order_brief(None))
+
+    receipt = _receipts(world)["r1"]
+    assert receipt["status"] == "not_possible"
+    assert "attached" in receipt["reason"]

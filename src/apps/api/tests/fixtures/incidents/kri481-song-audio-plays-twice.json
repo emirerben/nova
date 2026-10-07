@@ -573,8 +573,8 @@
     ],
     "notes": [
       "Plan facts from the prod job: 42 timeline cuts, variant source_audio_preserved=false, music_playback_mode=reference_only, requirement r2 (voice) receipt 'partial / I can't verify this one automatically yet'.",
-      "Synthetic substitutes are a scaled-down analogue (a tone-tagged voice clip, two colour clips, a different-tone song): once PR-G owns an export proof they let a render be checked for voice presence and for the song playing once, by tone.",
-      "The double-playback and missing-voice facts are NOT proven by pytest; the observation records the creator report and the plan fields."
+      "Synthetic substitutes are a scaled-down analogue (a tone-tagged voice clip, two colour clips, a different-tone song). The EXPORT proof is `scripts/ios/phone-audio-parity.py` (prepare, `swift test --filter AudioParityFixtureTests`, compare): a user-song montage compiled by the real server compiler, exported by the production exporter on macOS, measured by tone.",
+      "Double playback is proven on a real export by the repro above (post-fix observation); pytest only records its result. The missing-voice fact is NOT fixed: a creator song replaces the footage's audio by design, so voice + song is a requirement conflict the dispatcher declines before rendering."
     ]
   },
   "expect": {
@@ -594,6 +594,11 @@
       "audio_plays_once": true,
       "order_ids": "chronological",
       "duration_basis": "strategy_choice"
+    },
+    "route": {
+      "platform": "phone",
+      "refusal": "requirement_conflict",
+      "field_path": "montage_audio.source_media_ids[]"
     }
   },
   "observations": [
@@ -655,18 +660,32 @@
         "audio_plays_once": "creator report (loop heard twice); not measured",
         "order_ids": "unified_montage.clip_ids plan order, not a rendered-frame read"
       }
+    },
+    {
+      "label": "post-fix",
+      "source": "macOS export of the real compiler's user-song recipe (window_start_s=11.5): scaled-down analogue of job 934811f3, 2026-10-07",
+      "proof": "python scripts/ios/phone-audio-parity.py compare OUT",
+      "facts": {
+        "duration_s": 12.0,
+        "voice_present": false,
+        "audio_plays_once": true
+      },
+      "evidence": {
+        "audio_plays_once": "measured on the exported MP4: every window tone sounds once at the song's level; the song's opening tones (the second copy from 0 s) are absent; a negative control (the bed switched back on) is detected",
+        "voice_present": "measured: camera audio is silent in the export (the recipe mutes it; a creator song replaces it). Not a regression: voice + song is declined, not rendered",
+        "duration_s": "ffprobe of the exported analogue (12 s), not the 45 s prod render"
+      }
     }
   ],
   "xfail": [
     {
-      "reason": "KRI-481 / PR-G",
+      "reason": "KRI-477 / PR-F",
       "scope": "output"
     }
   ],
   "repro": {
-    "command": "swift test --filter ContractOutputProofTests",
-    "status": "pending",
-    "owner": "KRI-478"
+    "command": "python scripts/ios/phone-audio-parity.py compare OUT",
+    "status": "available"
   },
   "sources": [
     "prod job debug (not committed)"

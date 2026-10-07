@@ -523,6 +523,8 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         # KRI-374: server-owned, like `resolved_clip_intents`: a
                         # model-authored per-take song placement is never trusted.
                         "resolved_song_takes": None,
+                        # KRI-476: server-owned conflict answers, never model-authored.
+                        "choice_answers": None,
                         "mixed_media_timing": timing,
                         "montage_cadence": cadence,
                         "video_reuse_policy": reuse,

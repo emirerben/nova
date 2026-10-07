@@ -25,6 +25,7 @@ from app.pipeline.phone_captions import (
 )
 from app.pipeline.phone_editor_visuals import compile_editor_media_track
 from app.pipeline.phone_subtitled_plan import _compile_overlay_track, _compile_sfx_track
+from app.pipeline.phone_voiceover_montage_plan import voiceover_music_gain
 from app.services.authored_editor import explicit_authored_slots
 from app.services.phone_editor_sources import (
     editor_source_bindings,
@@ -226,7 +227,9 @@ def compile_phone_authored_timeline(
     old_manifest = {asset.id: asset for asset in previous.asset_manifest.assets}
     old_assets = {asset.id: asset for asset in previous.assets}
     narration_id = None
-    music_id = None
+    has_voice = variant.get("resolved_archetype") == "voiceover" or any(
+        asset.kind == "voiceover" for asset in old_manifest.values()
+    )
     for track in previous.tracks:
         if track.kind != "audio":
             continue
@@ -249,13 +252,19 @@ def compile_phone_authored_timeline(
             projected["source_duration"] = min(
                 clip.source_duration, (cursor - clip.timeline_start) * clip.rate
             )
+            if is_music and isinstance(variant.get("mix"), (int, float)):
+                # The music level lives on the bed's own track clip. `mix` means two
+                # things: on a voiceover variant it is the VOICE-prominence slider and the
+                # compiler plays the music at `voiceover_music_gain(mix)`; elsewhere it is
+                # the editor's music level itself (`mix.music_level`).
+                projected["volume"] = (
+                    voiceover_music_gain(variant["mix"]) if has_voice else float(variant["mix"])
+                )
             retained.append(TimelineClip.model_validate(projected))
             manifest[asset.id] = asset
             assets[asset.id] = old_assets[asset.id]
             if is_voice:
                 narration_id = asset.id
-            else:
-                music_id = asset.id
         if retained:
             tracks.append(TimelineTrack(id=track.id, kind="audio", clips=retained))
     original_gain = variant.get("original_audio_level")
@@ -266,13 +275,14 @@ def compile_phone_authored_timeline(
     if original_gain is None:
         original_gain = previous.audio.original_volume if not narration_id else 0
     audio = previous.audio.model_dump(mode="json")
+    # The retained music plays through its audio-track clip. `music_asset_id` stays
+    # unset: the device plays that asset as a SECOND bed from source 0 on top of the
+    # clips, which is the KRI-481 double play (and `verify_phone_recipe` refuses it).
     audio.update(
         original_volume=float(original_gain),
-        music_asset_id=music_id,
+        music_asset_id=None,
         narration_asset_id=narration_id,
     )
-    if music_id and isinstance(variant.get("mix"), (int, float)):
-        audio["music_volume"] = float(variant["mix"])
     # Old mute windows target old clip IDs; current visual placements carry
     # their own audio policy and must not inherit removed footage's windows.
     audio["mute_windows"] = []

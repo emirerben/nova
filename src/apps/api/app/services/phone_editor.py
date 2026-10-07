@@ -58,6 +58,7 @@ from app.services.creator_render_contract import (
     CONTRACT_FIELD,
     CreatorRenderContractError,
     TextRequirement,
+    decline_payload,
     read_render_contract,
 )
 from app.services.device_render import CONTRACT_REVISIONS_FIELD, device_status, pin_device_request
@@ -195,12 +196,76 @@ class _StagedJob:
         return getattr(self._job, name)
 
 
+def _text_requirements_for_save(
+    rows: list,
+    prior: tuple[TextRequirement, ...],
+    prior_elements: dict[str, str],
+    *,
+    keep_shot_roles: bool,
+) -> tuple[TextRequirement, ...]:
+    """The saved text lane as requirements, each keeping every role it was approved with.
+
+    A row inherits the requirements it carried before the Save: matched by element id (so
+    an edited opening title is still the opening title), else by exact text. The standard
+    contract shape is TWO requirements for one title, ``[opening X (2.0 s), any X]``
+    (the strategy's opening title and the brief's literal), so ALL matches are kept: the
+    specific role (opening > closing > clip) with its approved ``duration_s``, and the
+    generic ``any`` presence check beside it. An opening or closing role is verified
+    against the recompiled recipe, so an edit that moves the opening text out of its
+    window, or holds it for less than the approved time, is refused instead of silently
+    accepted. A shot-scoped role is kept only while the timeline is untouched: a reorder
+    invalidates the shot it was pinned to, and it degrades to ``any`` (never to nothing).
+    Anything the contract never asked for stays ``any``.
+    """
+
+    def matches(text: object) -> list[TextRequirement]:
+        key = _normal_text(text)
+        return [item for item in prior if _normal_text(item.text) == key] if key else []
+
+    out: list[TextRequirement] = []
+    for row in rows:
+        if not (isinstance(row, dict) and isinstance(row.get("text"), str) and row["text"].strip()):
+            continue
+        before = prior_elements.get(str(row.get("id")))
+        sources = matches(before) or matches(row["text"])
+        wanted: list[TextRequirement] = []
+        for source in sources:
+            if source.role in {"opening", "closing"}:
+                wanted.append(
+                    TextRequirement(
+                        role=source.role, text=row["text"], duration_s=source.duration_s
+                    )
+                )
+            elif source.role == "clip" and keep_shot_roles:
+                wanted.append(
+                    TextRequirement(
+                        role="clip",
+                        text=row["text"],
+                        media_id=source.media_id,
+                        shot_index=source.shot_index,
+                        duration_s=source.duration_s,
+                    )
+                )
+            else:
+                wanted.append(TextRequirement(role="any", text=row["text"]))
+        wanted = wanted or [TextRequirement(role="any", text=row["text"])]
+        for requirement in wanted:
+            if requirement not in out:
+                out.append(requirement)
+    return tuple(out)
+
+
+def _normal_text(value: object) -> str:
+    return " ".join(str(value or "").split()).casefold()
+
+
 def _rebind_editor_render_contract(
     staged: _StagedJob,
     variant_id: str,
     prep: dict,
     *,
     brief_binding: dict | None = None,
+    previous_variant: dict | None = None,
 ) -> None:
     """Carry creator requirements into the editor's next approved generation.
 
@@ -242,14 +307,20 @@ def _rebind_editor_render_contract(
     if sections.get("text_elements"):
         # The staged variant is the accepted editor state.  Do not inspect the
         # generated recipe here: compiler output is proof, not edit authority.
-        texts = []
         canonical_text = (prep.get("guided_revision") or {}).get(
             "text_elements", variant.get("text_elements") or []
         )
-        for row in canonical_text:
-            if isinstance(row, dict) and isinstance(row.get("text"), str) and row["text"].strip():
-                texts.append(TextRequirement(role="any", text=row["text"]))
-        changes["exact_texts"] = tuple(texts)
+        prior_elements = {
+            str(row.get("id")): row["text"]
+            for row in (previous_variant or {}).get("text_elements") or []
+            if isinstance(row, dict) and isinstance(row.get("text"), str)
+        }
+        changes["exact_texts"] = _text_requirements_for_save(
+            canonical_text,
+            contract.exact_texts,
+            prior_elements,
+            keep_shot_roles=not sections.get("timeline"),
+        )
     if sections.get("timeline"):
         # `_prepare_editor_commit` has already validated and projected this
         # number from the submitted slots (or guided revision); the prior
@@ -295,7 +366,18 @@ def prepare_phone_editor_commit(
         raise HTTPException(422, detail={"code": "phone_rendering_unavailable"})
     try:
         _rebind_editor_render_contract(
-            staged, variant_id, prep, brief_binding=creator_brief_binding
+            staged,
+            variant_id,
+            prep,
+            brief_binding=creator_brief_binding,
+            previous_variant=next(
+                (
+                    v
+                    for v in (job.assembly_plan or {}).get("variants", [])
+                    if isinstance(v, dict) and v.get("variant_id") == variant_id
+                ),
+                None,
+            ),
         )
         previous = device_status(job, variant_id).request
         assembly = staged.assembly_plan
@@ -502,7 +584,10 @@ def _unsupported_phone_edit(job: Any, variant_id: str, exc: Exception) -> HTTPEx
         reason=reason,
         exc_info=True,
     )
-    return HTTPException(422, detail={"code": "unsupported_phone_edit", "reason": reason})
+    # A contract refusal keeps its typed reason on the wire (additive keys): the edit was
+    # refused, the last accepted version is untouched, and the client can say why.
+    typed = decline_payload(exc)
+    return HTTPException(422, detail={"code": "unsupported_phone_edit", "reason": reason, **typed})
 
 
 def _pinned_song_bed(recipe: EditRecipeV2, user_song: dict[str, Any]) -> PhoneSongBed:

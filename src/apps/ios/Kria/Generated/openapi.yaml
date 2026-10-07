@@ -1078,6 +1078,11 @@
             "title": "Slide Post Chat Edit",
             "type": "boolean"
           },
+          "slide_post_extended_device_export": {
+            "default": false,
+            "title": "Slide Post Extended Device Export",
+            "type": "boolean"
+          },
           "slide_post_rich_text": {
             "default": false,
             "title": "Slide Post Rich Text",

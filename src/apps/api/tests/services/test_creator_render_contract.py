@@ -792,3 +792,105 @@ def test_rebind_is_the_only_supported_integrity_preserving_change() -> None:
     changed = contract.rebind(generation_id="gen-2")
     assert changed.generation_id == "gen-2"
     assert read_render_contract({CONTRACT_FIELD: changed.model_dump(mode="json")}) == changed
+
+
+# -- song-order answer on a user-song (lip-sync) item -------------------------
+
+_SONG_IDS = [f"m{i}.mp4" for i in range(1, 8)]
+
+
+def _song_strategy():
+    return {
+        "audio_strategy": "user_song",
+        "song_sync": "lipsync",
+        "target_duration_s": 62,
+        "target_duration_requested": True,
+        "resolved_song_takes": [
+            {"media_id": mid, "place": "pinned", "order_index": i, "delta_s": float(i)}
+            for i, mid in enumerate(_SONG_IDS)
+        ],
+    }
+
+
+def _order_brief(literal="clips 1, 2, 3, 4, 5, 7, 6", facts=None):
+    from app.kria.brief import BriefRequirement, CreativeBrief
+
+    return CreativeBrief(
+        requirements=[
+            BriefRequirement(
+                id="r1", kind="order", scope="global", literal=literal, facts=facts or {}
+            )
+        ]
+    )
+
+
+def test_song_order_answer_on_lipsync_item_is_not_an_unresolved_order_rule():
+    """Prod job 7deecc98: "Use this order: clips ..." became an `order` requirement and
+    declined the item (needs_choice). The song placement owns that order."""
+    from app.services.creator_render_contract import check_phone_dispatch_contract
+
+    contract = build_render_contract(
+        _song_strategy(), generation_id="g", brief=_order_brief(), media_snapshot={}
+    )
+    assert contract is not None
+    assert contract.unresolved == ()
+    assert contract.order_required is False
+    assert contract.order_ids == ()
+    assert contract.duration_s == 62
+    check_phone_dispatch_contract(
+        contract, snapshot_generation_id="g", has_voiceover_candidate=False, user_song=object()
+    )
+
+
+def test_explicit_capture_order_on_song_item_is_still_enforced():
+    contract = build_render_contract(
+        _song_strategy(),
+        generation_id="g",
+        brief=_order_brief("oldest first", {"key": "capture_time"}),
+        media_snapshot={},
+    )
+    assert contract.order_required is True
+    assert contract.unresolved  # no capture times -> still needs evidence
+
+
+def test_plain_order_on_non_song_item_still_declines_needs_choice():
+    from app.services.creator_render_contract import check_phone_dispatch_contract
+
+    contract = build_render_contract(
+        {"target_duration_s": 30}, generation_id="g", brief=_order_brief(), media_snapshot={}
+    )
+    assert contract.order_required is True
+    assert contract.unresolved
+    with pytest.raises(CreatorRenderContractError) as exc:
+        check_phone_dispatch_contract(
+            contract, snapshot_generation_id="g", has_voiceover_candidate=False
+        )
+    assert exc.value.decline_reason == "needs_choice"
+
+
+def test_song_order_on_song_item_without_resolved_takes_still_declines():
+    strategy = _song_strategy()
+    strategy["resolved_song_takes"] = None
+    contract = build_render_contract(
+        strategy, generation_id="g", brief=_order_brief(), media_snapshot={}
+    )
+    assert contract.unresolved
+
+
+# --- KRI-470 PR-D: the strict contract model must not change under old workers -----------
+
+
+def test_the_contract_model_schema_is_unchanged_so_old_workers_can_still_read_it():
+    """``CreatorRenderContract`` forbids extra keys, so ANY field added to it makes every job
+    stamped by new code unreadable by a still-running (or rolled-back) older worker: phone
+    dispatch fails terminally, cloud preflight, the editor and device pinning all reject it.
+    New plan facts ride as sibling dicts on the job instead (``creator_route``, like
+    ``cloud_evidence``). ``tests/fixtures/creator_render_contract.schema.json`` is the schema
+    as of origin/main at KRI-470 PR-D; change it only with an explicit rolling-deploy plan."""
+    import json
+    from pathlib import Path
+
+    golden = json.loads(
+        (Path(__file__).parents[1] / "fixtures" / "creator_render_contract.schema.json").read_text()
+    )
+    assert CreatorRenderContract.model_json_schema() == golden

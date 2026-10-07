@@ -4,8 +4,10 @@ import XCTest
 
 /// Renders the recipes `scripts/ios/phone-audio-parity.py prepare` compiled with
 /// the real phone compilers through the production exporter, so `compare` can
-/// measure them against the cloud's mix of the same edit (KRI-139). Opt-in:
-/// skipped unless `KRIA_AUDIO_PARITY_DIR` names a prepared directory.
+/// measure them against the cloud's mix of the same edit (KRI-139) and measure a
+/// creator-song export by tone and colour: the song plays once, from its window,
+/// with the cuts in order and the opening text in its window (KRI-470 PR-G).
+/// Opt-in: skipped unless `KRIA_AUDIO_PARITY_DIR` names a prepared directory.
 final class AudioParityFixtureTests: XCTestCase {
     @MainActor func testRendersEveryPreparedCase() async throws {
         guard let path = ProcessInfo.processInfo.environment["KRIA_AUDIO_PARITY_DIR"] else { throw XCTSkip("Set KRIA_AUDIO_PARITY_DIR to run") }

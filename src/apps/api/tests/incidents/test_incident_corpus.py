@@ -7,6 +7,8 @@ HONEST SCOPE. This module asserts only what pytest CI can prove with the real co
   ``BriefBinding`` the way dispatch does), and the real verifiers
   (``verify_phone_recipe`` on a recipe compiled by the real speech-montage
   compiler, or ``preflight_cloud_contract``) decline what the record says they must.
+- ``route`` (KRI-470 / PR-D): the pure route resolver maps the approved plan (contract,
+  strategy, media facts, platform) to the recorded route, typed refusal or open choice.
 - ``question``: the real creator-planner turn asks (or does not ask) the recorded
   question over the recorded conversation.
 - ``output``: the recorded output evidence (what the creator actually got, later a
@@ -153,6 +155,41 @@ def test_real_verifier_declines_what_the_record_says(record: IncidentRecord) -> 
     harness.refusal_message(record, contract)
 
 
+@pytest.mark.parametrize("record", [pytest.param(r, id=r.id) for r in RECORDS if r.expect.cloud])
+def test_cloud_adapter_proves_or_declines_as_recorded(record: IncidentRecord) -> None:
+    """KRI-470 / PR-E: a requirement lifted for an adapter passes preflight AND the verifier
+    on the renderer's receipt; wrong evidence is declined, typed. Real code, recorded receipt."""
+    contract = loader.build_contract(record)
+    assert contract is not None and not contract.unresolved
+    want = record.expect.cloud
+    verdicts = harness.cloud_verdicts(record, contract)
+    if want.preflight == "passes":
+        assert verdicts["preflight"] is None, f"preflight declined: {verdicts['preflight']}"
+    else:
+        assert verdicts["preflight"] is not None, "preflight accepted a plan it must decline"
+    if want.plan_gate is not None:
+        gate = verdicts["plan_gate"]
+        if want.plan_gate == "passes":
+            assert gate is None, f"the plan gate declined: {gate}"
+        else:
+            assert gate is not None, "the plan gate accepted a plan it must decline pre-render"
+            if want.gate_reason:
+                assert gate.decline_reason == want.gate_reason
+            if want.gate_field_path:
+                assert gate.field_path == want.gate_field_path
+    if want.publication is None:
+        return
+    error = verdicts["publication"]
+    if want.publication == "accepts":
+        assert error is None, f"the verifier refused the recorded receipt: {error}"
+        return
+    assert error is not None, "the verifier accepted a receipt it must refuse"
+    if want.reason:
+        assert error.decline_reason == want.reason
+    if want.field_path:
+        assert error.field_path == want.field_path
+
+
 @pytest.mark.parametrize(
     "record",
     _params(
@@ -192,6 +229,25 @@ async def test_planner_asks_or_stays_quiet_as_recorded(
     if want.option_keys:
         assert keys == want.option_keys
     assert len(keys) >= want.min_options
+
+
+@pytest.mark.parametrize("record", _params("route", lambda r: r.expect.route is not None))
+def test_route_resolver_picks_the_recorded_route(record: IncidentRecord) -> None:
+    """KRI-470 / PR-D: the approved plan alone (contract + strategy + media facts) resolves
+    to the recorded route, typed refusal or open choice. Real resolver; no request text."""
+    want = record.expect.route
+    got = harness.resolved_route(record)
+    if want.route is not None:
+        assert got.outcome == "route", f"resolved {got.label}, expected route {want.route}"
+        assert got.route.value == want.route
+    elif want.refusal is not None:
+        assert got.outcome == "refusal", f"resolved {got.label}, expected refusal {want.refusal}"
+        assert got.reason == want.refusal
+    else:
+        assert got.outcome == "needs_choice", f"resolved {got.label}"
+        assert got.choice_kind == want.choice
+    if want.field_path is not None:
+        assert got.field_path == want.field_path
 
 
 def output_mismatches(record: IncidentRecord, want: OutputFacts, seen: Observation) -> list[str]:

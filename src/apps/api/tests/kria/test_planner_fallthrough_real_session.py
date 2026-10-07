@@ -17,6 +17,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.agents._schemas.brief_extractor import BriefExtractionOutput
 from app.agents._schemas.creator_agent import AskUser
 from app.config import settings
 from app.database import sync_session
@@ -101,12 +102,18 @@ async def test_declined_fast_path_falls_through_without_missing_greenlet(
     )
     monkeypatch.setattr(planner, "_load_editor_target", AsyncMock(return_value=target))
     monkeypatch.setattr(planner, "run_copilot_turn", AsyncMock(return_value=response))
-    calls = []
+    extractor_calls = []
+    creator_calls = []
+
+    async def extractor(inputs, **_kw):  # noqa: ANN001, ANN202
+        extractor_calls.append(inputs)
+        return BriefExtractionOutput(brief_updates=[_upd("select", "global")])
 
     async def creator(inputs, **_kw):  # noqa: ANN001, ANN202
-        calls.append(inputs)
-        return SimpleNamespace(action=AskUser(**_ASK), brief_updates=[_upd("select", "global")])
+        creator_calls.append(inputs)
+        return SimpleNamespace(action=AskUser(**_ASK), brief_updates=[])
 
+    monkeypatch.setattr(planner, "_call_brief_extractor", extractor)
     monkeypatch.setattr(planner, "_call_main_creator", creator)
     # Same construction as the runtime: an unpooled engine that lives for this loop.
     engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
@@ -121,7 +128,8 @@ async def test_declined_fast_path_falls_through_without_missing_greenlet(
             )
     finally:
         await engine.dispose()
-    assert calls, f"{case}: the extraction must run after the fast path declined"
+    assert extractor_calls, f"{case}: the extraction must run after the fast path declined"
+    assert not creator_calls, f"{case}: non-explicit followup must not invoke MainCreator"
     assert result.defer_brief is False
     assert result.brief_route in {"replan", "editor_ops"}
 
@@ -144,12 +152,10 @@ async def test_deferred_brief_extraction_runs_on_a_real_session(
     )
     monkeypatch.setattr(planner, "_load_editor_target", AsyncMock(return_value=target))
 
-    async def creator(_inputs, **_kw):  # noqa: ANN001, ANN202
-        return SimpleNamespace(
-            action=AskUser(**_ASK), brief_updates=[_upd("text", "title", literal="N")]
-        )
+    async def extractor(_inputs, **_kw):  # noqa: ANN001, ANN202
+        return BriefExtractionOutput(brief_updates=[_upd("text", "title", literal="N")])
 
-    monkeypatch.setattr(planner, "_call_main_creator", creator)
+    monkeypatch.setattr(planner, "_call_brief_extractor", extractor)
     engine = create_async_engine(settings.asyncpg_database_url, poolclass=NullPool)
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:

@@ -441,6 +441,7 @@ private struct CreationWorkspaceView: View {
     @State private var isThinking = false
     /// Highest transcript sequence known when the thinking turn was accepted; only later events can settle it.
     @State private var thinkingAnchor: Int?
+    @State private var thinkingTurnID: String?
     /// Approvals have no reply message, so a terminal job status also ends the wait (KRI-222).
     @State private var thinkingSettlesOnJobStatus = false
     @State private var failure: ChatFailure?
@@ -672,7 +673,7 @@ private struct CreationWorkspaceView: View {
             }
         }
         if (isThinking || isSending) && workspaceStage != .rendering {
-            if showsPlanFeed { planFeedView } else { ThinkingRow().id("thinking") }
+            ThinkingRow().id("thinking")
         }
         if let approvalNotice { Text(approvalNotice).font(KriaFont.body(13)) }
         if let failure {
@@ -1457,6 +1458,7 @@ private struct CreationWorkspaceView: View {
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
         conversationAcceptedID = UUID()
         thinkingAnchor = afterSequence
+        thinkingTurnID = accepted.turnID
         thinkingSettlesOnJobStatus = false
         isThinking = true
         failure = await acceptedMutationRefreshError(
@@ -1582,7 +1584,7 @@ private struct CreationWorkspaceView: View {
                 // polling it only while it is unsettled or the thread moved.
                 let deviceSettled = deviceRenderKey.flatMap { model.deviceRenders.presentations[$0]?.phase } == .synced
                 if changed || !deviceSettled || currentProject.status == .rendering { await refreshDeviceRender() }
-                delay = changed || isSending || isActing || currentProject.status == .rendering
+                delay = changed || isSending || isActing || isThinking || currentProject.status == .rendering
                     || fullThread?.preparationIsActive == true || speechCleanupIsChecking
                     ? 1_000_000_000 : min(delay * 2, 8_000_000_000)
             } catch is CancellationError {
@@ -1749,9 +1751,10 @@ private struct CreationWorkspaceView: View {
         guard isThinking, let anchor = thinkingAnchor else { return }
         let jobTerminal = thinkingSettlesOnJobStatus
             && ChatThinkingSettlement.isTerminalJobStatus(fullThread?.job?.status)
-        if ChatThinkingSettlement.isSettled(events: events, after: anchor) || jobTerminal {
+        if ChatThinkingSettlement.isSettled(events: events, after: anchor, turnID: thinkingTurnID) || jobTerminal {
             isThinking = false
             thinkingAnchor = nil
+            thinkingTurnID = nil
             thinkingSettlesOnJobStatus = false
         }
     }
@@ -1891,6 +1894,7 @@ private struct CreationWorkspaceView: View {
             }
             self.approval = nil
             thinkingAnchor = decision == "approve" ? afterSequence : nil
+            thinkingTurnID = decision == "approve" ? approval.turnID : nil
             thinkingSettlesOnJobStatus = decision == "approve"
             isThinking = decision == "approve"
             failure = await acceptedMutationRefreshError(
@@ -2009,8 +2013,17 @@ enum ChatThinkingSettlement {
         ChatTranscriptMessage.from(event: event)?.role == .assistant || settledTypes.contains(event.eventType)
     }
 
-    static func isSettled(events: [ThreadEvent], after anchor: Int) -> Bool {
-        events.contains { $0.sequence > anchor && settles($0) }
+    static func isSettled(events: [ThreadEvent], after anchor: Int, turnID: String? = nil) -> Bool {
+        events.contains { event in
+            guard event.sequence > anchor, settles(event) else { return false }
+            guard let turnID else { return true }
+            if let eventTurnID = event.payload?["turn_id"]?.stringValue {
+                return eventTurnID.caseInsensitiveCompare(turnID) == .orderedSame
+            }
+            // Legacy conversation replies have no turn identifier. Unowned plan/render
+            // events cannot settle a known follow-up turn.
+            return ChatTranscriptMessage.from(event: event)?.role == .assistant
+        }
     }
 
     static func isTerminalJobStatus(_ status: String?) -> Bool {

@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.133.0] - 2026-10-07
+
+### Changed
+- feat(phone): honest order verdicts, song-once proof on a real export, last-good guard (KRI-478) (#1458) <!-- release-pr: 1458 -->
+
+## [0.78.132.0] - 2026-10-07
+
+### Changed
+- feat(route): one route resolver from the approved plan, in shadow mode (KRI-477) (#1457) <!-- release-pr: 1457 -->
+
+## [0.78.131.0] - 2026-10-07
+
+### Fixed
+- fix(creator): make iPhone title follow-ups edit the current cut (KRI-485) (#1454) <!-- release-pr: 1454 -->
+
+## [0.78.130.0] - 2026-10-07
+
+### Changed
+- feat(ios): export slide videos and looks on device (KRI-482) (#1452) <!-- release-pr: 1452 -->
+
+## [0.78.129.0] - 2026-10-07
+
+### Changed
+- fix(creator): a song-order answer on a lip-sync item is no longer an unverifiable ordering rule (KRI-470 follow-up) (#1451) <!-- release-pr: 1451 -->
+
+## [0.78.128.0] - 2026-10-07
+
+### Changed
+- feat(creator): clarification gate with one shared conflict collector (KRI-476) (#1450) <!-- release-pr: 1450 -->
+
+## [0.78.127.0] - 2026-10-07
+
+### Changed
+- feat(cloud): cloud render evidence and honest preflight lifts (KRI-478) (#1449) <!-- release-pr: 1449 -->
+
+## [0.78.126.0] - 2026-10-07
+
+### Changed
+- fix(ios): smooth left-drawer swipe (KRI-474) (#1442) <!-- release-pr: 1442 -->
+
 ## [0.78.125.0] - 2026-10-07
 
 ### Changed

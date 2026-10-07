@@ -24,7 +24,7 @@ from app.kria.brief import CreativeBrief
 Kind = Literal["output", "clarification", "routing", "contract_pin"]
 # One dimension per kind of claim the pytest corpus can check. A record's xfail must name
 # a scope it actually asserts (validated below), so a scope can never be silently ignored.
-Scope = Literal["contract", "refusal", "question", "output"]
+Scope = Literal["contract", "refusal", "question", "output", "route"]
 
 
 class _Strict(BaseModel):
@@ -101,6 +101,12 @@ class PhoneRecipeSpec(_Strict):
     sections: list[PhoneSection]
 
 
+class GuidedPlanSpec(_Strict):
+    order: list[str] = Field(description="Media ids in the order the plan's timeline shows them")
+    opening_title: str | None = None
+    closing_title: str | None = None
+
+
 class Inputs(_Strict):
     media: list[MediaFact] = []
     voiceover_id: str | None = None
@@ -110,6 +116,16 @@ class Inputs(_Strict):
     synthetic: list[SyntheticClip] = []
     phone_recipe: PhoneRecipeSpec | None = None
     cloud_preflight: bool = False
+    # KRI-470 / PR-E: the cloud adapter that would render the plan (preflight consults its
+    # declaration) and the receipt its renderer reported (the publication verifier's input).
+    cloud_adapter: Literal["cloud_guided_story", "cloud_classic", "cloud_slides"] | None = None
+    cloud_receipt: dict[str, Any] | None = None
+    # The sibling ``cloud_evidence`` the renderer reported (hand-built records only).
+    cloud_evidence: dict[str, Any] | None = None
+    # A guided plan compiled by the REAL compiler from this media order; the pre-render
+    # gate runs on it and (unless ``cloud_evidence`` is given) the evidence is derived
+    # from its timeline by the real evidence builder.
+    guided_plan: GuidedPlanSpec | None = None
     notes: list[str] = []
 
 
@@ -156,6 +172,26 @@ class RefusalExpect(_Strict):
     message_advisory: str | None = None
 
 
+class CloudExpect(_Strict):
+    """KRI-470 / PR-E: the real cloud preflight + publication verifier, on the recorded receipt.
+
+    ``preflight`` is whether the named adapter lets the plan through before any work;
+    ``plan_gate`` is the pre-render verdict on ``inputs.guided_plan``; ``publication`` is the
+    verdict on the recorded/derived evidence (``None`` = not asserted).  A declining
+    verdict may pin the typed ``reason`` / ``field_path`` (the gate's decline is checked
+    against them when no publication verdict is asserted).
+    """
+
+    preflight: Literal["passes", "declines"]
+    # The pre-render guided plan gate (needs ``inputs.guided_plan``): declined plans never render.
+    plan_gate: Literal["passes", "declines"] | None = None
+    publication: Literal["accepts", "declines"] | None = None
+    reason: str | None = None
+    field_path: str | None = None
+    gate_reason: str | None = None
+    gate_field_path: str | None = None
+
+
 class QuestionExpect(_Strict):
     kind: str | None = None
     option_keys: list[str] = []
@@ -186,8 +222,27 @@ class OutputFacts(_Strict):
     exact_texts: list[str] | None = None
 
 
+class RouteExpect(_Strict):
+    """KRI-470 / PR-D: what the pure route resolver (``services/render_route``) must return.
+
+    Resolved from the record's approved strategy + contract + media facts on ``platform``;
+    no request text is an input.  Exactly one of ``route`` / ``refusal`` / ``choice``.
+    """
+
+    platform: Literal["phone", "cloud"]
+    route: str | None = None
+    refusal: str | None = Field(default=None, description="DeclineReason of a typed refusal")
+    choice: str | None = Field(default=None, description="choice_kind of a needs_choice")
+    field_path: str | None = None
+
+    @model_validator(mode="after")
+    def _one_outcome(self) -> RouteExpect:
+        if sum(value is not None for value in (self.route, self.refusal, self.choice)) != 1:
+            raise ValueError("a route expectation names exactly one of route / refusal / choice")
+        return self
+
+
 class Expect(_Strict):
-    # No route expectation yet: route assertions arrive with PR-D's resolver.
     failure_reason: str | None = Field(
         default=None,
         description="Typed job failure_reason a replay-backed record stands for; the assertion "
@@ -195,8 +250,10 @@ class Expect(_Strict):
     )
     contract: ContractExpect | None = None
     refusal: RefusalExpect | None = None
+    cloud: CloudExpect | None = None
     question: QuestionExpect | None = None
     output_facts: OutputFacts | None = None
+    route: RouteExpect | None = None
 
 
 class Observation(_Strict):
@@ -239,9 +296,11 @@ class Repro(_Strict):
         if self.status == "pending" and not self.owner:
             raise ValueError("a pending repro names its owning ticket")
         if self.status == "available" and not (
-            self.command.startswith(("pytest ", "make kria-replay FIXTURE="))
+            self.command.startswith(("pytest ", "make kria-replay FIXTURE=", "python scripts/"))
         ):
-            raise ValueError("an available repro must be a pytest id or make kria-replay")
+            raise ValueError(
+                "an available repro must be a pytest id, make kria-replay or a repo script"
+            )
         return self
 
 
@@ -284,6 +343,7 @@ class IncidentRecord(_Strict):
             ),
             "question": self.expect.question is not None,
             "output": self.expect.output_facts is not None,
+            "route": self.expect.route is not None,
         }
         for scope in scopes:
             if not asserted[scope]:

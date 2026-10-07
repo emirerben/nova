@@ -6502,6 +6502,21 @@ _VOICEOVER_MUSIC_BED_MAX_GAIN = 0.5
 _NARRATED_FOOTAGE_BED_MAX_GAIN = 0.6
 
 
+@dataclasses.dataclass(frozen=True)
+class VoiceoverMixOutcome:
+    """What ``_mix_user_voiceover`` actually put in the output (KRI-470 evidence).
+
+    The mixer is deliberately non-fatal: on any ffmpeg failure it copies the
+    assembled video through, which still carries the footage audio but no voice.
+    ``applied`` is therefore the only honest signal that the recording is in the
+    file; ``footage_audible`` says whether the clips' own sound is mixed in (a
+    music bed or full ducking removes it).
+    """
+
+    applied: bool
+    footage_audible: bool
+
+
 def _mix_user_voiceover(
     video_path: str,
     voiceover_local_path: str,
@@ -6514,7 +6529,7 @@ def _mix_user_voiceover(
     music_start_offset_s: float = 0.0,
     footage_bed_path: str | None = None,
     bed_level: float = 0.0,
-) -> None:
+) -> VoiceoverMixOutcome:
     """Mix a user-supplied voiceover over the assembled video.
 
     The voice plays at full level. The "bed" — the clips' own footage audio, or a
@@ -6636,6 +6651,12 @@ def _mix_user_voiceover(
     if result.returncode != 0:
         log.warning("voiceover_mix_failed", stderr=result.stderr.decode()[:300])
         shutil.copy2(video_path, output_path)
+        # The copy-through keeps the assembled video's own audio, no recording.
+        return VoiceoverMixOutcome(applied=False, footage_audible=True)
+    return VoiceoverMixOutcome(
+        applied=True,
+        footage_audible=bool(use_footage_bed or (not music_gcs_path and mix < 0.999)),
+    )
 
 
 # ── Copy helpers ───────────────────────────────────────────────────────────────

@@ -113,6 +113,20 @@ logs `kria_turn_claims_exhausted`. Look for the kills (`TimeLimitExceeded`,
 - For prompt changes, bump the v2 `AgentSpec.prompt_version`, run structural
   replay evals, and run the required live judged fixtures before cohort rollout.
 
+### Rendered follow-up routing
+
+Once a draft has a rendered snapshot, the planner first runs the narrow
+`nova.creator.brief_extractor` prompt (`2026-10-07-v1`) to turn the follow-up into
+typed brief requirements. Text and style changes, plus timing scoped to a
+title, can stay on the current snapshot through editor operations. Broad clip
+timing, stale or unsupported targets, and clarifying outcomes remain in the
+recovery path; they do not silently create a replacement video. An explicit
+full replan or structured clip picker is the path that invokes Main Creator.
+
+The follow-up binds to the current plan item and draft version before saving.
+Keep that binding and save in the same atomic completion path so a stale turn
+cannot attach its requirements to a newer draft.
+
 Run `make verify-kria` before the wider backend/web suites. Renderer-affecting
 changes still require their existing local-render and overlay gates.
 
@@ -160,8 +174,10 @@ is noticed. Route assertions (`route`) are deliberately absent until PR-D's reso
 line), `kind`, `approved` (strategy + brief as persisted, validated against
 `CreativeStrategy`/`CreativeBrief`), `inputs` (redacted media: opaque id, duration,
 capture time, speech facts; the conversation `turns`; optional `phone_recipe`,
-`cloud_preflight`, `synthetic` clips), `expect` (`contract`, `refusal`, `question` or
-`no_question`, `output_facts`; structured facts only, never copy), `observations`,
+`cloud_preflight`, `cloud_adapter` + `cloud_receipt`/`cloud_evidence`/`guided_plan`,
+`synthetic` clips), `expect`
+(`contract`, `refusal`, `cloud`, `question` or `no_question`, `output_facts`; structured
+facts only, never copy), `observations`,
 `xfail` (`{reason: "KRI-47x / PR-x", scope: contract|refusal|question|output}`; the
 scope must be something the record really asserts), and `repro` (resolved against the
 repo by `test_repro_command_points_at_something_real`, including the `::test` part and
@@ -170,11 +186,24 @@ regenerated on demand (`tests/incidents/synthetic.py`); generated media is never
 committed. `refusal.reason`/`field_path` are the typed decline (KRI-476 / PR-A) and are
 asserted unconditionally, so a record can stage them as a strict xfail.
 
-**Clarification harness.** It calls the planner like `plan_live_turn` does today (the
-capture-order flag is read off the brief, the brief request rides along, target length
-reaches the planner through the strategy). PR-C (KRI-476) moves the gate into
-`plan_live_turn` after the media snapshot is attached, so PR-C must adapt this harness
-and flip the `KRI-476 / PR-C` records.
+**Cloud evidence records (KRI-470 / PR-E).** `expect.cloud` runs the real
+`preflight_cloud_contract(adapter=inputs.cloud_adapter)` and `verify_cloud_variant`
+(`preflight: passes|declines`; `plan_gate` for a guided plan the real compiler builds from
+`inputs.guided_plan`; `publication: accepts|declines` with the typed `reason` /
+`field_path`). Guided evidence is derived from that plan's timeline by the real evidence
+builder; a hand-built `inputs.cloud_evidence` is used only where the point is wrong
+evidence. Whether a renderer emits such evidence on real output is proven by
+`tests/tasks/test_cloud_render_receipts.py`, `tests/pipeline/test_guided_cloud_evidence.py`
+and the PR-E real-output evidence.
+
+**Clarification harness.** It runs the real creator-output adapter and then the real
+clarification gate (`planner._gate_unresolved_choices`), which `plan_live_turn` calls
+once the approved media snapshot is attached (KRI-476 / PR-C). The harness attaches the
+record's media snapshot, supplies the record's brief, and replays the record's
+`choice_question` / `choice_selection` turns as the thread events. A `question`
+expectation asserts the kind, the offered option keys and `min_options`; a
+`no_question` record is the must-not-ask control. `kria_choice_questions_enabled` gates
+the gate.
 
 **Capture-fail-first workflow.**
 

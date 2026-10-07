@@ -7,7 +7,8 @@ import hashlib
 import json
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from app.kria.brief import CreativeBrief, render_brief_request
 
@@ -20,6 +21,14 @@ class BriefBinding(BaseModel):
     brief: CreativeBrief | None = None
     creator_request: str = ""
     media_snapshot: dict = {}
+    # KRI-476 (PR-C): the creator's answers to material conflicts that approval froze.
+    # Part of the digest ONLY when non-empty, so every stored binding keeps its digest.
+    # Kept out of the derived JSON schema (and omitted when empty): the mobile OpenAPI
+    # subset models this class with additionalProperties=false, so the wire shape every
+    # existing client decodes must not move.
+    choice_answers: SkipJsonSchema[list[dict]] = Field(
+        default_factory=list, exclude_if=lambda value: not value
+    )
     digest: str
 
     @staticmethod
@@ -29,6 +38,7 @@ class BriefBinding(BaseModel):
         brief: CreativeBrief | None,
         request: str,
         media_snapshot: dict | None = None,
+        choice_answers: list[dict] | None = None,
     ) -> str:
         payload = {
             "thread_id": thread_id,
@@ -38,6 +48,8 @@ class BriefBinding(BaseModel):
         }
         if media_snapshot:
             payload["media_snapshot"] = media_snapshot
+        if choice_answers:
+            payload["choice_answers"] = choice_answers
         return hashlib.sha256(
             json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
         ).hexdigest()
@@ -50,18 +62,21 @@ class BriefBinding(BaseModel):
         *,
         latest_message: str = "",
         media_snapshot: dict | None = None,
+        choice_answers: list[dict] | None = None,
     ) -> BriefBinding:
         snapshot = brief.model_copy(deep=True) if brief is not None else None
         state = "pinned" if snapshot is not None else "none"
         request = render_brief_request(snapshot, latest_message=latest_message)
         media = copy.deepcopy(media_snapshot or {})
+        answers = copy.deepcopy(list(choice_answers or []))
         return cls(
             thread_id=str(thread_id),
             state=state,
             brief=snapshot,
             creator_request=request,
             media_snapshot=media,
-            digest=cls._digest(str(thread_id), state, snapshot, request, media),
+            choice_answers=answers,
+            digest=cls._digest(str(thread_id), state, snapshot, request, media, answers),
         )
 
     @model_validator(mode="after")
@@ -69,7 +84,12 @@ class BriefBinding(BaseModel):
         if (self.state == "pinned") != (self.brief is not None):
             raise ValueError("Brief binding state disagrees with snapshot")
         if self.digest != self._digest(
-            self.thread_id, self.state, self.brief, self.creator_request, self.media_snapshot
+            self.thread_id,
+            self.state,
+            self.brief,
+            self.creator_request,
+            self.media_snapshot,
+            self.choice_answers,
         ):
             raise ValueError("Brief binding digest mismatch")
         return self

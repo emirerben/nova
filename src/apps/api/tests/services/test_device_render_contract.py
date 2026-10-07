@@ -138,7 +138,9 @@ def test_required_camera_audio_rejects_a_source_known_to_have_no_audio() -> None
                 ],
             )
         ],
-        audio=SimpleNamespace(original_volume=1.0, mute_windows=[]),
+        audio=SimpleNamespace(
+            original_volume=1.0, mute_windows=[], music_asset_id=None, music_volume=1.0
+        ),
     )
     contract = CreatorRenderContract(generation_id="approved").rebind(
         original_audio="require", audio_source_ids=("talk",)

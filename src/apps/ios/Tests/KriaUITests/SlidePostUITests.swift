@@ -73,6 +73,26 @@ import XCTest
 
     // MARK: Redesigned workspace (KRIA_SLIDE_POST_RICH_TEXT=1)
 
+    func testLooksAppearOnThePhotoBeforeSavingWhenDeviceCapabilityIsEnabled() {
+        let app = openRichWorkspace(save: false, extraEnv: [
+            "KRIA_SLIDE_POST_REMOTE_MEDIA": "1", "KRIA_SLIDE_POST_EXTENDED_DEVICE_EXPORT": "1",
+        ])
+        let image = app.descendants(matching: .any)["slidepost-preview-image"]
+        XCTAssertTrue(image.waitForExistence(timeout: 10))
+        app.buttons["slidepost-tool-look"].tap()
+        XCTAssertFalse(app.staticTexts["Save to apply this look to the preview."].exists)
+        for look in ["golden_hour", "smoky_split_tone", "faded_analog"] {
+            app.buttons["slidepost-look-\(look)"].tap()
+            expectation(for: NSPredicate(format: "value ENDSWITH %@", "|look:\(look)"), evaluatedWith: image)
+            waitForExpectations(timeout: 15)
+            XCTAssertFalse(app.staticTexts["Look preview unavailable"].exists)
+            attach(app, "Live \(look) before save")
+        }
+        app.buttons["slidepost-look-none"].tap()
+        expectation(for: NSPredicate(format: "value ENDSWITH '|full'"), evaluatedWith: image)
+        waitForExpectations(timeout: 10)
+    }
+
     /// Walks the fixture creation flow to the redesigned workspace: format, direction, Apply.
     private func openRichWorkspace(dynamicType: String? = nil, chatEdit: Bool = false, many: Bool = false, lateAsset: Bool = false, capabilities: String? = nil, save: Bool = true, extraEnv: [String: String] = [:]) -> XCUIApplication {
         let app = launchRich(dynamicType: dynamicType, chatEdit: chatEdit, many: many, lateAsset: lateAsset, capabilities: capabilities, extraEnv: extraEnv)

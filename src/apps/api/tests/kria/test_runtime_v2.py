@@ -53,6 +53,10 @@ class _Result:
     def scalar_one(self):  # noqa: ANN201
         return self._scalar
 
+    def all(self):  # noqa: ANN201
+        # `(role, payload)` rows of the free-text choice lookup (KRI-476): none here.
+        return list(self._scalars)
+
     def scalars(self):  # noqa: ANN201
         values = self._scalars
 
@@ -447,6 +451,7 @@ async def test_status_turn_completes_immediately_without_consuming_successor_slo
             side_effect=[
                 _Result(scalar=thread),
                 _Result(scalar=None),
+                _Result(scalars=[]),  # free-text choice lookup (KRI-476)
                 _Result(scalars=[active]),
                 _Result(scalar=4),
                 _Result(scalar=5),
@@ -511,6 +516,7 @@ async def test_second_turn_is_one_unpublished_queued_successor() -> None:
             side_effect=[
                 _Result(scalar=thread),
                 _Result(scalar=None),
+                _Result(scalars=[]),  # free-text choice lookup (KRI-476)
                 _Result(scalars=[active]),
                 _Result(scalar=None),
                 _Result(scalar=4),
@@ -552,6 +558,7 @@ async def test_submit_rejects_during_successor_promotion_window() -> None:
             side_effect=[
                 _Result(scalar=thread),
                 _Result(scalar=None),
+                _Result(scalars=[]),  # free-text choice lookup (KRI-476)
                 _Result(scalars=[]),
                 _Result(scalar=queued),
             ]
@@ -1716,6 +1723,7 @@ async def test_first_inert_prompt_also_reserves_title_generation():
             side_effect=[
                 _Result(scalar=thread),
                 _Result(scalar=None),
+                _Result(scalars=[]),  # free-text choice lookup (KRI-476)
                 _Result(scalars=[]),
                 _Result(scalar=1),
                 _Result(scalar=2),
