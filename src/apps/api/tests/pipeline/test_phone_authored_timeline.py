@@ -1,5 +1,3 @@
-
-
 def test_authored_compile_refuses_a_creator_song_instead_of_dropping_it(monkeypatch) -> None:
     import pytest
 
