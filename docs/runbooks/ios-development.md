@@ -139,11 +139,13 @@ variant is in the script docstring. Cases:
   picture that must never show; every picture clip is a unique colour with its own (muted)
   tone. Checks: length within 0.1 s; every cut's centre frame is the contract's colour at that
   position (order, each once); each voice tone sounds at the source's level for the whole
-  planned span and the span fills the picture to within the 3 s sentence-snap slack
+  span, and the MEASURED voice end (the last 0.1 s step in the export with a voice tone) matches the
+  plan's span and fills the picture to within `min(3 s, 15 %)` of its end
   (`voice_present_throughout`); no other voice tone and no picture-clip tone above -30 dB
   (`voice_once`, `camera_audio_silent`); non-silent loudness; the opening text differs from the
   `voice_behind_footage_notext` twin inside its window and not after it. Controls that must
-  fail their named check: `voice_behind_footage_unmuted` (`camera_audio_silent`),
+  fail their named check AND nothing outside an explicit allowed set (unmuted: `camera_audio_silent` +
+  `voice_once`; voice stops early: `voice_present_throughout` + `voice_once`; wrapped: `picture_order` only): `voice_behind_footage_unmuted` (`camera_audio_silent`),
   `voice_behind_footage_voice_stops_early` (`voice_present_throughout`),
   `voice_behind_footage_wrapped` (`picture_order`). Run it alone with
   `prepare "$OUT" --cases voice_behind_footage`.

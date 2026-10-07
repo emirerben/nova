@@ -437,3 +437,9 @@ Deviations and decisions made while building (all within the accepted answers in
 - The `voice_mode` question of section 3 is not implemented (the Creator sets the field).
 - `kri469-voice-clip-ignored` stays xfail with a precise note (see the pipeline doc); the shape is covered by
   synthetic records instead.
+- Review fixes (same PR): lengths are computed in whole frames; an unstated length is extended to show every
+  clip while a stated one is never touched; the tail slack is `min(3 s, 15 % of the picture)`; render-time
+  adjustments reach the creator in the finished-cut review reply (the draft cannot show them: the transcript is
+  read at render time, so the "disclosed on the plan card" lines in sections 3 and 6 are NOT built); the
+  "how long" options come from the real constraint; questions, the prompt section and the `voice_mode` repair
+  are off whenever the route cannot render (plan authority or the camera-audio renderer off).

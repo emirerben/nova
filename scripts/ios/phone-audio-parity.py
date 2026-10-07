@@ -1586,13 +1586,20 @@ def prepare_voice_behind_footage(out: Path) -> None:
         out, "voice_behind_footage_notext", twin, files, {"kind": "text_twin", "of": "voice"}
     )
 
-    def control(name: str, expect: list[str], mutated) -> None:  # noqa: ANN001
+    def control(name: str, expect: list[str], allowed: list[str], mutated) -> None:  # noqa: ANN001
+        # `expect` must ALL fail; nothing outside `allowed` may (a control that breaks
+        # unrelated checks proves a sloppy harness, not a sharp one).
         _write_voice_case(
             out,
             name,
             mutated,
             files,
-            {**proof, "expect_failure": expect, "twin": "voice_behind_footage_notext"},
+            {
+                **proof,
+                "expect_failure": expect,
+                "allowed_failures": allowed,
+                "twin": "voice_behind_footage_notext",
+            },
         )
 
     def with_clips(track_id: str, clips: list) -> object:
@@ -1609,18 +1616,25 @@ def prepare_voice_behind_footage(out: Path) -> None:
     control(
         "voice_behind_footage_unmuted",
         ["camera_audio_silent"],
+        ["camera_audio_silent", "voice_once"],
         with_clips("voice-footage", [c.model_copy(update={"volume": 1.0}) for c in footage.clips]),
     )
     # 2. The voice stops at half its span.
     control(
         "voice_behind_footage_voice_stops_early",
         ["voice_present_throughout"],
+        ["voice_present_throughout", "voice_once"],
         with_clips("voice", [voice.model_copy(update={"source_duration": voice.source_duration / 2})]),
     )
     # 3. A picture clip shown twice (the wrap-around), another one never shown.
     wrapped = list(footage.clips)
     wrapped[3] = wrapped[3].model_copy(update={"source_asset_id": wrapped[0].source_asset_id})
-    control("voice_behind_footage_wrapped", ["picture_order"], with_clips("voice-footage", wrapped))
+    control(
+        "voice_behind_footage_wrapped",
+        ["picture_order"],
+        ["picture_order"],
+        with_clips("voice-footage", wrapped),
+    )
     print(
         f"prepared voice_behind_footage cases in {out} (voice {voice.source_start:.2f}s +"
         f" {voice.source_duration:.2f}s, {len(footage.clips)} cuts, {recipe.duration:.2f}s)"
@@ -1686,18 +1700,28 @@ def _compare_voice_behind_footage(out: Path, directory: Path, proof: dict) -> tu
         and abs(r["level_vs_source_db"]) <= LEVEL_TOLERANCE_DB
         for r in rows
     )
-    # The measured windows must reach the voice's planned end (the last one-second window
-    # before the closing fade), and that planned end must itself sit within the sentence-snap
-    # slack of the picture's end: a voice cut at half its span fails the first, a voice
-    # planned short of the picture fails the second.
-    reaches = covered_to >= span - fade - 0.25 - 1.0
-    fills_picture = span >= proof["duration_s"] - 3.0 - 0.05
+    # Where the voice really ends in the EXPORTED audio: the last 0.1 s step in which any voice
+    # tone is above -9 dB of its source level (the closing fade is below that after ~0.1 s).
+    steps = np.arange(0.05, exported - 0.05, 0.1)
+    floor_amp = expected_peak * 0.35
+    voiced = [
+        t for t in steps if max(_goertzel(pcm, rate, t, 0.05, f) for f in freqs) >= floor_amp
+    ]
+    heard_end = (max(voiced) + 0.05) if voiced else 0.0
+    # (a) the export plays the voice to where the plan says it ends (within a fade + a step);
+    # (b) that end fills the picture to within the shared tail slack. A voice cut at half its
+    # span fails (a); a voice the plan itself stopped far short of the picture fails (b).
+    slack = min(3.0, 0.15 * proof["duration_s"])  # = phone_recipe_shared.voice_tail_slack_s
+    reaches = bool(abs(heard_end - span) <= 0.5)
+    fills_picture = bool(heard_end >= proof["duration_s"] - slack - 0.1)
     checks["voice_present_throughout"] = {
         "windows": rows,
         "covered_to_s": round(covered_to, 2),
         "planned_voice_span_s": round(span, 2),
+        "heard_voice_end_s": round(heard_end, 2),
+        "tail_slack_s": round(slack, 2),
         "level_within_db": LEVEL_TOLERANCE_DB,
-        "ok": present and reaches and fills_picture,
+        "ok": bool(present and reaches and fills_picture),
     }
     checks["voice_once"] = {
         "worst_other_tone_vs_expected_db": round(worst_leak, 1),
@@ -1760,8 +1784,10 @@ def _compare_voice_behind_footage(out: Path, directory: Path, proof: dict) -> tu
     expect = proof.get("expect_failure")
     if expect:
         # Negative control: the harness must SEE the regression it exists to catch.
-        caught = set(expect) <= set(failed_checks)
+        allowed = set(proof.get("allowed_failures") or expect)
+        caught = set(expect) <= set(failed_checks) <= allowed
         row["expect_failure"] = expect
+        row["allowed_failures"] = sorted(allowed)
         row["negative_control_detected"] = caught
         print(f"{name}: negative control {'DETECTED' if caught else 'MISSED'} ({failed_checks})")
         return row, not caught
