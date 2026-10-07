@@ -282,6 +282,23 @@ CaptionStyle = Literal["none", "clean", "kinetic", "karaoke", "editorial", "auto
 OptionalTreatment = Literal["overlays", "sfx", "transitions", "looks"]
 
 
+class ChoiceAnswer(_CreatorModel):
+    """One creator decision on a material conflict (KRI-476 / PR-C), server-owned.
+
+    ``input_digest`` scopes it to the exact media set and strategy fields the question
+    depended on; ``requirement_ids`` link it to the brief requirements it resolves.
+    ``source`` is ``creator`` for a tapped/typed answer and ``default`` when the same
+    question went unanswered after its single re-ask (the draft then says so).
+    """
+
+    conflict: str = Field(min_length=1, max_length=80)
+    kind: str = Field(min_length=1, max_length=40)
+    option: str = Field(min_length=1, max_length=64)
+    input_digest: str = Field(min_length=1, max_length=64)
+    requirement_ids: list[str] = Field(default_factory=list, max_length=16)
+    source: Literal["creator", "default"] = "creator"
+
+
 class CreativeStrategy(_CreatorModel):
     """Bounded editorial choices selected by the orchestrator.
 
@@ -390,6 +407,14 @@ class CreativeStrategy(_CreatorModel):
     ordering_choice: SkipJsonSchema[Literal["group_first", "chronological"] | None] = Field(
         default=None
     )
+    # KRI-476 (PR-C): the creator's answers to material conflicts (duration vs clip
+    # count, order basis, text placement). Server-owned exactly like
+    # ``ordering_choice``: the planner gate writes it from the thread's stored
+    # ``choice_selection`` events and every model-authored value is discarded. Omitted
+    # from the dump when unset so stored strategies stay byte-identical.
+    choice_answers: SkipJsonSchema[list[ChoiceAnswer] | None] = Field(
+        default=None, max_length=8
+    )
     # KRI-178 (flag PHONE_SUBTITLED_REACTION_BEATS_ENABLED). Same rationale as
     # clip_intents immediately above: default None keeps stored strategies and
     # every exclude_none hash byte-identical when unused, and SkipJsonSchema
@@ -467,6 +492,7 @@ class CreativeStrategy(_CreatorModel):
             "clip_intents",
             "resolved_clip_intents",
             "ordering_choice",
+            "choice_answers",
             "reaction_beats",
             "closing_media",
             "song_sync",
@@ -1415,6 +1441,7 @@ __all__ = [
     "CREATOR_CORE_CRAFT_COMMAND_ADAPTER",
     "CREATOR_CRAFT_BUNDLE_COMMAND_ADAPTER",
     "CreatorEditSnapshot",
+    "ChoiceAnswer",
     "ClosingMedia",
     "MAX_REACTION_BEATS",
     "ReactionBeat",

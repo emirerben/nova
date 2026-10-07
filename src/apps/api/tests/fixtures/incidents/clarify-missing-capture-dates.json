@@ -88,7 +88,7 @@
       }
     ],
     "notes": [
-      "Gate lands in PR-C (KRI-476): order_basis -> use upload order, or the creator's own sequence."
+      "Gate: PR-C (KRI-476), `collect_conflicts`: order_basis -> use the order the clips were added, or continue without chronological order (a creator-typed sequence has no supported way in yet)."
     ]
   },
   "expect": {
@@ -99,15 +99,13 @@
     },
     "question": {
       "kind": "order_basis",
-      "min_options": 2
+      "min_options": 2,
+      "option_keys": [
+        "attachment_order",
+        "unordered"
+      ]
     }
   },
-  "xfail": [
-    {
-      "reason": "KRI-476 / PR-C",
-      "scope": "question"
-    }
-  ],
   "repro": {
     "command": "pytest tests/incidents/test_incident_corpus.py -k clarify-missing-capture-dates",
     "status": "available"

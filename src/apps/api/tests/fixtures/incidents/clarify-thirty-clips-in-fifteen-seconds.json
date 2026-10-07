@@ -192,7 +192,7 @@
       }
     ],
     "notes": [
-      "Gate lands in PR-C (KRI-476): duration_vs_count -> extend the length, or use fewer clips."
+      "Gate: PR-C (KRI-476), `collect_conflicts`: duration_vs_count -> extend the length, or use fewer clips."
     ]
   },
   "expect": {
@@ -202,15 +202,13 @@
     },
     "question": {
       "kind": "duration_vs_count",
-      "min_options": 2
+      "min_options": 2,
+      "option_keys": [
+        "extend",
+        "fewer"
+      ]
     }
   },
-  "xfail": [
-    {
-      "reason": "KRI-476 / PR-C",
-      "scope": "question"
-    }
-  ],
   "repro": {
     "command": "pytest tests/incidents/test_incident_corpus.py -k clarify-thirty-clips-in-fifteen-seconds",
     "status": "available"

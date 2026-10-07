@@ -467,7 +467,11 @@ def ordered_ids(clips: Sequence[UnifiedClip]) -> list[str]:
     return [clip.media_id for clip in clips]
 
 
-_MIN_UNLABELLED_FRAMES = int(round(0.8 * FPS))
+# The shortest an unlabelled cut may be shrunk to: the readable-shot floor. Public so
+# the clarification gate (``choice_questions.collect_conflicts``) asks about exactly
+# the length the planner can never go below, never about a number of its own.
+MIN_READABLE_SHOT_S = 0.8
+_MIN_UNLABELLED_FRAMES = int(round(MIN_READABLE_SHOT_S * FPS))
 
 
 def _positive_number(value: object) -> float | None:

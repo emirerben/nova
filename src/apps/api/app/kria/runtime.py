@@ -53,7 +53,11 @@ from app.models import (
     PlanItem,
 )
 from app.schemas.user_song import SongOrderAnswerIn
-from app.services.choice_questions import ChoiceSelectionIn, latest_open_choice_question
+from app.services.choice_questions import (
+    ChoiceSelectionIn,
+    latest_open_choice_question,
+    match_open_choice,
+)
 from app.services.clip_selection import ClipSelectionIn, latest_open_clip_question
 from app.services.creation_thread_titles import (
     conversation_revision_matches,
@@ -252,6 +256,43 @@ async def _validate_choice_selection(
         )
 
 
+# How many of the thread's newest events can still hold an OPEN choice question. A
+# question that old is stale and a plain message is never read as its answer.
+_FREE_TEXT_CHOICE_WINDOW = 12
+
+
+async def _free_text_choice_selection(
+    db: AsyncSession, thread: CreationThread, message: str
+) -> ChoiceSelectionIn | None:
+    """KRI-476: a plain message that IS an answer becomes a server-owned ``choice_selection``.
+
+    Deterministic and exact: the message must normalise (case, punctuation, whitespace)
+    to exactly one option's label, key, list number or server-defined alias of the thread's
+    open choice question. Anything else returns ``None`` and goes to the Creator agent
+    like any message; the question stays in the thread, so the agent sees it, and the
+    planner gate re-asks at most once (``MAX_ASKS_PER_QUESTION``), never in a loop.
+    """
+
+    rows = (
+        await db.execute(
+            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == thread.id,
+                CreationThreadEvent.role.in_({"user", "assistant"}),
+            )
+            .order_by(CreationThreadEvent.sequence.desc())
+            .limit(_FREE_TEXT_CHOICE_WINDOW)
+        )
+    ).all()
+    question = latest_open_choice_question((role, payload) for role, payload in reversed(rows))
+    if question is None:
+        return None
+    option_key = match_open_choice(question, message)
+    if option_key is None:
+        return None
+    return ChoiceSelectionIn(question_id=str(question["question_id"]), option_key=option_key)
+
+
 async def _owned_thread(
     db: AsyncSession,
     *,
@@ -392,12 +433,22 @@ async def submit_turn(
             current_revision=int(thread.revision),
         )
 
+    choice_selection = body.choice_selection
+    if (
+        choice_selection is None
+        and settings.kria_choice_questions_enabled
+        and body.clip_selection is None
+        and body.song_order is None
+    ):
+        # The request digest above stays that of the body as sent (idempotency); only
+        # the stored event carries the derived selection.
+        choice_selection = await _free_text_choice_selection(db, thread, body.message)
     if body.clip_selection is not None and settings.kria_clip_selection_questions_enabled:
         await _validate_clip_selection(db, thread, body.clip_selection)
     if body.song_order is not None and settings.user_song_montage_enabled:
         await _validate_song_order(db, thread, body.song_order)
-    if body.choice_selection is not None and settings.kria_choice_questions_enabled:
-        await _validate_choice_selection(db, thread, body.choice_selection)
+    if choice_selection is not None and settings.kria_choice_questions_enabled:
+        await _validate_choice_selection(db, thread, choice_selection)
 
     active = (
         (
@@ -590,8 +641,8 @@ async def submit_turn(
                 else {}
             ),
             **(
-                {"choice_selection": body.choice_selection.model_dump(mode="json")}
-                if body.choice_selection is not None and settings.kria_choice_questions_enabled
+                {"choice_selection": choice_selection.model_dump(mode="json")}
+                if choice_selection is not None and settings.kria_choice_questions_enabled
                 else {}
             ),
         },

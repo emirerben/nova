@@ -22,6 +22,15 @@ from app.kria.brief import CreativeBrief
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
+from app.services.choice_questions import (
+    ATTACHMENT_ORDER_KEY,
+    CAPTURE_ORDER_KEYS,
+    CONFLICT_DURATION_VS_COUNT,
+    CONFLICT_ORDER_BASIS,
+    CONFLICT_TEXT_PLACEMENT,
+    OPT_ATTACHMENT_ORDER,
+    OPT_UNORDERED,
+)
 
 CONTRACT_FIELD = "creator_render_requirements"
 REQUIREMENT_VERSION_FIELD = "creator_render_requirements_version"
@@ -314,6 +323,28 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "closing_media.badge_visual_id",
         "closing_media.from_trigger",
         note="grounded against the real transcript by the server; placement is not verified",
+    ),
+    **_rules(
+        "upstream_resolved",
+        "choice_questions",
+        "choice_answers[]",
+        *(
+            f"choice_answers[].{leaf}"
+            for leaf in (
+                "conflict",
+                "kind",
+                "option",
+                "input_digest",
+                "requirement_ids[]",
+                "source",
+            )
+        ),
+        note=(
+            "server-owned creator decisions on material conflicts; the planner gate writes "
+            "them, build_render_contract consumes them (order basis, shot placement) and the "
+            "chosen duration/clip subset is already rewritten into target_duration_s / "
+            "selected_media_ids"
+        ),
     ),
     **_rules(
         "upstream_resolved",
@@ -611,6 +642,11 @@ def build_render_contract(
         return None
     typed = _strategy(strategy)
     raw = dict(strategy or {})
+    # KRI-476 (PR-C): the creator's recorded answers to material conflicts. They
+    # resolve the matching requirement; without an answer the legacy behaviour is
+    # unchanged (an unresolved item, never a guess).
+    answers = {a.conflict: a for a in (typed.choice_answers or ())} if typed else {}
+    order_answer = answers.get(CONFLICT_ORDER_BASIS)
     texts: list[TextRequirement] = []
     if typed is not None:
         if typed.opening_title:
@@ -629,12 +665,18 @@ def build_render_contract(
     if raw.get("target_duration_requested") is True and "target_duration_s" in raw:
         durations.append(float(raw["target_duration_s"]))
     order_required = bool(typed and typed.ordering_choice == "chronological")
+    attachment_order = False
     order_ids = tuple(str(item) for item in clip_order if str(item).strip())
     order_basis = "confirmed" if order_ids else None
     unresolved: list[str] = []
     if brief:
         for requirement in brief.live():
             if requirement.kind == "timing" and requirement.facts.get("duration_s") is not None:
+                answered = answers.get(CONFLICT_DURATION_VS_COUNT)
+                if answered is not None and requirement.id in answered.requirement_ids:
+                    # The creator chose a different length for exactly this requirement;
+                    # the approved strategy carries it (target_duration_s, requested).
+                    continue
                 durations.append(float(requirement.facts["duration_s"]))
             if requirement.kind == "text" and requirement.literal:
                 shot_index = None
@@ -645,8 +687,18 @@ def build_render_contract(
                         for index, text in enumerate(labels)
                         if _normal(text) == _normal(requirement.literal)
                     ]
+                    placed = answers.get(f"{CONFLICT_TEXT_PLACEMENT}:{requirement.id}")
+                    chosen = (
+                        int(placed.option.rsplit("_", 1)[-1]) - 1
+                        if placed is not None
+                        and placed.option.startswith("shot_")
+                        and placed.option.rsplit("_", 1)[-1].isdigit()
+                        else None
+                    )
                     if len(matching) == 1:
                         shot_index = matching[0]
+                    elif chosen is not None and chosen in matching:
+                        shot_index = chosen
                     else:
                         unresolved.append(
                             "I need an explicit shot assignment for the confirmed text."
@@ -668,9 +720,37 @@ def build_render_contract(
                 )
             if requirement.kind == "order":
                 order_required = True
-                if requirement.facts.get("key") not in {"capture_time", "chronological"}:
+                key = requirement.facts.get("key")
+                if order_answer is not None and requirement.id in order_answer.requirement_ids:
+                    continue  # the creator's answer decides how this order is met
+                if key == ATTACHMENT_ORDER_KEY:
+                    attachment_order = True
+                elif key not in CAPTURE_ORDER_KEYS:
                     unresolved.append("I can't verify this ordering rule from the approved media.")
-    if order_required:
+    if order_answer is not None:
+        if order_answer.option == OPT_UNORDERED:
+            # The creator chose to drop the chronological promise: nothing to verify.
+            order_required = False
+        elif order_answer.option == OPT_ATTACHMENT_ORDER:
+            order_required = True
+            attachment_order = True
+    if order_required and attachment_order:
+        # An explicit, verifiable basis: the order the clips were added to the project.
+        rows = (media_snapshot or {}).get("clip_assignments") or []
+        selected = set(typed.selected_media_ids or ()) if typed else set()
+        if selected:
+            rows = [
+                row for row in rows if isinstance(row, Mapping) and row.get("media_id") in selected
+            ]
+        ids = [
+            str(row["media_id"]) for row in rows if isinstance(row, Mapping) and row.get("media_id")
+        ]
+        if not ids or len(ids) != len(rows) or len(set(ids)) != len(ids):
+            unresolved.append("I need to know which clips are in the edit to verify their order.")
+        else:
+            order_ids = tuple(ids)
+            order_basis = "attachment_order"
+    elif order_required:
         from app.services.clip_facts import capture_from_assignment
 
         rows = (media_snapshot or {}).get("clip_assignments") or []

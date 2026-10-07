@@ -71,6 +71,12 @@ from app.routes.generative_jobs import (
     prepare_editor_commit,
     variant_render_baseline,
 )
+from app.services.choice_questions import (
+    answered_brief,
+    build_choice_question,
+    choice_question_text,
+    open_conflicts,
+)
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
 from app.services.kria_editor_ops import (
     EditorStateReplyError,
@@ -347,6 +353,54 @@ def _state_event_fields(state_id: str | None, trace: dict[str, Any]) -> dict[str
     }
 
 
+def _unresolved_choice_plan(
+    strategy: Mapping[str, Any] | None,
+    brief: Any,
+    media_snapshot: Mapping[str, Any] | None,
+) -> KriaTurnPlan | None:
+    """KRI-476 backstop: the reply that replaces a draft an unresolved choice blocks.
+
+    A draft must never be approvable while the requirement contract it will pin still
+    has an open question (askable -> the same tappable question the planner gate asks)
+    or an unresolved item (not askable -> a plain refusal that leaves the draft as it
+    was). Both used to surface only when the render was dispatched. ``None`` = clear.
+    """
+
+    from app.services.creator_render_contract import (  # noqa: PLC0415
+        CreatorRenderContractError,
+        build_render_contract,
+    )
+
+    if not strategy:
+        return None
+    open_ones = open_conflicts(strategy, brief, media_snapshot)
+    if open_ones:
+        candidate = open_ones[0].candidate()
+        return KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=choice_question_text(candidate),
+            choice_question=build_choice_question(candidate),
+        )
+    try:
+        contract = build_render_contract(
+            strategy, generation_id="preflight", brief=brief, media_snapshot=media_snapshot
+        )
+    except CreatorRenderContractError as exc:
+        return KriaTurnPlan(
+            mode="respond",
+            turn_value="recovery",
+            response=f"{exc} Your current draft is unchanged.",
+        )
+    if contract is not None and contract.unresolved:
+        return KriaTurnPlan(
+            mode="respond",
+            turn_value="recovery",
+            response=f"{contract.unresolved[0]} Your current draft is unchanged.",
+        )
+    return None
+
+
 def _complete_draft_turn(
     turn_id: uuid.UUID,
     *,
@@ -578,6 +632,12 @@ def _complete_draft_turn(
                 turn_id=turn.id,
                 updates=planned.brief_updates,
             )
+            if settings.kria_choice_questions_enabled and apply_intent.tool_name == (
+                "draft.apply_strategy"
+            ):
+                # KRI-476: the creator's answers supersede the requirement they
+                # resolved, so receipts judge (and approval pins) what they chose.
+                brief = answered_brief(brief, document.strategy)
             if brief is not None:
                 if apply_intent.tool_name == "draft.apply_strategy":
                     facts = plan_facts_from_strategy(
@@ -674,11 +734,54 @@ def _complete_draft_turn(
                 brief_expected_version=planned.brief_expected_version,
             )
             return replace(completed, response_only=True)
+        choice_gate = (
+            settings.kria_choice_questions_enabled
+            and apply_intent.tool_name == "draft.apply_strategy"
+            and bool(document.strategy)
+        )
+        if choice_gate:
+            from app.kria.brief_binding import snapshot_media as _snapshot_media  # noqa: PLC0415
+
+            gate_brief = brief
+            if gate_brief is None and settings.brief_binding_for(thread.creator_id):
+                gate_brief = answered_brief(
+                    load_latest_brief_sync(db, thread.id), document.strategy
+                )
+            blocked = _unresolved_choice_plan(
+                document.strategy,
+                gate_brief,
+                planned.media_snapshot
+                if planned.media_snapshot is not None
+                else _snapshot_media(item),
+            )
+            if blocked is not None:
+                # Same rollback-then-respond pattern as the receipts gate above: the
+                # speculative draft/brief work is undone and the question is persisted
+                # in the normal response transaction (the old draft stays the head).
+                db.rollback()
+                completed = _complete_response_turn(
+                    turn_id,
+                    lease_owner=lease_owner,
+                    lease_epoch=lease_epoch,
+                    claimed_thread_revision=claimed_thread_revision,
+                    plan=blocked,
+                    brief_updates=planned.brief_updates,
+                    requirement_receipts=requirement_receipts,
+                    brief_coverage={
+                        **(planned.brief_coverage or {}),
+                        "stage": "draft",
+                        "reason": "unresolved_choice",
+                    },
+                    brief_expected_version=planned.brief_expected_version,
+                )
+                return replace(completed, response_only=True)
         if settings.brief_binding_for(thread.creator_id):
             from app.kria.brief_binding import BriefBinding, snapshot_media  # noqa: PLC0415
 
             if brief is None:
                 brief = load_latest_brief_sync(db, thread.id)
+                if choice_gate:
+                    brief = answered_brief(brief, document.strategy)
             source_event = db.get(CreationThreadEvent, turn.source_event_id)
             coverage = dict(planned.brief_coverage or {})
             coverage["enforced_ids"] = [
@@ -702,6 +805,11 @@ def _complete_draft_turn(
                         media_snapshot=planned.media_snapshot
                         if planned.media_snapshot is not None
                         else snapshot_media(item),
+                        choice_answers=(
+                            list(document.strategy.get("choice_answers") or [])
+                            if choice_gate
+                            else None
+                        ),
                     ),
                     "brief_coverage": coverage,
                 }
