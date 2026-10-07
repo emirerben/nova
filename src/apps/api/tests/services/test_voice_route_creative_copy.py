@@ -12,8 +12,6 @@ Two layers, both independent of the route:
 
 from __future__ import annotations
 
-import pytest
-
 from app.services.creative_copy_decisions import media_digest, wording_question
 from app.services.creative_copy_gate import creative_copy_problem
 from tests.services.test_phone_voice_behind_footage_job import (
