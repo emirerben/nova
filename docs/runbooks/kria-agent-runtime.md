@@ -113,6 +113,20 @@ logs `kria_turn_claims_exhausted`. Look for the kills (`TimeLimitExceeded`,
 - For prompt changes, bump the v2 `AgentSpec.prompt_version`, run structural
   replay evals, and run the required live judged fixtures before cohort rollout.
 
+### Rendered follow-up routing
+
+Once a draft has a rendered snapshot, the planner first runs the narrow
+`nova.creator.brief_extractor` prompt (`promptv1`) to turn the follow-up into
+typed brief requirements. Text and style changes, plus timing scoped to a
+title, can stay on the current snapshot through editor operations. Broad clip
+timing, stale or unsupported targets, and clarifying outcomes remain in the
+recovery path; they do not silently create a replacement video. An explicit
+full replan or structured clip picker is the path that invokes Main Creator.
+
+The follow-up binds to the current plan item and draft version before saving.
+Keep that binding and save in the same atomic completion path so a stale turn
+cannot attach its requirements to a newer draft.
+
 Run `make verify-kria` before the wider backend/web suites. Renderer-affecting
 changes still require their existing local-render and overlay gates.
 
