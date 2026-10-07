@@ -168,25 +168,41 @@ preflight decline:
 | --- | --- | --- | --- |
 | `duration_s` | honours, evidences | honours, evidences | declined (stills) |
 | `require_voiceover` | honours (execution contract + pinned narration mix), evidences | honours (by archetype), evidences (**was declined: rendered then rejected**) | declined |
-| `original_audio` | honours (`montage_audio` is in the snapshot), evidences | **declined** (matcher never reads `audio_strategy`; song variants replace camera audio, track-less ones keep it), evidences | declined |
+| `original_audio` | honours (`montage_audio` is in the snapshot) + **gated** (pre-render plan check), evidences | **declined** (matcher never reads `audio_strategy`; song variants replace camera audio, track-less ones keep it), evidences | declined |
 | `order_required` | **gated** (pre-render plan gate), evidences | **declined** (greedy matcher never reads the contract), evidences | declined |
-| `exact_texts` | honours (typed copy flows into the snapshot), evidences | declined | declined |
+| `exact_texts` | honours typed copy (opening, closing, shot labels) + **gated** (pre-render plan check), evidences | declined | declined |
 | `audio_source_ids` | declined (mixes every clip's sound) | declined | declined |
 
 Before this PR every cloud adapter declined `exact_texts`, `audio_source_ids`,
 `original_audio` and `order_required`, and classic voiceover/narrated jobs rendered
 and were then rejected at publication for lack of a receipt.
 
-**The guided order gate.** The guided builder selects a coverage set and does not order
-it by the contract (`ordering_choice` is never read by the proposal builder; fast
-montage records `ordering_not_applied`). So after `_guided_execution_plan` and before
-the attempt is claimed or any media is touched, `check_guided_plan_order` compares the
-collapsed (adjacent repeats merged) media order of the pinned plan's `story_timeline`
-with `contract.order_ids` restricted to the media the plan uses. Equal proceeds; anything
-else is a typed `capability_unavailable` on `ordering_choice` with an iPhone alternative,
-persisted like other typed declines. The route resolver (PR-D/F) is what will eventually
-route order. The verifier applies the same rule to the rendered order
-(`order_satisfied`), so a gate that passed and a render that drifted is still refused.
+**The guided pre-render gates.** The guided builder selects a coverage set and does not
+order it by the contract (`ordering_choice` is never read by the proposal builder; fast
+montage records `ordering_not_applied`), does not reconcile a recorded voice or a song
+with camera audio, and has no field for brief-derived text. So after
+`_guided_execution_plan` and before the attempt is claimed or any media is touched,
+`check_guided_plan` runs three pure checks on the pinned plan, each a typed decline with
+an alternative, persisted like other typed declines:
+
+- **Order** (`check_guided_plan_order`): the collapsed (adjacent repeats merged) media order
+  of `story_timeline` against `contract.order_ids` restricted to the media the plan uses.
+  Because the proposal's own order is whatever the proposal builder chose, a contracted
+  chronological order is declined whenever that order is not chronological: chronological
+  order on cloud guided jobs is effectively unsupported until the route work (PR-D/F).
+- **Camera audio** (`check_guided_plan_audio`): `original_audio == "require"` is declined
+  when the plan has a narration, a mixed song, a creator song, a muting `montage_audio` or a
+  pre-v6 compiler (`requirement_conflict` when the contract also requires the recorded
+  voice); `"forbid"` is declined when the plan keeps source audio. Footage with no audio
+  stream remains the one post-render case.
+- **Exact text** (`check_guided_plan_text`): the plan's own text layers are checked with the
+  verifier's role/window rules, assuming every layer renders. Guided honours the typed copy
+  fields (opening title and hold, closing title, shot labels, per-clip montage labels) and
+  the plan's generated captions/labels; a brief-derived literal with no snapshot field is
+  declined before render.
+
+The verifier applies the same order rule to the rendered order (`order_satisfied`), so a
+gate that passed and a render that drifted is still refused.
 
 **Where the evidence lives.** In a plain dict on the variant, `variant["cloud_evidence"]`
 (`app/pipeline/cloud_render_evidence.py`), beside `render_receipt` and never inside the
@@ -207,19 +223,25 @@ reading a newer receipt during a rolling deploy or rollback would otherwise rais
 `None`/absent means "this renderer did not produce it" and the verifier reports
 `evidence_missing`; `[]` means "produced, and there was nothing". Evidence describes
 one artifact and never outlives it: a new artifact without fresh evidence drops the old
-(`_update_variant_entry`, the staged-merge helper and `_merge_finalized_variants`), a text
-reburn re-derives it from the edited elements, and a later artifact with none is
-`evidence_missing`, not a pass on stale evidence. Receipts written before this change
+(`_update_variant_entry`, the staged-merge helper and `_merge_finalized_variants`), a phone
+export that replaces the cloud file drops it (`device-render/complete`), and a later artifact
+with none is `evidence_missing`, not a pass on stale evidence. A guided text reburn
+re-derives the text rows from the edited elements. A classic text reburn carries the existing
+evidence over (a text burn changes neither picture order, camera audio, narration nor length)
+only while the base is current (`base_video_stale` unset) and the variant already had
+evidence. Receipts written before this change
 have none and are never failed retroactively for requirements they never had to prove.
 
 Evidence is emitted only for jobs that carry the contract marker
 (`_cloud_evidence_context`), so a job without it gains no key on its variants. This is
 narrower than "unchanged stored data": the marker is set whenever a creator strategy
-exists, so every creator-flow job gains a `cloud_evidence` key (and the guided path one
-extra read of the job row per render). The context carries the approved
-`gcs_path -> media_id` map; an unreadable job logs
-`cloud_evidence_context_unreadable` (with the job id) and the render proceeds without
-evidence, which a contracted publication then refuses visibly.
+exists, so every creator-flow job gains a `cloud_evidence` key. A legacy job is recognised on
+the row already in hand and gains no key and no copy; the guided first render still costs
+one extra read of the job row for the plan gate (the pinned plan loader's own read is not
+shared). The context carries the approved
+`gcs_path -> media_id` map. An unreadable job row at the guided gate logs
+`guided_plan_gate_unreadable` (with the job id), the gate is skipped and the render proceeds
+without evidence, which a contracted publication then refuses visibly.
 
 How each adapter evidences a requirement and where it stops:
 
@@ -251,7 +273,8 @@ narrated caption and bed-level reburns, camera-effect re-renders, retranscribe, 
 overlay and sound-effect passes, and fast text reburns (`_update_variant_entry` drops the
 receipt on a new artifact). Editor re-renders of a guided plan (timeline, revision,
 orientation) re-run `render_execution_plan` and so re-emit evidence, but the pre-render
-order gate only runs on the first render (the publication verifier covers the rest).
+gates only run on the first render: revision re-renders are protected only by the
+publication verifier.
 Real-output check: an independent per-segment `ebur128` of the rendered file matches the
 evidence's order and camera-audio claims (each IstRun clip has a distinct loudness
 signature), a muted edit measures -70 LUFS, and a voiceover whose mix failed is a

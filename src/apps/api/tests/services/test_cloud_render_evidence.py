@@ -620,3 +620,19 @@ def test_closing_text_tolerance_matches_the_guided_duration_check():
         _receipt(picture_timeline=[_seg("a", 0.0, 12.0)], text_evidence=row),
         path="closing_title",
     )
+
+
+def test_closing_text_slack_is_capped_so_long_edits_do_not_excuse_a_missing_ending():
+    """30 moments earn the duration check 1.2s of drift; a closing title still has to sit
+    within 0.5s of the end."""
+    assembly = _assembly({"closing_title": "See you soon"})
+    thirty = [_seg("a", i * 0.4, (i + 1) * 0.4) for i in range(30)]
+    near = [_text("closing", "See you soon", 10.0, 11.6)]  # 0.4s short of 12.0
+    far = [_text("closing", "See you soon", 10.0, 11.3)]  # 0.7s short
+    _passes(GUIDED, assembly, _receipt(picture_timeline=thirty, text_evidence=near))
+    _fails(
+        GUIDED,
+        assembly,
+        _receipt(picture_timeline=thirty, text_evidence=far),
+        path="closing_title",
+    )

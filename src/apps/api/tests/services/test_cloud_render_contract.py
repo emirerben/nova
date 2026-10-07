@@ -966,9 +966,14 @@ def test_classic_worker_lifts_the_recorded_voice_but_not_camera_audio_or_order(
     """Classic HONOURS the recorded voice (by archetype), so that early decline is lifted and
     the job proceeds toward ingest. Camera audio and order are not honoured by its matcher
     and song variants, so they still decline before any spend."""
+    import app.services.cloud_render_contract as crc
+
     job_id = "11111111-1111-1111-1111-111111111111"
 
-    def run(strategy: dict) -> FakeJob:
+    class _ReachedIngest(Exception):
+        pass
+
+    def run(strategy: dict) -> tuple[FakeJob, list[tuple[str | None, str]], BaseException | None]:
         job = FakeJob(
             job_id=job_id,
             assembly_plan=_assembly(strategy),
@@ -976,19 +981,37 @@ def test_classic_worker_lifts_the_recorded_voice_but_not_camera_audio_or_order(
             status="queued",
         )
         patch_job_session(monkeypatch, job)
-        monkeypatch.setattr(generative_build, "_ingest_clips", lambda *a, **k: 1 / 0, raising=False)
+        calls: list[tuple[str | None, str]] = []
+        real = crc.preflight_cloud_contract
+
+        def spy(assembly, *, candidates=None, adapter=None):
+            try:
+                real(assembly, candidates=candidates, adapter=adapter)
+            except CloudRenderContractError:
+                calls.append((adapter, "declined"))
+                raise
+            calls.append((adapter, "passed"))
+
+        def ingest(*_a, **_k):
+            raise _ReachedIngest
+
+        monkeypatch.setattr(crc, "preflight_cloud_contract", spy)
+        monkeypatch.setattr(generative_build, "_ingest_clips", ingest)
+        raised: BaseException | None = None
         try:
             generative_build._run_generative_job(job_id)
-        except Exception:  # noqa: BLE001 - a later stage proves preflight passed
-            pass
-        return job
+        except Exception as exc:  # noqa: BLE001 - inspected below
+            raised = exc
+        return job, calls, raised
 
-    voice = run({"audio_strategy": "voiceover"})
-    # The run got past preflight (the FakeJob then lacks fields a later stage reads).
+    voice, calls, raised = run({"audio_strategy": "voiceover"})
+    assert calls == [("cloud_classic", "passed")]  # preflight really ran, for classic, and passed
     assert getattr(voice, "failure_reason", None) != "creator_render_contract_unsupported"
     assert "creator_decline" not in voice.assembly_plan
+    assert not isinstance(raised, CloudRenderContractError)
 
-    audio = run({"audio_strategy": "original_audio"})
+    audio, calls, _ = run({"audio_strategy": "original_audio"})
+    assert calls == [("cloud_classic", "declined")]
     assert audio.failure_reason == "creator_render_contract_unsupported"
     assert audio.assembly_plan["creator_decline"]["decline_reason"] == "capability_unavailable"
     assert audio.assembly_plan["creator_decline"]["alternative"]
@@ -1148,3 +1171,59 @@ def test_finalization_keeps_fresh_evidence_and_drops_a_stale_live_copy(
         [legacy],
     )
     assert "cloud_evidence" not in merged[0]
+
+
+def test_a_staged_replacement_artifact_never_inherits_the_previous_staged_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.speech_cleanup_terminal import peek_required_speech_generation
+    from tests.tasks.test_generative_build import (  # noqa: PLC0415
+        _patch_speech_rerender_terminal_side_effects,
+        _required_speech_rerender_fixture,
+    )
+
+    job_id = "11111111-1111-1111-1111-111111111111"
+    generation, operation_id, attempt_id = "a" * 32, "b" * 32, "task:0:abc"
+    job, result = _required_speech_rerender_fixture(
+        job_id, generation=generation, operation_id=operation_id, attempt_id=attempt_id
+    )
+    job.assembly_plan.update(_assembly({"audio_strategy": "voiceover"}))
+    _patch_speech_rerender_terminal_side_effects(monkeypatch, job)
+    monkeypatch.setattr(
+        generative_build, "_attach_variant_posters", lambda result, **_: (dict(result), [])
+    )
+
+    def stage(patch: dict) -> None:
+        assert generative_build._update_required_speech_staged_variant(
+            job_id,
+            variant_id="subtitled",
+            generation=generation,
+            patch=patch,
+            expected_operation_id=operation_id,
+            expected_attempt_id=attempt_id,
+        )
+
+    stage(
+        {
+            "video_path": result["video_path"].replace(".mp4", "_a.mp4"),
+            "render_status": "ready",
+            "render_receipt": {"verified": True, "narration_applied": True},
+            "cloud_evidence": {"schema_version": 1, "narration_applied": True},
+        }
+    )
+    staged = peek_required_speech_generation(
+        job.assembly_plan, variant_id="subtitled", generation=generation
+    )
+    assert staged["cloud_evidence"]["narration_applied"] is True
+    # a second staged artifact that brings no evidence must not keep the first one's
+    stage(
+        {
+            "video_path": result["video_path"].replace(".mp4", "_b.mp4"),
+            "render_status": "ready",
+        }
+    )
+    staged = peek_required_speech_generation(
+        job.assembly_plan, variant_id="subtitled", generation=generation
+    )
+    assert staged.get("cloud_evidence") is None
+    assert staged.get("render_receipt") is None

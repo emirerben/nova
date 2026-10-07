@@ -26,13 +26,17 @@ from app.pipeline.guided_story import (
 )
 from app.services.cloud_render_contract import (
     CloudRenderContractError,
+    check_guided_plan,
+    check_guided_plan_audio,
     check_guided_plan_order,
+    check_guided_plan_text,
     preflight_cloud_contract,
     verify_cloud_variant,
 )
 from app.services.creator_render_contract import (
     CONTRACT_FIELD,
     REQUIREMENT_VERSION_FIELD,
+    TextRequirement,
     build_render_contract,
 )
 from tests.pipeline.test_guided_story import _guided_snapshot
@@ -304,3 +308,127 @@ def test_text_reburn_rederives_the_words_that_are_now_on_screen(plan, monkeypatc
     assert fresh["source_audio_ids"] == evidence["source_audio_ids"]
     # a variant with no evidence stays without it
     assert rederive_guided_text_evidence(None, edited, {e.id for e in edited}) is None
+
+
+# ── the pre-render camera-audio gate ─────────────────────────────────────────────
+
+
+def _audio_assembly(strategy: dict) -> dict:
+    contract = build_render_contract(strategy, generation_id="g")
+    return {CONTRACT_FIELD: contract.model_dump(mode="json")}
+
+
+_NARRATION = {"gcs_path": "voice/a.m4a", "generation": "1", "duration_s": 8.0}
+
+
+def test_audio_gate_passes_a_plan_that_keeps_camera_audio_when_it_is_required(plan):
+    keeps = {**_plain(plan), "compiler_version": 7, "narration": None, "montage_audio": None}
+    check_guided_plan_audio(
+        _audio_assembly({"audio_strategy": "original_audio"}), candidates=_CANDIDATES, plan=keeps
+    )
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"narration": _NARRATION},  # a recording replaces camera audio
+        {"user_song": {"gcs_path": "song/a.m4a"}},  # a creator song is the whole soundtrack
+        {"montage_audio": {"preserve_source_audio": False}},  # the plan itself mutes it
+        {"compiler_version": 5},  # pre-v6 plans never restore source audio
+    ],
+)
+def test_audio_gate_declines_before_render_when_required_audio_cannot_survive(plan, changes):
+    muted = {**_plain(plan), "narration": None, "montage_audio": None, **changes}
+    with pytest.raises(CloudRenderContractError) as exc:
+        check_guided_plan_audio(
+            _audio_assembly({"audio_strategy": "original_audio"}),
+            candidates=_CANDIDATES,
+            plan=muted,
+        )
+    assert exc.value.decline_reason == "capability_unavailable"
+    assert exc.value.field_path == "montage_audio.preserve_source_audio"
+    assert exc.value.alternative
+
+
+def test_audio_gate_names_the_voice_versus_camera_audio_conflict(plan):
+    both = _audio_assembly(
+        {
+            "audio_strategy": "voiceover",
+            "montage_audio": {"preserve_source_audio": True, "source_media_ids": []},
+        }
+    )
+    narrated = {**_plain(plan), "narration": _NARRATION}
+    with pytest.raises(CloudRenderContractError) as exc:
+        check_guided_plan_audio(both, candidates=_CANDIDATES, plan=narrated)
+    assert exc.value.decline_reason == "requirement_conflict"
+    assert "voice" in exc.value.alternative
+
+
+def test_audio_gate_declines_a_forbid_the_plan_would_break(plan):
+    forbid = _audio_assembly(
+        {"montage_audio": {"preserve_source_audio": False, "source_media_ids": []}}
+    )
+    keeps = {**_plain(plan), "compiler_version": 7, "narration": None, "montage_audio": None}
+    with pytest.raises(CloudRenderContractError):
+        check_guided_plan_audio(forbid, candidates=_CANDIDATES, plan=keeps)
+    mutes = {**keeps, "montage_audio": {"preserve_source_audio": False}}
+    check_guided_plan_audio(forbid, candidates=_CANDIDATES, plan=mutes)
+    narrated = {**keeps, "narration": _NARRATION}
+    check_guided_plan_audio(forbid, candidates=_CANDIDATES, plan=narrated)
+
+
+def test_audio_gate_ignores_contracts_without_a_camera_audio_requirement(plan):
+    check_guided_plan_audio(
+        _audio_assembly({"opening_title": "x"}), candidates=_CANDIDATES, plan=_plain(plan)
+    )
+    check_guided_plan_audio({}, candidates={}, plan=_plain(plan))
+
+
+# ── the pre-render text gate ─────────────────────────────────────────────────────
+
+
+def _text_assembly(*texts: TextRequirement) -> dict:
+    contract = build_render_contract({"pacing": "fast"}, generation_id="g")
+    return {CONTRACT_FIELD: contract.rebind(exact_texts=tuple(texts)).model_dump(mode="json")}
+
+
+def test_text_gate_passes_text_the_plan_will_burn(plan):
+    assembly = _text_assembly(
+        TextRequirement(role="opening", text="Corfu in a day"),
+        TextRequirement(role="closing", text="See you next summer"),
+        TextRequirement(role="any", text="Corfu in a day"),
+    )
+    check_guided_plan_text(assembly, candidates=_CANDIDATES, plan=_plain(plan))
+
+
+@pytest.mark.parametrize(
+    "requirement",
+    [
+        # brief-derived copy that no snapshot field carries
+        TextRequirement(role="any", text="Words the snapshot never received"),
+        # the right words in the wrong place: an end card is not the opening
+        TextRequirement(role="closing", text="Corfu in a day"),
+        # a per-shot label on a shot that has none
+        TextRequirement(role="clip", text="Start line", shot_index=0),
+    ],
+)
+def test_text_gate_declines_before_render_when_the_plan_cannot_show_the_text(plan, requirement):
+    with pytest.raises(CloudRenderContractError) as exc:
+        check_guided_plan_text(
+            _text_assembly(requirement), candidates=_CANDIDATES, plan=_plain(plan)
+        )
+    assert exc.value.decline_reason == "capability_unavailable"
+    assert exc.value.field_path
+    assert exc.value.alternative
+
+
+def test_combined_gate_runs_order_audio_and_text(plan):
+    contract = build_render_contract(
+        {"audio_strategy": "original_audio", "opening_title": "Corfu in a day"}, generation_id="g"
+    ).rebind(order_ids=tuple(_ORDER), order_required=True, order_basis="capture_time")
+    assembly = {CONTRACT_FIELD: contract.model_dump(mode="json")}
+    check_guided_plan(assembly, candidates=_CANDIDATES, plan=_plain(plan))
+    with pytest.raises(CloudRenderContractError):
+        check_guided_plan(
+            assembly, candidates=_CANDIDATES, plan={**_plain(plan), "narration": _NARRATION}
+        )

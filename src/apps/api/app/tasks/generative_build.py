@@ -3424,7 +3424,7 @@ def _run_generative_job_impl(
         from app.services.cloud_render_contract import check_classic_archetype  # noqa: PLC0415
 
         check_classic_archetype(immutable_job_plan, candidates=all_candidates, archetype=archetype)
-        cloud_evidence_ctx = _cloud_evidence_context(job_id)
+        cloud_evidence_ctx = _cloud_evidence_context_for(immutable_job_plan, all_candidates)
         if creator_opening_title and archetype == "subtitled":
             raise ValueError(f"opening_title is not supported by the {archetype} renderer")
         if archetype == "montage" and creator_clip_order:
@@ -8340,7 +8340,7 @@ def _run_guided_story_job(
     plan, track = _guided_execution_plan(job_id, guided_snapshot, emit_decided=False)
     # KRI-470 PR-E: a confirmed order the pinned plan does not follow is declined here,
     # before the attempt is claimed and before any media is touched.
-    _guided_plan_contract_gate(job_id, plan)
+    contract_bound = _guided_plan_contract_gate(job_id, plan)
     record_phase(
         job_id,
         "analyze_clips",
@@ -8401,7 +8401,7 @@ def _run_guided_story_job(
                     attempt_id=attempt_id,
                     # KRI-443: the feed follows the real render stages (no lock held here).
                     on_stage=_make_plan_stage_reporter(job_id, plan),
-                    emit_cloud_evidence=_job_contract_bound(job_id),
+                    emit_cloud_evidence=contract_bound,
                 )
     result["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
     result["render_generation_id"] = attempt_id
@@ -12717,7 +12717,30 @@ def _creator_layer_cache_patch(
     }
 
 
-def _reburn_text_on_base(
+def _reburn_text_on_base(**kwargs: Any) -> dict[str, Any]:
+    """Burn text onto the cached base; a classic edit keeps its evidence (KRI-470).
+
+    A text burn changes neither a classic edit's picture order, camera audio, narration
+    nor length, so the evidence its untouched base earned still describes the new
+    artifact.  It is carried over only while the base is current (a stale base means
+    lanes changed the picture since) and the variant already has evidence; guided
+    variants re-derive theirs from the burned elements instead.
+    """
+    existing = kwargs["existing"]
+    result = _reburn_text_on_base_impl(**kwargs)
+    evidence = existing.get("cloud_evidence")
+    if (
+        isinstance(evidence, dict)
+        and existing.get("resolved_archetype") != "guided_story"
+        and not existing.get("base_video_stale")
+        and "cloud_evidence" not in result
+        and result.get("video_path")
+    ):
+        result = {**result, "cloud_evidence": copy.deepcopy(evidence)}
+    return result
+
+
+def _reburn_text_on_base_impl(
     *,
     job_id: str,
     variant_id: str,
@@ -15511,6 +15534,10 @@ def _rerender_guided_story_orientation(
         assembly = dict(job.assembly_plan or {})
         guided_snapshot = assembly.get("guided_edit")
         pinned_plan = assembly.get("guided_story_execution_plan")
+        contract_bound = (
+            _cloud_evidence_context_for(assembly, getattr(job, "all_candidates", None) or {})
+            is not None
+        )
     canonical = validate_execution_plan(pinned_plan, guided_snapshot)
     runtime_plan = execution_plan_with_editor_state(
         canonical,
@@ -15538,7 +15565,7 @@ def _rerender_guided_story_orientation(
             tmpdir=tmpdir,
             track=track,
             attempt_id=attempt_id,
-            emit_cloud_evidence=_job_contract_bound(job_id),
+            emit_cloud_evidence=contract_bound,
         )
     previous_receipt = existing.get("render_receipt")
     receipt = GuidedStoryRenderReceipt.model_validate(result["render_receipt"])
@@ -15606,6 +15633,10 @@ def _rerender_guided_story_revision(
         assembly = dict(job.assembly_plan or {})
         guided_snapshot = assembly.get("guided_edit")
         pinned_plan = assembly.get("guided_story_execution_plan")
+        contract_bound = (
+            _cloud_evidence_context_for(assembly, getattr(job, "all_candidates", None) or {})
+            is not None
+        )
         _version, _digest, snapshot = validate_guided_snapshot(guided_snapshot)
         item = db.get(PlanItem, job.content_plan_item_id)
         if item is None:
@@ -15704,7 +15735,7 @@ def _rerender_guided_story_revision(
             tmpdir=tmpdir,
             track=track,
             attempt_id=attempt_id,
-            emit_cloud_evidence=_job_contract_bound(job_id),
+            emit_cloud_evidence=contract_bound,
         )
     result.update(
         {
@@ -15866,6 +15897,7 @@ def _run_regenerate_variant(
             log.info("generative_regenerate_cancelled_job_skipped", job_id=job_id)
             return
         all_candidates = job.all_candidates or {}
+        regen_cloud_evidence = _cloud_evidence_context_for(job.assembly_plan or {}, all_candidates)
         from app.services.creator_direction_snapshot import snapshot_from_container  # noqa: PLC0415
 
         pinned_direction = snapshot_from_container(job.assembly_plan) or (
@@ -16776,7 +16808,6 @@ def _run_regenerate_variant(
                 resolved_mix = _VOICEOVER_ONLY_DEFAULT_MIX
             spec["voiceover_gcs_path"] = voiceover_gcs_path
             spec["mix"] = resolved_mix
-        regen_cloud_evidence = _cloud_evidence_context(job_id)
         if regen_cloud_evidence is not None:
             # Contract-bound job: the re-render reports receipt evidence too.
             spec["cloud_evidence_ctx"] = regen_cloud_evidence
@@ -17524,59 +17555,53 @@ def _cloud_contract_is_bound(plan: dict[str, Any], candidates: dict[str, Any]) -
     return bool(plan.get(CONTRACT_FIELD) or candidates.get(REQUIREMENT_VERSION_FIELD) == 1)
 
 
-def _cloud_evidence_context(job_id: str) -> dict[str, Any] | None:
-    """The receipt-evidence context for a contract-bound job, else ``None``.
+def _cloud_evidence_context_for(
+    plan: dict[str, Any], candidates: dict[str, Any]
+) -> dict[str, Any] | None:
+    """The receipt-evidence context for a contract-bound job whose row is already in hand.
 
-    Renderers only emit KRI-470 receipt evidence when handed this context, so a
-    job without the contract marker keeps its exact stored variants and receipts.
-    The context carries the approved ``gcs_path -> media_id`` map: the renderers
-    see storage paths, the contract speaks media ids.  A read failure means "not
-    bound": the render proceeds as legacy and a contracted publication then
-    refuses visibly for missing evidence instead of a transient read failing it.
+    Renderers only emit KRI-470 evidence when handed this context, so a job without the
+    contract marker gains no key on its variants and costs no extra read.  The context
+    carries the approved ``gcs_path -> media_id`` map: the renderers see storage paths,
+    the contract speaks media ids.
     """
-    try:
-        with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
-            if job is None:
-                return None
-            plan = job.assembly_plan or {}
-            if not _cloud_contract_is_bound(plan, getattr(job, "all_candidates", None) or {}):
-                return None
-            from app.pipeline.cloud_render_evidence import media_ids_by_gcs_path  # noqa: PLC0415
-
-            return {"media_ids_by_gcs": media_ids_by_gcs_path(plan)}
-    except Exception as exc:  # noqa: BLE001 - never fail a render on the evidence gate
-        # Without the context the renderer emits no evidence, so a contracted
-        # publication will later refuse with ``evidence_missing``: say why.
-        log.warning("cloud_evidence_context_unreadable", job_id=job_id, error=str(exc)[:200])
+    if not _cloud_contract_is_bound(plan, candidates):
         return None
+    from app.pipeline.cloud_render_evidence import media_ids_by_gcs_path  # noqa: PLC0415
+
+    return {"media_ids_by_gcs": media_ids_by_gcs_path(plan)}
 
 
-def _guided_plan_contract_gate(job_id: str, plan: dict[str, Any]) -> None:
-    """Refuse, before render spend, a guided plan that cannot satisfy a confirmed order.
+def _guided_plan_contract_gate(job_id: str, plan: dict[str, Any]) -> bool:
+    """Refuse, before render spend, a guided plan that cannot satisfy the confirmed contract.
 
-    The guided builder covers a media set but does not order it by the contract, so
-    the pinned plan's own timeline is compared with the contract's order here.  A
-    read failure skips the gate (logged); the publication verifier still checks the
-    rendered order.  ``CloudRenderContractError`` propagates to the orchestrator.
+    The guided builder covers a media set but does not order it by the contract, does not
+    reconcile a recorded voice or song with camera audio, and may carry no field for
+    brief-derived text, so the pinned plan itself is checked (order, camera audio, text)
+    before the attempt is claimed or any media is touched.  Returns whether the job is
+    contract-bound (the caller then asks the renderer for evidence).  A legacy job is
+    recognised on the unmarked row and costs no copy.  A read failure skips the gate
+    (logged); the publication verifier still checks the output.
+    ``CloudRenderContractError`` propagates to the orchestrator.
     """
-    from app.services.cloud_render_contract import check_guided_plan_order  # noqa: PLC0415
+    from app.services.cloud_render_contract import check_guided_plan  # noqa: PLC0415
 
     try:
         with _sync_session() as db:
             job = db.get(Job, uuid.UUID(job_id))
             if job is None:
-                return
-            assembly = copy.deepcopy(job.assembly_plan or {})
-            candidates = dict(getattr(job, "all_candidates", None) or {})
+                return False
+            live_plan = job.assembly_plan or {}
+            candidates = getattr(job, "all_candidates", None) or {}
+            if not _cloud_contract_is_bound(live_plan, candidates):
+                return False
+            assembly = copy.deepcopy(live_plan)
+            candidates = dict(candidates)
     except Exception as exc:  # noqa: BLE001 - the verifier remains the last line of defence
         log.warning("guided_plan_gate_unreadable", job_id=job_id, error=str(exc)[:200])
-        return
-    check_guided_plan_order(assembly, candidates=candidates, plan=plan)
-
-
-def _job_contract_bound(job_id: str) -> bool:
-    return _cloud_evidence_context(job_id) is not None
+        return False
+    check_guided_plan(assembly, candidates=candidates, plan=plan)
+    return True
 
 
 def _cloud_contract_has_objective_requirements(

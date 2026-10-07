@@ -161,7 +161,7 @@ def cloud_verdicts(record: IncidentRecord, contract: CreatorRenderContract) -> d
     from app.pipeline.guided_story import guided_cloud_evidence
     from app.services.cloud_render_contract import (
         CloudRenderContractError,
-        check_guided_plan_order,
+        check_guided_plan,
         verify_cloud_variant,
     )
 
@@ -184,7 +184,7 @@ def cloud_verdicts(record: IncidentRecord, contract: CreatorRenderContract) -> d
     if record.inputs.guided_plan is not None:
         plan = _guided_plan(record)
         try:
-            check_guided_plan_order(assembly, candidates=candidates, plan=plan)
+            check_guided_plan(assembly, candidates=candidates, plan=plan)
         except CloudRenderContractError as exc:
             out["plan_gate"] = exc
         if evidence is None:

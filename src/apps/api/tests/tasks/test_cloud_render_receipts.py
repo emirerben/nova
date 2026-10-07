@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 import app.tasks.generative_build as gb
+from app.services.cloud_render_contract import CloudRenderContractError
 from app.services.creator_render_contract import (
     CONTRACT_FIELD,
     REQUIREMENT_VERSION_FIELD,
@@ -170,6 +171,12 @@ _VOICE_SPEC = {
 }
 
 
+def _ctx() -> dict | None:
+    """The evidence context a render is handed, from the job row the test installed."""
+    job = gb._sync_session().get(gb.Job, JOB_ID)
+    return gb._cloud_evidence_context_for(job.assembly_plan or {}, job.all_candidates or {})
+
+
 def _published(monkeypatch, assembly, result) -> dict[str, Any]:
     """Hand a rendered result to the real publication path and return what was stored."""
     job = _context(monkeypatch, assembly)
@@ -186,7 +193,7 @@ def test_classic_voiceover_job_publishes_with_its_own_receipt(monkeypatch, tmp_p
     _stub_renderer(
         monkeypatch, steps=_STEPS, voice=VoiceoverMixOutcome(applied=True, footage_audible=False)
     )
-    ctx = gb._cloud_evidence_context(JOB_ID)
+    ctx = _ctx()
     assert ctx is not None
     result = _render(tmp_path, {**_VOICE_SPEC, "cloud_evidence_ctx": ctx})
 
@@ -223,9 +230,7 @@ def test_a_failed_voice_mix_is_never_reported_as_narration(monkeypatch, tmp_path
     assembly = _assembly({"audio_strategy": "voiceover"})
     _context(monkeypatch, assembly)
     _stub_renderer(monkeypatch, steps=_STEPS, voice=outcome)
-    result = _render(
-        tmp_path, {**_VOICE_SPEC, "cloud_evidence_ctx": gb._cloud_evidence_context(JOB_ID)}
-    )
+    result = _render(tmp_path, {**_VOICE_SPEC, "cloud_evidence_ctx": _ctx()})
     assert result["cloud_evidence"]["narration_applied"] is False
     stored = _published(monkeypatch, assembly, result)
     assert stored["render_status"] == "failed"
@@ -244,7 +249,7 @@ def test_classic_reports_order_and_camera_audio_but_the_contract_is_declined(mon
     _context(monkeypatch, assembly)
     ordered = [_step("c1", 0, 2), _step("c2", 0, 2), _step("c3", 0, 2)]  # a, b, c
     _stub_renderer(monkeypatch, steps=ordered)
-    spec = {"variant_id": "original_text", "cloud_evidence_ctx": gb._cloud_evidence_context(JOB_ID)}
+    spec = {"variant_id": "original_text", "cloud_evidence_ctx": _ctx()}
     result = _render(tmp_path, spec)
 
     evidence = result["cloud_evidence"]
@@ -264,7 +269,7 @@ def test_an_out_of_order_classic_cut_reports_its_real_order(monkeypatch, tmp_pat
     _context(monkeypatch, assembly)
     shuffled = [_step("c3", 0, 2), _step("c1", 0, 2), _step("c2", 0, 2)]  # c, a, b
     _stub_renderer(monkeypatch, steps=shuffled)
-    spec = {"variant_id": "original_text", "cloud_evidence_ctx": gb._cloud_evidence_context(JOB_ID)}
+    spec = {"variant_id": "original_text", "cloud_evidence_ctx": _ctx()}
     result = _render(tmp_path, spec)
     assert result["cloud_evidence"]["actual_clip_order"] == ["c", "a", "b"]
 
@@ -287,7 +292,7 @@ def test_song_variant_evidence_says_the_song_replaced_camera_audio(monkeypatch, 
     spec = {
         "variant_id": "song_text",
         "track": _track(),
-        "cloud_evidence_ctx": gb._cloud_evidence_context(JOB_ID),
+        "cloud_evidence_ctx": _ctx(),
         "music_start_s": 0.0,
         "music_window_video_duration_s": 6.0,
     }
@@ -302,8 +307,7 @@ def test_song_variant_evidence_says_the_song_replaced_camera_audio(monkeypatch, 
 def test_an_unmarked_job_gets_no_evidence_context_and_no_receipt(monkeypatch, tmp_path):
     job = FakeJob(assembly_plan={}, all_candidates={})
     patch_job_session(monkeypatch, job)
-    assert gb._cloud_evidence_context(JOB_ID) is None
-    assert gb._job_contract_bound(JOB_ID) is False
+    assert _ctx() is None
     _stub_renderer(monkeypatch, steps=_STEPS)
     result = _render(tmp_path, {"variant_id": "original_text"})
     assert "render_receipt" not in result and "cloud_evidence" not in result
@@ -311,9 +315,7 @@ def test_an_unmarked_job_gets_no_evidence_context_and_no_receipt(monkeypatch, tm
 
 def test_a_marked_job_gets_the_approved_media_map(monkeypatch):
     _context(monkeypatch, _assembly({"audio_strategy": "voiceover"}))
-    assert gb._cloud_evidence_context(JOB_ID) == {
-        "media_ids_by_gcs": {"u/c.mp4": "c", "u/a.mp4": "a", "u/b.mp4": "b"}
-    }
+    assert _ctx() == {"media_ids_by_gcs": {"u/c.mp4": "c", "u/a.mp4": "a", "u/b.mp4": "b"}}
 
 
 def test_evidence_never_lists_clips_the_snapshot_does_not_know(monkeypatch, tmp_path):
@@ -322,12 +324,12 @@ def test_evidence_never_lists_clips_the_snapshot_does_not_know(monkeypatch, tmp_
     assembly["creator_brief_binding"] = {"media_snapshot": {"clip_assignments": []}}
     _context(monkeypatch, assembly)
     _stub_renderer(monkeypatch, steps=_STEPS)
-    spec = {"variant_id": "original_text", "cloud_evidence_ctx": gb._cloud_evidence_context(JOB_ID)}
+    spec = {"variant_id": "original_text", "cloud_evidence_ctx": _ctx()}
     evidence = _render(tmp_path, spec)["cloud_evidence"]
     assert "actual_clip_order" not in evidence and "source_audio_ids" not in evidence
 
 
-def test_a_failed_evidence_read_is_logged_not_silent(monkeypatch):
+def test_a_failed_gate_read_is_logged_not_silent(monkeypatch):
     seen: list[dict] = []
 
     class _Boom:
@@ -341,59 +343,135 @@ def test_a_failed_evidence_read_is_logged_not_silent(monkeypatch):
     monkeypatch.setattr(
         gb.log, "warning", lambda event, **kw: seen.append({"event": event, **kw}), raising=False
     )
-    assert gb._cloud_evidence_context(JOB_ID) is None
-    assert seen and seen[0]["event"] == "cloud_evidence_context_unreadable"
+    assert gb._guided_plan_contract_gate(JOB_ID, {}) is False
+    assert seen and seen[0]["event"] == "guided_plan_gate_unreadable"
     assert seen[0]["job_id"] == JOB_ID
 
 
 # ── the pre-render guided plan gate, through the real worker entry ───────────────
 
 
-def test_a_guided_plan_out_of_order_is_declined_before_any_render_spend(monkeypatch):
+def _guided_gate_case(monkeypatch, contract, *, plan_changes=None):
+    """Install a contract-bound job and a pinned guided plan; render/claim assert if reached."""
     from app.pipeline import guided_story
-    from app.services.cloud_render_contract import CloudRenderContractError
     from tests.pipeline.test_guided_story import _guided_snapshot
 
     plan = guided_story.compile_execution_plan(_guided_snapshot(), track=None)
-    timeline_order = ["food-photo", "town-photo", "coast-video"]
-    assert plan["selected_media_ids"] == timeline_order
-    contract = build_render_contract({"opening_title": "x"}, generation_id="g")
-    contract = contract.rebind(
-        order_ids=("coast-video", "food-photo", "town-photo"),  # capture order differs
-        order_required=True,
-        order_basis="capture_time",
-    )
+    plan = {**plan, **(plan_changes or {})}
     job = FakeJob(
         assembly_plan={CONTRACT_FIELD: contract.model_dump(mode="json")},
         all_candidates={REQUIREMENT_VERSION_FIELD: 1},
     )
     patch_job_session(monkeypatch, job)
+    reached: list[str] = []
 
     def _spend(*_a, **_k):
+        reached.append("spend")
         raise AssertionError("render spend happened before the plan gate")
 
     monkeypatch.setattr(gb, "_guided_execution_plan", lambda *_a, **_k: (plan, None))
     monkeypatch.setattr(gb, "record_phase", lambda *_a, **_k: None)
     monkeypatch.setattr(gb, "_claim_guided_story_attempt", _spend)
     monkeypatch.setattr(guided_story, "render_execution_plan", _spend)
+    return job, plan, reached
+
+
+_TIMELINE_ORDER = ("food-photo", "town-photo", "coast-video")
+
+
+def test_a_guided_plan_out_of_order_is_declined_before_any_render_spend(monkeypatch):
+    contract = build_render_contract({"pacing": "fast"}, generation_id="g")
+    contract = contract.rebind(
+        order_ids=("coast-video", "food-photo", "town-photo"),  # capture order differs
+        order_required=True,
+        order_basis="capture_time",
+    )
+    job, _plan, reached = _guided_gate_case(monkeypatch, contract)
     with pytest.raises(CloudRenderContractError) as exc:
         gb._run_guided_story_job(JOB_ID, {}, render_trace_id="t")
     assert (exc.value.decline_reason, exc.value.field_path) == (
         "capability_unavailable",
         "ordering_choice",
     )
+    assert reached == []
 
     # the same plan against a contract that matches it proceeds to the claim
-    ok = contract.rebind(order_ids=tuple(timeline_order))
+    ok = contract.rebind(order_ids=_TIMELINE_ORDER)
     job.assembly_plan = {CONTRACT_FIELD: ok.model_dump(mode="json")}
-    reached: list[str] = []
+    claimed: list[str] = []
     monkeypatch.setattr(
         gb,
         "_claim_guided_story_attempt",
-        lambda *_a, **_k: reached.append("claim") or ("rejected", None),
+        lambda *_a, **_k: claimed.append("claim") or ("rejected", None),
     )
     gb._run_guided_story_job(JOB_ID, {}, render_trace_id="t")
-    assert reached == ["claim"]
+    assert claimed == ["claim"]
+
+
+@pytest.mark.parametrize(
+    "strategy,plan_changes,decline_reason,field_path",
+    [
+        # a recorded voice replaces the camera audio the creator also asked to keep
+        (
+            {
+                "audio_strategy": "voiceover",
+                "montage_audio": {"preserve_source_audio": True, "source_media_ids": []},
+            },
+            {"narration": {"gcs_path": "voice/a.m4a", "generation": "1", "duration_s": 8.0}},
+            "requirement_conflict",
+            "montage_audio.preserve_source_audio",
+        ),
+        # a creator's song is the whole soundtrack, so camera audio cannot be kept
+        (
+            {"audio_strategy": "original_audio"},
+            {"user_song": {"gcs_path": "song/a.m4a"}},
+            "capability_unavailable",
+            "montage_audio.preserve_source_audio",
+        ),
+        # camera audio turned off, but the plan keeps it
+        (
+            {"montage_audio": {"preserve_source_audio": False, "source_media_ids": []}},
+            {"narration": None, "montage_audio": None},
+            "capability_unavailable",
+            "montage_audio.preserve_source_audio",
+        ),
+    ],
+)
+def test_a_guided_plan_that_contradicts_camera_audio_is_declined_before_render(
+    monkeypatch, strategy, plan_changes, decline_reason, field_path
+):
+    contract = build_render_contract(strategy, generation_id="g")
+    _job, _plan, reached = _guided_gate_case(monkeypatch, contract, plan_changes=plan_changes)
+    with pytest.raises(CloudRenderContractError) as exc:
+        gb._run_guided_story_job(JOB_ID, {}, render_trace_id="t")
+    assert (exc.value.decline_reason, exc.value.field_path) == (decline_reason, field_path)
+    assert exc.value.alternative
+    assert reached == []
+
+
+def test_a_guided_plan_without_the_confirmed_text_is_declined_before_render(monkeypatch):
+    from app.services.creator_render_contract import TextRequirement
+
+    contract = build_render_contract({"pacing": "fast"}, generation_id="g")
+    contract = contract.rebind(
+        exact_texts=(TextRequirement(role="any", text="Words the snapshot never received"),)
+    )
+    _job, _plan, reached = _guided_gate_case(monkeypatch, contract)
+    with pytest.raises(CloudRenderContractError) as exc:
+        gb._run_guided_story_job(JOB_ID, {}, render_trace_id="t")
+    assert exc.value.decline_reason == "capability_unavailable"
+    assert exc.value.field_path == "brief:text"
+    assert reached == []
+
+
+def test_a_legacy_job_costs_the_gate_no_copy_and_asks_for_no_evidence(monkeypatch):
+    class _NoCopy(dict):
+        def __deepcopy__(self, memo):
+            raise AssertionError("legacy job was copied")
+
+    job = FakeJob(assembly_plan=_NoCopy(), all_candidates={})
+    patch_job_session(monkeypatch, job)
+    assert gb._guided_plan_contract_gate(JOB_ID, {}) is False
 
 
 # ── the real voiceover mixer's outcome (no mock) ─────────────────────────────────
@@ -475,9 +553,97 @@ def test_classic_voiceover_regression_with_the_real_mixer(
 
     monkeypatch.setattr(to, "_assemble_clips", _assemble, raising=False)
     monkeypatch.setattr(gb, "_rendered_duration_s", lambda path: 2.0)
-    result = _render(
-        tmp_path, {**_VOICE_SPEC, "cloud_evidence_ctx": gb._cloud_evidence_context(JOB_ID)}
-    )
+    result = _render(tmp_path, {**_VOICE_SPEC, "cloud_evidence_ctx": _ctx()})
     assert result["cloud_evidence"]["narration_applied"] is (not broken)
     stored = _published(monkeypatch, assembly, result)
     assert stored["render_status"] == ("failed" if broken else "ready")
+
+
+# ── a classic text reburn keeps the evidence its untouched base earned ───────────
+
+
+def _classic_voiceover_variant() -> dict:
+    return {
+        "variant_id": "voiceover_only",
+        "rank": 1,
+        "text_mode": "agent_text",
+        "resolved_archetype": "voiceover",
+        "render_status": "ready",
+        "ok": True,
+        "video_path": "generative-jobs/fake-job/final.mp4",
+        "base_video_path": "generative-jobs/fake-job/base.mp4",
+        "intro_text": "original intro",
+        "intro_mode": "linear",
+        "intro_layout": "linear",
+        "intro_effect": "karaoke-line",
+        "intro_text_color": "#FFFFFF",
+        "intro_text_size_px": 60,
+        "intro_size_source": "computed",
+        "intro_highlight_word": None,
+        "intro_word_roles": None,
+        "cloud_evidence": {
+            "schema_version": 1,
+            "adapter": "cloud_classic",
+            "actual_duration_s": 6.0,
+            "narration_applied": True,
+            "source_audio_ids": [],
+            "source_audio_state": "muted",
+            "source_audio_reason": "replaced_by_narration",
+        },
+    }
+
+
+def _reburn_classic(monkeypatch, tmp_path, existing: dict) -> dict:
+    from tests.tasks.test_text_elements_snapshot import _patch_reburn_helpers
+
+    _patch_reburn_helpers(monkeypatch, tmp_path)
+    return gb._reburn_text_on_base(
+        job_id="fake-job",
+        variant_id="voiceover_only",
+        existing=existing,
+        agent_text=types.SimpleNamespace(text="new intro", highlight_word=None, word_roles=None),
+        agent_form={"effect": "karaoke-line", "layout": "linear"},
+        text_mode="agent_text",
+        resolved_style_set_id="default",
+        size_override_px=None,
+        settings=gb.settings,
+        sequence_allowed=True,
+        language="en",
+    )
+
+
+def test_a_classic_text_reburn_keeps_the_evidence_of_its_untouched_base(monkeypatch, tmp_path):
+    assembly = _assembly({"audio_strategy": "voiceover"})
+    existing = _classic_voiceover_variant()
+    job = _context(monkeypatch, {**assembly, "variants": [existing]})
+    monkeypatch.setattr(gb, "_attach_variant_posters", lambda result, **_kw: (dict(result), []))
+
+    result = _reburn_classic(monkeypatch, tmp_path, existing)
+    assert result["cloud_evidence"] == existing["cloud_evidence"]
+    assert result["video_path"] != existing["video_path"] or result["output_url"]
+
+    # end to end: the reburned artifact is accepted, evidence intact (no "no verified evidence")
+    assert gb._update_variant_entry(JOB_ID, "voiceover_only", result)
+    stored = job.assembly_plan["variants"][0]
+    assert stored["render_status"] == "ready"
+    assert stored["cloud_evidence"]["narration_applied"] is True
+
+
+def test_a_classic_text_reburn_does_not_vouch_for_a_stale_base(monkeypatch, tmp_path):
+    assembly = _assembly({"audio_strategy": "voiceover"})
+    existing = {**_classic_voiceover_variant(), "base_video_stale": True}
+    job = _context(monkeypatch, {**assembly, "variants": [existing]})
+    monkeypatch.setattr(gb, "_attach_variant_posters", lambda result, **_kw: (dict(result), []))
+
+    result = _reburn_classic(monkeypatch, tmp_path, existing)
+    assert "cloud_evidence" not in result
+    assert not gb._update_variant_entry(JOB_ID, "voiceover_only", result)
+    stored = job.assembly_plan["variants"][0]
+    assert stored["render_status"] == "failed"
+    assert stored["decline_reason"] == "evidence_missing"
+
+
+def test_a_job_without_evidence_gains_none_from_a_reburn(monkeypatch, tmp_path):
+    existing = {k: v for k, v in _classic_voiceover_variant().items() if k != "cloud_evidence"}
+    result = _reburn_classic(monkeypatch, tmp_path, existing)
+    assert "cloud_evidence" not in result

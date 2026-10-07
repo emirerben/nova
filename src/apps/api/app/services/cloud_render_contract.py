@@ -125,11 +125,12 @@ _ASK_CAMERA_AUDIO = (
 # default contracted job never renders everything and then fails publication.  The
 # post-render verifier stays the last line of defence, never the first.
 #
-#   guided  honours: exact text (typed copy flows into the snapshot), camera audio
-#                    (``montage_audio`` is in the snapshot), recorded voice (execution
-#                    contract + pinned narration mix).  Order is GATED: the builder only
-#                    covers a media set, so ``check_guided_plan_order`` compares the
-#                    pinned plan's timeline with the contract before any render.
+#   guided  honours: typed exact text (opening, closing, shot labels flow into the
+#                    snapshot), camera audio (``montage_audio`` is in the snapshot),
+#                    recorded voice (execution contract + pinned narration mix).  Text
+#                    and camera audio are also GATED on the pinned plan, and order is
+#                    GATED because the builder only covers a media set:
+#                    ``check_guided_plan`` runs before any render.
 #   classic honours: the recorded voice only (by archetype).  Its matcher is greedy and
 #                    never reads the contract's order, and its song variants replace
 #                    camera audio while track-less ones keep it.
@@ -388,6 +389,91 @@ def check_guided_plan_order(
     )
 
 
+def check_guided_plan_audio(
+    assembly: Mapping[str, Any],
+    *,
+    candidates: Mapping[str, Any] | None,
+    plan: Mapping[str, Any],
+) -> None:
+    """Decline, before render spend, a plan whose audio contradicts a confirmed camera-audio choice.
+
+    A recorded narration, a song or a muted plan replaces the footage audio, so a
+    required camera audio cannot survive; a plan that keeps it cannot satisfy a
+    forbidden one.  Footage with no audio stream stays a post-render case.
+    """
+
+    contract = _pinned_contract(assembly, candidates)
+    if contract is None or contract.original_audio is None:
+        return
+    from app.pipeline.guided_story import guided_plan_keeps_camera_audio  # noqa: PLC0415
+
+    keeps = guided_plan_keeps_camera_audio(plan)
+    if (contract.original_audio == "require") == keeps:
+        return
+    field_path = REQUIREMENT_FIELD_PATHS.get("original_audio")
+    if contract.original_audio == "require":
+        if contract.require_voiceover and plan.get("narration") is not None:
+            raise CloudRenderContractError(
+                "Your recorded voice replaces the camera audio in this edit.",
+                decline_reason="requirement_conflict",
+                field_path=field_path,
+                alternative="Choose either your recorded voice or the camera audio for this edit.",
+            )
+        message = "This guided edit's plan won't keep the camera audio you confirmed."
+    else:
+        message = "This guided edit's plan would keep camera audio you turned off."
+    raise CloudRenderContractError(
+        message,
+        decline_reason="capability_unavailable",
+        field_path=field_path,
+        alternative=_ASK_CAMERA_AUDIO,
+    )
+
+
+def check_guided_plan_text(
+    assembly: Mapping[str, Any],
+    *,
+    candidates: Mapping[str, Any] | None,
+    plan: Mapping[str, Any],
+) -> None:
+    """Decline, before render spend, confirmed text the pinned plan cannot show.
+
+    Typed copy (opening, closing, shot labels) flows into the snapshot, but brief-derived
+    text may have no field there.  The plan's own text layers are checked with the same
+    role/window rules as the post-render verifier, assuming every layer renders.
+    """
+
+    contract = _pinned_contract(assembly, candidates)
+    if contract is None or not contract.exact_texts:
+        return
+    from app.pipeline.guided_story import guided_plan_text_evidence  # noqa: PLC0415
+
+    try:
+        _verify_text(contract, guided_plan_text_evidence(plan), plan.get("resolved_duration_s"))
+    except CloudRenderContractError as exc:
+        raise CloudRenderContractError(
+            "This guided edit's plan doesn't carry the on-screen text you confirmed.",
+            decline_reason="capability_unavailable",
+            field_path=exc.field_path,
+            alternative=(
+                "Put that text in the title, closing title or a shot label, or tell me to drop it."
+            ),
+        ) from exc
+
+
+def check_guided_plan(
+    assembly: Mapping[str, Any],
+    *,
+    candidates: Mapping[str, Any] | None,
+    plan: Mapping[str, Any],
+) -> None:
+    """Every cheap pre-render check of a guided plan against the pinned contract."""
+
+    check_guided_plan_order(assembly, candidates=candidates, plan=plan)
+    check_guided_plan_audio(assembly, candidates=candidates, plan=plan)
+    check_guided_plan_text(assembly, candidates=candidates, plan=plan)
+
+
 def _numbers_match(actual: object, required: float) -> bool:
     if isinstance(actual, bool) or not isinstance(actual, int | float) or actual <= 0:
         return False
@@ -411,6 +497,10 @@ def _rows(receipt: Mapping[str, Any], key: str, model: type[BaseModel]) -> list[
         return [model.model_validate(row) for row in raw]
     except ValidationError:
         return None
+
+
+# A long edit earns the duration check more drift; the closing title still must sit near the end.
+_CLOSING_SLACK_CAP_S = 0.5
 
 
 def _verify_text(
@@ -459,7 +549,9 @@ def _verify_text(
                 raise refuse("This edit couldn't measure where its closing text sits.")
             # The planned end sits against a MEASURED duration, which the renderer itself
             # accepts within ``duration_tolerance_s``: use the same slack.
-            slack = max(tolerance, duration_tolerance_s(len(timeline or [])))
+            slack = min(
+                _CLOSING_SLACK_CAP_S, max(tolerance, duration_tolerance_s(len(timeline or [])))
+            )
             matches = [row for row in matches if row.end_s >= float(duration_s) - slack]
         elif requirement.role == "clip":
             if timeline is None:

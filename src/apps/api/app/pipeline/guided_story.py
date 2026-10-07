@@ -4114,6 +4114,50 @@ def guided_text_evidence(
     return rows
 
 
+def guided_plan_keeps_camera_audio(plan: Mapping[str, Any]) -> bool:
+    """Whether a pinned plan's finished audio will contain the clips' own sound.
+
+    Pure plan inspection, mirroring the render: the source-audio mux only runs for
+    compiler v6+ plans that preserve it, and a recorded narration, a mixed song or a
+    creator's song replaces the footage audio outright.  Footage that simply has no
+    audio stream is the one case only the render can discover.
+    """
+
+    if plan.get("narration") is not None or plan.get("music") is not None:
+        return False
+    if int(plan.get("compiler_version", 0)) < 6:
+        return False
+    return plan_preserves_source_audio(plan)
+
+
+def guided_plan_text_evidence(plan: Mapping[str, Any]) -> dict[str, Any]:
+    """The text and picture evidence a pinned plan WOULD produce if every layer renders.
+
+    Used before render spend to decline a confirmed text the plan cannot show; the
+    post-render evidence still decides what really appeared.
+    """
+
+    timeline = picture_timeline(
+        (str(m["media_id"]), float(m["output_start_s"]), float(m["output_end_s"]))
+        for m in plan.get("story_timeline") or []
+    )
+    hidden = set(plan.get("editor_hidden_caption_ids") or [])
+    elements = [
+        TextElement.model_validate(row)
+        for lane in (
+            "text_elements",
+            "context_label_text_elements",
+            "narration_label_text_elements",
+        )
+        for row in plan.get(lane) or []
+        if row.get("id") not in hidden
+    ]
+    return {
+        "picture_timeline": timeline,
+        "text_evidence": guided_text_evidence(elements, {e.id for e in elements}, timeline),
+    }
+
+
 def guided_cloud_evidence(
     plan: Mapping[str, Any],
     moment_receipts: list[dict],

@@ -879,7 +879,8 @@ async def complete_device_export(
     assembly = dict(job.assembly_plan)
     assembly["variants"] = [
         {
-            **v,
+            # Cloud evidence describes the cloud file this export replaces.
+            **{key: value for key, value in v.items() if key != "cloud_evidence"},
             "ok": True,
             "render_status": "ready",
             "render_generation_id": attempt_id,
