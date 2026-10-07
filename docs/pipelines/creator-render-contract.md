@@ -821,6 +821,33 @@ what the creator said was refused after rendering while the receipt read "met". 
   third copy of the seating rule, not contract-checked). An explicit sequence of clips
   ("clips 1..8 in that sequence", KRI-491) is not a sequence rule here.
 
+**A sequence rule with no basis order (KRI-510).** "End on the sip by the window" with no
+filming or upload order asked for: the brief records an `order` requirement whose key is not a
+capture key, and the resolver places the described clip (a resolved `order` intent,
+`position: last`). The question gate does not ask about a placed rule
+(`choice_questions._placed_sequence`), but the contract still listed every non-capture rule as
+`unresolved`, so the planning preflight answered only "I can't verify this ordering rule from
+the approved media." (prod thread 8e5e9930, 2026-10-07). Now:
+
+* A described rule is PLACED when clip intents are on, every sequence row is `resolved`, and at
+  least one row matched a clip in the media snapshot (a Visuals-only match is not placed: the
+  planner seats clips only). `build_render_contract` skips a placed rule: not `unresolved`, not
+  `order_required`.
+* With a basis order (a capture-key requirement or an attachment answer alongside it) the
+  KRI-503 seating pins it in `order_ids` as before. Without one there is no full order to pin,
+  and `CreatorRenderContract` takes no new field (old workers must read every contract, see
+  `test_the_contract_model_schema_is_unchanged_so_old_workers_can_still_read_it`). The proof is
+  the brief receipt: `_check_order` reads where each described group landed
+  (`intent_outcomes`), and a checked receipt that is not met blocks a bound unified montage
+  before anything renders.
+* A rule nothing placed (no intent, a `needs_creator` intent, a Visuals-only match, clip intents
+  off) builds a byte-identical contract: the same unresolved message, still `order_required`,
+  and the gate still asks its order question.
+* Known limit: on routes that do not seat a described sequence (cloud guided story,
+  spoken-excerpt montage) nothing in the contract checks a placed rule with no basis; the brief
+  receipt is the only report. Pins: `tests/services/test_described_order_contract.py`, corpus
+  record `kri510-order-end-on-clip-no-basis`.
+
 **Last good artifact.** A contract refusal never replaces the last accepted artifact. At
 the editor Save / `pin_device_request` the check runs before any mutation; at the retry
 re-pin and at publication the refusal is written beside the intact state

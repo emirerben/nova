@@ -317,7 +317,9 @@ FIELD_MATRIX: dict[str, FieldRule] = {
             "server-resolved per-clip answers; labels reach the render via the plan. The "
             "`order` intents with a first/last position are also read by build_render_contract "
             "(KRI-503): they seat the described clips ahead of / behind the basis order "
-            "in order_ids, the same rule the montage planner lays out"
+            "in order_ids, the same rule the montage planner lays out. With no basis order "
+            "(KRI-510: 'end on the sip') a placed one only lifts the unresolved order rule; "
+            "the brief receipt proves where the described clips landed"
         ),
     ),
     **_rules(
@@ -747,6 +749,21 @@ def build_render_contract(
         and typed.song_sync == "lipsync"
         and typed.resolved_song_takes
     )
+    # The creator's described sequence ("start with X", "end on Y"), as the clip-intent
+    # resolver matched it to clips; the montage planner seats exactly these rows.
+    sequence = (
+        sequence_rows(raw.get("resolved_clip_intents"))
+        if brief is not None and _clip_intents_on()
+        else []
+    )
+    clip_ids = {
+        str(row["media_id"])
+        for row in (media_snapshot or {}).get("clip_assignments") or []
+        if isinstance(row, Mapping) and row.get("media_id")
+    }
+    sequence_placed = all(status == "resolved" for _p, _n, _m, status in sequence) and any(
+        clip_ids.intersection(members) for _p, _n, members, _s in sequence
+    )
     if brief:
         for requirement in brief.live():
             if requirement.kind == "timing" and requirement.facts.get("duration_s") is not None:
@@ -808,8 +825,23 @@ def build_render_contract(
                     # render verifies it through the lip-sync receipts, so it is not
                     # an unverifiable media-order rule (and must never pin capture time).
                     continue
-                order_required = True
                 key = requirement.facts.get("key")
+                answered = order_answer is not None and (
+                    requirement.id in order_answer.requirement_ids or key == ATTACHMENT_ORDER_KEY
+                )
+                if sequence_placed and key not in CAPTURE_ORDER_KEYS and not answered:
+                    # KRI-510: "end on the sip by the window", with no filming or upload
+                    # order asked for. The resolver matched the words to clips and the
+                    # planner seats them; the question gate stays quiet about a placed
+                    # rule (`choice_questions._placed_sequence`), so refusing it here was
+                    # a dead end. With a basis order the seating is pinned in `order_ids`
+                    # below (KRI-503). Without one there is no full order to pin and the
+                    # strict model takes no new field (old workers must read every
+                    # contract): the brief receipt proves where each described group
+                    # landed (`brief_checks._check_order`), and a checked receipt that is
+                    # not met blocks the unified montage before anything renders.
+                    continue
+                order_required = True
                 if order_answer is not None and requirement.id in order_answer.requirement_ids:
                     continue  # the creator's answer decides how this order is met
                 if key == ATTACHMENT_ORDER_KEY and order_answer is not None:
@@ -885,7 +917,7 @@ def build_render_contract(
         # the described clips on top of the basis order (`clip_order_sequence`); the contract
         # pins that same seating, so an edit that does what the creator said still verifies.
         # Without a sequence rule nothing changes: `order_ids` stays the pure basis order.
-        rows = sequence_rows(raw.get("resolved_clip_intents"))
+        rows = sequence
         if any(status != "resolved" for _position, _name, _members, status in rows):
             order_ids = ()
             order_basis = None

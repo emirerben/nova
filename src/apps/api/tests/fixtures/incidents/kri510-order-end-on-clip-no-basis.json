@@ -1,0 +1,143 @@
+{
+  "id": "kri510-order-end-on-clip-no-basis",
+  "incident": {
+    "ticket": "KRI-510",
+    "summary": "KRI-510: 'End on the sip by the window' with no filming-order ask. The resolver placed the sip clip last and the question gate stayed quiet, but the contract listed the rule as unresolved, so the planning preflight dead-ended with 'I can't verify this ordering rule from the approved media.' A placed rule is now lifted (the brief receipt proves where it landed); nothing else changes."
+  },
+  "kind": "contract_pin",
+  "approved": {
+    "strategy": {
+      "pacing": "relaxed",
+      "archetype": "day_vlog",
+      "direction": "guided_story",
+      "rationale": "(redacted)",
+      "edit_format": "montage",
+      "media_scope": "selected",
+      "selected_media_ids": [
+        "clip-a",
+        "clip-b",
+        "clip-d",
+        "clip-e",
+        "clip-f",
+        "clip-h"
+      ],
+      "target_duration_s": 20,
+      "video_reuse_policy": "once",
+      "resolved_clip_intents": [
+        {
+          "op": "order",
+          "status": "resolved",
+          "intent_id": "order_end_sip",
+          "attribute": "the sip by the window",
+          "position": "last",
+          "assignments": [
+            {
+              "media_id": "clip-f",
+              "evidence": "glass raised by a window",
+              "confidence": 0.9
+            }
+          ]
+        }
+      ]
+    },
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "timing",
+          "scope": "global",
+          "description": "Make it 20 seconds",
+          "facts": {
+            "duration_s": 20
+          },
+          "source_turn_id": "turn-1"
+        },
+        {
+          "id": "r6",
+          "kind": "order",
+          "scope": "global",
+          "description": "End on the sip by the window.",
+          "facts": {},
+          "source_turn_id": "turn-1"
+        }
+      ]
+    },
+    "creator_request": "Calm, aesthetic iced matcha morning. Skip the blurry clip and the messy counter shot. No text at all, no title. End on the sip by the window. Make it 20 seconds.",
+    "provenance": "Synthetic neutral data shaped like prod thread 8e5e9930 (2026-10-07, KRI-510): a montage brief whose only order requirement is a described end clip with no key, plus the resolver's placed position-last intent. Not a prod capture."
+  },
+  "inputs": {
+    "media": [
+      {
+        "id": "clip-a",
+        "kind": "video",
+        "duration_s": 5.0,
+        "has_audio": true
+      },
+      {
+        "id": "clip-b",
+        "kind": "video",
+        "duration_s": 5.0,
+        "has_audio": true
+      },
+      {
+        "id": "clip-c",
+        "kind": "video",
+        "duration_s": 5.0,
+        "has_audio": true
+      },
+      {
+        "id": "clip-d",
+        "kind": "video",
+        "duration_s": 5.0,
+        "has_audio": true
+      },
+      {
+        "id": "clip-e",
+        "kind": "video",
+        "duration_s": 5.0,
+        "has_audio": true
+      },
+      {
+        "id": "clip-f",
+        "kind": "video",
+        "duration_s": 5.0,
+        "has_audio": true
+      },
+      {
+        "id": "clip-g",
+        "kind": "video",
+        "duration_s": 5.0,
+        "has_audio": true
+      },
+      {
+        "id": "clip-h",
+        "kind": "video",
+        "duration_s": 5.0,
+        "has_audio": true
+      }
+    ],
+    "notes": [
+      "Contract pin, not incident replay: the real contract builder over the approved binding. Before KRI-510 the same plan built unresolved=(\"I can't verify this ordering rule from the approved media.\", \"I need capture times ...\") and the route resolver returned an open choice; now it resolves, pins no full order (none was asked for), and the phone route is the unified montage, whose checked brief receipt blocks a plan that does not end on the sip clip (tests/services/test_described_order_contract.py)."
+    ]
+  },
+  "expect": {
+    "contract": {
+      "duration_s": 20,
+      "order_required": false,
+      "order_ids": [],
+      "resolved": true
+    },
+    "route": {
+      "platform": "phone",
+      "route": "unified_montage"
+    }
+  },
+  "repro": {
+    "command": "pytest tests/incidents/test_incident_corpus.py -k kri510-order-end-on-clip-no-basis",
+    "status": "available"
+  },
+  "sources": [
+    "tests/services/test_described_order_contract.py"
+  ]
+}
