@@ -57,6 +57,18 @@ log = structlog.get_logger()
 
 Platform = Literal["phone", "cloud"]
 
+# Creator-facing alternatives for the refusals below.  Shared with the dispatchers (KRI-470
+# PR-F), which raise the SAME typed decline for a plan-authority job instead of silently
+# rendering a different kind of edit, so the resolver's shadow answer and the worker's
+# decline can never drift apart in wording.
+ALT_DIFFERENT_FORMAT = "Ask for a different format."
+ALT_NARRATED_UNAVAILABLE = "Ask for a montage with your voice, or a different format."
+ALT_SELF_NARRATION_UNAVAILABLE = "Record your voice for this edit, or ask for a different format."
+ALT_GUIDED_AUDIO_LED = (
+    "This plan has a guided story but the edit format is audio-led. "
+    "Pick one: the guided story, or the spoken/narrated edit."
+)
+
 
 class Route(StrEnum):
     """Every route the dispatchers can take today.
@@ -321,7 +333,7 @@ def _self_narration(
         return _refuse(
             "capability_unavailable",
             "edit_format",
-            "Record your voice for this edit, or ask for a different format.",
+            ALT_SELF_NARRATION_UNAVAILABLE,
             [*drivers, "capabilities.self_narration"],
         )
     drivers = [*drivers, "media.clip_count"]
@@ -348,7 +360,7 @@ def _self_narration(
         return _refuse(
             "capability_unavailable",
             "edit_format",
-            "Ask for a different format.",
+            ALT_DIFFERENT_FORMAT,
             [*drivers, "capabilities.subtitled"],
         )
     return _adapter_gate("cloud" if cloud else "phone", route, inp.contract, drivers)
@@ -407,13 +419,7 @@ def _resolve_cloud(inp: RouteInputs, fmt: str, drivers: list[str]) -> RouteResol
         drivers.append("render_program")
         if program == "guided" or inp.plan.guided_voiceover:
             return _adapter_gate("cloud", Route.GUIDED_STORY, contract, drivers)
-        return _refuse(
-            "requirement_conflict",
-            "edit_format",
-            "This plan has a guided story but the edit format is audio-led. "
-            "Pick one: the guided story, or the spoken/narrated edit.",
-            drivers,
-        )
+        return _refuse("requirement_conflict", "edit_format", ALT_GUIDED_AUDIO_LED, drivers)
     if fmt in GUIDED_EDIT_FORMATS:
         if fmt == "day_vlog" and not caps.day_vlog:
             return _refuse(
@@ -441,7 +447,7 @@ def _resolve_cloud(inp: RouteInputs, fmt: str, drivers: list[str]) -> RouteResol
                 return _refuse(
                     "capability_unavailable",
                     "edit_format",
-                    "Ask for a montage with your voice, or a different format.",
+                    ALT_NARRATED_UNAVAILABLE,
                     [*drivers, "capabilities.narrated"],
                 )
             return _adapter_gate("cloud", Route.NARRATED, contract, drivers)
@@ -460,7 +466,7 @@ def _resolve_cloud(inp: RouteInputs, fmt: str, drivers: list[str]) -> RouteResol
             return _refuse(
                 "capability_unavailable",
                 "edit_format",
-                "Ask for a different format.",
+                ALT_DIFFERENT_FORMAT,
                 [*drivers, "capabilities.subtitled"],
             )
         return _adapter_gate("cloud", Route.SUBTITLED, contract, drivers)
@@ -469,7 +475,7 @@ def _resolve_cloud(inp: RouteInputs, fmt: str, drivers: list[str]) -> RouteResol
             return _refuse(
                 "capability_unavailable",
                 "edit_format",
-                "Ask for a different format.",
+                ALT_DIFFERENT_FORMAT,
                 [*drivers, "capabilities.talking_head"],
             )
         if inp.clip_has_speech and all(flag is False for flag in inp.clip_has_speech):

@@ -326,3 +326,58 @@ def test_unstamped_guided_plan_with_a_recording_skips_to_the_classic_voice_route
     from app.services.cloud_render_contract import cloud_adapter_for_job
 
     assert cloud_adapter_for_job(run.job.assembly_plan, run.job.all_candidates) == "cloud_classic"
+
+
+def test_stamped_guided_snapshot_on_an_audio_led_format_is_a_typed_decline(monkeypatch) -> None:
+    from app.services.cloud_render_contract import CloudRenderContractError
+
+    run = _guided_cloud(
+        monkeypatch, stamped=True, edit_format="talking_head", render_program="native"
+    )
+    assert run.run(CloudRenderContractError) is None
+    decline = _decline_of(run.raised)
+    assert decline["decline_reason"] == "requirement_conflict"
+    assert decline["field_path"] == "edit_format"
+    assert "guided story" in decline["alternative"]
+    assert run.guided_calls == [] and run.resolved == []
+
+
+def test_unstamped_guided_snapshot_on_an_audio_led_format_still_skips_to_classic(
+    monkeypatch,
+) -> None:
+    run = _guided_cloud(
+        monkeypatch, stamped=False, edit_format="talking_head", render_program="native"
+    )
+    assert run.run() == "talking_head"
+    assert run.guided_calls == []
+
+
+def _voiceover_execution_strategy() -> dict:
+    return {
+        "audio_strategy": "voiceover",
+        "render_program": "guided",
+        "execution_contract": "guided_voiceover_v1",
+    }
+
+
+def test_stamped_voiceover_execution_binding_that_no_longer_holds_is_a_typed_repair(
+    monkeypatch,
+) -> None:
+    from app.services.cloud_render_contract import CloudRenderContractError
+
+    run = _guided_cloud(monkeypatch, stamped=True, **_voiceover_execution_strategy())
+    run.job.all_candidates["voiceover_gcs_path"] = VOICE_FILE
+    assert run.run(CloudRenderContractError) is None
+    decline = _decline_of(run.raised)
+    assert decline["decline_reason"] == "evidence_missing"
+    assert decline["field_path"] == "audio_strategy"
+
+
+def test_unstamped_voiceover_execution_binding_that_no_longer_holds_keeps_the_value_error(
+    monkeypatch,
+) -> None:
+    run = _guided_cloud(monkeypatch, stamped=False, **_voiceover_execution_strategy())
+    run.job.all_candidates["voiceover_gcs_path"] = VOICE_FILE
+    run.run(ValueError)
+    assert type(run.raised) is ValueError
+    assert "voiceover" in str(run.raised)

@@ -238,6 +238,11 @@ def _creator_decline_payload(exc: BaseException) -> dict[str, str]:
     return decline_payload(exc)
 
 
+_PLAN_REPAIR = (
+    "I can rebuild the edit from your confirmed plan, or you can ask for a different edit."
+)
+
+
 def _plan_decline(
     reason: str, message: str, *, field_path: str | None, alternative: str
 ) -> BaseException:
@@ -3061,10 +3066,22 @@ def _run_generative_job_impl(
     )
     from app.services.creator_execution_contract import validate_execution_binding  # noqa: PLC0415
 
-    if validate_execution_binding(
-        guided_snapshot, all_candidates.get("creator_strategy"), voiceover_gcs_path
-    ):
-        guided_applicable = True
+    try:
+        if validate_execution_binding(
+            guided_snapshot, all_candidates.get("creator_strategy"), voiceover_gcs_path
+        ):
+            guided_applicable = True
+    except ValueError as exc:
+        if plan_contract is None:
+            raise
+        # KRI-470 PR-F: the approved voiceover plan no longer matches what is attached.
+        # Repairable, so say so with the typed reason instead of an untyped crash.
+        raise _plan_decline(
+            "evidence_missing",
+            str(exc),
+            field_path=REQUIREMENT_FIELD_PATHS["require_voiceover"],
+            alternative=_PLAN_REPAIR,
+        ) from exc
     if guided_snapshot is not None and not guided_applicable:
         if not _guided_snapshot_has_genuine_clip_input(guided_snapshot, clip_paths_gcs):
             record_pipeline_event(
@@ -3078,6 +3095,18 @@ def _run_generative_job_impl(
                 },
             )
             raise AudioLedGuidedConflict()
+        if plan_contract is not None:
+            # KRI-470 PR-F: the approved plan carries a guided story but its edit format
+            # is audio-led. Switching to the classic path would render a different kind
+            # of edit than the one the creator approved, so ask which one they want.
+            from app.services.render_route import ALT_GUIDED_AUDIO_LED  # noqa: PLC0415
+
+            raise _plan_decline(
+                "requirement_conflict",
+                "This plan has a guided story but its edit format is audio-led.",
+                field_path="edit_format",
+                alternative=ALT_GUIDED_AUDIO_LED,
+            )
         record_pipeline_event(
             "assembly",
             "guided_story_skipped_incompatible_intent",
