@@ -549,7 +549,9 @@ def test_footage_derived_labels_are_reported_as_inferred() -> None:
 def test_order_check_uses_basis_and_reports_fallback_clips() -> None:
     req = _req("order", "global", facts={"key": "capture_time"})
     assert check_requirement(req, PlanFacts()).status == "partial"
-    assert check_requirement(req, PlanFacts(ordering_basis="attachment_order")).status == "partial"
+    # KRI-470 PR-G: a plan in another order than the one asked for is a failure, not "partly".
+    attachment = check_requirement(req, PlanFacts(ordering_basis="attachment_order"))
+    assert attachment.status == "not_possible"
     assert check_requirement(req, PlanFacts(ordering_basis="capture_time")).status == "met"
     fallback = check_requirement(
         req, PlanFacts(ordering_basis="capture_time", ordering_fallback_clip_ids=("c2",))
@@ -569,7 +571,8 @@ def test_order_check_uses_basis_and_reports_fallback_clips() -> None:
 def test_order_check_never_claims_an_unverifiable_key(key: str) -> None:
     req = _req("order", "global", facts={"key": key} if key else {})
     facts = PlanFacts(ordering_basis="capture_order")
-    assert check_requirement(req, facts).status == "partial"
+    # Never "met" -- and, the order being required, not a neutral "can't verify" either.
+    assert check_requirement(req, facts).status == "not_possible"
 
 
 @pytest.mark.parametrize(
