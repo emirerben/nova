@@ -78,6 +78,7 @@ def _brief(*requirements: BriefRequirement) -> CreativeBrief:
 
 def _planned(**strategy: object) -> PlannedKriaTurn:
     seconds = strategy.pop("seconds", None)
+    resolved = strategy.pop("resolved", None)  # server-resolved clip intents (placed order)
     base: dict = {
         "direction": "guided_story",
         "edit_format": "montage",
@@ -90,7 +91,8 @@ def _planned(**strategy: object) -> PlannedKriaTurn:
         base |= {"target_duration_s": seconds, "target_duration_requested": True}
     strategy_model = CreativeStrategy(**{**base, **strategy})
     plan = planner.adapt_creator_action(
-        ProposeStrategy(kind="propose_strategy", strategy=strategy_model, summary="A montage.")
+        ProposeStrategy(kind="propose_strategy", strategy=strategy_model, summary="A montage."),
+        **({"server_resolved_clip_intents": resolved} if resolved else {}),
     )
     return PlannedKriaTurn(plan=plan, manifest_hash="a" * 64, context_hash="b" * 64)
 
@@ -182,7 +184,9 @@ async def test_default_length_never_asks(monkeypatch) -> None:
     [
         {"edit_format": "subtitled"},
         {"archetype": "single_hero"},
-        {"media_scope": "selected", "selected_media_ids": ["c00", "c01", "c02"]},
+        {"audio_strategy": "voiceover"},
+        {"audio_strategy": "user_song", "song_sync": "lipsync"},
+        {"audio_strategy": "user_song"},
     ],
 )
 async def test_shapes_that_cannot_flash_cut_never_ask(monkeypatch, extra) -> None:
@@ -212,11 +216,88 @@ async def test_dated_clips_ask_nothing_about_order(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_non_capture_order_rule_is_not_a_question(monkeypatch) -> None:
-    # A rule the contract cannot verify is a typed decline, never an option list.
-    result = await _gate(
-        monkeypatch, _planned(), rows=_rows(8, dated=False), brief=_brief(_order(key="route"))
+@pytest.mark.parametrize(
+    "requirement",
+    [
+        # The three prod-shaped key-less/non-capture rules (redacted): facts {} and an
+        # explicit "in that sequence" ask, or a route key.
+        BriefRequirement(
+            id="r2", kind="order", scope="global", description="clips 1, 2, 3 in that sequence"
+        ),
+        BriefRequirement(
+            id="r2",
+            kind="order",
+            scope="global",
+            description="in that sequence",
+            facts={},
+        ),
+        BriefRequirement(
+            id="r2",
+            kind="order",
+            scope="global",
+            description="along my route",
+            facts={"key": "route"},
+        ),
+    ],
+)
+async def test_a_rule_the_contract_cannot_verify_is_askable_not_a_dead_end(
+    monkeypatch, requirement
+) -> None:
+    rows = _rows(8)
+    result = await _gate(monkeypatch, _planned(), rows=rows, brief=_brief(requirement))
+    question = result.plan.choice_question
+    assert question["kind"] == "order_basis" and question["input_digest"]
+    assert [o["key"] for o in question["options"]] == ["attachment_order", "unordered"]
+    assert "specific order" in result.plan.response and "own" not in str(question["options"])
+    asked = _asked(result)
+    strategy = _strategy(
+        await _gate(
+            monkeypatch,
+            _planned(),
+            rows=rows,
+            brief=_brief(requirement),
+            events=(asked, _picked(asked[1]["choice_question"], "attachment_order")),
+        )
     )
+    contract = build_render_contract(
+        strategy,
+        generation_id="g",
+        brief=answered_brief(_brief(requirement), strategy),
+        media_snapshot={"clip_assignments": rows},
+    )
+    assert not contract.unresolved and contract.order_basis == "attachment_order"
+    raw = build_render_contract(
+        strategy,
+        generation_id="g",
+        brief=_brief(requirement),
+        media_snapshot={"clip_assignments": rows},
+    )
+    assert not raw.unresolved  # the recorded answer alone resolves it
+
+
+@pytest.mark.asyncio
+async def test_a_sequence_the_server_already_placed_is_not_asked_about(monkeypatch) -> None:
+    from app.schemas.clip_intents import ClipAssignment, ClipIntent, ResolvedClipIntent
+
+    intent = ClipIntent(intent_id="o", op="order", attribute="the pier first")
+    placed = ResolvedClipIntent(
+        **intent.model_dump(),
+        assignments=[ClipAssignment(media_id="c00", evidence="x", confidence=0.9)],
+    )
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=CreativeStrategy(edit_format="montage", resolved_clip_intents=[placed]),
+        summary="x",
+    )
+    planned = PlannedKriaTurn(
+        plan=planner.adapt_creator_action(action, server_resolved_clip_intents=[placed]),
+        manifest_hash="a",
+        context_hash="b",
+    )
+    brief = _brief(
+        BriefRequirement(id="r2", kind="order", scope="global", description="pier first")
+    )
+    result = await _gate(monkeypatch, planned, rows=_rows(8), brief=brief)
     assert result.plan.mode == "act"
 
 
@@ -367,27 +448,66 @@ async def test_model_authored_answers_are_never_trusted(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_one_re_ask_then_the_recommended_option_is_applied_and_disclosed(
+async def test_one_re_ask_then_the_plan_goes_through_unchanged_and_nothing_is_chosen(
     monkeypatch,
 ) -> None:
     rows, brief = _rows(30), _brief(_timing(15))
     events: tuple = ()
-    asks = 0
     for _ in range(MAX_ASKS_PER_QUESTION):  # the question and exactly ONE re-ask
         result = await _gate(
             monkeypatch, _planned(seconds=15), rows=rows, brief=brief, events=events
         )
         events += (_asked(result),)
-        asks += 1
-    assert asks == 2
     final = await _gate(monkeypatch, _planned(seconds=15), rows=rows, brief=brief, events=events)
-    (answer,) = _strategy(final)["choice_answers"]
-    assert answer["source"] == "default" and answer["option"] == "extend"
-    summary = final.plan.intents[0].arguments["summary"]
-    assert "You didn't pick one" in summary
-    # And it stays decided on every later turn: no third question, ever.
-    later = await _gate(monkeypatch, _planned(seconds=15), rows=rows, brief=brief, events=events)
-    assert later.plan.mode == "act"
+    strategy = _strategy(final)  # the creator's plan, untouched: no answer, no rewrite
+    assert "choice_answers" not in strategy
+    assert strategy["target_duration_s"] == 15 and not strategy.get("selected_media_ids")
+    assert "extended" not in final.plan.intents[0].arguments["summary"]
+    # The pinned requirement is NOT rewritten either: the receipts keep judging 15 s.
+    assert answered_brief(brief, strategy) is brief
+
+
+@pytest.mark.asyncio
+async def test_repeating_the_request_is_not_an_answer_and_never_triggers_a_default(
+    monkeypatch,
+) -> None:
+    rows, brief = _rows(30), _brief(_timing(15))
+    first = await _gate(monkeypatch, _planned(seconds=15), rows=rows, brief=brief)
+    asked = _asked(first)
+    # The creator repeats the request as the next message: no choice_selection, so the
+    # question simply stays unanswered (the gate asks again, once).
+    events = (asked, ("user", {}))
+    again = await _gate(monkeypatch, _planned(seconds=15), rows=rows, brief=brief, events=events)
+    assert again.plan.turn_value == "question"
+    events += (_asked(again), ("user", {}))  # third message: the request once more
+    third = await _gate(monkeypatch, _planned(seconds=15), rows=rows, brief=brief, events=events)
+    assert third.plan.mode == "act" and "choice_answers" not in _strategy(third)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phrase", ["you choose", "Surprise me!", "whatever", "up to you"])
+async def test_an_explicit_delegation_picks_the_recommended_option_and_says_so(
+    monkeypatch, phrase
+) -> None:
+    from app.services.choice_questions import delegated_choice
+
+    rows, brief = _rows(30), _brief(_timing(15))
+    first = await _gate(monkeypatch, _planned(seconds=15), rows=rows, brief=brief)
+    asked = _asked(first)
+    question = asked[1]["choice_question"]
+    assert delegated_choice(question, phrase) == "extend"
+    selection = {"question_id": question["question_id"], "option_key": "extend", "delegated": True}
+    done = await _gate(
+        monkeypatch,
+        _planned(seconds=15),
+        rows=rows,
+        brief=brief,
+        events=(asked, ("user", {"choice_selection": selection})),
+    )
+    (answer,) = _strategy(done)["choice_answers"]
+    assert answer["source"] == "creator_delegated"
+    assert "You left it to me" in done.plan.intents[0].arguments["summary"]
+    assert delegated_choice(question, "Keep 15 seconds, all clips") is None
 
 
 # ── free text ─────────────────────────────────────────────────────────────────
@@ -516,7 +636,7 @@ async def test_unordered_answer_drops_the_promise_visibly(monkeypatch) -> None:
         events=(asked, _picked(asked[1]["choice_question"], "unordered")),
     )
     strategy = _strategy(result)
-    assert "not promising a filming-time order" in result.plan.intents[0].arguments["summary"]
+    assert "not promising a particular order" in result.plan.intents[0].arguments["summary"]
     contract = build_render_contract(
         strategy,
         generation_id="g",

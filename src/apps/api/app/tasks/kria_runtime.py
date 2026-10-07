@@ -72,9 +72,13 @@ from app.routes.generative_jobs import (
     variant_render_baseline,
 )
 from app.services.choice_questions import (
+    CONFLICT_ORDER_BASIS,
+    KEEP_OPEN_REASON,
+    MAX_ASKS_PER_QUESTION,
     answered_brief,
     build_choice_question,
     choice_question_text,
+    count_asks,
     open_conflicts,
 )
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
@@ -357,13 +361,27 @@ def _unresolved_choice_plan(
     strategy: Mapping[str, Any] | None,
     brief: Any,
     media_snapshot: Mapping[str, Any] | None,
-) -> KriaTurnPlan | None:
+    *,
+    contract_brief: Any = None,
+    events: Any = (),
+    has_draft: bool = False,
+) -> tuple[KriaTurnPlan, str] | None:
     """KRI-476 backstop: the reply that replaces a draft an unresolved choice blocks.
 
     A draft must never be approvable while the requirement contract it will pin still
     has an open question (askable -> the same tappable question the planner gate asks)
-    or an unresolved item (not askable -> a plain refusal that leaves the draft as it
-    was). Both used to surface only when the render was dispatched. ``None`` = clear.
+    or an unresolved item (not askable -> a plain refusal). Both used to surface only
+    when the render was dispatched. ``None`` = clear; otherwise ``(plan, reason)``.
+
+    A question already asked ``MAX_ASKS_PER_QUESTION`` times is never asked again and
+    never answered for the creator: a length question lets the plan through (the receipts
+    state what is unmet), an order question becomes ONE plain message that says what
+    cannot be checked and quotes the supported ways forward, which a typed reply still
+    answers (``unresolved_choice`` keeps the question open).
+
+    ``contract_brief`` is the brief the dispatch-time contract will actually read: only a
+    creator with a brief binding has one, so the brief-derived ``unresolved`` items are
+    evaluated for that cohort alone.
     """
 
     from app.services.creator_render_contract import (  # noqa: PLC0415
@@ -373,30 +391,56 @@ def _unresolved_choice_plan(
 
     if not strategy:
         return None
-    open_ones = open_conflicts(strategy, brief, media_snapshot)
-    if open_ones:
-        candidate = open_ones[0].candidate()
-        return KriaTurnPlan(
-            mode="respond",
-            turn_value="question",
-            response=choice_question_text(candidate),
-            choice_question=build_choice_question(candidate),
-        )
+    unchanged = " Your current draft is unchanged." if has_draft else ""
+    history = list(events)
+    for conflict in open_conflicts(strategy, brief, media_snapshot):
+        if count_asks(history, conflict.conflict_id, conflict.input_digest) < (
+            MAX_ASKS_PER_QUESTION
+        ):
+            candidate = conflict.candidate()
+            return (
+                KriaTurnPlan(
+                    mode="respond",
+                    turn_value="question",
+                    response=choice_question_text(candidate),
+                    choice_question=build_choice_question(candidate),
+                ),
+                KEEP_OPEN_REASON,
+            )
+        if conflict.kind == CONFLICT_ORDER_BASIS:
+            ways = " or ".join(f'"{o.label}"' for o in conflict.options)
+            return (
+                KriaTurnPlan(
+                    mode="respond",
+                    turn_value="recovery",
+                    response=(
+                        f"{conflict.intro} {conflict.reason} I won't guess, so I haven't "
+                        f"made an edit yet. To go ahead, reply {ways}.{unchanged}"
+                    ),
+                ),
+                KEEP_OPEN_REASON,
+            )
     try:
         contract = build_render_contract(
-            strategy, generation_id="preflight", brief=brief, media_snapshot=media_snapshot
+            strategy, generation_id="preflight", brief=contract_brief, media_snapshot=media_snapshot
         )
     except CreatorRenderContractError as exc:
-        return KriaTurnPlan(
-            mode="respond",
-            turn_value="recovery",
-            response=f"{exc} Your current draft is unchanged.",
+        return (
+            KriaTurnPlan(
+                mode="respond",
+                turn_value="recovery",
+                response=f"{exc}{unchanged}",
+            ),
+            "unresolved_requirement",
         )
     if contract is not None and contract.unresolved:
-        return KriaTurnPlan(
-            mode="respond",
-            turn_value="recovery",
-            response=f"{contract.unresolved[0]} Your current draft is unchanged.",
+        return (
+            KriaTurnPlan(
+                mode="respond",
+                turn_value="recovery",
+                response=f"{contract.unresolved[0]}{unchanged}",
+            ),
+            "unresolved_requirement",
         )
     return None
 
@@ -742,8 +786,9 @@ def _complete_draft_turn(
         if choice_gate:
             from app.kria.brief_binding import snapshot_media as _snapshot_media  # noqa: PLC0415
 
+            binding_on = settings.brief_binding_for(thread.creator_id)
             gate_brief = brief
-            if gate_brief is None and settings.brief_binding_for(thread.creator_id):
+            if gate_brief is None and binding_on:
                 gate_brief = answered_brief(
                     load_latest_brief_sync(db, thread.id), document.strategy
                 )
@@ -753,24 +798,38 @@ def _complete_draft_turn(
                 planned.media_snapshot
                 if planned.media_snapshot is not None
                 else _snapshot_media(item),
+                contract_brief=gate_brief if binding_on else None,
+                events=[
+                    (role, payload)
+                    for role, payload in db.execute(
+                        select(CreationThreadEvent.role, CreationThreadEvent.payload)
+                        .where(
+                            CreationThreadEvent.thread_id == thread.id,
+                            CreationThreadEvent.role.in_({"user", "assistant"}),
+                        )
+                        .order_by(CreationThreadEvent.sequence)
+                    ).all()
+                ],
+                has_draft=head is not None,
             )
             if blocked is not None:
+                blocked_plan, blocked_reason = blocked
                 # Same rollback-then-respond pattern as the receipts gate above: the
-                # speculative draft/brief work is undone and the question is persisted
-                # in the normal response transaction (the old draft stays the head).
+                # speculative draft/brief work is undone and the reply is persisted in
+                # the normal response transaction (the old draft stays the head).
                 db.rollback()
                 completed = _complete_response_turn(
                     turn_id,
                     lease_owner=lease_owner,
                     lease_epoch=lease_epoch,
                     claimed_thread_revision=claimed_thread_revision,
-                    plan=blocked,
+                    plan=blocked_plan,
                     brief_updates=planned.brief_updates,
                     requirement_receipts=requirement_receipts,
                     brief_coverage={
                         **(planned.brief_coverage or {}),
                         "stage": "draft",
-                        "reason": "unresolved_choice",
+                        "reason": blocked_reason,
                     },
                     brief_expected_version=planned.brief_expected_version,
                 )

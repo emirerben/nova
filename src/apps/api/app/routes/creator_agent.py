@@ -2367,7 +2367,12 @@ def _model_strategy_hygiene(strategy: CreativeStrategy) -> CreativeStrategy:
     there is discarded. When clip intents are off, visual requests are discarded too;
     transcript intents keep their existing pinned-narration materialization path.
     """
-    update: dict[str, Any] = {"resolved_clip_intents": None, "resolved_song_takes": None}
+    update: dict[str, Any] = {
+        "resolved_clip_intents": None,
+        "resolved_song_takes": None,
+        # KRI-476: conflict answers are written only by the Kria planner gate.
+        "choice_answers": None,
+    }
     if not settings.clip_intents_enabled:
         update["clip_intents"] = [
             intent

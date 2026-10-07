@@ -58,7 +58,12 @@ async def _dispose_async_engine():
     await async_engine.dispose()
 
 
-def _project(monkeypatch: pytest.MonkeyPatch) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+def _project(
+    monkeypatch: pytest.MonkeyPatch, *, emit_after: int = 15, order: bool = False
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    """``emit_after``: the length the (mock) Creator model emits on every turn after the
+    first; a model that obeys an option's label emits 24, one that ignores it re-emits 15.
+    ``order``: the creator asked for filming order over clips with no capture times."""
     user_id, thread_id, session_id = _seed_runtime_project()
     with sync_session() as db:
         session = db.get(CreatorAgentSession, session_id)
@@ -89,8 +94,14 @@ def _project(monkeypatch: pytest.MonkeyPatch) -> tuple[uuid.UUID, uuid.UUID, uui
                     audio_strategy="licensed_music",
                     pacing="fast",
                     render_program="guided",
-                    target_duration_s=15,
-                    target_duration_requested=True,
+                    **(
+                        {}
+                        if order
+                        else {
+                            "target_duration_s": 15 if calls["n"] == 1 else emit_after,
+                            "target_duration_requested": True,
+                        }
+                    ),
                     rationale="Every clip, fast.",
                 ),
                 summary="A fast montage of all your clips.",
@@ -102,13 +113,22 @@ def _project(monkeypatch: pytest.MonkeyPatch) -> tuple[uuid.UUID, uuid.UUID, uui
             context_hash="b" * 64,
             brief_updates=(
                 (
-                    BriefUpdate(
-                        kind="timing",
-                        scope="global",
-                        description="15 seconds",
-                        facts={"duration_s": 15},
+                    (
+                        BriefUpdate(
+                            kind="order",
+                            scope="global",
+                            description="in the order I filmed them",
+                            facts={"key": "capture_time"},
+                        )
+                        if order
+                        else BriefUpdate(
+                            kind="timing",
+                            scope="global",
+                            description="15 seconds",
+                            facts={"duration_s": 15},
+                        )
                     ),
-                )  # fmt: skip
+                )
                 if calls["n"] == 1
                 else ()
             ),
@@ -282,18 +302,113 @@ async def test_a_resent_prompt_after_the_answer_is_not_asked_again(monkeypatch) 
     assert strategy["target_duration_s"] == 15 and len(strategy["selected_media_ids"]) == 18
 
 
+def _receipts(thread_id) -> dict[str, dict]:  # noqa: ANN001
+    """Requirement receipts of the newest assistant event that carries them."""
+    for event in reversed(_events(thread_id)):
+        rows = (event.payload or {}).get("requirement_receipts")
+        if event.role == "assistant" and rows:
+            return {row["requirement_id"]: row for row in rows}
+    return {}
+
+
 @pytest.mark.asyncio
-async def test_unanswerable_reply_gets_one_re_ask_then_a_disclosed_default(monkeypatch) -> None:
+@pytest.mark.parametrize("emit_after", [24, 18, 15])
+async def test_the_answered_length_wins_whatever_the_model_emits_next(
+    monkeypatch, emit_after: int
+) -> None:
+    """P1-B: iOS sends the label as the message, so an obedient model emits 24 while the
+    brief still says 15; a stubborn one re-emits 15; another invents 18. All three mint
+    the draft with the ANSWERED length and green receipts (no "Partly: 15 seconds")."""
+    user_id, thread_id, _ = _project(monkeypatch, emit_after=emit_after)
+    await _say(user_id, thread_id, PROMPT)
+    (question,) = _questions(thread_id)
+    selection = {"question_id": question["question_id"], "option_key": "extend"}
+    result = await _say(user_id, thread_id, "Extend it to 24 seconds", selection=selection)
+    assert result["status"] == "awaiting_approval"
+    strategy = _draft_strategy(_head_draft(thread_id))
+    assert strategy["target_duration_s"] == 24
+    assert strategy["choice_answers"][0]["option"] == "extend"
+    receipt = _receipts(thread_id)["r1"]
+    assert receipt["status"] == "met", receipt
+    assert len(_questions(thread_id)) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("emit_after", [24, 15])
+async def test_the_answered_clip_subset_wins_whatever_the_model_emits_next(
+    monkeypatch, emit_after: int
+) -> None:
+    user_id, thread_id, _ = _project(monkeypatch, emit_after=emit_after)
+    await _say(user_id, thread_id, PROMPT)
+    (question,) = _questions(thread_id)
+    selection = {"question_id": question["question_id"], "option_key": "fewer"}
+    result = await _say(user_id, thread_id, "Keep 15 seconds with 18 clips", selection=selection)
+    assert result["status"] == "awaiting_approval"
+    strategy = _draft_strategy(_head_draft(thread_id))
+    assert strategy["target_duration_s"] == 15 and len(strategy["selected_media_ids"]) == 18
+    assert _receipts(thread_id)["r1"]["status"] == "met"
+
+
+@pytest.mark.asyncio
+async def test_unanswerable_replies_get_one_re_ask_then_the_plan_goes_through_unchanged(
+    monkeypatch,
+) -> None:
+    """P2-2: no default is applied and no requirement is rewritten; repeating the request
+    is not an answer."""
     user_id, thread_id, _ = _project(monkeypatch)
     await _say(user_id, thread_id, PROMPT)
     await _say(user_id, thread_id, "make it more fun")  # not an answer: re-ask ONCE
     assert len(_questions(thread_id)) == 2
     assert _head_draft(thread_id) is None
-    done = await _say(user_id, thread_id, "I don't know, surprise me")
+    done = await _say(user_id, thread_id, PROMPT)  # the request again is NOT an answer
     assert done["status"] == "awaiting_approval"
     assert len(_questions(thread_id)) == 2  # never a third
+    strategy = _draft_strategy(_head_draft(thread_id))
+    assert "choice_answers" not in strategy and strategy["target_duration_s"] == 15
+    draft = _head_draft(thread_id)
+    assert "choice_answers" not in draft.snapshot_json["brief_binding"]
+    assert draft.snapshot_json["brief_binding"]["brief"]["requirements"][0]["facts"] == {
+        "duration_s": 15
+    }
+
+
+@pytest.mark.asyncio
+async def test_surprise_me_delegates_to_the_recommended_option_and_is_disclosed(
+    monkeypatch,
+) -> None:
+    user_id, thread_id, _ = _project(monkeypatch)
+    await _say(user_id, thread_id, PROMPT)
+    result = await _say(user_id, thread_id, "Surprise me")
+    assert result["status"] == "awaiting_approval"
     (answer,) = _draft_strategy(_head_draft(thread_id))["choice_answers"]
-    assert answer["source"] == "default" and answer["option"] == "extend"
+    assert answer["source"] == "creator_delegated" and answer["option"] == "extend"
+    assert len(_questions(thread_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_unanswered_order_question_ends_in_one_plain_message_a_typed_reply_answers(
+    monkeypatch,
+) -> None:
+    """P2-2/P2-3: after the single re-ask the order is not guessed. ONE plain message
+    names what cannot be checked and quotes the two ways forward; typing one of them
+    still answers the (exhausted) question."""
+    user_id, thread_id, _ = _project(monkeypatch, order=True)
+    await _say(user_id, thread_id, "Put them in the order I filmed them")
+    assert [q["kind"] for q in _questions(thread_id)] == ["order_basis"]
+    await _say(user_id, thread_id, "hmm, what do you mean?")  # re-ask once
+    assert len(_questions(thread_id)) == 2
+    await _say(user_id, thread_id, "Put them in the order I filmed them")  # not an answer
+    assert len(_questions(thread_id)) == 2  # no third question ...
+    assert _head_draft(thread_id) is None  # ... and no draft
+    last = [e for e in _events(thread_id) if e.role == "assistant"][-1]
+    text = last.content or ""
+    assert "Use the order you added the clips" in text
+    assert "Continue without chronological order" in text
+    assert "draft is unchanged" not in text  # there is no draft to be unchanged
+    result = await _say(user_id, thread_id, "Use the order you added the clips")
+    assert result["status"] == "awaiting_approval"
+    (answer,) = _draft_strategy(_head_draft(thread_id))["choice_answers"]
+    assert answer["option"] == "attachment_order"
 
 
 @pytest.mark.asyncio

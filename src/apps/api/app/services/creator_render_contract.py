@@ -723,7 +723,9 @@ def build_render_contract(
                 key = requirement.facts.get("key")
                 if order_answer is not None and requirement.id in order_answer.requirement_ids:
                     continue  # the creator's answer decides how this order is met
-                if key == ATTACHMENT_ORDER_KEY:
+                if key == ATTACHMENT_ORDER_KEY and order_answer is not None:
+                    # Only a recorded creator answer makes "attachment" a verifiable
+                    # basis; a bare brief key stays unresolved exactly as before.
                     attachment_order = True
                 elif key not in CAPTURE_ORDER_KEYS:
                     unresolved.append("I can't verify this ordering rule from the approved media.")

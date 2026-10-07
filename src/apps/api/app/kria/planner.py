@@ -69,10 +69,12 @@ from app.models import (
 from app.routes._copilot import CopilotTurnBody, is_overlay_display_ask, run_copilot_turn
 from app.routes.generative_jobs import variant_render_baseline
 from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
+from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 from app.schemas.user_song import SONG_ALIGNMENT_VERSION
 from app.services.choice_questions import (
     CONFLICT_ORDER_VS_GROUP,
     ORDER_VS_GROUP_OPTIONS,
+    ChoiceCapability,
     ask_user_choice,
     build_choice_question,
     choice_question_text,
@@ -1206,6 +1208,13 @@ async def _plan_from_creator_output(
             manifest,
             action.strategy,
             **({"ask_before_simplifying": True} if settings.brief_binding_for(creator_id) else {}),
+            # KRI-476: also ask before a repair drops a title hold / full-screen ask the
+            # creator stated. Off with the choice-questions flag: identical to before.
+            **(
+                {"ask_about_stated_settings": True}
+                if settings.brief_binding_for(creator_id) and settings.kria_choice_questions_enabled
+                else {}
+            ),
         )
         if isinstance(checked, RefusedStrategy):
             log.info("kria_strategy_refused", thread_id=str(thread_id), code=checked.code)
@@ -1712,7 +1721,13 @@ async def _gate_unresolved_choices(
             with suppress(BriefUpdateBatchError):
                 brief = apply_updates(brief, planned.brief_updates, source_turn_id=None)
     events = await _load_thread_events(db, thread_id)
-    resolution = resolve_choices(strategy, brief, planned.media_snapshot, events)
+    resolution = resolve_choices(
+        strategy,
+        brief,
+        planned.media_snapshot,
+        events,
+        ChoiceCapability(max_duration_s=float(MAX_PROPOSAL_DURATION_S)),
+    )
     if resolution.question is not None:
         candidate = resolution.question.candidate()
         asked = KriaTurnPlan(

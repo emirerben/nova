@@ -189,7 +189,9 @@ def _refusal_question(exc: ValueError, strategy: CreativeStrategy) -> RefusedStr
     )
 
 
-def _drops_requested_action(before: CreativeStrategy, after: CreativeStrategy) -> bool:
+def _drops_requested_action(
+    before: CreativeStrategy, after: CreativeStrategy, *, stated_settings: bool = False
+) -> bool:
     """Semantic losses need consent; styling normalization can still recover."""
     prior = before.model_dump(mode="json")
     next_values = after.model_dump(mode="json")
@@ -205,12 +207,12 @@ def _drops_requested_action(before: CreativeStrategy, after: CreativeStrategy) -
         "mixed_media_timing",
         "licensed_sfx",
         "target_duration_s",
+    )
+    if stated_settings:
         # KRI-476: the creator's own seconds for the title and their explicit ask for
         # full-screen Visuals are creator-stated; a renderer that cannot honour them used
         # to drop them silently inside `compile_strategy_to_plan`.
-        "opening_title_duration_s",
-        "overlay_display",
-    )
+        fields = (*fields, "opening_title_duration_s", "overlay_display")
     if any(
         prior.get(key) not in (None, [], "") and prior.get(key) != next_values.get(key)
         for key in fields
@@ -240,6 +242,7 @@ def check_strategy_for_runtime_v2(
     strategy: CreativeStrategy,
     *,
     ask_before_simplifying: bool = False,
+    ask_about_stated_settings: bool = False,
 ) -> CheckedStrategy | RefusedStrategy:
     """Run v1's plan compile over a v2 strategy; never raises a policy error."""
 
@@ -279,10 +282,12 @@ def check_strategy_for_runtime_v2(
         # that specialist, so keep the selection the model boundary normalized.
         checked = checked.model_copy(update={"selected_media_ids": strategy.selected_media_ids})
     all_notices = (*notices, *edit_plan.notices)
-    if ask_before_simplifying and _drops_requested_action(original, checked):
+    if ask_before_simplifying and _drops_requested_action(
+        original, checked, stated_settings=ask_about_stated_settings
+    ):
         details = (
             " ".join(all_notices)
-            or _repair_detail(original, checked)
+            or (_repair_detail(original, checked) if ask_about_stated_settings else "")
             or "This edit cannot carry out that exact combination of requests."
         )
         return RefusedStrategy(

@@ -120,8 +120,17 @@ def test_a_title_length_the_renderer_cannot_hold_is_asked_about_not_dropped(
     assert isinstance(quiet, CheckedStrategy)  # no brief binding: unchanged, silent as before
     assert quiet.strategy.opening_title_duration_s is None
 
-    asked = check_strategy_for_runtime_v2(
+    # Brief binding on but the choice-questions flag off: identical to main (silent).
+    flag_off = check_strategy_for_runtime_v2(
         _narrated_manifest(), strategy, ask_before_simplifying=True
+    )
+    assert isinstance(flag_off, CheckedStrategy) and flag_off == quiet
+
+    asked = check_strategy_for_runtime_v2(
+        _narrated_manifest(),
+        strategy,
+        ask_before_simplifying=True,
+        ask_about_stated_settings=True,
     )
     assert isinstance(asked, RefusedStrategy)
     assert asked.code == "simplification_requires_choice"
@@ -130,7 +139,10 @@ def test_a_title_length_the_renderer_cannot_hold_is_asked_about_not_dropped(
 
 def test_a_title_without_a_stated_length_is_never_asked_about(prod_profile) -> None:
     checked = check_strategy_for_runtime_v2(
-        _narrated_manifest(), _narrated(opening_title="My Trip"), ask_before_simplifying=True
+        _narrated_manifest(),
+        _narrated(opening_title="My Trip"),
+        ask_before_simplifying=True,
+        ask_about_stated_settings=True,
     )
     assert isinstance(checked, CheckedStrategy)
     assert checked.strategy.opening_title == "My Trip"
@@ -141,7 +153,8 @@ def test_a_dropped_fullscreen_ask_counts_as_a_dropped_request_and_is_worded() ->
 
     asked = CreativeStrategy(edit_format="montage", overlay_display="fullscreen")
     repaired = asked.model_copy(update={"overlay_display": None})
-    assert _drops_requested_action(asked, repaired)
+    assert _drops_requested_action(asked, repaired, stated_settings=True)
+    assert not _drops_requested_action(asked, repaired)  # flag off: not counted, as on main
     assert _repair_detail(asked, repaired) == "Full-screen Visuals aren't available for this edit."
     # Nothing was asked for, so nothing was dropped.
     plain = CreativeStrategy(edit_format="montage")

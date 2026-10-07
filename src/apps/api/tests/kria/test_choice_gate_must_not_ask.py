@@ -22,14 +22,23 @@ from pathlib import Path
 import pytest
 
 from app.kria.brief import BriefRequirement, CreativeBrief
+from app.schemas.clip_intents import ClipAssignment, ResolvedClipIntent
 from app.services.choice_questions import collect_conflicts
 from tests.evals.request_following.runner import discover_fixture_paths, load_fixture, load_footage
 from tests.kria.test_choice_conflict_gate import _gate, _planned
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
-# fixture id -> why asking is CORRECT (the footage genuinely cannot satisfy the ask).
-LEGITIMATE_ASKS: dict[str, str] = {}
+# fixture id -> why asking is CORRECT (the contract genuinely cannot verify the ask).
+_ROUTE = (
+    "route order: the contract pins only capture-time/chronological order, so a route rule "
+    "is unresolved (it used to be refused at dispatch); it is now ONE question"
+)
+LEGITIMATE_ASKS: dict[str, str] = {
+    "east_run": _ROUTE,
+    "harbor_route_reversed_then_route_order": _ROUTE,
+    "trip_route_order": _ROUTE,
+}
 
 THREADS = [pytest.param(path, id=path.stem) for path in discover_fixture_paths()]
 
@@ -65,17 +74,33 @@ def _derive(fixture, footage) -> tuple[dict, CreativeBrief, list[dict]]:  # noqa
                     facts={"duration_s": seconds},
                 )
             )
-        elif req.kind == "order":
-            key = str(req.params.get("key") or "explicit")
+        elif req.kind == "order" and req.checker in ("order_by_key", "order_explicit"):
+            # (`reply_states` rows are checks on the REPLY text, not brief requirements.)
+            key = str(req.params.get("key") or "")
+            explicit = req.checker == "order_explicit"
             requirements.append(
                 BriefRequirement(
                     id=rid,
                     kind="order",
                     scope="global",
                     description=req.source or "an order",
-                    facts={"key": {"route_rank": "route"}.get(key, key)},
+                    facts={} if explicit else {"key": {"route_rank": "route"}.get(key, key)},
                 )
             )
+            if explicit:
+                # The server places a described sequence ("start with S3, then S4"), so the
+                # planned strategy carries resolved order intents with their assignments.
+                strategy["resolved"] = [
+                    ResolvedClipIntent(
+                        intent_id=f"o{index}",
+                        op="order",
+                        attribute="the creator's sequence",
+                        assignments=[
+                            ClipAssignment(media_id=m, evidence="x", confidence=0.9)
+                            for m in req.params.get("sequence") or []
+                        ],
+                    )
+                ]
         elif req.checker == "select_exclude":
             gone = set(req.params.get("clip_ids") or [])
             strategy |= {

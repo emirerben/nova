@@ -237,23 +237,54 @@ def _option_keys(question: Mapping[str, Any]) -> set[str]:
     }
 
 
-def latest_open_choice_question(events: Events) -> dict[str, Any] | None:
-    """The latest ``choice_question`` not yet answered by a ``choice_selection``.
+# A recovery reply that restates an exhausted question in words keeps it answerable.
+KEEP_OPEN_REASON = "unresolved_choice"
 
-    ``events`` are ``(role, payload)`` in chronological order.
+
+def _keeps_question_open(payload: Mapping[str, Any]) -> bool:
+    coverage = payload.get("brief_coverage")
+    return isinstance(coverage, Mapping) and coverage.get("reason") == KEEP_OPEN_REASON
+
+
+def latest_open_choice_question(events: Events) -> dict[str, Any] | None:
+    """The choice question a plain reply or a tap may still answer, else ``None``.
+
+    ``events`` are ``(role, payload)`` in chronological order. A question is open only
+    while it is the live last assistant turn:
+
+    * a ``choice_selection`` that answers it closes it;
+    * any later assistant event that is not a choice question closes it (a text question
+      such as "how many clips?" must never have its answer read as this one's), except a
+      recovery that restates it in words (``brief_coverage.reason == "unresolved_choice"``);
+    * once it has been asked ``MAX_ASKS_PER_QUESTION`` times, a later user message that is
+      not an answer closes it too.
     """
-    latest: dict[str, Any] | None = None
+    last: dict[str, Any] | None = None
+    is_open = False
+    asked: dict[tuple[Any, Any], int] = {}
     for role, payload in events:
         if not isinstance(payload, dict):
             continue
-        if role == "assistant" and isinstance(payload.get("choice_question"), dict):
-            latest = payload["choice_question"]
-        elif role == "user" and isinstance(payload.get("choice_selection"), dict):
-            if latest is not None and payload["choice_selection"].get("question_id") == latest.get(
-                "question_id"
-            ):
-                latest = None
-    return latest
+        if role == "assistant":
+            question = payload.get("choice_question")
+            if isinstance(question, dict):
+                key = (question.get("conflict"), question.get("input_digest"))
+                asked[key] = asked.get(key, 0) + 1
+                last, is_open = question, True
+            elif last is not None and _keeps_question_open(payload):
+                is_open = True
+            else:
+                is_open = False
+        elif role == "user":
+            selection = payload.get("choice_selection")
+            if isinstance(selection, dict):
+                if last is not None and selection.get("question_id") == last.get("question_id"):
+                    last, is_open = None, False
+            elif last is not None and is_open:
+                key = (last.get("conflict"), last.get("input_digest"))
+                if asked.get(key, 0) >= MAX_ASKS_PER_QUESTION:
+                    is_open = False
+    return last if is_open else None
 
 
 def fold_choice_answers(events: Events) -> dict[str, str]:
@@ -304,7 +335,7 @@ ATTACHMENT_ORDER_KEY = "attachment"
 # The most clips a draft names; a hard bound on the evenly-spaced subset.
 _MAX_FIT_FRAMES_FPS = 30
 # A choice is asked at most this many times for the same inputs: the question and ONE
-# re-ask. After that the recommended option is applied and the draft says so.
+# re-ask. After that the creator's plan goes through unchanged (never a default for them).
 MAX_ASKS_PER_QUESTION = 2
 
 
@@ -385,13 +416,17 @@ def _rows(snapshot: Mapping[str, Any] | None) -> list[Any]:
     return list((snapshot or {}).get("clip_assignments") or [])
 
 
-def _requested_durations(strategy: Mapping[str, Any], brief: Any) -> tuple[list[float], list[str]]:
+def _requested_durations(brief: Any) -> tuple[list[float], list[str], str]:
+    """The creator's own lengths: LIVE brief timing requirements only.
+
+    A strategy ``target_duration_s`` is NOT evidence: the Creator model must always emit
+    one (it picks a length from the footage when the creator named none), and the server
+    marks it ``target_duration_requested`` either way.
+    """
+
     durations: list[float] = []
     requirement_ids: list[str] = []
-    if strategy.get("target_duration_requested") is True:
-        value = _number(strategy.get("target_duration_s"))
-        if value is not None:
-            durations.append(value)
+    quoted = ""
     for req in _live(brief):
         if req.kind != "timing":
             continue
@@ -399,7 +434,8 @@ def _requested_durations(strategy: Mapping[str, Any], brief: Any) -> tuple[list[
         if value is not None:
             durations.append(value)
             requirement_ids.append(str(req.id))
-    return durations, requirement_ids
+            quoted = quoted or " ".join(str(req.description or "").split())[:80]
+    return durations, requirement_ids, quoted
 
 
 def _evenly_spaced(ids: Sequence[str], count: int) -> list[str]:
@@ -416,28 +452,67 @@ def _clean_seconds(value: float) -> float | int:
     return int(value) if float(value).is_integer() else round(value, 1)
 
 
+def _montage_exempt(strategy: Mapping[str, Any]) -> bool:
+    """Strategies whose length is not a promise about N flash-cut clips.
+
+    Only a plain montage cuts every clip to ``target_duration_s``. Voiceover, creator-song
+    and lip-sync montages are timed by the recording / song, speech and day-vlog timelines
+    by their own material (the voiceover and lip-sync planners never read the strategy
+    length), and a cadence or exact photo/video timing is the creator's own cut length.
+    """
+
+    return bool(
+        strategy.get("edit_format", "montage") != "montage"
+        or strategy.get("montage_cadence")
+        or strategy.get("mixed_media_timing")
+        or strategy.get("montage_audio")
+        or strategy.get("archetype")
+        or strategy.get("execution_contract")
+        or strategy.get("audio_strategy") in ("voiceover", "user_song")
+        or strategy.get("song_sync")
+    )
+
+
+def _included_ids(strategy: Mapping[str, Any]) -> set[str] | None:
+    """Clips the creator's resolved ``include`` intents keep (None = no such intent)."""
+
+    kept: set[str] = set()
+    found = False
+    for intent in strategy.get("resolved_clip_intents") or []:
+        if not isinstance(intent, Mapping) or intent.get("op") != "include":
+            continue
+        if intent.get("status", "resolved") != "resolved":
+            continue
+        found = True
+        kept |= {
+            str(a["media_id"])
+            for a in intent.get("assignments") or []
+            if isinstance(a, Mapping) and a.get("media_id")
+        }
+    return kept if found else None
+
+
 def _duration_vs_count(
     strategy: Mapping[str, Any], brief: Any, rows: list[Any], cap: ChoiceCapability
 ) -> UnresolvedChoice | None:
-    if strategy.get("edit_format", "montage") != "montage":
+    if _montage_exempt(strategy):
         return None
-    if strategy.get("montage_cadence") or strategy.get("archetype") == "single_hero":
-        # A creator-authored cut length (cadence) or a one-hero story is not a flash-cut risk.
-        return None
-    durations, requirement_ids = _requested_durations(strategy, brief)
+    durations, requirement_ids, quoted = _requested_durations(brief)
     if not durations:
-        # Only an EXPLICIT length is a promise; the 24 s default never asks.
+        # Only a length the CREATOR stated is a promise. The model's own pick (and the 24 s
+        # default) never asks, however many clips there are.
         return None
     if any(abs(value - durations[0]) > 0.001 for value in durations[1:]):
         return None  # conflicting lengths are the contract's own typed error
+    if any(req.kind == "select" for req in _live(brief)) and _included_ids(strategy) is None:
+        return None  # the creator chose a subset we cannot count: never guess N
     seconds = durations[0]
     ids = [str(r["media_id"]) for r in rows if isinstance(r, Mapping) and r.get("media_id")]
     if not ids or len(set(ids)) != len(ids):
         return None
-    selected = [str(m) for m in strategy.get("selected_media_ids") or []]
-    scoped = strategy.get("media_scope") == "selected" and bool(selected)
-    clip_ids = [m for m in ids if m in set(selected)] if scoped else ids
-    if scoped and not clip_ids:
+    kept = _included_ids(strategy)
+    clip_ids = [m for m in ids if kept is None or m in kept]
+    if not clip_ids:
         return None
     floor_s = cap.min_readable_shot_s
     if floor_s is None:
@@ -449,22 +524,37 @@ def _duration_vs_count(
     if count * floor_frames <= round(seconds * _MAX_FIT_FRAMES_FPS):
         return None
     needed = math.ceil(count * floor_frames / _MAX_FIT_FRAMES_FPS * 10 - 1e-9) / 10
-    needed = min(needed, cap.max_duration_s)
+    can_extend = needed <= cap.max_duration_s
     fit = max(1, int(seconds * _MAX_FIT_FRAMES_FPS) // floor_frames)
     subset = _evenly_spaced(clip_ids, fit)
     shown = _clean_seconds(needed)
     asked = _clean_seconds(seconds)
-    return UnresolvedChoice(
-        kind=CONFLICT_DURATION_VS_COUNT,
-        conflict_id=CONFLICT_DURATION_VS_COUNT,
-        field_path="target_duration_s",
-        requirement_ids=tuple(requirement_ids),
-        intro=f"You asked for {asked} seconds and all {count} clips.",
-        reason=(
-            f"{count} clips can't each stay on screen long enough to be seen in {asked} "
-            f"seconds (each needs about {floor_s:g} seconds)."
-        ),
-        options=(
+    said = quoted or f"{asked} seconds"
+    options = [
+        ConflictOption(
+            key=OPT_FEWER,
+            label=f"Keep {asked} seconds with {len(subset)} clips",
+            description=(
+                f"Uses {len(subset)} of your {count} clips, spread evenly through your "
+                "footage; the others are left out."
+            ),
+            recommended=not can_extend,
+            aliases=("fewer", "fewer clips", "use fewer", "use fewer clips", "keep it short"),
+        )
+    ]
+    effects: dict[str, Mapping[str, Any]] = {
+        OPT_FEWER: {
+            "strategy": {
+                "selected_media_ids": subset,
+                "media_scope": "selected",
+                "target_duration_s": _clean_seconds(seconds),
+                "target_duration_requested": True,
+            }
+        }
+    }
+    if can_extend:
+        options.insert(
+            0,
             ConflictOption(
                 key=OPT_EXTEND,
                 label=f"Extend it to {shown} seconds",
@@ -474,81 +564,121 @@ def _duration_vs_count(
                 recommended=True,
                 aliases=("extend", "extend it", "longer", "make it longer", "extend the length"),
             ),
-            ConflictOption(
-                key=OPT_FEWER,
-                label=f"Keep {asked} seconds with {len(subset)} clips",
-                description=(
-                    f"Uses {len(subset)} of your {count} clips, spread evenly through your "
-                    "footage; the others are left out."
-                ),
-                aliases=("fewer", "fewer clips", "use fewer", "use fewer clips", "keep it short"),
-            ),
+        )
+        effects[OPT_EXTEND] = {
+            "strategy": {
+                "target_duration_s": _clean_seconds(needed),
+                "target_duration_requested": True,
+            }
+        }
+    return UnresolvedChoice(
+        kind=CONFLICT_DURATION_VS_COUNT,
+        conflict_id=CONFLICT_DURATION_VS_COUNT,
+        field_path="target_duration_s",
+        requirement_ids=tuple(requirement_ids),
+        intro=f'Your brief says "{said}" and this edit uses {count} clips.',
+        reason=(
+            f"{count} clips can't each stay on screen long enough to be seen in {asked} "
+            f"seconds (each needs about {floor_s:g} seconds)."
         ),
+        options=tuple(options),
+        # The creator's inputs only: the model's own selection or length never reopens it.
         input_digest=_digest(CONFLICT_DURATION_VS_COUNT, sorted(ids), sorted(clip_ids), seconds),
-        effects={
-            OPT_EXTEND: {
-                "strategy": {
-                    "target_duration_s": _clean_seconds(needed),
-                    "target_duration_requested": True,
-                }
-            },
-            OPT_FEWER: {"strategy": {"selected_media_ids": subset, "media_scope": "selected"}},
-        },
+        effects=effects,
+    )
+
+
+_ATTACHMENT_ALIASES = (
+    "upload order",
+    "order i added them",
+    "the order i added them",
+    "order i uploaded them",
+    "attachment order",
+    "as uploaded",
+    "as added",
+)
+
+
+def _placed_sequence(strategy: Mapping[str, Any]) -> bool:
+    """Did the server already place the creator's described sequence ("start with X")?"""
+
+    return any(
+        isinstance(i, Mapping)
+        and i.get("op") == "order"
+        and i.get("status", "resolved") == "resolved"
+        and i.get("assignments")
+        for i in strategy.get("resolved_clip_intents") or []
     )
 
 
 def _order_basis(
     strategy: Mapping[str, Any], brief: Any, rows: list[Any], cap: ChoiceCapability
 ) -> UnresolvedChoice | None:
-    requirement_ids: list[str] = []
-    wants = strategy.get("ordering_choice") == "chronological"
+    capture_ids: list[str] = []
+    rule_ids: list[str] = []
+    rule_text: list[str] = []
     for req in _live(brief):
         if req.kind != "order":
             continue
         key = str((req.facts or {}).get("key") or "").casefold()
         if key in CAPTURE_ORDER_KEYS:
-            wants = True
-            requirement_ids.append(str(req.id))
-    if not wants:
-        return None
+            capture_ids.append(str(req.id))
+        elif key != ATTACHMENT_ORDER_KEY:
+            # A key-less or non-capture rule ("clips 1, 2, 3 in that sequence", "along my
+            # route") the contract cannot verify from the approved media.
+            rule_ids.append(str(req.id))
+            rule_text.append(_norm_text(req.description or ""))
+    wants_capture = strategy.get("ordering_choice") == "chronological" or bool(capture_ids)
     selected = {str(m) for m in strategy.get("selected_media_ids") or []}
     if selected:
         rows = [r for r in rows if isinstance(r, Mapping) and r.get("media_id") in selected]
-    # Exactly the contract's own "can I resolve the order" shape, so a question is asked
-    # only for the one thing a creator can fix: clips with no capture time.
-    if not rows or not all(isinstance(r, Mapping) and r.get("media_id") for r in rows):
-        return None
-    ids = [str(r["media_id"]) for r in rows]
-    if len(set(ids)) != len(ids) or (selected and set(ids) != selected):
-        return None
+    # Exactly the contract's own "can I resolve the order" shape, so a capture question is
+    # asked only for the one thing a creator can fix: clips with no capture time.
+    valid = bool(rows) and all(isinstance(r, Mapping) and r.get("media_id") for r in rows)
+    ids = [str(r["media_id"]) for r in rows] if valid else []
+    if valid and (len(set(ids)) != len(ids) or (selected and set(ids) != selected)):
+        valid, ids = False, []
     missing = []
-    for row in rows:
-        capture = capture_from_assignment(row)
-        if not (capture and capture.capture_time):
-            missing.append(str(row["media_id"]))
-    if not missing:
+    if valid and wants_capture:
+        for row in rows:
+            capture = capture_from_assignment(row)
+            if not (capture and capture.capture_time):
+                missing.append(str(row["media_id"]))
+    ask_capture = bool(missing)
+    ask_rule = bool(rule_ids) and not _placed_sequence(strategy)
+    if not (ask_capture or ask_rule):
         return None
-    many = len(ids)
-    some = (
-        "none of your clips have a filming time"
-        if len(missing) == many
-        else f"{len(missing)} of your {many} clips have no filming time"
-    )
+    if ask_capture:
+        many = len(ids)
+        some = (
+            "none of your clips have a filming time"
+            if len(missing) == many
+            else f"{len(missing)} of your {many} clips have no filming time"
+        )
+        intro = "You asked for the clips in the order you filmed them."
+        reason = f"{some}, so I can't put them in filming order."
+        unordered_label = "Continue without chronological order"
+        unordered_text = (
+            "I won't promise or check a filming-time order; the clips still play in a "
+            "sensible sequence."
+        )
+        covered = capture_ids + (rule_ids if ask_rule else [])
+    else:
+        intro = "You gave me a specific order for the clips."
+        reason = "I can't check that order against your clips, so I can't promise it."
+        unordered_label = "Continue without a fixed order"
+        unordered_text = (
+            "I won't promise or check a particular order; the clips still play in a "
+            "sensible sequence."
+        )
+        covered = rule_ids
     options = [
         ConflictOption(
             key=OPT_ATTACHMENT_ORDER,
             label="Use the order you added the clips",
             description="The clips play in the order they were added to this project.",
             recommended=True,
-            aliases=(
-                "upload order",
-                "order i added them",
-                "the order i added them",
-                "order i uploaded them",
-                "attachment order",
-                "as uploaded",
-                "as added",
-            ),
+            aliases=_ATTACHMENT_ALIASES,
         )
     ]
     if cap.creator_sequence_supported:
@@ -563,23 +693,31 @@ def _order_basis(
     options.append(
         ConflictOption(
             key=OPT_UNORDERED,
-            label="Continue without chronological order",
-            description=(
-                "I won't promise or check a filming-time order; the clips still play in a "
-                "sensible sequence."
+            label=unordered_label,
+            description=unordered_text,
+            aliases=(
+                "without order",
+                "no order",
+                "skip the order",
+                "continue without order",
+                "no fixed order",
             ),
-            aliases=("without order", "no order", "skip the order", "continue without order"),
         )
     )
     return UnresolvedChoice(
         kind=CONFLICT_ORDER_BASIS,
         conflict_id=CONFLICT_ORDER_BASIS,
         field_path="ordering_choice",
-        requirement_ids=tuple(requirement_ids),
-        intro="You asked for the clips in the order you filmed them.",
-        reason=f"{some}, so I can't put them in filming order.",
+        requirement_ids=tuple(covered),
+        intro=intro,
+        reason=reason,
         options=tuple(options),
-        input_digest=_digest(CONFLICT_ORDER_BASIS, sorted(ids), sorted(missing)),
+        input_digest=_digest(
+            CONFLICT_ORDER_BASIS,
+            sorted(ids),
+            sorted(missing),
+            sorted(rule_text) if ask_rule else [],
+        ),
     )
 
 
@@ -601,7 +739,7 @@ def _text_placement(
         options = tuple(
             ConflictOption(
                 key=f"shot_{i + 1}",
-                label=f"Shot {i + 1}",
+                label=f"On shot {i + 1}",
                 description=f"This line belongs on shot {i + 1} of the draft.",
                 recommended=n == 0,
                 aliases=(f"shot {i + 1}", f"shot number {i + 1}"),
@@ -693,6 +831,9 @@ def open_conflicts(
 class ScopedAnswer:
     option_key: str
     input_digest: str | None
+    # The creator handed the decision to us ("you choose"): the recommended option,
+    # recorded as such and disclosed. Never set for an unanswered question.
+    delegated: bool = False
 
 
 def _event_list(events: Events) -> list[tuple[str, Any]]:
@@ -720,7 +861,9 @@ def fold_scoped_answers(events: Events) -> dict[str, ScopedAnswer]:
             continue
         digest = question.get("input_digest")
         answers[str(conflict)] = ScopedAnswer(
-            str(selection["option_key"]), str(digest) if digest else None
+            str(selection["option_key"]),
+            str(digest) if digest else None,
+            selection.get("delegated") is True,
         )
     return answers
 
@@ -782,12 +925,49 @@ def match_open_choice(question: Mapping[str, Any], message: object) -> str | Non
     return next(iter(hits)) if len(hits) == 1 else None
 
 
+_DELEGATION_PHRASES = frozenset(
+    normalize_reply(p)
+    for p in (
+        "you choose",
+        "you decide",
+        "your choice",
+        "up to you",
+        "surprise me",
+        "whatever",
+        "whatever you think",
+        "whatever you want",
+        "i don't mind",
+        "i don't care",
+        "dealer's choice",
+    )
+)
+
+
+def delegated_choice(question: Mapping[str, Any], message: object) -> str | None:
+    """The recommended option key when the creator explicitly hands the choice over.
+
+    Only a message that IS a delegation ("you choose", "surprise me", "whatever") counts;
+    repeating the request, or any instruction, never does.
+    """
+
+    if normalize_reply(message) not in _DELEGATION_PHRASES:
+        return None
+    options = [o for o in question.get("options") or [] if isinstance(o, Mapping) and o.get("key")]
+    if not options:
+        return None
+    pick = next((o for o in options if o.get("recommended")), options[0])
+    return str(pick["key"])
+
+
 @dataclass(frozen=True)
 class ChoiceResolution:
     strategy: dict[str, Any]
     answers: tuple[dict[str, Any], ...]
     question: UnresolvedChoice | None
     notices: tuple[str, ...] = ()
+    # Conflicts asked ``MAX_ASKS_PER_QUESTION`` times and still unanswered: the creator's
+    # plan goes through UNCHANGED and the honest receipts / refusal say what is unmet.
+    exhausted: tuple[UnresolvedChoice, ...] = ()
 
 
 def _apply_effect(strategy: dict[str, Any], choice: UnresolvedChoice, option_key: str) -> None:
@@ -802,10 +982,8 @@ _DISCLOSURES = {
     (CONFLICT_DURATION_VS_COUNT, OPT_FEWER): (
         "I kept your length and used fewer clips, spread evenly through your footage."
     ),
-    (CONFLICT_ORDER_BASIS, OPT_ATTACHMENT_ORDER): (
-        "I'm using the order you added the clips, not filming order."
-    ),
-    (CONFLICT_ORDER_BASIS, OPT_UNORDERED): "I'm not promising a filming-time order.",
+    (CONFLICT_ORDER_BASIS, OPT_ATTACHMENT_ORDER): ("I'm using the order you added the clips."),
+    (CONFLICT_ORDER_BASIS, OPT_UNORDERED): "I'm not promising a particular order.",
 }
 
 
@@ -816,13 +994,19 @@ def resolve_choices(
     events: Events,
     capability: ChoiceCapability | None = None,
 ) -> ChoiceResolution:
-    """Fold earlier answers into the strategy and return at most ONE open question.
+    """Apply earlier answers to the strategy and return at most ONE open question.
 
     * An answer counts only while its question's ``input_digest`` equals the digest the
       collector computes now: a changed media set or length reopens just that question.
-    * The same question is asked at most twice (``MAX_ASKS_PER_QUESTION``); after that
-      the recommended option is applied, recorded as ``source="default"`` and disclosed,
-      so a creator who never answers is never looped and never silently overruled.
+    * The server-owned answer WINS: once answered, the chosen length / clip subset is
+      written over whatever the model emitted on this turn (it may re-emit the old value
+      or follow the option's label); the matching brief requirement is superseded in the
+      pinned copy (``answered_brief``).
+    * The same question is asked at most twice (``MAX_ASKS_PER_QUESTION``). After that
+      nothing is chosen for the creator and nothing is rewritten: the conflict is returned
+      in ``exhausted`` and the plan passes through (receipts or the backstop then state the
+      unmet requirement). Only an explicit delegation ("you choose") picks the
+      recommended option, recorded as ``source="creator_delegated"``.
     * Model-authored ``choice_answers`` are discarded: answers are server-owned.
     """
 
@@ -832,15 +1016,18 @@ def resolve_choices(
     scoped = fold_scoped_answers(history)
     answers: list[dict[str, Any]] = []
     notices: list[str] = []
+    exhausted: list[UnresolvedChoice] = []
     for choice in collect_conflicts(data, brief, media_snapshot, capability):
         keys = {o.key for o in choice.options}
         prior = scoped.get(choice.conflict_id)
         if prior and prior.input_digest == choice.input_digest and prior.option_key in keys:
-            option_key, source = prior.option_key, "creator"
+            option_key = prior.option_key
+            source = "creator_delegated" if prior.delegated else "creator"
         elif count_asks(history, choice.conflict_id, choice.input_digest) >= MAX_ASKS_PER_QUESTION:
-            option_key, source = choice.recommended().key, "default"
+            exhausted.append(choice)
+            continue
         else:
-            return ChoiceResolution(data, tuple(answers), choice, tuple(notices))
+            return ChoiceResolution(data, tuple(answers), choice, tuple(notices), tuple(exhausted))
         answers.append(
             {
                 "conflict": choice.conflict_id,
@@ -854,12 +1041,16 @@ def resolve_choices(
         _apply_effect(data, choice, option_key)
         note = _DISCLOSURES.get((choice.kind, option_key))
         if note:
-            notices.append(
-                note if source == "creator" else f"{note} (You didn't pick one, so I went with it.)"
-            )
+            notices.append(_disclose(note, source))
     if answers:
         data["choice_answers"] = answers
-    return ChoiceResolution(data, tuple(answers), None, tuple(notices))
+    return ChoiceResolution(data, tuple(answers), None, tuple(notices), tuple(exhausted))
+
+
+def _disclose(note: str, source: object) -> str:
+    return (
+        f"{note} (You left it to me, so I went with it.)" if source == "creator_delegated" else note
+    )
 
 
 def answered_brief(brief: Any, strategy: Any) -> Any:
@@ -921,11 +1112,7 @@ def choice_notices(strategy: Any) -> list[str]:
             continue
         note = _DISCLOSURES.get((answer.get("kind"), answer.get("option")))
         if note:
-            out.append(
-                note
-                if answer.get("source") == "creator"
-                else f"{note} (You didn't pick one, so I went with it.)"
-            )
+            out.append(_disclose(note, answer.get("source")))
     return out
 
 
@@ -972,6 +1159,7 @@ __all__ = [
     "CONFLICT_ORDER_BASIS",
     "CONFLICT_PRIORITY",
     "CONFLICT_TEXT_PLACEMENT",
+    "KEEP_OPEN_REASON",
     "MAX_ASKS_PER_QUESTION",
     "OPT_ATTACHMENT_ORDER",
     "OPT_EXTEND",
@@ -987,6 +1175,7 @@ __all__ = [
     "choice_notices",
     "collect_conflicts",
     "count_asks",
+    "delegated_choice",
     "fold_scoped_answers",
     "match_open_choice",
     "normalize_reply",

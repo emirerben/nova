@@ -55,6 +55,7 @@ from app.models import (
 from app.schemas.user_song import SongOrderAnswerIn
 from app.services.choice_questions import (
     ChoiceSelectionIn,
+    delegated_choice,
     latest_open_choice_question,
     match_open_choice,
 )
@@ -263,14 +264,17 @@ _FREE_TEXT_CHOICE_WINDOW = 12
 
 async def _free_text_choice_selection(
     db: AsyncSession, thread: CreationThread, message: str
-) -> ChoiceSelectionIn | None:
+) -> tuple[ChoiceSelectionIn, bool] | None:
     """KRI-476: a plain message that IS an answer becomes a server-owned ``choice_selection``.
 
     Deterministic and exact: the message must normalise (case, punctuation, whitespace)
-    to exactly one option's label, key, list number or server-defined alias of the thread's
-    open choice question. Anything else returns ``None`` and goes to the Creator agent
-    like any message; the question stays in the thread, so the agent sees it, and the
-    planner gate re-asks at most once (``MAX_ASKS_PER_QUESTION``), never in a loop.
+    to exactly one option's label, key, list number or server-defined alias of the
+    thread's open choice question, or explicitly hand the choice over ("you choose": the
+    recommended option, flagged ``delegated``). Anything else returns ``None`` and goes to
+    the Creator agent like any message. The question is open only while it is the live
+    last assistant turn (``latest_open_choice_question``), so a later text question's
+    answer is never read as this one's; the planner gate re-asks at most once
+    (``MAX_ASKS_PER_QUESTION``), never in a loop.
     """
 
     rows = (
@@ -288,9 +292,14 @@ async def _free_text_choice_selection(
     if question is None:
         return None
     option_key = match_open_choice(question, message)
+    delegated = False
+    if option_key is None:
+        option_key = delegated_choice(question, message)
+        delegated = option_key is not None
     if option_key is None:
         return None
-    return ChoiceSelectionIn(question_id=str(question["question_id"]), option_key=option_key)
+    selection = ChoiceSelectionIn(question_id=str(question["question_id"]), option_key=option_key)
+    return selection, delegated
 
 
 async def _owned_thread(
@@ -434,6 +443,7 @@ async def submit_turn(
         )
 
     choice_selection = body.choice_selection
+    choice_delegated = False
     if (
         choice_selection is None
         and settings.kria_choice_questions_enabled
@@ -442,7 +452,9 @@ async def submit_turn(
     ):
         # The request digest above stays that of the body as sent (idempotency); only
         # the stored event carries the derived selection.
-        choice_selection = await _free_text_choice_selection(db, thread, body.message)
+        derived = await _free_text_choice_selection(db, thread, body.message)
+        if derived is not None:
+            choice_selection, choice_delegated = derived
     if body.clip_selection is not None and settings.kria_clip_selection_questions_enabled:
         await _validate_clip_selection(db, thread, body.clip_selection)
     if body.song_order is not None and settings.user_song_montage_enabled:
@@ -641,7 +653,12 @@ async def submit_turn(
                 else {}
             ),
             **(
-                {"choice_selection": choice_selection.model_dump(mode="json")}
+                {
+                    "choice_selection": {
+                        **choice_selection.model_dump(mode="json"),
+                        **({"delegated": True} if choice_delegated else {}),
+                    }
+                }
                 if choice_selection is not None and settings.kria_choice_questions_enabled
                 else {}
             ),

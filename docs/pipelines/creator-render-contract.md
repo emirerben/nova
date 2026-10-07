@@ -129,37 +129,64 @@ render route, and returns typed `UnresolvedChoice` items (`kind`, `field_path`,
 `requirement_ids`, `options`, `input_digest`) in a fixed priority order. One question per
 turn.
 
-| Kind | Detector | Options (all executable today) | Persisted answer |
-| --- | --- | --- | --- |
-| `order_basis` | A capture-time/chronological order is required and some selected clip has no capture time (the contract's own `unresolved` condition). | `attachment_order` (the order the clips were added), `unordered` (no chronological promise). A creator-typed sequence is NOT offered: nothing can receive one yet. | `choice_answers[]`; the contract carries `order_basis="attachment_order"` + `order_ids`, or `order_required=false`. |
-| `duration_vs_count` | An explicit length and a montage whose N clips cannot each get the readable-shot floor (`unified_montage.MIN_READABLE_SHOT_S`, 0.8 s). 30 clips in 15 s asks; 30 in 60 s, a default length, fewer clips than fit, a creator cadence or a selected subset never ask. | `extend` (the length N x floor needs, e.g. 24 s), `fewer` (the clips that fit, evenly spaced). Flash-cutting is never offered. | `target_duration_s` (+ `target_duration_requested`) or `selected_media_ids` + `media_scope="selected"`; the pinned brief timing requirement is updated to match. |
-| `text_placement` | A dictated shot text whose literal appears on two or more draft shots. | One option per matching shot. | `choice_answers[]`; the contract sets that requirement's `shot_index`. |
+**Evidence rule.** A question needs something the CREATOR said, i.e. a live brief
+requirement. The Creator model must always emit `target_duration_s` and the server stamps
+`target_duration_requested` whenever it did, so neither is evidence of a stated length.
 
-Not questions: a text with no matching label, a rule the contract cannot verify, a
-technical failure, and any combination no renderer supports (typed declines above).
+| Kind | Evidence required | Detector | Options (all executable today) | Persisted field | Exempt (never asks) |
+| --- | --- | --- | --- | --- | --- |
+| `duration_vs_count` | A live brief `timing` requirement with `duration_s` (quoted in the question) | N clips of the snapshot (minus clips outside a resolved `include` intent) cannot each get the readable-shot floor (`unified_montage.MIN_READABLE_SHOT_S`, 0.8 s) in that length | `extend` (the length N x floor needs, if within the 120 s cap), `fewer` (the clips that fit, evenly spaced); flash-cutting is never offered | `target_duration_s` + requested flag (extend), or `selected_media_ids` + `media_scope=selected` + the length (fewer); the pinned brief timing requirement is updated to match | Strategy-only lengths; non-montage formats; a live `select` requirement with no resolved subset; `montage_cadence`, `mixed_media_timing`, `montage_audio`, `archetype`, `execution_contract`; `audio_strategy` voiceover / user_song, `song_sync` (those planners never read the strategy length) |
+| `order_basis` | A live brief `order` requirement, or `ordering_choice=chronological` | (a) a capture-time/chronological order and some selected clip has no capture time (the contract's own condition); (b) a key-less or non-capture rule ("clips 1, 2, 3 in that sequence", "along my route") the contract cannot verify | `attachment_order` (the order the clips were added), `unordered` (no promise). A creator-typed sequence is NOT offered: nothing can receive one yet | `choice_answers[]`; the contract carries `order_basis="attachment_order"` + `order_ids`, or `order_required=false` | Rule (b) when the server already placed the sequence (a resolved `order` intent with assignments) |
+| `text_placement` | A live brief dictated shot text | The literal appears on two or more draft shots | One `On shot N` option per matching shot | `choice_answers[]`; the contract sets that requirement's `shot_index` | A text with no matching label (a planner miss) |
+
+Not questions: a rule no option can fix, a technical failure, and any combination no
+renderer supports (typed declines above).
 
 **Where it runs.** `planner.plan_live_turn` runs the gate AFTER the media snapshot is
 attached, on the same snapshot approval binds (`_plan_from_creator_output` runs before
 it and would invent "missing capture dates"). `_complete_draft_turn` re-checks as a
-backstop: with an open choice, or a contract that still has `unresolved` items, it rolls
-back to a respond turn instead of minting an approvable draft.
+backstop: with an open choice, or (for creators with a brief binding, the only ones whose
+dispatch contract reads the brief) a contract that still has `unresolved` items, it
+rolls back to a respond turn instead of minting an approvable draft. It says "your draft
+is unchanged" only when a draft exists.
 
-**Answers.** A tapped `choice_selection` or a plain message that normalises (case,
+**Answers.** A tapped `choice_selection`, or a plain message that normalises (case,
 punctuation, whitespace) to exactly one option key, label, list number or server alias
-(`submit_turn` -> `match_open_choice`) is stored on the thread and replayed on every
-later turn. `resolve_choices` applies it only when the question's `input_digest` still
-equals the digest of the current inputs, so a changed media set or length reopens just
-that question and an old answer never answers a different one. Applied answers are
-server-owned strategy fields (`CreativeStrategy.choice_answers`, a model-authored value
-is discarded), link to the brief requirement ids they resolve, are part of the
-`BriefBinding` digest when present, and are disclosed in the draft summary. The same
-question is asked at most twice; after the single re-ask the recommended option is
-applied with `source="default"` and said so, never a loop.
+(`submit_turn` -> `match_open_choice`), is stored on the thread and replayed on every
+later turn. A question is open only while it is the live last assistant turn: any later
+assistant event (a text question, a draft) closes it, and once it has been asked twice a
+later non-answer closes it too (a recovery that restates it in words reopens it).
+`resolve_choices` applies an answer only when the question's `input_digest` still equals
+the digest of the current inputs, so a changed media set or brief length reopens just that
+question and an old answer never answers a different one. **The server-owned answer
+wins:** the chosen length / clip subset is written over whatever the model emitted that
+turn (it may re-emit the old value or follow the option's label), and the matching brief
+requirement is superseded in the PINNED copy (`answered_brief`; the thread's stored brief
+keeps what the creator typed). Applied answers are `CreativeStrategy.choice_answers`
+(server-owned: a model- or client-written value is discarded), link to the brief
+requirement ids they resolve, are part of the `BriefBinding` digest when present, and are
+disclosed in the draft summary.
 
-**Known gaps.** `group_first` is not yet an explicit contract order basis: the
-arrangement is computed at render time (visual scatter, sequence intents), so pinning it
-needs the route resolver (PR-D). Questions render through the generic v1
-`ChoiceQuestionCard` on iOS; web has no question card and shows the plain-text list.
+**Never a default.** The same question is asked at most twice. After that nothing is
+chosen for the creator and no requirement is rewritten: the plan goes through and the
+receipts state what is unmet; an unverifiable order becomes ONE plain message quoting the
+two ways forward. Only an explicit delegation ("you choose", "surprise me", "whatever")
+picks the recommended option, recorded as `source="creator_delegated"` and disclosed.
+
+**Known limits.**
+
+* An answer is invalidated only by a digest change (different clips, different brief
+  length/order rule). A later explicit instruction that repeats the old value
+  ("keep it 15 seconds") re-derives the same digest and the old answer is re-applied; it
+  is not treated as reopening, because a re-sent prompt must not re-ask.
+* `group_first` is not yet an explicit contract order basis: the arrangement is computed at
+  render time (visual scatter, sequence intents), so pinning it needs the route resolver
+  (PR-D).
+* `route` order rules are asked about (the contract pins capture-time only) even though
+  the montage renders route order as capture order; "use the order you added the clips" is
+  not what the creator asked for there.
+* Questions render through the generic v1 `ChoiceQuestionCard` on iOS; web has no question
+  card and shows the plain-text list.
 
 ## Stored-contract compatibility
 

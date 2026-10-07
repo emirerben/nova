@@ -287,8 +287,9 @@ class ChoiceAnswer(_CreatorModel):
 
     ``input_digest`` scopes it to the exact media set and strategy fields the question
     depended on; ``requirement_ids`` link it to the brief requirements it resolves.
-    ``source`` is ``creator`` for a tapped/typed answer and ``default`` when the same
-    question went unanswered after its single re-ask (the draft then says so).
+    ``source`` is ``creator`` for a tapped/typed answer and ``creator_delegated`` when the
+    creator explicitly left the choice to us ("you choose"; the draft then says so).
+    An unanswered question never produces an answer.
     """
 
     conflict: str = Field(min_length=1, max_length=80)
@@ -296,7 +297,7 @@ class ChoiceAnswer(_CreatorModel):
     option: str = Field(min_length=1, max_length=64)
     input_digest: str = Field(min_length=1, max_length=64)
     requirement_ids: list[str] = Field(default_factory=list, max_length=16)
-    source: Literal["creator", "default"] = "creator"
+    source: Literal["creator", "creator_delegated"] = "creator"
 
 
 class CreativeStrategy(_CreatorModel):
