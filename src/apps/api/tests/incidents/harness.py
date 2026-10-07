@@ -387,12 +387,12 @@ def voice_behind_footage_composition(record: IncidentRecord, monkeypatch: pytest
         strategy = resolve_choices(
             strategy, binding.resolve(), binding.media_snapshot, events
         ).strategy
-    previous = (record.approved.strategy, planner.settings.clip_intents_enabled)
+    original = record.approved.strategy
     record.approved.strategy = strategy
     try:
         contract = build_contract(record)
     finally:
-        record.approved.strategy = previous[0]
+        record.approved.strategy = original
     assert contract is not None and not contract.unresolved, contract
     commitments = commitments_from_strategy(strategy)
     assert commitments is not None, "the plan carries no continuous voice"

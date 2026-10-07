@@ -244,6 +244,15 @@ async def test_a_long_voice_with_no_stated_length_asks_how_long(monkeypatch) -> 
     )
     strategy = _strategy(picked)
     assert strategy["target_duration_s"] == 60 and strategy["target_duration_requested"] is True
+    # The answer is the evidence of the length: the contract pins it though the brief has none.
+    contract = build_render_contract(
+        strategy,
+        generation_id="g",
+        brief=_brief(_order()),
+        media_snapshot={"clip_assignments": _voice_rows(voice_s=147.7)},
+        composition=commitments_from_strategy(strategy),
+    )
+    assert contract is not None and contract.duration_s == 60
 
 
 # --- which_voice -----------------------------------------------------------------------------
