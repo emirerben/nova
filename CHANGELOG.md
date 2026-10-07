@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.132.0] - 2026-10-07
+
+### Changed
+- feat(route): one route resolver from the approved plan, in shadow mode (KRI-477) (#1457) <!-- release-pr: 1457 -->
+
 ## [0.78.131.0] - 2026-10-07
 
 ### Fixed
