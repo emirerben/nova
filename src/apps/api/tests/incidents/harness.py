@@ -38,7 +38,7 @@ from app.services.creator_render_contract import (
     verify_phone_recipe,
 )
 from app.services.phone_sources import PhoneSourceBinding
-from tests.incidents.loader import binding_for, media_snapshot
+from tests.incidents.loader import binding_for, build_contract, media_snapshot
 from tests.incidents.models import IncidentRecord, MediaFact
 
 
@@ -334,3 +334,123 @@ def resolved_route(record: IncidentRecord):
     inputs = route_inputs_from_job(assembly, candidates, platform=want.platform)
     assert inputs is not None
     return resolve_route(inputs)
+
+
+def voice_behind_footage_composition(record: IncidentRecord, monkeypatch: pytest.MonkeyPatch):
+    """Compose and verify the record's approved plan with the REAL voice composer (KRI-479).
+
+    Returns ``(recipe, receipt, facts)``; raises whatever the real composer or verifier
+    declines with. The contract is rebuilt the way a stamped dispatch does (answers applied
+    by the real ``resolve_choices``, commitments derived from the answered strategy).
+    """
+    from app.pipeline.phone_speech_montage_plan import (
+        compile_phone_voice_behind_footage_plan,
+        select_voice_window,
+    )
+    from app.services.choice_questions import resolve_choices
+    from app.services.creator_render_contract import commitments_from_strategy
+    from tests.incidents.models import OutputFacts
+
+    spec = record.inputs.voice_behind_footage
+    assert spec is not None
+    strategy = dict(record.approved.strategy or {})
+    binding = binding_for(record)
+    if spec.answers:
+        # Replay the creator's answers through the real gate, question by question.
+        events: list = []
+        for option in spec.answers:
+            resolution = resolve_choices(
+                strategy, binding.resolve(), binding.media_snapshot, events
+            )
+            assert resolution.question is not None, f"nothing to answer with {option!r}"
+            question = {
+                "question_id": f"q{len(events)}",
+                **{
+                    "conflict": resolution.question.conflict_id,
+                    "kind": resolution.question.kind,
+                    "input_digest": resolution.question.input_digest,
+                    "options": [{"key": o.key} for o in resolution.question.options],
+                },
+            }
+            events += [
+                ("assistant", {"choice_question": question}),
+                (
+                    "user",
+                    {
+                        "choice_selection": {
+                            "question_id": question["question_id"],
+                            "option_key": option,
+                        }
+                    },
+                ),
+            ]
+        strategy = resolve_choices(
+            strategy, binding.resolve(), binding.media_snapshot, events
+        ).strategy
+    previous = (record.approved.strategy, planner.settings.clip_intents_enabled)
+    record.approved.strategy = strategy
+    try:
+        contract = build_contract(record)
+    finally:
+        record.approved.strategy = previous[0]
+    assert contract is not None and not contract.unresolved, contract
+    commitments = commitments_from_strategy(strategy)
+    assert commitments is not None, "the plan carries no continuous voice"
+    by_id = {m.id: m for m in record.inputs.media}
+    voice_id = contract.audio_source_ids[0]
+    voice = _binding(by_id[voice_id])
+    picture = tuple(_binding(by_id[m]) for m in contract.order_ids)
+    duration = contract.duration_s or 24.0
+    seconds = by_id[voice_id].duration_s - 1.0
+    words, t, i = [], 0.4, 0
+    while t + 0.3 < seconds:
+        words.append(
+            {
+                "text": f"w{i}" + ("." if (i + 1) % 5 == 0 else ""),
+                "start_s": round(t, 3),
+                "end_s": round(t + 0.3, 3),
+            }
+        )
+        t, i = t + 0.5, i + 1
+    window = select_voice_window(
+        words, source_duration_s=voice.original.duration_s, max_length_s=duration - 0.05
+    )
+    opening = next((x for x in contract.exact_texts if x.role == "opening"), None)
+    recipe, receipt = compile_phone_voice_behind_footage_plan(
+        voice,
+        window,
+        picture,
+        duration_s=duration,
+        opening_title=opening.text if opening else None,
+        opening_title_hold_s=opening.duration_s if opening else None,
+        allow_silent_tail=commitments.voice_span_s is not None,
+    )
+    verify_phone_recipe(
+        contract,
+        recipe,
+        source_audio={m.id: bool(m.has_audio) for m in record.inputs.media},
+        composition=commitments,
+    )
+    manifest = {a.id: a for a in recipe.asset_manifest.assets}
+    heard = sorted(
+        {
+            manifest[clip.source_asset_id].media_id
+            for track in recipe.tracks
+            if track.kind == "audio"
+            for clip in track.clips
+            if clip.volume > 0
+        }
+    )
+    shown = [
+        manifest[clip.source_asset_id].media_id
+        for track in recipe.tracks
+        if track.kind == "video"
+        for clip in sorted(track.clips, key=lambda c: c.timeline_start)
+    ]
+    facts = OutputFacts(
+        duration_s=recipe.duration,
+        voice_source_ids=heard,
+        order_ids=shown,
+        exact_texts=[opening.text] if opening else None,
+    )
+    return recipe, receipt, facts

@@ -181,7 +181,11 @@ facts only, never copy), `observations`,
 `xfail` (`{reason: "KRI-47x / PR-x", scope: contract|refusal|question|output}`; the
 scope must be something the record really asserts), and `repro` (resolved against the
 repo by `test_repro_command_points_at_something_real`, including the `::test` part and
-`-k` ids). `synthetic` clips are deterministic ffmpeg colour/tone substitutes
+`-k` ids). `inputs.voice_behind_footage` (KRI-479; optional `answers`: option keys replayed through the real
+`resolve_choices`) composes the approved plan with the REAL voice-behind-footage composer and
+verifier (`test_voice_behind_footage_record_composes_and_verifies`: plan-to-recipe proof, the
+latest observation's facts must equal the compiled recipe's; the export proof is
+`scripts/ios/phone-audio-parity.py --cases voice_behind_footage`). `synthetic` clips are deterministic ffmpeg colour/tone substitutes
 regenerated on demand (`tests/incidents/synthetic.py`); generated media is never
 committed. `refusal.reason`/`field_path` are the typed decline (KRI-476 / PR-A) and are
 asserted unconditionally, so a record can stage them as a strict xfail.

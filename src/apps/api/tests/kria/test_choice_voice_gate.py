@@ -61,7 +61,7 @@ def _voice_rows(*, voice_s: float, pictures: int = 6, speech: dict[str, str] | N
                 "media_id": f"c{i:02d}",
                 "kind": "video",
                 "duration_s": 12.0,
-                "capture": {"capture_time": f"2026-06-01T09:{i:02d}:00Z"},
+                "capture": {"capture_time": f"2026-06-01T{9 + i // 60:02d}:{i % 60:02d}:00Z"},
             }
         )
     for media_id, quote in (speech or {}).items():
@@ -313,3 +313,25 @@ def test_the_voice_clip_is_not_counted_against_the_readable_floor() -> None:
     tight = strategy.model_copy(update={"target_duration_s": 20})
     kinds = [c.kind for c in collect_conflicts(tight, _brief(_timing(20)), snapshot)]
     assert kinds == ["duration_vs_count"]
+
+
+@pytest.mark.asyncio
+async def test_how_long_never_offers_a_length_the_clips_cannot_be_seen_in(monkeypatch) -> None:
+    """41 clips need 32.8 s at the readable floor: 30 s would be a trap, so only 60 s is offered."""
+    result = await _gate(
+        monkeypatch,
+        _voice_plan(24),
+        rows=_voice_rows(voice_s=147.7, pictures=41),
+        brief=_brief(_order()),
+    )
+    question = result.plan.choice_question
+    assert [o["key"] for o in question["options"]] == ["length_60"]
+    assert "32.8" in result.plan.response  # why only one length is on offer
+    # Not even a minute holds 80 clips: no question here; the composer declines, typed.
+    crowded = await _gate(
+        monkeypatch,
+        _voice_plan(24),
+        rows=_voice_rows(voice_s=147.7, pictures=80),
+        brief=_brief(_order()),
+    )
+    assert crowded.plan.mode == "act"

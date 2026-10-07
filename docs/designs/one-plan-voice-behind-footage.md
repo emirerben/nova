@@ -1,6 +1,7 @@
 # One plan, composable tracks: voice behind footage
 
-Status: DRAFT for human review (KRI-479, parent KRI-470). Docs only; nothing here is built.
+Status: SLICE IMPLEMENTED (KRI-479, PR-H); the rest of the design is still a proposal. See "Implementation
+status" at the end for what was built and where it deviates. (Originally a DRAFT for human review, docs only.)
 Date: 2026-10-07. Base: `origin/main` 0f3cfe6e8. Builds on PR-A (#1446, branch `codex/kri-470-a-matrix`,
 commit 2998f553e), which is not merged yet.
 
@@ -405,3 +406,34 @@ Open questions for the human reviewer (recommended answer first).
 9. **Implicit duration (KRI-469 as stated).** Ask "how long" only when voice `> 60 s`; otherwise default to `min(L, D_strategy)` and disclose. Confirm the 60 s ceiling (CLAUDE.md says sub-60 s output; schema max is 120 s).
 10. **No new env flag.** CLAUDE.md has about 12 characters of headroom and the plan's single kill switch (`KRIA_PLAN_AUTHORITY_ENABLED`) covers new jobs. Recommend accepting; rollback = flip the flag for new jobs.
 11. **Capture-time ties.** KRI-469's record has two clips with identical `capture_time` (13:06:18). `build_render_contract` sorts stably, so ties follow snapshot order. Recommend disclosing the tie in the plan card rather than asking.
+
+## Implementation status (PR-H)
+
+Built, as section 6 describes it: `voice_mode` strategy field (model-authored, prompt `2026-10-07-v46`),
+`compile_phone_voice_behind_footage_plan` + `select_voice_window` in `phone_speech_montage_plan.py`,
+`build_render_contract(composition=)` + the sibling `creator_composition` key, the verifier checks
+(`composition=`), `Route.VOICE_BEHIND_FOOTAGE` + `run_phone_voice_behind_footage_job` + one stamped-only
+dispatcher branch, `which_voice` / `voice_vs_duration`, the `voice_behind_footage` export-proof case in
+`scripts/ios/phone-audio-parity.py`, and corpus records. Details: `docs/pipelines/creator-render-contract.md`,
+"Voice behind footage".
+
+Deviations and decisions made while building (all within the accepted answers in section 9):
+
+- Q4: `voice_mode` is `upstream_resolved` in `FIELD_MATRIX`, not `supported`: the matrix guard defines
+  `supported` as "changes the pinned projection", and by design (hard rule: no contract field) it does not.
+  Dispatch derives the commitments from it instead.
+- `voice_span_s` is set ONLY for a chosen silent tail (the voice clip's length less the margin); `None` means
+  "covers the whole picture". The plan-time `min(usable voice, duration)` of the table needs speech timing that
+  does not exist before transcription. For a silent tail the worker verifies against the smaller of the
+  commitment and the speech the transcript actually found.
+- The verifier allows the voice to stop up to `VOICE_TAIL_SLACK_S` (3 s) before the picture ends (the sentence-snap
+  slack of section 6 step 1), so `voice_covers_timeline` is "covers the picture end minus 3 s", not "to the frame".
+- The slice variant reuses the `speech_montage` variant id / `resolved_archetype` so every existing consumer
+  (editor refusal, client) treats it as a device-only fixed recipe; the record carries `route:
+  "voice_behind_footage"`.
+- The implicit "how long" question offers only lengths in which every picture clip can be seen at the 0.8 s floor
+  (41 clips: 60 s only), and `duration_vs_count` now also applies to this shape.
+- A model-added day-vlog / single-hero shape next to a continuous voice is cleared rather than demoting the voice.
+- The `voice_mode` question of section 3 is not implemented (the Creator sets the field).
+- `kri469-voice-clip-ignored` stays xfail with a precise note (see the pipeline doc); the shape is covered by
+  synthetic records instead.

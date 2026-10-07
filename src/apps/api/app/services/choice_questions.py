@@ -235,7 +235,11 @@ def choice_question_text(candidate: ConflictCandidate) -> str:
             f"{candidate.intro} Unfortunately {candidate.reason} The most I can do is: "
             f'{only.label}. Reply "{only.label}" to go with that, or change your request.'
         )
-    lines = [f"{candidate.intro} Unfortunately {candidate.reason} Which do you prefer?"]
+    if candidate.reason.endswith("?"):
+        # The reason is itself the question ("How long should the video be?").
+        lines = [f"{candidate.intro} {candidate.reason}"]
+    else:
+        lines = [f"{candidate.intro} Unfortunately {candidate.reason} Which do you prefer?"]
     for index, option in enumerate(options, start=1):
         mark = " (recommended)" if option.recommended else ""
         lines.append(f"{index}. {option.label}{mark}")
@@ -1068,6 +1072,20 @@ def _has_speech(row: Mapping[str, Any]) -> bool:
     return bool(clip_record(row.get("analysis"), kind=kind).speech.has_speech)
 
 
+def _picture_ids(strategy: Mapping[str, Any], rows: list[Any]) -> list[str]:
+    """The clips a continuous voice's picture is cut from: the plan's clip set minus the voice."""
+
+    voice_id = _continuous_voice(strategy)
+    ids = [str(r["media_id"]) for r in rows if isinstance(r, Mapping) and r.get("media_id")]
+    kept = _included_ids(strategy)
+    chosen = {str(m) for m in strategy.get("selected_media_ids") or []}
+    return [
+        m
+        for m in ids
+        if m != voice_id and (kept is None or m in kept) and (not chosen or m in chosen)
+    ]
+
+
 def _which_voice(
     strategy: Mapping[str, Any], brief: Any, rows: list[Any], cap: ChoiceCapability
 ) -> UnresolvedChoice | None:
@@ -1174,31 +1192,47 @@ def _voice_vs_duration(
         intro = f'Your brief says "{said}" and your voice clip runs {voice_s} seconds.'
         reason = "Your voice can't fill the whole video."
     elif length > _VOICE_IMPLICIT_ASK_S:
-        options = (
+        from app.pipeline.unified_montage import MIN_READABLE_SHOT_S  # noqa: PLC0415
+
+        floor_s = cap.min_readable_shot_s or MIN_READABLE_SHOT_S
+        count = len(_picture_ids(strategy, rows))
+        # Only lengths the composer can honour: every picture clip once, at least a readable
+        # shot each. (41 clips cannot be seen in 30 s; offering it would be a trap.)
+        fitting = [
+            (key, seconds, label, alias)
+            for key, seconds, label, alias in (
+                (OPT_LENGTH_30, 30, "30 seconds", ("30", "thirty seconds")),
+                (OPT_LENGTH_60, 60, "60 seconds", ("60", "a minute", "one minute")),
+            )
+            if count * floor_s <= seconds + 1e-9
+        ]
+        if not fitting:
+            return None  # not even a minute holds them: the composer's typed decline says so
+        options = tuple(
             ConflictOption(
-                key=OPT_LENGTH_30,
-                label="30 seconds",
-                description="The first part of your voice, as a quick video.",
-                recommended=True,
-                aliases=("30", "30 seconds", "thirty seconds"),
-            ),
-            ConflictOption(
-                key=OPT_LENGTH_60,
-                label="60 seconds",
-                description="A minute of your voice.",
-                aliases=("60", "60 seconds", "a minute", "one minute"),
-            ),
+                key=key,
+                label=label,
+                description=(
+                    "The first part of your voice, as a quick video."
+                    if seconds == 30
+                    else "A minute of your voice."
+                ),
+                recommended=index == 0,
+                aliases=(label, *alias),
+            )
+            for index, (key, seconds, label, alias) in enumerate(fitting)
         )
         effects = {
-            OPT_LENGTH_30: {
-                "strategy": {"target_duration_s": 30, "target_duration_requested": True}
-            },
-            OPT_LENGTH_60: {
-                "strategy": {"target_duration_s": 60, "target_duration_requested": True}
-            },
+            key: {"strategy": {"target_duration_s": seconds, "target_duration_requested": True}}
+            for key, seconds, _label, _alias in fitting
         }
         intro = f"Your voice clip runs {_clean_seconds(length)} seconds."
-        reason = "How long should the video be?"
+        reason = (
+            "How long should the video be?"
+            if len(fitting) == 2
+            else f"{count} clips need at least {_clean_seconds(count * floor_s)} seconds to "
+            "each be seen."
+        )
         requirement_ids = []
     else:
         return None
