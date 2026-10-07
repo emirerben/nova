@@ -944,6 +944,36 @@ def check_phone_dispatch_contract(
     return contract.require_voiceover
 
 
+def stamped_plan_contract(
+    assembly: Mapping[str, Any], candidates: Mapping[str, Any] | None
+) -> CreatorRenderContract | None:
+    """The pinned contract of a plan-authority job; ``None`` for every legacy job.
+
+    KRI-470 PR-F gate.  A job is plan-authority only when it carries the dispatch-time
+    ``PLAN_AUTHORITY_FIELD`` stamp (workers never read the live flag) AND a pinned
+    contract.  Every retired heuristic override is guarded by this one function, so an
+    unstamped job (or a stamped one with no contract to follow) keeps the legacy branch
+    byte for byte.
+    """
+
+    if not candidates or candidates.get(PLAN_AUTHORITY_FIELD) is None:
+        return None
+    return read_render_contract(assembly)
+
+
+def plan_voiceover_path(contract: CreatorRenderContract | None, attached: str | None) -> str | None:
+    """The recorded voice that may decide a route (KRI-470 PR-F).
+
+    Legacy: the mere presence of an attached file.  Plan-authority: the approved
+    contract -- a stray attached recording does not change the route, and a required
+    voice with no attached file stays ``None`` so the caller can ask for it.
+    """
+
+    if contract is None:
+        return attached or None
+    return (attached or None) if contract.require_voiceover else None
+
+
 def speech_edit_not_built() -> CreatorRenderContractError:
     """The speech adapter declined a contract that requires camera-audio sources."""
 

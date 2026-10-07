@@ -6008,7 +6008,22 @@ def _run_phone_subtitled_job(
         )
 
     edit_format = coerce_edit_format(all_candidates.get("edit_format"))
-    has_voiceover = bool(all_candidates.get("voiceover_gcs_path"))
+    # KRI-470 PR-F: the dispatcher chose this branch from the approved contract
+    # (`check_phone_dispatch_contract`), so a plan-authority job derives the voice from
+    # the same contract. Recomputing it from the attached FILE sent a narrated format
+    # with a stray recording but no voice requirement to the "No phone renderer" error
+    # below. Legacy (unstamped) jobs keep the file test.
+    from app.services.creator_render_contract import (  # noqa: PLC0415
+        plan_voiceover_path,
+        stamped_plan_contract,
+    )
+
+    has_voiceover = bool(
+        plan_voiceover_path(
+            stamped_plan_contract(snapshot, all_candidates),
+            all_candidates.get("voiceover_gcs_path"),
+        )
+    )
     self_narrated = edit_format in NARRATED_EDIT_FORMATS and not has_voiceover
     if edit_format != "subtitled" and not self_narrated:
         raise ValueError(f"No phone renderer is registered for edit_format={edit_format!r}")
