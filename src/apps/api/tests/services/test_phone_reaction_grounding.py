@@ -480,6 +480,126 @@ def test_visual_is_video(monkeypatch):
     ]
 
 
+# --- KRI-521: "when I say X, show my video" ------------------------------------
+
+# The T3 Kadıköy take: "İlk durak Moda'da, deniz kenarında..." at 7.7 s.
+_KADIKOY_WORDS = [
+    _word("Bakın", 4.1, 4.4),
+    _word("kahve", 5.2, 5.6),
+    _word("İlk", 7.7, 7.9),
+    _word("durak", 7.95, 8.3),
+    _word("Moda'da,", 8.35, 8.9),
+    _word("kahve", 10.9, 11.3),
+]
+
+
+def _video_asset(id_: str, *, duration_s: float | None = 5.033, generation: str | None = "9"):
+    asset = _asset(id_, kind="video", generation=generation, filename="T3_02_visual.mp4")
+    asset.update({"duration_s": duration_s, "aspect": 0.5625})
+    return asset
+
+
+def _ground_kadikoy(beats: list[dict], *, video_supported: bool = True):
+    return rg.ground_phone_reaction_beats(
+        _open_session,
+        job_id="j1",
+        beats=beats,
+        closing=None,
+        words=_KADIKOY_WORDS,
+        duration_s=33.6,
+        clip_path=None,
+        video_supported=video_supported,
+    )
+
+
+def test_video_beat_becomes_a_muted_corner_video_card(monkeypatch):
+    """The model binds the brewing video (an `asset-*` manifest id) to the
+    spoken "İlk durak": it plays muted from its first frame, for its own
+    length, in the photo corner -- not refused as `visual_is_video`."""
+    _patch(monkeypatch, assets=[_video_asset("d6f9")])
+    result = _ground_kadikoy(
+        [
+            {
+                "beat_id": "ilk-durak",
+                "trigger": "İlk durak",
+                "visual_id": "asset-d6f9",
+                "visual_role": "photo",
+            }
+        ]
+    )
+
+    assert len(result.cards) == 1
+    card = result.cards[0]
+    assert card.kind == "video"
+    assert card.source_start_s == 0.0
+    assert card.media_id == "d6f9"
+    assert card.generation == "9"
+    assert card.start_s == 7.7
+    assert round(card.end_s, 3) == round(7.7 + 5.033, 3)
+    assert card.y_frac <= rg.CAPTION_BAND_TOP_FRAC
+    dumped = card.model_dump()
+    assert dumped["kind"] == "video" and dumped["source_start_s"] == 0.0
+    assert result.receipt["unplaced"] == []
+    assert [p["beat_id"] for p in result.receipt["placed"]] == ["ilk-durak"]
+
+
+def test_video_beat_hold_never_outlasts_the_video_and_takes_the_photo_slot(monkeypatch):
+    _patch(monkeypatch, assets=[_video_asset("d6f9", duration_s=2.0)])
+    result = _ground_kadikoy(
+        [
+            {
+                "beat_id": "ilk-durak",
+                "trigger": "İlk durak",
+                "visual_id": "asset-d6f9",
+                "visual_role": "sticker",
+                "hold_s": 8.0,
+            }
+        ]
+    )
+    (card,) = result.cards
+    assert round(card.end_s - card.start_s, 3) == 2.0
+    # A video is a picture-in-picture clip, never stacked as a sticker badge.
+    assert card.z == 0
+
+
+def test_long_video_beat_is_capped_without_an_explicit_hold(monkeypatch):
+    _patch(monkeypatch, assets=[_video_asset("d6f9", duration_s=40.0)])
+    result = _ground_kadikoy([{"beat_id": "b", "trigger": "İlk durak", "visual_id": "asset-d6f9"}])
+    (card,) = result.cards
+    assert round(card.end_s - card.start_s, 3) == rg._VIDEO_HOLD_S_MAX
+
+
+def test_video_beat_without_a_generation_is_not_in_the_pool(monkeypatch):
+    _patch(monkeypatch, assets=[_video_asset("d6f9", generation=None)])
+    result = _ground_kadikoy([{"beat_id": "b", "trigger": "İlk durak", "visual_id": "asset-d6f9"}])
+    assert result.cards == []
+    assert result.receipt["unplaced"] == [
+        {"beat_id": "b", "trigger": "İlk durak", "reason": "visual_not_in_pool"}
+    ]
+
+
+def test_video_beat_still_refused_when_video_cards_are_off(monkeypatch):
+    _patch(monkeypatch, assets=[_video_asset("d6f9")])
+    result = _ground_kadikoy(
+        [{"beat_id": "b", "trigger": "İlk durak", "visual_id": "asset-d6f9"}],
+        video_supported=False,
+    )
+    assert result.cards == []
+    assert result.receipt["unplaced"] == [
+        {"beat_id": "b", "trigger": "İlk durak", "reason": "visual_is_video"}
+    ]
+
+
+def test_video_cards_never_change_a_photo_beat_card(monkeypatch):
+    """A photo beat's card keeps its pre-KRI-521 persisted shape (no `kind`)."""
+    _patch(monkeypatch, assets=[_asset("p1")])
+    beats = [{"beat_id": "b", "trigger": "İlk durak", "visual_id": "asset-p1"}]
+    on = _ground_kadikoy(beats)
+    off = _ground_kadikoy(beats, video_supported=False)
+    assert [c.model_dump() for c in on.cards] == [c.model_dump() for c in off.cards]
+    assert "kind" not in on.cards[0].model_dump()
+
+
 def test_sound_not_found(monkeypatch):
     _patch(monkeypatch, assets=[], sfx=[])
     words = [_word("hello", 0.0, 0.3)]

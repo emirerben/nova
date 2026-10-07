@@ -6765,6 +6765,9 @@ def _run_phone_subtitled_job(
                                     words=raw_words or [],
                                     duration_s=float(probe.duration_s),
                                     clip_path=clip_path,
+                                    # KRI-521: "when I say X, show my video" -- the
+                                    # same gate the KRI-183 PiP pass uses.
+                                    video_supported=video_overlays_enabled,
                                 )
                             )
                         except OperationalError:
@@ -6919,6 +6922,13 @@ def _run_phone_subtitled_job(
                                 overlay_receipt,
                                 grounded_media_ids & video_media_ids,
                                 "video_not_supported",
+                            )
+                        beat_video_card_ids = frozenset(
+                            card.id for card in beat_cards if card.media_id in video_media_ids
+                        )
+                        if beat_video_card_ids and beat_receipt is not None:
+                            beat_receipt = _demote_beat_receipt(
+                                beat_receipt, card_ids=beat_video_card_ids, reason="visual_is_video"
                             )
                     if overlay_cards and "image" not in visual_kinds:
                         lane_drops.append(

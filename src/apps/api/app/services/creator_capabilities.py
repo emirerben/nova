@@ -865,7 +865,8 @@ def _repair_creator_reaction_beats(
     fields entirely.
     Repairs (b)/(c): resolve every `visual_id`/`badge_visual_id` against an
     owned IMAGE media entry (drop the beat, or fall back to no closing media,
-    when it doesn't resolve) and every `sound` against the sound-effect
+    when it doesn't resolve; a beat's `visual_id` may also be a Visuals VIDEO
+    where video cards render, KRI-521) and every `sound` against the sound-effect
     catalog (canonical id when it matches, otherwise left as the creator's own
     words for the worker to resolve by description).
     """
@@ -891,14 +892,32 @@ def _repair_creator_reaction_beats(
         resolved = resolve_creator_sfx_catalog_ref(manifest, sound)
         return resolved.catalog_id if resolved is not None else sound
 
+    # KRI-521: a beat may also pop a Visuals VIDEO in the corner ("when I say
+    # 'first stop', show the brewing video small") wherever the phone draws
+    # muted video cards (KRI-183).
+    video_cards = manifest.capabilities.get(CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS)
+    videos_allowed = video_cards is not None and video_cards.available
     beats = []
     for beat in strategy.reaction_beats or []:
         visual_id = beat.visual_id
         if visual_id is not None:
             resolved_media = resolve_creator_image_media_ref(manifest, visual_id)
             if resolved_media is None:
-                notices.append(f"Couldn't find \"{beat.trigger}\"'s photo/sticker; left it out.")
-                continue
+                video = resolve_creator_visual_video_media_ref(manifest, visual_id)
+                if video is not None and videos_allowed:
+                    resolved_media = video
+                elif video is not None:
+                    notices.append(
+                        "Videos can't pop up on your words in this edit yet, so the video "
+                        f'for "{beat.trigger}" is left out.'
+                    )
+                    continue
+                else:
+                    notices.append(
+                        f'Couldn\'t find the photo or sticker for "{beat.trigger}" in your '
+                        "Visuals; left it out."
+                    )
+                    continue
             visual_id = resolved_media.media_id
         beats.append(
             beat.model_copy(update={"visual_id": visual_id, "sound": _resolve_sound(beat.sound)})
@@ -1263,13 +1282,40 @@ def resolve_creator_image_media_ref(
     catalog: only the descriptive manifest is consulted here, never storage.
     """
 
+    return _match_owned_media_ref(
+        [item for item in manifest.media if item.kind == "image"], requested
+    )
+
+
+def resolve_creator_visual_video_media_ref(
+    manifest: ResolvedCreatorManifest,
+    requested: str | None,
+) -> CreatorMediaRef | None:
+    """Resolve a Visuals-pool VIDEO by the same exact id/label match (KRI-521).
+
+    Only `asset-*` entries count: a reaction beat can pop a Visuals video in the
+    corner, never the speaker's own take.
+    """
+
+    return _match_owned_media_ref(
+        [
+            item
+            for item in manifest.media
+            if item.kind == "video" and item.media_id.startswith("asset-")
+        ],
+        requested,
+    )
+
+
+def _match_owned_media_ref(
+    candidates: list[CreatorMediaRef], requested: str | None
+) -> CreatorMediaRef | None:
     needle = " ".join(str(requested or "").split()).casefold()
     if not needle:
         return None
-    images = [item for item in manifest.media if item.kind == "image"]
     matches = [
         item
-        for item in images
+        for item in candidates
         if item.media_id.casefold() == needle or (item.label or "").strip().casefold() == needle
     ]
     if len(matches) != 1:
@@ -1305,6 +1351,7 @@ __all__ = [
     "normalize_creator_strategy_media",
     "repair_creator_reaction_beats",
     "resolve_creator_image_media_ref",
+    "resolve_creator_visual_video_media_ref",
     "resolve_creator_manifest",
     "resolve_creator_sfx_catalog_ref",
 ]
