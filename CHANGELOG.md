@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.143.0] - 2026-10-07
+
+### Changed
+- docs(design): composable voice/picture/order/text and the voice-behind-footage slice (KRI-479) (#1447) <!-- release-pr: 1447 -->
+
 ## [0.78.142.0] - 2026-10-07
 
 ### Changed
