@@ -18,6 +18,7 @@ from typing import Annotated, Any, Literal, Union, get_args, get_origin
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agents._schemas.creator_agent import CreativeStrategy
+from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.kria.brief import CreativeBrief
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
@@ -34,6 +35,14 @@ from app.services.choice_questions import (
 
 CONTRACT_FIELD = "creator_render_requirements"
 REQUIREMENT_VERSION_FIELD = "creator_render_requirements_version"
+# Edit formats whose length is set by the footage, not by a target: a Talking
+# edit keeps the whole take (minus speech-cleanup pauses) and a voiceover edit
+# runs as long as the voiceover. `brief_checks._check_timing` reports the same
+# rule to the creator (KRI-142). A declared `talking_head` is not here: its
+# cloud assembler caps the output at the target, and the phone only reaches a
+# multi-clip Talking head through the narrated family.
+TAKE_LENGTH_EDIT_FORMATS: frozenset[str] = frozenset({"subtitled", *NARRATED_EDIT_FORMATS})
+
 # KRI-470 kill-switch stamp in Job.all_candidates. Written once at contract stamp
 # time when KRIA_PLAN_AUTHORITY_ENABLED is on; workers branch on the stamp and
 # never on the live flag. Absent = legacy behaviour.
@@ -676,6 +685,16 @@ def build_render_contract(
     # choice (the answer rewrites it). A user-song item's
     # length is owned by the song window, never by a model-chosen target. Legacy
     # brief-less non-song strategies keep the marker behaviour unchanged.
+    # A Talking (subtitled) edit runs as long as the take and a voiceover edit (the
+    # narrated family, or a montage spined by a recorded voiceover) as long as the
+    # voiceover: no compiler trims those to a named length, so a length the creator
+    # asked for is not a fact the recipe can prove (the brief receipt already says
+    # the length follows the take or the voiceover). Pinning it refused every such
+    # edit at the pin step (job e1c5f89e, 2026-10-06: a 68 s Talking take approved
+    # with "keep it under 45 seconds").
+    length_is_pinnable = typed is None or not (
+        typed.edit_format in TAKE_LENGTH_EDIT_FORMATS or typed.audio_strategy == "voiceover"
+    )
     is_user_song = bool(typed and typed.audio_strategy == "user_song")
     duration_answered = answers.get(CONFLICT_DURATION_VS_COUNT) is not None
     brief_names_duration = bool(
@@ -686,7 +705,8 @@ def build_render_contract(
         not is_user_song and (brief is None or brief_names_duration)
     )
     if (
-        strategy_duration_is_evidence
+        length_is_pinnable
+        and strategy_duration_is_evidence
         and raw.get("target_duration_requested") is True
         and "target_duration_s" in raw
     ):
@@ -705,6 +725,8 @@ def build_render_contract(
     if brief:
         for requirement in brief.live():
             if requirement.kind == "timing" and requirement.facts.get("duration_s") is not None:
+                if not length_is_pinnable:
+                    continue
                 answered = answers.get(CONFLICT_DURATION_VS_COUNT)
                 if answered is not None and requirement.id in answered.requirement_ids:
                     # The creator chose a different length for exactly this requirement;

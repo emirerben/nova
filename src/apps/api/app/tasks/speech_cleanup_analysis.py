@@ -73,6 +73,11 @@ SPEECH_CLEANUP_SIGNED_URL_TTL_MINUTES = 15
 SPEECH_CLEANUP_PROCESS_KILL_GRACE_S = 5
 SPEECH_CLEANUP_WAV_HEADER_ALLOWANCE_BYTES = 64 * 1024
 SPEECH_CLEANUP_DURATION_TOLERANCE_S = 0.25
+# How much earlier than the picture the audio track may end and still be read
+# as the clip (the missing tail is padded with silence): the larger of this
+# many seconds and this share of the window. A bigger gap is a changed source.
+SPEECH_CLEANUP_MAX_AUDIO_SHORTFALL_S = 3.0
+SPEECH_CLEANUP_MAX_AUDIO_SHORTFALL_FRAC = 0.10
 SPEECH_CLEANUP_RECONCILE_SOFT_LIMIT_S = 20
 SPEECH_CLEANUP_RECONCILE_HARD_LIMIT_S = 25
 SPEECH_CLEANUP_PUBLISH_RETRY_S = 30
@@ -264,6 +269,12 @@ def _ffmpeg_command(*, signed_url: str, output_path: Path, work: _ClaimedWork) -
         "-vn",
         "-sn",
         "-dn",
+        # Anchor the audio to the window's first instant: a track that starts
+        # after the picture (a positive stream start_time) gets leading silence,
+        # so every detected word and pause stays in picture time. A track that
+        # ENDS early is padded after decoding (`_read_pcm_duration`).
+        "-af",
+        "aresample=async=1:first_pts=0",
         "-ac",
         str(SPEECH_CLEANUP_CHANNELS),
         "-ar",
@@ -310,9 +321,48 @@ def _read_pcm_duration(output_path: Path, *, requested_duration_s: float) -> flo
     if frame_count <= 0:
         raise SpeechCleanupOperationalError("no_speech_track", detail="empty_audio_artifact")
     duration_s = frame_count / SPEECH_CLEANUP_SAMPLE_RATE_HZ
-    if abs(duration_s - requested_duration_s) > SPEECH_CLEANUP_DURATION_TOLERANCE_S:
+    shortfall_s = requested_duration_s - duration_s
+    max_shortfall_s = max(
+        SPEECH_CLEANUP_MAX_AUDIO_SHORTFALL_S,
+        SPEECH_CLEANUP_MAX_AUDIO_SHORTFALL_FRAC * requested_duration_s,
+    )
+    if shortfall_s > max_shortfall_s:
+        raise SpeechCleanupOperationalError("snapshot_mismatch", detail="source_duration")
+    if shortfall_s > SPEECH_CLEANUP_DURATION_TOLERANCE_S:
+        # The audio track ends before the picture does (items 50004c29 /
+        # cc5f9715, 2026-10-06: a 68.0 s take whose AAC track runs 66.13 s;
+        # every other phone proxy was within 25 ms). That is the clip, not a
+        # changed source: the window stays the picture's, and the missing
+        # tail is silence the engine may cut like any other pause.
+        _pad_pcm_with_silence(output_path, frames=frame_count, add_seconds=shortfall_s)
+        log.info(
+            "speech_cleanup_analysis.audio_padded",
+            shortfall_ms=int(round(shortfall_s * 1000)),
+            requested_ms=int(round(requested_duration_s * 1000)),
+        )
+        return requested_duration_s
+    if -shortfall_s > SPEECH_CLEANUP_DURATION_TOLERANCE_S:
         raise SpeechCleanupOperationalError("snapshot_mismatch", detail="source_duration")
     return duration_s
+
+
+def _pad_pcm_with_silence(output_path: Path, *, frames: int, add_seconds: float) -> None:
+    """Append ``add_seconds`` of digital silence to the PCM WAV at ``output_path``."""
+    extra_frames = int(round(add_seconds * SPEECH_CLEANUP_SAMPLE_RATE_HZ))
+    if extra_frames <= 0:
+        return
+    try:
+        with wave.open(str(output_path), "rb") as artifact:
+            params = artifact.getparams()
+            pcm = artifact.readframes(frames)
+        silence = b"\x00" * (extra_frames * params.sampwidth * params.nchannels)
+        with wave.open(str(output_path), "wb") as padded:
+            padded.setparams(params)
+            padded.writeframes(pcm + silence)
+    except (OSError, EOFError, wave.Error) as exc:
+        raise SpeechCleanupOperationalError(
+            "unsupported_media", detail="invalid_audio_artifact"
+        ) from exc
 
 
 def _extract_bounded_audio(*, signed_url: str, output_path: Path, work: _ClaimedWork) -> float:
@@ -657,6 +707,7 @@ def analyze_speech_cleanup(analysis_id: str) -> dict[str, object]:
             "speech_cleanup_analysis.failed",
             analysis_id=str(work.claim.analysis_id),
             error_code=error.code,
+            detail=error.private_detail,
             retryable=error.retryable,
             persisted=persisted,
             source_kind=work.source_kind,
@@ -670,6 +721,7 @@ def analyze_speech_cleanup(analysis_id: str) -> dict[str, object]:
             "speech_cleanup_analysis.failed",
             analysis_id=str(work.claim.analysis_id),
             error_code=error.code,
+            detail=error.private_detail,
             retryable=error.retryable,
             persisted=persisted,
             source_kind=work.source_kind,

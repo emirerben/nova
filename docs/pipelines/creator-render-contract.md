@@ -261,7 +261,7 @@ renders differently because of it yet.
 
 | Requirement | Phone evidence | Cloud evidence | Current rule |
 | --- | --- | --- | --- |
-| Duration | Compiled recipe duration within the accepted tolerance | Renderer measured duration (`actual_duration_s` or measured `duration_s`) | Compare actual output; never compare desired metadata |
+| Duration | Compiled recipe duration within the accepted tolerance | Renderer measured duration (`actual_duration_s` or measured `duration_s`) | Compare actual output; never compare desired metadata. Not pinned on take-length formats (`TAKE_LENGTH_EDIT_FORMATS`: Talking `subtitled` keeps the take minus speech-cleanup pauses; the narrated family and a voiceover montage run as long as the voiceover) -- no compiler trims those to a named length, and the brief receipt tells the creator so (job e1c5f89e, 2026-10-06). |
 | Recorded voice | Audible `VoiceoverRenderAsset` on an audio track | `narration_applied`, set only when the mixer reports the recording is in the output file | Guided and classic honour it; missing evidence declines |
 | Camera audio (require / forbid) | Audible original assets, source IDs, and complete mute-window coverage | `source_audio_ids` + `source_audio_state` from the audio graph actually mixed | Guided honours and proves it; classic declines up front; named sources decline everywhere |
 | Chronological order | Every selected clip has capture evidence; recipe picture sequence matches resolved IDs | `actual_clip_order` / `picture_timeline` from the rendered moments | Guided: gated before render, then verified; classic declines up front |

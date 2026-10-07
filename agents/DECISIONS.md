@@ -2874,3 +2874,47 @@ Guards: `tests/kria/test_brief_talking_receipts.py` (the exact sourdough require
 helper, both checkers), `tests/kria/test_runtime_talking_first_draft.py` (first draft made;
 a dropped karaoke ask still asks, with "I haven't started a draft yet").
 
+## [2026-10-07] A take-length format never pins a requested length in the render contract (job e1c5f89e)
+
+The first retry of the sourdough Talking chat (thread 6bc94e7b) made its draft, the creator
+approved it, and the render failed at the pin step: `creator_render_contract.verify_phone_recipe`
+raised "This edit couldn't keep the confirmed length" because the approved strategy carried
+`target_duration_s: 40, target_duration_requested: true` ("Keep it under 45 seconds") and the
+single-clip Talking recipe is the 68 s take. KRI-470 (PR #1439, the day before) pins a requested
+length as a hard requirement for every format, but no compiler trims a Talking or voiceover edit
+to a length: `subtitled`/`talking_head` keep the take (minus speech-cleanup pauses) and the
+narrated family runs as long as the voiceover (KRI-142's `_TALKING_KEEPS_WHOLE_TAKE` /
+`_VOICEOVER_SETS_LENGTH` receipts already say so). Every such edit that named a length failed
+with "This edit uses something your iPhone can't render yet."
+
+Decision: `build_render_contract` pins a duration (from the strategy or a brief timing fact)
+only when the edit format is not in `TAKE_LENGTH_EDIT_FORMATS`; montage-family and speech
+montage keep KRI-470's rule unchanged. The creator still sees the honest "Partly: ... the length
+follows what's left of your take" receipt at draft time, so the approved summary and the contract
+agree. Guards: `tests/services/test_creator_render_contract.py::test_a_take_length_format_never_pins_a_requested_length`,
+`::test_the_sourdough_talking_recipe_passes_its_pinned_contract`, `::test_a_montage_still_pins_its_requested_length`.
+
+## [2026-10-07] Speech-cleanup preflight pads audio that ends before the picture (items 50004c29, cc5f9715)
+
+Both sourdough Talking chats scheduled a preflight analysis on `media_added`; both failed
+`snapshot_mismatch` 1.5 s later and, since that code is non-retryable, were never retried. The
+iPhone's approval card then showed "The speech check couldn't finish" with "Create without
+cleanup" as the primary button, so the creator's "cut out the long pauses" rendered uncut
+(`speech_cleanup_contract: off_v1`, `bypassed_unchecked`). Measured on the speech machine: the
+68.0 s proxy's AAC track runs 66.13 s; every other recent phone proxy was within 25 ms of its
+picture. `_read_pcm_duration` compared the decoded audio (66.13 s) with the picture window
+(68.0 s) under a 0.25 s tolerance and called the clip a changed source.
+
+Decision: audio that ends before the picture is the clip, not a changed source. The window
+stays the picture's (the render-time `require_source` fence keeps comparing it to the clip
+duration); ffmpeg anchors the track to the window's first instant (`aresample=async=1:first_pts=0`,
+so a track that STARTS late gets leading silence and words stay in picture time) and a tail
+shortfall is padded with silence after decoding, which the engine may cut like any other pause.
+The shortfall is capped (the larger of 3 s and 10% of the window); beyond it, and for audio
+LONGER than the window, it is still `snapshot_mismatch`. The failure
+log now carries the private detail code (`detail=source_duration`), which was neither logged
+nor persisted before. Guards: `tests/tasks/test_speech_cleanup_analysis.py::test_audio_that_ends_before_the_picture_is_padded_to_the_window`
+and siblings. Not changed: the iOS card still offers a dead "Retry speech check" for a
+non-retryable failure and makes "Create without cleanup" primary while the brief asks for
+cleanup -- an iOS follow-up.
+

@@ -653,6 +653,116 @@ def test_explicit_opening_title_is_a_pinned_requirement() -> None:
     assert contract.model_dump(mode="json")["digest"]
 
 
+@pytest.mark.parametrize(
+    "edit_format", ["subtitled", "narrated", "narrated_planned", "narrated_ready"]
+)
+def test_a_take_length_format_never_pins_a_requested_length(edit_format: str) -> None:
+    """Job e1c5f89e (2026-10-06): a 68 s Talking take approved with "keep it under
+    45 seconds" was refused at the pin step. A Talking or voiceover edit runs as
+    long as the take or the voiceover, so the length is not a provable fact."""
+    from app.kria.brief import BriefRequirement, CreativeBrief
+
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(
+                id="r3",
+                kind="timing",
+                scope="global",
+                description="cut out the long pauses",
+                facts={"duration_s": 45},
+            )
+        ],
+    )
+    contract = build_render_contract(
+        {
+            "edit_format": edit_format,
+            "opening_title": "3 sourdough mistakes",
+            "target_duration_s": 40,
+            "target_duration_requested": True,
+        },
+        generation_id="gen-1",
+        brief=brief,
+    )
+    assert contract is not None
+    assert contract.duration_s is None
+    assert [item.text for item in contract.exact_texts] == ["3 sourdough mistakes"]
+
+
+def test_a_voiceover_montage_runs_as_long_as_its_voiceover() -> None:
+    contract = build_render_contract(
+        {
+            "edit_format": "montage",
+            "audio_strategy": "voiceover",
+            "target_duration_s": 30,
+            "target_duration_requested": True,
+        },
+        generation_id="gen-1",
+    )
+    assert contract is not None
+    assert contract.duration_s is None
+    assert contract.require_voiceover is True
+
+
+def test_a_declared_talking_head_still_pins_its_requested_length() -> None:
+    """The cloud talking-head assembler caps the cut at the target."""
+    contract = build_render_contract(
+        {"edit_format": "talking_head", "target_duration_s": 30, "target_duration_requested": True},
+        generation_id="gen-1",
+    )
+    assert contract is not None
+    assert contract.duration_s == 30
+
+
+def test_a_montage_still_pins_its_requested_length() -> None:
+    contract = build_render_contract(
+        {"edit_format": "montage", "target_duration_s": 30, "target_duration_requested": True},
+        generation_id="gen-1",
+    )
+    assert contract is not None
+    assert contract.duration_s == 30
+
+
+def test_the_sourdough_talking_recipe_passes_its_pinned_contract() -> None:
+    """The exact prod shape: a 68 s single-clip Talking recipe, strategy target 40 s."""
+    from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
+    from app.pipeline.phone_subtitled_title import talking_title_element
+    from tests.pipeline.test_phone_subtitled_plan import _binding
+
+    binding = _binding(duration_s=68.0)
+    title = talking_title_element(
+        "3 sourdough mistakes",
+        duration_s=2.0,
+        first_word_end_s=None,
+        timeline_duration_s=68.0,
+        canvas=type("Canvas", (), {"width": 1080, "height": 1920})(),
+    )
+    recipe = compile_phone_subtitled_plan(
+        (binding,),
+        caption_cues=[{"text": "Hello", "start_s": 0.2, "end_s": 1.0}],
+        text_elements=[title] if title else [],
+        text_elements_user_edited=True,
+    )
+    contract = build_render_contract(
+        {
+            "edit_format": "subtitled",
+            "audio_strategy": "original_audio",
+            "render_program": "native",
+            "caption_style": "karaoke",
+            "opening_title": "3 sourdough mistakes",
+            "opening_title_duration_s": 2.0,
+            "target_duration_s": 40,
+            "target_duration_requested": True,
+            "selected_media_ids": [binding.media_id],
+        },
+        generation_id="gen-1",
+    )
+    assert contract is not None
+    assert contract.duration_s is None
+    assert recipe.duration == pytest.approx(68.0)
+    assert verify_phone_recipe(contract, recipe, source_audio={binding.media_id: True})
+
+
 def test_default_duration_does_not_create_a_requirement() -> None:
     contract = build_render_contract(
         {"target_duration_s": 24, "target_duration_requested": False}, generation_id="gen-1"
