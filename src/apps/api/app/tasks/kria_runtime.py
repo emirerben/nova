@@ -2638,26 +2638,31 @@ def _device_contract_decline(job: Job, variant_id: str | None) -> dict[str, str]
 
 
 _LAST_GOOD_STAYS = "Your last good version is still available."
+_NOTHING_PUBLISHED = "Nothing was published."
+# What a creator can really do next: send a new message. The approved request (the brief)
+# stays in force across turns, so a plain "redo it" builds a new version from it; the
+# runtime has no automatic re-run of a refused phone render and no device-job chat retry.
+_REDO_FROM_APPROVED = (
+    "Tell me to redo it and I'll make a new version from what you already approved."
+)
 
 
-def _device_refusal_copy(decline: dict[str, str]) -> str:
+def _device_refusal_copy(decline: dict[str, str], *, last_good: bool = True) -> str:
     """What the creator hears when the contract refused an edit of a phone render.
 
-    Never asks them to restate a clear instruction: a violated requirement is
-    repaired from the approved request; only a genuinely new decision is a question,
-    and it names the choice. Either way the last good version stays live.
+    Says what could not be confirmed, that the edit was NOT applied, that the last good
+    version is kept, and a next step that exists. Never promises an automatic rebuild and
+    never asks the creator to restate a clear instruction.
     """
     message = decline.get("message") or "That edit didn't keep something you asked for."
     reason = decline["decline_reason"]
-    if reason == "evidence_missing":
-        return (
-            f"{message} {_LAST_GOOD_STAYS} I'll rebuild this change from your "
-            "approved request so it keeps that."
-        )
+    kept = _LAST_GOOD_STAYS if last_good else _NOTHING_PUBLISHED
     if reason == "capability_unavailable":
-        return f"{_capability_refusal_copy(decline)} {_LAST_GOOD_STAYS}"
-    alternative = decline.get("alternative") or "Tell me which way you want to go."
-    return f"{message} {alternative} {_LAST_GOOD_STAYS}"
+        return f"{_capability_refusal_copy(decline)} That edit was not applied. {kept}"
+    if reason in {"needs_choice", "requirement_conflict"}:
+        alternative = decline.get("alternative") or "Tell me which way you want to go."
+        return f"{message} That edit was not applied. {alternative} {kept}"
+    return f"{message} That edit was not applied. {kept} {_REDO_FROM_APPROVED}"
 
 
 def _capability_refusal_copy(decline: dict[str, str]) -> str:
@@ -3543,11 +3548,10 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         retryable = not device_failed and not deterministic
         if device_decline is not None:
             # The contract refused this edit, so the phone's own Retry (which re-pins the
-            # same refused recipe) is a dead end. A violated clear instruction is
-            # repaired from the approved request; a new decision is a question.
-            repair = device_decline["decline_reason"] == "evidence_missing"
-            recovery = "refresh_replan" if repair else "ask_user"
-            retryable = repair
+            # same refused recipe) is a dead end, and nothing re-runs it automatically.
+            # The creator's real next step is a new message, never a retry button.
+            recovery = "ask_user"
+            retryable = False
         execution.error = {
             "code": failure_code,
             "retryable": retryable,
@@ -3627,7 +3631,14 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 recovery_receipts = [receipt.model_dump(mode="json") for receipt in receipts]
                 recovery_message = raw_recovery["message"].strip()
         if device_decline is not None:
-            failure_content = _device_refusal_copy(device_decline)
+            from app.services.device_render import has_accepted_artifact  # noqa: PLC0415
+
+            failure_content = _device_refusal_copy(
+                device_decline,
+                last_good=has_accepted_artifact(
+                    job, str(execution.target_variant_id or "") or None
+                ),
+            )
         elif device_failed:
             failure_content = (
                 "Your iPhone couldn't finish the render. Your approved edit is still saved: "

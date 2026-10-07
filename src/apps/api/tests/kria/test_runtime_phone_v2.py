@@ -1166,7 +1166,7 @@ def _observe_refusal(job):  # noqa: ANN001, ANN202
     )
 
 
-def test_a_refused_edit_is_repaired_against_the_approved_instruction_not_re_asked() -> None:
+def test_a_refused_edit_says_what_failed_what_was_kept_and_a_next_step_that_exists() -> None:
     job = _refused_job("evidence_missing")
     good = dict(job.assembly_plan["variants"][0])
 
@@ -1174,15 +1174,20 @@ def test_a_refused_edit_is_repaired_against_the_approved_instruction_not_re_aske
 
     assert outcome == "failed"
     error = execution.error
-    assert (error["recovery"], error["retryable"]) == ("refresh_replan", True)
+    # Nothing re-runs a refused phone render and chat retry does not exist for device jobs:
+    # the error must not claim it is retryable or that a replan will happen by itself.
+    assert (error["recovery"], error["retryable"]) == ("ask_user", False)
     assert (error["decline_reason"], error["field_path"]) == ("evidence_missing", "ordering_choice")
     failed = events[-1]
     assert failed["event_type"] == "assistant_render_failed"
     assert failed["payload"]["decline_reason"] == "evidence_missing"
     text = failed["content"]
-    assert "confirmed clip order" in text  # what was violated
-    assert "last good version" in text  # what stays live
-    assert "tap Retry" not in text  # the phone Retry would re-pin the same refused recipe
+    assert "confirmed clip order" in text  # what could not be confirmed
+    assert "not applied" in text  # the edit did not happen
+    assert "last good version is still available" in text  # what is kept
+    assert "make a new version from what you already approved" in text  # a path that exists
+    for promise in ("I'll rebuild", "I will rebuild", "tap Retry", "I'll retry"):
+        assert promise not in text  # no unperformed promise
     for restating in ("tell me again", "re-send", "restate", "which do you want"):
         assert restating not in text.lower()
     assert job.assembly_plan["variants"][0] == good  # nothing about the live version changed
@@ -1199,12 +1204,12 @@ def test_a_refusal_that_needs_a_new_decision_asks_the_specific_question(reason) 
     outcome, execution, events = _observe_refusal(job)
 
     assert outcome == "failed"
-    assert execution.error["recovery"] == "ask_user"
-    assert execution.error["retryable"] is False
+    assert (execution.error["recovery"], execution.error["retryable"]) == ("ask_user", False)
     assert execution.error["decline_reason"] == reason
     text = events[-1]["content"]
     assert "Use the order you added the clips" in text
-    assert "last good version" in text
+    assert "not applied" in text and "last good version is still available" in text
+    assert "redo it" not in text  # a question, not a redo offer
 
 
 def test_an_unavailable_capability_refuses_with_the_way_forward() -> None:
@@ -1212,8 +1217,22 @@ def test_an_unavailable_capability_refuses_with_the_way_forward() -> None:
 
     _, execution, events = _observe_refusal(job)
 
-    assert execution.error["recovery"] == "ask_user"
-    assert "Ask for a plain montage instead." in events[-1]["content"]
+    assert (execution.error["recovery"], execution.error["retryable"]) == ("ask_user", False)
+    text = events[-1]["content"]
+    assert "Ask for a plain montage instead." in text
+    assert "not applied" in text and "last good version is still available" in text
+
+
+def test_a_refused_first_render_does_not_claim_a_last_good_version_exists() -> None:
+    job = _refused_job("evidence_missing")
+    job.assembly_plan["variants"][0].pop("output_url")  # nothing was ever published
+    job.assembly_plan["variants"][0]["ok"] = False
+
+    _, _, events = _observe_refusal(job)
+
+    text = events[-1]["content"]
+    assert "Nothing was published." in text
+    assert "last good version" not in text
 
 
 def test_a_device_failure_with_no_recorded_refusal_keeps_the_phone_retry_copy() -> None:

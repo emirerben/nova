@@ -107,11 +107,11 @@ def record_contract_decline(
     return decline
 
 
-def has_accepted_artifact(job: Any, variant_id: str) -> bool:
-    """True when this variant already carries a published (last good) artifact."""
+def has_accepted_artifact(job: Any, variant_id: str | None) -> bool:
+    """True when this variant (any variant when None) carries a published artifact."""
     return any(
         isinstance(row, dict)
-        and row.get("variant_id") == variant_id
+        and (variant_id is None or row.get("variant_id") == variant_id)
         and bool(row.get("video_path") or row.get("output_url"))
         for row in (job.assembly_plan or {}).get("variants") or []
     )
