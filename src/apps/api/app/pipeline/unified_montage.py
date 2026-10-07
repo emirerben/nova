@@ -645,25 +645,41 @@ def _apply_sequence(
 def _sequence_outcomes(
     rows: Sequence[tuple[str | None, str, list[str], str]], ordered: Sequence[UnifiedClip]
 ) -> list[dict[str, Any]]:
-    """Did each described group land where the creator said? Read off the finished order."""
+    """Did each described group land where the creator said? Read off the finished order.
+
+    Every row also carries a ``code`` (KRI-503) so the receipt never re-parses ``reason``:
+    ``landed`` / ``misplaced`` (a described group is not where it was asked), ``absent`` (none
+    of its clips are in the edit), ``contained`` (all its clips are already in an earlier
+    group), ``visual`` (its members are Visuals-pool items, which no sequence rule seats) and
+    ``unresolved``. ``status`` keeps its meaning for every other consumer.
+    """
     spot = {clip.ref_id: i for i, clip in enumerate(c for c in ordered if c.lane == "clip")}
+    visuals = {clip.ref_id for clip in ordered if clip.lane != "clip"}
     named = {m for _p, _n, members, _s in rows for m in members if m in spot}
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for position, name, members, status in rows:
         label = f"{position or 'then'}: {name}" if name else "the order you described"
-        row = {"op": "order", "name": label}
+        row = {"op": "order", "name": label, "position": position or "then"}
         mine = [m for m in members if m in spot and m not in seen]
         if status != "resolved":
-            out.append({**row, "status": "not_possible", "reason": "I couldn't tell which clips"})
+            out.append(
+                {
+                    **row,
+                    "status": "not_possible",
+                    "code": "unresolved",
+                    "reason": "I couldn't tell which clips",
+                }
+            )
             continue
         if not mine:
-            reason = (
-                "its clips are already in an earlier group"
-                if any(m in seen for m in members)
-                else "I found no clips of it"
-            )
-            out.append({**row, "status": "not_possible", "reason": reason})
+            if any(m in seen for m in members):
+                code, reason = "contained", "its clips are already in an earlier group"
+            elif members and all(m in visuals for m in members):
+                code, reason = "visual", "I found no clips of it"
+            else:
+                code, reason = "absent", "I found no clips of it"
+            out.append({**row, "status": "not_possible", "code": code, "reason": reason})
             continue
         seen.update(mine)
         ahead = {spot[m] for m in mine}
@@ -678,6 +694,7 @@ def _sequence_outcomes(
             {
                 **row,
                 "status": "met" if met else "partial",
+                "code": "landed" if met else "misplaced",
                 "reason": None if met else "the clips did not end up there",
             }
         )

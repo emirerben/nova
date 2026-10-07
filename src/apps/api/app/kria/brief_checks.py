@@ -122,6 +122,10 @@ class PlanFacts:
     # as the creator's own words and the spot ("the video that is blue (first)"). Read off
     # the finished order like `sequence_statuses`; empty = every stated group landed.
     sequence_unmet: tuple[str, ...] = ()
+    # ... and the stated groups none of whose clips are in the edit (deselected, or no match):
+    # absent, not misplaced. A group made only of clips an earlier group already seated, or of
+    # Visuals-pool items, is neither (the planner outcome's ``code`` says which).
+    sequence_absent: tuple[str, ...] = ()
     texts: tuple[str, ...] = ()
     # Where the title came from: "creator" (their words), "brief" (written from the
     # brief's facts), "default" (nothing to title with), None = unknown.
@@ -376,6 +380,23 @@ def _sequence_label(name: str) -> str:
     return name or "the order you described"
 
 
+def _sequence_problems(record: Mapping[str, Any], codes: tuple[str | None, ...]) -> tuple[str, ...]:
+    """The stated-sequence groups of a unified-montage record that did not land, by outcome
+    ``code`` (KRI-503). A ``then`` group wholly inside an earlier group, and a Visuals-only
+    group, are not "a described group missed its place"; a row without a code (an older or
+    hand-built record) counts as misplaced, exactly as before."""
+    out: list[str] = []
+    for row in record.get("intent_outcomes") or []:
+        if not isinstance(row, Mapping) or row.get("op") != "order" or row.get("status") == "met":
+            continue
+        code = row.get("code")
+        if code == "visual" or (code == "contained" and row.get("position") == "then"):
+            continue
+        if code in codes:
+            out.append(_sequence_label(str(row.get("name") or "")))
+    return tuple(out)
+
+
 def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFacts:
     """Read verifiable facts off a unified montage plan record (KRI-190).
 
@@ -428,11 +449,8 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
             for row in record.get("intent_outcomes") or []
             if isinstance(row, Mapping) and row.get("op") == "order"
         ),
-        sequence_unmet=tuple(
-            _sequence_label(str(row.get("name") or ""))
-            for row in record.get("intent_outcomes") or []
-            if isinstance(row, Mapping) and row.get("op") == "order" and row.get("status") != "met"
-        ),
+        sequence_unmet=_sequence_problems(record, ("misplaced", None, "contained")),
+        sequence_absent=_sequence_problems(record, ("absent", "unresolved")),
         texts=tuple(
             str(text) for text in (title, record.get("closing_title"), *per_clip.values()) if text
         ),
@@ -923,17 +941,21 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
         if required and basis not in _ORDER_VERIFIED_ELSEWHERE:
             return _receipt(req, "not_possible", _ORDER_RULE_NOT_APPLIED)
         return _receipt(req, "partial", _CANT_CHECK_ORDER_RULE)
-    if key in _CAPTURE_ORDER_KEYS and facts.strict_order and facts.sequence_unmet:
+    if (
+        key in _CAPTURE_ORDER_KEYS
+        and facts.strict_order
+        and (facts.sequence_unmet or facts.sequence_absent)
+    ):
         # KRI-503: "chronological order, starting with the blue video". The basis matching is
         # not enough: the stated clip must really be where the creator put it. The render
         # contract pins that same seating, so a plan that misses it would be refused after
         # the render; say so before.
-        return _receipt(
-            req,
-            unmet,
-            "Your clips are in filming order, but these aren't where you asked: "
-            f"{', '.join(facts.sequence_unmet)}.",
-        )
+        said = []
+        if facts.sequence_unmet:
+            said.append(f"these aren't where you asked: {', '.join(facts.sequence_unmet)}")
+        if facts.sequence_absent:
+            said.append(f"I found no clips for: {', '.join(facts.sequence_absent)}")
+        return _receipt(req, unmet, f"Your clips are in filming order, but {'; '.join(said)}.")
     if facts.ordering_fallback_clip_ids:
         n = len(facts.ordering_fallback_clip_ids)
         return _receipt(

@@ -32,7 +32,11 @@ from app.services.choice_questions import (
     OPT_ATTACHMENT_ORDER,
     OPT_UNORDERED,
 )
-from app.services.clip_order_sequence import apply_sequence, sequence_rows
+from app.services.clip_order_sequence import (
+    apply_sequence,
+    sequence_rows,
+    unresolved_questions,
+)
 
 CONTRACT_FIELD = "creator_render_requirements"
 REQUIREMENT_VERSION_FIELD = "creator_render_requirements_version"
@@ -885,7 +889,9 @@ def build_render_contract(
         if any(status != "resolved" for _position, _name, _members, status in rows):
             order_ids = ()
             order_basis = None
-            unresolved.append(_SEQUENCE_UNRESOLVED)
+            unresolved.extend(
+                unresolved_questions(raw.get("resolved_clip_intents")) or [_SEQUENCE_UNRESOLVED]
+            )
         elif rows:
             order_ids = tuple(apply_sequence(order_ids, rows))
     if durations and any(abs(value - durations[0]) > 0.001 for value in durations[1:]):

@@ -35,6 +35,36 @@ def _members(intent: Mapping[str, Any]) -> list[str]:
     ]
 
 
+def _sequence(value: object) -> Sequence[Any]:
+    """Any list / tuple of intents (never a string), like the planner always accepted."""
+    return value if isinstance(value, Sequence) and not isinstance(value, str | bytes) else []
+
+
+def unresolved_questions(resolved_intents: object) -> list[str]:
+    """What to ask for each sequence intent the server could not resolve: the intent's own
+    question when it has one, else its words, else nothing (the caller says it generically)."""
+    out: list[str] = []
+    for intent in _sequence(resolved_intents):
+        if not isinstance(intent, Mapping) or intent.get("op") != "order":
+            continue
+        if intent.get("order_by") or intent.get("placeholder"):
+            continue
+        if intent.get("position") not in (None, "first", "last"):
+            continue
+        if str(intent.get("status") or "resolved") == "resolved":
+            continue
+        question = _nfc(intent.get("question"))
+        if question:
+            out.append(question)
+            continue
+        words = _nfc(intent.get("attribute"))
+        if words:
+            out.append(
+                f"I couldn't tell which clips \"{words}\" means, so I can't confirm the order."
+            )
+    return out
+
+
 def sequence_rows(resolved_intents: object) -> list[SequenceRow]:
     """The creator's stated sequence: (position, name, member ids, status), listed order.
 
@@ -43,7 +73,7 @@ def sequence_rows(resolved_intents: object) -> list[SequenceRow]:
     order (``order_by``: capture time / route) is the brief's, not this one's.
     """
     rows: list[SequenceRow] = []
-    for intent in resolved_intents if isinstance(resolved_intents, list) else []:
+    for intent in _sequence(resolved_intents):
         if not isinstance(intent, Mapping) or intent.get("op") != "order":
             continue
         if intent.get("order_by") or intent.get("placeholder"):
