@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 
 from app.pipeline.caption_language import (
+    coerce_caption_language_request,
     crosscheck_detected_language,
     infer_language_from_text,
     parse_caption_language_request,
@@ -26,6 +27,19 @@ from app.pipeline.caption_language import (
 )
 
 # ── 1. parse_caption_language_request ───────────────────────────────────────
+
+# Prod thread 2ef61a47 (Cappadocia, phone Narrated): the creator's message, and
+# the same ask as Kria's pinned brief renders it into the dispatched request.
+_CAPPADOCIA_MESSAGE = (
+    "The voiceover is in Turkish, but I want the subtitles in English so my foreign "
+    "followers understand."
+)
+_CAPPADOCIA_BRIEF_REQUEST = (
+    "Creative brief v1 (everything the creator has asked for, still in force):\n"
+    "- [r1] [text/global] English subtitles with exact place name spellings: Göreme, "
+    "Paşabağ, Avanos, Kızılçukur\n"
+    f"Latest message: {_CAPPADOCIA_MESSAGE}"
+)
 
 
 @pytest.mark.parametrize(
@@ -39,6 +53,8 @@ from app.pipeline.caption_language import (
         ("altyazıyı İngilizceye çevir", "en"),
         ("turkish captions translated into english", "en"),
         ("ALTYAZILAR TÜRKÇE OLSUN", "tr"),
+        (_CAPPADOCIA_MESSAGE, "en"),
+        (_CAPPADOCIA_BRIEF_REQUEST, "en"),
         # Negative: Turkish/English prose with no caption/subtitle keyword —
         # the prompt merely being *written* in a language must not count.
         ("Bu videoyu güzel düzenle, Türkçe konuşuyorum", None),
@@ -55,6 +71,14 @@ from app.pipeline.caption_language import (
 )
 def test_parse_caption_language_request(text: str | None, expected: str | None) -> None:
     assert parse_caption_language_request(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("en", "en"), (" TR ", "tr"), ("fr", None), ("", None), (None, None), (1, None)],
+)
+def test_coerce_caption_language_request(value: object, expected: str | None) -> None:
+    assert coerce_caption_language_request(value) == expected
 
 
 # ── 2. infer_language_from_text ─────────────────────────────────────────────
