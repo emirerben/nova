@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.141.0] - 2026-10-07
+
+### Changed
+- fix(kria): an unsupported editor refusal offers a redo instead of a dead end (KRI-473) (#1437) <!-- release-pr: 1437 -->
+
 ## [0.78.140.0] - 2026-10-07
 
 ### Changed
