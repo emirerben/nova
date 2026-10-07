@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.142.0] - 2026-10-07
+
+### Changed
+- feat(route): retire safe legacy overrides for stamped jobs, typed cloud declines reach the creator (KRI-477) (#1461) <!-- release-pr: 1461 -->
+
 ## [0.78.141.0] - 2026-10-07
 
 ### Changed
