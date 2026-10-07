@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.129.0] - 2026-10-07
+
+### Changed
+- fix(creator): a song-order answer on a lip-sync item is no longer an unverifiable ordering rule (KRI-470 follow-up) (#1451) <!-- release-pr: 1451 -->
+
 ## [0.78.128.0] - 2026-10-07
 
 ### Changed
