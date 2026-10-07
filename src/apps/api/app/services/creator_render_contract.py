@@ -23,6 +23,7 @@ from app.kria.brief import CreativeBrief
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
+from app.pipeline.phone_recipe_shared import VOICE_TAIL_SLACK_S
 from app.services.choice_questions import (
     ATTACHMENT_ORDER_KEY,
     CAPTURE_ORDER_KEYS,
@@ -1309,21 +1310,136 @@ def doubled_soundtrack_assets(recipe: EditRecipeV2) -> list[str]:
     return []
 
 
+_SOUNDTRACK_UNREQUESTED = Decline(
+    "requirement_conflict",
+    "I can rebuild the edit without that soundtrack, or you can ask for music.",
+)
+
+
+def _verify_composition(
+    contract: CreatorRenderContract,
+    recipe: EditRecipeV2,
+    composition: CompositionCommitments,
+    *,
+    manifest: Mapping[str, Any],
+    audible: Any,
+    picture: Sequence[Any],
+    frame: float,
+) -> None:
+    """The checks that only make sense once the plan commits to a composition (KRI-479).
+
+    ``voice_covers_timeline`` / ``voice_window_contiguous``: the approved camera-audio clip
+    plays as ONE contiguous window from time zero up to where the picture ends (or the
+    committed span), give or take the sentence-snap slack. ``picture_shot_floor``: no shot is
+    below the readable floor unless its whole clip is. No soundtrack other than the approved
+    voice. Nothing, voice included, runs past the picture (``recipe.duration`` is the max end
+    over ALL tracks, so a long voice would silently stretch the video).
+    """
+
+    voice_ids = set(contract.audio_source_ids)
+    if composition.voice_picture == "hidden" and any(
+        isinstance(manifest.get(clip.source_asset_id), OriginalRenderAsset)
+        and manifest[clip.source_asset_id].media_id in voice_ids
+        for clip in picture
+    ):
+        raise _phone_decline(
+            "order_required",
+            "This edit shows the picture of the clip that is only meant to be heard.",
+        )
+
+    picture_end = max((c.timeline_start + c.source_duration / c.rate for c in picture), default=0.0)
+    if recipe.duration > picture_end + frame:
+        raise _phone_decline(
+            "duration_s",
+            "This edit's voice or text runs past the end of the picture.",
+            field_path="target_duration_s",
+        )
+
+    extras = [
+        clip
+        for track in recipe.tracks
+        if track.kind in {"video", "audio"}
+        for clip in track.clips
+        if audible(track, clip)
+        and not isinstance(manifest.get(clip.source_asset_id), OriginalRenderAsset)
+    ]
+    if extras or music_bed_audible(recipe) is not None or recipe.audio.narration_asset_id:
+        raise CreatorRenderContractError(
+            "This edit has a soundtrack you didn't ask for.",
+            decline_reason=_SOUNDTRACK_UNREQUESTED.reason,
+            field_path="audio_strategy",
+            alternative=_SOUNDTRACK_UNREQUESTED.alternative,
+        )
+
+    voice = sorted(
+        (
+            clip
+            for track in recipe.tracks
+            if track.kind == "audio"
+            for clip in track.clips
+            if isinstance(manifest.get(clip.source_asset_id), OriginalRenderAsset)
+            and manifest[clip.source_asset_id].media_id in voice_ids
+            and audible(track, clip)
+        ),
+        key=lambda clip: clip.timeline_start,
+    )
+    expected = composition.voice_span_s if composition.voice_span_s is not None else picture_end
+    covered = 0.0
+    for clip in voice:
+        if clip.timeline_start > covered + frame:
+            raise _phone_decline(
+                "audio_source_ids",
+                "This edit's voice has a gap or starts late instead of playing straight through.",
+            )
+        covered = max(covered, clip.timeline_start + clip.source_duration / clip.rate)
+    if not voice or covered < expected - VOICE_TAIL_SLACK_S - frame:
+        raise _phone_decline(
+            "audio_source_ids", "This edit's voice stops before the end of the picture."
+        )
+
+    from app.pipeline.unified_montage import MIN_READABLE_SHOT_S  # noqa: PLC0415
+
+    floor = composition.min_shot_s if composition.min_shot_s is not None else MIN_READABLE_SHOT_S
+    source_seconds = {asset.id: asset.duration for asset in recipe.assets}
+    for clip in picture:
+        shown = clip.source_duration / clip.rate
+        whole = source_seconds.get(clip.source_asset_id)
+        if shown + frame / 2 >= floor or (whole is not None and shown + 0.05 + 2 * frame >= whole):
+            continue
+        raise _phone_decline(
+            "duration_s",
+            "A shot in this edit is too short to be seen.",
+            field_path="target_duration_s",
+        )
+
+
 def verify_phone_recipe(
     contract: CreatorRenderContract,
     recipe: EditRecipeV2,
     *,
     source_audio: Mapping[str, bool] | None = None,
+    composition: CompositionCommitments | None = None,
 ) -> list[dict[str, Any]]:
+    """Check a compiled phone recipe against the pinned contract.
+
+    ``composition`` (KRI-479) is passed only for a composer route whose plan carries
+    commitments: it adds the voice / shot-floor / soundtrack / overrun checks and tightens
+    the duration tolerance from 10 % to ``max(0.1 s, 1 frame)`` (the composer sums exact
+    shots, so a looser bound only hides drift). ``None`` leaves every legacy lane unchanged.
+    """
     if contract.unresolved:
         raise unresolved_decline(contract.unresolved[0])
     manifest = {asset.id: asset for asset in recipe.asset_manifest.assets}
     receipts: list[dict[str, Any]] = []
-    if (
-        contract.duration_s is not None
-        and abs(recipe.duration - contract.duration_s) / contract.duration_s > 0.1
-    ):
-        raise _phone_decline("duration_s", "This edit couldn't keep the confirmed length.")
+    if contract.duration_s is not None:
+        drift = abs(recipe.duration - contract.duration_s)
+        allowed = (
+            max(0.1, 1 / recipe.frame_rate)
+            if composition is not None
+            else contract.duration_s * 0.1
+        )
+        if drift > allowed + 1e-9:
+            raise _phone_decline("duration_s", "This edit couldn't keep the confirmed length.")
 
     def audible(track, clip) -> bool:
         return _clip_audible(recipe, track, clip)
@@ -1395,6 +1511,16 @@ def verify_phone_recipe(
         key=lambda clip: clip.timeline_start,
     )
     frame = 1 / recipe.frame_rate
+    if composition is not None:
+        _verify_composition(
+            contract,
+            recipe,
+            composition,
+            manifest=manifest,
+            audible=audible,
+            picture=picture,
+            frame=frame,
+        )
 
     def _run_can_be_visible(run) -> bool:  # noqa: ANN001
         """Reject only layers the portable paint contract proves invisible."""

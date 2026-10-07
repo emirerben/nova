@@ -77,6 +77,7 @@ from app.kria.render_assets import LibraryRenderAsset, RenderAssetManifest
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_recipe_shared import (
     EXPORT_SAFETY_MARGIN_S,
+    VOICE_TAIL_SLACK_S,
     PhoneMusicBed,
     audio_fade,
     refit_source_window,
@@ -512,9 +513,8 @@ def _music_clips(
 
 VOICE_FOOTAGE_TRACK_ID = "voice-footage"
 VOICE_AUDIO_TRACK_ID = "voice"
-# The voice may stop up to this long before the picture ends when it is cut on a sentence
-# end instead of mid-word. The verifier (`voice_covers_timeline`) allows exactly this slack.
-VOICE_TAIL_SLACK_S = 3.0
+# `VOICE_TAIL_SLACK_S` (phone_recipe_shared): how long before the picture ends the voice may
+# stop when cut on a sentence end instead of mid-word; the verifier allows exactly this slack.
 _FPS = 30
 _VOICE_HARD_CUT_FADE_S = 0.5
 _VOICE_LEAD_S = 0.06  # mirrors `speech_segments.EXCERPT_LEAD_S`
