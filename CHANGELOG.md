@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.128.0] - 2026-10-07
+
+### Changed
+- feat(creator): clarification gate with one shared conflict collector (KRI-476) (#1450) <!-- release-pr: 1450 -->
+
 ## [0.78.127.0] - 2026-10-07
 
 ### Changed
