@@ -1730,3 +1730,62 @@ async def test_context_hands_the_item_to_the_manifest_as_its_user_song_source(mo
     await creator_sessions.resolve_item_creator_context(db, item, persona=persona)
 
     assert seen["user_song_item"] is item
+
+
+def _failed_job_reconcile(*, dispatched: bool):
+    creator_id, item_id, job_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    session = _session(
+        creator_id=creator_id,
+        plan_item_id=item_id,
+        phase="rendering",
+        target_job_id=job_id,
+    )
+    job = SimpleNamespace(
+        id=job_id,
+        status="processing_failed",
+        failure_reason="phone_plan_unsupported",
+        user_id=creator_id,
+        content_plan_item_id=item_id,
+        content_plan_ownership_epoch=0,
+        assembly_plan={},
+    )
+    item = SimpleNamespace(id=item_id, content_plan_id=uuid.uuid4())
+    plan = SimpleNamespace(user_id=creator_id, ownership_epoch=0)
+    db = AsyncMock()
+    db.get.side_effect = [job, item, plan]
+    result = MagicMock()
+    result.first.return_value = (uuid.uuid4(),) if dispatched else None
+    db.execute.return_value = result
+    return session, db
+
+
+@pytest.mark.asyncio
+async def test_a_failed_job_awaiting_the_v2_observer_gets_no_generic_failure_line(
+    monkeypatch,
+) -> None:
+    """The observer states the real reason; a poll must not say 'didn't finish' first."""
+    session, db = _failed_job_reconcile(dispatched=True)
+    append = AsyncMock()
+    monkeypatch.setattr(creator_sessions, "append_event", append)
+
+    assert await creator_sessions.reconcile_render_state(db, session) is True
+
+    assert session.phase == "failed"
+    assert session.last_error == {"code": "phone_plan_unsupported"}
+    append.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_job_without_a_v2_execution_keeps_the_generic_failure_line(
+    monkeypatch,
+) -> None:
+    session, db = _failed_job_reconcile(dispatched=False)
+    append = AsyncMock()
+    monkeypatch.setattr(creator_sessions, "append_event", append)
+
+    assert await creator_sessions.reconcile_render_state(db, session) is True
+
+    append.assert_awaited_once()
+    assert append.await_args.kwargs["payload"] == {
+        "message": "That render didn't finish. Your confirmed plan is saved."
+    }
