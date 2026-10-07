@@ -1252,7 +1252,15 @@ def _owns_turn_lease(
 
 def _answers_clip_question(source: Any) -> bool:
     payload = getattr(source, "payload", None)
-    return isinstance(payload, dict) and isinstance(payload.get("clip_selection"), dict)
+    if not isinstance(payload, dict):
+        return False
+    if isinstance(payload.get("clip_selection"), dict):
+        return bool(settings.kria_clip_selection_questions_enabled)
+    # A tapped choice_question option ANSWERS the open question: it must re-plan (the
+    # planner folds the stored answer), never be read as a follow-up edit request.
+    return isinstance(payload.get("choice_selection"), dict) and bool(
+        settings.kria_choice_questions_enabled
+    )
 
 
 def _stored_editor_state(turn: Any) -> dict[str, Any] | None:
@@ -1671,11 +1679,9 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
         return {"turn_id": turn_id, "status": "failed"}
     snapshot, user_message, lease_epoch, claimed_thread_revision, *claimed_rest = claimed
     editor_state = claimed_rest[0] if claimed_rest else None
-    answers_clip_question = bool(
-        settings.kria_clip_selection_questions_enabled
-        and len(claimed_rest) > 1
-        and claimed_rest[1] is True
-    )
+    # `_claim` appends True only when the source event answers a question AND that
+    # question kind's flag is on.
+    answers_clip_question = bool(len(claimed_rest) > 1 and claimed_rest[1] is True)
     try:
         if settings.main_creator_agent_enabled and snapshot.get("item_id"):
             planned = asyncio.run(

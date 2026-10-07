@@ -1875,9 +1875,16 @@ async def _plan_live_turn(
     # decides between the editor-op tool and a re-plan, so the Main Creator
     # (which extracts the requirements) runs FIRST. Everything else keeps the
     # original order: editor copilot first, planner only when no op survives.
+    # A FAILED latest job has no ready variant to follow up on: the turn is a fresh plan
+    # (the editor target is unavailable and the follow-up route has nothing to route to).
+    latest_job_failed = False
+    if item.current_job_id is not None:
+        latest_job = await db.get(Job, item.current_job_id)
+        latest_job_failed = str(getattr(latest_job, "status", "") or "").endswith("failed")
     extract_first = (
         brief_on
         and item.current_job_id is not None
+        and not latest_job_failed
         and manifest.capabilities["dispatch_render"].available
     )
     if (
@@ -2127,7 +2134,14 @@ async def _plan_live_turn(
             )
         except BriefCoverageError as exc:
             return _request_recovery(manifest, prior_brief, reason=str(exc))
-        except (RuntimeError, ValidationError, BriefUpdateBatchError):
+        except (RuntimeError, ValidationError, BriefUpdateBatchError) as exc:
+            log.warning(
+                "kria_request_recovery_cause",
+                stage="followup_extraction",
+                error_type=type(exc).__name__,
+                error=str(exc)[:500],
+                exc_info=True,
+            )
             if binding_on and brief_on:
                 return _request_recovery(manifest, prior_brief, reason="request_extraction_failed")
             item = await _refetch_item(db, item_id)
@@ -2187,7 +2201,14 @@ async def _plan_live_turn(
         output = outputs[-1]
     except BriefCoverageError as exc:
         return _request_recovery(manifest, prior_brief, reason=str(exc))
-    except (RuntimeError, ValidationError, BriefUpdateBatchError):
+    except (RuntimeError, ValidationError, BriefUpdateBatchError) as exc:
+        log.warning(
+            "kria_request_recovery_cause",
+            stage="main_creator",
+            error_type=type(exc).__name__,
+            error=str(exc)[:500],
+            exc_info=True,
+        )
         if binding_on and brief_on:
             return _request_recovery(manifest, prior_brief, reason="request_extraction_failed")
         if not extract_first or answers_clip_question:

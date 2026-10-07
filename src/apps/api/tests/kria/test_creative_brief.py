@@ -56,7 +56,7 @@ from app.kria.brief_checks import (
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaTurnPlan, RequirementReceipt
 from app.kria.planner import PlannedKriaTurn, plan_live_turn
-from app.models import ContentPlan, CreationThread, Persona, PlanItem
+from app.models import ContentPlan, CreationThread, Job, Persona, PlanItem
 from app.tasks.kria_runtime import _useful_plan, _validate_draft_plan
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "kria_turns" / "east-run-brief.json"
@@ -921,6 +921,7 @@ def _planner_db(item):  # noqa: ANN001, ANN202
             ContentPlan: content_plan,
             Persona: persona,
             CreationThread: thread,
+            Job: SimpleNamespace(status="done"),
         }[model]
 
     async def rollback():  # noqa: ANN202
