@@ -1,0 +1,16 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-10-07-v46",
+  "input": {
+    "user_message": "I want an opening hook for this travel video.",
+    "creator_request": "I want an opening hook for this travel video.",
+    "creator_context": "Travel creator",
+    "item_context": "Short montage; no recorded voiceover.",
+    "media_context": [{"media_id":"clip-1","kind":"video","duration_s":5}],
+    "conversation": [],
+    "creative_copy_state": [{"target":"opening_title","status":"unresolved","dependency_digest":"dddddddddddddddddddddddd"}],
+    "capability_manifest": {"schema_version":1,"item_id":"item-kri506-1","edit_format":"montage","render_program":"guided","media":[{"media_id":"clip-1","kind":"video","duration_s":5}],"capabilities":{},"context_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","manifest_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  },
+  "raw_text": "{\"creative_decision\":{\"target\":\"opening_title\",\"status\":\"unresolved\"},\"action\":{\"kind\":\"ask_user\",\"question\":\"Do you have an idea, or would you like me to write one?\",\"reason_code\":\"creative_copy_authorship\",\"options\":[\"I have an idea\",\"Write one\",\"Skip it\"]}}",
+  "meta": {"source":"hand_authored_golden","case":"kri506_metadata_parse_unresolved","creative_copy_decision":{"target":"opening_title","status":"unresolved"}}
+}

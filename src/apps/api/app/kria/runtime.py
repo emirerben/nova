@@ -65,6 +65,8 @@ from app.services.creation_thread_titles import (
     conversation_revision_matches,
     prepare_message_title,
 )
+from app.services.creative_copy_decisions import latest_open_creative_question
+from app.services.creative_copy_gate import CREATIVE_COPY_PENDING, creative_copy_problem
 from app.services.song_order import STALE_CODE as SONG_ORDER_STALE_CODE
 from app.services.song_order import (
     SongOrderError,
@@ -243,9 +245,10 @@ async def _validate_choice_selection(
             .order_by(CreationThreadEvent.sequence)
         )
     ).all()
-    question = latest_open_choice_question(
+    events = [
         tag_event(role, payload, event_type, content) for role, payload, event_type, content in rows
-    )
+    ]
+    question = latest_open_choice_question(events) or latest_open_creative_question(events)
     if question is None or question.get("question_id") != selection.question_id:
         raise RuntimeFailure(
             422,
@@ -265,8 +268,8 @@ async def _validate_choice_selection(
         )
 
 
-# How many of the thread's newest events can still hold an OPEN choice question. A
-# question that old is stale and a plain message is never read as its answer.
+# Ordinary choices keep their bounded matching window. Creative wording consent
+# is reconstructed from the durable ledger, independently of the model chat window.
 _FREE_TEXT_CHOICE_WINDOW = 60
 
 
@@ -297,14 +300,15 @@ async def _free_text_choice_selection(
                 CreationThreadEvent.thread_id == thread.id,
                 CreationThreadEvent.role.in_({"user", "assistant"}),
             )
-            .order_by(CreationThreadEvent.sequence.desc())
-            .limit(_FREE_TEXT_CHOICE_WINDOW)
+            .order_by(CreationThreadEvent.sequence)
         )
     ).all()
-    question = latest_open_choice_question(
-        tag_event(role, payload, event_type, content)
-        for role, payload, event_type, content in reversed(rows)
-    )
+    events = [
+        tag_event(role, payload, event_type, content) for role, payload, event_type, content in rows
+    ]
+    question = latest_open_choice_question(events[-_FREE_TEXT_CHOICE_WINDOW:])
+    if question is None or not settings.kria_choice_questions_enabled:
+        question = latest_open_creative_question(events)
     if question is None:
         return None
     option_key = match_open_choice(question, message)
@@ -459,13 +463,21 @@ async def submit_turn(
         )
 
     choice_selection = body.choice_selection
+    if not settings.kria_choice_questions_enabled and choice_selection is not None:
+        # Existing generic-choice flag-off behavior is preserved. Durable creative
+        # consent remains answerable through both cards and the text fallback.
+        rows = (
+            await db.execute(
+                select(CreationThreadEvent.role, CreationThreadEvent.payload)
+                .where(CreationThreadEvent.thread_id == thread.id)
+                .order_by(CreationThreadEvent.sequence)
+            )
+        ).all()
+        question = latest_open_creative_question(rows)
+        if question is None or question.get("question_id") != choice_selection.question_id:
+            choice_selection = None
     choice_delegated = False
-    if (
-        choice_selection is None
-        and settings.kria_choice_questions_enabled
-        and body.clip_selection is None
-        and body.song_order is None
-    ):
+    if choice_selection is None and body.clip_selection is None and body.song_order is None:
         # The request digest above stays that of the body as sent (idempotency); only
         # the stored event carries the derived selection.
         derived = await _free_text_choice_selection(db, thread, body.message)
@@ -475,7 +487,7 @@ async def submit_turn(
         await _validate_clip_selection(db, thread, body.clip_selection)
     if body.song_order is not None and settings.user_song_montage_enabled:
         await _validate_song_order(db, thread, body.song_order)
-    if choice_selection is not None and settings.kria_choice_questions_enabled:
+    if choice_selection is not None:
         await _validate_choice_selection(db, thread, choice_selection)
 
     active = (
@@ -675,7 +687,7 @@ async def submit_turn(
                         **({"delegated": True} if choice_delegated else {}),
                     }
                 }
-                if choice_selection is not None and settings.kria_choice_questions_enabled
+                if choice_selection is not None
                 else {}
             ),
         },
@@ -1973,6 +1985,45 @@ async def decide_approval(
             recovery="refresh_replan",
             current_revision=int(thread.revision),
         )
+
+    if decision == "approve":
+        from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+
+        copy_document = _parse_draft_document(draft.snapshot_json)
+        copy_item = plan_item or await db.get(PlanItem, session.plan_item_id)
+        copy_rows = (
+            await db.execute(
+                select(
+                    CreationThreadEvent.role,
+                    CreationThreadEvent.payload,
+                    CreationThreadEvent.event_type,
+                    CreationThreadEvent.content,
+                )
+                .where(CreationThreadEvent.thread_id == thread.id)
+                .order_by(CreationThreadEvent.sequence)
+            )
+        ).all()
+        copy_problem = creative_copy_problem(
+            [
+                tag_event(role, payload, event_type, content)
+                for role, payload, event_type, content in copy_rows
+            ],
+            snapshot_media(copy_item),
+            strategy=copy_document.strategy if copy_document is not None else None,
+        )
+        if copy_problem:
+            log.info("kria_creative_copy_blocked", phase="approval", thread_id=str(thread.id))
+            await _cancel_pending_approval(
+                db,
+                thread=thread,
+                session=session,
+                turn=turn,
+                approval=approval,
+                execution=execution,
+                plan_item=plan_item,
+                code=CREATIVE_COPY_PENDING,
+                message=copy_problem,
+            )
 
     # KRI-306: validate the creator's output-shape choice against what this
     # strategy offers BEFORE any media mutation or commit, so a bad choice

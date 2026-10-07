@@ -1169,6 +1169,9 @@ def delegated_choice(question: Mapping[str, Any], message: object) -> str | None
 
     if normalize_reply(message) not in _DELEGATION_PHRASES:
         return None
+    if question.get("conflict") == "creative_copy":
+        # Delegating authorship is not permission to use unreviewed wording.
+        return None
     if question.get("kind") == CONFLICT_TITLE_TEXT:
         # Handing over a wordless title would drop the title the creator asked for (and we
         # never write on-screen words): not a delegation. The gate asks once more.
@@ -1357,9 +1360,14 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
 
     data = _as_dict(strategy)
     answers = [a for a in data.get("choice_answers") or [] if isinstance(a, Mapping)]
-    if brief is None or not answers:
+    omitted = data.get("omitted_copy_targets") or []
+    if brief is None or (not answers and not omitted):
         return brief
-    changed: dict[str, Any] = {}
+    changed: dict[str, Any] = {
+        req.id: req.model_copy(update={"status": "superseded"})
+        for req in _live(brief)
+        if "opening_title" in omitted and req.kind == "text" and req.scope == "title"
+    }
     for answer in answers:
         ids = {str(i) for i in answer.get("requirement_ids") or []}
         kind, option = answer.get("kind"), answer.get("option")

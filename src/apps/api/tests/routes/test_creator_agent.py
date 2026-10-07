@@ -3526,6 +3526,7 @@ async def test_preparation_retry_controller_restores_saved_request_and_keeps_rec
         active_plan={"stale": "plan"},
         preparation={"attempt_id": str(attempt_id), "status": "failed"},
         last_error={"code": "analysis_unavailable"},
+        events=[],
     )
     attempt = SimpleNamespace(
         id=attempt_id,
@@ -5597,7 +5598,9 @@ async def test_start_locks_an_existing_session_before_appending(
     monkeypatch.setattr(creator_routes, "_latest_session", AsyncMock(return_value=session))
     load_session = AsyncMock(return_value=session)
     monkeypatch.setattr(creator_routes, "_load_session", load_session)
-    append_event = AsyncMock(side_effect=lambda *_args, **kwargs: SimpleNamespace(**kwargs))
+    append_event = AsyncMock(
+        side_effect=lambda *_args, **kwargs: SimpleNamespace(sequence=1, **kwargs)
+    )
     monkeypatch.setattr(creator_routes, "append_event", append_event)
     planning = AsyncMock(return_value=SimpleNamespace(id="response"))
     monkeypatch.setattr(creator_routes, "_run_planning_turn", planning)

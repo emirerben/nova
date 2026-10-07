@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -56,7 +56,8 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # KRI-459: stable IDs make changes and removals unambiguous (v44).
 # KRI-470: a stated video length ALWAYS becomes a `timing` requirement; the clarification
 # gate cannot compare a number the brief lost (v45; brief_extractor v2 shares the section).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-07-v45"
+# KRI-506: delegated creative copy is proposed for a separate server approval (v46).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-07-v46"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -311,6 +312,8 @@ class MainCreatorInput(BaseModel):
     media_context: list[dict] = Field(default_factory=list, max_length=50)
     conversation: list[dict] = Field(default_factory=list, max_length=MAIN_CREATOR_CONVERSATION_MAX)
     capability_manifest: ResolvedCreatorManifest
+    # Durable, event-folded state is separate from the bounded chat window.
+    creative_copy_state: list[dict] = Field(default_factory=list, max_length=2)
     # KRI-188: True only when the Creative Brief is on for this creator. Off =>
     # the prompt is byte-identical and no `brief_updates` are read from output.
     brief_enabled: bool = False
@@ -323,6 +326,21 @@ class MainCreatorOutput(BaseModel):
     # KRI-188: requirements newly stated/changed by the current message. Empty
     # (and omitted from dumps) unless the brief is enabled for this creator.
     brief_updates: list[BriefUpdate] = Field(default_factory=list, exclude_if=lambda v: not v)
+    creative_decision: CreativeCopyDecision | None = Field(
+        default=None, exclude_if=lambda v: v is None
+    )
+
+
+class CreativeCopyDecision(BaseModel):
+    """A model suggestion/classification; it never approves wording."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target: Literal["opening_title", "closing_title"]
+    status: Literal["unresolved", "delegated", "candidate", "creator_supplied", "cancelled"]
+    proposed_text: str | None = Field(default=None, max_length=280)
+    source_evidence: str | None = Field(default=None, max_length=1200)
+    language: str = Field(default="en", max_length=16)
 
 
 class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
@@ -388,6 +406,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             conversation=json.dumps(input.conversation, ensure_ascii=False),
             creator_request=input.creator_request or input.user_message,
             user_message=input.user_message,
+            creative_copy_state=json.dumps(input.creative_copy_state, ensure_ascii=False),
             # Renders to "" (flag off) on the one blank template line it
             # occupies, so the rest of the prompt is untouched byte-for-byte.
             clip_intents_section=(
@@ -552,6 +571,11 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 )
             return MainCreatorOutput(
                 action=action,
+                creative_decision=(
+                    CreativeCopyDecision.model_validate(data["creative_decision"])
+                    if data.get("creative_decision") is not None
+                    else None
+                ),
                 brief_updates=(
                     parse_brief_updates(data.get("brief_updates")) if input.brief_enabled else []
                 ),

@@ -99,6 +99,7 @@ async def test_pending_analysis_extracts_brief_updates_without_compiling_action(
     )
     monkeypatch.setattr(planner, "_plan_from_creator_output", compile_action)
 
+    monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=[]))
     result = await planner._plan_live_turn(
         db,
         thread_id=thread_id,
