@@ -319,3 +319,16 @@ async def planner_turn(record: IncidentRecord, monkeypatch: pytest.MonkeyPatch):
     return await planner._gate_unresolved_choices(
         SimpleNamespace(), planned, thread_id=uuid.uuid4(), creator_id=uuid.uuid4()
     )
+
+
+def resolved_route(record: IncidentRecord):
+    """The pure resolver's verdict for the record's approved plan on its expected platform."""
+    from app.services.render_route import resolve_route, route_inputs_from_job
+    from tests.incidents.loader import route_job
+
+    want = record.expect.route
+    assert want is not None
+    assembly, candidates = route_job(record, want.platform)
+    inputs = route_inputs_from_job(assembly, candidates, platform=want.platform)
+    assert inputs is not None
+    return resolve_route(inputs)

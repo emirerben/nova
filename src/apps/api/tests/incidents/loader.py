@@ -69,6 +69,73 @@ def build_contract(record: IncidentRecord) -> CreatorRenderContract | None:
     )
 
 
+def route_job(record: IncidentRecord, platform: str) -> tuple[dict, dict]:
+    """The persisted job shape (assembly_plan, all_candidates) a stamped dispatch would read.
+
+    Mirrors what approval persists: the contract, the approved strategy, the binding's
+    media snapshot (with per-clip speech facts), the plan's edit format and the media
+    present (recording / song). Request text is never put here -- the point of PR-D is that
+    nothing downstream reads it.
+    """
+    from app.services.creator_render_contract import (
+        CONTRACT_FIELD,
+        PLAN_AUTHORITY_FIELD,
+        REQUIREMENT_VERSION_FIELD,
+    )
+    from app.services.phone_sources import PHONE_SOURCES_FIELD
+
+    contract = build_contract(record)
+    assert contract is not None, "a route expectation needs a built contract"
+    binding = binding_for(record)
+    rows = []
+    for row, media in zip(
+        binding.media_snapshot["clip_assignments"], record.inputs.media, strict=True
+    ):
+        row = dict(row)
+        if media.speech is not None:
+            row["analysis"] = {
+                "understanding": {
+                    "speech": {
+                        "has_speech": media.speech.has_speech,
+                        "to_camera": bool(media.speech.to_camera),
+                        "transcript": "spoken" if media.speech.has_speech else "",
+                    }
+                }
+            }
+        rows.append(row)
+    strategy = record.approved.strategy
+    assembly: dict = {
+        CONTRACT_FIELD: contract.model_dump(mode="json"),
+        "creator_generation_id": contract.generation_id,
+        "creator_brief_binding": {
+            **binding.model_dump(mode="json"),
+            "media_snapshot": {"clip_assignments": rows},
+        },
+    }
+    if platform == "phone":
+        assembly[PHONE_SOURCES_FIELD] = []
+    if record.inputs.cloud_adapter == "cloud_guided_story" or record.inputs.guided_plan is not None:
+        assembly["guided_edit"] = {"approved_proposal": {}}
+    candidates: dict = {
+        REQUIREMENT_VERSION_FIELD: 1,
+        PLAN_AUTHORITY_FIELD: 1,
+        "edit_format": (strategy or {}).get("edit_format", "montage"),
+        "clip_paths": [media.id for media in record.inputs.media],
+    }
+    if strategy is not None:
+        candidates["creator_strategy"] = strategy
+    if record.inputs.voiceover_id:
+        candidates["voiceover_gcs_path"] = f"voiceover/{record.inputs.voiceover_id}"
+    if record.inputs.song is not None:
+        candidates["user_song"] = {
+            "gcs_path": "song/incident",
+            "generation": 1,
+            "duration_s": record.inputs.song.duration_s,
+            "sync": "lipsync" if record.inputs.song.mode == "lipsync" else "background",
+        }
+    return assembly, candidates
+
+
 def capture_sorted_ids(record: IncidentRecord) -> list[str]:
     """Selected media in capture order (all media when the strategy selects none)."""
     selected = set((record.approved.strategy or {}).get("selected_media_ids") or ())

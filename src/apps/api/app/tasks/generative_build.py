@@ -2317,6 +2317,36 @@ def rerender_speech_timing(self, job_id: str, operation_id: str) -> None:
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 
 
+def _shadow_route(
+    job_id: str,
+    assembly: dict,
+    candidates: dict,
+    platform: str,
+    legacy_route: str,
+    point: str,
+) -> None:
+    """KRI-470 PR-D: compare the plan's resolved route with the legacy decision.
+
+    Records `route_mismatch` for plan-authority jobs only; never raises and never
+    changes what renders. Call only while holding no row lock on the job (the trace
+    write is a separate connection).
+    """
+    try:
+        # Imported inside the guard: an import-time fault must not reach any job.
+        from app.services.render_route import shadow_route_check  # noqa: PLC0415
+
+        shadow_route_check(
+            job_id=job_id,
+            assembly=assembly,
+            candidates=candidates,
+            platform=platform,  # type: ignore[arg-type]
+            legacy_route=legacy_route,
+            point=point,
+        )
+    except Exception:  # noqa: BLE001 -- shadow mode never changes a render
+        log.warning("route_shadow_unavailable", job_id=job_id, point=point)
+
+
 def _run_generative_job(
     job_id: str,
     *,
@@ -2426,6 +2456,14 @@ def _run_generative_job_impl(
                         user_song=candidates.get("user_song"),
                     )
                 if isinstance(phone_snapshot.get("guided_edit"), dict):
+                    _shadow_route(
+                        job_id,
+                        phone_snapshot,
+                        candidates,
+                        "phone",
+                        "guided_story",
+                        "phone_dispatch",
+                    )
                     _run_phone_guided_job(
                         job_id,
                         phone_snapshot,
@@ -2441,6 +2479,14 @@ def _run_generative_job_impl(
                         # mix, trim-to-voice and the intro hook are not in the
                         # unified planner yet). See agents/DECISIONS.md "Two montage
                         # writers by design".
+                        _shadow_route(
+                            job_id,
+                            phone_snapshot,
+                            candidates,
+                            "phone",
+                            "voiceover_montage",
+                            "phone_dispatch",
+                        )
                         _run_phone_voiceover_montage_job(
                             job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
                         )
@@ -2460,6 +2506,27 @@ def _run_generative_job_impl(
                         # KRI-374: a creator song is the whole soundtrack (camera audio
                         # is muted), so a spoken-excerpt montage never applies to it.
                         handled_speech = False
+                        # Legacy label for a contracted job: speech only when the contract
+                        # requires it; otherwise the unified plan (song modes inside it).
+                        _user_song = candidates.get("user_song")
+                        _shadow_route(
+                            job_id,
+                            phone_snapshot,
+                            candidates,
+                            "phone",
+                            "speech_montage"
+                            if required_speech
+                            else (
+                                "lipsync_montage"
+                                if isinstance(_user_song, dict)
+                                and _user_song.get("gcs_path")
+                                and _user_song.get("sync") == "lipsync"
+                                else "user_song_montage"
+                                if isinstance(_user_song, dict) and _user_song.get("gcs_path")
+                                else "unified_montage"
+                            ),
+                            "phone_dispatch",
+                        )
                         if required_speech or (
                             contract is None and not candidates.get("user_song")
                         ):
@@ -2494,10 +2561,24 @@ def _run_generative_job_impl(
                     # possibly resolve to `subtitled` -- `_run_phone_subtitled_job`
                     # re-verifies that with the real, post-ingest
                     # `_resolve_archetype` and fails closed otherwise.
+                    _shadow_route(
+                        job_id,
+                        phone_snapshot,
+                        candidates,
+                        "phone",
+                        "talking_head"
+                        if declared_format != "subtitled"
+                        and len(candidates.get("clip_paths") or []) > 1
+                        else "subtitled",
+                        "phone_dispatch",
+                    )
                     _run_phone_subtitled_job(
                         job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
                     )
                 elif declared_format in NARRATED_EDIT_FORMATS and has_voiceover_candidate:
+                    _shadow_route(
+                        job_id, phone_snapshot, candidates, "phone", "narrated", "phone_dispatch"
+                    )
                     _run_phone_narrated_job(
                         job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
                     )
@@ -2976,6 +3057,9 @@ def _run_generative_job_impl(
     if guided_snapshot is not None:
         if speech_cut_operation_id:
             raise RuntimeError("Speech-cut rerenders are not available on guided stories")
+        _shadow_route(
+            job_id, immutable_job_plan, all_candidates, "cloud", "guided_story", "cloud_guided"
+        )
         _run_guided_story_job(
             job_id,
             guided_snapshot,
@@ -2991,6 +3075,7 @@ def _run_generative_job_impl(
         # clip_paths_gcs check below (plans/024 risk #6).
         if speech_cut_operation_id:
             raise RuntimeError("Speech-cut rerenders are not available on slide posts")
+        _shadow_route(job_id, immutable_job_plan, all_candidates, "cloud", "slides", "cloud_slides")
         _run_slide_post_job(job_id, render_trace_id=render_trace_id)
         return
 
@@ -3418,6 +3503,9 @@ def _run_generative_job_impl(
             clip_durations_s=clip_durations_s,
             prefer_narrated_voiceover=(job.mode == "content_plan"),
             narrative_shot_count=narrative_shot_count,
+        )
+        _shadow_route(
+            job_id, immutable_job_plan, all_candidates, "cloud", archetype, "cloud_archetype"
         )
         # KRI-470 PR-E: talking-head/subtitled renders emit no receipt, so a
         # receipt-only requirement is refused before any variant renders.

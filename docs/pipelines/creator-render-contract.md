@@ -229,8 +229,9 @@ first stamped (`services/generative_jobs.py`, or `tasks/content_plan_build.py` w
 dispatch is what first builds it), and persisted as
 `Job.all_candidates["creator_plan_authority_version"] = 1` (a JSON key; no
 migration). Workers branch on the stamp and never on the live flag, so a running
-job cannot change behaviour; jobs without the stamp keep legacy behaviour. Nothing
-branches on it yet.
+job cannot change behaviour; jobs without the stamp keep legacy behaviour. Only the
+route stamp and the shadow route check read it so far (see "Route resolution"); nothing
+renders differently because of it yet.
 
 | Requirement | Phone evidence | Cloud evidence | Current rule |
 | --- | --- | --- | --- |
@@ -379,6 +380,162 @@ Preflight takes the dispatched adapter (`cloud_adapter_for_job`); without a name
 adapter it keeps the pre-PR conservative refusal, so nothing is lifted on an unknown
 route. `verify_cloud_variant` picks the adapter from the variant
 (`cloud_adapter_for_variant`).
+
+## Route resolution (KRI-470 PR-D)
+
+`services/render_route.py:resolve_route` is the one function that maps an approved plan
+to a render route. It is pure, and no string a creator or model wrote can reach it. Its
+inputs are a **typed projection** (`RouteInputs`), not the contract or strategy objects:
+
+- `ContractFacts`: booleans and enums lifted from the pinned contract (duration set, voice
+  required, camera-audio sources present, `original_audio`, order required, unresolved) plus
+  the matrix field path of the first exact text, derived from its *role*. Exact-text content,
+  media ids and unresolved messages are not passed.
+- `PlanFacts`: four enumerated strategy values the dispatchers branch on (`audio_strategy`,
+  `song_sync`, `render_program`, and whether the guided-voiceover execution contract applies).
+  Every other strategy field, including all prose (`rationale`, `intro_hook`, `story_structure`,
+  titles, shot labels), is unreachable.
+- the declared `edit_format` (coerced to the known vocabulary), whether a guided snapshot,
+  a recording or a creator song is attached, the clip count, per-clip speech facts
+  (`analysis.understanding.speech` from the approval snapshot; unknown when that block is
+  absent, so legacy-shaped analyses never block a route), rollout capabilities (flags and the
+  settings-aware `phone_render_supported_formats()` as plain values) and the platform.
+- an opaque `contract_digest`, only echoed into the stamp and events.
+
+Guards: a test pins the string-typed fields of the input dataclasses to an allowlist
+(`test_the_resolver_inputs_are_a_typed_projection_without_prose`); the module may not name
+request-text helpers; and `tests/services/test_render_route_invariance.py` plus the table
+test rewrite **every** string (messages, `creator_request`, brief descriptions and literals,
+strategy prose, exact-text content, unresolved messages, clip transcripts) for all incident
+records and all `request_following` threads and assert the resolution is identical.
+
+It returns a `RouteResolution`: a `Route`, a typed refusal (`reason` is a PR-A
+`DeclineReason`, plus `field_path` and an `alternative`), or `needs_choice` (a typed
+`choice_kind` plus `field_path`, a plain value PR-C's collector can wrap). Refusals come
+from the adapter declarations: after a route is chosen, every pinned requirement its adapter
+declares `capability_unavailable` or `requirement_conflict` refuses; `evidence_missing`
+declines stay with the verifiers. `RouteResolution.drivers` lists the field paths the
+decision read.
+
+### Routes, plan conditions and the legacy gate each will retire
+
+| Route | Platform | Plan conditions (in order) | Legacy branch it maps to | Legacy gate/heuristic PR-F retires |
+| --- | --- | --- | --- | --- |
+| `guided_story` | phone | an approved guided snapshot is attached | `_run_phone_guided_job` (first branch of the phone fork) | - |
+| `speech_montage` | phone | montage family, no voice requirement, `contract.audio_source_ids` | `run_phone_speech_montage_job` (`required_speech`) | `speech_montage_possible` / `mentions_speech` raw-text gate (`phone_speech_montage_job.py`, `speech_montage_planning.py`, `render_shape.py`); fall-through to unified when the speech job returns False |
+| `voiceover_montage` | phone | montage family + `contract.require_voiceover` | `_run_phone_voiceover_montage_job` | voiceover-file presence over the plan (the phone fork already reads the contract flag; `_run_phone_subtitled_job` still reads the file) |
+| `unified_montage` | phone | montage family, none of the above | `_run_phone_unified_montage_job` -> `_run_phone_guided_job` | speech-coverage fallbacks to montage |
+| `user_song_montage` / `lipsync_montage` | phone | montage family + `audio_strategy == "user_song"` (+ `song_sync == "lipsync"`) | unified montage entry with `candidates["user_song"]` | silent lip-sync -> background fallback; a stale song attachment steering the route |
+| `subtitled` | phone, cloud | edit format `subtitled`, or narrated* with no voice requirement and one clip | `_run_phone_subtitled_job`; cloud `_resolve_archetype` | flag fallback to montage; self-narration clip-count rule |
+| `talking_head` | phone, cloud | edit format `talking_head` (cloud), or narrated* with no voice requirement and 2+ clips | `_run_phone_subtitled_job` (multi-clip); cloud `_resolve_archetype` | footage-type promotion (`footage_type_bias`); speech-coverage fallbacks; `spine_too_short` |
+| `narrated` | phone, cloud | narrated* + `contract.require_voiceover` | `_run_phone_narrated_job`; cloud `_resolve_archetype` | voiceover-file presence; `prefer_narrated_voiceover = job.mode == "content_plan"` |
+| `guided_story` | cloud | a guided snapshot, and the plan's `render_program` is `guided` (or the guided-voiceover execution contract) | `_run_guided_story_job` | guided snapshot silently skipped (`guided_story_skipped_incompatible_intent`, `AudioLedGuidedConflict`) |
+| `slides` | cloud | edit format `slides` | `_run_slide_post_job` | - |
+| `montage` | cloud | montage, no voice requirement | `_resolve_archetype` -> `montage` | footage-type promotion; speech-coverage fallbacks; flag fallbacks |
+| `voiceover` | cloud | montage family + `contract.require_voiceover` | `_resolve_archetype` -> `voiceover` | voiceover-file presence over the plan |
+| `day_vlog`, `single_hero` | cloud | declared edit format, no voice requirement | `_resolve_archetype` | `insufficient_media` / flag fallbacks |
+
+Typed refusals and choices the resolver adds on top (each mirrors a check the legacy
+dispatcher already makes somewhere, or marks a silent downgrade): camera-audio sources
+combined with a recorded voice or a creator song (`requirement_conflict`, mirrors
+`check_phone_dispatch_contract`); `subtitled` / `talking_head` combined with a voice
+requirement; a guided snapshot on an audio-led plan; a rollout flag that forbids the plan's
+format; self-narration over clips that were all analysed and none speaks; a creator song on
+cloud; `needs_choice` for an unresolved contract, a required voice with no recording
+(`voiceover_recording`) and a creator-song plan with no song (`song_upload`).
+`_creator_requests_narrated_treatment` is **not** a route input: it only decides narrated
+storyboard text treatments from request prose, and PR-F replaces it with the approved text
+requirements.
+
+### Stamp and shadow mode
+
+For jobs carrying `creator_plan_authority_version` (and only those) the resolved route is
+recorded as a plain-dict **sibling key** on the job, never inside `CreatorRenderContract`:
+
+```json
+"creator_route": {"route": "speech_montage", "platform": "phone", "contract_digest": "<digest>"}
+```
+
+Why a sibling: the contract model is `extra="forbid"`, so any field added to it makes every
+job stamped by new code unreadable by a still-running or rolled-back older worker (phone
+dispatch, cloud preflight, the phone editor and device pinning all fail closed). A
+golden schema (`tests/fixtures/creator_render_contract.schema.json`, checked by
+`test_the_contract_model_schema_is_unchanged_so_old_workers_can_still_read_it`) keeps the
+model byte-identical; only new code reads or writes `creator_route`, the same arrangement as
+`cloud_evidence`.
+
+The stamp is written ONCE, at dispatch (`tasks/content_plan_build.py`, right before the Job
+is added), after every input is attached: the brief-bound contract, the creator song and the
+guided snapshot. `build_generative_job` writes no route (its inputs are incomplete). A plan
+that resolves to a refusal or an open choice gets no stamp, and re-stamping REMOVES a previous
+stamp that no longer resolves. `read_route_stamp(assembly, contract_digest)` treats a stamp
+whose `contract_digest` differs from the current contract (e.g. an editor `rebind`) as absent;
+editor revisions never copy it. Every writer that rewrites `assembly_plan` for these jobs
+spreads the existing keys (audited: the finalize/status/decline/speech-cleanup/editor-control
+paths in `generative_build.py`, `creator_agent.py`, `generative_jobs.py`, `plan_items.py`,
+`lyrics_preview_task.py`), so the key survives normal paths.
+
+The dispatchers run the resolver in **shadow mode**: at each decision point
+(`_shadow_route` in `tasks/generative_build.py`: the five phone branches, the cloud guided
+entry, cloud slides and the cloud `_resolve_archetype` result) the legacy branch label is
+written next to the branch, the resolver is run on the same persisted inputs and, when
+they disagree (or the resolver refuses / needs a choice where legacy renders), one
+`route_mismatch` event (stage `assembly`) is recorded through `record_pipeline_event`. The
+legacy decision still renders. The check never raises (any fault is logged as
+`route_shadow_check_failed`), reads nothing for unstamped jobs, and runs only where no
+`FOR UPDATE` lock is held on the job row.
+
+`route_mismatch` event data: `point` (`phone_dispatch`, `cloud_guided`, `cloud_slides`,
+`cloud_archetype`), `platform`, `legacy_route`, `resolver_outcome` (`route` / `refusal` /
+`needs_choice`), `resolver_route`, `decline_reason`, `field_path`, `choice_kind`,
+`stamped_route` (the dispatch-time stamp; `null` when absent or stale), `contract_digest`
+and `drivers` (field paths the resolver read). It carries no request text, URLs or ids.
+Read it at `/admin/jobs/{id}` (pipeline trace, stage `assembly`) or with
+`python scripts/admin.py --prod GET jobs/<id>/debug`. A redelivered task does not append an
+identical event again (one JSONB containment probe on the job's trace, only when a mismatch is
+about to be written; a failed probe records anyway).
+
+### How PR-F uses it
+
+PR-F flips one override at a time. For each row of the legacy-gate column: review the
+`route_mismatch` events from a canary of stamped jobs, decide whether the resolver or the
+legacy branch was right, then (for stamped jobs only) make the dispatcher obey the
+resolver for that one case and turn the legacy downgrade into a typed refusal or a
+repair/retry. Unstamped jobs keep the legacy branch, so each flip needs a stamped and an
+unstamped twin test.
+
+Differences between the resolver and the legacy dispatchers already known (the starting
+worklist; the event log will add to it):
+
+- `prefer_narrated_voiceover = job.mode == "content_plan"`: legacy renders `narrated` for a
+  montage-family plan with a voiceover; the resolver says `voiceover`. Needs a product call.
+- Voiceover-file presence vs the plan: cloud legacy lets an attached file choose
+  voiceover/narrated and skip the guided snapshot; the resolver follows
+  `contract.require_voiceover`. The resolver also asks (`voiceover_recording`) when the plan
+  requires a voice and no file is attached, where legacy phone dispatch raises
+  `needs_choice` through `check_phone_dispatch_contract` and cloud renders without it.
+  `RouteInputs.voiceover_present` is the FILE; legacy phone routing uses the contract flag.
+- Footage-type promotion (`footage_type_bias`): legacy turns a montage into `talking_head`.
+- Rollout flags off (subtitled, talking_head, narrated, day_vlog, single_hero, self-narration):
+  legacy silently falls back to montage; the resolver refuses with `capability_unavailable`.
+- Speech-coverage fallback (`no_speech` -> montage): the resolver refuses only when every clip
+  was analysed with a real `understanding.speech` block and none speaks.
+- A guided snapshot on an audio-led or native plan: legacy skips it (or raises
+  `AudioLedGuidedConflict`); the resolver returns `requirement_conflict`.
+- A stale creator-song attachment (song attached, plan says library music): legacy renders
+  `user_song_montage`; the resolver says `unified_montage`.
+- `audio_strategy == "user_song"` with NO attached song: the resolver returns `needs_choice`
+  (`song_upload`) where legacy silently renders a plain unified montage. A regression risk for
+  PR-F: flipping this override changes what such jobs do.
+- Ordering: legacy checks guided before slides; the resolver checks slides first. A slides plan
+  never has a guided snapshot, so this differs only for inconsistent jobs.
+- A recorded voice on a `subtitled` edit: legacy renders `subtitled`; the resolver refuses.
+- Confirmed legacy defect the route label cannot show: `_run_phone_subtitled_job` recomputes
+  `has_voiceover` from the file (`generative_build.py`, ~line 6000) while the dispatcher chose
+  the branch from `contract.require_voiceover`. A narrated format with a file attached but no
+  voice requirement reaches it and raises "No phone renderer is registered".
+- Not modelled (post-ingest facts): `_MIN_SPINE_COVERAGE`, `spine_too_short`,
+  `insufficient_media`, and the lip-sync to background fallback.
 
 ## Routing and failure behavior
 

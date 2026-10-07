@@ -875,3 +875,22 @@ def test_song_order_on_song_item_without_resolved_takes_still_declines():
         strategy, generation_id="g", brief=_order_brief(), media_snapshot={}
     )
     assert contract.unresolved
+
+
+# --- KRI-470 PR-D: the strict contract model must not change under old workers -----------
+
+
+def test_the_contract_model_schema_is_unchanged_so_old_workers_can_still_read_it():
+    """``CreatorRenderContract`` forbids extra keys, so ANY field added to it makes every job
+    stamped by new code unreadable by a still-running (or rolled-back) older worker: phone
+    dispatch fails terminally, cloud preflight, the editor and device pinning all reject it.
+    New plan facts ride as sibling dicts on the job instead (``creator_route``, like
+    ``cloud_evidence``). ``tests/fixtures/creator_render_contract.schema.json`` is the schema
+    as of origin/main at KRI-470 PR-D; change it only with an explicit rolling-deploy plan."""
+    import json
+    from pathlib import Path
+
+    golden = json.loads(
+        (Path(__file__).parents[1] / "fixtures" / "creator_render_contract.schema.json").read_text()
+    )
+    assert CreatorRenderContract.model_json_schema() == golden
