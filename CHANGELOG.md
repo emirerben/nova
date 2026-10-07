@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.126.0] - 2026-10-07
+
+### Changed
+- fix(ios): smooth left-drawer swipe (KRI-474) (#1442) <!-- release-pr: 1442 -->
+
 ## [0.78.125.0] - 2026-10-07
 
 ### Changed
