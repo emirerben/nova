@@ -561,6 +561,14 @@ ADAPTER_DECLARATIONS: dict[str, AdapterDeclaration] = {
             {"duration_s", "audio_source_ids", "original_audio", "order_required"},
             require_voiceover=_VOICE_CONFLICT,
         ),
+        # services/phone_speech_montage_job.py:run_phone_voice_behind_footage_job (KRI-479):
+        # one clip's voice under the others, composed from the contract's own fields and
+        # verified with the composition commitments.
+        _phone(
+            "phone_voice_behind_footage",
+            {"duration_s", "audio_source_ids", "original_audio", "exact_texts", "order_required"},
+            require_voiceover=_VOICE_CONFLICT,
+        ),
         # _run_phone_unified_montage_job -> _run_phone_guided_job.
         _phone(
             "phone_guided_unified_montage",

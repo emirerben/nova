@@ -32,7 +32,7 @@ from typing import Any, Literal, get_args
 
 import structlog
 
-from app.agents._schemas.creator_agent import AudioStrategy, SongSyncMode
+from app.agents._schemas.creator_agent import AudioStrategy, SongSyncMode, VoiceMode
 from app.agents._schemas.edit_format import (
     GUIDED_EDIT_FORMATS,
     NARRATED_EDIT_FORMATS,
@@ -86,6 +86,8 @@ class Route(StrEnum):
     NARRATED = "narrated"
     # Phone montage family (``_run_phone_*``)
     SPEECH_MONTAGE = "speech_montage"
+    # KRI-479: ONE clip's voice plays straight through under the other clips (phone only).
+    VOICE_BEHIND_FOOTAGE = "voice_behind_footage"
     VOICEOVER_MONTAGE = "voiceover_montage"
     UNIFIED_MONTAGE = "unified_montage"
     USER_SONG_MONTAGE = "user_song_montage"
@@ -150,6 +152,8 @@ class ContractFacts:
     duration_set: bool = False
     require_voiceover: bool = False
     has_audio_sources: bool = False
+    # How many camera-audio sources the contract names (a count, never the ids).
+    audio_source_count: int = 0
     original_audio: Literal["forbid", "require"] | None = None
     # Matrix field path of the first exact-text requirement (from its ROLE), or None.
     text_field_path: str | None = None
@@ -165,6 +169,8 @@ class PlanFacts:
     song_sync: str | None = None
     render_program: str | None = None
     guided_voiceover: bool = False
+    # KRI-479: `continuous` | `excerpts` (an enumerated value; anything else reads as None).
+    voice_mode: str | None = None
 
 
 @dataclass(frozen=True)
@@ -244,6 +250,7 @@ _PHONE_ADAPTER = {
     Route.USER_SONG_MONTAGE: "phone_guided_unified_montage",
     Route.LIPSYNC_MONTAGE: "phone_guided_unified_montage",
     Route.SPEECH_MONTAGE: "phone_speech_montage",
+    Route.VOICE_BEHIND_FOOTAGE: "phone_voice_behind_footage",
     Route.VOICEOVER_MONTAGE: "phone_voiceover_montage",
     Route.SUBTITLED: "phone_subtitled",
     Route.TALKING_HEAD: "phone_subtitled",
@@ -385,6 +392,14 @@ def _resolve_phone(inp: RouteInputs, fmt: str, drivers: list[str]) -> RouteResol
         if voice:
             return _adapter_gate("phone", Route.VOICEOVER_MONTAGE, contract, drivers)
         if contract.has_audio_sources:
+            if inp.plan.voice_mode == "continuous" and contract.audio_source_count == 1:
+                # One named clip's voice straight through under the other clips.
+                return _adapter_gate(
+                    "phone",
+                    Route.VOICE_BEHIND_FOOTAGE,
+                    contract,
+                    [*drivers, "plan.voice_mode"],
+                )
             return _adapter_gate("phone", Route.SPEECH_MONTAGE, contract, drivers)
         if inp.plan.audio_strategy == "user_song":
             lipsync = inp.plan.song_sync == "lipsync"
@@ -557,6 +572,7 @@ ROUTE_STAMP_FIELD = "creator_route"
 _AUDIO_STRATEGIES = frozenset(get_args(AudioStrategy))
 _SONG_SYNCS = frozenset(get_args(SongSyncMode))
 _RENDER_PROGRAMS = frozenset(get_args(RenderProgram))
+_VOICE_MODES = frozenset(get_args(VoiceMode))
 
 
 def platform_for(assembly: Mapping[str, Any]) -> Platform:
@@ -574,6 +590,7 @@ def contract_facts(contract: CreatorRenderContract) -> ContractFacts:
         duration_set=contract.duration_s is not None,
         require_voiceover=bool(contract.require_voiceover),
         has_audio_sources=bool(contract.audio_source_ids),
+        audio_source_count=len(contract.audio_source_ids),
         original_audio=contract.original_audio,
         text_field_path=text_field_path(contract.exact_texts[0]) if contract.exact_texts else None,
         order_required=bool(contract.order_required),
@@ -589,6 +606,7 @@ def plan_facts(strategy: object) -> PlanFacts:
         song_sync=_enum(strategy.get("song_sync"), _SONG_SYNCS),
         render_program=_enum(strategy.get("render_program"), _RENDER_PROGRAMS),
         guided_voiceover=requests_guided_voiceover(strategy),
+        voice_mode=_enum(strategy.get("voice_mode"), _VOICE_MODES),
     )
 
 
