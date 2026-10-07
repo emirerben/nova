@@ -896,9 +896,15 @@ def repair_creator_voice_mode(strategy: CreativeStrategy) -> tuple[CreativeStrat
         or strategy.edit_format != "montage"
         or strategy.audio_strategy in ("voiceover", "user_song")
         or strategy.execution_contract is not None
-        or strategy.archetype is not None
     ):
         return strategy.model_copy(update={"voice_mode": None}), []
+    if strategy.voice_mode == "continuous" and (
+        strategy.archetype is not None or strategy.hero_media_id is not None
+    ):
+        # The creator asked for one voice under the other clips; a day-vlog / single-hero
+        # SHAPE the model added on top is not part of that request and the voice composer has
+        # no use for it (KRI-469's recorded strategy carried `archetype: day_vlog`).
+        return strategy.model_copy(update={"archetype": None, "hero_media_id": None}), []
     return strategy, []
 
 

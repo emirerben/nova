@@ -146,7 +146,6 @@ def test_policy_keeps_voice_mode_under_a_camera_audio_montage() -> None:
         {"montage_audio": MontageAudioPlan(preserve_source_audio=False)},
         {"audio_strategy": "licensed_music", "montage_audio": None},
         {"audio_strategy": "voiceover"},
-        {"archetype": "day_vlog"},
         {"edit_format": "subtitled"},
     ],
 )
@@ -161,3 +160,18 @@ def test_policy_drops_a_stray_voice_mode_instead_of_promising_it(update) -> None
     repaired, notices = repair_creator_voice_mode(CreativeStrategy(**{**base, **update}))
     assert repaired.voice_mode is None
     assert notices == []  # a vestigial field is dropped silently (KRI-129)
+
+
+def test_a_model_added_story_shape_does_not_demote_a_continuous_voice() -> None:
+    """KRI-469's recorded strategy carried `archetype: day_vlog` next to the voice."""
+    from app.agents._schemas.creator_policy import repair_creator_voice_mode
+
+    strategy = CreativeStrategy(
+        audio_strategy="original_audio",
+        voice_mode="continuous",
+        archetype="day_vlog",
+        montage_audio=MontageAudioPlan(preserve_source_audio=True, source_media_ids=["m0"]),
+    )
+    repaired, notices = repair_creator_voice_mode(strategy)
+    assert repaired.voice_mode == "continuous" and repaired.archetype is None
+    assert notices == []

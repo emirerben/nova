@@ -132,6 +132,21 @@ variant is in the script docstring. Cases:
 - `speech_music`: the real spoken-excerpt compiler with a music bed. Music is audible only
   under the montage runs (continuing where it left off), the speaker's tone alone under the
   speech, b-roll silent. Control `speech_music_doubled_bed` must fail `music_once`.
+- `voice_behind_footage` (KRI-479): the REAL composer (`compile_phone_voice_behind_footage_plan`)
+  puts ONE clip's voice under six picture clips listed in a non-sorted order, with opening
+  text, and the recipe must pass `verify_phone_recipe` with its composition commitments before
+  it is exported. The voice is a staircase of one pure tone per source second under a grey
+  picture that must never show; every picture clip is a unique colour with its own (muted)
+  tone. Checks: length within 0.1 s; every cut's centre frame is the contract's colour at that
+  position (order, each once); each voice tone sounds at the source's level for the whole
+  planned span and the span fills the picture to within the 3 s sentence-snap slack
+  (`voice_present_throughout`); no other voice tone and no picture-clip tone above -30 dB
+  (`voice_once`, `camera_audio_silent`); non-silent loudness; the opening text differs from the
+  `voice_behind_footage_notext` twin inside its window and not after it. Controls that must
+  fail their named check: `voice_behind_footage_unmuted` (`camera_audio_silent`),
+  `voice_behind_footage_voice_stops_early` (`voice_present_throughout`),
+  `voice_behind_footage_wrapped` (`picture_order`). Run it alone with
+  `prepare "$OUT" --cases voice_behind_footage`.
 - `user_song_doubled_bed`: the NEGATIVE CONTROL, the same recipe with `music_volume = 1.0`
   (the KRI-481 failure). `compare` requires it to FAIL `tone_a_absent` and `song_once`;
   a harness that cannot see the double play fails loudly.
@@ -139,7 +154,9 @@ variant is in the script docstring. Cases:
 **Cadence.** This proof is opt-in and not in CI, so it only protects what someone re-runs.
 Re-run the full cycle (`prepare`, `swift test`, `compare`; all controls detected, exit 0)
 on every PR that touches `pipeline/phone_guided_plan.py`, `pipeline/phone_authored_timeline.py`,
-`pipeline/phone_speech_montage_plan.py`, `pipeline/phone_voiceover_montage_plan.py`,
+`pipeline/phone_speech_montage_plan.py` (including the voice-behind-footage composer),
+`pipeline/phone_voiceover_montage_plan.py`, the composition checks in
+`services/creator_render_contract.py:verify_phone_recipe`,
 `services/phone_editor.py` audio handling, or `Composition.swift`, and attach `report.json`
 and `montage.png` to the PR.
 
