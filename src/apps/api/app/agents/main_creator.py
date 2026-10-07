@@ -57,6 +57,8 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # KRI-470: a stated video length ALWAYS becomes a `timing` requirement; the clarification
 # gate cannot compare a number the brief lost (v45; brief_extractor v2 shares the section).
 # KRI-506: delegated creative copy is proposed for a separate server approval (v46).
+# KRI-479: `voice_mode` (continuous | excerpts) for a montage that keeps one clip's camera
+# audio, taught only when the manifest advertises `phone_source_audio` (v47).
 MAIN_CREATOR_PROMPT_VERSION = "2026-10-07-v46"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
@@ -231,6 +233,28 @@ instead only if the creator explicitly asks for it. `summary` MUST say in plain 
 mode you chose (for example "I'll use your song as the background music and cut to its beat."
 or "I'll lip-sync your takes to your song, placing each one where it fits the music."). Never
 invent or quote lyrics, and never promise cuts matched to lyrics.
+""".strip("\n")
+
+
+# KRI-479: how a named camera-audio clip is used under a montage. Rendered into the
+# `$voice_mode_section` slot (the last on the `$clip_intents_section` line) ONLY when the
+# manifest advertises `phone_source_audio`; "" otherwise, so every prompt without that
+# capability is byte-identical to before this field existed (pinned by
+# tests/agents/test_main_creator_user_song.py).
+_VOICE_MODE_PROMPT_SECTION = """
+VOICE MODE (iPhone montage that keeps a clip's own sound)
+When `montage_audio.preserve_source_audio` is true, also set `voice_mode` inside `strategy`
+to exactly one of:
+- "continuous" -- ONE clip's voice plays straight through under the whole edit while the
+  creator's other clips are the picture. Use it when the creator wants the voice or talk from
+  a particular clip (for example "use the voice from my talk-to-camera video behind a fast
+  montage of the rest") to run over the other footage. `montage_audio.source_media_ids` MUST
+  then name exactly that one clip. That clip's own picture is not shown.
+- "excerpts" -- chosen lines or quotes from the speaker cut over the footage. Use it when the
+  creator asks for particular lines, quotes or moments from what someone says.
+Leave `voice_mode` null when no camera-audio clip is named, and when you are unsure which of
+the two the creator means, choose "excerpts"; never invent a clip as the voice. Say in
+`summary`, in plain words, which clip's voice plays and whether it plays straight through.
 """.strip("\n")
 
 
@@ -445,6 +469,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             user_song_section=(
                 "\n" + _USER_SONG_PROMPT_SECTION if input.capability_manifest.has_user_song else ""
             ),
+            # KRI-479: "" (no `phone_source_audio`) adds no bytes; same line-suffix trick.
+            voice_mode_section=(
+                "\n" + _VOICE_MODE_PROMPT_SECTION
+                if _voice_mode_available(input.capability_manifest)
+                else ""
+            ),
         )
 
     def parse(self, raw_text: str, input: MainCreatorInput) -> MainCreatorOutput:  # noqa: A002
@@ -627,6 +657,17 @@ def _story_shapes_available(manifest: ResolvedCreatorManifest) -> bool:
         return False
     guided = manifest.capabilities.get(CAPABILITY_DRAFT_GUIDED_PROPOSAL)
     return bool(guided is not None and guided.available)
+
+
+def _voice_mode_available(manifest: ResolvedCreatorManifest) -> bool:
+    """KRI-479: teach `voice_mode` only on a phone manifest that can keep source audio.
+
+    `compile_strategy_to_plan` (`repair_creator_voice_mode`) drops a stray value
+    regardless of whether the model saw this guidance.
+    """
+
+    capability = manifest.capabilities.get("phone_source_audio")
+    return bool(capability is not None and capability.available)
 
 
 def _reaction_beats_available(manifest: ResolvedCreatorManifest) -> bool:

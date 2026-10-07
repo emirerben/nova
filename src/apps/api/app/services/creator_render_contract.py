@@ -217,6 +217,18 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "ordering_choice",
         note="only `chronological` pins order; `group_first` is resolved upstream, not projected",
     ),
+    **_rules(
+        "upstream_resolved",
+        "render_contract:composition",
+        "voice_mode",
+        note=(
+            "KRI-479: `continuous` = one named camera-audio clip's voice plays under the whole "
+            "edit and its own picture is hidden. Not part of the pinned projection (the strict "
+            "contract model never grows a field): the route resolver reads it and dispatch "
+            "derives the composition commitments (sibling `creator_composition` key) the "
+            "verifier checks; absent/`excerpts` = the spoken-excerpt lane unchanged"
+        ),
+    ),
     # Taste: no renderer is held to it.
     **_rules(
         "preference_only",
