@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.138.0] - 2026-10-07
+
+### Changed
+- fix(kria): tapping a choice answer on an item whose last render failed re-plans instead of dying in brief extraction (#1460) <!-- release-pr: 1460 -->
+
 ## [0.78.137.0] - 2026-10-07
 
 ### Changed
