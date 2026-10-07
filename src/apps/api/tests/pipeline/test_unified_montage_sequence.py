@@ -125,9 +125,9 @@ def test_receipt_and_reply_say_done_when_the_sequence_landed():
 
 def test_unapplied_description_is_never_silent_or_claimed():
     # No intents matched anything (or the flag is off): the order requirement must
-    # produce a visible "partial", not a dropped neutral receipt.
+    # produce a visible failure ("Couldn't": KRI-470 PR-G), not a dropped neutral receipt.
     receipts, reply = _reply(_plan(_strategy(), enabled=False))
-    assert [r.status for r in receipts] == ["partial"]
+    assert [r.status for r in receipts] == ["not_possible"]
     assert "order you attached them" in reply
     assert reply.startswith("Not everything you asked for made it in")
 
@@ -135,6 +135,7 @@ def test_unapplied_description_is_never_silent_or_claimed():
 def test_unmatched_sequence_makes_the_reply_a_failure_notice():
     strategy = _strategy(_intent("the field and football", "first"))
     receipts, reply = _reply(_plan(strategy))
-    assert [r.status for r in receipts] == ["partial"]
+    # None of the described groups landed: the required order is not met (not "partly").
+    assert [r.status for r in receipts] == ["not_possible"]
     assert reply.startswith("Not everything you asked for made it in")
     assert "I found no clips of it" in reply
