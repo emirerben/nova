@@ -661,6 +661,19 @@ contract requires speech. Unsupported combinations decline with a
 creator-facing reason before pinning; missing evidence is a contract failure,
 not an invitation to accept a one-off raw-text override.
 
+The clips a job is dispatched with must be the clips the contract pins
+(KRI-515). The contract filters the bound media snapshot by an explicit
+`media_scope="selected"` pick, so `content_plan_build._creator_selected_clip_paths`
+narrows `clip_paths` to that pick whenever the dispatch has no approved guided
+proposal (every runtime-v2 approval): attachment order is kept, a named
+`montage_audio.source_media_ids` clip always stays, and a pick that names no
+attached clip keeps every clip. Proposal-backed guided jobs still hand the
+worker every clip (the proposal owns media choice). Before this, a v2 montage
+rendered a clip the Creator had dropped (a duplicate, "skip the X clip") and,
+under an order rule, the phone verifier refused it: "This edit couldn't keep
+the confirmed clip order" (prod thread 0b1f9556, stress kit M3). Guard:
+`tests/tasks/test_selected_clip_dispatch.py`.
+
 Cloud preflight declines unresolved order facts and every requirement the
 dispatched adapter's declaration lists as declined (see "Cloud evidence"). For
 consumed requirements, publication checks measured duration and the
