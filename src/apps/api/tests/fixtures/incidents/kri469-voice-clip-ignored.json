@@ -602,7 +602,7 @@
   ],
   "xfail": [
     {
-      "reason": "KRI-479 / PR-H",
+      "reason": "KRI-512 / PR-H",
       "scope": "output"
     }
   ],

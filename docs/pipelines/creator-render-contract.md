@@ -783,7 +783,7 @@ cut away") is NOT in this slice: the voice clip's own picture is hidden, so such
 route here. Only the opening text is composed; closing/per-clip/any text requirements fail
 the verifier's `exact_texts` check (typed) rather than render without them. Capture-time ties
 keep the snapshot order and are disclosed in the review reply, not asked. The `kri469-voice-clip-ignored` output
-record stays xfail (owner now `KRI-479 / PR-H`): its recorded 30 s is the strategy's own pick
+record stays xfail (owner now `KRI-512 / PR-H`, the re-base ticket): its recorded 30 s is the strategy's own pick
 over 41 other clips, which cannot each be seen in 30 s; the new flow asks "how long" and offers
 33 s (the least in which every clip is seen), 45 s and 60 s. What is missing to flip it is a
 creator-confirmed length for that plan (no ticket is filed for it here).
