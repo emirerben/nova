@@ -203,34 +203,55 @@ def _text_requirements_for_save(
     *,
     keep_shot_roles: bool,
 ) -> tuple[TextRequirement, ...]:
-    """The saved text lane as requirements, each keeping the role it was approved with.
+    """The saved text lane as requirements, each keeping every role it was approved with.
 
-    A row inherits the role of the requirement it carried before the Save: matched by
-    element id (so an edited opening title is still the opening title), else by the
-    exact text. Anything the contract never asked for stays ``any``. An opening or
-    closing role is verified against the recompiled recipe, so an edit that moves the
-    opening text out of the opening window is refused instead of silently accepted.
-    A shot-scoped role is kept only while the timeline is untouched: a reorder
-    invalidates the shot it was pinned to.
+    A row inherits the requirements it carried before the Save: matched by element id (so
+    an edited opening title is still the opening title), else by exact text. The standard
+    contract shape is TWO requirements for one title, ``[opening X (2.0 s), any X]``
+    (the strategy's opening title and the brief's literal), so ALL matches are kept: the
+    specific role (opening > closing > clip) with its approved ``duration_s``, and the
+    generic ``any`` presence check beside it. An opening or closing role is verified
+    against the recompiled recipe, so an edit that moves the opening text out of its
+    window, or holds it for less than the approved time, is refused instead of silently
+    accepted. A shot-scoped role is kept only while the timeline is untouched: a reorder
+    invalidates the shot it was pinned to, and it degrades to ``any`` (never to nothing).
+    Anything the contract never asked for stays ``any``.
     """
 
-    by_text = {_normal_text(item.text): item for item in prior}
+    def matches(text: object) -> list[TextRequirement]:
+        key = _normal_text(text)
+        return [item for item in prior if _normal_text(item.text) == key] if key else []
+
     out: list[TextRequirement] = []
     for row in rows:
         if not (isinstance(row, dict) and isinstance(row.get("text"), str) and row["text"].strip()):
             continue
         before = prior_elements.get(str(row.get("id")))
-        source = by_text.get(_normal_text(before)) if before else None
-        if source is None:
-            source = by_text.get(_normal_text(row["text"]))
-        role = "any"
-        shot: dict[str, Any] = {}
-        if source is not None and source.role in {"opening", "closing"}:
-            role = source.role
-        elif source is not None and source.role == "clip" and keep_shot_roles:
-            role = "clip"
-            shot = {"media_id": source.media_id, "shot_index": source.shot_index}
-        out.append(TextRequirement(role=role, text=row["text"], **shot))
+        sources = matches(before) or matches(row["text"])
+        wanted: list[TextRequirement] = []
+        for source in sources:
+            if source.role in {"opening", "closing"}:
+                wanted.append(
+                    TextRequirement(
+                        role=source.role, text=row["text"], duration_s=source.duration_s
+                    )
+                )
+            elif source.role == "clip" and keep_shot_roles:
+                wanted.append(
+                    TextRequirement(
+                        role="clip",
+                        text=row["text"],
+                        media_id=source.media_id,
+                        shot_index=source.shot_index,
+                        duration_s=source.duration_s,
+                    )
+                )
+            else:
+                wanted.append(TextRequirement(role="any", text=row["text"]))
+        wanted = wanted or [TextRequirement(role="any", text=row["text"])]
+        for requirement in wanted:
+            if requirement not in out:
+                out.append(requirement)
     return tuple(out)
 
 

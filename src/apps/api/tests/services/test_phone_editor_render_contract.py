@@ -120,3 +120,84 @@ def test_an_element_that_was_never_a_requirement_stays_unplaced(monkeypatch):
 
     roles = {item.text: item.role for item in _revised(job).exact_texts}
     assert roles == {"After": "opening", "Added later": "any"}
+
+
+# --- the standard prod shape: [opening X (2.0 s), any X] ------------------------------
+
+
+def _prod_shape_contract(job, text="Before", hold=2.0):
+    """Prod jobs 110c3dd2 / e1c5f89e: the strategy's opening title AND the brief's literal."""
+    from app.kria.brief import BriefRequirement, CreativeBrief
+
+    brief = CreativeBrief(
+        version=1,
+        requirements=[BriefRequirement(id="r1", kind="text", scope="title", literal=text)],
+    )
+    contract = build_render_contract(
+        {"opening_title": text, "opening_title_duration_s": hold},
+        generation_id="first",
+        brief=brief,
+    )
+    # (No brief binding is stored on this fixture job, so drop the digest it would check.)
+    contract = contract.rebind(brief_digest=None)
+    assert [(t.role, t.duration_s) for t in contract.exact_texts] == [
+        ("opening", hold),
+        ("any", None),
+    ]
+    job.assembly_plan[CONTRACT_FIELD] = contract.model_dump(mode="json")
+    return contract
+
+
+def test_the_duplicate_shape_still_refuses_an_opening_title_pushed_out_of_its_window(
+    monkeypatch,
+):
+    job = phone_job(monkeypatch)
+    _prod_shape_contract(job)
+    before = device_status(job, "guided_story").request
+
+    with pytest.raises(HTTPException) as caught:
+        save(job, text="Before", start_s=1.0, end_s=3.0)
+
+    assert caught.value.detail["field_path"] == "opening_title"
+    assert device_status(job, "guided_story").request == before
+
+
+def test_the_duplicate_shape_keeps_both_requirements_through_a_retyped_title(monkeypatch):
+    job = phone_job(monkeypatch)
+    _prod_shape_contract(job)
+
+    save(job, text="After", start_s=0, end_s=3)
+
+    assert [(t.role, t.text, t.duration_s) for t in _revised(job).exact_texts] == [
+        ("opening", "After", 2.0),
+        ("any", "After", None),
+    ]
+
+
+def test_the_approved_on_screen_minimum_is_reverified_after_an_edit(monkeypatch):
+    job = phone_job(monkeypatch)
+    _prod_shape_contract(job)
+
+    with pytest.raises(HTTPException) as caught:
+        save(job, text="Before", start_s=0, end_s=1.0)  # a 1 s hold under a 2.0 s approval
+
+    assert caught.value.detail["field_path"] == "opening_title_duration_s"
+
+
+def test_a_row_the_contract_never_asked_for_stays_any_beside_the_duplicate_shape(monkeypatch):
+    job = phone_job(monkeypatch)
+    _prod_shape_contract(job)
+    first = job.assembly_plan["variants"][0]["text_elements"][0]
+    extra = {**first, "id": "added", "text": "Added later", "start_s": 1.0, "end_s": 2.0}
+
+    gj.prepare_editor_commit(
+        job,
+        "guided_story",
+        gj.EditorCommitRequest(base_generation="first", text_elements=[first, extra]),
+    )
+
+    assert sorted((t.role, t.text) for t in _revised(job).exact_texts) == [
+        ("any", "Added later"),
+        ("any", "Before"),
+        ("opening", "Before"),
+    ]
