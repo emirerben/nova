@@ -22,6 +22,16 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.agents._schemas.text_element import CAPTION_CUE_SOURCE, TextElement
 from app.config import settings
 from app.pipeline.canvas import LANDSCAPE, PORTRAIT, Canvas
+from app.pipeline.cloud_render_evidence import (
+    CloudPictureSegment,
+    CloudTextEvidence,
+    SourceAudioState,
+    TextRole,
+    audio_evidence,
+    collapse_adjacent,
+    picture_timeline,
+    text_evidence_row,
+)
 from app.pipeline.duration_contract import (
     STRICT_MIXED_MEDIA_DURATION_TOLERANCE_S,
     STRICT_MIXED_MEDIA_MAX_CFR_OVERRUN_S,
@@ -440,6 +450,22 @@ class GuidedStoryRenderReceipt(BaseModel):
     )
     narration_applied: bool = False
     narration_label_receipt: dict[str, Any] | None = None
+    # KRI-470 cloud evidence (None = this render predates it / did not emit it;
+    # omitted from the dump so stored receipts keep their exact shape).
+    actual_clip_order: list[str] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    picture_timeline: list[CloudPictureSegment] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    source_audio_ids: list[str] | None = Field(default=None, exclude_if=lambda value: value is None)
+    source_audio_state: SourceAudioState | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    source_audio_reason: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    text_evidence: list[CloudTextEvidence] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def validate_strict_equality(self) -> GuidedStoryRenderReceipt:
@@ -463,6 +489,14 @@ class GuidedStoryRenderReceipt(BaseModel):
             raise ValueError("receipt cannot carry both mixed music and an external reference")
         if self.narration_applied != (self.narration is not None):
             raise ValueError("receipt narration identity does not match application state")
+        if self.picture_timeline is not None and self.actual_clip_order is not None:
+            if self.actual_clip_order != collapse_adjacent(
+                segment.media_id for segment in self.picture_timeline
+            ):
+                raise ValueError("receipt clip order does not match its picture timeline")
+        if self.source_audio_ids is not None and self.source_audio_state is not None:
+            if (self.source_audio_state == "audible") != bool(self.source_audio_ids):
+                raise ValueError("receipt camera-audio state does not match its sources")
         if self.music is not None and self.music_window_applied is not None:
             expected_window = max(
                 0.0,
@@ -3892,12 +3926,19 @@ def _mux_guided_source_audio(
     plan: dict[str, Any],
     local_by_id: dict[str, str],
     output: str,
+    audible_out: list[str] | None = None,
 ) -> str:
-    """Restore approved source audio after cloud's video-only transition join."""
+    """Restore approved source audio after cloud's video-only transition join.
+
+    ``audible_out`` (receipt evidence) receives the media ids whose own sound was
+    actually mixed into the returned file -- the audio graph's branches, not the
+    plan's intent.  It stays empty when nothing was restored or the level is 0.
+    """
     if not plan_preserves_source_audio(plan):
         return assembled
     inputs: list[str] = []
     branches: list[str] = []
+    branch_media_ids: list[str] = []
     branch_labels: list[str] = []
     for index, moment in enumerate(plan.get("story_timeline") or []):
         source = local_by_id.get(moment.get("media_id"))
@@ -3953,6 +3994,7 @@ def _mux_guided_source_audio(
         delay = max(0, round(float(moment.get("output_start_s") or 0.0) * 1000))
         filters.append(f"adelay={delay}:all=1")
         branches.append(",".join(filters) + f"[sa{index}]")
+        branch_media_ids.append(str(moment["media_id"]))
     if not branches:
         _attach_silent_aac(assembled, output)
         return output
@@ -3989,7 +4031,109 @@ def _mux_guided_source_audio(
         raise GuidedStoryError(
             "guided_story_render_failed", "Approved source audio could not be restored."
         ) from exc
+    if audible_out is not None and level > 0:
+        audible_out.extend(dict.fromkeys(branch_media_ids))
     return output
+
+
+_GUIDED_OPENING_TEXT_IDS = frozenset({"guided-title"})
+_GUIDED_CLOSING_TEXT_IDS = frozenset({"guided-closing-title"})
+# Per-shot copy the guided compiler binds to one clip's window.
+_GUIDED_CLIP_TEXT_PREFIXES = ("clip-label-", "montage-text-")
+
+
+def _guided_source_audio_evidence(
+    plan: Mapping[str, Any],
+    mixed_media_ids: list[str],
+    *,
+    narration_applied: bool,
+    music_applied: bool,
+) -> dict[str, Any]:
+    """Which sources' own sound is audible in the finished guided output.
+
+    A recorded narration or a mixed song replaces the footage audio outright
+    (their mixers map only the new track), so those win over whatever the
+    source-audio mux restored earlier.
+    """
+
+    if narration_applied:
+        return audio_evidence([], reason="replaced_by_narration")
+    if music_applied:
+        return audio_evidence([], reason="replaced_by_music")
+    if mixed_media_ids:
+        return audio_evidence(mixed_media_ids)
+    if not plan_preserves_source_audio(plan):
+        return audio_evidence([], reason="not_preserved")
+    level = plan.get("editor_audio_level")
+    if level is not None and float(level) <= 0:
+        return audio_evidence([], reason="level_zero")
+    return audio_evidence([], reason="no_source_audio")
+
+
+def _guided_text_role(element_id: str) -> TextRole:
+    """The contract role a guided-compiler text element plays (by its own ids)."""
+
+    if element_id in _GUIDED_OPENING_TEXT_IDS:
+        return "opening"
+    if element_id in _GUIDED_CLOSING_TEXT_IDS:
+        return "closing"
+    if element_id.startswith(_GUIDED_CLIP_TEXT_PREFIXES):
+        return "clip"
+    return "any"
+
+
+def guided_picture_timeline(
+    plan: Mapping[str, Any], moment_receipts: list[dict]
+) -> list[dict[str, Any]]:
+    """Picture segments from the moments the renderer actually produced, in order."""
+
+    moments = {str(row["moment_id"]): row for row in plan["story_timeline"]}
+    return picture_timeline(
+        (
+            str(receipt["media_id"]),
+            float(moments[str(receipt["moment_id"])]["output_start_s"]),
+            float(moments[str(receipt["moment_id"])]["output_end_s"]),
+        )
+        for receipt in moment_receipts
+    )
+
+
+def guided_text_evidence(
+    elements: list[TextElement],
+    visible_ids: set[str],
+    timeline: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """One row per text layer that was burned and measured visible.
+
+    Role comes from the compiler's own element ids; a per-shot label is bound to
+    the picture segment its window overlaps most.  Elements the pixel check did
+    not find are absent -- a hidden or clipped layer is never reported as shown.
+    """
+
+    rows: list[dict[str, Any]] = []
+    for element in elements:
+        if element.id not in visible_ids or not element.text.strip():
+            continue
+        role = _guided_text_role(element.id)
+        media_id: str | None = None
+        if role == "clip" and timeline:
+            best = 0.0
+            for segment in timeline:
+                overlap = min(element.end_s, segment["end_s"]) - max(
+                    element.start_s, segment["start_s"]
+                )
+                if overlap > best:
+                    best, media_id = overlap, segment["media_id"]
+        rows.append(
+            text_evidence_row(
+                role=role,
+                text=element.text,
+                start_s=element.start_s,
+                end_s=element.end_s,
+                media_id=media_id,
+            )
+        )
+    return rows
 
 
 def _verify_receipt(
@@ -4003,6 +4147,8 @@ def _verify_receipt(
     narration_applied: bool = False,
     text_stage_input_path: str | None = None,
     text_stage_output_path: str | None = None,
+    source_audio: dict[str, Any] | None = None,
+    text_elements: list[TextElement] | None = None,
 ) -> dict[str, Any]:
     expected_beats = [row["beat_id"] for row in plan["beat_windows"]]
     expected_moments = [row["moment_id"] for row in plan["story_timeline"]]
@@ -4134,6 +4280,17 @@ def _verify_receipt(
             plan_preserves_source_audio(plan) if plan.get("compiler_version", 0) >= 6 else None
         ),
     }
+    if source_audio is not None:
+        # KRI-470 evidence: derived from the timeline and audio graph just built.
+        timeline = guided_picture_timeline(plan, moment_receipts)
+        receipt_data["picture_timeline"] = timeline
+        receipt_data["actual_clip_order"] = collapse_adjacent(
+            str(row["media_id"]) for row in timeline
+        )
+        receipt_data.update(source_audio)
+        receipt_data["text_evidence"] = guided_text_evidence(
+            list(text_elements or []), set(visible_text), timeline
+        )
     if plan.get("editor_revision_number") is not None:
         receipt_data["approved_text_ids"] = list(
             plan.get("editor_approved_text_ids") or expected_text
@@ -4230,6 +4387,14 @@ def verify_guided_text_reburn(
             "guided_story_receipt_mismatch", "The edited video no longer matches the story."
         )
     updated = previous.model_dump(mode="json")
+    if previous.text_evidence is not None:
+        # The edited words replace the rendered ones: re-derive what is on screen
+        # from the elements that were just burned, against the unchanged picture.
+        updated["text_evidence"] = guided_text_evidence(
+            elements,
+            set(actual_ids),
+            list(updated.get("picture_timeline") or []),
+        )
     updated.update(
         {
             "verified": True,
@@ -5118,8 +5283,13 @@ def render_execution_plan(
     track: Any | None,
     attempt_id: str | None = None,
     on_stage: Callable[[tuple[str, ...], str], None] | None = None,
+    emit_cloud_evidence: bool = False,
 ) -> dict[str, Any]:
     """Render and verify one strict guided-story variant.
+
+    ``emit_cloud_evidence`` (KRI-470) adds the clip-order, camera-audio and
+    text-layer evidence to the receipt.  Only contract-bound jobs ask for it so
+    every other job keeps its exact stored receipt.
 
     ``on_stage(sections, state)`` (KRI-443 live feed) is called from this thread at the
     real stage boundaries: a section is ``deciding`` when its work starts and ``decided``
@@ -5215,12 +5385,14 @@ def render_execution_plan(
             expected_duration_s=float(plan["resolved_duration_s"]),
             canvas=canvas,
         )
+    mixed_source_audio_ids: list[str] = []
     if plan.get("compiler_version", 0) >= 6:
         assembled = _mux_guided_source_audio(
             assembled,
             plan,
             local_by_id,
             os.path.join(tmpdir, "guided_story_source_audio.mp4"),
+            audible_out=mixed_source_audio_ids,
         )
     if (plan.get("montage_audio") or {}).get("preview_source_beds"):
         plan["source_audio_options"] = _build_montage_audio_options(
@@ -5398,6 +5570,17 @@ def render_execution_plan(
         text_stage_output_path=(
             os.path.join(tmpdir, "guided_story_final.mp4") if render_elements else None
         ),
+        source_audio=(
+            _guided_source_audio_evidence(
+                plan,
+                mixed_source_audio_ids,
+                narration_applied=narration_applied,
+                music_applied=music_applied,
+            )
+            if emit_cloud_evidence
+            else None
+        ),
+        text_elements=render_elements,
     )
 
     attempt_suffix = hashlib.sha256(str(attempt_id or "preview").encode()).hexdigest()[:16]
