@@ -632,6 +632,12 @@ def build_render_contract(
     order_ids = tuple(str(item) for item in clip_order if str(item).strip())
     order_basis = "confirmed" if order_ids else None
     unresolved: list[str] = []
+    song_time_owns_order = bool(
+        typed
+        and typed.audio_strategy == "user_song"
+        and typed.song_sync == "lipsync"
+        and typed.resolved_song_takes
+    )
     if brief:
         for requirement in brief.live():
             if requirement.kind == "timing" and requirement.facts.get("duration_s") is not None:
@@ -667,6 +673,15 @@ def build_render_contract(
                     )
                 )
             if requirement.kind == "order":
+                if song_time_owns_order and requirement.facts.get("key") not in {
+                    "capture_time",
+                    "chronological",
+                }:
+                    # The song-order answer ("Use this order: clips 1, 2, ..."): the
+                    # server-resolved song placement IS the order authority and the
+                    # render verifies it through the lip-sync receipts, so it is not
+                    # an unverifiable media-order rule (and must never pin capture time).
+                    continue
                 order_required = True
                 if requirement.facts.get("key") not in {"capture_time", "chronological"}:
                     unresolved.append("I can't verify this ordering rule from the approved media.")
