@@ -149,6 +149,7 @@
       "KriaUITests/NativeEditorInspectorUITests/testSoundsTabShowsCreatorsOwnSongWithoutCatalogControls",
       "KriaUITests/NativeEditorInspectorUITests/testSoundsTabShowsSongVolumeStartAndRemove",
       "KriaUITests/NativeEditorInspectorUITests/testLipSyncSongLocksStartButKeepsVolumeAndRemove",
+      "KriaUITests/NativeEditorInspectorUITests/testOriginalAudioVolumeAndPerClipAudioButtonWorkOnALipSyncVideo",
       "KriaUITests/NativeEditorInspectorUITests/testSongReferenceBarKeepsTimelineAndToolsOnScreen",
       "KriaUITests/NativeEditorInspectorUITests/testSoundEffectsHomeLibraryEditTrimFlow",
       "KriaUITests/NativeEditorInspectorUITests/testFinishedRenderFallbackRemainsPlayableAndDisablesCanvasManipulation",
@@ -285,6 +286,7 @@
     "src/apps/ios/Tests/KriaUITests/SongOrderUITests.swift": "creation",
     "src/apps/ios/Kria/Core/NativeUserSong.swift": "editor",
     "src/apps/ios/Kria/Features/NativeEditorYourSongRow.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeEditorOriginalAudioRow.swift": "editor",
     "src/apps/ios/Kria/Features/NativeSongAudition.swift": "editor"
   }
 }

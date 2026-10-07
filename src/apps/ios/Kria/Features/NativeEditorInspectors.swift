@@ -451,10 +451,7 @@ private struct NativeSelectedClipInspector: View {
                         .accessibilityIdentifier("native-editor-clip-transition-caption")
                 }
             }
-            Section("Clip audio") {
-                Label(clip?.muted == true ? "Muted" : "Original audio on", systemImage: clip?.muted == true ? "speaker.slash" : "speaker.wave.2")
-                nativeLockedNote(session: session, keys: ["clip_audio", "timeline"], fallback: "Per-clip audio changes are not supported by the renderer yet.")
-            }
+            NativeClipAudioSection(clipID: selection.id, session: session)
             if !session.canEditTimeline {
                 Section { Label("Clip edits are locked for this render.", systemImage: "lock") }
             }

@@ -987,6 +987,9 @@ class TimelineSlotEdit(BaseModel):
     layout: Literal["fullscreen", "supporting_card"] | None = None
     source_crop: dict[str, float] | None = None
     playback_rate: float | None = Field(default=None, ge=0.25, le=4.0)
+    # Camera sound for this occurrence: True silences it. None = an older client omitted
+    # the field; the saved value is kept. Honoured on phone-rendered guided edits only.
+    muted: bool | None = None
 
     @field_validator("source_crop")
     @classmethod
@@ -1131,8 +1134,10 @@ class TimelineResponse(BaseModel):
 
 class EditorCommitMix(BaseModel):
     """Editor mix section. `music_level` maps onto the existing per-variant `mix`
-    semantics (voice/bed balance — voiceover variants only). `original_level` is
-    persisted for round-tripping but not yet honored by the render pipeline."""
+    semantics (voice/bed balance — voiceover variants only). `original_level` is the
+    footage's own sound level: persisted on every variant, and honored by the phone
+    renderer for guided-story edits (including creator-song videos, where it plays WITH
+    the song; unset keeps the song video's camera silent)."""
 
     music_level: float | None = Field(None, ge=0.0, le=1.0)
     original_level: float | None = Field(None, ge=0.0, le=1.0)
@@ -7292,6 +7297,15 @@ def _base_editor_capabilities(job: Job, variant: dict) -> dict:
                 settings.edit_wide_looks_enabled,
                 None if settings.edit_wide_looks_enabled else "disabled",
             )
+            # The footage's own sound (per clip, and one level for the whole video). Only the
+            # phone compiler plays it at a creator-set level; the cloud render ignores both.
+            on_device = variant.get("render_destination") == "device"
+            clips["audio"] = operation(
+                on_device, None if on_device else "original_audio_phone_only"
+            )
+            original_audio = operation(
+                on_device, None if on_device else "original_audio_phone_only"
+            )
             # KRI-428: the creator's own song gets its own controls, separate from the
             # catalog-music operations below (which stay closed for reference-only).
             creator_song = _variant_user_song(job, variant)
@@ -7322,6 +7336,7 @@ def _base_editor_capabilities(job: Job, variant: dict) -> dict:
                 "copilot_snapshot_max_bytes": COPILOT_SNAPSHOT_MAX_BYTES,
                 "split_clips": bool(revision is not None),
                 "clips": clips,
+                "original_audio": original_audio,
                 "music_operations": music_operations,
                 **user_song_capability,
                 "automatic_cut": False,
@@ -8618,6 +8633,7 @@ def _guided_v2_slot_rows(
                     if segment.get("playback_rate") is not None
                     else {}
                 ),
+                **({"muted": True} if segment.get("source_audio_muted") else {}),
                 "duration_beats": None,
                 "output_start_s": segment.get("output_start_s"),
                 "output_end_s": segment.get("output_end_s"),
@@ -9669,6 +9685,13 @@ def _guided_v2_revision_from_commit(
     ]
     if payload.mix is not None and payload.mix.music_level is not None:
         raw.setdefault("audio", {})["level"] = float(payload.mix.music_level)
+    # The footage's own level is independent of the catalog music (above) and of the
+    # creator's song volume, and survives a music swap/removal below.
+    original_level = (
+        float(payload.mix.original_level)
+        if payload.mix is not None and payload.mix.original_level is not None
+        else (raw.get("audio") or {}).get("original_level")
+    )
     if payload.remove_music:
         raw["audio"] = {
             "mode": "none",
@@ -9689,6 +9712,8 @@ def _guided_v2_revision_from_commit(
             "start_s": float(updated.get("music_start_s") or 0.0),
             "level": float((raw.get("audio") or {}).get("level", 1.0)),
         }
+    if original_level is not None:
+        raw.setdefault("audio", {})["original_level"] = round(float(original_level), 4)
     if payload.timeline_slots is not None:
         projected = _guided_v2_revision_for_write(
             job,
@@ -9828,7 +9853,9 @@ def require_guided_story_editor_commit(
         or payload.remove_music
         or payload.music_window is not None
         or payload.background_music is not None
-        or payload.mix is not None
+        # `mix.original_level` is the footage's own sound, not the (reference-only)
+        # catalog song, so only a music level is refused here.
+        or (payload.mix is not None and payload.mix.music_level is not None)
     ):
         raise HTTPException(status_code=422, detail="song_added_when_posting")
     if payload.user_song is not None:
@@ -9862,6 +9889,16 @@ def require_guided_story_editor_commit(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="guided_story_editor_v2_section_unsupported",
+            )
+        wants_camera_audio = (
+            payload.mix is not None and payload.mix.original_level is not None
+        ) or any(slot.muted for slot in payload.timeline_slots or [])
+        if wants_camera_audio and variant.get("render_destination") != "device":
+            # Only the phone compiler plays the footage's sound at a creator-set level;
+            # a cloud render would accept the Save and silently ignore it.
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="original_audio_phone_only",
             )
         return
     if isinstance(variant.get("guided_edit_revision"), dict):
@@ -11084,7 +11121,9 @@ def _prepare_editor_commit(
             if payload.mix.music_level is not None:
                 updated["mix"] = float(payload.mix.music_level)
             if payload.mix.original_level is not None:
-                # Round-trip persistence only — not yet honored by the renderer.
+                # Persisted for round-tripping on every variant; honored by the phone
+                # compiler for guided edits (revision.audio.original_level) and the
+                # phone authored timeline. Cloud renders ignore it (see the guided gate).
                 updated["original_audio_level"] = float(payload.mix.original_level)
         if payload.music_track_id is not None:
             updated["music_track_id"] = payload.music_track_id

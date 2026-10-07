@@ -628,14 +628,14 @@ import KriaMediaEngine
     }
 
     /// KRI-374: the creator's song plays from the recipe's window, camera audio is forced to 0 even when the
-    /// slot explicitly un-mutes it or the mix keeps the original level, and no catalog music is layered on top.
+    /// slot explicitly un-mutes it (unless the creator sets an Original audio level, below), and no catalog
+    /// music is layered on top.
     func testCreatorSongEmitsSongTrackAndMutesCameraAudio() throws {
         let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
         let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
         let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "original", relativePath: "original.mp4", fingerprint: fingerprint, duration: 6), url: URL(fileURLWithPath: "/original.mp4"))
         let song = ResolvedEditorSource(clipIndex: -1, mediaID: "song-item", asset: MediaAsset(id: "song-item", relativePath: "song.wav", fingerprint: fingerprint, duration: 200), url: URL(fileURLWithPath: "/song.wav"))
         var document = EditorDocument(clips: [.init(id: "shot", clipIndex: 0, inS: 0, durationS: 4, raw: ["muted": .bool(false)])])
-        document.mix = ["original_level": .number(1)]
         document.music = .init(trackID: "catalog-bed")
         let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 4, trimIn: 0, trimOut: 4, sourceDuration: 6, slotID: "shot")
         let bed = NativeEditorSongBed(assetID: "song-item", sourceStart: 108, sourceDuration: 15, volume: 0.8, fadeIn: 0.5, fadeOut: 3)
@@ -643,7 +643,8 @@ import KriaMediaEngine
                                            audioSources: [NativeEditorRenderCompiler.songSourceKey: song], sourceAudioPreserved: true, songBed: bed)
 
         let visual = try XCTUnwrap(program.recipe.tracks.first { $0.kind == .video }?.clips.first)
-        XCTAssertEqual(visual.volume, 0, "an explicit un-mute or original_level must not leak camera audio over the song")
+        XCTAssertEqual(visual.volume, 0, "an explicit un-mute must not leak camera audio over the song")
+        XCTAssertEqual(program.recipe.audio.originalVolume, 1, "no Original audio level set: the default recipe level is untouched")
         let audio = program.recipe.tracks.filter { $0.kind == .audio }
         XCTAssertEqual(audio.map(\.id), ["song"], "no catalog music beside the creator's song")
         let rendered = try XCTUnwrap(audio.first?.clips.first)
@@ -654,6 +655,26 @@ import KriaMediaEngine
         XCTAssertEqual(try XCTUnwrap(rendered.audioFadeIn), 0.5, accuracy: 0.0001)
         XCTAssertEqual(try XCTUnwrap(rendered.audioFadeOut), 2, accuracy: 0.0001, "a fade is capped at half the played length")
         XCTAssertEqual(program.assetURLs["song"], song.url)
+
+        // The creator's own Original audio level (Sounds tab) is the one thing that lets the camera play
+        // WITH the song: at that level, the song at its own, the clip's `muted` still silencing that clip.
+        var heard = document
+        heard.mix = ["original_level": .number(0.6)]
+        let withCamera = try compiler.compile(document: heard, clips: [clip], items: [], sources: [0: source],
+                                              audioSources: [NativeEditorRenderCompiler.songSourceKey: song], songBed: bed)
+        XCTAssertEqual(try XCTUnwrap(withCamera.recipe.tracks.first { $0.kind == .video }?.clips.first).volume, 1)
+        XCTAssertEqual(withCamera.recipe.audio.originalVolume, 0.6, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(withCamera.recipe.tracks.first { $0.id == "song" }?.clips.first).volume, 0.8, accuracy: 0.0001)
+        var mutedClip = heard
+        mutedClip.clips[0].raw["muted"] = .bool(true)
+        let oneClipMuted = try compiler.compile(document: mutedClip, clips: [clip], items: [], sources: [0: source],
+                                                audioSources: [NativeEditorRenderCompiler.songSourceKey: song], songBed: bed)
+        XCTAssertEqual(try XCTUnwrap(oneClipMuted.recipe.tracks.first { $0.kind == .video }?.clips.first).volume, 0)
+        var zero = document
+        zero.mix = ["original_level": .number(0)]
+        let silent = try compiler.compile(document: zero, clips: [clip], items: [], sources: [0: source],
+                                          audioSources: [NativeEditorRenderCompiler.songSourceKey: song], songBed: bed)
+        XCTAssertEqual(try XCTUnwrap(silent.recipe.tracks.first { $0.kind == .video }?.clips.first).volume, 0, "an explicit 0 keeps the song alone")
 
         // A window past the end of the file is refused rather than silently clamped to nothing.
         let past = NativeEditorSongBed(assetID: "song-item", sourceStart: 500)

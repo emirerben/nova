@@ -682,3 +682,135 @@ def test_a_projection_carries_the_volume_and_defaults_to_full():
     assert _projection(job)["volume"] == 1.0
     _song_save(job, volume=0.25)
     assert _projection(job)["volume"] == 0.25
+
+
+# ── Original (camera) audio: one level for the video, and a per-clip switch ───────────
+#
+# A song video silences the camera by default. The creator can now ask to hear it (to debug
+# a take) through `mix.original_level` and per-slot `muted`; the song keeps its own level and
+# a lip-sync take's pinned song offset must not move.
+
+
+def _mix_save(job, **mix):
+    variant = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, variant)
+    payload = gj.EditorCommitRequest(
+        base_generation=gj.variant_render_baseline(variant),
+        guided_revision_number=revision["revision_number"],
+        mix=gj.EditorCommitMix(**mix),
+    )
+    gj.require_guided_story_editor_commit(job, "guided_story", payload)
+    return gj.prepare_editor_commit(job, "guided_story", payload)
+
+
+def _slots_save(job, muted_indexes=(), unmute_indexes=()):
+    variant = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, variant)
+    segment_layout, _ = gj._guided_v2_layouts(job, variant)
+    rows = gj._guided_v2_slot_rows(revision, segment_layout)
+    slots = []
+    for index, row in enumerate(rows):
+        slot = gj.TimelineSlotEdit(
+            slot_id=row["slot_id"],
+            clip_index=row["clip_index"],
+            in_s=row["in_s"],
+            duration_s=row["duration_s"],
+            transition_after=row["transition_after"],
+            transition_duration_s=row["transition_duration_s"],
+            **({"muted": True} if index in muted_indexes else {}),
+            **({"muted": False} if index in unmute_indexes else {}),
+        )
+        slots.append(slot)
+    payload = gj.EditorCommitRequest(
+        base_generation=gj.variant_render_baseline(variant),
+        guided_revision_number=revision["revision_number"],
+        timeline_slots=slots,
+    )
+    gj.require_guided_story_editor_commit(job, "guided_story", payload)
+    return gj.prepare_editor_commit(job, "guided_story", payload)
+
+
+def _video_clips(recipe):
+    return next(t for t in recipe.tracks if t.kind == "video").clips
+
+
+@pytest.mark.parametrize("make_job", [background_job, lipsync_job])
+def test_a_song_video_keeps_its_camera_silent_until_the_creator_asks(make_job):
+    job, _result = make_job()
+    _text_save(job)
+    recipe = _recipe(job)
+    assert recipe.audio.original_volume == 0.0
+    assert all(clip.volume == 1 for clip in _video_clips(recipe))
+
+
+@pytest.mark.parametrize("make_job", [background_job, lipsync_job])
+def test_original_level_plays_the_camera_with_the_song_at_each_own_level(make_job):
+    from app.services.creator_render_contract import (
+        CreatorRenderContract,
+        doubled_soundtrack_assets,
+        verify_phone_recipe,
+    )
+
+    job, result = make_job()
+    _song_save(job, volume=0.4)
+    _mix_save(job, original_level=0.6)
+    recipe = _recipe(job)
+    assert recipe.audio.original_volume == pytest.approx(0.6)
+    assert _song_clip(recipe).volume == pytest.approx(0.4)
+    assert "audioMix" in recipe.required_capabilities
+    # The song lane stays single-play and the recipe passes the same contract check as a save.
+    assert doubled_soundtrack_assets(recipe) == []
+    assert verify_phone_recipe(CreatorRenderContract(generation_id="g"), recipe)
+    if result.user_song.mode == "lipsync":
+        assert _take_offsets_ok(job, result) > 0
+    # A later save of something else keeps both levels.
+    _text_save(job)
+    recipe = _recipe(job)
+    assert recipe.audio.original_volume == pytest.approx(0.6)
+    assert _song_clip(recipe).volume == pytest.approx(0.4)
+    # Back to zero restores the silent default.
+    _mix_save(job, original_level=0.0)
+    assert _recipe(job).audio.original_volume == 0.0
+
+
+def test_a_music_level_is_still_refused_on_a_reference_only_song_variant():
+    job, _result = background_job()
+    with pytest.raises(HTTPException) as caught:
+        _mix_save(job, music_level=0.5)
+    assert caught.value.detail == "song_added_when_posting"
+
+
+def test_the_creators_original_level_is_not_a_cloud_render_feature():
+    job, _result = background_job()
+    job.assembly_plan["variants"][0]["render_destination"] = "cloud"
+    with pytest.raises(HTTPException) as caught:
+        _mix_save(job, original_level=0.5)
+    assert caught.value.detail == "original_audio_phone_only"
+    caps = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
+    assert caps["original_audio"] == {"editable": False, "reason": "original_audio_phone_only"}
+    assert caps["clips"]["audio"]["editable"] is False
+
+
+def test_a_phone_variant_advertises_the_original_audio_controls():
+    job, _result = lipsync_job()
+    caps = gj._editor_capabilities(job, job.assembly_plan["variants"][0])
+    assert caps["original_audio"] == {"editable": True, "reason": None}
+    assert caps["clips"]["audio"] == {"editable": True, "reason": None}
+
+
+def test_muting_one_lipsync_clip_silences_only_that_clip_and_keeps_every_take_in_sync():
+    job, result = lipsync_job()
+    _mix_save(job, original_level=1.0)
+    _slots_save(job, muted_indexes={0})
+    clips = _video_clips(_recipe(job))
+    assert clips[0].volume == 0
+    assert all(clip.volume == 1 for clip in clips[1:])
+    assert _take_offsets_ok(job, result) > 0
+    variant = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, variant)
+    assert gj._guided_v2_slot_rows(revision, lambda _s: "fullscreen")[0]["muted"] is True
+    # The mute survives an unrelated save, and an explicit false clears it.
+    _text_save(job)
+    assert _video_clips(_recipe(job))[0].volume == 0
+    _slots_save(job, unmute_indexes={0})
+    assert all(clip.volume == 1 for clip in _video_clips(_recipe(job)))

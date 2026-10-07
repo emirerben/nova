@@ -1168,6 +1168,9 @@ private struct NativeSoundsControls: View {
                 .accessibilityIdentifier("native-editor-music-volume")
                 .disabled(!session.canEditMix)
             }
+            if session.hasOriginalAudioControl {
+                NativeEditorOriginalAudioRow(session: session)
+            }
             if session.yourSong == nil, !session.userSongRemoved, !session.canEditMix {
                 Label("Music level is unavailable for this edit. Existing audio stays unchanged.", systemImage: "lock")
                     .font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc)
@@ -1235,10 +1238,8 @@ private struct NativeAdjustInspector: View {
             }
             .disabled(!session.canEditTimeline)
             Section { Text("Trim handles appear in the timeline as soon as a clip is selected. These small nudge controls keep the adjustment reversible and precise.").font(KriaFont.body(13)).foregroundStyle(KriaColor.zinc) }
-            Section("Clip audio") {
-                Label("Per-clip mute is not supported by the renderer yet. Audio remains unchanged; whole-video music level is available under Sounds when supported.", systemImage: "speaker.slash")
-                    .font(KriaFont.body(13))
-                    .foregroundStyle(KriaColor.zinc)
+            if let clipID = session.selection?.kind == .clip ? session.selection?.id : nil {
+                NativeClipAudioSection(clipID: clipID, session: session)
             }
             if !session.canEditTimeline {
                 Section { Label("Clip edits are locked for this render.", systemImage: "lock") }

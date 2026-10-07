@@ -2564,7 +2564,7 @@
         "type": "object"
       },
       "EditorCommitMix": {
-        "description": "Editor mix section. `music_level` maps onto the existing per-variant `mix`\nsemantics (voice/bed balance \u2014 voiceover variants only). `original_level` is\npersisted for round-tripping but not yet honored by the render pipeline.",
+        "description": "Editor mix section. `music_level` maps onto the existing per-variant `mix`\nsemantics (voice/bed balance \u2014 voiceover variants only). `original_level` is the\nfootage's own sound level: persisted on every variant, and honored by the phone\nrenderer for guided-story edits (including creator-song videos, where it plays WITH\nthe song; unset keeps the song video's camera silent).",
         "properties": {
           "music_level": {
             "default": null,
@@ -3503,6 +3503,12 @@
             "nullable": true,
             "title": "Media Kind",
             "type": "string"
+          },
+          "muted": {
+            "default": null,
+            "nullable": true,
+            "title": "Muted",
+            "type": "boolean"
           },
           "parent_segment_id": {
             "default": null,
@@ -8854,6 +8860,12 @@
             "nullable": true,
             "title": "Look Preset",
             "type": "string"
+          },
+          "muted": {
+            "default": null,
+            "nullable": true,
+            "title": "Muted",
+            "type": "boolean"
           },
           "parent_segment_id": {
             "default": null,

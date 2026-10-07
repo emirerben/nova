@@ -101,6 +101,9 @@ enum NativeEditorUITestFixtures {
                 ? EditorCapability(editable: false, reason: "user_song_lipsync_locked")
                 : EditorCapability(editable: true),
             "user_song.remove": EditorCapability(editable: true),
+            // The footage's own sound: one level for the video, and a switch per clip.
+            "original_audio": EditorCapability(editable: true),
+            "clips.audio": EditorCapability(editable: true),
         ]
     }
 

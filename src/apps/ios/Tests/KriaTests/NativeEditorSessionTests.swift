@@ -237,6 +237,101 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.lastRequest?.userSong, EditorCommitUserSong(removed: true))
     }
 
+    /// The Sounds tab's Original audio control and the per-clip audio button: a creator-song video plays the
+    /// song alone until the creator turns the camera up, then both play at their own levels; each edit is dirty,
+    /// undoable, saved as `mix.original_level` / the slot's `muted`, and heard in the live preview.
+    func testOriginalAudioLevelAndClipAudioDrivePreviewDirtyStateAndCommit() async throws {
+        let (session, fake, sourceURL) = try await userSongSession(mode: "lipsync", caps: [
+            "volume": true, "window": false, "remove": true], originalAudio: true)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        func cameraLevels() throws -> [Double] {
+            try XCTUnwrap(session.displayedSourcePreviewRecipe).tracks.first { $0.kind == .video }?.clips.map(\.volume) ?? []
+        }
+        func songVolume() throws -> Double? {
+            try XCTUnwrap(session.displayedSourcePreviewRecipe).tracks.first { $0.id == "song" && $0.kind == .audio }?.clips.first?.volume
+        }
+        XCTAssertTrue(session.hasOriginalAudioControl)
+        XCTAssertEqual(session.originalAudioLevel, 0, "a song video's camera is silent until the creator asks")
+        XCTAssertEqual(try cameraLevels(), [0])
+        let clipID = try XCTUnwrap(session.document.clips.first?.id)
+        XCTAssertFalse(session.isClipAudioOn(clipID: clipID))
+
+        // The whole-video level turns the camera up next to the song, which keeps its own level.
+        session.setUserSongVolume(0.4)
+        session.setOriginalAudioLevel(0.6)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertEqual(session.originalAudioLevel, 0.6, accuracy: 0.001)
+        XCTAssertTrue(session.isDirty(.mix))
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertTrue(try cameraLevels().allSatisfy { $0 > 0 }, "the camera plays together with the song")
+        XCTAssertEqual(try XCTUnwrap(songVolume()), 0.4, accuracy: 0.001)
+        XCTAssertEqual(session.displayedSourcePreviewRecipe?.audio.originalVolume ?? 0, 0.6, accuracy: 0.001)
+
+        // The per-clip button mutes just this clip, and works the other way too.
+        XCTAssertTrue(session.isClipAudioOn(clipID: clipID))
+        session.toggleClipAudio(clipID: clipID)
+        XCTAssertFalse(session.isClipAudioOn(clipID: clipID))
+        XCTAssertEqual(session.document.clips.first?.raw["muted"], .bool(true))
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(try cameraLevels(), [0], "a muted clip is silent in the preview")
+        session.toggleClipAudio(clipID: clipID)
+        XCTAssertTrue(session.isClipAudioOn(clipID: clipID))
+        session.toggleClipAudio(clipID: clipID)
+
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "generation-2",
+            sections: EditorCommitSections(textElements: false, captionMeta: false, timeline: false, mix: false),
+            revisionNumber: 2, revisionHash: "h2", expectedDuration: nil)
+        await session.save()
+        let request = try XCTUnwrap(fake.lastRequest)
+        XCTAssertEqual(request.mix, ["original_level": .number(0.6)], "a guided Save carries only the footage's level, never a music level")
+        XCTAssertEqual(request.timelineSlots?.first?.objectValue?["muted"], .bool(true))
+        XCTAssertEqual(request.userSong, EditorCommitUserSong(volume: 0.4, windowStartS: nil, removed: false))
+
+        // Back to zero is the silent default again, and Undo reverts a level edit.
+        session.setOriginalAudioLevel(0)
+        XCTAssertEqual(session.originalAudioLevel, 0)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(try cameraLevels(), [0])
+        session.undo()
+        XCTAssertEqual(session.originalAudioLevel, 0.6, accuracy: 0.001)
+    }
+
+    /// With the camera off for the whole video, turning one clip on raises the level and solos that clip.
+    func testTurningAClipOnWhileOriginalAudioIsOffSolosThatClip() async throws {
+        let (session, _, _) = try await userSongSession(mode: "background", caps: ["volume": true, "window": true, "remove": true], originalAudio: true)
+        let clips = session.document.clips
+        guard let target = clips.first?.id else { return XCTFail("fixture has a clip") }
+        session.toggleClipAudio(clipID: target)
+        XCTAssertEqual(session.originalAudioLevel, 1)
+        XCTAssertTrue(session.isClipAudioOn(clipID: target))
+        for other in session.document.clips.dropFirst() where !other.removed { XCTAssertEqual(other.raw["muted"], .bool(true)) }
+        session.undo()
+        XCTAssertEqual(session.originalAudioLevel, 0, "one undo step")
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
+    /// Without the capabilities (older server, cloud render) the control is absent and edits are no-ops.
+    func testOriginalAudioControlsStayClosedWithoutCapabilities() async throws {
+        let (session, _, _) = try await userSongSession(mode: "background", caps: ["volume": true, "window": true, "remove": true], originalAudio: false)
+        XCTAssertFalse(session.canEditOriginalAudio)
+        XCTAssertFalse(session.canEditClipAudio)
+        let clipID = try XCTUnwrap(session.document.clips.first?.id)
+        session.setOriginalAudioLevel(0.5)
+        session.toggleClipAudio(clipID: clipID)
+        XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
+    /// A reopened guided video shows the level the creator saved, and the camera plays with the song.
+    func testSavedOriginalLevelIsRestoredOnReopen() async throws {
+        let (session, _, sourceURL) = try await userSongSession(mode: "background", caps: ["volume": true, "window": true, "remove": true],
+                                                                originalAudio: true, savedOriginalLevel: 0.3)
+        XCTAssertEqual(session.originalAudioLevel, 0.3, accuracy: 0.001)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        let levels = try XCTUnwrap(session.displayedSourcePreviewRecipe).tracks.first { $0.kind == .video }?.clips.map(\.volume) ?? []
+        XCTAssertTrue(levels.allSatisfy { $0 > 0 })
+    }
+
     /// A lip-sync song keeps its start (each take's offset depends on it): the start setter is a no-op that
     /// never dirties the edit, while volume and remove still work.
     func testLipSyncSongLocksStartButKeepsVolumeAndRemove() async throws {
@@ -483,7 +578,8 @@ final class NativeEditorSessionTests: XCTestCase {
 
     /// A background or lip-sync creator-song edit on a device recipe whose song file is 4s long and whose
     /// bed plays 1s...3s of it; `caps` are the nested `user_song.{volume,window,remove}` editable flags.
-    private func userSongSession(mode: String, caps: [String: Bool], songDuration: Double = 200, videoDuration: Double = 2) async throws -> (NativeEditorSession, EditorCommitSpy, URL) {
+    private func userSongSession(mode: String, caps: [String: Bool], songDuration: Double = 200, videoDuration: Double = 2,
+                                 originalAudio: Bool = false, savedOriginalLevel: Double? = nil) async throws -> (NativeEditorSession, EditorCommitSpy, URL) {
         let threadID = UUID(), jobID = UUID()
         let wav = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).wav")
         addTeardownBlock { try? FileManager.default.removeItem(at: wav) }
@@ -509,8 +605,14 @@ final class NativeEditorSessionTests: XCTestCase {
         authoritative["source_audio_preserved"] = .bool(false)
         authoritative["user_song"] = .object(["title": .string("Midnight Drive"), "mode": .string(mode),
             "duration_s": .number(songDuration), "window_start_s": .number(1), "window_end_s": .number(3)])
+        if let savedOriginalLevel {
+            authoritative["resolved_archetype"] = .string("guided_story")
+            authoritative["original_audio_level"] = .number(savedOriginalLevel)
+        }
         authoritative["editor_capabilities"] = .object([
             "timeline": .bool(true), "text_elements": .bool(true), "mix": .bool(false),
+            "original_audio": .object(["editable": .bool(originalAudio)]),
+            "clips": .object(["audio": .object(["editable": .bool(originalAudio)])]),
             "user_song": .object(Dictionary(uniqueKeysWithValues: caps.map { key, editable in
                 (key, JSONValue.object(["editable": .bool(editable)]
                     .merging(key == "window" && !editable ? ["reason": .string("user_song_lipsync_locked")] : [:]) { $1 }))
