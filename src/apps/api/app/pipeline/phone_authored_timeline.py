@@ -50,9 +50,8 @@ def compile_phone_authored_timeline(
     clips or missing lane values. Saved editor sections are authoritative.
     """
     from app.pipeline.portable_text_layout import compile_text_overlay
-    from app.tasks.generative_build import _text_element_burn_dicts, canvas_for_orientation
-
     from app.services.user_song_projection import user_song_for_variant
+    from app.tasks.generative_build import _text_element_burn_dicts, canvas_for_orientation
 
     if user_song_for_variant(job, variant, song_filename=None) is not None:
         # This compiler keeps only voiceover + library music; a creator's own song
