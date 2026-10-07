@@ -216,5 +216,7 @@ def test_the_prompt_says_plainly_when_not_to_set_continuous() -> None:
         "talking-head or subtitled edit",
         "the request is ambiguous",
         "Never invent a clip as the voice",
+        "Leave `archetype` and `hero_media_id` null for a continuous edit",
+        "do not call it a day vlog in `summary`",
     ):
         assert cue in phone, cue

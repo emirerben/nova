@@ -668,7 +668,7 @@ The Main Creator prompt teaches it only when the manifest advertises `phone_sour
 `SPEECH_EXCERPT_MONTAGE_ENABLED` both on: the route renders only for stamped jobs and needs the
 camera-audio renderer), and says plainly when NOT to set `continuous` (best-quote requests,
 talking-head / subtitled edits, several clips' sounds, no named clip, ambiguity; null is the safe
-default). Prompt `2026-10-07-v46`; **the live re-record is pending an owner-approved spend**,
+default). Prompt `2026-10-07-v47`; **the live re-record is pending an owner-approved spend**,
 replay evals ignore the prompt text. `repair_creator_voice_mode` drops a stray value (no camera-audio
 montage, voiceover/user-song, non-montage, or the route unavailable) silently and clears a
 model-added day-vlog / single-hero shape next to a continuous voice (KRI-469's recorded strategy

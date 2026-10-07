@@ -409,7 +409,7 @@ Open questions for the human reviewer (recommended answer first).
 
 ## Implementation status (PR-H)
 
-Built, as section 6 describes it: `voice_mode` strategy field (model-authored, prompt `2026-10-07-v46`),
+Built, as section 6 describes it: `voice_mode` strategy field (model-authored, prompt `2026-10-07-v47`),
 `compile_phone_voice_behind_footage_plan` + `select_voice_window` in `phone_speech_montage_plan.py`,
 `build_render_contract(composition=)` + the sibling `creator_composition` key, the verifier checks
 (`composition=`), `Route.VOICE_BEHIND_FOOTAGE` + `run_phone_voice_behind_footage_job` + one stamped-only

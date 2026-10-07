@@ -60,7 +60,7 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # KRI-479: `voice_mode` (continuous | excerpts) for a montage that keeps one clip's camera
 # audio, taught only when the manifest advertises `phone_source_audio` AND the route can render
 # (`Settings.voice_behind_footage_enabled`) (v47).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-07-v46"
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-07-v47"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -252,7 +252,8 @@ not sure.
   play straight through, under the whole edit, while their other clips are the picture (for
   example "use the voice from my talk-to-camera video behind a fast montage of the rest").
   `montage_audio.source_media_ids` MUST then name exactly that one clip. That clip's own
-  picture is not shown.
+  picture is not shown. Leave `archetype` and `hero_media_id` null for a continuous edit and
+  do not call it a day vlog in `summary`: it is a plain montage with that clip's voice under it.
 - "excerpts" -- chosen lines or quotes from the speaker cut over the footage. Use it when the
   creator asks for particular lines, quotes or moments from what someone says.
 Do NOT set "continuous" when the creator asks you to pick the best quote, line or moment; asks
