@@ -1584,6 +1584,15 @@ def _title(strategy: Mapping[str, Any], view: BriefView) -> tuple[str | None, st
     return None, "none"
 
 
+def title_source_exists(strategy: Mapping[str, Any], brief: Any) -> bool:
+    """Would ``plan_unified_montage`` burn an opening title for this strategy + brief?
+
+    The clarification gate asks "what are the title's words?" only when this is False, so
+    the question and the render read the same ``_title`` and cannot disagree.
+    """
+    return _title(strategy, brief_view(brief))[0] is not None
+
+
 __all__ = [
     "BriefView",
     "UnifiedClip",
@@ -1594,4 +1603,5 @@ __all__ = [
     "selected_visual_ids",
     "skia_font_covers",
     "title_from_facts",
+    "title_source_exists",
 ]

@@ -73,8 +73,10 @@ from app.routes.generative_jobs import (
 )
 from app.services.choice_questions import (
     CONFLICT_ORDER_BASIS,
+    CONFLICT_TITLE_TEXT,
     KEEP_OPEN_REASON,
     MAX_ASKS_PER_QUESTION,
+    ChoiceCapability,
     answered_brief,
     build_choice_question,
     choice_question_text,
@@ -366,6 +368,7 @@ def _unresolved_choice_plan(
     contract_brief: Any = None,
     events: Any = (),
     has_draft: bool = False,
+    creator_id: Any = None,
 ) -> tuple[KriaTurnPlan, str] | None:
     """KRI-476 backstop: the reply that replaces a draft an unresolved choice blocks.
 
@@ -394,7 +397,8 @@ def _unresolved_choice_plan(
         return None
     unchanged = " Your current draft is unchanged." if has_draft else ""
     history = list(events)
-    for conflict in open_conflicts(strategy, brief, media_snapshot):
+    capability = ChoiceCapability(creator_id=creator_id) if creator_id is not None else None
+    for conflict in open_conflicts(strategy, brief, media_snapshot, capability):
         if count_asks(history, conflict.conflict_id, conflict.input_digest) < (
             MAX_ASKS_PER_QUESTION
         ):
@@ -408,8 +412,10 @@ def _unresolved_choice_plan(
                 ),
                 KEEP_OPEN_REASON,
             )
-        if conflict.kind == CONFLICT_ORDER_BASIS:
+        if conflict.kind in (CONFLICT_ORDER_BASIS, CONFLICT_TITLE_TEXT):
             ways = " or ".join(f'"{o.label}"' for o in conflict.options)
+            if conflict.kind == CONFLICT_TITLE_TEXT:
+                ways = f"{ways}, or type the words you want"
             return (
                 KriaTurnPlan(
                     mode="respond",
@@ -817,6 +823,7 @@ def _complete_draft_turn(
                     ).all()
                 ],
                 has_draft=head is not None,
+                creator_id=thread.creator_id if binding_on else None,
             )
             if blocked is not None:
                 blocked_plan, blocked_reason = blocked

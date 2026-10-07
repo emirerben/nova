@@ -1824,7 +1824,7 @@ async def _gate_unresolved_choices(
         brief,
         planned.media_snapshot,
         events,
-        ChoiceCapability(max_duration_s=float(MAX_PROPOSAL_DURATION_S)),
+        ChoiceCapability(max_duration_s=float(MAX_PROPOSAL_DURATION_S), creator_id=creator_id),
     )
     if resolution.question is not None:
         candidate = resolution.question.candidate()

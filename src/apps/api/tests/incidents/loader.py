@@ -37,7 +37,12 @@ def media_snapshot(record: IncidentRecord) -> dict:
         if media.capture_time is not None:
             row["capture"] = {"capture_time": media.capture_time.strftime("%Y-%m-%dT%H:%M:%SZ")}
         rows.append(row)
-    return {"clip_assignments": rows}
+    snapshot: dict = {"clip_assignments": rows}
+    if record.inputs.phone_proxy_media:
+        snapshot["clip_paths"] = [
+            f"users/redacted/analysis-proxy-{media.id}.mp4" for media in record.inputs.media
+        ]
+    return snapshot
 
 
 def binding_for(record: IncidentRecord) -> BriefBinding:

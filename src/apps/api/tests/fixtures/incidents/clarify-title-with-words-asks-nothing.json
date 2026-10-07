@@ -1,0 +1,101 @@
+{
+  "id": "clarify-title-with-words-asks-nothing",
+  "incident": {
+    "ticket": "KRI-470",
+    "summary": "Must not ask: the creator gave the exact title words, so a title source exists and the render needs no question."
+  },
+  "kind": "clarification",
+  "approved": {
+    "strategy": {
+      "direction": "guided_story",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "render_program": "guided",
+      "pacing": "fast"
+    },
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "order",
+          "scope": "global",
+          "description": "in the order I filmed them",
+          "facts": {
+            "key": "capture_time"
+          },
+          "source_turn_id": "turn-1"
+        },
+        {
+          "id": "r2",
+          "kind": "text",
+          "scope": "title",
+          "description": "the title 'Weekend away' animated with typewriter",
+          "source_turn_id": "turn-1",
+          "literal": "Weekend away"
+        },
+        {
+          "id": "r3",
+          "kind": "text",
+          "scope": "per_clip",
+          "description": "the location",
+          "source_turn_id": "turn-1"
+        }
+      ]
+    },
+    "creator_request": "Make a day montage in the order I filmed them with the title 'Weekend away' animated with typewriter and the location on each clip.",
+    "provenance": "Synthetic neutral stand-in for the prod thread of 2026-10-07 (job failed phone_plan_unsupported at render): same requirement shapes, invented text and ids."
+  },
+  "inputs": {
+    "media": [
+      {
+        "id": "c0",
+        "kind": "video",
+        "duration_s": 4.0,
+        "capture_time": "2026-01-01T09:00:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "c1",
+        "kind": "video",
+        "duration_s": 4.5,
+        "capture_time": "2026-01-01T09:01:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "c2",
+        "kind": "video",
+        "duration_s": 5.0,
+        "capture_time": "2026-01-01T09:02:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "c3",
+        "kind": "video",
+        "duration_s": 5.5,
+        "capture_time": "2026-01-01T09:03:00Z",
+        "has_audio": true
+      }
+    ],
+    "phone_proxy_media": true,
+    "turns": [
+      {
+        "role": "user",
+        "text": "Make a day montage in the order I filmed them with the title 'Weekend away' animated with typewriter and the location on each clip."
+      }
+    ],
+    "notes": [
+      "Control for clarify-title-words-missing: a literal title is the renderer's own title source, so the gate stays quiet."
+    ]
+  },
+  "expect": {
+    "question": {
+      "no_question": true
+    }
+  },
+  "repro": {
+    "command": "pytest tests/incidents/test_incident_corpus.py -k clarify-title-with-words-asks-nothing",
+    "status": "available"
+  },
+  "sources": []
+}

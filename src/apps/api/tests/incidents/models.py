@@ -118,6 +118,10 @@ class Inputs(_Strict):
     cloud_preflight: bool = False
     # KRI-470 / PR-E: the cloud adapter that would render the plan (preflight consults its
     # declaration) and the receipt its renderer reported (the publication verifier's input).
+    # The media are iPhone analysis proxies on a phone-enrolled account (the unified phone
+    # montage renders it): the clarification gate then knows the draft-time text receipts
+    # are deferred to render time (``title_text``).
+    phone_proxy_media: bool = False
     cloud_adapter: Literal["cloud_guided_story", "cloud_classic", "cloud_slides"] | None = None
     cloud_receipt: dict[str, Any] | None = None
     # The sibling ``cloud_evidence`` the renderer reported (hand-built records only).
