@@ -527,8 +527,10 @@
     "cloud_preflight": true,
     "notes": [
       "Same approval as kri469-voice-clip-ignored sent to a cloud renderer: camera-audio sources cannot be proven there, so the preflight must decline before any work.",
-      "Typed refusal (reason + field_path) asserted since KRI-476 / PR-A: capability_unavailable on montage_audio.source_media_ids[] (list paths carry a [] suffix)."
-    ]
+      "Typed refusal (reason + field_path) asserted since KRI-476 / PR-A: capability_unavailable on montage_audio.source_media_ids[] (list paths carry a [] suffix).",
+      "KRI-470 / PR-E: still declined after cloud renderers began emitting evidence. Even the strongest adapter (cloud_guided_story, which now proves order, exact text and camera-audio presence) cannot isolate a NAMED camera-audio source: it mixes every clip's own sound. Named sources therefore stay capability_unavailable on every cloud adapter; the supported alternative is the phone spoken-excerpt montage."
+    ],
+    "cloud_adapter": "cloud_guided_story"
   },
   "expect": {
     "refusal": {

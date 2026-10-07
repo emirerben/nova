@@ -3886,7 +3886,9 @@ def test_first_guided_render_applies_materialized_sfx_after_text(monkeypatch, tm
     monkeypatch.setattr("app.tasks.template_orchestrate._concat_demuxer", fake_concat)
     monkeypatch.setattr(guided_story, "_audio_codec", lambda _path: "aac")
     # Source audio is on by default now (KRI-184); this test is about the SFX lane.
-    monkeypatch.setattr(guided_story, "_mux_guided_source_audio", lambda assembled, *_a: assembled)
+    monkeypatch.setattr(
+        guided_story, "_mux_guided_source_audio", lambda assembled, *_a, **_k: assembled
+    )
     monkeypatch.setattr(
         generative_overlays, "build_overlays_from_text_elements", lambda *_args, **_kwargs: []
     )

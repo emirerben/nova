@@ -153,6 +153,41 @@ def test_real_verifier_declines_what_the_record_says(record: IncidentRecord) -> 
     harness.refusal_message(record, contract)
 
 
+@pytest.mark.parametrize("record", [pytest.param(r, id=r.id) for r in RECORDS if r.expect.cloud])
+def test_cloud_adapter_proves_or_declines_as_recorded(record: IncidentRecord) -> None:
+    """KRI-470 / PR-E: a requirement lifted for an adapter passes preflight AND the verifier
+    on the renderer's receipt; wrong evidence is declined, typed. Real code, recorded receipt."""
+    contract = loader.build_contract(record)
+    assert contract is not None and not contract.unresolved
+    want = record.expect.cloud
+    verdicts = harness.cloud_verdicts(record, contract)
+    if want.preflight == "passes":
+        assert verdicts["preflight"] is None, f"preflight declined: {verdicts['preflight']}"
+    else:
+        assert verdicts["preflight"] is not None, "preflight accepted a plan it must decline"
+    if want.plan_gate is not None:
+        gate = verdicts["plan_gate"]
+        if want.plan_gate == "passes":
+            assert gate is None, f"the plan gate declined: {gate}"
+        else:
+            assert gate is not None, "the plan gate accepted a plan it must decline pre-render"
+            if want.gate_reason:
+                assert gate.decline_reason == want.gate_reason
+            if want.gate_field_path:
+                assert gate.field_path == want.gate_field_path
+    if want.publication is None:
+        return
+    error = verdicts["publication"]
+    if want.publication == "accepts":
+        assert error is None, f"the verifier refused the recorded receipt: {error}"
+        return
+    assert error is not None, "the verifier accepted a receipt it must refuse"
+    if want.reason:
+        assert error.decline_reason == want.reason
+    if want.field_path:
+        assert error.field_path == want.field_path
+
+
 @pytest.mark.parametrize(
     "record",
     _params(

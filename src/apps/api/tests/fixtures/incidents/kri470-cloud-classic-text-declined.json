@@ -1,0 +1,100 @@
+{
+  "id": "kri470-cloud-classic-text-declined",
+  "incident": {
+    "ticket": "KRI-470",
+    "summary": "KRI-470 PR-E: the classic cloud renderers do not evidence exact text, so the same plan on them is declined before any work."
+  },
+  "kind": "contract_pin",
+  "approved": {
+    "strategy": {
+      "pacing": "fast",
+      "archetype": "day_vlog",
+      "direction": "guided_story",
+      "rationale": "(redacted)",
+      "edit_format": "montage",
+      "media_scope": "all",
+      "ordering_choice": "chronological",
+      "opening_title": "Arnavutkoy to Eminonu",
+      "opening_title_duration_s": 2.0,
+      "target_duration_s": 9,
+      "target_duration_requested": true,
+      "selected_media_ids": [
+        "run-1",
+        "run-2",
+        "run-3"
+      ],
+      "video_reuse_policy": "once"
+    },
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "order",
+          "scope": "global",
+          "description": "in the order I ran it",
+          "facts": {
+            "key": "capture_time"
+          },
+          "source_turn_id": "turn-1"
+        },
+        {
+          "id": "r2",
+          "kind": "timing",
+          "scope": "global",
+          "description": "keep 9 seconds",
+          "facts": {
+            "duration_s": 9
+          },
+          "source_turn_id": "turn-1"
+        }
+      ]
+    },
+    "creator_request": "Show the run in the order I ran it, keep 9 seconds, open with the title.",
+    "provenance": "Synthetic plan shaped like the east_run thread (KRI-185): chronological order, a short length and an exact opening title. Not a prod capture."
+  },
+  "inputs": {
+    "media": [
+      {
+        "id": "run-1",
+        "kind": "video",
+        "duration_s": 6.0,
+        "capture_time": "2026-10-04T11:00:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "run-2",
+        "kind": "video",
+        "duration_s": 6.0,
+        "capture_time": "2026-10-04T10:00:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "run-3",
+        "kind": "video",
+        "duration_s": 6.0,
+        "capture_time": "2026-10-04T12:00:00Z",
+        "has_audio": true
+      }
+    ],
+    "cloud_preflight": true,
+    "cloud_adapter": "cloud_classic",
+    "notes": [
+      "Contract pin, not incident replay: drives the real cloud preflight, the real pre-render plan gate on a plan compiled by the real guided compiler from the recorded media order, and the real publication verifier on evidence the real evidence builder derives from that plan's timeline.",
+      "Per-adapter lift: classic honours the recorded voice only; exact text stays capability_unavailable with its field path."
+    ]
+  },
+  "expect": {
+    "refusal": {
+      "reason": "capability_unavailable",
+      "field_path": "opening_title"
+    }
+  },
+  "repro": {
+    "command": "pytest tests/incidents/test_incident_corpus.py -k kri470-cloud-classic-text-declined",
+    "status": "available"
+  },
+  "sources": [
+    "tests/fixtures/request_following/threads/east_run.json"
+  ]
+}
