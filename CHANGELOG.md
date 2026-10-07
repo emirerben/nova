@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.139.0] - 2026-10-07
+
+### Changed
+- feat(ios): chat motion — message spring-in, word-by-word reply with haptics (KRI-484) (#1455) <!-- release-pr: 1455 -->
+
 ## [0.78.138.0] - 2026-10-07
 
 ### Changed
