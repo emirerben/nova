@@ -527,13 +527,13 @@
     "cloud_preflight": true,
     "notes": [
       "Same approval as kri469-voice-clip-ignored sent to a cloud renderer: camera-audio sources cannot be proven there, so the preflight must decline before any work.",
-      "Typed refusal expectation is staged for KRI-476 / PR-A (reason/field_path are best guesses; PR-A's worker corrects them when it flips this xfail)."
+      "Typed refusal (reason + field_path) asserted since KRI-476 / PR-A: capability_unavailable on montage_audio.source_media_ids[] (list paths carry a [] suffix)."
     ]
   },
   "expect": {
     "refusal": {
       "reason": "capability_unavailable",
-      "field_path": "montage_audio.source_media_ids",
+      "field_path": "montage_audio.source_media_ids[]",
       "message_advisory": "camera-audio sources"
     }
   },
@@ -543,11 +543,5 @@
   },
   "sources": [
     "prod job debug (not committed)"
-  ],
-  "xfail": [
-    {
-      "reason": "KRI-476 / PR-A",
-      "scope": "refusal"
-    }
   ]
 }
