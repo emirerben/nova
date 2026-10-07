@@ -195,20 +195,30 @@ def test_schema_walk_reaches_nested_models_behind_optional_list_and_annotated():
         assert expected in paths
 
 
-def test_a_new_nested_field_would_fail_the_guard():
-    from pydantic import BaseModel, Field
+def test_a_new_top_level_field_fails_the_guard_for_exactly_that_path():
+    from pydantic import create_model
 
+    from app.agents._schemas.creator_agent import CreativeStrategy
     from app.services.creator_render_contract import FIELD_MATRIX, schema_field_paths
 
-    class Child(BaseModel):
-        old: int = 0
-        brand_new: int = 0
+    mutated = create_model(
+        "MutatedStrategy", __base__=CreativeStrategy, brand_new_field=(int | None, None)
+    )
+    assert schema_field_paths(mutated) - set(FIELD_MATRIX) == {"brand_new_field"}
 
-    class Parent(BaseModel):
-        children: list[Child] | None = Field(default=None)
 
-    assert schema_field_paths(Parent) == {"children[]", "children[].old", "children[].brand_new"}
-    assert not set(schema_field_paths(Parent)) <= set(FIELD_MATRIX)
+def test_a_new_nested_field_fails_the_guard_for_exactly_that_path():
+    from pydantic import create_model
+
+    from app.agents._schemas.creator_agent import CreativeStrategy
+    from app.schemas.edit_proposal import MontageAudioPlan
+    from app.services.creator_render_contract import FIELD_MATRIX, schema_field_paths
+
+    audio = create_model("MutatedAudio", __base__=MontageAudioPlan, brand_new=(int, 0))
+    mutated = create_model(
+        "MutatedStrategy", __base__=CreativeStrategy, montage_audio=(audio | None, None)
+    )
+    assert schema_field_paths(mutated) - set(FIELD_MATRIX) == {"montage_audio.brand_new"}
 
 
 def test_matrix_dispositions_are_valid_and_owned():
@@ -222,24 +232,75 @@ def test_matrix_dispositions_are_valid_and_owned():
         assert rule.owner.strip(), path
 
 
-def test_only_projected_requirements_are_marked_supported():
-    """`supported` means build_render_contract pins it; accounting is not enforcement."""
+# strategy fragment that sets each `supported` path -> it must change the contract.
+_SUPPORTED_FRAGMENTS = {
+    "target_duration_s": {"target_duration_s": 30, "target_duration_requested": True},
+    "target_duration_requested": {"target_duration_s": 24, "target_duration_requested": True},
+    "audio_strategy": {"audio_strategy": "voiceover"},
+    "montage_audio": {"montage_audio": {"preserve_source_audio": False}},
+    "montage_audio.preserve_source_audio": {"montage_audio": {"preserve_source_audio": False}},
+    "montage_audio.source_media_ids[]": {
+        "montage_audio": {"preserve_source_audio": True, "source_media_ids": ["a"]}
+    },
+    "opening_title": {"opening_title": "Title"},
+    "opening_title_duration_s": {"opening_title": "Title", "opening_title_duration_s": 3},
+    "shot_labels[]": {"shot_labels": ["One"]},
+    "closing_title": {"closing_title": "End"},
+    "ordering_choice": {"ordering_choice": "chronological"},
+}
+# fragments for fields that are NOT supported -> the contract must ignore them.
+_UNSUPPORTED_FRAGMENTS = {
+    "pacing": {"pacing": "fast"},
+    "caption_style": {"caption_style": "kinetic"},
+    "intro_hook": {"intro_hook": "A hook"},
+    "rationale": {"rationale": "why"},
+    "story_structure[]": {"story_structure": ["a"]},
+    "optional_treatments[]": {"optional_treatments": ["sfx"]},
+    "overlay_display": {"overlay_display": "fullscreen"},
+    "selected_media_ids[]": {"selected_media_ids": ["a", "b"]},
+    "hero_media_id": {"hero_media_id": "a"},
+    "licensed_sfx.effect_id": {"licensed_sfx": {"effect_id": "sfx-1"}},
+}
+
+
+def _projection(strategy):
+    contract = build_render_contract(strategy, generation_id="g")
+    data = contract.model_dump(mode="json")
+    data.pop("strategy_digest")
+    data.pop("digest")
+    return data
+
+
+def test_supported_paths_are_exactly_the_ones_that_change_the_contract():
+    """`supported` is behaviour: the projection reacts to it. Accounting is not enforcement."""
     from app.services.creator_render_contract import FIELD_MATRIX
 
-    assert {p for p, r in FIELD_MATRIX.items() if r.disposition == "supported"} == {
-        "target_duration_s",
-        "target_duration_requested",
-        "audio_strategy",
-        "montage_audio",
-        "montage_audio.preserve_source_audio",
-        "montage_audio.source_media_ids[]",
-        "opening_title",
-        "opening_title_duration_s",
-        "shot_labels[]",
-        "closing_title",
-        "ordering_choice",
-        "selected_media_ids[]",
-    }
+    supported = {p for p, r in FIELD_MATRIX.items() if r.disposition == "supported"}
+    assert supported == set(_SUPPORTED_FRAGMENTS)
+    baseline = _projection({})
+    for path, fragment in _SUPPORTED_FRAGMENTS.items():
+        base = (
+            _projection({"target_duration_s": 24, "target_duration_requested": False})
+            if path == "target_duration_requested"
+            else baseline
+        )
+        assert _projection(fragment) != base, path
+
+
+def test_supported_fields_pin_only_the_values_their_note_names():
+    baseline = _projection({})
+    assert _projection({"audio_strategy": "licensed_music"}) == baseline
+    assert _projection({"ordering_choice": "group_first"}) == baseline
+    assert _projection({"target_duration_s": 30, "target_duration_requested": False}) == baseline
+
+
+def test_unsupported_preference_and_upstream_fields_do_not_reach_the_contract():
+    from app.services.creator_render_contract import FIELD_MATRIX
+
+    baseline = _projection({})
+    for path, fragment in _UNSUPPORTED_FRAGMENTS.items():
+        assert FIELD_MATRIX[path].disposition != "supported", path
+        assert _projection(fragment) == baseline, path
 
 
 # --- KRI-470 PR-A: stored-v1 digest compatibility ---------------------------------
@@ -359,14 +420,12 @@ def _phone_cases():
 
 
 @pytest.mark.parametrize("requirement", sorted(_phone_cases()))
-def test_phone_verifier_raises_the_declared_typed_decline(requirement):
-    from app.services.creator_render_contract import PHONE_VERIFIER_DECLINES
-
+def test_phone_verifier_refuses_with_typed_missing_evidence(requirement):
     changes, path = _phone_cases()[requirement]
     contract = CreatorRenderContract(generation_id="g").rebind(**changes)
     with pytest.raises(CreatorRenderContractError) as exc:
         verify_phone_recipe(contract, _speech_recipe(), source_audio={"talk": True})
-    assert _typed(exc) == (PHONE_VERIFIER_DECLINES[requirement].reason, path)
+    assert _typed(exc) == ("evidence_missing", path)
     assert exc.value.alternative
 
 
@@ -526,45 +585,53 @@ def test_speech_montage_is_the_adapter_that_consumes_the_audio_contract():
     ],
 )
 def test_declared_phone_declines_match_the_real_entry_points(adapter):
-    """Each declared decline fires through verify_phone_recipe or the dispatch gate."""
+    """The declaration must agree with what the real entry point raises.
+
+    Expected reasons are literals, independent of the table the code reads.
+    """
     from app.services.creator_render_contract import (
         ADAPTER_DECLARATIONS,
-        PHONE_VERIFIER_DECLINES,
         check_phone_dispatch_contract,
     )
 
+    # What only the worker dispatcher / dispatch gate raises (not the pin verifier).
+    gate_declines = {
+        ("phone_speech_montage", "require_voiceover"): "requirement_conflict",
+        ("phone_voiceover_montage", "audio_source_ids"): "requirement_conflict",
+        ("phone_narrated", "audio_source_ids"): "requirement_conflict",
+        ("phone_guided_unified_montage", "audio_source_ids"): "capability_unavailable",
+    }
     declaration = ADAPTER_DECLARATIONS[adapter]
     cases = _phone_cases()
     for requirement, decline in declaration.declines.items():
+        key = (adapter, requirement)
         if requirement == "unresolved":
+            expected = "needs_choice"
             contract = CreatorRenderContract(generation_id="g").rebind(unresolved=("Pick.",))
             with pytest.raises(CreatorRenderContractError) as exc:
                 verify_phone_recipe(contract, _speech_recipe())
-            assert exc.value.decline_reason == decline.reason
-        elif decline == PHONE_VERIFIER_DECLINES[requirement]:
+            assert exc.value.decline_reason == expected
+        elif key in gate_declines:
+            expected = gate_declines[key]
+            if expected == "requirement_conflict":
+                contract = CreatorRenderContract(generation_id="g").rebind(
+                    require_voiceover=True, audio_source_ids=("talk",)
+                )
+                with pytest.raises(CreatorRenderContractError) as exc:
+                    check_phone_dispatch_contract(
+                        contract, snapshot_generation_id="g", has_voiceover_candidate=True
+                    )
+                assert exc.value.decline_reason == expected
+            # capability_unavailable fires in the worker dispatcher:
+            # tests/tasks/test_unified_montage_dispatch.py
+        else:
+            expected = "evidence_missing"
             changes, _path = cases[requirement]
             contract = CreatorRenderContract(generation_id="g").rebind(**changes)
             with pytest.raises(CreatorRenderContractError) as exc:
                 verify_phone_recipe(contract, _speech_recipe(), source_audio={"talk": True})
-            assert exc.value.decline_reason == decline.reason
-        elif decline.reason == "requirement_conflict":
-            # The voice <-> camera-audio soundtrack conflict is a dispatcher gate.
-            contract = CreatorRenderContract(generation_id="g").rebind(
-                require_voiceover=True, audio_source_ids=("talk",)
-            )
-            with pytest.raises(CreatorRenderContractError) as exc:
-                check_phone_dispatch_contract(
-                    contract, snapshot_generation_id="g", has_voiceover_candidate=True
-                )
-            assert exc.value.decline_reason == decline.reason
-        else:
-            # capability_unavailable (unified montage cannot carry camera-audio
-            # sources) fires in the worker dispatcher: test_unified_montage_dispatch.
-            assert (adapter, requirement, decline.reason) == (
-                "phone_guided_unified_montage",
-                "audio_source_ids",
-                "capability_unavailable",
-            )
+            assert exc.value.decline_reason == expected
+        assert decline.reason == expected, (adapter, requirement)
 
 
 def test_absent_strategy_and_brief_preserves_legacy() -> None:

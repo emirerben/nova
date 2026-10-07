@@ -790,12 +790,14 @@ def test_a_job_without_a_contract_is_never_stamped(monkeypatch) -> None:
 
     monkeypatch.setattr(settings, "kria_plan_authority_enabled", True)
     plain = build_generative_job(user_id=uuid.uuid4(), clip_paths=["users/u/plan/i/a.mp4"])
+    assert "creator_render_requirements_version" not in plain.all_candidates
     assert "creator_plan_authority_version" not in plain.all_candidates
-    no_requirements = _stamp_job(monkeypatch, enabled=True, strategy={"pacing": "fast"})
-    # A strategy with no objective requirement still stamps a (trivial) contract.
-    assert ("creator_render_requirements_version" in no_requirements.all_candidates) == (
-        "creator_plan_authority_version" in no_requirements.all_candidates
-    )
+
+
+def test_a_trivial_creator_contract_is_still_stamped(monkeypatch) -> None:
+    job = _stamp_job(monkeypatch, enabled=True, strategy={"pacing": "fast"})
+    assert job.all_candidates["creator_render_requirements_version"] == 1
+    assert job.all_candidates["creator_plan_authority_version"] == 1
 
 
 def test_stamp_helper_never_mutates_its_input_and_respects_the_flag() -> None:
