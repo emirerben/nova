@@ -41,6 +41,13 @@ from app.kria.contracts import (
     RequirementReceipt,
 )
 from app.kria.language import is_help_question, is_status_question
+from app.kria.reply_language import (
+    remember_reply_language,
+    reply_language_for,
+    resolve_reply_language,
+    say,
+    thread_reply_language,
+)
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -403,9 +410,13 @@ async def submit_turn(
     thread_id: uuid.UUID,
     creator_id: uuid.UUID,
     body: SubmitTurnBody,
+    locale: str | None = None,
     _expected_revision_override: int | None = None,
 ) -> tuple[TurnAccepted, bool]:
     """Commit a user event and pending turn together, before broker I/O.
+
+    ``locale`` is the request's raw ``Accept-Language``: the chat's reply language
+    falls back to it when the creator's words don't say (KRI-520).
 
     ``_expected_revision_override`` is internal: set only on the single re-entry
     after an overdue approval was lazily expired (that expiry bumps the thread
@@ -542,30 +553,62 @@ async def submit_turn(
                 thread_id=thread_id,
                 creator_id=creator_id,
                 body=body,
+                locale=locale,
                 _expected_revision_override=(
                     revision_after_expiry
                     if revision_after_expiry is not None
                     else body.expected_thread_revision
                 ),
             )
+    # KRI-520: the chat's reply language after this message, stored on the locked
+    # thread row (committed with the event below; rolled back with a refusal).
+    reply_language = resolve_reply_language(
+        body.message, previous=thread_reply_language(thread), locale=locale
+    )
+    remember_reply_language(thread, reply_language)
     inert_response: tuple[Literal["progress", "question"], str] | None = None
-    if is_status_question(body.message):
-        status = getattr(active, "status", None)
-        if status in {"pending", "planning"}:
-            message = "I’m working on the edit plan. Your project is saved."
-        elif status == "awaiting_approval":
-            message = "Your draft is ready. Review the pinned approval before I start the render."
-        elif status in {"executing", "observing"}:
-            message = "Your approved render is in progress. Your draft is saved."
-        else:
-            message = "There’s no edit running right now. Your latest project state is saved."
-        inert_response = ("progress", message)
-    elif is_help_question(body.message):
-        inert_response = (
-            "question",
-            "I can inspect your footage, prepare reversible draft edits, explain what changed, "
-            "and render only after you approve the exact draft.",
-        )
+    with reply_language_for(reply_language):
+        if is_status_question(body.message):
+            status = getattr(active, "status", None)
+            if status in {"pending", "planning"}:
+                message = say(
+                    en="I’m working on the edit plan. Your project is saved.",
+                    tr="Düzenleme planı üzerinde çalışıyorum. Projen kaydedildi.",
+                )
+            elif status == "awaiting_approval":
+                message = say(
+                    en="Your draft is ready. Review the pinned approval before I start the render.",
+                    tr=(
+                        "Taslağın hazır. Videoyu oluşturmaya başlamadan önce sabitlenen "
+                        "onayı incele."
+                    ),
+                )
+            elif status in {"executing", "observing"}:
+                message = say(
+                    en="Your approved render is in progress. Your draft is saved.",
+                    tr="Onayladığın video hazırlanıyor. Taslağın kaydedildi.",
+                )
+            else:
+                message = say(
+                    en="There’s no edit running right now. Your latest project state is saved.",
+                    tr="Şu anda devam eden bir düzenleme yok. Projenin son hâli kaydedildi.",
+                )
+            inert_response = ("progress", message)
+        elif is_help_question(body.message):
+            inert_response = (
+                "question",
+                say(
+                    en=(
+                        "I can inspect your footage, prepare reversible draft edits, explain "
+                        "what changed, and render only after you approve the exact draft."
+                    ),
+                    tr=(
+                        "Çekimlerini inceleyebilir, geri alınabilir taslak düzenlemeler "
+                        "hazırlayabilir, neyin değiştiğini açıklayabilirim. Videoyu yalnızca "
+                        "taslağı onayladıktan sonra oluştururum."
+                    ),
+                ),
+            )
 
     if inert_response is not None:
         turn_value, message = inert_response

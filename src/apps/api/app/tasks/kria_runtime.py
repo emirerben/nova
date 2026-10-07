@@ -49,6 +49,11 @@ from app.kria.planner import (
     turn_deadline,
 )
 from app.kria.registry import KRIA_TOOLS
+from app.kria.reply_language import (
+    bind_reply_language,
+    release_reply_language,
+    thread_reply_language,
+)
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -170,6 +175,9 @@ def _snapshot(thread: CreationThread) -> dict[str, Any]:
         "edit_format": state.get("edit_format") or state.get("format") or "montage",
         "strongest_moment": state.get("strongest_moment"),
         "editorial_decision": state.get("editorial_decision"),
+        # KRI-520: the chat's language; the turn binds it for its server copy.
+        # Absent until a message told, so older snapshots are unchanged.
+        **({"reply_language": language} if (language := thread_reply_language(thread)) else {}),
     }
 
 
@@ -1753,6 +1761,9 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
     # `_claim` appends True only when the source event answers a question AND that
     # question kind's flag is on.
     answers_clip_question = bool(len(claimed_rest) > 1 and claimed_rest[1] is True)
+    # KRI-520: every reply this turn writes (model prompts, server copy, failures)
+    # follows the chat's language; released in the `finally` below.
+    language_token = bind_reply_language(snapshot.get("reply_language"))
     try:
         if settings.main_creator_agent_enabled and snapshot.get("item_id"):
             planned = asyncio.run(
@@ -1954,6 +1965,8 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                 queue="agent-control",
             )
         raise
+    finally:
+        release_reply_language(language_token)
 
 
 async def _extract_brief_async(snapshot: dict[str, Any], user_message: str):

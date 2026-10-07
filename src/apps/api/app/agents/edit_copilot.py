@@ -27,6 +27,7 @@ from app.agents._schemas.text_element import _ALLOWED_EFFECTS, _ALLOWED_FONTS, _
 from app.agents.editor_ops_v2 import text as _v2_text
 from app.agents.music_matcher import _sanitize_text
 from app.config import settings
+from app.kria.reply_language import prompt_language_line
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 from app.services.editor_limits import (
@@ -38,7 +39,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-07-v69"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-08-v70"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -702,6 +703,9 @@ class EditCopilotInput(BaseModel):
     # KRI-186: the thread's first creator brief, so a later "do that again"
     # style follow-up can be read against what the creator originally asked.
     original_request: str | None = Field(default=None, max_length=_MAX_UTTERANCE_CHARS)
+    # KRI-520: the chat's language (app.kria.reply_language). None/"en" => the
+    # prompt is byte-identical and the field is left out of input dumps.
+    reply_language: str | None = Field(default=None, max_length=8, exclude_if=lambda v: v is None)
 
 
 class EditCopilotOutput(BaseModel):
@@ -3092,7 +3096,11 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             custom_effect_catalog=_custom_effect_catalog(),
             max_ops=_MAX_OPS,
         )
-        return _with_v2_fragments(prompt, input.variant_snapshot)
+        prompt = _with_v2_fragments(prompt, input.variant_snapshot)
+        # KRI-520: the reply-language instruction goes last, after every fragment.
+        # "" for English/unknown: byte-identical prompt.
+        language_line = prompt_language_line(input.reply_language)
+        return f"{prompt.rstrip(chr(10))}\n\n{language_line}\n" if language_line else prompt
 
     def parse(self, raw_text: str, input: EditCopilotInput) -> EditCopilotOutput:  # noqa: A002
         try:

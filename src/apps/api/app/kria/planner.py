@@ -58,6 +58,7 @@ from app.kria.brief import (
     route_requirements,
 )
 from app.kria.contracts import KriaTurnPlan
+from app.kria.reply_language import current_reply_language
 from app.kria.strategy_policy import RefusedStrategy, check_strategy_for_runtime_v2
 from app.models import (
     ContentPlan,
@@ -1182,6 +1183,8 @@ async def _load_creator_inputs(
         ],
         capability_manifest=manifest,
         creative_copy_state=compact_copy_state,
+        # KRI-520: bound per Kria turn by the task; None leaves the prompt unchanged.
+        reply_language=current_reply_language(),
         **extra,
     )
     # Do not pin an async DB connection or block the event loop that renews the

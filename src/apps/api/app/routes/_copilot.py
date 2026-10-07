@@ -29,6 +29,7 @@ from app.agents.edit_copilot import (
     EditCopilotInput,
     EditCopilotOutput,
 )
+from app.kria.reply_language import current_reply_language
 from app.services.copilot_limits import COPILOT_SNAPSHOT_MAX_BYTES
 
 log = structlog.get_logger()
@@ -238,6 +239,8 @@ async def run_copilot_turn(
         prior_turns=body.turns[:12],
         variant_snapshot=body.snapshot,
         original_request=body.original_request,
+        # KRI-520: bound per Kria turn; None (unchanged prompt) everywhere else.
+        reply_language=current_reply_language(),
     )
 
     try:
