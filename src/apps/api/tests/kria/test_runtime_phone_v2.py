@@ -170,6 +170,9 @@ class _Db:
         return self._gets[model]
 
     def execute(self, _statement):  # noqa: ANN001, ANN201
+        if not self._executes:
+            # KRI-506's consent backstop reads thread events before dispatch.
+            return SimpleNamespace(all=lambda: [], scalar_one_or_none=lambda: None)
         row = self._executes.pop(0)
         return SimpleNamespace(scalar_one_or_none=lambda: row)
 

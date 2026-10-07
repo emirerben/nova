@@ -13,6 +13,7 @@ import copy
 import math
 import re
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
@@ -117,6 +118,16 @@ from app.services.clip_intent_answers import (
 from app.services.clip_intent_planning import plan_and_resolve_clip_intents
 from app.services.clip_intent_resolution import IntentResolution
 from app.services.content_plan_persona import load_owned_plan_persona
+from app.services.creative_copy_decisions import (
+    authorship_question,
+    fold_creative_copy,
+    latest_open_creative_question,
+    localize_question,
+    media_digest,
+    question_message,
+    wording_question,
+)
+from app.services.creative_copy_gate import creative_copy_problem
 from app.services.creator_autonomy import (
     build_auto_bundle,
     evaluate_auto_iteration,
@@ -491,6 +502,31 @@ def _conversation(events: list[CreatorAgentEvent]) -> list[dict[str, str]]:
         keep = _ROUTE_CONVERSATION_WINDOW - 1
         return [{"role": "user", "content": carried}, *turns[-keep:]]
     return turns
+
+
+def _creative_copy_events(events: list[CreatorAgentEvent]) -> list[tuple[str, dict[str, Any]]]:
+    """Adapt legacy append-only events to the shared copy-consent folder."""
+    mapped: list[tuple[str, dict[str, Any]]] = []
+    for event in sorted(events, key=lambda value: value.sequence):
+        payload = dict(event.payload or {})
+        mapped.append((str(event.role), payload))
+    return mapped
+
+
+def _legacy_copy_selection(events: list[CreatorAgentEvent], message: str) -> dict[str, str] | None:
+    """Translate only an exact displayed legacy option into a durable selection."""
+    question = latest_open_creative_question(_creative_copy_events(events))
+    if question is None:
+        return None
+    normalized = " ".join(message.casefold().split())
+    for option in question.get("options") or []:
+        if not isinstance(option, dict):
+            continue
+        key = str(option.get("key") or "")
+        label = " ".join(str(option.get("label") or "").casefold().split())
+        if normalized in {key.casefold(), label}:
+            return {"question_id": str(question["question_id"]), "option_key": key}
+    return None
 
 
 def _confirmed_creator_request(
@@ -1127,6 +1163,7 @@ def _apply_explicit_render_intent(
     render_intent_evidence: CreatorRenderIntentEvidence | None = None,
     resolved_sfx: CreatorCatalogRef | None = None,
     model_resolved_sfx: CreatorCatalogRef | None = None,
+    approved_creative_copy: Mapping[str, str | None] | None = None,
 ) -> CreativeStrategy:
     """Preserve grounded semantic intent, with legacy literal extraction as fallback.
 
@@ -1455,6 +1492,17 @@ def _apply_explicit_render_intent(
     if target_duration_s is not None:
         updates["target_duration_s"] = target_duration_s
     updates.update(semantic_updates)
+    updates["omitted_copy_targets"] = [
+        target for target, value in (approved_creative_copy or {}).items() if value is None
+    ] or None
+    # KRI-506: only the event-folded server value may override literal/model
+    # extraction for generated creative wording. This parameter is deliberately
+    # supplied by the controller, never read from an agent response.
+    for target, value in (approved_creative_copy or {}).items():
+        if target in {"opening_title", "closing_title"} and (
+            value is None or isinstance(value, str)
+        ):
+            updates[target] = value
     return CreativeStrategy.model_validate({**strategy.model_dump(mode="json"), **updates})
 
 
@@ -2438,6 +2486,13 @@ async def _run_planning_turn(
         persona=persona,
         guided_capability_enabled=(True if allow_chat else None),
     )
+    from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+
+    copy_snapshot = snapshot_media(item)
+    copy_states = fold_creative_copy(
+        _creative_copy_events(getattr(session, "events", [])),
+        dependency_digest=media_digest(copy_snapshot),
+    )
     # KRI-118 item 6: a "I used 50 of N items" notice when the manifest cap
     # actually dropped owned media, so this turn's plan can surface it.
     media_truncation_notice = await creator_media_truncation_notice(db, item, persona)
@@ -2627,11 +2682,22 @@ async def _run_planning_turn(
     locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
     if locked.revision != expected_revision or locked.status not in {"planning", "revising"}:
         raise HTTPException(status_code=409, detail="Creator session changed while planning")
+    copy_overrides = {
+        target: None if state.cancelled else state.approved
+        for target, state in copy_states.items()
+        if state.cancelled or state.approved is not None
+    }
     action: AskUser | ProposeStrategy | ReviewDecision
+    creative_decision = None
     if prepared_attempt is not None and prepared_attempt.planning_action:
-        action = MainCreatorOutput.model_validate(
-            {"action": prepared_attempt.planning_action}
-        ).action
+        saved = dict(prepared_attempt.planning_action)
+        output = MainCreatorOutput.model_validate(
+            {
+                "creative_decision": saved.pop("_creative_decision", None),
+                "action": saved,
+            }
+        )
+        action, creative_decision = output.action, output.creative_decision
     elif all_media_capacity_choice is not None:
         # The displayed, hash-fenced mapping is authoritative. Applying it is
         # deterministic and must not spend another model call or fail against
@@ -2667,6 +2733,15 @@ async def _run_planning_turn(
             media_context=media_context,
             conversation=_conversation(session.events),
             capability_manifest=manifest,
+            creative_copy_state=[
+                {
+                    "target": target,
+                    "status": state.status,
+                    "candidate": state.candidate,
+                    "dependency_digest": state.dependency_digest,
+                }
+                for target, state in copy_states.items()
+            ],
         )
         try:
             output = await asyncio.to_thread(
@@ -2684,6 +2759,7 @@ async def _run_planning_turn(
                 ),
             )
             action = output.action
+            creative_decision = getattr(output, "creative_decision", None)
             if isinstance(action, ProposeStrategy):
                 # KRI-127 / KRI-374 model-output hygiene, applied right where the
                 # model's ProposeStrategy is accepted, flag on or off.
@@ -2754,14 +2830,149 @@ async def _run_planning_turn(
         prepared_attempt = await require_current_attempt(
             db, preparation_attempt_id, preparation_token or ""
         )
-        prepared_attempt.planning_action = action.model_dump(mode="json")
+        prepared_attempt.planning_action = {
+            **action.model_dump(mode="json"),
+            **(
+                {"_creative_decision": creative_decision.model_dump(mode="json")}
+                if creative_decision is not None
+                else {}
+            ),
+        }
         await db.commit()
         await require_current_attempt(db, preparation_attempt_id, preparation_token or "")
 
     locked = await _load_session(db, session.id, user.id, item.id, for_update=True)
     if locked.revision != expected_revision or locked.status not in {"planning", "revising"}:
         raise HTTPException(status_code=409, detail="Creator session changed while planning")
-    if isinstance(action, AskUser) and locked.question_count < locked.question_budget:
+    if creative_decision is not None:
+        target = creative_decision.target
+        digest = media_digest(copy_snapshot)
+        question = None
+        message = ""
+        proposed = creative_decision.proposed_text or ""
+        evidence = creative_decision.source_evidence or ""
+        if creative_decision.status in {"creator_supplied", "cancelled"}:
+            valid = (
+                evidence
+                and evidence in user_message
+                and (creative_decision.status == "cancelled" or (proposed and proposed in evidence))
+            )
+            if valid:
+                resolution = {
+                    "target": target,
+                    "status": creative_decision.status,
+                    "text": proposed if creative_decision.status == "creator_supplied" else None,
+                    "dependency_digest": digest,
+                }
+                await append_event(
+                    db,
+                    locked,
+                    event_type="creative_copy_resolution",
+                    role="assistant",
+                    payload={"creative_copy_resolution": resolution},
+                )
+                expected_revision = locked.revision
+                copy_overrides[target] = resolution["text"]
+                if isinstance(action, ProposeStrategy):
+                    action = action.model_copy(
+                        update={
+                            "strategy": action.strategy.model_copy(
+                                update={
+                                    target: (
+                                        proposed
+                                        if creative_decision.status == "creator_supplied"
+                                        else None
+                                    )
+                                }
+                            )
+                        }
+                    )
+            else:
+                question = authorship_question(target=target, dependency_digest=digest)
+                message = "Do you have an idea, or would you like me to write one?"
+        elif creative_decision.status == "candidate" or (
+            creative_decision.status == "delegated" and proposed
+        ):
+            if not proposed:
+                question = authorship_question(target=target, dependency_digest=digest)
+                message = "Do you have an idea, or would you like me to write one?"
+            else:
+                question = wording_question(
+                    target=target, candidate=proposed, dependency_digest=digest
+                )
+                message = f"I’d try “{question['candidate']}”. Does this wording work?"
+        elif creative_decision.status == "unresolved" and target in copy_overrides:
+            pass
+        elif creative_decision.status in {"unresolved", "delegated"}:
+            question = authorship_question(target=target, dependency_digest=digest)
+            message = (
+                action.question
+                if isinstance(action, AskUser) and action.question.strip()
+                else "Do you have an idea, or would you like me to write one?"
+            )
+        else:
+            question = None
+            message = ""
+        if question is not None:
+            if isinstance(action, AskUser):
+                if question.get("candidate"):
+                    message = action.question
+                    if question["candidate"] not in message:
+                        message = f"“{question['candidate']}” — {message}"
+            localize_question(question, creative_decision.language)
+            locked.status = "briefing"
+            # Creative-copy questions are a safety boundary, not an ordinary
+            # clarification, and never fall through when the legacy budget is spent.
+            await append_event(
+                db,
+                locked,
+                event_type="assistant_question",
+                payload={
+                    "message": question_message(question, message),
+                    "choice_question": question,
+                    "options": [option["label"] for option in question["options"]],
+                },
+            )
+            return await _response(db, locked)
+    # A model omission or its exhausted question allowance cannot turn an open
+    # wording decision into an approvable legacy strategy.
+    pending_copy = [
+        state
+        for target, state in copy_states.items()
+        if target not in copy_overrides and not state.approved and not state.cancelled
+    ]
+    if pending_copy and isinstance(action, ProposeStrategy):
+        state = pending_copy[0]
+        question = (
+            wording_question(
+                target=state.target,
+                candidate=state.candidate,
+                dependency_digest=media_digest(copy_snapshot),
+            )
+            if state.candidate
+            else authorship_question(
+                target=state.target, dependency_digest=media_digest(copy_snapshot)
+            )
+        )
+        locked.status = "briefing"
+        await append_event(
+            db,
+            locked,
+            event_type="assistant_question",
+            payload={
+                "message": (
+                    f"“{state.candidate}” — does this wording work?"
+                    if state.candidate
+                    else "Do you have an idea, or would you like me to write one?"
+                ),
+                "choice_question": question,
+            },
+        )
+        return await _response(db, locked)
+    if isinstance(action, AskUser) and (
+        locked.question_count < locked.question_budget
+        or any(not state.approved and not state.cancelled for state in copy_states.values())
+    ):
         locked.status = "briefing"
         locked.question_count += 1
         await append_event(
@@ -3007,6 +3218,7 @@ async def _run_planning_turn(
                 render_intent_evidence=render_intent_evidence,
                 resolved_sfx=described_sfx,
                 model_resolved_sfx=model_described_sfx,
+                approved_creative_copy=copy_overrides,
             )
             pre_normalize_target_duration_s = strategy.target_duration_s
             try:
@@ -3479,6 +3691,7 @@ async def _run_planning_turn(
                     creator_request,
                     manifest=manifest,
                     latest_user_message=user_message,
+                    approved_creative_copy=copy_overrides,
                     render_intent_evidence=(
                         action.render_intent_evidence
                         if isinstance(action, ProposeStrategy)
@@ -3746,7 +3959,14 @@ async def start_creator_session_controller(
         session,
         event_type="user_message",
         role="user",
-        payload={"message": body.message.strip()},
+        payload={
+            "message": body.message.strip(),
+            **(
+                {"choice_selection": selection}
+                if (selection := _legacy_copy_selection(session.events, body.message.strip()))
+                else {}
+            ),
+        },
         client_event_id=body.client_event_id,
     )
     expected_revision = session.revision
@@ -3818,7 +4038,14 @@ async def creator_session_turn_controller(
         session,
         event_type="user_message",
         role="user",
-        payload={"message": body.message.strip()},
+        payload={
+            "message": body.message.strip(),
+            **(
+                {"choice_selection": selection}
+                if (selection := _legacy_copy_selection(session.events, body.message.strip()))
+                else {}
+            ),
+        },
         client_event_id=body.client_event_id,
     )
     expected_revision = session.revision
@@ -4401,6 +4628,15 @@ async def confirm_creator_plan_controller(
         raise HTTPException(status_code=409, detail="Speech cleanup recovery changed")
     item, plan_row, persona = await _owned_context(db, item_id, user.id, for_update=True)
     session = await _load_session(db, body.session_id, user.id, item.id, for_update=True)
+    from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+
+    copy_problem = creative_copy_problem(
+        _creative_copy_events(getattr(session, "events", [])),
+        snapshot_media(item),
+        strategy=((session.active_plan or {}).get("edit_plan") or {}).get("strategy"),
+    )
+    if copy_problem:
+        raise HTTPException(status_code=409, detail=copy_problem)
     # Keep identity/ownership scalars local.  The guided auto-design helper
     # commits its own proposal work, and the rollback below expires every ORM
     # instance in this AsyncSession; reading those instances afterward would

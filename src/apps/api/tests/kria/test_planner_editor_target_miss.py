@@ -37,6 +37,7 @@ def _db(thread, session, job, execute_rows=None):  # noqa: ANN001, ANN202
         execute=AsyncMock(
             return_value=SimpleNamespace(
                 scalar_one_or_none=lambda: None,
+                all=lambda: [],
                 scalars=lambda: SimpleNamespace(all=lambda: execute_rows or []),
             )
         ),
@@ -136,6 +137,9 @@ def _wire(monkeypatch, *, miss, plan_after=None):  # noqa: ANN001, ANN202
     )
     monkeypatch.setattr(planner, "creator_context", lambda *_a: ("creator", "item"))
     monkeypatch.setattr(planner, "load_latest_brief", AsyncMock(return_value=None))
+    # Planner now folds the full copy lifecycle before routing. These editor-target
+    # tests intentionally have no thread events; keep their fake DB out of that path.
+    monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=[]))
 
     async def revision(_db, *, thread_id, item, user_message):  # noqa: ANN001, ANN202
         planner._editor_target_miss.set(miss)
@@ -153,7 +157,11 @@ def _wire(monkeypatch, *, miss, plan_after=None):  # noqa: ANN001, ANN202
             creator_runs.append(agent_input)
             from app.agents._schemas.creator_agent import AskUser
 
-            return SimpleNamespace(action=AskUser(**_ASK), brief_updates=[_upd("select", "global")])
+            return SimpleNamespace(
+                action=AskUser(**_ASK),
+                brief_updates=[_upd("select", "global")],
+                creative_decision=None,
+            )
 
     monkeypatch.setattr(planner, "MainCreatorAgent", FakeAgent)
 
@@ -276,6 +284,8 @@ def _wire_real(  # noqa: ANN202
         res = await inner_execute(*a, **kw)
         if not hasattr(res, "scalar_one_or_none"):
             res.scalar_one_or_none = lambda: None
+        if not hasattr(res, "all"):
+            res.all = lambda: []
         return res
 
     db.execute = AsyncMock(side_effect=execute)
@@ -291,6 +301,7 @@ def _wire_real(  # noqa: ANN202
     monkeypatch.setattr(planner, "creator_context", lambda *_a: ("creator", "item"))
     monkeypatch.setattr(planner, "load_latest_brief", AsyncMock(return_value=None))
     monkeypatch.setattr(planner, "_copilot_clip_context", AsyncMock(return_value=None))
+    monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=[]))
     monkeypatch.setattr(
         planner,
         "build_editor_snapshot",
@@ -308,7 +319,11 @@ def _wire_real(  # noqa: ANN202
             creator_runs.append(agent_input)
             from app.agents._schemas.creator_agent import AskUser
 
-            return SimpleNamespace(action=AskUser(**_ASK), brief_updates=[_upd("select", "global")])
+            return SimpleNamespace(
+                action=AskUser(**_ASK),
+                brief_updates=[_upd("select", "global")],
+                creative_decision=None,
+            )
 
     monkeypatch.setattr(planner, "MainCreatorAgent", FakeAgent)
 
@@ -530,8 +545,21 @@ def _inputs_db(rows):  # noqa: ANN001, ANN202
     captured = {}
 
     async def execute(stmt):  # noqa: ANN001, ANN202
-        captured["limit"] = stmt._limit
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: rows[: stmt._limit]))
+        if stmt._limit is not None:
+            captured["limit"] = stmt._limit
+        event_rows = [
+            (
+                row.role,
+                getattr(row, "payload", None),
+                getattr(row, "event_type", None),
+                getattr(row, "content", None),
+            )
+            for row in rows
+        ]
+        return SimpleNamespace(
+            all=lambda: event_rows,
+            scalars=lambda: SimpleNamespace(all=lambda: rows[: stmt._limit]),
+        )
 
     return (
         SimpleNamespace(execute=AsyncMock(side_effect=execute), rollback=AsyncMock()),

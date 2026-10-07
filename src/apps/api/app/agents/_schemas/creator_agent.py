@@ -414,6 +414,10 @@ class CreativeStrategy(_CreatorModel):
     # ``choice_selection`` events and every model-authored value is discarded. Omitted
     # from the dump when unset so stored strategies stay byte-identical.
     choice_answers: SkipJsonSchema[list[ChoiceAnswer] | None] = Field(default=None, max_length=8)
+    # Server-folded cancellation suppresses saved-brief title fallbacks as well.
+    omitted_copy_targets: SkipJsonSchema[list[Literal["opening_title", "closing_title"]] | None] = (
+        Field(default=None, max_length=2)
+    )
     # KRI-178 (flag PHONE_SUBTITLED_REACTION_BEATS_ENABLED). Same rationale as
     # clip_intents immediately above: default None keeps stored strategies and
     # every exclude_none hash byte-identical when unused, and SkipJsonSchema
@@ -492,6 +496,7 @@ class CreativeStrategy(_CreatorModel):
             "resolved_clip_intents",
             "ordering_choice",
             "choice_answers",
+            "omitted_copy_targets",
             "reaction_beats",
             "closing_media",
             "song_sync",

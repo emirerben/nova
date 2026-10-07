@@ -930,7 +930,9 @@ def _planner_db(item):  # noqa: ANN001, ANN202
     db = SimpleNamespace(
         get=AsyncMock(side_effect=get),
         execute=AsyncMock(
-            return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+            return_value=SimpleNamespace(
+                all=lambda: [], scalars=lambda: SimpleNamespace(all=lambda: [])
+            )
         ),
         rollback=AsyncMock(side_effect=rollback),
         commit=AsyncMock(),
@@ -946,6 +948,11 @@ def _wire_planner(monkeypatch, *, output, editor_plan, snapshot):  # noqa: ANN00
         edit_format="montage",
     )
     db, creator_id = _planner_db(item)
+    # These routing tests use no persisted thread events; bypass the full-history
+    # copy fold while retaining conversation behavior in its dedicated tests.
+    monkeypatch.setattr(planner, "_load_thread_events", AsyncMock(return_value=[]))
+    if output is not None and not hasattr(output, "creative_decision"):
+        output.creative_decision = None
     monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
     monkeypatch.setattr(settings, "clip_intents_enabled", False)
     # These tests pin the extract-first router; the copilot-first fast path has its own.

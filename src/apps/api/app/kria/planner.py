@@ -36,6 +36,7 @@ from app.agents._schemas.edit_format import CLIP_INTENT_FREE_EDIT_FORMATS
 from app.agents.brief_extractor import BriefExtractionInput, BriefExtractorAgent
 from app.agents.main_creator import (
     MAIN_CREATOR_CONVERSATION_MAX,
+    CreativeCopyDecision,
     MainCreatorAgent,
     MainCreatorInput,
     MainCreatorOutput,
@@ -77,6 +78,7 @@ from app.services.choice_questions import (
     CONFLICT_ORDER_VS_GROUP,
     ORDER_VS_GROUP_OPTIONS,
     ChoiceCapability,
+    answered_brief,
     ask_user_choice,
     build_choice_question,
     choice_question_text,
@@ -90,6 +92,14 @@ from app.services.clip_intent_planning import plan_and_resolve_clip_intents
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_selection import fold_clip_selections
 from app.services.clip_understanding import understanding_incomplete
+from app.services.creative_copy_decisions import (
+    authorship_question,
+    fold_creative_copy,
+    localize_question,
+    media_digest,
+    question_message,
+    wording_question,
+)
 from app.services.creator_sessions import (
     creator_context,
     load_intent_clips_for_item,
@@ -147,6 +157,7 @@ class PlannedKriaTurn:
     # KRI-142: what the server strategy check repaired or left out, so the
     # receipts reply still says it when it replaces the model's summary.
     policy_notices: tuple[str, ...] = ()
+    creative_copy_resolution: dict | None = None
 
 
 def adapt_creator_action(
@@ -380,7 +391,9 @@ def _with_song_sync(strategy: Any, song_sync: str) -> Any:
     return clone
 
 
-async def _load_thread_events(db: AsyncSession, thread_id: uuid.UUID) -> list[tuple[str, Any]]:
+async def _load_thread_events(
+    db: AsyncSession, thread_id: uuid.UUID, *, release: bool = True
+) -> list[tuple[str, Any]]:
     rows = (
         await db.execute(
             select(
@@ -396,7 +409,8 @@ async def _load_thread_events(db: AsyncSession, thread_id: uuid.UUID) -> list[tu
             .order_by(CreationThreadEvent.sequence)
         )
     ).all()
-    await db.rollback()  # no connection pinned across what follows
+    if release:
+        await db.rollback()  # no connection pinned across what follows
     # KRI-476: tagged with the event type and a user message's text so a choice question
     # is closed only by a real reply, never by an async event (see `tag_event`).
     return [
@@ -1056,6 +1070,8 @@ class _CreatorInputs:
     intent_clips: list
     creator_request: str | None
     brief_batches: tuple = ()
+    creative_copy_state: dict | None = None
+    creative_copy_digest: str = ""
 
 
 async def _load_creator_inputs(
@@ -1138,6 +1154,24 @@ async def _load_creator_inputs(
         batches = context.batches
         if batches:
             extra["creator_request"] = batches[0].text
+    # Full event history is folded into a tiny state summary: a decision cannot
+    # disappear merely because the model only receives its newest 40 turns.
+    from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+
+    creative_copy_digest = media_digest(snapshot_media(item))
+    decision_states = fold_creative_copy(
+        await _load_thread_events(db, thread_id, release=False),
+        dependency_digest=creative_copy_digest,
+    )
+    compact_copy_state = [
+        {
+            "target": target,
+            "status": state.status,
+            "candidate": state.candidate,
+            "dependency_digest": state.dependency_digest,
+        }
+        for target, state in decision_states.items()
+    ]
     agent_input = MainCreatorInput(
         user_message=user_message,
         creator_context=creator_summary,
@@ -1147,6 +1181,7 @@ async def _load_creator_inputs(
             {"role": row.role, "content": str(row.content)[:1000]} for row in rows if row.content
         ],
         capability_manifest=manifest,
+        creative_copy_state=compact_copy_state,
         **extra,
     )
     # Do not pin an async DB connection or block the event loop that renews the
@@ -1157,6 +1192,8 @@ async def _load_creator_inputs(
         intent_clips=intent_clips,
         creator_request=creator_request,
         brief_batches=batches,
+        creative_copy_state=decision_states,
+        creative_copy_digest=creative_copy_digest,
     )
 
 
@@ -1293,7 +1330,101 @@ async def _plan_from_creator_output(
     wants_capture_order: bool = False,
 ) -> PlannedKriaTurn:
     """Turn a Main Creator answer into an inert plan (clip-intent resolution incl.)."""
+    decision = getattr(output, "creative_decision", None)
+    # Only the current creator message can authorize a replacement. Brief prose and
+    # earlier assistant suggestions are not creator-authored evidence.
+    resolution = None
+    if decision is not None and decision.status in {"creator_supplied", "cancelled"}:
+        evidence = decision.source_evidence or ""
+        text = decision.proposed_text or ""
+        if (
+            evidence
+            and evidence in user_message
+            and (decision.status == "cancelled" or (text and text in evidence))
+        ):
+            resolution = {
+                "target": decision.target,
+                "status": decision.status,
+                "text": text if decision.status == "creator_supplied" else None,
+                "dependency_digest": inputs.creative_copy_digest,
+            }
+    creative_turn = _creative_copy_turn(
+        decision,
+        inputs=inputs,
+        creator_request=user_message,
+        manifest=manifest,
+        response=output.action.question if isinstance(output.action, AskUser) else None,
+    )
+    if creative_turn is not None:
+        return creative_turn
+    # Persist validated replacements alongside whichever result the normal planner
+    # produces, within the same revision-fenced completion transaction.
+    planned = await _plan_creator_action(
+        db,
+        thread_id=thread_id,
+        item_id=item_id,
+        creator_id=creator_id,
+        user_message=user_message,
+        manifest=manifest,
+        inputs=inputs,
+        output=output,
+        brief_request=brief_request,
+        wants_capture_order=wants_capture_order,
+    )
+    return replace(planned, creative_copy_resolution=resolution)
+
+
+async def _plan_creator_action(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    item_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    user_message: str,
+    manifest: Any,
+    inputs: _CreatorInputs,
+    output: MainCreatorOutput,
+    brief_request: str | None = None,
+    wants_capture_order: bool = False,
+) -> PlannedKriaTurn:
     action = output.action
+    if isinstance(action, ProposeStrategy):
+        user_sources = [
+            user_message,
+            *[
+                str(row.get("content") or "")
+                for row in getattr(getattr(inputs, "agent_input", None), "conversation", [])
+                if row.get("role") == "user"
+            ],
+        ]
+        for target in ("opening_title", "closing_title"):
+            value = getattr(action.strategy, target)
+            state = (getattr(inputs, "creative_copy_state", None) or {}).get(target)
+            evidence = getattr(action.render_intent_evidence, target, None) or ""
+            decision = getattr(output, "creative_decision", None)
+            authored = (
+                value is not None
+                and decision is not None
+                and decision.status == "creator_supplied"
+                and decision.target == target
+                and decision.proposed_text == value
+                and decision.source_evidence
+                and decision.source_evidence in user_message
+                and value in decision.source_evidence
+            )
+            grounded = (
+                evidence
+                and value
+                and value in evidence
+                and any(evidence in source for source in user_sources)
+            )
+            if value and not (state and state.approved == value) and not (authored or grounded):
+                return _creative_copy_turn(
+                    CreativeCopyDecision(target=target, status="candidate", proposed_text=value),
+                    inputs=inputs,
+                    creator_request=user_message,
+                    manifest=manifest,
+                )
     policy_notices: tuple[str, ...] = ()
     server_song_takes: list[dict[str, Any]] | None = None
     if isinstance(action, ProposeStrategy):
@@ -1562,6 +1693,58 @@ async def _plan_from_creator_output(
     )
 
 
+def _creative_copy_turn(
+    decision: CreativeCopyDecision | None,
+    *,
+    inputs: _CreatorInputs,
+    creator_request: str,
+    manifest: Any,
+    response: str | None = None,
+) -> PlannedKriaTurn | None:
+    """Suggestions are inert questions; only a later persisted answer grants consent."""
+    if decision is None or decision.status in {"creator_supplied", "cancelled"}:
+        return None
+    state = (getattr(inputs, "creative_copy_state", None) or {}).get(decision.target)
+    digest = inputs.creative_copy_digest
+    if not digest:
+        return None
+    if state and (state.approved or state.cancelled) and decision.status == "unresolved":
+        return None
+    candidate = decision.proposed_text
+    if state and state.status == "stale":
+        candidate = candidate or state.candidate
+    # Even unsolicited model wording must become a suggestion, never pixels. An
+    # explicit delegation can therefore produce its candidate on the first turn.
+    if (
+        candidate
+        and decision.status in {"candidate", "delegated"}
+        or (state and state.status == "stale" and candidate)
+    ):
+        question = wording_question(
+            target=decision.target,
+            candidate=candidate,
+            dependency_digest=digest,
+        )
+        candidate = question["candidate"]
+        message = response or f"I’d try “{candidate}”. Does this wording work?"
+        if candidate not in message:
+            message = f"“{candidate}” — {message}"
+    else:
+        question = authorship_question(target=decision.target, dependency_digest=digest)
+        message = response or "Do you have an idea, or would you like me to write one?"
+    localize_question(question, decision.language)
+    return PlannedKriaTurn(
+        plan=KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=question_message(question, message),
+            choice_question=question,
+        ),
+        manifest_hash=manifest.manifest_hash,
+        context_hash=manifest.context_hash,
+    )
+
+
 def _ordering_conflict_question(
     resolved: list[ResolvedClipIntent],
     clips: list,
@@ -1778,8 +1961,6 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
             ),
         )
     planned = replace(planned, media_snapshot=after)
-    if not settings.kria_choice_questions_enabled:
-        return planned
     return await _gate_unresolved_choices(
         db, planned, thread_id=kwargs["thread_id"], creator_id=kwargs["creator_id"]
     )
@@ -1809,6 +1990,65 @@ async def _gate_unresolved_choices(
     strategy = arguments.get("strategy") if isinstance(arguments, dict) else None
     if apply_intent.tool_name != "draft.apply_strategy" or not isinstance(strategy, dict):
         return planned
+    # KRI-506: a generated wording may enter the executable strategy only through
+    # this event-folded server path.  The question id, offered option, exact candidate
+    # and current owned-media digest are all checked by ``fold_creative_copy``; a model
+    # cannot manufacture an approval by emitting a field in its strategy.
+    creative = fold_creative_copy(
+        [
+            *await _load_thread_events(db, thread_id),
+            ("assistant", {"creative_copy_resolution": planned.creative_copy_resolution}),
+        ],
+        dependency_digest=media_digest(planned.media_snapshot),
+    )
+    for state in creative.values():
+        if not state.approved and not state.cancelled:
+            question = (
+                wording_question(
+                    target=state.target,
+                    candidate=state.candidate,
+                    dependency_digest=media_digest(planned.media_snapshot),
+                )
+                if state.candidate
+                else authorship_question(
+                    target=state.target, dependency_digest=media_digest(planned.media_snapshot)
+                )
+            )
+            message = (
+                f"“{state.candidate}” — does this wording work?"
+                if state.candidate
+                else "Do you have an idea, or would you like me to write one? "
+                "You can also skip this text."
+            )
+            return replace(
+                planned,
+                plan=KriaTurnPlan(
+                    mode="respond",
+                    turn_value="question",
+                    response=question_message(question, message),
+                    choice_question=question,
+                ),
+            )
+    approved_copy = {
+        target: None if state.cancelled else state.approved
+        for target, state in creative.items()
+        if state.approved is not None or state.cancelled
+    }
+    omitted = [target for target, state in creative.items() if state.cancelled]
+    if omitted:
+        strategy = {**strategy, "omitted_copy_targets": omitted}
+    elif "omitted_copy_targets" in strategy:
+        strategy = {key: value for key, value in strategy.items() if key != "omitted_copy_targets"}
+    if approved_copy or strategy != arguments.get("strategy"):
+        strategy = {**strategy, **approved_copy}
+        apply_intent = apply_intent.model_copy(
+            update={"arguments": {**arguments, "strategy": strategy}}
+        )
+        plan = plan.model_copy(update={"intents": [apply_intent, *plan.intents[1:]]})
+        arguments = apply_intent.arguments
+    planned = replace(planned, plan=plan)
+    if not settings.kria_choice_questions_enabled:
+        return planned
     brief: CreativeBrief | None = None
     # Only a creator with a brief BINDING has a dispatch contract that reads the brief, so
     # only they can be asked a brief-derived question that anything would later refuse
@@ -1821,12 +2061,25 @@ async def _gate_unresolved_choices(
     events = await _load_thread_events(db, thread_id)
     resolution = resolve_choices(
         strategy,
-        brief,
+        answered_brief(brief, strategy),
         planned.media_snapshot,
         events,
         ChoiceCapability(max_duration_s=float(MAX_PROPOSAL_DURATION_S), creator_id=creator_id),
     )
     if resolution.question is not None:
+        if resolution.question.kind == "title_text":
+            return replace(
+                planned,
+                plan=KriaTurnPlan(
+                    mode="respond",
+                    turn_value="question",
+                    response="Do you have an idea, or would you like me to write one?",
+                    choice_question=authorship_question(
+                        target="opening_title",
+                        dependency_digest=media_digest(planned.media_snapshot),
+                    ),
+                ),
+            )
         candidate = resolution.question.candidate()
         asked = KriaTurnPlan(
             mode="respond",
@@ -1903,6 +2156,20 @@ async def _plan_live_turn(
             plan = await db.get(ContentPlan, item.content_plan_id, populate_existing=True)
             persona = await db.get(Persona, plan.persona_id, populate_existing=True)
     manifest, media_context = await resolve_item_creator_context(db, item, persona=persona)
+    # A pending creative-copy discussion must reach Main Creator, never the editor
+    # shortcut (which could otherwise stage/render unrelated text before wording is
+    # settled). The durable fold reads all events, not the model's bounded context.
+    from app.kria.brief_binding import snapshot_media  # noqa: PLC0415
+
+    creative_copy_states = fold_creative_copy(
+        await _load_thread_events(db, thread_id, release=False),
+        dependency_digest=media_digest(snapshot_media(item)),
+    )
+    # A copy-bearing edit stays on the planner path, including revisions: editor
+    # text rewrites cannot silently replace separately approved words.
+    creative_copy_pending = bool(creative_copy_states)
+    if creative_copy_pending:
+        allow_fast_path = False
     brief_on = settings.creative_brief_for(creator_id)
     binding_on = settings.brief_binding_for(creator_id)
     if binding_on:
@@ -1923,6 +2190,7 @@ async def _plan_live_turn(
         brief_on
         and item.current_job_id is not None
         and not latest_job_failed
+        and not creative_copy_pending
         and manifest.capabilities["dispatch_render"].available
     )
     if (
@@ -1988,7 +2256,12 @@ async def _plan_live_turn(
             answers_clip_question=answers_clip_question,
             **_state_kw(editor_state),
         )
-    if not extract_first and not answers_clip_question and not (binding_on and brief_on):
+    if (
+        not extract_first
+        and not answers_clip_question
+        and not (binding_on and brief_on)
+        and not creative_copy_pending
+    ):
         has_render = item.current_job_id is not None
         _editor_target_miss.set(None)
         editor_plan = await _plan_editor_revision(
@@ -2357,7 +2630,11 @@ async def _plan_live_turn(
             # The route below would be a re-plan caused solely by the missing target.
             return _editor_target_recovery(manifest)
     route = route_requirements(fresh, shape, message=user_message)
-    if answers_clip_question:
+    if (
+        answers_clip_question
+        or creative_copy_pending
+        or getattr(output, "creative_decision", None) is not None
+    ):
         route = "replan"
     if route == "editor_ops":
         if first_editor_result is not None:

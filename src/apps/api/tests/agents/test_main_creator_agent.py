@@ -122,7 +122,7 @@ def test_brief_prompt_requires_explicit_versioned_target_for_changes() -> None:
         _input().model_copy(update={"brief_enabled": True})
     )
 
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-07-v45"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-07-v46"
     assert '`operation`: "change"' in prompt
     assert "target_requirement_id" in prompt
     assert "expected_version" in prompt
@@ -556,6 +556,7 @@ def test_reaction_beats_prompt_section_omitted_when_capability_unavailable() -> 
         conversation=json_module.dumps(agent_input.conversation, ensure_ascii=False),
         creator_request=agent_input.creator_request or agent_input.user_message,
         user_message=agent_input.user_message,
+        creative_copy_state=json_module.dumps(agent_input.creative_copy_state, ensure_ascii=False),
         clip_intents_section=(
             main_creator_module._CLIP_INTENTS_PROMPT_SECTION
             if settings.clip_intents_enabled

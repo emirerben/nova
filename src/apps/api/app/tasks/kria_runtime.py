@@ -84,6 +84,7 @@ from app.services.choice_questions import (
     open_conflicts,
     tag_event,
 )
+from app.services.creative_copy_gate import CREATIVE_COPY_PENDING, creative_copy_problem
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
 from app.services.kria_editor_ops import (
     EditorStateReplyError,
@@ -183,6 +184,7 @@ def _complete_response_turn(
     brief_coverage: dict | None = None,
     brief_expected_version: int | None = None,
     requirement_receipts: list[dict[str, Any]] | None = None,
+    creative_copy_resolution: dict | None = None,
 ) -> _Completion:
     with sync_session() as db:
         turn = db.execute(
@@ -251,6 +253,11 @@ def _complete_response_turn(
                     else {}
                 ),
                 **({"choice_question": plan.choice_question} if plan.choice_question else {}),
+                **(
+                    {"creative_copy_resolution": creative_copy_resolution}
+                    if creative_copy_resolution
+                    else {}
+                ),
             },
         )
         turn.plan_json = plan.model_dump(mode="json")
@@ -452,6 +459,28 @@ def _unresolved_choice_plan(
     return None
 
 
+def _creative_copy_problem_sync(db, thread_id, media, *, strategy=None, resolution=None):  # noqa: ANN001, ANN202
+    rows = db.execute(
+        select(
+            CreationThreadEvent.role,
+            CreationThreadEvent.payload,
+            CreationThreadEvent.event_type,
+            CreationThreadEvent.content,
+        )
+        .where(CreationThreadEvent.thread_id == thread_id)
+        .order_by(CreationThreadEvent.sequence)
+    ).all()
+    return creative_copy_problem(
+        [
+            tag_event(role, payload, event_type, content)
+            for role, payload, event_type, content in rows
+        ]
+        + [("assistant", {"creative_copy_resolution": resolution})],
+        media,
+        strategy=strategy,
+    )
+
+
 def _complete_draft_turn(
     turn_id: uuid.UUID,
     *,
@@ -556,6 +585,31 @@ def _complete_draft_turn(
 
             if media_identity(planned.media_snapshot) != media_identity(snapshot_media(item)):
                 raise RuntimeError("Your clips changed after planning; please plan again")
+        # KRI-506: consent is checked under the revision fence for BOTH draft kinds.
+        # A planner/editor shortcut or an exhausted question budget cannot bypass it.
+        from app.kria.brief_binding import snapshot_media as _copy_media  # noqa: PLC0415
+
+        copy_problem = _creative_copy_problem_sync(
+            db,
+            thread.id,
+            _copy_media(item),
+            strategy=document.strategy if document is not None else None,
+            resolution=planned.creative_copy_resolution,
+        )
+        if copy_problem:
+            log.info("kria_creative_copy_blocked", phase="draft", thread_id=str(thread.id))
+            db.rollback()
+            completed = _complete_response_turn(
+                turn_id,
+                lease_owner=lease_owner,
+                lease_epoch=lease_epoch,
+                claimed_thread_revision=claimed_thread_revision,
+                plan=KriaTurnPlan(mode="respond", turn_value="question", response=copy_problem),
+                brief_coverage={"stage": "draft", "reason": KEEP_OPEN_REASON},
+                brief_expected_version=planned.brief_expected_version,
+            )
+            return replace(completed, response_only=True)
+
         variant_key = str(session.target_variant_id or "initial")
         generation_id = str(session.target_generation_id or "") or None
         draft_generation_id = generation_id
@@ -988,6 +1042,11 @@ def _complete_draft_turn(
                     "can_undo": parent_draft is not None,
                     "receipt_ids": [str(draft_execution.id)],
                     "render_requested": False,
+                    **(
+                        {"creative_copy_resolution": planned.creative_copy_resolution}
+                        if planned.creative_copy_resolution
+                        else {}
+                    ),
                     **_state_event_fields(state_id, state_trace),
                     **(
                         {"requirement_receipts": requirement_receipts}
@@ -1082,6 +1141,11 @@ def _complete_draft_turn(
             payload={
                 "turn_id": str(turn.id),
                 "draft_id": str(draft.id),
+                **(
+                    {"creative_copy_resolution": planned.creative_copy_resolution}
+                    if planned.creative_copy_resolution
+                    else {}
+                ),
                 "draft_revision": draft.draft_revision,
                 "snapshot_hash": draft.snapshot_hash,
                 "changes": changes,
@@ -1711,6 +1775,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     claimed_thread_revision=claimed_thread_revision,
                     plan=planned.plan,
                     brief_updates=planned.brief_updates,
+                    creative_copy_resolution=planned.creative_copy_resolution,
                     brief_coverage=planned.brief_coverage,
                     brief_expected_version=planned.brief_expected_version,
                 )
@@ -2110,6 +2175,24 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                     (execution.result or {}).get("creator_request"), str
                 )
 
+        copy_problem = None
+        if target_valid and document is not None:
+            # The draft's approved media is authoritative after strategy selection
+            # changes the working item's subset. The identity fence above checks drift.
+            from app.kria.brief_binding import snapshot_media as _copy_media  # noqa: PLC0415
+
+            copy_media = (
+                document.brief_binding.media_snapshot
+                if document.brief_binding is not None and document.brief_binding.media_snapshot
+                else _copy_media(item)
+            )
+            copy_problem = _creative_copy_problem_sync(
+                db, thread.id, copy_media, strategy=document.strategy
+            )
+            if copy_problem:
+                target_valid = False
+                log.info("kria_creative_copy_blocked", phase="dispatch", thread_id=str(thread.id))
+
         if (
             target_valid
             and execution.status == "accepted"
@@ -2181,7 +2264,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
             approval.status = "cancelled"
             execution.status = "stale"
             execution.error = {
-                "code": "approval_target_stale",
+                "code": CREATIVE_COPY_PENDING if copy_problem else "approval_target_stale",
                 "retryable": False,
                 "recovery": "refresh_replan",
             }
@@ -2195,14 +2278,15 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                 thread,
                 role="assistant",
                 event_type="assistant_error",
-                content=(
+                content=copy_problem
+                or (
                     "The project changed before I could start that render. "
                     "I kept your draft; ask me to prepare it again."
                 ),
                 payload={
                     "turn_id": str(turn.id),
                     "approval_id": str(approval.id),
-                    "code": "approval_target_stale",
+                    "code": CREATIVE_COPY_PENDING if copy_problem else "approval_target_stale",
                     "recovery": "refresh_replan",
                 },
             )

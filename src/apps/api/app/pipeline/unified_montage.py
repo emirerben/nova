@@ -1562,6 +1562,8 @@ def _intent_outcomes(
 
 
 def _title(strategy: Mapping[str, Any], view: BriefView) -> tuple[str | None, str]:
+    if "opening_title" in (strategy.get("omitted_copy_targets") or []):
+        return None, "none"
     confirmed = _nfc(strategy.get("opening_title"))
     if confirmed:
         return confirmed[:280], "creator"

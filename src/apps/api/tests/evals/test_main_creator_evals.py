@@ -32,6 +32,17 @@ def test_main_creator_eval(
     )
     assert result.passed, f"{result.summary()}: {result.structural_failures}"
 
+    copy_meta = fixture.meta.get("creative_copy_decision")
+    if copy_meta:
+        assert result.output is not None
+        decision = result.output.get("creative_decision")
+        assert decision is not None, "creative copy metadata must survive MainCreator parsing"
+        for field in ("target", "status"):
+            assert decision[field] == copy_meta[field]
+        for field in ("proposed_text", "source_evidence"):
+            if field in copy_meta:
+                assert decision.get(field) == copy_meta[field]
+
     if fixture.meta.get("phone_original_audio"):
         assert result.output is not None
         action = result.output["action"]

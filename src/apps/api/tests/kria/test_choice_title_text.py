@@ -1,4 +1,4 @@
-"""KRI-470: a requested title with no words is a question BEFORE approval, never a render block.
+"""KRI-506: title copy is authored or separately approved before approval.
 
 Failure modes this file is written against (before the code):
 
@@ -6,8 +6,8 @@ Failure modes this file is written against (before the code):
   text receipt, the creator approves, and the render then blocks (the incident);
 * the question is asked when a title source exists (typed literal, `opening_title`, a
   global literal, brief facts) or when the draft is not rendered by the unified montage;
-* "continue without a title" does not actually clear the render-time receipt;
-* typed words are mistaken for an option, or do not become the title;
+* skipping title copy does not actually clear the render-time receipt;
+* generated wording reaches an executable strategy before its separate approval;
 * a question loop, or the exhausted question silently letting an unrenderable plan through;
 * the question and the renderer disagreeing about whether a title source exists.
 
@@ -31,14 +31,8 @@ from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_checks import build_receipts, plan_facts_from_unified_montage
 from app.kria.planner import PlannedKriaTurn
 from app.pipeline.unified_montage import brief_view, plan_unified_montage, title_source_exists
-from app.services.choice_questions import (
-    CONFLICT_TITLE_TEXT,
-    MAX_ASKS_PER_QUESTION,
-    answered_brief,
-    collect_conflicts,
-    match_open_choice,
-)
-from app.tasks.kria_runtime import _unresolved_choice_plan
+from app.services.choice_questions import answered_brief, collect_conflicts, match_open_choice
+from app.services.creative_copy_decisions import media_digest, wording_question
 from tests.pipeline.test_unified_montage import clip
 
 CREATOR = uuid.uuid4()
@@ -185,14 +179,13 @@ async def test_a_title_with_no_words_asks_before_approval(monkeypatch) -> None:
     result = await _gate(monkeypatch, _planned(), brief=_incident_brief())
     assert result.plan.mode == "respond" and not result.plan.intents  # nothing approvable
     question = result.plan.choice_question
-    assert question["kind"] == CONFLICT_TITLE_TEXT and question["input_digest"]
-    assert [o["key"] for o in question["options"]] == ["no_title"]
+    assert question["kind"] == "creative_copy_authorship"
+    assert question["conflict"] == "creative_copy"
+    assert [o["key"] for o in question["options"]] == ["write_my_own", "generate", "cancel"]
     assert question["allow_free_text"] is True
     text = result.plan.response
-    assert "don't write on-screen text for you" in text
-    assert "Continue without a title" in text and "Type the words you want" in text
-    # Never offers to invent the words.
-    assert "write one" not in text.lower() and "for me" not in str(question["options"]).lower()
+    assert "Do you have an idea" in text
+    assert "write one" in text.lower()
 
 
 @pytest.mark.asyncio
@@ -302,13 +295,10 @@ async def test_continue_without_a_title_clears_the_render_time_receipt(monkeypat
     brief = _incident_brief()
     first = await _gate(monkeypatch, _planned(), brief=brief)
     asked = _asked(first)
-    events = (asked, _picked(asked[1]["choice_question"], "no_title"))
+    events = (asked, _picked(asked[1]["choice_question"], "cancel"))
     done = await _gate(monkeypatch, _planned(), brief=brief, events=events)
     strategy = _strategy(done)
-    (answer,) = strategy["choice_answers"]
-    assert answer["kind"] == "title_text" and answer["option"] == "no_title"
-    assert answer["requirement_ids"] == ["r2"] and answer["source"] == "creator"
-    assert "leaving the title off" in done.plan.intents[0].arguments["summary"]  # never silent
+    assert strategy["omitted_copy_targets"] == ["opening_title"]
     pinned = answered_brief(brief, strategy)
     assert [r.id for r in pinned.live()] == ["r1", "r3"]  # r2 superseded in the pinned copy
     assert [r.id for r in brief.live()] == ["r1", "r2", "r3"]  # the thread's brief is unchanged
@@ -322,25 +312,36 @@ async def test_a_typed_reply_naming_the_option_is_the_answer_and_delegation_is_d
 ) -> None:
     first = await _gate(monkeypatch, _planned(), brief=_incident_brief())
     question = first.plan.choice_question
-    for reply in ("Continue without a title", "no title", "Option 1", "without a title!"):
-        assert match_open_choice(question, reply) == "no_title", reply
+    for reply in ("Continue without a title", "no title", "Option 3", "without a title!"):
+        assert match_open_choice(question, reply) == "cancel", reply
     # Typed WORDS are never an option, however they are phrased.
     for reply in (f"The hook should say '{WORDS}'", WORDS, "Make it a title about my trip"):
         assert match_open_choice(question, reply) is None, reply
 
 
 @pytest.mark.asyncio
-async def test_typed_words_become_the_title_and_the_receipt_is_met(monkeypatch) -> None:
+async def test_creator_words_need_a_server_owned_resolution_before_the_receipt_is_met(
+    monkeypatch,
+) -> None:
     brief = _incident_brief()
     first = await _gate(monkeypatch, _planned(), brief=brief)
     asked = _asked(first)
-    # The reply is not an option, so no answer is recorded; the brief extractor turns the
-    # typed words into a literal on the title requirement.
-    typed = _brief(*[r if r.id != "r2" else _title_req(literal=WORDS) for r in brief.requirements])
-    second = await _gate(monkeypatch, _planned(), brief=typed, events=(asked,))
-    strategy = _strategy(second)  # no question: the plan goes through
-    assert "choice_answers" not in strategy
-    record, receipts = _render(typed, strategy)
+    digest = media_digest(_snapshot())
+    resolution = (
+        "assistant",
+        {
+            "creative_copy_resolution": {
+                "target": "opening_title",
+                "status": "creator_supplied",
+                "text": WORDS,
+                "dependency_digest": digest,
+            }
+        },
+    )
+    second = await _gate(monkeypatch, _planned(), brief=brief, events=(asked, resolution))
+    strategy = _strategy(second)
+    assert strategy["opening_title"] == WORDS
+    record, receipts = _render(brief, strategy)
     assert record["title"] == WORDS and record["title_source"] == "creator"
     assert not _blocks(receipts)
     title = next(r for r in receipts if r["requirement_id"] == "r2")
@@ -348,31 +349,18 @@ async def test_typed_words_become_the_title_and_the_receipt_is_met(monkeypatch) 
 
 
 @pytest.mark.asyncio
-async def test_asked_at_most_twice_then_the_backstop_refuses_instead_of_inventing(
+async def test_unanswered_authorship_never_passes_even_after_repeated_discussion(
     monkeypatch,
 ) -> None:
     brief = _incident_brief()
     events: tuple = ()
-    for _ in range(MAX_ASKS_PER_QUESTION):
+    for _ in range(4):
         asked = _asked(await _gate(monkeypatch, _planned(), brief=brief, events=events))
         events += (asked, ("user", {"_content": "hmm"}))
-    # The gate no longer asks (the plan passes through unchanged), nothing is invented...
+    # Creative authorship stays blocking even after generic question budgets are exhausted.
     through = await _gate(monkeypatch, _planned(), brief=brief, events=events)
-    assert through.plan.mode == "act" and "choice_answers" not in _strategy(through)
-    # ...and the pre-approval backstop says so in words and keeps the question answerable.
-    backstop = _unresolved_choice_plan(
-        _strategy(through),
-        brief,
-        _snapshot(),
-        contract_brief=brief,
-        events=events,
-        creator_id=CREATOR,
-    )
-    assert backstop is not None
-    plan, reason = backstop
-    assert reason == "unresolved_choice" and plan.turn_value == "recovery"
-    assert "Continue without a title" in plan.response and "type the words" in plan.response
-    assert "I haven't made an edit yet" in plan.response
+    assert through.plan.mode == "respond" and through.plan.turn_value == "question"
+    assert through.plan.choice_question["kind"] == "creative_copy_authorship"
 
 
 def test_typed_words_on_a_new_requirement_also_satisfy_the_old_wordless_one() -> None:
@@ -405,7 +393,7 @@ async def test_the_option_matcher_is_broad_but_exact(monkeypatch) -> None:
         "başlık olmasın",
         "Başlıksız",
     ):
-        assert match_open_choice(question, reply) == "no_title", reply
+        assert match_open_choice(question, reply) == "cancel", reply
     # Words, even words that START with an alias, are never an answer.
     for reply in (
         WORDS,
@@ -436,17 +424,55 @@ async def test_an_option_is_not_recommended_and_delegation_never_drops_the_title
     again = await _gate(
         monkeypatch, _planned(), brief=brief, events=(asked, ("user", {"_content": "you decide"}))
     )
-    assert again.plan.choice_question["kind"] == CONFLICT_TITLE_TEXT
-    assert "don't write on-screen text for you" in again.plan.response
+    assert again.plan.choice_question["kind"] == "creative_copy_authorship"
+    assert "Do you have an idea" in again.plan.response
 
 
 @pytest.mark.asyncio
-async def test_the_single_option_reads_as_an_option_not_a_limit(monkeypatch) -> None:
+async def test_authorship_question_offers_all_three_creator_owned_outcomes(monkeypatch) -> None:
     result = await _gate(monkeypatch, _planned(), brief=_incident_brief())
     text = result.plan.response
-    assert 'or reply "Continue without a title"' in text
-    assert "Type the words you want and I'll use them exactly" in text
-    assert "The most I can do" not in text and "Unfortunately" not in text
+    question = result.plan.choice_question
+    assert [option["label"] for option in question["options"]] == [
+        "I have an idea",
+        "Generate one",
+        "Skip it",
+    ]
+    assert "Do you have an idea" in text
+
+
+@pytest.mark.asyncio
+async def test_generated_candidate_requires_its_own_approval_and_uses_exact_copy(
+    monkeypatch,
+) -> None:
+    """Generate delegates authorship, never wording consent."""
+    brief = _incident_brief()
+    first = await _gate(monkeypatch, _planned(), brief=brief)
+    asked = _asked(first)
+    candidate = wording_question(
+        target="opening_title", candidate=WORDS, dependency_digest=media_digest(_snapshot())
+    )
+    pending_events = (
+        asked,
+        _picked(asked[1]["choice_question"], "generate"),
+        ("assistant", {"choice_question": candidate}),
+    )
+    pending = await _gate(monkeypatch, _planned(), brief=brief, events=pending_events)
+    assert pending.plan.mode == "respond"
+    assert pending.plan.choice_question["kind"] == "creative_copy_wording"
+    assert pending.plan.choice_question["candidate"] == WORDS
+
+    approved = await _gate(
+        monkeypatch,
+        _planned(),
+        brief=brief,
+        events=(*pending_events, _picked(candidate, "approve")),
+    )
+    strategy = _strategy(approved)
+    assert strategy["opening_title"] == WORDS
+    record, receipts = _render(brief, strategy)
+    assert record["title"] == WORDS
+    assert not _blocks(receipts)
 
 
 @pytest.mark.asyncio

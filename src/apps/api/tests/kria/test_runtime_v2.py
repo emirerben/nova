@@ -718,6 +718,7 @@ async def test_cancel_turn_promotes_one_queued_successor_after_commit() -> None:
             ]
         ),
         add=MagicMock(),
+        get=AsyncMock(return_value=SimpleNamespace(clip_gcs_paths=[], clip_assignments=[])),
         flush=AsyncMock(),
         commit=AsyncMock(),
         rollback=AsyncMock(),
@@ -747,10 +748,12 @@ async def test_approve_records_consent_but_never_dispatches_render() -> None:
         thread_id=thread.id,
         draft_revision=9,
         is_head=True,
+        snapshot_json={},
     )
     approval = _approval(thread=thread, draft=draft, creator_id=thread.creator_id)
     thread.active_creator_agent_session_id = approval.session_id
     session = _session_for(approval)
+    session.plan_item_id = uuid.uuid4()
     turn = _turn_for(approval)
     db = SimpleNamespace(
         execute=AsyncMock(
@@ -763,9 +766,11 @@ async def test_approve_records_consent_but_never_dispatches_render() -> None:
                 _Result(scalar=approval),
                 _Result(scalar=thread),
                 _Result(scalar=21),
+                _Result(scalar=21),
             ]
         ),
         add=MagicMock(),
+        get=AsyncMock(return_value=SimpleNamespace(clip_gcs_paths=[], clip_assignments=[])),
         flush=AsyncMock(),
         commit=AsyncMock(),
     )

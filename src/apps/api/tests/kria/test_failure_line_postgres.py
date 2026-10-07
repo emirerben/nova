@@ -67,6 +67,7 @@ def _seed_failed(*, dispatched_age: timedelta | None) -> tuple[uuid.UUID, uuid.U
                 payload=None,
             )
             db.add(source)
+            thread.revision = source.revision
             db.flush()
             turn = CreatorAgentTurn(
                 thread_id=thread_id,
