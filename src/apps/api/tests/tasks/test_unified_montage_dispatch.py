@@ -1183,3 +1183,35 @@ def test_a_title_with_words_does_not_block(harness):
         str(job.id), copy.deepcopy(job.assembly_plan), job.all_candidates, ownership_epoch=3
     )
     assert planned is not None and planned["unified_montage"]["title"] == "Weekend away"
+
+
+def test_a_wordless_title_next_to_another_blocker_keeps_the_generic_ask_but_honest_copy(harness):
+    from app.kria.brief_binding import BriefBinding
+    from app.services.creator_render_contract import CreatorRenderContractError
+
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(id="r4", kind="text", scope="title", description="a hook"),
+            BriefRequirement(
+                id="r5",
+                kind="order",
+                scope="global",
+                description="alphabetically by the place",
+                facts={"key": "alphabetical"},
+            ),
+        ],
+    )
+    job, *_ = harness(brief=brief)
+    job.assembly_plan["creator_brief_binding"] = BriefBinding.create(
+        uuid.uuid4(), brief
+    ).model_dump(mode="json")
+    with pytest.raises(UnsupportedPhonePlan) as caught:
+        gb._run_phone_unified_montage_job(
+            str(job.id), copy.deepcopy(job.assembly_plan), job.all_candidates, ownership_epoch=3
+        )
+    message = str(caught.value)
+    assert not isinstance(caught.value, CreatorRenderContractError)  # two blockers: untyped
+    assert "I couldn't make the video yet" in message and "I didn't add a title" not in message
+    assert "stay in the order you attached them" in message
+    assert message.endswith("Should I try again or simplify this request?")
