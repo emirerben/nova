@@ -14,6 +14,7 @@ import json
 import re
 import time
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -70,14 +71,19 @@ from app.models import (
 from app.routes._copilot import CopilotTurnBody, is_overlay_display_ask, run_copilot_turn
 from app.routes.generative_jobs import variant_render_baseline
 from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
+from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 from app.schemas.user_song import SONG_ALIGNMENT_VERSION
 from app.services.choice_questions import (
     CONFLICT_ORDER_VS_GROUP,
     ORDER_VS_GROUP_OPTIONS,
+    ChoiceCapability,
+    ask_user_choice,
     build_choice_question,
     choice_question_text,
     detect_order_vs_group,
     fold_choice_answers,
+    resolve_choices,
+    tag_event,
 )
 from app.services.clip_intent_answers import persist_clip_intent_vision_answers
 from app.services.clip_intent_planning import plan_and_resolve_clip_intents
@@ -155,6 +161,17 @@ def adapt_creator_action(
     survives into the draft: it is server-owned (the song-order gate writes it after the
     creator answered), so whatever a model-authored strategy carried is discarded here."""
     if isinstance(action, AskUser):
+        if settings.kria_choice_questions_enabled:
+            # KRI-476: the agent's own options become tappable (and stay listed in the
+            # text for clients without the card). No/one option keeps the text question.
+            asked = ask_user_choice(action.question, action.reason_code, action.options)
+            if asked is not None:
+                return KriaTurnPlan(
+                    mode="respond",
+                    turn_value="question",
+                    response=asked[0],
+                    choice_question=asked[1],
+                )
         return KriaTurnPlan(
             mode="respond",
             turn_value="question",
@@ -202,6 +219,8 @@ def adapt_creator_action(
         "resolved_song_takes": server_resolved_song_takes or None,
         # KRI-282: server-owned, always overwritten (a model-authored value is dropped).
         "ordering_choice": ordering_choice,
+        # KRI-476: likewise; the gate in `plan_live_turn` is the only writer.
+        "choice_answers": None,
     }
     return KriaTurnPlan(
         mode="act",
@@ -364,7 +383,12 @@ def _with_song_sync(strategy: Any, song_sync: str) -> Any:
 async def _load_thread_events(db: AsyncSession, thread_id: uuid.UUID) -> list[tuple[str, Any]]:
     rows = (
         await db.execute(
-            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            select(
+                CreationThreadEvent.role,
+                CreationThreadEvent.payload,
+                CreationThreadEvent.event_type,
+                CreationThreadEvent.content,
+            )
             .where(
                 CreationThreadEvent.thread_id == thread_id,
                 CreationThreadEvent.role.in_({"user", "assistant"}),
@@ -373,7 +397,11 @@ async def _load_thread_events(db: AsyncSession, thread_id: uuid.UUID) -> list[tu
         )
     ).all()
     await db.rollback()  # no connection pinned across what follows
-    return [(role, payload) for role, payload in rows]
+    # KRI-476: tagged with the event type and a user message's text so a choice question
+    # is closed only by a real reply, never by an async event (see `tag_event`).
+    return [
+        tag_event(role, payload, event_type, content) for role, payload, event_type, content in rows
+    ]
 
 
 async def _song_order_gate(
@@ -1237,6 +1265,13 @@ async def _plan_from_creator_output(
             manifest,
             action.strategy,
             **({"ask_before_simplifying": True} if settings.brief_binding_for(creator_id) else {}),
+            # KRI-476: also ask before a repair drops a title hold / full-screen ask the
+            # creator stated. Off with the choice-questions flag: identical to before.
+            **(
+                {"ask_about_stated_settings": True}
+                if settings.brief_binding_for(creator_id) and settings.kria_choice_questions_enabled
+                else {}
+            ),
         )
         if isinstance(checked, RefusedStrategy):
             log.info("kria_strategy_refused", thread_id=str(thread_id), code=checked.code)
@@ -1704,7 +1739,75 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
                 ),
             ),
         )
-    return replace(planned, media_snapshot=after)
+    planned = replace(planned, media_snapshot=after)
+    if not settings.kria_choice_questions_enabled:
+        return planned
+    return await _gate_unresolved_choices(
+        db, planned, thread_id=kwargs["thread_id"], creator_id=kwargs["creator_id"]
+    )
+
+
+async def _gate_unresolved_choices(
+    db: AsyncSession,
+    planned: PlannedKriaTurn,
+    *,
+    thread_id: uuid.UUID,
+    creator_id: uuid.UUID,
+) -> PlannedKriaTurn:
+    """KRI-476: an unresolved material choice never becomes an approvable draft.
+
+    Runs HERE, after ``media_snapshot`` is attached, because the order/duration
+    conflicts depend on the exact snapshot approval later binds (a dry run inside
+    ``_plan_from_creator_output`` would invent "missing capture dates"). One question
+    per turn; earlier answers are folded into server-owned strategy fields (digest
+    scoped) so a retry or a re-sent prompt never re-asks an answered question.
+    """
+
+    plan = planned.plan
+    if plan.mode != "act" or not plan.intents:
+        return planned
+    apply_intent = plan.intents[0]
+    arguments = apply_intent.arguments
+    strategy = arguments.get("strategy") if isinstance(arguments, dict) else None
+    if apply_intent.tool_name != "draft.apply_strategy" or not isinstance(strategy, dict):
+        return planned
+    brief: CreativeBrief | None = None
+    # Only a creator with a brief BINDING has a dispatch contract that reads the brief, so
+    # only they can be asked a brief-derived question that anything would later refuse
+    # (the completion backstop applies the same guard).
+    if settings.creative_brief_for(creator_id) and settings.brief_binding_for(creator_id):
+        brief = await load_latest_brief(db, thread_id)
+        if planned.brief_updates:
+            with suppress(BriefUpdateBatchError):
+                brief = apply_updates(brief, planned.brief_updates, source_turn_id=None)
+    events = await _load_thread_events(db, thread_id)
+    resolution = resolve_choices(
+        strategy,
+        brief,
+        planned.media_snapshot,
+        events,
+        ChoiceCapability(max_duration_s=float(MAX_PROPOSAL_DURATION_S)),
+    )
+    if resolution.question is not None:
+        candidate = resolution.question.candidate()
+        asked = KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=choice_question_text(candidate),
+            choice_question=build_choice_question(candidate),
+        )
+        return replace(planned, plan=asked)
+    if not resolution.answers:
+        return planned
+    summary = " ".join([str(arguments.get("summary") or ""), *resolution.notices]).strip()
+    rewritten = apply_intent.model_copy(
+        update={
+            "arguments": {**arguments, "strategy": resolution.strategy, "summary": summary[:1000]}
+        }
+    )
+    return replace(
+        planned, plan=plan.model_copy(update={"intents": [rewritten, *plan.intents[1:]]})
+    )
 
 
 async def _plan_live_turn(

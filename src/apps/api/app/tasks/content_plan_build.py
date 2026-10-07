@@ -1307,7 +1307,14 @@ def _creator_selected_clip_paths(
 
     strategy = CreativeStrategy.model_validate(creator_strategy)
     selected = list(strategy.selected_media_ids)
-    if strategy.render_program != "native" or not selected:
+    # KRI-476: "keep the length, use the clips that fit" is a creator decision that the
+    # guided/unified montage can only follow if the job is dispatched with exactly
+    # those clips (otherwise it would take every attached clip and flash-cut).
+    chose_fewer = any(
+        answer.kind == "duration_vs_count" and answer.option == "fewer"
+        for answer in strategy.choice_answers or ()
+    )
+    if (strategy.render_program != "native" and not chose_fewer) or not selected:
         return clip_paths
     path_by_id: dict[str, str] = {}
     assignments = [value for value in (item.clip_assignments or []) if isinstance(value, dict)]
