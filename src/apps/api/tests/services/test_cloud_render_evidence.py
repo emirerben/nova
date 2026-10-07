@@ -152,6 +152,16 @@ def test_adapter_is_identified_from_the_variant_and_the_job():
     assert cloud_adapter_for_variant({}) == CLASSIC
     assert cloud_adapter_for_job({}, {"edit_format": "montage"}) == CLASSIC
     assert cloud_adapter_for_job({}, {"declared_edit_format": "slides"}) == SLIDES
+    # A guided snapshot that applies to the intent is the guided adapter; with a
+    # recorded voiceover the intent is native, so the dispatcher renders classic.
+    snapshot = {"guided_edit": {"proposal_version": 1}}
+    assert cloud_adapter_for_job(snapshot, {"edit_format": "montage"}) == GUIDED
+    assert (
+        cloud_adapter_for_job(
+            snapshot, {"edit_format": "montage", "voiceover_gcs_path": "voice/a.m4a"}
+        )
+        == CLASSIC
+    )
 
 
 # ── order_required ───────────────────────────────────────────────────────────────

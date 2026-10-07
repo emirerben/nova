@@ -216,6 +216,18 @@ How each adapter evidences a requirement and where it stops:
 - **Slides**: stills, no length, no voice, no camera audio, no order: everything stays
   declined with `capability_unavailable`.
 
+Known limits (unchanged behaviour, now stated): passes that publish a new artifact
+without re-rendering through these code paths -- narrated caption/bed-level reburns,
+overlay and sound-effect passes -- carry no receipt, so on a contract with objective
+requirements they stay refused (`evidence_missing` or the in-place decline). The
+guided builder and the classic matcher do not yet route from the contract's order, so
+a plan that does not already follow it fails visibly after the render rather than being
+declined up front; routing from the contract is the route resolver's job (PR-D/F).
+Real-output check: an independent per-segment `ebur128` of the rendered file matches the
+receipt's order and camera-audio claims (each IstRun clip has a distinct loudness
+signature), a muted edit measures -70 LUFS, and a voiceover whose mix failed is a
+copy-through of the footage with no voice -- reported `narration_applied: false`.
+
 Preflight takes the dispatched adapter (`cloud_adapter_for_job`); without a named
 adapter it keeps the pre-PR conservative refusal, so nothing is lifted on an unknown
 route. `verify_cloud_variant` picks the adapter from the variant
