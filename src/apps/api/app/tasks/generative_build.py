@@ -159,6 +159,19 @@ def _rendered_duration_s(path: str) -> float | None:
 log = structlog.get_logger()
 
 MAX_ERROR_DETAIL_LEN = 2000
+
+
+# Variant keys carrying a typed creator-contract decline (beside `error_class`).
+_DECLINE_VARIANT_FIELDS = ("decline_reason", "field_path", "alternative")
+
+
+def _creator_decline_payload(exc: BaseException) -> dict[str, str]:
+    """Typed creator-contract decline (reason/field_path/alternative) or ``{}``."""
+    from app.services.creator_render_contract import decline_payload  # noqa: PLC0415
+
+    return decline_payload(exc)
+
+
 _CLIP_METADATA_CACHE_VERSION = 1
 _PREPROCESSED_SOURCE_CACHE_VERSION = 1
 _HDR_PRETONEMAP_CACHE_VERSION = 1
@@ -2266,6 +2279,16 @@ def _run_generative_job_impl(
         if job.status == _CANCELLED_JOB_STATUS:
             return
         candidates = getattr(job, "all_candidates", None) or {}
+        from app.services.creator_render_contract import CREATOR_DECLINE_FIELD  # noqa: PLC0415
+
+        if isinstance(job.assembly_plan, dict) and CREATOR_DECLINE_FIELD in job.assembly_plan:
+            # A new run starts clean: a decline from an earlier failure of this job
+            # (retry, re-dispatch) must not outlive it. This run re-persists its own.
+            job.assembly_plan = {
+                key: value
+                for key, value in job.assembly_plan.items()
+                if key != CREATOR_DECLINE_FIELD
+            }
         from app.services.phone_sources import PHONE_SOURCES_FIELD  # noqa: PLC0415
 
         if PHONE_SOURCES_FIELD in (job.assembly_plan or {}):
@@ -2288,7 +2311,9 @@ def _run_generative_job_impl(
                 from app.services.creator_render_contract import (  # noqa: PLC0415
                     REQUIREMENT_VERSION_FIELD,
                     CreatorRenderContractError,
+                    check_phone_dispatch_contract,
                     read_render_contract,
+                    speech_edit_not_built,
                 )
                 from app.services.phone_rollout import (  # noqa: PLC0415
                     phone_render_supported_formats,
@@ -2303,25 +2328,15 @@ def _run_generative_job_impl(
                     )
                 required_speech = bool(contract and contract.audio_source_ids)
                 if contract is not None:
-                    if contract.generation_id != phone_snapshot.get("creator_generation_id"):
-                        raise CreatorRenderContractError(
-                            "This edit belongs to a different approved revision."
-                        )
-                    if contract.unresolved:
-                        raise CreatorRenderContractError(contract.unresolved[0])
-                    if contract.require_voiceover and not has_voiceover_candidate:
-                        raise CreatorRenderContractError(
-                            "This edit needs your confirmed recorded voice."
-                        )
                     # A recording's mere presence cannot override the approved
                     # soundtrack. Historical jobs retain their original dispatch.
-                    has_voiceover_candidate = contract.require_voiceover
-                    if required_speech and (
-                        contract.require_voiceover or candidates.get("user_song")
-                    ):
-                        raise CreatorRenderContractError(
-                            "This renderer can't combine the confirmed soundtracks."
-                        )
+                    # Every decline here is typed (decline_reason/field_path).
+                    has_voiceover_candidate = check_phone_dispatch_contract(
+                        contract,
+                        snapshot_generation_id=phone_snapshot.get("creator_generation_id"),
+                        has_voiceover_candidate=has_voiceover_candidate,
+                        user_song=candidates.get("user_song"),
+                    )
                 if isinstance(phone_snapshot.get("guided_edit"), dict):
                     _run_phone_guided_job(
                         job_id,
@@ -2364,9 +2379,7 @@ def _run_generative_job_impl(
                                 job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
                             )
                         if required_speech and not handled_speech:
-                            raise CreatorRenderContractError(
-                                "I couldn't build the confirmed camera-audio edit."
-                            )
+                            raise speech_edit_not_built()
                         if not handled_speech:
                             # KRI-190/KRI-220: one montage plan, always. The guided plan
                             # format renders per-clip text, honours reading time and has
@@ -2446,7 +2459,13 @@ def _run_generative_job_impl(
                     exc_info=True,
                 )
                 mark_failed_phase(job_id)
-                terminalized = _fail_job(job_id, str(exc), failure_reason=failure_reason)
+                decline = _creator_decline_payload(exc)
+                terminalized = _fail_job(
+                    job_id,
+                    str(exc),
+                    failure_reason=failure_reason,
+                    **({"decline": decline} if decline else {}),
+                )
                 if not terminalized:
                     raise
             return
@@ -2484,6 +2503,7 @@ def _run_generative_job_impl(
             CloudRenderContractError,
             preflight_cloud_contract,
         )
+        from app.services.creator_render_contract import CREATOR_DECLINE_FIELD  # noqa: PLC0415
 
         try:
             preflight_cloud_contract(assembly, candidates=candidates)
@@ -2491,6 +2511,15 @@ def _run_generative_job_impl(
             job.status = "processing_failed"
             job.error_detail = str(exc)[:MAX_ERROR_DETAIL_LEN]
             job.failure_reason = "creator_render_contract_unsupported"
+            decline = _creator_decline_payload(exc)
+            if decline:
+                job.assembly_plan = {
+                    **assembly,
+                    CREATOR_DECLINE_FIELD: {
+                        **decline,
+                        "failure_reason": "creator_render_contract_unsupported",
+                    },
+                }
             db.commit()
             return
         creator_direction_typed_overrides = _pinned_creator_direction_typed_overrides(assembly)
@@ -10656,7 +10685,9 @@ def _run_media_overlay_pass(
         from app.services.cloud_render_contract import CloudRenderContractError  # noqa: PLC0415
 
         raise CloudRenderContractError(
-            "This cloud renderer can't safely replace a confirmed output in place yet."
+            "This cloud renderer can't safely replace a confirmed output in place yet.",
+            decline_reason="capability_unavailable",
+            alternative="Ask me to make the change as a new edit instead.",
         )
 
     current_video_path = existing.get("video_path")
@@ -11495,7 +11526,9 @@ def _run_sfx_pass(
         from app.services.cloud_render_contract import CloudRenderContractError  # noqa: PLC0415
 
         raise CloudRenderContractError(
-            "This cloud renderer can't safely replace a confirmed output in place yet."
+            "This cloud renderer can't safely replace a confirmed output in place yet.",
+            decline_reason="capability_unavailable",
+            alternative="Ask me to make the change as a new edit instead.",
         )
 
     current_video_path = existing.get("video_path")
@@ -17335,7 +17368,7 @@ def _reject_unverified_cloud_variant(
         blocked = {
             key: value
             for key, value in result.items()
-            if key not in set(_PENDING_VARIANT_ASSET_FIELDS)
+            if key not in set(_PENDING_VARIANT_ASSET_FIELDS) | set(_DECLINE_VARIANT_FIELDS)
         }
         return {
             **blocked,
@@ -17343,6 +17376,7 @@ def _reject_unverified_cloud_variant(
             "render_status": "failed",
             "error": str(exc),
             "error_class": "creator_render_contract_unverified",
+            **_creator_decline_payload(exc),
         }
     return result
 
@@ -17392,7 +17426,9 @@ def _cloud_contract_has_objective_requirements(
 
 def _cloud_contract_failure(result: dict[str, Any], error: str) -> dict[str, Any]:
     blocked = {
-        key: value for key, value in result.items() if key not in set(_PENDING_VARIANT_ASSET_FIELDS)
+        key: value
+        for key, value in result.items()
+        if key not in set(_PENDING_VARIANT_ASSET_FIELDS) | set(_DECLINE_VARIANT_FIELDS)
     }
     return {
         **blocked,
@@ -17400,6 +17436,7 @@ def _cloud_contract_failure(result: dict[str, Any], error: str) -> dict[str, Any
         "render_status": "failed",
         "error": error,
         "error_class": "creator_render_contract_unverified",
+        "decline_reason": "evidence_missing",
     }
 
 
@@ -17695,6 +17732,8 @@ def _update_variant_entry(
                         == "creator_render_contract_unverified"
                     ):
                         updated_variant.pop("error_class", None)
+                        for decline_key in _DECLINE_VARIANT_FIELDS:
+                            updated_variant.pop(decline_key, None)
                         if "error" not in patch:
                             updated_variant.pop("error", None)
                     if "render_receipt" not in patch:
@@ -30210,6 +30249,9 @@ def _finalize_job_decision(
                     "silence_cut_outcome": r.get("silence_cut_outcome"),
                     "speech_cleanup_failure_reason": r.get("speech_cleanup_failure_reason"),
                     "error_class": r.get("error_class"),
+                    # Typed creator-contract decline; present only on a contract
+                    # failure so every other variant keeps its exact shape.
+                    **{key: r[key] for key in _DECLINE_VARIANT_FIELDS if r.get(key)},
                 }
                 for r in results
             ],
@@ -30421,7 +30463,12 @@ def _merge_finalized_variants(
             if live_generation is not None and live_generation != finalized_generation:
                 merged.append(live)
             else:
-                merged.append({**live, **finalized})
+                row = {**live, **finalized}
+                for key in _DECLINE_VARIANT_FIELDS:
+                    if key not in finalized:
+                        # A typed decline belongs to the result that produced it.
+                        row.pop(key, None)
+                merged.append(row)
         if isinstance(variant_id, str):
             finalized_ids.add(variant_id)
 
@@ -30845,6 +30892,19 @@ def _set_status(
                     **public_plan,
                     "speech_cleanup_outcome": public_outcome,
                 }
+        if status in {"variants_ready", "variants_ready_partial", "done"} and isinstance(
+            job.assembly_plan, dict
+        ):
+            from app.services.creator_render_contract import (  # noqa: PLC0415
+                CREATOR_DECLINE_FIELD,
+            )
+
+            if CREATOR_DECLINE_FIELD in job.assembly_plan:
+                job.assembly_plan = {
+                    key: value
+                    for key, value in job.assembly_plan.items()
+                    if key != CREATOR_DECLINE_FIELD
+                }
         terminal_decision = JobFinalizationResult(
             "accepted",
             variants=tuple(variant_decisions),
@@ -30869,6 +30929,7 @@ def _fail_job(
     error_detail: str,
     failure_reason: str | None = None,
     speech_cleanup_failure_reason: str | None = None,
+    decline: dict[str, str] | None = None,
 ) -> bool:
     reanalysis_id: uuid.UUID | None = None
     committed = False
@@ -31016,6 +31077,19 @@ def _fail_job(
                         for v in variants
                     ]
                     patch = {"variants": new_variants} if new_variants != variants else {}
+                    if decline:
+                        # Typed creator-contract decline: the failure_reason string is
+                        # unchanged; the reason/field_path ride beside it for recovery.
+                        from app.services.creator_render_contract import (  # noqa: PLC0415
+                            CREATOR_DECLINE_FIELD,
+                        )
+
+                        # Stamped with the failure code it belongs to: a later,
+                        # unrelated failure of the same job must not inherit it.
+                        patch[CREATOR_DECLINE_FIELD] = {
+                            **decline,
+                            **({"failure_reason": failure_reason} if failure_reason else {}),
+                        }
                     if speech_cleanup_failure_reason:
                         patch["speech_cleanup_failure_reason"] = speech_cleanup_failure_reason
                     job.assembly_plan = {**ap, **patch} if patch else ap

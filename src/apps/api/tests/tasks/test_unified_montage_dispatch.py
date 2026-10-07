@@ -408,6 +408,34 @@ def test_approved_source_cannot_fall_back_to_unified_when_planner_declines(harne
     speech.assert_called_once()
     unified.assert_not_called()
     assert "confirmed" in failure.call_args.args[1]
+    # The unified montage cannot carry camera-audio sources: the decline is typed
+    # and rides beside the unchanged `phone_plan_unsupported` failure code.
+    assert failure.call_args.kwargs["failure_reason"] == "phone_plan_unsupported"
+    decline = failure.call_args.kwargs["decline"]
+    assert decline["decline_reason"] == "capability_unavailable"
+    assert decline["field_path"] == "montage_audio.source_media_ids[]"
+    assert decline["alternative"]
+
+
+def test_unresolved_contract_declines_as_a_typed_choice_before_any_planning(harness, monkeypatch):
+    from app.services import phone_speech_montage_job
+    from app.services.creator_render_contract import CONTRACT_FIELD, CreatorRenderContract
+
+    job, *_ = harness(brief=None)
+    contract = CreatorRenderContract(
+        generation_id=job.assembly_plan["creator_generation_id"]
+    ).rebind(unresolved=("I need capture times for every selected clip.",))
+    job.assembly_plan[CONTRACT_FIELD] = contract.model_dump(mode="json")
+    speech = Mock(side_effect=AssertionError("planning started on an unresolved contract"))
+    unified = Mock(side_effect=AssertionError("planning started on an unresolved contract"))
+    failure = Mock(return_value=True)
+    monkeypatch.setattr(phone_speech_montage_job, "run_phone_speech_montage_job", speech)
+    monkeypatch.setattr(gb, "_run_phone_unified_montage_job", unified)
+    monkeypatch.setattr(gb, "_fail_job", failure)
+    gb._run_generative_job(str(job.id))
+    assert failure.call_args.kwargs["failure_reason"] == "phone_plan_unsupported"
+    assert failure.call_args.kwargs["decline"]["decline_reason"] == "needs_choice"
+    assert "capture times" in failure.call_args.args[1]
 
 
 def test_redelivery_after_planning_reuses_the_pinned_plan(harness):

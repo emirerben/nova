@@ -551,7 +551,7 @@
       "Speech facts only; transcripts, places and captions dropped.",
       "The prod job carried no creator_render_requirements object: it predates the contract, so the contract here is rebuilt from the persisted approval the way dispatch rebuilds it.",
       "expect.output_facts.duration_s=30 is the STRATEGY's chosen length (duration_basis=strategy_choice), not a creator ask: the creator never requested a length and target_duration_requested was not persisted, so the contract carries no duration. KRI-469's fix is the lane honouring the approved strategy.",
-      "Typed refusal expectation (reason/field_path) is staged for KRI-476 / PR-A; reason and path are best guesses from the PR-A plan and PR-A's worker should correct them when it flips this xfail.",
+      "Typed refusal (reason + field_path) asserted since KRI-476 / PR-A: evidence_missing on montage_audio.source_media_ids[] (list paths carry a [] suffix).",
       "Output-level repro is the lane fix's own check (KRI-477 / PR-F); the repro command here only re-runs what the corpus proves (contract, decline)."
     ]
   },
@@ -568,7 +568,7 @@
     },
     "refusal": {
       "reason": "evidence_missing",
-      "field_path": "montage_audio.source_media_ids",
+      "field_path": "montage_audio.source_media_ids[]",
       "message_advisory": "confirmed camera-audio sources"
     },
     "output_facts": {
@@ -599,10 +599,6 @@
     {
       "reason": "KRI-477 / PR-F",
       "scope": "output"
-    },
-    {
-      "reason": "KRI-476 / PR-A",
-      "scope": "refusal"
     }
   ],
   "repro": {

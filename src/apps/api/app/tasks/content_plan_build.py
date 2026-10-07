@@ -2388,12 +2388,15 @@ def _dispatch_item_render(
             # The generation remains the same token the factory assigned.
             strategy_payload = (job.all_candidates or {}).get("creator_strategy")
             if isinstance(strategy_payload, dict) or brief is not None:
+                from app.config import settings  # noqa: PLC0415
                 from app.services.creator_render_contract import (  # noqa: PLC0415
                     CONTRACT_FIELD,
                     REQUIREMENT_VERSION_FIELD,
                     build_render_contract,
+                    stamp_plan_authority,
                 )
 
+                already_stamped = (job.all_candidates or {}).get(REQUIREMENT_VERSION_FIELD) == 1
                 contract = build_render_contract(
                     strategy_payload,
                     generation_id=job.assembly_plan["creator_generation_id"],
@@ -2403,6 +2406,13 @@ def _dispatch_item_render(
                 )
                 if contract is not None:
                     job.all_candidates = {**job.all_candidates, REQUIREMENT_VERSION_FIELD: 1}
+                    # KRI-470: the kill switch is evaluated once, where the contract is
+                    # first stamped. A factory-stamped job already carries (or lacks) the
+                    # key through the spread above and must not be re-decided here.
+                    if not already_stamped:
+                        job.all_candidates = stamp_plan_authority(
+                            job.all_candidates, enabled=settings.kria_plan_authority_enabled
+                        )
                     job.assembly_plan = {
                         **job.assembly_plan,
                         CONTRACT_FIELD: contract.model_dump(mode="json"),

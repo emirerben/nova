@@ -2512,6 +2512,24 @@ CLAUDE.md hit 38,000/38,000 chars while KRI-185 lanes each needed a flag line. T
 
 - `SILENCE_CUT_ENABLED` / `RETAKE_CUT_ENABLED` — default `false`; speech paths only, fail-open. Removal-cap lever `SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED` (default `1.0`) + `DETECTOR_VERSION` are in the policy fingerprint — a flip retires analyses, re-consents, reshuffles cohorts. **"cleanup cut a word" is a guard bug, not this lever** — use the kill switch. Full narrative + triage: `docs/runbooks/chat-speech-cleanup-rollout.md`. Pins `test_silence_cut*.py` (`TestRuleZeroCannotCutRealSpeech`); plans/010/019/021.
 
+Moved out of CLAUDE.md 2026-10-06 (KRI-470 PR-A, to make room for `KRIA_PLAN_AUTHORITY_ENABLED`); the full text of these two env-var lines, preserved verbatim:
+
+- `RECONCILE_STUCK_VARIANTS_ENABLED` — default `true`. Kill switch for the stuck-variant watchdog (`reconcile_stuck_variants`), which WRITES user-visible state. **Invariant:** every reaper jsonpath is param-bound and run against real Postgres by `tests/tasks/test_reaper_jsonpath.py`; migration 0099's index predicate must match `_STUCK_VARIANT_JSONPATH`. Apply: fly secret `…=false` + worker restart.
+
+- `NARRATED_SELF_NARRATION_ENABLED` — default **`false`**; narrated items without a voiceover use the footage's own audio (1 clip → `subtitled`, 2+ → `talking_head`, no speech → montage + `assembly_plan["archetype_fallback"]`). SOLE gate, bypasses the archetype flags. Twin `NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED`; Fly first. Guards: `tests/tasks/test_generative_dispatch.py`.
+
+Also moved out of CLAUDE.md 2026-10-06 (KRI-470 PR-A), verbatim:
+
+- `IOS_DEVICE_ONLY_MODE` / `KRIA_MINIMUM_CLIENT_PROTOCOL` / `CLOUD_RENDER_EXECUTION_ENABLED` — defaults `false` / `2` / `true`. The staged cutover retires web/cloud creation for protocol-2 native clients, then disables cloud execution only after drain verification; API and workers must share the flags. Runbook: `docs/runbooks/ios-device-only-runtime.md`.
+
+- `SUBTITLED_ARCHETYPE_ENABLED` — **ON in prod** (code default `false`); subtitled single-clip style, off ⇒ montage. Dual-flag `NEXT_PUBLIC_SUBTITLED_ENABLED` (Vercel, ON, build-time inlined ⇒ needs `vercel --prod`). Companions: `SUBTITLED_CAPTION_CORRECTION_ENABLED`, `CAPTION_CORRECTION_MODEL`. Rollback + detail: DECISIONS.md "CLAUDE.md flag detail".
+
+- `SILENCE_CUT_ENABLED` / `RETAKE_CUT_ENABLED` — default `false`; speech paths only, fail-open. `SPEECH_CLEANUP_MAX_REMOVAL_FRAC_REQUIRED` + `DETECTOR_VERSION` are in the policy fingerprint. **"cleanup cut a word" is a guard bug, not this lever.** Runbook: `docs/runbooks/chat-speech-cleanup-rollout.md`; pins `test_silence_cut*.py`; plans/010/019/021.
+
+- `NARRATIVE_CLIP_ORDER_ENABLED` — defaults to `true`. Plan-item edits follow the filming guide's shot order (narrative mode in `template_matcher.match`; dispatch contract in `content_plan_build._narrative_clip_order`). Read at render time (affects queued jobs). `false` ⇒ pure greedy matching. Apply: fly secret + restart.
+
+- `TIKTOK_DEEP_ANALYSIS_ENABLED` — defaults to `true`. When false, `scrape_tiktok_profile` skips chaining `analyze_tiktok_profile` and persona/plan/hook prompts receive no TikTok analysis block (byte-identical to pre-feature). Apply: fly secret + restart.
+
 ## [2026-09-24] One montage plan: phone montage compiles through the guided fast-montage format (KRI-190)
 
 Context. A v2 phone approval reaches the worker with no `guided_edit`, so the plain

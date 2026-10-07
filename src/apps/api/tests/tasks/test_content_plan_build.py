@@ -4263,6 +4263,8 @@ def _dispatch_guided_voiceover_cleanup(
     cleanup_choice: str | None,
     narration_for,  # noqa: ANN001
     before_dispatch=None,  # noqa: ANN001
+    dispatch_kwargs=None,  # noqa: ANN001
+    thread_id=None,  # noqa: ANN001
 ):
     from app.config import settings
     from app.kria.media_sources import OriginalMediaDescriptor
@@ -4272,7 +4274,7 @@ def _dispatch_guided_voiceover_cleanup(
     item, plan, session, creator_strategy, attempt_id = _guided_voiceover_dispatch_setup(
         monkeypatch, phone_guided_narration_rendering_enabled=True
     )
-    thread_id = uuid.uuid4()
+    thread_id = thread_id or uuid.uuid4()
     binding = PhoneSourceBinding(
         media_id="phone-source",
         proxy_path=(f"users/{plan.user_id}/creation-threads/{thread_id}/analysis-proxy-source.mp4"),
@@ -4351,6 +4353,7 @@ def _dispatch_guided_voiceover_cleanup(
             creator_guided_attempt_id=attempt_id,
             speech_cleanup_analysis_id=str(cleanup.id) if cleanup_choice else None,
             speech_cleanup_choice=cleanup_choice,
+            **(dispatch_kwargs or {}),
         )
     return SimpleNamespace(
         result=result,
@@ -4705,3 +4708,82 @@ def test_creator_intent_clip_order_basename_fallback_and_guided_noop() -> None:
     guided = {"render_program": "guided", "resolved_clip_intents": intents}
     assert _creator_intent_clip_order(item, paths, guided) == (paths, 0)
     assert _creator_intent_clip_order(item, paths, None) == (paths, 0)
+
+
+# --- KRI-470 PR-A: plan-authority stamp where dispatch first builds the contract --------
+#
+# Failure modes: dispatch re-decides a factory-stamped job (flag flipped between);
+# dispatch never stamps a job whose contract it creates; flag off stamps anyway.
+
+
+def _dispatch_with_binding(monkeypatch, *, enabled, factory_stamped):  # noqa: ANN001, ANN202
+    from app.config import settings
+    from app.kria.brief_binding import BriefBinding
+    from app.services import generative_jobs
+
+    monkeypatch.setattr(settings, "kria_plan_authority_enabled", enabled)
+    thread_id = uuid.uuid4()
+    binding = BriefBinding.create(thread_id, None, media_snapshot={}).model_dump(mode="json")
+    real_build = generative_jobs.build_generative_job
+
+    def build(**kwargs):  # noqa: ANN003, ANN202
+        # Simulate a factory that did (or did not) stamp the job before dispatch.
+        job = real_build(**{**kwargs, "creator_strategy": None})
+        # The factory persisted a strategy but (in this simulation) no contract yet.
+        job.all_candidates = {**job.all_candidates, "creator_strategy": {"opening_title": "T"}}
+        if factory_stamped:
+            job.all_candidates = {
+                **job.all_candidates,
+                "creator_render_requirements_version": 1,
+                "creator_plan_authority_version": 1,
+            }
+        job.assembly_plan = {**(job.assembly_plan or {}), "creator_generation_id": "gen-1"}
+        return job
+
+    monkeypatch.setattr(generative_jobs, "build_generative_job", build)
+
+    holder = {}
+
+    def before() -> None:
+        # The active-thread lookup the stamp block performs resolves to our thread.
+        holder["session"].execute.return_value.scalar_one_or_none.return_value = SimpleNamespace(
+            id=thread_id
+        )
+
+    original_setup = _guided_voiceover_dispatch_setup
+
+    def setup(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        result = original_setup(*args, **kwargs)
+        holder["session"] = result[2]
+        return result
+
+    monkeypatch.setitem(globals(), "_guided_voiceover_dispatch_setup", setup)
+    return _dispatch_guided_voiceover_cleanup(
+        monkeypatch,
+        cleanup_choice=None,
+        narration_for=lambda *_a: {},
+        before_dispatch=before,
+        dispatch_kwargs={"creator_brief_binding": binding},
+        thread_id=thread_id,
+    )
+
+
+def test_dispatch_stamps_a_contract_it_builds_first(monkeypatch):  # noqa: ANN001
+    run = _dispatch_with_binding(monkeypatch, enabled=True, factory_stamped=False)
+    job = run.session.add.call_args.args[0]
+    assert job.all_candidates["creator_render_requirements_version"] == 1
+    assert job.all_candidates["creator_plan_authority_version"] == 1
+
+
+def test_dispatch_flag_off_does_not_stamp(monkeypatch):  # noqa: ANN001
+    run = _dispatch_with_binding(monkeypatch, enabled=False, factory_stamped=False)
+    job = run.session.add.call_args.args[0]
+    assert job.all_candidates["creator_render_requirements_version"] == 1
+    assert "creator_plan_authority_version" not in job.all_candidates
+
+
+def test_dispatch_keeps_a_factory_stamp_and_never_restamps(monkeypatch):  # noqa: ANN001
+    on = _dispatch_with_binding(monkeypatch, enabled=False, factory_stamped=True)
+    job = on.session.add.call_args.args[0]
+    # The factory decided once (stamped); a later flag flip must not unstamp it.
+    assert job.all_candidates["creator_plan_authority_version"] == 1

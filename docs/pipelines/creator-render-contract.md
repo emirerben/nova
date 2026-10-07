@@ -53,10 +53,88 @@ or reread from mutable chat during a retry.
 ## What is hard and what is not
 
 The core contract covers duration, audio, ordering, and exact text. Every
-`CreativeStrategy` field still has an explicit disposition in code, but fields
-outside this projection remain under their existing capability or planning
-policy. A field accounting entry is not evidence that the field is enforced by
-every renderer.
+`CreativeStrategy` field path still has an explicit disposition in code (see
+"Field matrix"), but fields outside this projection remain under their existing
+capability or planning policy. A matrix entry is not evidence that the field is
+enforced by every renderer.
+
+### Field matrix
+
+`FIELD_MATRIX` in `services/creator_render_contract.py` replaces the old flat
+per-field note. It is keyed by field path, nested and with list fields marked
+`[]` (`shot_labels[]`, `clip_intents[].op`, `montage_audio.source_media_ids[]`),
+and each entry carries a disposition and the owning component:
+
+| Disposition | Meaning |
+| --- | --- |
+| `supported` | The contract pins it and a verifier produces evidence (duration, audio source/policy, exact text, order, voiceover requirement). |
+| `preference_only` | Taste; nothing is held to it. |
+| `upstream_resolved` | Resolved or repaired before the contract (planner, capability policy, server resolvers); not re-verified. |
+| `unsupported` | A creator can state it but no component proves it (a named licensed SFX). A request depending on it must not be treated as met. |
+
+The required path set is derived by walking the `CreativeStrategy` pydantic
+schema recursively (`schema_field_paths`). `test_every_strategy_path_is_assigned`
+fails when any field or nested field is added, removed, or renamed without a
+matrix entry, so new fields cannot ship unclassified.
+
+### Adapter declarations
+
+`ADAPTER_DECLARATIONS` (phone, in `creator_render_contract.py`) and
+`CLOUD_ADAPTER_DECLARATIONS` (cloud, in `cloud_render_contract.py`) state, per
+render path, which contract requirements it `consumes` (routes from and
+verifies) and which it `declines`, with a typed reason. Every requirement
+(`duration_s`, `require_voiceover`, `audio_source_ids`, `original_audio`,
+`exact_texts`, `order_required`, `unresolved`) must be consumed or declined
+exactly once. Today only the phone speech montage routes from the audio, duration
+and order requirements; every other phone path is verified at pin time
+(`verify_phone_recipe`); the cloud paths decline what no receipt can prove.
+Behaviour tests drive the real entry points (`verify_phone_recipe`,
+`check_phone_dispatch_contract`, `preflight_cloud_contract`,
+`verify_cloud_variant`) and assert the declared reason, not the table.
+
+## Typed declines
+
+A refusal carries a `DeclineReason` and a `field_path` (matrix path, or
+`brief:text` for a brief-only literal) on `CreatorRenderContractError` and
+`CloudRenderContractError`:
+
+| Reason | Meaning | Creator recovery (`tasks/kria_runtime.py`) |
+| --- | --- | --- |
+| `capability_unavailable` | The path can never honour or prove it. | Refusal naming the limit and a supported alternative. |
+| `evidence_missing` | Supported, but the output did not demonstrate it. | Repair / retry, only where the evidence can appear on a re-run (cloud publication verification, `creator_render_contract_unverified`; cloud preflight). A phone `phone_plan_unsupported` stays deterministic: it asks, with the original copy plus the typed alternative. |
+| `requirement_conflict` | Two approved requirements cannot both hold. | Existing ask behaviour (real questions arrive with the clarification gate); a typed alternative is appended to phone copy. |
+| `needs_choice` | Ambiguous until the creator decides (includes `unresolved`). | Existing ask behaviour. |
+
+The reason is persisted beside, never in place of, the existing failure strings:
+`phone_plan_unsupported`, `creator_render_contract_unsupported` and
+`creator_render_contract_unverified` are unchanged. Phone and cloud-preflight
+declines land in `Job.assembly_plan["creator_decline"]`
+(`{"decline_reason", "field_path"?, "alternative"?, "failure_reason"}`), stamped with
+the failure code they belong to; recovery honours it only when it matches the
+job's current failure code, and a new worker run or a successful finalization
+clears it, so a later unrelated failure never inherits an old refusal. A cloud
+publication decline lands on the failed variant next to `error_class`, and
+recovery reads only the targeted variant's own decline. `unresolved` stays a tuple of
+strings; it is reported as `needs_choice` without a field path.
+
+## Stored-contract compatibility
+
+`CreatorRenderContract` forbids extra fields and digests its full dump, so adding
+a field would change the digest of every stored contract. `_digest` skips any
+field registered in `_POST_V1_FIELD_DEFAULTS` while it holds its default, and
+`STORED_V1_CONTRACT` in `tests/services/test_creator_render_contract.py` is a real
+stored v1 contract that must keep reading. Register a new field there in the same
+change that adds it.
+
+## Plan-authority stamp
+
+`KRIA_PLAN_AUTHORITY_ENABLED` (default on) is read once, where a job's contract is
+first stamped (`services/generative_jobs.py`, or `tasks/content_plan_build.py` when
+dispatch is what first builds it), and persisted as
+`Job.all_candidates["creator_plan_authority_version"] = 1` (a JSON key; no
+migration). Workers branch on the stamp and never on the live flag, so a running
+job cannot change behaviour; jobs without the stamp keep legacy behaviour. Nothing
+branches on it yet.
 
 | Requirement | Phone evidence | Cloud evidence | Current rule |
 | --- | --- | --- | --- |

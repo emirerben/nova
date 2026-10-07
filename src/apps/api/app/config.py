@@ -641,6 +641,13 @@ class Settings(BaseSettings):
     # Default TRUE; kill switch = false + restart (the field is dropped, no question is
     # asked, the montage behaves exactly as before).
     kria_choice_questions_enabled: bool = True
+    # KRI-470: "one plan, obeyed everywhere". Evaluated ONCE, when a creator
+    # render contract is stamped onto a new job (`creator_plan_authority_version`
+    # in `Job.all_candidates`); workers branch on that stamp, never on this live
+    # flag, so a running job cannot change behaviour. False = new jobs are
+    # unstamped = legacy behaviour. Default TRUE; kill switch = false + restart
+    # api and worker (affects new jobs only).
+    kria_plan_authority_enabled: bool = True
     # KRI-189 (KRI-185 P3): clip facts -- capture time, place name and a
     # best-guess landmark per clip, each with provenance. Gates SERVER
     # CONSUMPTION only: the landmark agent run, exposing facts to the Main
