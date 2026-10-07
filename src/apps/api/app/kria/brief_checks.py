@@ -118,6 +118,10 @@ class PlanFacts:
     # KRI-458: how each described group ("start with the football, end at the pub")
     # landed in a unified montage: one status per sequence intent. Empty = none asked.
     sequence_statuses: tuple[str, ...] = ()
+    # KRI-503: the groups of that stated sequence that did NOT land where the creator said,
+    # as the creator's own words and the spot ("the video that is blue (first)"). Read off
+    # the finished order like `sequence_statuses`; empty = every stated group landed.
+    sequence_unmet: tuple[str, ...] = ()
     texts: tuple[str, ...] = ()
     # Where the title came from: "creator" (their words), "brief" (written from the
     # brief's facts), "default" (nothing to title with), None = unknown.
@@ -363,6 +367,15 @@ def _declared_outro_s(record: Mapping[str, Any]) -> float:
     return 0.0
 
 
+def _sequence_label(name: str) -> str:
+    """``first: the video that is blue`` (the planner's outcome name) -> ``the video that is
+    blue (first)``, the way a creator would say it back."""
+    spot, _, words = name.partition(": ")
+    if words and spot in ("first", "last", "then"):
+        return f"{words} ({spot})"
+    return name or "the order you described"
+
+
 def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFacts:
     """Read verifiable facts off a unified montage plan record (KRI-190).
 
@@ -414,6 +427,11 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
             str(row.get("status"))
             for row in record.get("intent_outcomes") or []
             if isinstance(row, Mapping) and row.get("op") == "order"
+        ),
+        sequence_unmet=tuple(
+            _sequence_label(str(row.get("name") or ""))
+            for row in record.get("intent_outcomes") or []
+            if isinstance(row, Mapping) and row.get("op") == "order" and row.get("status") != "met"
         ),
         texts=tuple(
             str(text) for text in (title, record.get("closing_title"), *per_clip.values()) if text
@@ -905,6 +923,17 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
         if required and basis not in _ORDER_VERIFIED_ELSEWHERE:
             return _receipt(req, "not_possible", _ORDER_RULE_NOT_APPLIED)
         return _receipt(req, "partial", _CANT_CHECK_ORDER_RULE)
+    if key in _CAPTURE_ORDER_KEYS and facts.strict_order and facts.sequence_unmet:
+        # KRI-503: "chronological order, starting with the blue video". The basis matching is
+        # not enough: the stated clip must really be where the creator put it. The render
+        # contract pins that same seating, so a plan that misses it would be refused after
+        # the render; say so before.
+        return _receipt(
+            req,
+            unmet,
+            "Your clips are in filming order, but these aren't where you asked: "
+            f"{', '.join(facts.sequence_unmet)}.",
+        )
     if facts.ordering_fallback_clip_ids:
         n = len(facts.ordering_fallback_clip_ids)
         return _receipt(

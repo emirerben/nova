@@ -32,6 +32,7 @@ from app.services.choice_questions import (
     OPT_ATTACHMENT_ORDER,
     OPT_UNORDERED,
 )
+from app.services.clip_order_sequence import apply_sequence, sequence_rows
 
 CONTRACT_FIELD = "creator_render_requirements"
 REQUIREMENT_VERSION_FIELD = "creator_render_requirements_version"
@@ -308,7 +309,12 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "resolved_clip_intents[].question",
         "resolved_clip_intents[].caption_text",
         "resolved_clip_intents[].caption_grounding",
-        note="server-resolved per-clip answers; labels reach the render via the plan",
+        note=(
+            "server-resolved per-clip answers; labels reach the render via the plan. The "
+            "`order` intents with a first/last position are also read by build_render_contract "
+            "(KRI-503): they seat the described clips ahead of / behind the basis order "
+            "in order_ids, the same rule the montage planner lays out"
+        ),
     ),
     **_rules(
         "upstream_resolved",
@@ -642,6 +648,21 @@ def _strategy(raw: Mapping[str, Any] | None) -> CreativeStrategy | None:
         ) from exc
 
 
+# The bases a described sequence can sit on (`order_basis` values, unchanged by KRI-503).
+_SEQUENCE_BASES = frozenset({"capture_time", "attachment_order"})
+_SEQUENCE_UNRESOLVED = (
+    "I couldn't tell which clips you want first or last, so I can't confirm their order."
+)
+
+
+def _clip_intents_on() -> bool:
+    """The planner seats a described sequence only when clip intents are on; so does the
+    contract, or the two would disagree after a flag flip."""
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(settings.clip_intents_enabled)
+
+
 def build_render_contract(
     strategy: Mapping[str, Any] | None,
     *,
@@ -849,6 +870,24 @@ def build_render_contract(
         else:
             order_ids = tuple(sorted(ids, key=lambda media_id: dates[media_id]))
             order_basis = "capture_time"
+    if (
+        order_required
+        and order_ids
+        and order_basis in _SEQUENCE_BASES
+        and brief is not None
+        and _clip_intents_on()
+    ):
+        # KRI-503: "chronological order, starting with the blue video". The planner seats
+        # the described clips on top of the basis order (`clip_order_sequence`); the contract
+        # pins that same seating, so an edit that does what the creator said still verifies.
+        # Without a sequence rule nothing changes: `order_ids` stays the pure basis order.
+        rows = sequence_rows(raw.get("resolved_clip_intents"))
+        if any(status != "resolved" for _position, _name, _members, status in rows):
+            order_ids = ()
+            order_basis = None
+            unresolved.append(_SEQUENCE_UNRESOLVED)
+        elif rows:
+            order_ids = tuple(apply_sequence(order_ids, rows))
     if durations and any(abs(value - durations[0]) > 0.001 for value in durations[1:]):
         raise CreatorRenderContractError(
             "Your confirmed edit lengths conflict, so I can't render it safely.",
