@@ -5930,14 +5930,10 @@ def _run_phone_unified_montage_job(
                     "requirement_receipts": failures,
                 },
             )
-            reasons = " ".join(
-                dict.fromkeys(
-                    row.get("reason") or "A requested change is missing." for row in failures
-                )
-            )
-            recovery_message = (
-                f"{reasons} Your draft is saved. Should I try again or simplify this request?"
-            )
+            from app.kria.brief_checks import render_block_recovery  # noqa: PLC0415
+
+            block = render_block_recovery(failures)
+            recovery_message = block.message
             if not _save_request_recovery(
                 job_id,
                 snapshot,
@@ -5946,6 +5942,19 @@ def _run_phone_unified_montage_job(
                 receipts=record["requirement_receipts"],
             ):
                 return None
+            if block.decline_reason:
+                # A blocker the creator answers directly (a title with no words): typed,
+                # so the thread gets `needs_choice` + the way forward, not a bare failure.
+                from app.services.creator_render_contract import (  # noqa: PLC0415
+                    CreatorRenderContractError,
+                )
+
+                raise CreatorRenderContractError(
+                    recovery_message,
+                    decline_reason=block.decline_reason,  # type: ignore[arg-type]
+                    field_path=block.field_path,
+                    alternative=block.alternative,
+                )
             raise UnsupportedPhonePlan(recovery_message)
 
     with _sync_session() as db:
