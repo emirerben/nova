@@ -801,14 +801,17 @@ what the creator said was refused after rendering while the receipt read "met". 
   the two agree after a flag flip. Jobs without a sequence intent (and every brief-less job)
   get a byte-identical contract and digest; `CreatorRenderContract` gained no field.
 * `unresolved`: an `order` intent that is not `resolved` (it never reaches a draft, the
-  resolver's own `needs_creator` clip question asks first) pins nothing and reports "I couldn't
-  tell which clips you want first or last"; the draft backstop shows it as a plain message. A
-  resolved intent whose clips are not in the edit pins nothing; the plan places nothing and the
-  receipt says so.
-* Receipt: `_check_order` now also reads which stated groups did NOT land
-  (`PlanFacts.sequence_unmet`, from the plan record's `intent_outcomes`, computed from the
-  FINISHED order) and answers `not_possible` ("these aren't where you asked: the blue video
-  (first)") for a required order on a strict job. Unbound jobs keep today's verdict.
+  resolver's own `needs_creator` clip question asks first) pins nothing and reports the
+  intent's own question (else its words: "I couldn't tell which clips "the blue video" means");
+  the draft backstop shows it as a plain message. A resolved intent whose clips are not in the
+  edit pins nothing; the plan places nothing and the receipt says so.
+* Receipt: `_check_order` now also reads which stated groups did NOT land, from the plan
+  record's `intent_outcomes` (computed from the FINISHED order; each row carries a `code`
+  so nothing re-parses messages): `misplaced` (a described first/last group is not where it was
+  asked) and `absent` / `unresolved` (none of its clips are in the edit: "I found no clips
+  for ..."). A `then` group wholly inside an earlier group, and a Visuals-only group, are
+  NOT failures. A required order on a strict job is `not_possible` ("these aren't where you
+  asked: the blue video (first)"). Unbound jobs keep today's verdict.
 * No new draft-time question. A start clip the resolver cannot pin is already asked through the
   resolver's clip question (`needs_creator`); a second `order_start` question would have
   duplicated it. Known limits: a start clip that is the speaker of a spoken-excerpt montage

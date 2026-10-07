@@ -23,6 +23,8 @@ verifier and receipts; nothing is mocked except the one mutation tests that disa
 
 from __future__ import annotations
 
+import dataclasses
+import sys
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -102,7 +104,9 @@ def _intent(position: str | None, name: str, *indices: int, status: str = "resol
         "status": status,
         "intent_id": f"order_{name.replace(' ', '_')}",
         "attribute": name,
-        "assignments": [{"media_id": _id(i), "confidence": 0.9} for i in indices],
+        "assignments": [
+            {"media_id": _id(i) if isinstance(i, int) else i, "confidence": 0.9} for i in indices
+        ],
     }
     if position:
         row["position"] = position
@@ -272,7 +276,12 @@ def test_receipt_judges_the_start_clip_not_just_the_basis() -> None:
     wrong = {
         **record,
         "intent_outcomes": [
-            {**row, "status": "partial", "reason": "the clips did not end up there"}
+            {
+                **row,
+                "status": "partial",
+                "code": "misplaced",
+                "reason": "the clips did not end up there",
+            }
             if row.get("op") == "order"
             else row
             for row in record["intent_outcomes"]
@@ -318,7 +327,7 @@ def test_start_and_end_rules_together_and_a_multi_clip_group_stay_in_filming_ord
 def test_an_unresolved_start_clip_is_reported_not_guessed() -> None:
     strategy = _strategy(_intent("first", "the teal video", status="needs_creator"))
     _brief_, contract = _world(strategy)
-    assert contract.unresolved and "first or last" in contract.unresolved[0]
+    assert contract.unresolved and "teal video" in contract.unresolved[0]
     assert contract.order_ids == ()
 
 
@@ -333,7 +342,7 @@ def test_the_draft_backstop_turns_an_unresolved_start_clip_into_a_plain_message(
     assert asked is not None
     plan, reason = asked
     assert reason == "unresolved_requirement"
-    assert "first or last" in plan.response
+    assert "teal video" in plan.response
 
 
 def test_plain_chronological_order_asks_nothing_and_is_unchanged() -> None:
@@ -417,3 +426,133 @@ def test_cloud_guided_order_gate_accepts_the_stated_clip_first_and_refuses_pure_
     check_guided_plan_order(_assembly(contract), candidates=None, plan=_timeline(seated))
     with pytest.raises(CloudRenderContractError):
         check_guided_plan_order(_assembly(contract), candidates=None, plan=_timeline(FILMING))
+
+
+# -- review fixes: groups that are not "a described group failed to land" --------
+
+
+def _receipt_for(strategy: dict, *, visuals=()):
+    brief, contract = _world(strategy)
+    plan = plan_unified_montage(
+        _clips(),
+        brief_view(brief),
+        strategy=strategy,
+        clip_intents_enabled=True,
+        visuals=list(visuals),
+    )
+    return brief, contract, plan, _receipt(brief, plan)
+
+
+def test_a_then_group_made_only_of_clips_an_earlier_group_seated_does_not_fail_the_order() -> None:
+    """Prod shape (job aee52a3c): first(A) + last(B) + then("this chapter order", A, B)."""
+    strategy = _strategy(
+        _intent("first", "the teal video", TEAL),
+        _intent("last", "the green video", GREEN),
+        _intent(None, "this chapter order", TEAL, GREEN),
+    )
+    brief, contract, plan, receipt = _receipt_for(strategy)
+    assert tuple(plan.clip_ids) == contract.order_ids
+    assert _verify(contract, _recipe(plan))
+    assert (receipt.status, receipt.reason) == ("met", None)
+
+
+def test_a_then_group_that_repeats_the_start_clip_does_not_fail_the_order() -> None:
+    strategy = _strategy(
+        _intent("first", "the teal video", TEAL), _intent(None, "the teal one again", TEAL)
+    )
+    brief, contract, plan, receipt = _receipt_for(strategy)
+    assert tuple(plan.clip_ids) == contract.order_ids
+    assert _verify(contract, _recipe(plan))
+    assert receipt.status == "met"
+
+
+def test_a_then_group_of_visuals_only_does_not_fail_the_order() -> None:
+    """Prod shape (job 7d53b0fd): a chapter whose members are Visuals-pool ids, not clips."""
+    from tests.pipeline.test_unified_montage import visual
+
+    photo = dataclasses.replace(visual(1), capture_time=T0)
+    strategy = _strategy(
+        _intent("first", "the teal video", TEAL), _intent(None, "the photos", photo.ref_id)
+    )
+    _brief_, contract, plan, receipt = _receipt_for(strategy, visuals=[photo])
+    assert contract.order_ids[0] == _id(TEAL)
+    assert receipt.status == "met"
+
+
+def test_a_then_group_that_introduces_new_clips_still_counts_and_stays_met_when_seated() -> None:
+    strategy = _strategy(
+        _intent("first", "the teal video", TEAL), _intent(None, "the chapter", TEAL, 8)
+    )
+    brief, contract, plan, receipt = _receipt_for(strategy)
+    assert list(contract.order_ids)[:2] == _ids([TEAL, 8])
+    assert tuple(plan.clip_ids) == contract.order_ids
+    assert receipt.status == "met"
+
+
+def test_a_group_with_no_clip_in_the_edit_is_reported_as_absent_not_misplaced() -> None:
+    for position in ("first", "last", None):
+        strategy = _strategy(_intent(position, "the teal video", "deselected-clip"))
+        _brief_, _contract, _plan_, receipt = _receipt_for(strategy)
+        assert receipt.status == "not_possible", position
+        assert "no clips" in receipt.reason and "teal video" in receipt.reason, position
+        assert "aren't where you asked" not in receipt.reason, position
+
+
+def test_a_misplaced_group_is_still_reported_when_a_contained_group_is_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    strategy = _strategy(
+        _intent("first", "the teal video", TEAL), _intent(None, "the teal one again", TEAL)
+    )
+    brief, _contract = _world(strategy)
+    monkeypatch.setattr(unified_montage, "_apply_sequence", lambda ordered, rows: list(ordered))
+    receipt = _receipt(brief, _plan(strategy, brief))
+    assert receipt.status == "not_possible"
+    assert "teal video (first)" in receipt.reason
+    assert "teal one again" not in receipt.reason
+
+
+def test_sequence_rows_accept_a_tuple_like_the_planner_always_did() -> None:
+    from app.services.clip_order_sequence import sequence_rows
+
+    rows = sequence_rows((_intent("first", "x", TEAL),))
+    assert [(r[0], r[2]) for r in rows] == [("first", [_id(TEAL)])]
+    assert sequence_rows("not a list") == [] and sequence_rows(None) == []
+
+
+def test_an_unresolved_start_clip_message_names_what_to_disambiguate() -> None:
+    asked = _intent("first", "the teal video", status="needs_creator")
+    asked["question"] = "Which of these is the teal video?"
+    _brief_, with_question = _world(_strategy(asked))
+    assert with_question.unresolved == ("Which of these is the teal video?",)
+    bare = _intent("first", "the teal video", status="needs_creator")
+    _brief_, without = _world(_strategy(bare))
+    assert "teal video" in without.unresolved[0] and without.order_ids == ()
+
+
+def test_capture_time_ties_seat_the_same_way_in_plan_and_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tied = list(MINUTES)
+    tied[2] = tied[4]  # two clips filmed in the same minute
+    monkeypatch.setattr(sys.modules[__name__], "MINUTES", tied)
+    strategy = _strategy(_intent("first", "the teal video", TEAL))
+    brief, contract = _world(strategy)
+    assert contract.order_ids[0] == _id(TEAL)
+    plan = _plan(strategy, brief)
+    assert tuple(plan.clip_ids) == contract.order_ids
+    assert _verify(contract, _recipe(plan))
+
+
+def test_an_answered_attachment_order_gets_the_same_start_clip_seating() -> None:
+    answer = {
+        "conflict": "order_basis",
+        "kind": "order_basis",
+        "option": "attachment_order",
+        "input_digest": "d",
+        "requirement_ids": ["r1"],
+    }
+    strategy = {**_strategy(_intent("first", "the teal video", TEAL)), "choice_answers": [answer]}
+    _brief_, contract = _world(strategy)
+    assert contract.order_basis == "attachment_order"
+    assert list(contract.order_ids) == _ids([TEAL, *[i for i in range(11) if i != TEAL]])
