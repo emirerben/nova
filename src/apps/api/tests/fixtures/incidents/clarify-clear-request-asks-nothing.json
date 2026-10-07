@@ -1,0 +1,117 @@
+{
+  "id": "clarify-clear-request-asks-nothing",
+  "incident": {
+    "ticket": "KRI-476",
+    "summary": "Must not ask: a clear request (20s, filming order, every clip has a capture time) is answerable; a question here is a regression."
+  },
+  "kind": "clarification",
+  "approved": {
+    "strategy": {
+      "direction": "guided_story",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "target_duration_requested": true
+    },
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "timing",
+          "scope": "global",
+          "description": "20 seconds",
+          "facts": {
+            "duration_s": 20
+          },
+          "source_turn_id": "turn-1"
+        },
+        {
+          "id": "r2",
+          "kind": "order",
+          "scope": "global",
+          "description": "in the order I filmed them",
+          "facts": {
+            "key": "capture_time"
+          },
+          "source_turn_id": "turn-1"
+        }
+      ]
+    },
+    "creator_request": "Make a 20 second montage of my day in the order I filmed them.",
+    "provenance": "Synthetic control."
+  },
+  "inputs": {
+    "media": [
+      {
+        "id": "c0",
+        "kind": "video",
+        "duration_s": 4.0,
+        "capture_time": "2026-01-01T09:00:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "c1",
+        "kind": "video",
+        "duration_s": 4.5,
+        "capture_time": "2026-01-01T09:01:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "c2",
+        "kind": "video",
+        "duration_s": 5.0,
+        "capture_time": "2026-01-01T09:02:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "c3",
+        "kind": "video",
+        "duration_s": 5.5,
+        "capture_time": "2026-01-01T09:03:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "c4",
+        "kind": "video",
+        "duration_s": 6.0,
+        "capture_time": "2026-01-01T09:04:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "c5",
+        "kind": "video",
+        "duration_s": 6.5,
+        "capture_time": "2026-01-01T09:05:00Z",
+        "has_audio": true
+      }
+    ],
+    "turns": [
+      {
+        "role": "user",
+        "text": "Make a 20 second montage of my day in the order I filmed them."
+      }
+    ],
+    "notes": [
+      "Passes today (no gate exists) and must keep passing once PR-C adds one: it is the must-not-ask half of the gate."
+    ]
+  },
+  "expect": {
+    "contract": {
+      "duration_s": 20,
+      "order_required": true,
+      "order_basis": "capture_time",
+      "order_ids": "capture_time",
+      "resolved": true
+    },
+    "question": {
+      "no_question": true
+    }
+  },
+  "repro": {
+    "command": "pytest tests/incidents/test_incident_corpus.py -k clarify-clear-request-asks-nothing",
+    "status": "available"
+  },
+  "sources": []
+}

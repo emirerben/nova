@@ -1,0 +1,674 @@
+{
+  "id": "kri481-song-audio-plays-twice",
+  "incident": {
+    "ticket": "KRI-481",
+    "summary": "A redo with an attached 329s song rendered one 45s window as a background bed; the creator heard the audio play twice in a loop and the requested voice was not kept."
+  },
+  "kind": "output",
+  "approved": {
+    "strategy": {
+      "pacing": "fast",
+      "archetype": "single_hero",
+      "direction": "fast_montage",
+      "rationale": "(redacted)",
+      "song_sync": "background",
+      "edit_format": "montage",
+      "media_scope": "selected",
+      "clip_intents": [
+        {
+          "op": "order",
+          "order_by": "capture_time",
+          "attribute": "all clips",
+          "intent_id": "order-capture-time"
+        }
+      ],
+      "caption_style": "auto",
+      "hero_media_id": "m-1fb3444b",
+      "montage_audio": {
+        "source_media_ids": [
+          "m-1fb3444b"
+        ],
+        "preview_source_beds": false,
+        "preserve_source_audio": true
+      },
+      "audio_strategy": "user_song",
+      "render_program": "guided",
+      "story_structure": [
+        "(redacted)"
+      ],
+      "target_duration_s": 45,
+      "selected_media_ids": [],
+      "video_reuse_policy": "once",
+      "optional_treatments": [
+        "transitions"
+      ]
+    },
+    "brief": {
+      "version": 2,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "order",
+          "facts": {
+            "key": "capture_time"
+          },
+          "scope": "global",
+          "status": "open",
+          "literal": null,
+          "description": "chronologically",
+          "source_turn_id": "turn-1"
+        },
+        {
+          "id": "r2",
+          "kind": "audio",
+          "facts": {},
+          "scope": "global",
+          "status": "open",
+          "literal": null,
+          "description": "use the voice from the talk to camera video",
+          "source_turn_id": "turn-2"
+        }
+      ]
+    },
+    "creator_request": "use the voice from the talk to camera video (still in force from the earlier turn); latest message: Redo the video",
+    "provenance": "all_candidates.creator_strategy + assembly_plan.creator_brief_binding + unified_montage of the prod job (read-only, 2026-10-06). Story text redacted; media ids hashed."
+  },
+  "inputs": {
+    "media": [
+      {
+        "id": "m-b6913556",
+        "kind": "video",
+        "duration_s": 8.0,
+        "capture_time": "2026-01-01T15:49:38Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-7e81ba95",
+        "kind": "video",
+        "duration_s": 8.9,
+        "capture_time": "2026-01-01T15:49:55Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-c3ad286f",
+        "kind": "video",
+        "duration_s": 1.267,
+        "capture_time": "2026-01-01T14:57:28Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-0515678d",
+        "kind": "video",
+        "duration_s": 4.533,
+        "capture_time": "2026-01-01T15:15:24Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-ac06932b",
+        "kind": "video",
+        "duration_s": 10.3,
+        "capture_time": "2026-01-01T14:53:12Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-33314072",
+        "kind": "video",
+        "duration_s": 3.767,
+        "capture_time": "2026-01-01T14:18:46Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-a484a6b8",
+        "kind": "video",
+        "duration_s": 2.567,
+        "capture_time": "2026-01-01T14:18:41Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-ac68c72d",
+        "kind": "video",
+        "duration_s": 1.433,
+        "capture_time": "2026-01-01T13:55:43Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-8ab7e365",
+        "kind": "video",
+        "duration_s": 2.167,
+        "capture_time": "2026-01-01T13:55:38Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": true
+        }
+      },
+      {
+        "id": "m-9cf8da3f",
+        "kind": "video",
+        "duration_s": 1.867,
+        "capture_time": "2026-01-01T13:55:35Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-b11d6454",
+        "kind": "video",
+        "duration_s": 3.767,
+        "capture_time": "2026-01-01T13:55:27Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-27d01a68",
+        "kind": "video",
+        "duration_s": 3.733,
+        "capture_time": "2026-01-01T13:55:23Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-11a0978b",
+        "kind": "video",
+        "duration_s": 7.867,
+        "capture_time": "2026-01-01T13:55:13Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-93f5c910",
+        "kind": "video",
+        "duration_s": 1.667,
+        "capture_time": "2026-01-01T14:18:38Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-60890fdd",
+        "kind": "video",
+        "duration_s": 2.0,
+        "capture_time": "2026-01-01T13:55:32Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-3289c73b",
+        "kind": "video",
+        "duration_s": 4.667,
+        "capture_time": "2026-01-01T13:27:43Z",
+        "has_audio": false,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-2e65d1a4",
+        "kind": "video",
+        "duration_s": 6.3,
+        "capture_time": "2026-01-01T13:06:18Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": true
+        }
+      },
+      {
+        "id": "m-1fb3444b",
+        "kind": "video",
+        "duration_s": 147.7,
+        "capture_time": "2026-01-01T13:06:18Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": true
+        }
+      },
+      {
+        "id": "m-5ed5cb86",
+        "kind": "video",
+        "duration_s": 12.7,
+        "capture_time": "2026-01-01T13:06:03Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": true
+        }
+      },
+      {
+        "id": "m-1cbc37e8",
+        "kind": "video",
+        "duration_s": 5.0,
+        "capture_time": "2026-01-01T13:05:40Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-26f90112",
+        "kind": "video",
+        "duration_s": 7.033,
+        "capture_time": "2026-01-01T13:05:49Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": true
+        }
+      },
+      {
+        "id": "m-07baf088",
+        "kind": "video",
+        "duration_s": 10.267,
+        "capture_time": "2026-01-01T11:46:55Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-16a7f77a",
+        "kind": "video",
+        "duration_s": 9.033,
+        "capture_time": "2026-01-01T11:45:45Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-b553e04e",
+        "kind": "video",
+        "duration_s": 9.533,
+        "capture_time": "2026-01-01T11:46:39Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-3e318a4a",
+        "kind": "video",
+        "duration_s": 19.133,
+        "capture_time": "2026-01-01T11:36:50Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-275bd6e3",
+        "kind": "video",
+        "duration_s": 4.633,
+        "capture_time": "2026-01-01T11:33:28Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-208edfa6",
+        "kind": "video",
+        "duration_s": 39.267,
+        "capture_time": "2026-01-01T11:45:56Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-e4cff0f8",
+        "kind": "video",
+        "duration_s": 4.933,
+        "capture_time": "2026-01-01T11:32:17Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-ef119739",
+        "kind": "video",
+        "duration_s": 5.8,
+        "capture_time": "2026-01-01T11:31:59Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-85b5e3d9",
+        "kind": "video",
+        "duration_s": 18.267,
+        "capture_time": "2026-01-01T09:25:42Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-2eec974e",
+        "kind": "video",
+        "duration_s": 13.167,
+        "capture_time": "2026-01-01T09:22:25Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-743e0fcf",
+        "kind": "video",
+        "duration_s": 3.733,
+        "capture_time": "2026-01-01T09:18:41Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-e2dd0acf",
+        "kind": "video",
+        "duration_s": 2.533,
+        "capture_time": "2026-01-01T11:08:40Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-3c663e2d",
+        "kind": "video",
+        "duration_s": 6.467,
+        "capture_time": "2026-01-01T11:07:48Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-ed501116",
+        "kind": "video",
+        "duration_s": 7.6,
+        "capture_time": "2026-01-01T10:03:40Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-ee074896",
+        "kind": "video",
+        "duration_s": 2.4,
+        "capture_time": "2026-01-01T11:14:05Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-5b7fcafe",
+        "kind": "video",
+        "duration_s": 4.6,
+        "capture_time": "2026-01-01T09:00:09Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-0a3802bf",
+        "kind": "video",
+        "duration_s": 1.567,
+        "capture_time": "2026-01-01T09:00:06Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-9fb06f5f",
+        "kind": "video",
+        "duration_s": 1.933,
+        "capture_time": "2026-01-01T09:00:03Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-f3fb8c5e",
+        "kind": "video",
+        "duration_s": 1.833,
+        "capture_time": "2026-01-01T09:00:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-e8934318",
+        "kind": "video",
+        "duration_s": 2.933,
+        "capture_time": "2026-01-01T09:16:22Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "m-bc4ad10c",
+        "kind": "video",
+        "duration_s": 2.833,
+        "capture_time": "2026-01-01T09:11:44Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": false
+        }
+      }
+    ],
+    "song": {
+      "duration_s": 329.456,
+      "mode": "background",
+      "window_start_s": 107.964,
+      "window_end_s": 152.976
+    },
+    "synthetic": [
+      {
+        "id": "voice",
+        "role": "voice",
+        "duration_s": 6,
+        "color": "gray",
+        "tone_hz": 440
+      },
+      {
+        "id": "pic-a",
+        "role": "picture",
+        "duration_s": 2,
+        "color": "red"
+      },
+      {
+        "id": "pic-b",
+        "role": "picture",
+        "duration_s": 2,
+        "color": "blue"
+      },
+      {
+        "id": "song",
+        "role": "song",
+        "duration_s": 12,
+        "tone_hz": 880
+      }
+    ],
+    "notes": [
+      "Plan facts from the prod job: 42 timeline cuts, variant source_audio_preserved=false, music_playback_mode=reference_only, requirement r2 (voice) receipt 'partial / I can't verify this one automatically yet'.",
+      "Synthetic substitutes are a scaled-down analogue (a tone-tagged voice clip, two colour clips, a different-tone song): once PR-G owns an export proof they let a render be checked for voice presence and for the song playing once, by tone.",
+      "The double-playback and missing-voice facts are NOT proven by pytest; the observation records the creator report and the plan fields."
+    ]
+  },
+  "expect": {
+    "contract": {
+      "audio_source_ids": [
+        "m-1fb3444b"
+      ],
+      "original_audio": "require",
+      "order_required": true,
+      "order_basis": "capture_time",
+      "order_ids": "capture_time",
+      "resolved": true
+    },
+    "output_facts": {
+      "duration_s": 45,
+      "voice_present": true,
+      "audio_plays_once": true,
+      "order_ids": "chronological",
+      "duration_basis": "strategy_choice"
+    }
+  },
+  "observations": [
+    {
+      "label": "incident",
+      "source": "prod job debug (unified_montage, variants[0]) + creator report",
+      "facts": {
+        "duration_s": 45.012,
+        "voice_present": false,
+        "audio_plays_once": false,
+        "order_ids": [
+          "m-f3fb8c5e",
+          "m-9fb06f5f",
+          "m-0a3802bf",
+          "m-5b7fcafe",
+          "m-bc4ad10c",
+          "m-e8934318",
+          "m-743e0fcf",
+          "m-2eec974e",
+          "m-85b5e3d9",
+          "m-ed501116",
+          "m-3c663e2d",
+          "m-e2dd0acf",
+          "m-ee074896",
+          "m-ef119739",
+          "m-e4cff0f8",
+          "m-275bd6e3",
+          "m-3e318a4a",
+          "m-16a7f77a",
+          "m-208edfa6",
+          "m-b553e04e",
+          "m-07baf088",
+          "m-1cbc37e8",
+          "m-26f90112",
+          "m-5ed5cb86",
+          "m-2e65d1a4",
+          "m-1fb3444b",
+          "m-3289c73b",
+          "m-11a0978b",
+          "m-27d01a68",
+          "m-b11d6454",
+          "m-60890fdd",
+          "m-9cf8da3f",
+          "m-8ab7e365",
+          "m-ac68c72d",
+          "m-93f5c910",
+          "m-a484a6b8",
+          "m-33314072",
+          "m-ac06932b",
+          "m-c3ad286f",
+          "m-0515678d",
+          "m-b6913556",
+          "m-7e81ba95"
+        ]
+      },
+      "evidence": {
+        "duration_s": "unified_montage.duration_s (variant edit_duration_s 45.012)",
+        "voice_present": "inferred from variant source_audio_preserved=false; not listened to",
+        "audio_plays_once": "creator report (loop heard twice); not measured",
+        "order_ids": "unified_montage.clip_ids plan order, not a rendered-frame read"
+      }
+    }
+  ],
+  "xfail": [
+    {
+      "reason": "KRI-481 / PR-G",
+      "scope": "output"
+    }
+  ],
+  "repro": {
+    "command": "swift test --filter ContractOutputProofTests",
+    "status": "pending",
+    "owner": "KRI-478"
+  },
+  "sources": [
+    "prod job debug (not committed)"
+  ]
+}

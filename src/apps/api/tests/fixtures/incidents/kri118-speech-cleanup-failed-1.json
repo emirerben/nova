@@ -1,0 +1,30 @@
+{
+  "id": "kri118-speech-cleanup-failed-1",
+  "incident": {
+    "ticket": "KRI-118",
+    "summary": "Required speech cleanup bailed out of a subtitled edit."
+  },
+  "kind": "output",
+  "inputs": {
+    "media": [
+      {
+        "id": "clip-0",
+        "kind": "video",
+        "duration_s": 22.0
+      }
+    ],
+    "notes": [
+      "Structural shape of a real prod failure (admin debug, 2026-09-23); ids/paths/text were anonymized when the fixture was made. The replay depth is stated in tests/replay/README.md."
+    ]
+  },
+  "expect": {
+    "failure_reason": "speech_cleanup_failed"
+  },
+  "repro": {
+    "command": "pytest tests/replay/test_prod_failure_replay.py::test_speech_cleanup_unsafe_plan_is_a_typed_non_generic_failure",
+    "status": "available"
+  },
+  "sources": [
+    "tests/fixtures/kri118/speech_cleanup_failed_1.json"
+  ]
+}

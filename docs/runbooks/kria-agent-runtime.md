@@ -122,6 +122,95 @@ cases for each canonical token. Regenerate it only through
 then run the focused gate. These cases freeze requested intent and recovery
 coverage; they do not substitute for the consented live or real-media gates.
 
+## Incident corpus
+
+Every production request-following failure becomes a permanent, redacted fixture
+that CI re-checks (KRI-470 / KRI-480). Records live in
+`src/apps/api/tests/fixtures/incidents/*.json`; the schema and loader are in
+`src/apps/api/tests/incidents/`; the runner is `test_incident_corpus.py`:
+
+```bash
+cd src/apps/api && .venv/bin/python -m pytest tests/incidents -q
+```
+
+It runs in the normal test-api CI shards (every `tests/**/test_*.py` is picked up).
+
+**What the corpus proves, and what it does not.** pytest can prove contract
+construction (real `build_render_contract` over a real `BriefBinding`), that the
+real verifiers decline (`verify_phone_recipe` on a recipe from the real speech
+compiler, `preflight_cloud_contract`) and with which typed reason, and whether the
+planner asks a question. It cannot hear or watch a render. `output` facts (voice
+present, audio playing once, order on screen) are judged against recorded
+*observations*: the incident's own (plan fields, creator report) and, after a fix,
+a `post-fix` observation. Nothing renders in pytest, so an `output` record flips
+only when the owning PR appends a post-fix observation whose `proof` resolves to a
+real repro (a pytest node id that exists, a `make` target, a Swift filter or script
+in the repo; free text is rejected by the loader) and removes the xfail. Real output
+proof belongs to that repro (swift export proof / `make local-render`); a record whose
+repro is `pending` names the ticket that owns it. Never describe the corpus as output
+coverage it does not run.
+
+**Kinds.** `output` (a real incident with output facts), `clarification` (conversation
+turns; must-ask and must-not-ask), `routing`, and `contract_pin`. A `contract_pin` is
+NOT incident replay: it pins what the contract builder does for a plan shaped like a
+past incident, with expected values read off its own approved plan, so a later change
+is noticed. Route assertions (`route`) are deliberately absent until PR-D's resolver.
+
+**Record format** (`tests/incidents/models.py`): `id`, `incident` (Linear id + one
+line), `kind`, `approved` (strategy + brief as persisted, validated against
+`CreativeStrategy`/`CreativeBrief`), `inputs` (redacted media: opaque id, duration,
+capture time, speech facts; the conversation `turns`; optional `phone_recipe`,
+`cloud_preflight`, `synthetic` clips), `expect` (`contract`, `refusal`, `question` or
+`no_question`, `output_facts`; structured facts only, never copy), `observations`,
+`xfail` (`{reason: "KRI-47x / PR-x", scope: contract|refusal|question|output}`; the
+scope must be something the record really asserts), and `repro` (resolved against the
+repo by `test_repro_command_points_at_something_real`, including the `::test` part and
+`-k` ids). `synthetic` clips are deterministic ffmpeg colour/tone substitutes
+regenerated on demand (`tests/incidents/synthetic.py`); generated media is never
+committed. `refusal.reason`/`field_path` are the typed decline (KRI-476 / PR-A) and are
+asserted unconditionally, so a record can stage them as a strict xfail.
+
+**Clarification harness.** It calls the planner like `plan_live_turn` does today (the
+capture-order flag is read off the brief, the brief request rides along, target length
+reaches the planner through the strategy). PR-C (KRI-476) moves the gate into
+`plan_live_turn` after the media snapshot is attached, so PR-C must adapt this harness
+and flip the `KRI-476 / PR-C` records.
+
+**Capture-fail-first workflow.**
+
+1. Capture the failing case read-only and add the record first. For prod:
+   `python scripts/admin.py --prod GET /admin/jobs?limit=200`, then
+   `jobs/<id>/debug` and `creation-threads/<thread>/turns` (GET only; see
+   [agent navigation](agent-navigation.md)).
+2. Assert the creator's *request* (the expectation), not the bad behaviour. It must
+   fail for the intended reason: run it with `--runxfail` and read the message.
+   Mark it `xfail(strict=True)` with the owning ticket / PR letter and scope.
+3. The fixing PR makes it pass and flips its own records: for `contract`, `refusal` and
+   `question` records the product change makes them XPASS and strict mode forces the
+   xfail's removal; for `output` records see above (post-fix observation with a real proof).
+4. Keep a passing control next to the failing assertion (the same incident through a
+   path that already works) and cover phone and cloud variants where both exist:
+   `kri469-voice-clip-ignored` (phone) and `kri469-cloud-variant` (cloud) are the pattern.
+
+**Redaction rules.** New prod captures never carry private media, credentials or
+identity: no signed URLs, GCS paths, emails, user/job/thread ids, creator names,
+captions or transcripts that identify a person, places, or tokens. Media ids are
+opaque hashes, capture times are rebased to a synthetic epoch (order and gaps kept),
+speech is reduced to `has_speech`/`to_camera`, and the creator's typed request is
+paraphrased. Exemption: content that is already committed on `main` (for example the
+East Run thread, the KRI-126/129 titles and the KRI-118 shapes) may be reused verbatim
+in a record. Raw prod payloads stay out of git and out of tickets; summarize decision
+names and outcomes.
+
+**Owner and cadence.** Owner: Emir Erben. Review weekly, 15 minutes. Checklist:
+
+- [ ] Contract-decline reasons seen this week (which `unresolved`/refusal messages fired, and for which creator ask)
+- [ ] Escaped failures: bad outputs that shipped without a decline (new records, written failing first)
+- [ ] New capability gaps (asks the product cannot yet honour, with an alternative offered)
+- [ ] Unnecessary questions (asked when the request was already clear)
+- [ ] Refusal dead ends (a refusal with no next step for the creator)
+- [ ] Whether final outputs obeyed the creator's answers to questions
+
 ## Deployment order
 
 1. Deploy additive migrations and queue/task support with runtime v2 disabled.
