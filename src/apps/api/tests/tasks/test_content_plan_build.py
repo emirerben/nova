@@ -4787,3 +4787,21 @@ def test_dispatch_keeps_a_factory_stamp_and_never_restamps(monkeypatch):  # noqa
     job = on.session.add.call_args.args[0]
     # The factory decided once (stamped); a later flag flip must not unstamp it.
     assert job.all_candidates["creator_plan_authority_version"] == 1
+
+
+# --- KRI-470 PR-D: dispatch re-records the route once the guided snapshot is attached ---
+
+
+def test_dispatch_records_the_route_for_a_stamped_job_and_not_for_an_unstamped_one(monkeypatch):  # noqa: ANN001
+    from app.services.creator_render_contract import read_render_contract
+
+    stamped = _dispatch_with_binding(monkeypatch, enabled=True, factory_stamped=False)
+    job = stamped.session.add.call_args.args[0]
+    contract = read_render_contract(job.assembly_plan)
+    assert contract is not None
+    assert "guided_edit" in job.assembly_plan, "the route is resolved AFTER the snapshot attaches"
+    assert (contract.route, contract.route_platform) == ("guided_story", "phone")
+
+    unstamped = _dispatch_with_binding(monkeypatch, enabled=False, factory_stamped=False)
+    job = unstamped.session.add.call_args.args[0]
+    assert "route" not in job.assembly_plan["creator_render_requirements"]

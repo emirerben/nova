@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from types import UnionType
 from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_serializer
 
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.kria.brief import CreativeBrief
@@ -564,7 +564,23 @@ class CreatorRenderContract(BaseModel):
     order_required: bool = False
     order_basis: str | None = None
     unresolved: tuple[str, ...] = ()
+    # KRI-470 PR-D: the route the approved plan resolves to and the platform it was
+    # resolved for (`services/render_route.py`).  Post-v1 and stamped only on plan-
+    # authority jobs; shadow-compared by the dispatchers, never yet obeyed.
+    route: str | None = None
+    route_platform: str | None = None
     digest: str = ""
+
+    @model_serializer(mode="wrap")
+    def _omit_post_v1_defaults(self, handler):  # noqa: ANN001, ANN202
+        # A post-v1 field at its default is not written, so a job that never sets it
+        # stores exactly the pre-field JSON (unstamped jobs stay byte-identical, and an
+        # older worker's `extra="forbid"` reader never sees an unknown key).
+        data = handler(self)
+        for key, default in _POST_V1_FIELD_DEFAULTS.items():
+            if key in data and data[key] == default:
+                del data[key]
+        return data
 
     def rebind(self, **changes: object) -> CreatorRenderContract:
         """Return an explicitly changed contract with a fresh integrity digest."""
@@ -603,7 +619,7 @@ def _hash(value: object) -> str:
 # stored contract readable (``read_render_contract`` would otherwise reject
 # in-flight jobs with "requirements changed").  A field is added here in the
 # same change that adds it to the model, and never removed.
-_POST_V1_FIELD_DEFAULTS: dict[str, Any] = {}
+_POST_V1_FIELD_DEFAULTS: dict[str, Any] = {"route": None, "route_platform": None}
 
 
 def _digest(data: Mapping[str, Any]) -> str:

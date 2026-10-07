@@ -617,6 +617,11 @@ def build_generative_job(
         assembly_plan["creator_generation_id"] = creator_generation_id
     if creator_contract is not None:
         assembly_plan.update(creator_contract)
+        # KRI-470 PR-D: record the route the approved plan resolves to (plan-authority
+        # jobs only; every other job keeps its exact assembly_plan).
+        from app.services.render_route import stamp_route  # noqa: PLC0415
+
+        assembly_plan = stamp_route(assembly_plan, all_candidates)
     return Job(
         user_id=user_id,
         job_type="generative",

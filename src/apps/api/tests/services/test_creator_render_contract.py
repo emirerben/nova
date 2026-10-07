@@ -373,6 +373,23 @@ def test_a_post_v1_defaulted_field_does_not_change_a_stored_v1_digest(monkeypatc
         read_render_contract({CONTRACT_FIELD: tampered})
 
 
+def test_the_real_route_fields_leave_stored_v1_contracts_byte_identical():
+    """KRI-470 PR-D added ``route`` / ``route_platform``: a stored v1 contract still reads, its
+    dump carries neither key, and only an actually-set route changes the digest."""
+    contract = read_render_contract({CONTRACT_FIELD: dict(STORED_V1_CONTRACT)})
+    assert contract is not None
+    assert contract.route is None and contract.route_platform is None
+    assert contract.model_dump(mode="json") == STORED_V1_CONTRACT
+    assert contract.rebind().model_dump(mode="json") == STORED_V1_CONTRACT
+    stamped = contract.rebind(route="speech_montage", route_platform="phone")
+    assert stamped.digest != STORED_V1_CONTRACT["digest"]
+    dumped = stamped.model_dump(mode="json")
+    assert (dumped["route"], dumped["route_platform"]) == ("speech_montage", "phone")
+    assert read_render_contract({CONTRACT_FIELD: dumped}) == stamped
+    with pytest.raises(CreatorRenderContractError, match="changed"):
+        read_render_contract({CONTRACT_FIELD: {**dumped, "route": "montage"}})
+
+
 def test_without_the_skip_registration_a_new_field_would_break_stored_contracts(monkeypatch):
     """Guards the guard: an unregistered added field is exactly the in-flight-job break."""
     from app.services import creator_render_contract as module

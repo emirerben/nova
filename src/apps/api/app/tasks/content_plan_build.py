@@ -2543,6 +2543,13 @@ def _dispatch_item_render(
             }
         snapshot["speech_cleanup_outcome"] = dict(preflight_outcome)
     job.assembly_plan = snapshot
+    # KRI-470 PR-D: re-record the contract's route now that the guided snapshot (which
+    # the route depends on) is attached. Plan-authority jobs only; others unchanged.
+    from app.services.render_route import stamp_route  # noqa: PLC0415
+
+    job.assembly_plan = stamp_route(
+        job.assembly_plan or {}, getattr(job, "all_candidates", None) or {}
+    )
     # Caller holds Plan -> Persona -> PlanItem locks and has revalidated this
     # exact epoch. Job is last in the global lock/write order.
     if _plan_epoch(plan) != ownership_epoch:
