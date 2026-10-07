@@ -330,7 +330,11 @@ def _speaking_assignment(has_speech: bool = True) -> dict:
 
 def test_a_speech_montage_candidate_is_offered_no_shape(monkeypatch):
     """The spoken-excerpt montage renders portrait and ignores bars/crop, so a
-    strategy that may route to it must not offer a shape it would silently drop."""
+    strategy that may route to it must not offer a shape it would silently drop.
+
+    LEGACY (unstamped) routing: the worker's raw-text gate. Plan-authority jobs are covered
+    by the KRI-470 PR-F tests below."""
+    monkeypatch.setattr("app.config.settings.kria_plan_authority_enabled", False)
     monkeypatch.setattr("app.config.settings.speech_excerpt_montage_enabled", True)
     talking = _item([_speaking_assignment()])
     offer = _offer(item=talking, creator_request="make a reel")
@@ -348,6 +352,7 @@ def test_a_speech_montage_candidate_is_offered_no_shape(monkeypatch):
 def test_the_speech_gate_is_the_workers_own_predicate(monkeypatch):
     from app.services.speech_montage_planning import speech_montage_possible
 
+    monkeypatch.setattr("app.config.settings.kria_plan_authority_enabled", False)
     monkeypatch.setattr("app.config.settings.speech_excerpt_montage_enabled", True)
     for request, speech in [
         ("make a reel", True),
@@ -412,6 +417,46 @@ def test_the_preselected_default_matches_what_the_auto_path_would_pick(shapes):
 
 
 def test_an_unknown_request_with_a_speaking_clip_still_withholds_the_shape(monkeypatch):
+    monkeypatch.setattr("app.config.settings.kria_plan_authority_enabled", False)
     monkeypatch.setattr("app.config.settings.speech_excerpt_montage_enabled", True)
     assert _offer(item=_item([_speaking_assignment()]), creator_request="").has_choice is False
     assert _offer(item=_item([_speaking_assignment(False)]), creator_request="").has_choice is True
+
+
+# ── KRI-470 PR-F: plan-authority jobs route by the typed plan, not request words ──────────────
+
+
+def _montage_offer(*, camera_audio: bool, request: str, speech: bool = True):
+    audio = {"preserve_source_audio": True, "source_media_ids": ["m-1"]} if camera_audio else None
+    strategy = CreativeStrategy(edit_format="montage", montage_audio=audio)
+    return rs.creation_offer(
+        _item([_speaking_assignment(speech)]),
+        strategy,
+        landscape_enabled=True,
+        creator_request=request,
+    )
+
+
+def test_plan_authority_offers_a_shape_however_the_request_talks_about_speech(monkeypatch):
+    monkeypatch.setattr("app.config.settings.kria_plan_authority_enabled", True)
+    monkeypatch.setattr("app.config.settings.speech_excerpt_montage_enabled", True)
+    for request in ("make a reel", "play my best lines", "use what I say over the b-roll", ""):
+        offer = _montage_offer(camera_audio=False, request=request)
+        assert offer.has_choice is True, request
+
+
+def test_plan_authority_withholds_the_shape_only_for_named_camera_audio(monkeypatch):
+    monkeypatch.setattr("app.config.settings.kria_plan_authority_enabled", True)
+    monkeypatch.setattr("app.config.settings.speech_excerpt_montage_enabled", True)
+    for request in ("make a reel", "play my best lines"):
+        offer = _montage_offer(camera_audio=True, request=request, speech=False)
+        assert offer.has_choice is False and offer.reason == rs.REASON_SPEECH_MONTAGE
+
+
+def test_legacy_routing_still_reads_the_request_words(monkeypatch):
+    monkeypatch.setattr("app.config.settings.kria_plan_authority_enabled", False)
+    monkeypatch.setattr("app.config.settings.speech_excerpt_montage_enabled", True)
+    assert (
+        _montage_offer(camera_audio=False, request="play my best lines", speech=False).has_choice
+        is False
+    )

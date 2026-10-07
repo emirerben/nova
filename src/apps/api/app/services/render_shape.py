@@ -159,6 +159,12 @@ def previous_ready_orientation(job: object | None) -> OutputOrientationChoice | 
     return None
 
 
+def _names_camera_audio_sources(strategy: object) -> bool:
+    """Whether the strategy pins camera-audio sources (the contract's ``audio_source_ids``)."""
+    audio = _get(strategy, "montage_audio")
+    return bool(_get(audio, "preserve_source_audio") and (_get(audio, "source_media_ids") or []))
+
+
 def _may_route_to_speech_montage(item: object, strategy: object, creator_request: str) -> bool:
     """Whether the worker could take this montage down the spoken-excerpt lane.
 
@@ -175,6 +181,12 @@ def _may_route_to_speech_montage(item: object, strategy: object, creator_request
         return False
     if _get(strategy, "audio_strategy") == "voiceover" or getattr(item, "voiceover_gcs_path", None):
         return False
+    if settings.kria_plan_authority_enabled:
+        # KRI-470 PR-F: a job minted now is plan-authority stamped (this very flag is what
+        # stamps it at dispatch), and a stamped job's worker takes the spoken-excerpt lane
+        # only when its pinned contract names camera-audio sources -- never because the
+        # request mentions speaking. Offer the shape by the same typed fact.
+        return _names_camera_audio_sources(strategy)
     any_speech = False
     for assignment in getattr(item, "clip_assignments", None) or ():
         if not isinstance(assignment, Mapping):

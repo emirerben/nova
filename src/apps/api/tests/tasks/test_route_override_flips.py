@@ -769,3 +769,31 @@ def test_the_cloud_dispatcher_leaves_an_unstamped_narrated_render_on_the_legacy_
     monkeypatch,
 ) -> None:
     assert not _render_kwargs_of_the_narrated_dispatch(monkeypatch, stamped=False)["plan_authority"]
+
+
+# --- Flip 7b: request words never route a contracted phone montage to the speech lane -----
+
+
+def _phone_speech_words_job(monkeypatch, *, contracted: bool):
+    from tests.tasks.test_route_shadow_dispatch import Harness, _job
+
+    job = _job(platform="phone")
+    job.all_candidates["creator_request"] = "play my best lines, use what I say"
+    if not contracted:
+        # A pre-contract job: no pinned requirements at all (the legacy dispatch rule).
+        job.assembly_plan.pop(CONTRACT_FIELD)
+        job.all_candidates.pop(REQUIREMENT_VERSION_FIELD)
+        job.all_candidates.pop(PLAN_AUTHORITY_FIELD)
+    h = Harness(monkeypatch, job)
+    h.run()
+    return h
+
+
+def test_a_contracted_phone_montage_ignores_speech_words_in_the_request(monkeypatch) -> None:
+    h = _phone_speech_words_job(monkeypatch, contracted=True)
+    assert h.calls == ["_run_phone_unified_montage_job"]
+
+
+def test_a_pre_contract_phone_montage_still_tries_the_speech_lane_first(monkeypatch) -> None:
+    h = _phone_speech_words_job(monkeypatch, contracted=False)
+    assert h.calls == ["run_phone_speech_montage_job", "_run_phone_unified_montage_job"]
