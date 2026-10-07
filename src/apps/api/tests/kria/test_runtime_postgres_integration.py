@@ -3045,8 +3045,12 @@ async def test_a_stale_shape_stash_is_cleared_when_a_retry_sends_no_shape(
 async def test_a_shape_choice_on_a_possible_speech_montage_is_not_applicable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The spoken-excerpt montage ignores the shape, so a choice is refused, not dropped."""
+    """The spoken-excerpt montage ignores the shape, so a choice is refused, not dropped.
+
+    Legacy routing (raw-text gate). With plan authority on, the offer follows the typed plan's
+    camera-audio sources instead (KRI-470 PR-F; tests/services/test_render_shape.py)."""
     monkeypatch.setattr(settings, "ios_device_only_mode", True)
+    monkeypatch.setattr(settings, "kria_plan_authority_enabled", False)
     monkeypatch.setattr(settings, "speech_excerpt_montage_enabled", True)
     monkeypatch.setenv("LANDSCAPE_OUTPUT_ENABLED", "true")
     try:

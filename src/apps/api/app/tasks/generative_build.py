@@ -238,6 +238,85 @@ def _creator_decline_payload(exc: BaseException) -> dict[str, str]:
     return decline_payload(exc)
 
 
+_PLAN_REPAIR = (
+    "I can rebuild the edit from your confirmed plan, or you can ask for a different edit."
+)
+
+
+_SPEECH_FALLBACK_DECLINES = {
+    "no_speech": (
+        "I couldn't find clear speech in your clips to build this edit.",
+        "Pick a clip where you talk, record a voiceover, or ask for a montage.",
+    ),
+    "spine_too_short": (
+        "The clip with your speech is too short to cut other footage into.",
+        "Use a longer clip of you talking, or ask for a montage.",
+    ),
+    "spine_extraction_failed": (
+        "I couldn't read the speech in your clip.",
+        "Try a different clip of you talking, or ask for a montage.",
+    ),
+}
+
+
+def _speech_fallback_decline(reason: str | None) -> BaseException | None:
+    """KRI-470 PR-F: the typed decline for a plan-authority job whose speech-spined edit lost
+    its speech, or ``None`` when ``reason`` is not one of those (every other fallback keeps its
+    legacy handling).
+
+    A talking-head / self-narrated edit IS its speech. Legacy renders a montage instead and
+    banners the downgrade; a plan-authority job says what is missing (``evidence_missing``,
+    which recovery maps to a repair or a question), so the creator never gets a different
+    kind of edit than the one they approved.
+    """
+    detail = _SPEECH_FALLBACK_DECLINES.get(reason or "")
+    if detail is None:
+        return None
+    return _plan_decline(
+        "evidence_missing", detail[0], field_path="edit_format", alternative=detail[1]
+    )
+
+
+def _flag_decline(kind: str, message: str) -> BaseException:
+    """The resolver's typed refusal for a rollout flag that forbids the approved format.
+
+    ``kind`` picks the resolver's own alternative wording (``render_route.ALT_*``), imported
+    lazily like every other render_route use in this module.
+    """
+    from app.services import render_route  # noqa: PLC0415
+
+    alternative = {
+        "different_format": render_route.ALT_DIFFERENT_FORMAT,
+        "phone_format": render_route.ALT_PHONE_FORMAT_UNAVAILABLE,
+        "narrated": render_route.ALT_NARRATED_UNAVAILABLE,
+        "self_narration": render_route.ALT_SELF_NARRATION_UNAVAILABLE,
+    }[kind]
+    return _plan_decline(
+        "capability_unavailable", message, field_path="edit_format", alternative=alternative
+    )
+
+
+def _plan_decline(
+    reason: str, message: str, *, field_path: str | None, alternative: str
+) -> BaseException:
+    """KRI-470 PR-F: the typed refusal a plan-authority job raises where a legacy heuristic
+    would have silently rendered a different kind of edit.
+
+    A ``CloudRenderContractError`` so the cloud handler persists it (failure code
+    ``creator_render_contract_unsupported`` + ``creator_decline``) and the phone fork maps it
+    through ``_creator_decline_payload``; either way the creator sees the reason and the
+    alternative instead of a different edit.
+    """
+    from app.services.cloud_render_contract import CloudRenderContractError  # noqa: PLC0415
+
+    return CloudRenderContractError(
+        message,
+        decline_reason=reason,  # type: ignore[arg-type]
+        field_path=field_path,
+        alternative=alternative,
+    )
+
+
 _CLIP_METADATA_CACHE_VERSION = 1
 _PREPROCESSED_SOURCE_CACHE_VERSION = 1
 _HDR_PRETONEMAP_CACHE_VERSION = 1
@@ -2427,6 +2506,7 @@ def _run_generative_job_impl(
                 # shape fails loudly instead of silently entering the wrong (or a cloud)
                 # renderer.
                 from app.services.creator_render_contract import (  # noqa: PLC0415
+                    PLAN_AUTHORITY_FIELD,
                     REQUIREMENT_VERSION_FIELD,
                     CreatorRenderContractError,
                     check_phone_dispatch_contract,
@@ -2471,6 +2551,11 @@ def _run_generative_job_impl(
                         landscape_fit=_creator_landscape_fit(candidates),
                     )
                 elif declared_format not in phone_render_supported_formats():
+                    if contract is not None and candidates.get(PLAN_AUTHORITY_FIELD) is not None:
+                        # KRI-470 PR-F: the resolver's typed refusal, not a bare ValueError.
+                        raise _flag_decline(
+                            "phone_format", "This kind of edit isn't available on your iPhone yet."
+                        )
                     raise ValueError("No phone renderer is registered for this edit")
                 elif declared_format in GUIDED_EDIT_FORMATS:
                     if has_voiceover_candidate:
@@ -2948,6 +3033,27 @@ def _run_generative_job_impl(
         # narration bed and the job renders voiceover variants instead of song/original
         # — resolved in _resolve_archetype below, ahead of the footage-speech logic.
         voiceover_gcs_path: str | None = all_candidates.get("voiceover_gcs_path") or None
+        # KRI-470 PR-F: a plan-authority job follows the approved contract, not the mere
+        # presence of an attached file. A stray recording no longer turns a montage into
+        # a voiceover/narrated edit or skips a guided snapshot, and a required voice with
+        # no recording asks for it BEFORE any ingest or model spend (the same typed
+        # `needs_choice` the phone dispatcher raises). Unstamped jobs keep the file test.
+        from app.services.creator_render_contract import (  # noqa: PLC0415
+            REQUIREMENT_FIELD_PATHS,
+            plan_voiceover_path,
+            stamped_plan_contract,
+        )
+
+        plan_contract = stamped_plan_contract(immutable_job_plan, all_candidates)
+        if plan_contract is not None:
+            voiceover_gcs_path = plan_voiceover_path(plan_contract, voiceover_gcs_path)
+            if plan_contract.require_voiceover and voiceover_gcs_path is None:
+                raise _plan_decline(
+                    "needs_choice",
+                    "This edit needs your confirmed recorded voice.",
+                    field_path=REQUIREMENT_FIELD_PATHS["require_voiceover"],
+                    alternative="Record or upload your voice, or tell me to use music instead.",
+                )
         # Original-audio bed level for the narrated archetype (0..1; None → Kria's
         # default). Plumbed into the narrated spec; ignored by other archetypes.
         _raw_bed = all_candidates.get("voiceover_bed_level")
@@ -3019,10 +3125,22 @@ def _run_generative_job_impl(
     )
     from app.services.creator_execution_contract import validate_execution_binding  # noqa: PLC0415
 
-    if validate_execution_binding(
-        guided_snapshot, all_candidates.get("creator_strategy"), voiceover_gcs_path
-    ):
-        guided_applicable = True
+    try:
+        if validate_execution_binding(
+            guided_snapshot, all_candidates.get("creator_strategy"), voiceover_gcs_path
+        ):
+            guided_applicable = True
+    except ValueError as exc:
+        if plan_contract is None:
+            raise
+        # KRI-470 PR-F: the approved voiceover plan no longer matches what is attached.
+        # Repairable, so say so with the typed reason instead of an untyped crash.
+        raise _plan_decline(
+            "evidence_missing",
+            str(exc),
+            field_path=REQUIREMENT_FIELD_PATHS["require_voiceover"],
+            alternative=_PLAN_REPAIR,
+        ) from exc
     if guided_snapshot is not None and not guided_applicable:
         if not _guided_snapshot_has_genuine_clip_input(guided_snapshot, clip_paths_gcs):
             record_pipeline_event(
@@ -3036,6 +3154,18 @@ def _run_generative_job_impl(
                 },
             )
             raise AudioLedGuidedConflict()
+        if plan_contract is not None:
+            # KRI-470 PR-F: the approved plan carries a guided story but its edit format
+            # is audio-led. Switching to the classic path would render a different kind
+            # of edit than the one the creator approved, so ask which one they want.
+            from app.services.render_route import ALT_GUIDED_AUDIO_LED  # noqa: PLC0415
+
+            raise _plan_decline(
+                "requirement_conflict",
+                "This plan has a guided story but its edit format is audio-led.",
+                field_path="edit_format",
+                alternative=ALT_GUIDED_AUDIO_LED,
+            )
         record_pipeline_event(
             "assembly",
             "guided_story_skipped_incompatible_intent",
@@ -3503,10 +3633,18 @@ def _run_generative_job_impl(
             clip_durations_s=clip_durations_s,
             prefer_narrated_voiceover=(job.mode == "content_plan"),
             narrative_shot_count=narrative_shot_count,
+            plan_authority=plan_contract is not None,
         )
-        _shadow_route(
-            job_id, immutable_job_plan, all_candidates, "cloud", archetype, "cloud_archetype"
-        )
+        # KRI-470 PR-F: a plan-authority speech edit that lost its speech is declined below,
+        # never rendered as the montage this label names, so it is not a route disagreement.
+        if not (
+            plan_contract is not None
+            and archetype == "montage"
+            and _speech_fallback_decline(archetype_fallback_reason) is not None
+        ):
+            _shadow_route(
+                job_id, immutable_job_plan, all_candidates, "cloud", archetype, "cloud_archetype"
+            )
         # KRI-470 PR-E: talking-head/subtitled renders emit no receipt, so a
         # receipt-only requirement is refused before any variant renders.
         from app.services.cloud_render_contract import check_classic_archetype  # noqa: PLC0415
@@ -3539,6 +3677,11 @@ def _run_generative_job_impl(
             # they drain. A marked snapshot already proved a supported speech
             # lane, so losing that lane is a source mismatch, not a no-op.
             raise SpeechCleanupFailure(montage_cleanup_failure)
+        if plan_contract is not None and archetype == "montage":
+            # After the cleanup rule above, which owns its own recovery for marked jobs.
+            speech_decline = _speech_fallback_decline(archetype_fallback_reason)
+            if speech_decline is not None:
+                raise speech_decline
         if (
             archetype == "talking_head"
             and speech_cut_pinned_spine
@@ -4091,6 +4234,9 @@ def _run_generative_job_impl(
                 # the cleanup the user accepted. Leave the private generation
                 # owned so _fail_job terminalizes it with the reanalysis reset.
                 raise SpeechCleanupFailure(runtime_cleanup_failure) from exc
+            if plan_contract is not None:
+                # KRI-470 PR-F: never swap the approved talking-head edit for a montage.
+                raise _speech_fallback_decline("spine_extraction_failed") from exc  # type: ignore[misc]
             # Critical failure mode: a corrupt/unreadable spine clip degrades the whole
             # job to montage rather than hard-failing (best-effort invariant). Any
             # talking_head partials are discarded — _render_spec_set starts montage fresh.
@@ -4838,6 +4984,10 @@ def _run_phone_voiceover_montage_job(
                 (user_style.get("footage_type_bias") or []) if user_style else []
             )
             voiceover_gcs_path = all_candidates.get("voiceover_gcs_path")
+            from app.services.creator_render_contract import (  # noqa: PLC0415
+                stamped_plan_contract,
+            )
+
             archetype, _spine, _fallback_reason = _resolve_archetype(
                 edit_format,
                 clip_metas,
@@ -4849,6 +4999,9 @@ def _run_phone_voiceover_montage_job(
                 clip_durations_s=clip_durations_s,
                 prefer_narrated_voiceover=False,
                 narrative_shot_count=narrative_shot_count,
+                # KRI-470 PR-F: the recording wins before any bias is read here, but a
+                # plan-authority job states "no promotion" the same way as every caller.
+                plan_authority=stamped_plan_contract(snapshot, all_candidates) is not None,
             )
             # `_resolve_archetype` returns "voiceover" (never "narrated") for
             # any montage-family edit_format with a recorded voiceover --
@@ -6008,7 +6161,20 @@ def _run_phone_subtitled_job(
         )
 
     edit_format = coerce_edit_format(all_candidates.get("edit_format"))
-    has_voiceover = bool(all_candidates.get("voiceover_gcs_path"))
+    # KRI-470 PR-F: the dispatcher chose this branch from the approved contract
+    # (`check_phone_dispatch_contract`), so a plan-authority job derives the voice from
+    # the same contract. Recomputing it from the attached FILE sent a narrated format
+    # with a stray recording but no voice requirement to the "No phone renderer" error
+    # below. Legacy (unstamped) jobs keep the file test.
+    from app.services.creator_render_contract import (  # noqa: PLC0415
+        plan_voiceover_path,
+        stamped_plan_contract,
+    )
+
+    plan_contract = stamped_plan_contract(snapshot, all_candidates)
+    has_voiceover = bool(
+        plan_voiceover_path(plan_contract, all_candidates.get("voiceover_gcs_path"))
+    )
     self_narrated = edit_format in NARRATED_EDIT_FORMATS and not has_voiceover
     if edit_format != "subtitled" and not self_narrated:
         raise ValueError(f"No phone renderer is registered for edit_format={edit_format!r}")
@@ -6019,8 +6185,16 @@ def _run_phone_subtitled_job(
         # checked this via `phone_render_supported_formats()`, but a
         # redelivered message or a flag flipped mid-flight must still fail
         # closed here rather than compile an edit the rollout disabled.
+        if plan_contract is not None:
+            raise _flag_decline(
+                "different_format", "Talking-to-camera edits aren't available on your iPhone yet."
+            )
         raise ValueError("Phone rendering does not yet support talking-to-camera edits")
     if self_narrated and not settings.narrated_self_narration_enabled:
+        if plan_contract is not None:
+            raise _flag_decline(
+                "self_narration", "Edits narrated by your own footage aren't available yet."
+            )
         raise ValueError(
             f"Phone rendering does not yet support self-narrated '{edit_format}' edits"
         )
@@ -6248,7 +6422,12 @@ def _run_phone_subtitled_job(
                     job_id=job_id,
                     voiceover_gcs_path=None,
                     clip_durations_s=clip_durations_s,
+                    plan_authority=plan_contract is not None,
                 )
+                if plan_contract is not None and archetype == "montage":
+                    speech_decline = _speech_fallback_decline(_fallback_reason)
+                    if speech_decline is not None:
+                        raise speech_decline
                 expected_archetype = "talking_head" if multi_clip else "subtitled"
                 if archetype != expected_archetype or (multi_clip and spine_clip_id is None):
                     raise UnsupportedPhonePlan(
@@ -18308,8 +18487,15 @@ def _resolve_archetype(
     clip_durations_s: dict[str, float] | None = None,
     prefer_narrated_voiceover: bool = False,
     narrative_shot_count: int | None = None,
+    plan_authority: bool = False,
 ) -> tuple[str, str | None, str | None]:
     """Resolve the declared edit_format against footage → (archetype, spine, fallback_reason).
+
+    ``plan_authority`` (KRI-470 PR-F; a job stamped with ``creator_plan_authority_version``):
+    the approved plan stands. A rollout flag that forbids the plan's format raises the
+    resolver's typed ``capability_unavailable`` decline instead of falling back to a montage,
+    and ``footage_type_bias`` never promotes a montage to a talking head. The caller already
+    derived ``voiceover_gcs_path`` from the contract. Unstamped jobs take every legacy branch.
 
     Default-safe: returns `("montage", None, reason)` for every case except a talking_head
     edit that is enabled AND backed by footage with usable speech, and the narrated
@@ -18362,6 +18548,8 @@ def _resolve_archetype(
             record_pipeline_event("assembly", "archetype_selected", {"archetype": "narrated"})
             log.info("generative_archetype_selected", job_id=job_id, archetype="narrated")
             return "narrated", None, None
+        if plan_authority and edit_format in NARRATED_EDIT_FORMATS:
+            raise _flag_decline("narrated", "The narrated edit is not available.")
         record_pipeline_event(
             "assembly",
             "archetype_fallback",
@@ -18384,6 +18572,17 @@ def _resolve_archetype(
     # is the SOLE gate here — the declared-format kill switches
     # (subtitled_archetype_enabled / edit_format_talking_head_enabled) gate the style
     # picker, not this resolution outcome (see config.py).
+    if (
+        plan_authority
+        and edit_format in NARRATED_EDIT_FORMATS
+        and not voiceover_gcs_path
+        and not settings.narrated_self_narration_enabled
+    ):
+        # Legacy falls through to `archetype_not_implemented` -> montage: a different kind
+        # of edit than the narrated one the creator approved.
+        raise _flag_decline(
+            "self_narration", "Edits narrated by your own footage are not available."
+        )
     if (
         edit_format in NARRATED_EDIT_FORMATS
         and not voiceover_gcs_path
@@ -18439,6 +18638,8 @@ def _resolve_archetype(
     # via a stale/forced token).
     if edit_format == "subtitled":
         if not settings.subtitled_archetype_enabled:
+            if plan_authority:
+                raise _flag_decline("different_format", "The talking-to-camera edit is off.")
             return _fallback("flag_disabled")
         record_pipeline_event("assembly", "archetype_selected", {"archetype": "subtitled"})
         log.info("generative_archetype_selected", job_id=job_id, archetype="subtitled")
@@ -18493,7 +18694,8 @@ def _resolve_archetype(
         # talking_head path only when the flag is on AND speech actually exists.
         # Hard signals already handled above (voiceover) or below (explicit format).
         # This is a tie-breaker only — it NEVER runs if the flag is off.
-        bias = list(footage_type_bias or [])
+        # KRI-470 PR-F: the approved montage stands; a style preference never promotes it.
+        bias = [] if plan_authority else list(footage_type_bias or [])
         if bias:
             record_pipeline_event(
                 "assembly",
@@ -18561,6 +18763,8 @@ def _resolve_archetype(
         # Unknown future formats never enter a renderer.
         return _fallback("archetype_not_implemented")
     if not settings.edit_format_talking_head_enabled:
+        if plan_authority:
+            raise _flag_decline("different_format", "The talking-head edit is off.")
         return _fallback("flag_disabled")
 
     # Pick the highest-speech clip; reject the format if none carries real speech.

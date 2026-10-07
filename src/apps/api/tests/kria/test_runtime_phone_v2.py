@@ -985,16 +985,24 @@ def test_a_cloud_publication_evidence_gap_is_a_repair_retry() -> None:
     assert "retry without rebuilding" in events[-1]["content"]
 
 
-def test_a_preflight_evidence_gap_on_the_job_is_a_repair_retry() -> None:
+def test_a_preflight_evidence_gap_on_the_job_is_a_refusal_not_a_retry() -> None:
+    """KRI-470 PR-F: a decline persisted on the JOB (cloud preflight / pre-render) is
+    deterministic -- a retry re-runs ingest and cannot add evidence -- so it is a refusal
+    with the alternative. A publication-time gap on a VARIANT (below) keeps the repair retry."""
     job = _declined_job(
         "creator_render_contract_unsupported",
         decline={
             "decline_reason": "evidence_missing",
+            "alternative": "Pick a clip where you talk, or ask for a montage.",
             "failure_reason": "creator_render_contract_unsupported",
         },
+        detail="I couldn't find clear speech in your clips to build this edit.",
     )
-    _, execution, _events = _observe(job, {})
-    assert execution.error["recovery"] == "retry"
+    _, execution, events = _observe(job, {})
+    assert execution.error["recovery"] == "ask_user"
+    assert execution.error["retryable"] is False
+    assert execution.error["decline_reason"] == "evidence_missing"
+    assert "Pick a clip where you talk" in events[-1]["content"]
 
 
 def test_capability_unavailable_decline_names_the_limit_and_a_supported_alternative() -> None:
@@ -1244,3 +1252,75 @@ def test_a_device_failure_with_no_recorded_refusal_keeps_the_phone_retry_copy() 
     assert execution.error["recovery"] == "manual"
     assert "tap Retry" in events[-1]["content"]
     assert "decline_reason" not in execution.error
+
+
+# --- KRI-470 PR-F: cloud typed declines are what the creator SEES ------------------------------
+
+_CLOUD_DECLINES = {
+    "needs_choice": ("Record or upload your voice, or tell me to use music instead.", "ask_user"),
+    "requirement_conflict": ("Pick one: the guided story, or the spoken edit.", "ask_user"),
+    "evidence_missing": ("Pick a clip where you talk, or ask for a montage.", "ask_user"),
+    "capability_unavailable": ("Ask for a different format.", "ask_user"),
+}
+
+
+@pytest.mark.parametrize("reason", sorted(_CLOUD_DECLINES))
+def test_every_cloud_preflight_decline_reaches_the_creator_with_its_alternative(
+    reason: str,
+) -> None:
+    alternative, recovery = _CLOUD_DECLINES[reason]
+    job = _declined_job(
+        "creator_render_contract_unsupported",
+        decline={
+            "decline_reason": reason,
+            "field_path": "edit_format",
+            "alternative": alternative,
+            "failure_reason": "creator_render_contract_unsupported",
+        },
+        detail="This edit can't be built the way it was approved.",
+    )
+    _, execution, events = _observe(job, {})
+    assert execution.error == {
+        "code": "creator_render_contract_unsupported",
+        "retryable": False,
+        "recovery": recovery,
+        "decline_reason": reason,
+        "field_path": "edit_format",
+    }
+    content = events[-1]["content"]
+    assert "can't be built the way it was approved" in content
+    assert alternative in content
+    assert "retry without rebuilding" not in content
+    assert events[-1]["payload"]["recovery"] == recovery
+    assert events[-1]["payload"]["decline_reason"] == reason
+
+
+@pytest.mark.parametrize("reason", ["needs_choice", "requirement_conflict"])
+def test_a_cloud_publication_conflict_or_choice_is_a_question_not_a_retry(reason: str) -> None:
+    job = _declined_job("creator_render_contract_unverified")
+    job.assembly_plan = {
+        "variants": [
+            {
+                "variant_id": VARIANT,
+                "render_status": "failed",
+                "error": "Two of your confirmed requirements can't both hold.",
+                "error_class": "creator_render_contract_unverified",
+                "decline_reason": reason,
+                "alternative": "Tell me which one matters more.",
+            }
+        ]
+    }
+    _, execution, events = _observe(job, {"target_variant_id": VARIANT})
+    assert execution.error["recovery"] == "ask_user"
+    assert execution.error["retryable"] is False
+    assert "Tell me which one matters more." in events[-1]["content"]
+
+
+def test_a_cloud_decline_never_shows_text_that_was_not_authored_as_a_decline() -> None:
+    """No typed decline -> no copy from error_detail: the generic text stays."""
+    job = _declined_job(
+        "creator_render_contract_unsupported", detail="Traceback: KeyError 'secret-token'"
+    )
+    _, execution, events = _observe(job, {})
+    assert execution.error["recovery"] == "retry"
+    assert "secret-token" not in events[-1]["content"]

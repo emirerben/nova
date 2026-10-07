@@ -523,45 +523,79 @@ about to be written; a failed probe records anyway).
 
 ### How PR-F uses it
 
-PR-F flips one override at a time. For each row of the legacy-gate column: review the
-`route_mismatch` events from a canary of stamped jobs, decide whether the resolver or the
-legacy branch was right, then (for stamped jobs only) make the dispatcher obey the
-resolver for that one case and turn the legacy downgrade into a typed refusal or a
-repair/retry. Unstamped jobs keep the legacy branch, so each flip needs a stamped and an
-unstamped twin test.
+PR-F flips one override at a time. The gate is `creator_render_contract.stamped_plan_contract`
+(the dispatch-time `creator_plan_authority_version` stamp AND a pinned contract); an unstamped
+job takes the legacy line byte for byte, and each flip has a stamped test and an unstamped
+twin through the real dispatcher (`tests/tasks/test_route_override_flips.py`). A refusal is a
+typed decline (`reason`, `field_path`, `alternative`, the same wording the resolver uses:
+`render_route.ALT_*`), raised as `CloudRenderContractError` so the cloud handler persists it
+(`creator_render_contract_unsupported` + `creator_decline`) and the phone fork maps it through
+`_creator_decline_payload` (`phone_plan_unsupported`). What the creator then sees is decided by
+the recovery observer in `tasks/kria_runtime.py`:
 
-Differences between the resolver and the legacy dispatchers already known (the starting
-worklist; the event log will add to it):
+| Where the decline was persisted | `needs_choice`, `requirement_conflict`, `capability_unavailable` | `evidence_missing` |
+| --- | --- | --- |
+| Job level, cloud (`creator_render_contract_unsupported`: adapter preflight and every PR-F route decline, raised before anything renders) | `ask_user`, not retryable, the decline's own message plus its alternative | the same: a retry re-runs ingest and cannot add evidence |
+| Variant level, cloud (`creator_render_contract_unverified`: publication check of a rendered artifact) | the same refusal copy | repair retry (PR-A): a re-run can produce the evidence |
+| Phone (`phone_plan_unsupported`) | PR-A behaviour, alternative appended | deterministic, `ask_user` |
 
-- `prefer_narrated_voiceover = job.mode == "content_plan"`: legacy renders `narrated` for a
-  montage-family plan with a voiceover; the resolver says `voiceover`. Needs a product call.
-- Voiceover-file presence vs the plan: cloud legacy lets an attached file choose
-  voiceover/narrated and skip the guided snapshot; the resolver follows
-  `contract.require_voiceover`. The resolver also asks (`voiceover_recording`) when the plan
-  requires a voice and no file is attached, where legacy phone dispatch raises
-  `needs_choice` through `check_phone_dispatch_contract` and cloud renders without it.
-  `RouteInputs.voiceover_present` is the FILE; legacy phone routing uses the contract flag.
-- Footage-type promotion (`footage_type_bias`): legacy turns a montage into `talking_head`.
-- Rollout flags off (subtitled, talking_head, narrated, day_vlog, single_hero, self-narration):
-  legacy silently falls back to montage; the resolver refuses with `capability_unavailable`.
-- Speech-coverage fallback (`no_speech` -> montage): the resolver refuses only when every clip
-  was analysed with a real `understanding.speech` block and none speaks.
-- A guided snapshot on an audio-led or native plan: legacy skips it (or raises
-  `AudioLedGuidedConflict`); the resolver returns `requirement_conflict`.
-- A stale creator-song attachment (song attached, plan says library music): legacy renders
-  `user_song_montage`; the resolver says `unified_montage`.
-- `audio_strategy == "user_song"` with NO attached song: the resolver returns `needs_choice`
-  (`song_upload`) where legacy silently renders a plain unified montage. A regression risk for
-  PR-F: flipping this override changes what such jobs do.
-- Ordering: legacy checks guided before slides; the resolver checks slides first. A slides plan
-  never has a guided snapshot, so this differs only for inconsistent jobs.
-- A recorded voice on a `subtitled` edit: legacy renders `subtitled`; the resolver refuses.
-- Confirmed legacy defect the route label cannot show: `_run_phone_subtitled_job` recomputes
-  `has_voiceover` from the file (`generative_build.py`, ~line 6000) while the dispatcher chose
-  the branch from `contract.require_voiceover`. A narrated format with a file attached but no
-  voice requirement reaches it and raises "No phone renderer is registered".
-- Not modelled (post-ingest facts): `_MIN_SPINE_COVERAGE`, `spine_too_short`,
-  `insufficient_media`, and the lip-sync to background fallback.
+Only a TYPED decline changes the copy (an untyped failure keeps the generic retry text), so no
+raw exception text reaches the creator. `tests/kria/test_cloud_typed_decline_recovery.py` runs the
+real task entry, the real `_fail_job` and the real observer and asserts what the creator sees.
+
+**Retired for stamped jobs (PR-F)**
+
+| Override | What a stamped job does now | What the creator sees |
+| --- | --- | --- |
+| Phone subtitled worker recomputed the voice from the attached FILE (`_run_phone_subtitled_job`) | Reads `contract.require_voiceover`, like the dispatcher. A narrated format with a stray recording and no voice requirement renders self-narration | No more "No phone renderer is registered" failure |
+| Cloud voice precedence: a file chose voiceover/narrated and skipped the guided snapshot (`_run_generative_job_impl`, `cloud_adapter_for_job`) | `plan_voiceover_path`: the file only counts when `require_voiceover`. Worker and preflight adapter selection read the same value. Required voice + no recording is `needs_choice` before any ingest or model spend | The approved montage/guided edit renders; or "record or upload your voice, or tell me to use music" |
+| Rollout flags off (subtitled, talking_head, narrated, self-narration) fell back to a montage / voiceover (cloud) or raised an untyped ValueError (phone subtitled worker and the phone "no renderer for this format" dispatch) | `capability_unavailable`, the resolver's refusal verbatim, on both platforms | "Ask for a different format" etc. instead of a different kind of edit or a bare failure. Still untyped on phone: the multi-clip subtitled shape guard |
+| `footage_type_bias` promoted a montage to `talking_head` | No promotion | The approved montage |
+| `no_speech` / `spine_too_short` fallbacks and the mid-render `SpineExtractionError` degrade to montage | `evidence_missing`, a refusal with the alternative (no retry can add speech); marked speech-cleanup jobs keep their own `snapshot_mismatch` recovery first. No `route_mismatch` is recorded for the declined row | "I couldn't find clear speech..." with the alternative |
+| Guided snapshot silently skipped to classic on an audio-led format; `validate_execution_binding` ValueError | `requirement_conflict` (same alternative as the resolver) / `evidence_missing` | A question or repair, not a different path |
+| `speech_montage_possible` / `mentions_speech` raw-text gates | The phone dispatcher already routes a contracted job by `contract.audio_source_ids` (pinned by a twin test); the creation offer (`render_shape`) follows the typed `montage_audio` camera sources when `KRIA_PLAN_AUTHORITY_ENABLED` is on | The shape offer matches what the worker will do |
+
+`_first_user_message` stays: it is a content-only language hint for landmark names in the
+unified montage (and the pre-contract speech lane). `tests/test_raw_chat_text_readers.py` scans
+`app/` for every reader of raw chat text (`creator_request`, first/latest user message, brief
+`.text()` prose) and fails for one outside its categorised allow-list (agent prompt, plan time,
+carry, content only, legacy unstamped). Carry and legacy modules are pinned per function, and each
+legacy gate names a live (collected, not skipped or xfailed) test that proves plan-authority jobs
+bypass it. Known limit: a reader that builds the name dynamically (getattr, string concatenation,
+an alias) is not seen; the prose-taking helpers `speech_montage_possible`, `mentions_speech` and
+`_creator_requests_narrated_treatment` are scanned by name.
+
+**Still shadow / still raw-text (not decided by the owner; the resolver and the legacy dispatcher still differ and
+`route_mismatch` keeps recording them)**
+
+- `_creator_requests_narrated_treatment` (regexes over `creator_request` add intro / `PLAYER n` /
+  score text to narrated storyboards) is **not** retired: it changes output, and
+  `CreativeStrategy` has no typed carrier for players or scores, so dropping it for stamped jobs
+  would silently remove treatments the creator asked for. Stamped and unstamped jobs behave the
+  same until a typed treatment carrier exists (follow-up). The allow-list documents it as
+  output-affecting, content-carrying.
+- `prefer_narrated_voiceover = (job.mode == "content_plan")`: a content-plan montage with a
+  required voice renders `narrated`; the resolver says `voiceover`. Product decision.
+- `audio_strategy == "user_song"` with no attached song: resolver `needs_choice`, legacy renders a
+  plain montage.
+- Slides are checked after guided by the legacy dispatcher, before it by the resolver.
+- Post-ingest facts the resolver cannot model: the `_MIN_SPINE_COVERAGE` threshold itself (the
+  resolver only refuses when every clip was analysed with no speech; the worker measures coverage
+  after ingest and declines `evidence_missing` below the threshold, which is a retired fallback, not
+  a mismatch), `insufficient_media`, the lip-sync to background fallback, and the asset-only
+  `AudioLedGuidedConflict`.
+- A recorded voice on a `subtitled` edit (legacy renders subtitled; the verifier later declines
+  `require_voiceover` as `evidence_missing`), a stale creator-song attachment, day-vlog and
+  single-hero flags (they already fail visibly with their own typed policy errors, they never became
+  a montage).
+- The `kri469-voice-clip-ignored` and `kri481-song-audio-plays-twice` output xfails stay: they
+  assert compiled-output facts the voice-behind-footage composer (PR-H) and KRI-481's phone export
+  proof own, not a route.
+
+**Reading `route_mismatch` after PR-F.** A stamped job that records a mismatch for one of the
+"retired" rows above means a flip was bypassed (a regression, investigate). A mismatch for a
+"still shadow" row is expected; use the event's `legacy_route` / `resolver_route` pair to decide
+the next flip. The runbook note lives in `docs/runbooks/admin-job-debug.md`.
 
 ## Routing and failure behavior
 

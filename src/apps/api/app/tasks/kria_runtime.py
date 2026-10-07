@@ -2562,6 +2562,25 @@ _DETERMINISTIC_JOB_FAILURE_CODES = {"phone_plan_unsupported", "user_song_plan_de
 
 _VARIANT_DECLINE_FAILURE_CODES = {"variant_render_failed", "creator_render_contract_unverified"}
 
+# Cloud contract declines (KRI-470 PR-A/E/F). ``unsupported`` is a JOB-level decline raised
+# before anything renders (adapter preflight, plan-authority route declines): the same inputs
+# decline identically on every retry, and a retry re-runs ingest + clip analysis first, so no
+# reason is retryable. ``unverified`` is a publication-time decline of a rendered VARIANT: only
+# missing evidence can appear on a re-run; a conflict or a choice needs the creator.
+_CLOUD_PREFLIGHT_DECLINE_CODE = "creator_render_contract_unsupported"
+_CLOUD_PUBLICATION_DECLINE_CODE = "creator_render_contract_unverified"
+
+
+def _cloud_decline_needs_the_creator(failure_code: str, reason: str) -> bool:
+    """Whether a typed cloud decline is a question/refusal rather than a repair retry."""
+    if failure_code == _CLOUD_PREFLIGHT_DECLINE_CODE:
+        return True
+    return failure_code == _CLOUD_PUBLICATION_DECLINE_CODE and reason in {
+        "needs_choice",
+        "requirement_conflict",
+        "capability_unavailable",
+    }
+
 
 def _typed_creator_decline(
     job: Job, variant_id: str | None, failure_code: str | None = None
@@ -3541,7 +3560,10 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             )
         )
         if typed_decline is not None and not device_failed:
-            if (
+            if _cloud_decline_needs_the_creator(failure_code, typed_decline["decline_reason"]):
+                # KRI-470 PR-F: a cloud decline that no retry can fix is never a Retry button.
+                deterministic = True
+            elif (
                 typed_decline["decline_reason"] == "evidence_missing"
                 and failure_code not in _DETERMINISTIC_JOB_FAILURE_CODES
             ):
@@ -3652,10 +3674,12 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             )
         elif recovery_message is not None:
             failure_content = recovery_message
-        elif (
-            typed_decline is not None
-            and typed_decline["decline_reason"] == "capability_unavailable"
+        elif typed_decline is not None and (
+            typed_decline["decline_reason"] == "capability_unavailable"
+            or _cloud_decline_needs_the_creator(failure_code, typed_decline["decline_reason"])
         ):
+            # The decline's own authored message plus the way forward. Only a TYPED decline
+            # reaches here, so no raw exception text is ever shown.
             failure_content = _capability_refusal_copy(typed_decline)
         elif deterministic or failure_code in {
             "phone_capability_unavailable",
