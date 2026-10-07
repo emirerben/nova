@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.148.0] - 2026-10-07
+
+### Changed
+- fix(kria): resolve creative wording before render (KRI-506) (#1466) <!-- release-pr: 1466 -->
+
 ## [0.78.147.0] - 2026-10-07
 
 ### Changed
