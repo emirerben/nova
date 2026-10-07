@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.131.0] - 2026-10-07
+
+### Fixed
+- fix(creator): make iPhone title follow-ups edit the current cut (KRI-485) (#1454) <!-- release-pr: 1454 -->
+
 ## [0.78.130.0] - 2026-10-07
 
 ### Changed
