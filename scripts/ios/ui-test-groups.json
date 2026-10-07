@@ -99,6 +99,7 @@
       "KriaUITests/CreationUITests/testChoiceQuestionShowsRecommendedOptionAndSendsStructuredAnswerOnce",
       "KriaUITests/CreationUITests/testChoiceQuestionFallsBackToTextWhenServerLacksCapability",
       "KriaUITests/CreationUITests/testLivePlanFeedFullSequence",
+      "KriaUITests/CreationUITests/testReadyVideoFollowupWaitsWithoutReplayingPriorPlan",
       "KriaUITests/CreationUITests/testLivePlanFeedStaysOffWithoutTheCapability",
       "KriaUITests/CreationUITests/testLivePlanFeedStaysLiveAcrossTheDeviceBuild",
       "KriaUITests/CreationUITests/testLivePlanFeedStopCancelsTheDeviceRender",

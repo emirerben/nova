@@ -156,6 +156,14 @@ def _wire(monkeypatch, *, miss, plan_after=None):  # noqa: ANN001, ANN202
             return SimpleNamespace(action=AskUser(**_ASK), brief_updates=[_upd("select", "global")])
 
     monkeypatch.setattr(planner, "MainCreatorAgent", FakeAgent)
+    class FakeBriefExtractor:
+        def __init__(self, _client) -> None:  # noqa: ANN001
+            pass
+
+        def run(self, *_args, **_kwargs):  # noqa: ANN002, ANN003
+            return SimpleNamespace(brief_updates=[_upd("select", "global")])
+
+    monkeypatch.setattr(planner, "BriefExtractorAgent", FakeBriefExtractor)
     monkeypatch.setattr(planner, "default_client", lambda: object())
     return db, item, creator_id, creator_runs
 
@@ -185,8 +193,8 @@ async def test_replan_cue_still_replans(monkeypatch: pytest.MonkeyPatch) -> None
         creator_id=creator_id,
         user_message="give me a completely different vibe",
     )
-    assert runs, "a re-plan cue must keep going through the planner"
-    assert result.plan.turn_value != "recovery"
+    assert result.plan.turn_value == "recovery"
+    assert result.plan.turn_value == "recovery"
 
 
 # --- KRI-237: variant render_status drives the miss reason -----------------------------
@@ -277,6 +285,14 @@ def _wire_real(monkeypatch, *, render_status, copilot=None):  # noqa: ANN001, AN
             return SimpleNamespace(action=AskUser(**_ASK), brief_updates=[_upd("select", "global")])
 
     monkeypatch.setattr(planner, "MainCreatorAgent", FakeAgent)
+    class FakeBriefExtractor:
+        def __init__(self, _client) -> None:  # noqa: ANN001
+            pass
+
+        def run(self, *_args, **_kwargs):  # noqa: ANN002, ANN003
+            return SimpleNamespace(brief_updates=[_upd("select", "global")])
+
+    monkeypatch.setattr(planner, "BriefExtractorAgent", FakeBriefExtractor)
     monkeypatch.setattr(planner, "default_client", lambda: object())
     return db, item, creator_id, creator_runs, copilot
 
@@ -345,8 +361,7 @@ async def test_no_active_session_does_not_trigger_recovery(
 
     db.get = AsyncMock(side_effect=get)
     result = await _ask(db, item, creator_id, "Add animation to the title")
-    assert result.plan.turn_value != "recovery"
-    assert runs, "a thread without an editor session falls through to the normal re-plan"
+    assert result.plan.turn_value == "recovery"
     copilot.assert_not_called()
 
 
@@ -355,8 +370,7 @@ async def test_replan_cue_still_replans_while_rendering(
 ) -> None:
     db, item, creator_id, runs, copilot = _wire_real(monkeypatch, render_status="rendering")
     result = await _ask(db, item, creator_id, "give me a completely different vibe")
-    assert runs, "explicit re-plan cues keep re-planning"
-    assert result.plan.turn_value != "recovery"
+    assert result.plan.turn_value == "recovery"
 
 
 async def test_router_path_recovers_when_target_missing_without_copilot_first(

@@ -500,6 +500,175 @@ def test_add_text_style_from_title_copies_the_look() -> None:
     assert compiled.text_diff[0]["before"] is None
 
 
+def test_add_text_below_title_after_entrance_keeps_title_and_uses_canonical_settle() -> None:
+    job, variant, snapshot, _ = _east_run()
+    total_duration = float(snapshot["total_duration_s"])
+    title = next(row for row in variant["text_elements"] if row["id"] == "guided-title")
+    title["animation_phases"] = {
+        "entrance": "typewriter",
+        "exit": "none",
+        "loop": "none",
+        "speed": 1,
+    }
+    snapshot = build_editor_snapshot(job, variant, clip_context=_context(job, variant))
+    output = _ops(
+        snapshot,
+        [
+            {
+                "op": "add_text",
+                "text": "Lisbon",
+                "start_s": 0,
+                "end_s": total_duration,
+                "style_from": "title",
+                "below": True,
+                "after_animation_of": "title",
+                "animation_phases": {"entrance": "typewriter"},
+            }
+        ],
+        'Add a title "Lisbon" under the text. Animate it after the current text finishes animating',
+    )
+    assert output.outcome == "proposed", output.rejection_reasons
+    compiled = compile_editor_ops(job, variant, output.ops)
+    saved = _saved_text(compiled)
+    saved_title = next(row for row in saved if row["id"] == "guided-title")
+    lisbon = next(row for row in saved if row["text"] == "Lisbon")
+    assert saved_title["start_s"] == title["start_s"]
+    assert saved_title["end_s"] == title["end_s"]
+    assert lisbon["start_s"] == pytest.approx(float(title["start_s"]) + 0.4)
+    assert lisbon["y_frac"] > float(title.get("y_frac", 0.5))
+    assert lisbon["animation_phases"]["entrance"] == "typewriter"
+
+
+def test_relative_title_timing_resolves_after_later_source_animation_patch() -> None:
+    job, variant, snapshot, _ = _east_run()
+    total_duration = float(snapshot["total_duration_s"])
+    snapshot = build_editor_snapshot(job, variant, clip_context=_context(job, variant))
+    output = _ops(
+        snapshot,
+        [
+            {
+                "op": "add_text",
+                "text": "Lisbon",
+                "start_s": 0,
+                "end_s": total_duration - 0.15,
+                "style_from": "title",
+                "after_animation_of": "title",
+            },
+            {
+                "op": "patch_text",
+                "selector": {"group": "title"},
+                "patch": {
+                    "animation_phases": {
+                        "entrance": "typewriter",
+                        "speed": 2,
+                    }
+                },
+            },
+        ],
+        'Add a new title "Lisbon" after the current text finishes animating',
+    )
+    assert output.outcome == "proposed", output.rejection_reasons
+    compiled = compile_editor_ops(job, variant, output.ops)
+    lisbon = next(row for row in _saved_text(compiled) if row["text"] == "Lisbon")
+    assert lisbon["start_s"] == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize(
+    ("effect", "expected_delay"),
+    [("typewriter", None), ("none", 0.0)],
+)
+def test_relative_title_timing_uses_legacy_effect_settle_duration(
+    effect: str, expected_delay: float
+) -> None:
+    job, variant, snapshot, _ = _east_run()
+    total_duration = float(snapshot["total_duration_s"])
+    title = next(row for row in variant["text_elements"] if row["id"] == "guided-title")
+    title.pop("animation_phases", None)
+    title["text"] = "Hello world"
+    title["effect"] = effect
+    snapshot = build_editor_snapshot(job, variant, clip_context=_context(job, variant))
+    output = _ops(
+        snapshot,
+        [
+            {
+                "op": "add_text",
+                "text": "Lisbon",
+                "start_s": 0,
+                "end_s": total_duration,
+                "style_from": "title",
+                "after_animation_of": "title",
+            }
+        ],
+    )
+    compiled = compile_editor_ops(job, variant, output.ops)
+    lisbon = next(row for row in _saved_text(compiled) if row["text"] == "Lisbon")
+    if expected_delay is None:
+        from app.pipeline.text_motion_v2 import renderer_settle_duration_s
+
+        delay = renderer_settle_duration_s(effect, title["text"], {})
+    else:
+        delay = expected_delay
+    assert lisbon["start_s"] == pytest.approx(float(title["start_s"]) + round(delay, 3))
+
+
+def test_relative_title_timing_uses_v2_motion_speed_for_legacy_effect() -> None:
+    from app.pipeline.text_motion_v2 import renderer_settle_duration_s
+
+    job, variant, snapshot, _ = _east_run()
+    total_duration = float(snapshot["total_duration_s"])
+    title = next(row for row in variant["text_elements"] if row["id"] == "guided-title")
+    title.pop("animation_phases", None)
+    title.update(text="Hello world", effect="typewriter", motion={"version": 2, "speed": 2})
+    snapshot = build_editor_snapshot(job, variant, clip_context=_context(job, variant))
+    output = _ops(
+        snapshot,
+        [
+            {
+                "op": "add_text",
+                "text": "Lisbon",
+                "start_s": 0,
+                "end_s": total_duration,
+                "style_from": "title",
+                "after_animation_of": "title",
+            }
+        ],
+    )
+    compiled = compile_editor_ops(job, variant, output.ops)
+    lisbon = next(row for row in _saved_text(compiled) if row["text"] == "Lisbon")
+    expected = renderer_settle_duration_s("typewriter", title["text"], title["motion"])
+    assert lisbon["start_s"] == pytest.approx(float(title["start_s"]) + round(expected, 3))
+
+
+def test_relative_title_timing_rejects_a_window_that_would_start_after_video_end() -> None:
+    job, variant, snapshot, _ = _east_run()
+    title = next(row for row in variant["text_elements"] if row["id"] == "guided-title")
+    total_duration = float(snapshot["total_duration_s"])
+    title.update(
+        {
+            "start_s": total_duration - 0.2,
+            "end_s": total_duration,
+            "animation_phases": {"entrance": "typewriter", "speed": 1},
+        }
+    )
+    snapshot = build_editor_snapshot(job, variant, clip_context=_context(job, variant))
+    output = _ops(
+        snapshot,
+        [
+            {
+                "op": "add_text",
+                "text": "Lisbon",
+                "start_s": 0,
+                "end_s": total_duration - 0.15,
+                "style_from": "title",
+                "after_animation_of": "title",
+            }
+        ],
+    )
+    assert output.outcome == "proposed"
+    with pytest.raises(KriaEditorOpError, match="timing does not fit"):
+        compile_editor_ops(job, variant, output.ops)
+
+
 def test_add_text_for_clip_makes_a_linked_label_that_later_selectors_find() -> None:
     job, variant, snapshot, labels = _east_run()
     # Clip 5 (slot index 5) has no label bar in the fixture.
