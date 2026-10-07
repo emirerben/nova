@@ -40,6 +40,7 @@ from pydantic import (
 from sqlalchemy import func, select
 
 from app.kria.brief_route import loose_text, wants_filming_time_text
+from app.kria.reply_language import detect_chat_language
 from app.models import CreativeBriefVersion
 
 RequirementKind = Literal["text", "order", "select", "timing", "audio", "style"]
@@ -364,10 +365,7 @@ _PER_CLIP_LANE_ROLES = {"shot_label", "clip_label", "per_clip", "label"}
 # again" are ordinary edits and must stay on the editor-op path, so "again" only
 # counts right after a whole-edit object or next to prompt/brief/request.
 #
-# The patterns run on ``loose_text`` output (case-folded, Turkish letters reduced
-# to ASCII), so the Turkish phrases are written in that form: "baştan" is
-# "bastan", "yeniden oluştur" is "yeniden olustur", and ASCII-typed Turkish
-# ("hazirla") matches too.
+# English patterns run on ``_legacy_fold`` output, exactly as before KRI-520.
 _REDO_PATTERNS = (
     re.compile(
         r"\b(do|make|create|generate|render|build|try|run)\s+"
@@ -378,6 +376,11 @@ _REDO_PATTERNS = (
     re.compile(r"\bagain\b.{0,20}\b(prompt|brief|request|instructions?)\b"),
     re.compile(r"\b(redo|re-do|start over|from scratch)\b"),
     re.compile(r"\bbased on (my|the) (prompt|brief|request|instructions?)\b"),
+)
+# KRI-520: Turkish patterns run on ``loose_text`` output (case-folded, Turkish letters
+# reduced to ASCII), so they are written in that form ("baştan" is "bastan") and
+# ASCII-typed Turkish ("hazirla") matches too. Never applied to English messages.
+_TR_REDO_PATTERNS = (
     # "baştan" alone is a redo ("baştan yap"); "baştan sona" is start-to-finish.
     re.compile(r"\bbastan\b(?!\s+sona\b)"),
     re.compile(r"\bsifirdan\b"),
@@ -424,13 +427,23 @@ _TR_ELEMENT_STEMS = (
 _NEGATED_AGAIN = re.compile(r"\b(don'?t|dont|do not|never|stop)\b[^.!?]{0,20}\bagain\b")
 
 
-def _fold_for_redo(message: str) -> str:
-    """Case-fold and de-diacritic a message so one pattern reads English and Turkish.
+def _legacy_fold(message: str) -> str:
+    # Turkish dotted/dotless I: casefold() turns "\u0130" into i + combining dot,
+    # which no pattern would match, so map both capitals first. Kept as it was for the
+    # English patterns, so English routing is unchanged by KRI-520.
+    text = unicodedata.normalize("NFC", message or "").replace("\u0130", "i").replace("I", "\u0131")
+    return " ".join(text.casefold().split())
 
-    ``loose_text`` maps every Turkish capital and dotless I to ``i``, so
-    "TRY AGAIN" stays "try again" and "HAZIRLA" matches "hazirla".
-    """
+
+def _fold_for_redo(message: str) -> str:
+    """The Turkish patterns' fold: ``loose_text``, so "HAZIRLA" matches "hazirla"."""
     return loose_text(message or "")
+
+
+def _reads_english(message: str) -> bool:
+    """English messages never reach the Turkish patterns: "at", "al", "son" and "once"
+    are English words too ("put video 3 at the start")."""
+    return detect_chat_language(message) == "en"
 
 
 def _asks_turkish_redo(text: str) -> bool:
@@ -444,8 +457,15 @@ def _asks_turkish_redo(text: str) -> bool:
 
 def wants_full_replan(message: str) -> bool:
     """ "Do it again based on my prompt" is a supported re-plan, not an editor op."""
-    text = _NEGATED_AGAIN.sub(" ", _fold_for_redo(message))
-    return any(pattern.search(text) for pattern in _REDO_PATTERNS) or _asks_turkish_redo(text)
+    english = _NEGATED_AGAIN.sub(" ", _legacy_fold(message))
+    if any(pattern.search(english) for pattern in _REDO_PATTERNS):
+        return True
+    if _reads_english(message):
+        return False
+    turkish = _fold_for_redo(message)
+    return any(pattern.search(turkish) for pattern in _TR_REDO_PATTERNS) or _asks_turkish_redo(
+        turkish
+    )
 
 
 def plan_shape_from_editor_snapshot(snapshot: Mapping[str, Any] | None) -> CurrentPlanShape:
@@ -569,21 +589,25 @@ _POSITIONAL_FACT_KEYS = {
 }
 
 
-def _asks_move(text: str) -> bool:
-    """``text`` (already ``loose_text``-folded) asks to move a clip somewhere."""
-    return bool(_MOVE_MESSAGE.search(text) or _TR_MOVE_MESSAGE.search(text))
+def _asks_move(message: str) -> bool:
+    """``message`` asks to move a clip somewhere (English as before, or Turkish)."""
+    if _MOVE_MESSAGE.search(_legacy_fold(message)):
+        return True
+    return not _reads_english(message) and bool(_TR_MOVE_MESSAGE.search(_fold_for_redo(message)))
 
 
-def _asks_remove(text: str) -> bool:
-    """``text`` (already ``loose_text``-folded) asks to drop one named clip."""
-    return bool(_REMOVE_MESSAGE.search(text) or _TR_REMOVE_MESSAGE.search(text))
+def _asks_remove(message: str) -> bool:
+    """``message`` asks to drop one named clip (English as before, or Turkish)."""
+    if _REMOVE_MESSAGE.search(_legacy_fold(message)):
+        return True
+    return not _reads_english(message) and bool(_TR_REMOVE_MESSAGE.search(_fold_for_redo(message)))
 
 
 def _structural_reqs_editable(
     reqs: list[BriefRequirement | BriefUpdate], message: str | None
 ) -> bool:
     """True when every order/select requirement is an explicit clip move/removal."""
-    text = _fold_for_redo(message or "")
+    text = message or ""
     for req in reqs:
         if req.kind == "order":
             if not req.facts.get("key") or _asks_move(text):

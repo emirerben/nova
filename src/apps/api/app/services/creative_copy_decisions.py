@@ -65,7 +65,8 @@ _SKIP_ALIASES: tuple[str, ...] = (
     "continue without a title",
     "hayır",
     "hayır teşekkürler",
-    "yok",
+    # No bare "yok": to "Aklında bir fikir var mı, yoksa ben mi yazayım?" it means
+    # "I don't have one" (so write it), not "skip the title".
     "atla",
     "geç",
     "başlık yok",

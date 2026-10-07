@@ -181,7 +181,6 @@ def test_creative_copy_skip_accepts_turkish_declines_everywhere() -> None:
             "hayır",
             "HAYIR",
             "Hayir",
-            "yok",
             "atla",
             "geç",
             "başlık yok",
@@ -193,6 +192,8 @@ def test_creative_copy_skip_accepts_turkish_declines_everywhere() -> None:
             "no title",
         ):
             assert match_open_choice(question, reply) == OPT_CANCEL, reply
+        # "Yok" answers "Aklında bir fikir var mı?" ("I don't have one"); never a skip.
+        assert match_open_choice(question, "yok") != OPT_CANCEL
 
 
 # ── delegation ────────────────────────────────────────────────────────────────
@@ -208,11 +209,8 @@ def test_creative_copy_skip_accepts_turkish_declines_everywhere() -> None:
         "SEN KARAR VER",
         "sana bırakıyorum",
         "Sana bıraktım",
-        "fark etmez",
-        "FARK ETMEZ",
         "sürpriz yap",
         "surpriz yap",
-        "hangisi olursa",
         "dilediğin gibi",
         "dilediğin gibi yap",
     ],
@@ -242,6 +240,16 @@ def test_english_delegation_is_unchanged() -> None:
     assert delegated_choice(question, "up to you.") == OPT_GROUP_FIRST
     assert delegated_choice(question, "whatever") is None
     assert delegated_choice(question, "I don't care") is None
+    # Their Turkish twins are non-answers too.
+    assert delegated_choice(question, "fark etmez") is None
+    assert delegated_choice(question, "hangisi olursa") is None
+
+
+def test_one_option_question_takes_ordinals_as_the_creators_words() -> None:
+    title = _question(title_text_choice(["r1"]).candidate())
+    for words in ("İlk", "ilk", "birinci"):
+        assert match_open_choice(title, words) is None, words
+    assert match_open_choice(title, "1") == OPT_NO_TITLE  # unchanged English list number
 
 
 # ── ordinals ──────────────────────────────────────────────────────────────────

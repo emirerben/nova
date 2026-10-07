@@ -212,7 +212,7 @@ def test_turkish_reuse_is_granted_only_by_creator_words(text: str) -> None:
         "tekrar etmesin",
         "tekrar eden klipler olmasın",
         "her klibi sadece bir kez kullan",
-        "sadece bir kere göster",
+        "klipleri sadece bir kere göster",
         "videoyu bir kez göster",
         "döngü olmasın",
     ],
@@ -257,7 +257,9 @@ def test_turkish_alternating_clips_use_distinct_windows() -> None:
         ("tekrarla", "allow_repeat"),
         ("tekrar etme", "no_repeat"),
         ("tekrarlama", "no_repeat"),
-        ("sadece bir kere", "no_repeat"),
+        # Like English "only once", it needs footage to be about clip reuse.
+        ("sadece bir kere", None),
+        ("her klibi sadece bir kere", "no_repeat"),
         ("tekrar etmek istemiyorum", "no_repeat"),
         ("tekrar dene", None),
         ('Başlık: "tekrar kullan"', None),
@@ -266,6 +268,16 @@ def test_turkish_alternating_clips_use_distinct_windows() -> None:
 )
 def test_turkish_explicit_cadence_reuse(text: str, policy: str | None) -> None:
     assert recognize_explicit_cadence_reuse_policy(text) == policy
+
+
+def test_turkish_only_once_about_a_title_keeps_the_cadence_reuse() -> None:
+    # "The title appears only once" says nothing about reusing footage.
+    assert resolve_video_reuse_policy("Başlık sadece bir kez görünsün", "allow_repeat") == (
+        "allow_repeat"
+    )
+    assert resolve_video_reuse_policy("Logo yalnızca bir kez çıksın", "allow_repeat") == (
+        "allow_repeat"
+    )
 
 
 def test_english_reuse_is_unchanged() -> None:

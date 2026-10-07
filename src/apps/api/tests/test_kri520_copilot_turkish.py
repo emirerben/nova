@@ -332,9 +332,6 @@ def test_duration_answer_ignores_non_durations(text: str) -> None:
         "Hepsini kısaltalım",
         "daha kısa yap",
         "kısa yap",
-        "uzat",
-        "daha uzun olsun",
-        "uzun tut",
         "KISALT",
         "kisalt",
         "make them shorter",
@@ -346,7 +343,9 @@ def test_vague_duration_reads_turkish(text: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "text", ["kısaca anlat", "10 saniye yap", "uzaklaştır", "make them longer"]
+    "text",
+    # Lengthening is never a vague "how short?", in Turkish as in English.
+    ["kısaca anlat", "10 saniye yap", "uzaklaştır", "make them longer", "uzat", "daha uzun olsun"],
 )
 def test_vague_duration_negatives(text: str) -> None:
     assert _VAGUE_DURATION_RE.search(text) is None, text

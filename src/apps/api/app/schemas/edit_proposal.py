@@ -276,10 +276,17 @@ _TR_NUMBER = r"(?<![\d.,])(\d+(?:[.,]\d+)?)"
 
 
 def loose_creator_text(text: object) -> str:
-    """``loose_text`` of ``text``; imported late because ``app.kria`` imports this module."""
+    """``loose_text`` of ``text`` for the Turkish readers; "" when the text reads as
+    English, so English words a Turkish rule also knows ("at", "son", "silent" ~ "sil",
+    "Atlanta" ~ "atla") never fire one. Imported late: ``app.kria`` imports this module.
+    """
     from app.kria.brief_route import loose_text  # noqa: PLC0415
+    from app.kria.reply_language import detect_chat_language  # noqa: PLC0415
 
-    return loose_text(str(text or ""))
+    raw = str(text or "")
+    if detect_chat_language(raw) == "en":
+        return ""
+    return loose_text(raw)
 
 
 def _tr_float(raw: str) -> float:
@@ -322,7 +329,6 @@ _TR_REUSE_NEG = re.compile(
     rf"{_tr_not('koy', 'a')}|{_tr_not('ekle', 'e')})|"
     r"(?:tekrar|dongu)\w*\s+(?:\w+\s+){0,2}?(?:olmasin|olmamali|olmaz|yok|istemiyorum|istemem)\b|"
     rf"dongu\w*\s+{_tr_not('yap', 'a')}|"
-    r"(?:sadece|yalnizca|yalniz)\s+bir\s+(?:kere|kez|defa)\b(?!\s+daha)|"
     # "bir kez" inside a cut length ("her 2 saniyede bir kez") is not a reuse rule.
     rf"(?:hepsi\w*|{_TR_MEDIA})\b(?:(?!\bher\b|\bsaniye|\bsn\b)[^.!?;]){{0,32}}?"
     r"\bbir\s+(?:kere|kez|defa)\b(?!\s+daha)|"
@@ -348,7 +354,9 @@ _TR_DISTINCT = re.compile(
     rf"|\b{_TR_MEDIA}\b[^.!?;]{{0,32}}?\b{_TR_DISTINCT_WORD}"
 )
 _TR_TOTAL_DURATION = (
-    rf"{_TR_NUMBER}\s*(?:saniyelik|sn['’]?lik)\s+(?:bir\s+)?(?:video|montaj|edit|kurgu)\w*",
+    # Singular only: "4 saniyelik videolardan" is a per-clip length, not the video's.
+    rf"{_TR_NUMBER}\s*(?:saniyelik|sn['’]?lik)\s+(?:bir\s+)?(?:video|montaj|edit|kurgu)"
+    r"(?![a-z]*l[ae]r)\w*",
     rf"\b(?:video|montaj|edit|kurgu)\w*\s+{_TR_NUMBER}\s*(?:saniye|sn)\w*\s+"
     r"(?:olsun|olmali|sursun|uzunlugunda)\b",
     rf"\btoplam\s+(?:sure\s+)?{_TR_NUMBER}\s*(?:saniye|sn)\w*\s+(?:olsun|olmali|sursun|yeter)\b",

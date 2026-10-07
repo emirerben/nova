@@ -1983,9 +1983,11 @@ _TEXT_EDIT_ASK = re.compile(r"\b(labels?|captions?|texts?|titles?|wording|font)\
 # "başlığı" and "basligi" both land). Stems take any suffix: baslik/basligi/basliklar,
 # yazi/yazilar/altyazi (alt yazi), metin/metni, etiket, ifade (wording). "font" takes only
 # Turkish case endings, so English "fonts" keeps its old (non-)match.
+# "yazın" alone is "in summer", "Metin'in" is a name, "yüz ifadesi" is a facial
+# expression: none of them is a text ask.
 _TEXT_EDIT_ASK_TR = re.compile(
-    r"\b(?:(?:bas(?:lik|lig)|(?:alt)?yazi|met(?:in|ni)|etiket|ifade)\w*|"
-    r"font(?:lar|lari|u|un|a|i|ta|tan)?)\b"
+    r"\b(?:(?:bas(?:lik|lig)|etiket)\w*|(?:alt)?yazi(?!n\b)\w*|met(?:in|ni)(?![\'’])\w*|"
+    r"(?<!yuz )ifade\w*|font(?:lar|lari|u|un|a|i|ta|tan)?)\b"
 )
 # Wording that needs the planner even when the copilot could stage something.
 _REPLAN_CUES = re.compile(

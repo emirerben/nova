@@ -96,6 +96,7 @@ _CLIENT_STOCK_MESSAGES = frozenset(
         "make it warmer",
         "let s make a montage",
         "lets make a montage",
+        "use this order",
     }
 )
 _CLIENT_STOCK_PREFIXES = ("use this order clips", "none of these for ")
@@ -115,14 +116,21 @@ def _stock_key(text: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", fold_text(text)))
 
 
-def is_client_stock_message(text: str | None) -> bool:
-    """True for a sentence an app sends on the creator's behalf, not one they typed."""
-    key = _stock_key(text or "")
-    if not key:
-        return False
+def _is_stock_piece(key: str) -> bool:
     if key in _CLIENT_STOCK_MESSAGES or key.startswith(_CLIENT_STOCK_PREFIXES):
         return True
     return any(shape.match(key) for shape in _CLIENT_STOCK_SHAPES)
+
+
+def is_client_stock_message(text: str | None) -> bool:
+    """True for a sentence an app sends on the creator's behalf, not one they typed.
+
+    The iOS clip picker joins one answer per category with ". " ("Kapadokya: clips 3, 7.
+    None of these for balon"), so a message counts when every piece is stock.
+    """
+    pieces = [_stock_key(piece) for piece in re.split(r"\.\s+|\n+", text or "")]
+    pieces = [piece for piece in pieces if piece]
+    return bool(pieces) and all(_is_stock_piece(piece) for piece in pieces)
 
 
 def _scores(text: str) -> tuple[int, int, int]:

@@ -47,10 +47,11 @@ final class ClipSelectionTests: XCTestCase {
 
     /// KRI-520: Turkish wording keeps Turkish capitals; English wording is unchanged.
     func testTurkishWordingKeepsTurkishCapitals() {
-        XCTAssertEqual(ClipQuestion.displayLabel("ilk gün", preferredLanguages: ["en-US"]), "İlk gün")
-        XCTAssertEqual(ClipQuestion.displayLabel("iftar", preferredLanguages: ["tr-TR", "en-US"]), "İftar")
-        XCTAssertEqual(ClipQuestion.displayLabel("ıhlamur", preferredLanguages: ["en-US"]), "Ihlamur")
-        XCTAssertEqual(ClipQuestion.displayLabel("iced latte", preferredLanguages: ["en-US"]), "Iced latte")
+        XCTAssertEqual(ClipQuestion.displayLabel("ilk gün"), "İlk gün")
+        XCTAssertEqual(ClipQuestion.displayLabel("iç mekân"), "İç mekân")
+        XCTAssertEqual(ClipQuestion.displayLabel("ıhlamur"), "Ihlamur")
+        XCTAssertEqual(ClipQuestion.displayLabel("iced latte"), "Iced latte")
+        XCTAssertEqual(ClipQuestion.displayLabel("island"), "Island")
     }
 
     func testMalformedOrUnsupportedPayloadsYieldNoQuestion() {

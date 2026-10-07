@@ -2,8 +2,8 @@
 
 A Turkish "2. klibi başa al" or "son klibi sil" is a quick editor edit, not a slow
 full re-plan and re-render; "tekrar dene" / "sıfırdan yap" is a supported redo. The
-parsers fold text with ``loose_text``, so ASCII-typed Turkish and English all-caps
-("TRY AGAIN") are read the same way.
+Turkish patterns fold text with ``loose_text`` (ASCII-typed Turkish matches) and never
+run on an English message; English routing is exactly what it was before.
 """
 
 from __future__ import annotations
@@ -36,10 +36,8 @@ WITH_LANE = CurrentPlanShape(has_render=True, has_per_clip_text_lane=True)
 @pytest.mark.parametrize(
     "message",
     [
-        # English, including the all-caps case the old Turkish-I fold broke.
-        "TRY AGAIN",
+        # English.
         "Try again",
-        "DO IT AGAIN",
         "START OVER",
         "do it again",
         "redo this",
@@ -108,6 +106,17 @@ def test_ordinary_turkish_and_english_edits_are_not_redo(message: str) -> None:
     assert not wants_full_replan(message)
 
 
+def test_english_routing_is_unchanged_including_its_capital_i_quirk() -> None:
+    # The pre-KRI-520 fold maps a capital I to a dotless ı, so all-caps English with an
+    # I never matched. KRI-520 leaves English exactly as it was (not fixed here).
+    assert not wants_full_replan("TRY AGAIN")
+    assert not _asks_remove("REMOVE CLIP 2")
+    # English words that are also Turkish verbs/ordinals never reach the Turkish rules.
+    assert not _asks_remove("Put video 3 at the start")
+    assert not _asks_move("Show the kitten once at the end")
+    assert not _asks_remove("Only the best clips; my son video at the beginning")
+
+
 def test_fold_keeps_english_capitals_ascii() -> None:
     assert _fold_for_redo("TRY AGAIN") == "try again"
     assert _fold_for_redo("Hazırla İSTANBUL") == "hazirla istanbul"
@@ -137,7 +146,7 @@ def test_fold_keeps_english_capitals_ascii() -> None:
     ],
 )
 def test_turkish_and_english_move_asks(message: str) -> None:
-    assert _asks_move(_fold_for_redo(message))
+    assert _asks_move(message)
 
 
 @pytest.mark.parametrize(
@@ -156,7 +165,7 @@ def test_turkish_and_english_move_asks(message: str) -> None:
     ],
 )
 def test_ordinary_sentences_are_not_move_asks(message: str) -> None:
-    assert not _asks_move(_fold_for_redo(message))
+    assert not _asks_move(message)
 
 
 # ---------------------------------------------------------------------------- remove
@@ -178,11 +187,11 @@ def test_ordinary_sentences_are_not_move_asks(message: str) -> None:
         "5. videoyu kaldırır mısın",
         # English still matches.
         "delete the last clip",
-        "REMOVE CLIP 4",
+        "Remove clip 4",
     ],
 )
 def test_turkish_and_english_remove_asks(message: str) -> None:
-    assert _asks_remove(_fold_for_redo(message))
+    assert _asks_remove(message)
 
 
 @pytest.mark.parametrize(
@@ -205,7 +214,7 @@ def test_turkish_and_english_remove_asks(message: str) -> None:
     ],
 )
 def test_ordinary_sentences_are_not_remove_asks(message: str) -> None:
-    assert not _asks_remove(_fold_for_redo(message))
+    assert not _asks_remove(message)
 
 
 # --------------------------------------------------------------------- the router
@@ -243,7 +252,6 @@ def test_ordinary_sentences_are_not_remove_asks(message: str) -> None:
         # A redo phrase wins over everything.
         ([_upd("select", "global")], CAN_EDIT, "son klibi sil ve baştan yap", "replan"),
         ([], CAN_EDIT, "sıfırdan yap", "replan"),
-        ([], CAN_EDIT, "TRY AGAIN", "replan"),
         ([], CAN_EDIT, "başlığı büyüt", "editor_ops"),
         ([], CAN_EDIT, "başlığı tekrar yap", "editor_ops"),
     ],

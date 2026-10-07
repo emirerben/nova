@@ -1402,8 +1402,12 @@ def _ordinal_names(number: int) -> list[str]:
     return names
 
 
-def _option_names(number: int, option: Mapping[str, Any]) -> list[str]:
-    """Every raw string a typed reply may use for this option (before normalisation)."""
+def _option_names(number: int, option: Mapping[str, Any], *, ordinals: bool = True) -> list[str]:
+    """Every raw string a typed reply may use for this option (before normalisation).
+
+    ``ordinals=False`` for a one-option question: there "İlk" or "birinci" is far more
+    likely the creator's own words (a title) than a pick of "the first option".
+    """
 
     label = _RECOMMENDED_TAG.sub("", str(option.get("label") or ""))
     return [
@@ -1412,7 +1416,7 @@ def _option_names(number: int, option: Mapping[str, Any]) -> list[str]:
         str(number),
         f"option {number}",
         f"number {number}",
-        *_ordinal_names(number),
+        *(_ordinal_names(number) if ordinals else ()),
         *(str(a) for a in option.get("aliases") or []),
     ]
 
@@ -1433,10 +1437,12 @@ def match_open_choice(question: Mapping[str, Any], message: object) -> str | Non
     loose = loose_reply(message)
     exact: set[str] = set()
     fuzzy: set[str] = set()
-    for number, option in enumerate(question.get("options") or [], start=1):
+    options = question.get("options") or []
+    several = sum(1 for o in options if isinstance(o, Mapping) and o.get("key")) > 1
+    for number, option in enumerate(options, start=1):
         if not isinstance(option, Mapping) or not option.get("key"):
             continue
-        names = _option_names(number, option)
+        names = _option_names(number, option, ordinals=several)
         if reply in {n for n in map(normalize_reply, names) if n}:
             exact.add(str(option["key"]))
         if loose in {n for n in map(loose_reply, names) if n}:
@@ -1465,11 +1471,9 @@ _DELEGATION_PHRASES = frozenset(
         "sana kalmış",
         "kararı sana bırakıyorum",
         "karar senin",
-        "fark etmez",
+        # No "fark etmez" / "hangisi olursa": like English "whatever", a non-answer.
         "sürpriz yap",
         "beni şaşırt",
-        "hangisi olursa",
-        "hangisi olursa olsun",
         "dilediğin gibi",
         "dilediğin gibi yap",
         "nasıl istersen",

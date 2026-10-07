@@ -27,12 +27,12 @@ struct ClipQuestion: Equatable, Sendable {
     static let supportedVersion = 1
 
     /// The server sends the creator's own wording ("dodgeball"); capitalise the first letter for display.
-    /// Turkish wording keeps Turkish capitals ("ilk gün" -> "İlk gün", not "Ilk gün").
-    static func displayLabel(_ raw: String, preferredLanguages: [String] = Locale.preferredLanguages) -> String {
+    /// Wording with Turkish letters keeps Turkish capitals ("ilk gün" -> "İlk gün", not "Ilk gün").
+    /// Decided by the label's own letters, never the device language: "ice cream" stays "Ice cream".
+    static func displayLabel(_ raw: String) -> String {
         guard let first = raw.first else { return raw }
         let turkishLetters = CharacterSet(charactersIn: "çğıöşüÇĞİÖŞÜ")
         let turkish = raw.unicodeScalars.contains { turkishLetters.contains($0) }
-            || preferredLanguages.first?.lowercased().hasPrefix("tr") == true
         let capital = turkish ? String(first).uppercased(with: Locale(identifier: "tr")) : String(first).uppercased()
         return capital + raw.dropFirst()
     }

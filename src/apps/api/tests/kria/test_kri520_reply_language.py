@@ -86,6 +86,8 @@ def test_unclear_messages_say_nothing(message: str) -> None:
         "None of these for Kadıköy",
         "Let's make a montage",
         "Make it warmer",
+        "Kapadokya: clips 3, 7. None of these for balon",
+        "Use this order",
     ],
 )
 def test_app_sent_stock_sentences_never_set_the_language(message: str) -> None:
@@ -202,7 +204,20 @@ def test_turkish_status_and_help_questions(message: str, status: bool, help_requ
 def test_paraphrase_guard_reads_turkish_and_other_scripts() -> None:
     assert is_paraphrase_only(
         user_message="başlığı büyüt ve müziği kıs lütfen",
-        assistant_message="Anladım, başlığı büyütmemi istiyorsun.",
+        assistant_message="Görünüşe göre başlığı büyütmemi istiyorsun.",
+    )
+    # Like English "Got it,", these open real answers and must survive.
+    for reply in (
+        "Anladım! Bu video için enerjik bir pop parçası öneririm.",
+        "İstediğin gibi başlığı kısalttım.",
+        "Söylediğin gibi klipleri sıraladım.",
+    ):
+        assert not is_paraphrase_only(
+            user_message="başlığı kısalt ve klipleri sırala lütfen", assistant_message=reply
+        )
+    assert not is_paraphrase_only(
+        user_message="make the opening punchier please",
+        assistant_message="You'd like a punchier opening, so I moved the jump first.",
     )
     assert not is_paraphrase_only(
         user_message="make the title bigger please",

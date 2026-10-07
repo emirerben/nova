@@ -2222,8 +2222,8 @@ _DURATION_ANSWER_RE = _BilingualPattern(
 )
 _VAGUE_DURATION_RE = _BilingualPattern(
     r"\b(?:shorter|shorten|shorten(?:ed|ing)?|make\s+.+\s+short)\b",
-    r"\bkisalt\w*|\bdaha\s+kisa\b|\bkisa\s+(?:yap|olsun|tut|kes)\w*"
-    r"|\buzat\w*|\bdaha\s+uzun\b|\buzun\s+(?:yap|olsun|tut)\w*",
+    # Shortening only, like the English side: "uzat" is not a vague "how short?".
+    r"\bkisalt\w*|\bdaha\s+kisa\b|\bkisa\s+(?:yap|olsun|tut|kes)\w*",
 )
 # foto(graf), resim, gorsel; "resmi/resme" drops the vowel; "klip" softens to "klib-".
 _IMAGE_WORD_RE = _BilingualPattern(

@@ -6,8 +6,9 @@ import re
 
 from app.kria.brief_route import loose_text
 
-# Matched against ``_normalized`` text: Turkish letters folded to ASCII ("anladım"
-# -> "anladim"), punctuation dropped ("you'd" -> "you d").
+# Matched against ``_normalized`` text (Turkish letters folded to ASCII, punctuation
+# dropped). "you'd like" can never match that form; it is kept as it was so English
+# behavior is unchanged.
 _ACKNOWLEDGEMENT_PREFIXES = (
     "i understand",
     "i see that",
@@ -16,16 +17,11 @@ _ACKNOWLEDGEMENT_PREFIXES = (
     "you said",
     "you want",
     "you would like",
-    "you d like",
-    # KRI-520: the same empty acknowledgements in Turkish.
-    "anladim",
-    "anliyorum",
+    "you'd like",
+    # KRI-520: Turkish openers that only restate the ask. "Anladım," / "İstediğin
+    # gibi ..." are left out: like English "Got it,", they usually lead into real work.
     "gorunuse gore",
-    "istedigin",
-    "istediginiz",
-    "benden istedigin",
     "dedin ki",
-    "soyledigin",
 )
 
 _STATUS_QUESTIONS = {

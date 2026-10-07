@@ -2079,17 +2079,21 @@ async def decide_approval(
                 .order_by(CreationThreadEvent.sequence)
             )
         ).all()
-        # KRI-520: the gate words its question in the chat's language.
-        with reply_language_for(thread_reply_language(thread)):
-            copy_problem = creative_copy_problem(
-                [
-                    tag_event(role, payload, event_type, content)
-                    for role, payload, event_type, content in copy_rows
-                ],
-                snapshot_media(copy_item),
-                strategy=copy_document.strategy if copy_document is not None else None,
-            )
+        copy_events = [
+            tag_event(role, payload, event_type, content)
+            for role, payload, event_type, content in copy_rows
+        ]
+        copy_strategy = copy_document.strategy if copy_document is not None else None
+        copy_problem = creative_copy_problem(
+            copy_events, snapshot_media(copy_item), strategy=copy_strategy
+        )
         if copy_problem:
+            # KRI-520: the 409 keeps the English API string; the chat event gets the
+            # gate's question in the chat's language.
+            with reply_language_for(thread_reply_language(thread)):
+                copy_event_message = creative_copy_problem(
+                    copy_events, snapshot_media(copy_item), strategy=copy_strategy
+                )
             log.info("kria_creative_copy_blocked", phase="approval", thread_id=str(thread.id))
             await _cancel_pending_approval(
                 db,
@@ -2101,6 +2105,7 @@ async def decide_approval(
                 plan_item=plan_item,
                 code=CREATIVE_COPY_PENDING,
                 message=copy_problem,
+                event_message=copy_event_message,
             )
 
     # KRI-306: validate the creator's output-shape choice against what this

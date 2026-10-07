@@ -781,3 +781,15 @@ async def test_copilot_clarification_to_a_turkish_non_text_ask_replans(
         e["event"] == "kria_copilot_skipped_replan" and e["reason"] == "fast_path_not_taken"
         for e in logs
     )
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Yazın çektiğim klipleri başa al",  # "yazın" = in summer
+        "Metin'in olduğu klibi çıkar",  # Metin is a name
+        "En güzel yüz ifadelerini seç",  # a facial expression
+    ],
+)
+def test_turkish_words_that_only_look_like_text_asks(message: str) -> None:
+    assert not planner._is_text_edit_ask(message)
