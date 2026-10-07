@@ -768,3 +768,107 @@ def test_empty_guided_add_source_get_index_roundtrip_uses_shared_catalog(monkeyp
     assert reopened["slots"][0]["clip_index"] == added_index
     assert reopened["clips"][added_index]["used"] is True
     assert reopened["clips"][added_index]["signed_url"] == f"signed:{new_path}"
+
+
+# --- KRI-470 PR-G: the retained music keeps its compiled level semantics -------------------
+
+
+def _voiceover_music_recipe(mix: float):
+    from app.kria.render_assets import RenderFingerprint
+    from app.pipeline.phone_recipe_shared import PhoneMusicBed
+    from tests.pipeline.test_phone_voiceover_montage_plan import (
+        _narration,
+        compile_phone_voiceover_montage_plan,
+    )
+    from tests.pipeline.test_phone_voiceover_montage_plan import (
+        fixture as montage_fixture,
+    )
+
+    decision, bindings = montage_fixture(
+        voiceover_target_s=11.4, mix=mix, music_track_id="track1", music_start_s=10.0
+    )
+    music = PhoneMusicBed(
+        catalog_id="track1",
+        generation="7",
+        fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=500),
+        duration_s=120.0,
+        start_s=10.0,
+    )
+    return compile_phone_voiceover_montage_plan(
+        decision, bindings, music=music, narration=_narration(duration_s=11.4)
+    )
+
+
+def _music_clip(recipe):
+    return next(t for t in recipe.tracks if t.id == "music").clips[0]
+
+
+@pytest.mark.parametrize("mix", [0.7, 0.9, 0.4])
+def test_a_voiceover_variant_keeps_the_compiled_music_level_through_an_authored_restore(mix):
+    """For voiceover variants `variant["mix"]` is the VOICE-prominence slider (default 0.7)
+    and the compiler plays the music at min(1 - mix, 0.5). Restoring must not turn the music
+    up to the voice's level."""
+    job, variant, _ = fixture()
+    previous = _voiceover_music_recipe(mix)
+    compiled = _music_clip(previous).volume
+    variant.update(variant_id="voiceover_music", resolved_archetype="voiceover", mix=mix)
+    variant["music_track_id"] = "track1"
+
+    recipe = compile_phone_authored_timeline(job, variant, previous)
+
+    assert _music_clip(recipe).volume == pytest.approx(compiled)
+    assert _music_clip(recipe).volume < 0.5 + 1e-9  # never as loud as the voice
+    assert recipe.audio.music_asset_id is None
+    assert doubled_soundtrack_assets(recipe) == []
+
+
+def test_a_guided_variant_still_reads_mix_as_the_music_level():
+    """The editor's `mix.music_level` (a variant with no voiceover) IS the music level."""
+    from app.kria.recipes import AssetFingerprint, MediaAsset, TimelineClip, TimelineTrack
+    from app.kria.render_assets import LibraryRenderAsset, RenderFingerprint
+
+    job, variant, previous = fixture()
+    previous.assets.append(
+        MediaAsset(
+            id="bed",
+            relative_path="bed",
+            duration=10,
+            fingerprint=AssetFingerprint(hex="c" * 64, byte_count=123),
+        )
+    )
+    previous.asset_manifest = previous.asset_manifest.model_copy(
+        update={
+            "assets": (
+                *previous.asset_manifest.assets,
+                LibraryRenderAsset(
+                    id="bed",
+                    catalog="music",
+                    catalog_id="track",
+                    generation="1",
+                    fingerprint=RenderFingerprint(sha256="c" * 64, byte_count=123),
+                ),
+            )
+        }
+    )
+    previous.tracks.append(
+        TimelineTrack(
+            id="bed",
+            kind="audio",
+            clips=[
+                TimelineClip(
+                    id="bed",
+                    source_asset_id="bed",
+                    rate=1,
+                    source_start=0,
+                    source_duration=10,
+                    timeline_start=0,
+                    volume=0.9,
+                )
+            ],
+        )
+    )
+    variant.update(music_track_id="track", mix=0.35)
+
+    recipe = compile_phone_authored_timeline(job, variant, previous)
+
+    assert next(t for t in recipe.tracks if t.id == "bed").clips[0].volume == pytest.approx(0.35)

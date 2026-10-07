@@ -25,6 +25,7 @@ from app.pipeline.phone_captions import (
 )
 from app.pipeline.phone_editor_visuals import compile_editor_media_track
 from app.pipeline.phone_subtitled_plan import _compile_overlay_track, _compile_sfx_track
+from app.pipeline.phone_voiceover_montage_plan import voiceover_music_gain
 from app.services.authored_editor import explicit_authored_slots
 from app.services.phone_editor_sources import (
     editor_source_bindings,
@@ -226,6 +227,9 @@ def compile_phone_authored_timeline(
     old_manifest = {asset.id: asset for asset in previous.asset_manifest.assets}
     old_assets = {asset.id: asset for asset in previous.assets}
     narration_id = None
+    has_voice = variant.get("resolved_archetype") == "voiceover" or any(
+        asset.kind == "voiceover" for asset in old_manifest.values()
+    )
     for track in previous.tracks:
         if track.kind != "audio":
             continue
@@ -249,8 +253,13 @@ def compile_phone_authored_timeline(
                 clip.source_duration, (cursor - clip.timeline_start) * clip.rate
             )
             if is_music and isinstance(variant.get("mix"), (int, float)):
-                # The creator's music level lives on the bed's own track clip.
-                projected["volume"] = float(variant["mix"])
+                # The music level lives on the bed's own track clip. `mix` means two
+                # things: on a voiceover variant it is the VOICE-prominence slider and the
+                # compiler plays the music at `voiceover_music_gain(mix)`; elsewhere it is
+                # the editor's music level itself (`mix.music_level`).
+                projected["volume"] = (
+                    voiceover_music_gain(variant["mix"]) if has_voice else float(variant["mix"])
+                )
             retained.append(TimelineClip.model_validate(projected))
             manifest[asset.id] = asset
             assets[asset.id] = old_assets[asset.id]
