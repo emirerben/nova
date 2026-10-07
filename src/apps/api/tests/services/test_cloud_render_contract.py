@@ -668,35 +668,59 @@ def test_publication_cannot_prove_text_so_it_stays_a_capability_decline():
     )
 
 
-@pytest.mark.parametrize("adapter", ["cloud_guided_story", "cloud_classic", "cloud_slides"])
+_ADAPTER_ARCHETYPE = {
+    "cloud_guided_story": "guided_story",
+    "cloud_classic": "montage",
+    "cloud_slides": "slides",
+}
+
+
+@pytest.mark.parametrize("adapter", sorted(_ADAPTER_ARCHETYPE))
 def test_declared_cloud_declines_match_preflight_and_publication(adapter):
+    """Every declined requirement refuses with its declared reason, before work AND at
+    publication, for the adapter that would render it (KRI-470 PR-E: per adapter)."""
     from app.services.cloud_render_contract import CLOUD_ADAPTER_DECLARATIONS
 
     declaration = CLOUD_ADAPTER_DECLARATIONS[adapter]
-    ready = {"ok": True, "render_status": "ready", "video_path": "jobs/x/output.mp4"}
+    ready = {
+        "ok": True,
+        "render_status": "ready",
+        "video_path": "jobs/x/output.mp4",
+        "resolved_archetype": _ADAPTER_ARCHETYPE[adapter],
+    }
+    snapshot = {
+        "clip_assignments": [{"media_id": "a", "capture": {"capture_time": "2026-10-06T10:00:00Z"}}]
+    }
+    cases = {
+        "exact_texts": ({"opening_title": "Exact words"}, None),
+        "audio_source_ids": (_UNEVIDENCED_STRATEGIES["audio_source_ids"][0], None),
+        "original_audio": (_UNEVIDENCED_STRATEGIES["original_audio"][0], None),
+        "order_required": ({"ordering_choice": "chronological"}, snapshot),
+        "duration_s": ({"target_duration_s": 24, "target_duration_requested": True}, None),
+        "require_voiceover": ({"audio_strategy": "voiceover"}, None),
+    }
     for requirement, decline in declaration.declines.items():
-        if requirement in _UNEVIDENCED_STRATEGIES and requirement != "order_required":
-            strategy, _path = _UNEVIDENCED_STRATEGIES[requirement]
-            with pytest.raises(CloudRenderContractError) as exc:
-                preflight_cloud_contract(_assembly(strategy))
-        elif requirement == "order_required":
-            continue  # resolved-order case asserted above
-        elif requirement == "unresolved":
+        if requirement == "unresolved":
             contract = build_render_contract(
                 {"ordering_choice": "chronological"}, generation_id="generation-1"
             )
             with pytest.raises(CloudRenderContractError) as exc:
-                preflight_cloud_contract({CONTRACT_FIELD: contract.model_dump(mode="json")})
-        elif requirement == "duration_s":
-            with pytest.raises(CloudRenderContractError) as exc:
-                verify_cloud_variant(
-                    _assembly({"target_duration_s": 24, "target_duration_requested": True}),
-                    ready,  # no measured duration at all
+                preflight_cloud_contract(
+                    {CONTRACT_FIELD: contract.model_dump(mode="json")}, adapter=adapter
                 )
-        else:
-            assert requirement == "require_voiceover"
+            assert exc.value.decline_reason == decline.reason
+            continue
+        strategy, media = cases[requirement]
+        contract = build_render_contract(
+            strategy, generation_id="generation-1", media_snapshot=media
+        )
+        assembly = {CONTRACT_FIELD: contract.model_dump(mode="json")}
+        if requirement not in {"duration_s", "require_voiceover"} or adapter == "cloud_slides":
             with pytest.raises(CloudRenderContractError) as exc:
-                verify_cloud_variant(_assembly({"audio_strategy": "voiceover"}), ready)
+                preflight_cloud_contract(assembly, adapter=adapter)
+            assert exc.value.decline_reason == decline.reason, (adapter, requirement)
+        with pytest.raises(CloudRenderContractError) as exc:
+            verify_cloud_variant(assembly, ready)
         assert exc.value.decline_reason == decline.reason, (adapter, requirement)
     # What each adapter consumes, the real verifier accepts when the receipt proves it.
     if "duration_s" in declaration.consumes:
@@ -931,3 +955,96 @@ def test_finalize_merge_does_not_resurrect_a_live_rows_old_decline() -> None:
     finalized = [{"variant_id": "v", "ok": True, "render_status": "ready"}]
     merged = generative_build._merge_finalized_variants(live, finalized)
     assert not {"decline_reason", "field_path", "alternative"} & set(merged[0])
+
+
+# --- KRI-470 PR-E: per-adapter lift at the worker ----------------------------------
+
+
+def test_classic_worker_no_longer_declines_camera_audio_before_ingest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The classic adapter evidences camera audio, so the early decline is lifted: the
+    job proceeds toward ingest (publication then checks the renderer's receipt)."""
+    job_id = "11111111-1111-1111-1111-111111111111"
+    job = FakeJob(
+        job_id=job_id,
+        assembly_plan=_assembly({"audio_strategy": "original_audio"}),
+        all_candidates={"clip_paths": ["slot-uploads/clip.mp4"], REQUIREMENT_VERSION_FIELD: 1},
+        status="queued",
+    )
+    patch_job_session(monkeypatch, job)
+
+    class _ReachedIngest(Exception):
+        pass
+
+    def _ingest(*_args, **_kwargs):
+        raise _ReachedIngest
+
+    monkeypatch.setattr(generative_build, "_ingest_clips", _ingest, raising=False)
+    outcome: list[BaseException] = []
+    try:
+        generative_build._run_generative_job(job_id)
+    except Exception as exc:  # noqa: BLE001 - recorded below
+        outcome.append(exc)
+    # The run got past preflight (the FakeJob then lacks fields a later stage reads).
+    assert not any(isinstance(e, CloudRenderContractError) for e in outcome)
+    assert getattr(job, "failure_reason", None) != "creator_render_contract_unsupported"
+    assert "creator_decline" not in job.assembly_plan
+
+
+def test_classic_worker_still_declines_exact_text_for_its_own_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_id = "11111111-1111-1111-1111-111111111111"
+    job = FakeJob(
+        job_id=job_id,
+        assembly_plan=_assembly({"opening_title": "Exact approved title"}),
+        all_candidates={"clip_paths": ["slot-uploads/clip.mp4"], REQUIREMENT_VERSION_FIELD: 1},
+        status="queued",
+    )
+    patch_job_session(monkeypatch, job)
+    generative_build._run_generative_job(job_id)
+    assert job.failure_reason == "creator_render_contract_unsupported"
+    assert job.assembly_plan["creator_decline"]["field_path"] == "opening_title"
+
+
+def test_a_decline_raised_once_the_archetype_is_known_keeps_the_typed_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`check_classic_archetype` raises after analysis; the orchestrator must terminalize it
+    with the same code and typed decline as the early preflight, not `unknown`."""
+    import contextlib
+
+    import app.services.pipeline_trace as pt
+
+    error = CloudRenderContractError(
+        "A talking head edit can't prove this confirmed requirement in the cloud yet.",
+        decline_reason="capability_unavailable",
+        field_path="montage_audio.preserve_source_audio",
+        alternative="Ask for it on your iPhone.",
+    )
+
+    def _raise(job_id):
+        raise error
+
+    monkeypatch.setattr(generative_build, "_run_generative_job", _raise)
+    monkeypatch.setattr(generative_build, "job_heartbeat", lambda _id: contextlib.nullcontext())
+    monkeypatch.setattr(
+        generative_build,
+        "_owned_job_task_fence",
+        lambda _id, **_kwargs: contextlib.nullcontext(True),
+    )
+    monkeypatch.setattr(generative_build, "mark_failed_phase", lambda _id: None)
+    monkeypatch.setattr(pt, "pipeline_trace_for", lambda _id: contextlib.nullcontext())
+    failed: dict = {}
+
+    def _fail(job_id, detail, **kwargs):
+        failed.update(detail=detail, **kwargs)
+        return True
+
+    monkeypatch.setattr(generative_build, "_fail_job", _fail)
+    generative_build.orchestrate_generative_job.run("11111111-1111-1111-1111-111111111111")
+
+    assert failed["failure_reason"] == "creator_render_contract_unsupported"
+    assert failed["decline"]["decline_reason"] == "capability_unavailable"
+    assert failed["decline"]["field_path"] == "montage_audio.preserve_source_audio"

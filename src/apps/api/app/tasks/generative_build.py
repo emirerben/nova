@@ -156,6 +156,72 @@ def _rendered_duration_s(path: str) -> float | None:
         return None
 
 
+def _classic_cloud_receipt(
+    cloud_ctx: Mapping[str, Any],
+    final_path: str,
+    *,
+    slots: list[tuple[str, float]],
+    clip_id_to_gcs: Mapping[str, str],
+    clip_id_to_local: Mapping[str, str],
+    probe_map: Mapping[str, Any],
+    audio_mode: str,
+    voice_outcome: Any = None,
+    attributable: bool = True,
+) -> dict[str, Any] | None:
+    """The ``render_receipt`` a classic render reports for a contract-bound job.
+
+    Everything comes from what the renderer built: the post-resolution slots it
+    assembled, the mixer's own outcome (the voiceover mixer copies the video
+    through on failure, so ``applied`` is the only proof the recording is in the
+    file) and the output's probed duration.  ``audio_mode`` is how the variant's
+    soundtrack was made: ``music`` (matched song replaces camera audio),
+    ``voiceover`` (recording over a bed) or ``original`` (camera audio kept).
+    ``attributable=False`` (a collage/spliced cut whose slots are not the
+    picture) withholds picture and camera-audio evidence.  ``None`` means no
+    trustworthy duration could be measured, so nothing is claimed.
+    """
+
+    from app.pipeline.cloud_render_evidence import (  # noqa: PLC0415
+        audio_evidence,
+        classic_render_receipt,
+        classic_slot_evidence,
+    )
+    from app.tasks.template_orchestrate import VoiceoverMixOutcome  # noqa: PLC0415
+
+    duration_s = _rendered_duration_s(final_path)
+    if duration_s is None:
+        return None
+    slot = (
+        classic_slot_evidence(
+            slots,
+            clip_id_to_gcs=clip_id_to_gcs,
+            clip_id_to_local=clip_id_to_local,
+            probe_map=probe_map,
+            media_ids_by_gcs=cloud_ctx.get("media_ids_by_gcs") or {},
+        )
+        if attributable
+        else {"picture_timeline": None, "actual_clip_order": None, "slot_audio_media_ids": None}
+    )
+    narration_applied = False
+    audio: dict[str, Any] = {}
+    if audio_mode == "music":
+        audio = audio_evidence([], reason="replaced_by_music")
+    elif audio_mode == "voiceover":
+        if isinstance(voice_outcome, VoiceoverMixOutcome):
+            narration_applied = voice_outcome.applied
+            if narration_applied and not voice_outcome.footage_audible:
+                audio = audio_evidence([], reason="replaced_by_narration")
+            elif slot["slot_audio_media_ids"] is not None:
+                audio = audio_evidence(slot["slot_audio_media_ids"])
+    elif slot["slot_audio_media_ids"] is not None:
+        audio = audio_evidence(slot["slot_audio_media_ids"])
+    return classic_render_receipt(
+        actual_duration_s=duration_s,
+        narration_applied=narration_applied,
+        evidence={**slot, **audio},
+    )
+
+
 log = structlog.get_logger()
 
 MAX_ERROR_DETAIL_LEN = 2000
@@ -1928,6 +1994,7 @@ def orchestrate_generative_job(self, job_id: str) -> None:
 
     from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
 
+    from app.services.cloud_render_contract import CloudRenderContractError  # noqa: PLC0415
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     # job_heartbeat: liveness beacon for the status route's `retrying` flag —
@@ -2018,6 +2085,27 @@ def orchestrate_generative_job(self, job_id: str) -> None:
                 str(exc),
                 failure_reason="speech_cleanup_failed",
                 speech_cleanup_failure_reason=exc.reason,
+            )
+            if not terminalized:
+                raise
+            return
+        except CloudRenderContractError as exc:
+            # KRI-470 PR-E: the resolved renderer cannot evidence a confirmed
+            # requirement. Same failure code and typed decline as the early
+            # preflight, raised before any variant renders.
+            log.warning(
+                "cloud_render_contract_declined",
+                job_id=job_id,
+                decline_reason=exc.decline_reason,
+                field_path=exc.field_path,
+            )
+            mark_failed_phase(job_id)
+            decline = _creator_decline_payload(exc)
+            terminalized = _fail_job(
+                job_id,
+                str(exc),
+                failure_reason="creator_render_contract_unsupported",
+                **({"decline": decline} if decline else {}),
             )
             if not terminalized:
                 raise
@@ -2494,19 +2582,25 @@ def _run_generative_job_impl(
 
         ensure_job_snapshot(db, job, source="generative_worker")
         assembly = dict(job.assembly_plan or {})
-        # Current cloud compilers can provide receipt evidence for duration and
-        # narration. Camera-audio preservation/muting, literal text, source
-        # identities, and exact clip order lack trustworthy evidence. Decline
-        # those confirmed requirements before any ingest/model/render spend;
-        # publication rechecks too.
+        # Cloud renderers emit receipt evidence per adapter (CLOUD_ADAPTER_DECLARATIONS).
+        # Decline the confirmed requirements the dispatched adapter cannot evidence
+        # before any ingest/model/render spend; publication rechecks against the
+        # receipt the render actually produced.
         from app.services.cloud_render_contract import (  # noqa: PLC0415
             CloudRenderContractError,
+            cloud_adapter_for_job,
             preflight_cloud_contract,
         )
         from app.services.creator_render_contract import CREATOR_DECLINE_FIELD  # noqa: PLC0415
 
         try:
-            preflight_cloud_contract(assembly, candidates=candidates)
+            # KRI-470 PR-E: the dispatched adapter's declaration decides which
+            # requirements its renderer can evidence (and so skip the early decline).
+            preflight_cloud_contract(
+                assembly,
+                candidates=candidates,
+                adapter=cloud_adapter_for_job(assembly, candidates),
+            )
         except CloudRenderContractError as exc:
             job.status = "processing_failed"
             job.error_detail = str(exc)[:MAX_ERROR_DETAIL_LEN]
@@ -3325,6 +3419,12 @@ def _run_generative_job_impl(
             prefer_narrated_voiceover=(job.mode == "content_plan"),
             narrative_shot_count=narrative_shot_count,
         )
+        # KRI-470 PR-E: talking-head/subtitled renders emit no receipt, so a
+        # receipt-only requirement is refused before any variant renders.
+        from app.services.cloud_render_contract import check_classic_archetype  # noqa: PLC0415
+
+        check_classic_archetype(immutable_job_plan, candidates=all_candidates, archetype=archetype)
+        cloud_evidence_ctx = _cloud_evidence_context(job_id)
         if creator_opening_title and archetype == "subtitled":
             raise ValueError(f"opening_title is not supported by the {archetype} renderer")
         if archetype == "montage" and creator_clip_order:
@@ -3423,6 +3523,9 @@ def _run_generative_job_impl(
             render functions. Persists are row-locked (with_for_update), so this is
             safe to call concurrently across variants."""
             variant_id = spec["variant_id"]
+            if cloud_evidence_ctx is not None:
+                # Contract-bound job: the renderer reports receipt evidence.
+                spec = {**spec, "cloud_evidence": cloud_evidence_ctx}
             # Per-variant render_started_at timestamp (D6 tile clock).
             # First render only. Re-renders stamp this at DISPATCH instead
             # (`stamp_variant_attempt` in services/job_phases.py) so the tile
@@ -3508,6 +3611,7 @@ def _run_generative_job_impl(
                         speech_cleanup_contract=speech_cleanup_contract,
                         speech_cleanup_snapshot=speech_cleanup_snapshot,
                         speech_cleanup_uses_preflight=speech_cleanup_snapshot_contract,
+                        clip_id_to_gcs=clip_id_to_gcs,
                     )
                 elif spec.get("archetype") == "subtitled":
                     result = _render_subtitled_variant(
@@ -8294,6 +8398,7 @@ def _run_guided_story_job(
                     attempt_id=attempt_id,
                     # KRI-443: the feed follows the real render stages (no lock held here).
                     on_stage=_make_plan_stage_reporter(job_id, plan),
+                    emit_cloud_evidence=_job_contract_bound(job_id),
                 )
     result["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
     result["render_generation_id"] = attempt_id
@@ -15410,6 +15515,7 @@ def _rerender_guided_story_orientation(
             tmpdir=tmpdir,
             track=track,
             attempt_id=attempt_id,
+            emit_cloud_evidence=_job_contract_bound(job_id),
         )
     previous_receipt = existing.get("render_receipt")
     receipt = GuidedStoryRenderReceipt.model_validate(result["render_receipt"])
@@ -15575,6 +15681,7 @@ def _rerender_guided_story_revision(
             tmpdir=tmpdir,
             track=track,
             attempt_id=attempt_id,
+            emit_cloud_evidence=_job_contract_bound(job_id),
         )
     result.update(
         {
@@ -16646,6 +16753,10 @@ def _run_regenerate_variant(
                 resolved_mix = _VOICEOVER_ONLY_DEFAULT_MIX
             spec["voiceover_gcs_path"] = voiceover_gcs_path
             spec["mix"] = resolved_mix
+        regen_cloud_evidence = _cloud_evidence_context(job_id)
+        if regen_cloud_evidence is not None:
+            # Contract-bound job: the re-render reports receipt evidence too.
+            spec["cloud_evidence"] = regen_cloud_evidence
 
         variant_dir = os.path.join(tmpdir, f"variant_{rank}")
         os.makedirs(variant_dir, exist_ok=True)
@@ -17388,6 +17499,35 @@ def _cloud_contract_is_bound(plan: dict[str, Any], candidates: dict[str, Any]) -
     )
 
     return bool(plan.get(CONTRACT_FIELD) or candidates.get(REQUIREMENT_VERSION_FIELD) == 1)
+
+
+def _cloud_evidence_context(job_id: str) -> dict[str, Any] | None:
+    """The receipt-evidence context for a contract-bound job, else ``None``.
+
+    Renderers only emit KRI-470 receipt evidence when handed this context, so a
+    job without the contract marker keeps its exact stored variants and receipts.
+    The context carries the approved ``gcs_path -> media_id`` map: the renderers
+    see storage paths, the contract speaks media ids.  A read failure means "not
+    bound": the render proceeds as legacy and a contracted publication then
+    refuses visibly for missing evidence instead of a transient read failing it.
+    """
+    try:
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            if job is None:
+                return None
+            plan = job.assembly_plan or {}
+            if not _cloud_contract_is_bound(plan, getattr(job, "all_candidates", None) or {}):
+                return None
+            from app.pipeline.cloud_render_evidence import media_ids_by_gcs_path  # noqa: PLC0415
+
+            return {"media_ids_by_gcs": media_ids_by_gcs_path(plan)}
+    except Exception:  # noqa: BLE001 - never fail a render on the evidence gate
+        return None
+
+
+def _job_contract_bound(job_id: str) -> bool:
+    return _cloud_evidence_context(job_id) is not None
 
 
 def _cloud_contract_has_objective_requirements(
@@ -20623,12 +20763,13 @@ def _process_generative_variant(
     audio_mixed_path = os.path.join(variant_dir, "audio_mixed.mp4")
     final_path = os.path.join(variant_dir, "final.mp4")
     audio_t0 = time.monotonic()
+    voice_outcome: Any = None
     if voiceover_gcs_path:
         # Voiceover variants: the user's voice is the bed. voiceover_only ducks the
         # footage audio under the voice; voiceover_music drops a matched track low
         # under the voice instead. `mix` is the voice-prominence slider.
         cfg = (track.track_config or {}) if track is not None else {}
-        _mix_user_voiceover(
+        voice_outcome = _mix_user_voiceover(
             assembled_path,
             voiceover_local,
             audio_mixed_path,
@@ -21059,6 +21200,32 @@ def _process_generative_variant(
         variant_t0,
         detail={"variant_id": variant_id, "ok": True},
     )
+    cloud_ctx = spec.get("cloud_evidence")
+    cloud_receipt = (
+        _classic_cloud_receipt(
+            cloud_ctx,
+            final_path,
+            slots=[
+                (str(step.clip_id), float(plan.get("duration_s") or 0.0))
+                for step, plan in zip(steps, resolved_plans, strict=False)
+            ]
+            if len(steps) == len(resolved_plans)
+            else [],
+            clip_id_to_gcs=clip_id_to_gcs,
+            clip_id_to_local=clip_id_to_local,
+            probe_map=probe_map,
+            audio_mode=(
+                "voiceover"
+                if voiceover_gcs_path
+                else ("music" if track is not None else "original")
+            ),
+            voice_outcome=voice_outcome,
+            # A collage (masonry) cut's slots are not its picture.
+            attributable=not masonry_applied,
+        )
+        if cloud_ctx is not None
+        else None
+    )
     return {
         **base,
         "ok": True,
@@ -21070,6 +21237,7 @@ def _process_generative_variant(
             if settings.visual_blocks_enabled
             else {}
         ),
+        **({"render_receipt": cloud_receipt} if cloud_receipt is not None else {}),
     }
 
 
@@ -22319,6 +22487,7 @@ def _render_narrated_variant(
     speech_cleanup_contract: str = "legacy_auto",
     speech_cleanup_snapshot: HydratedSpeechCleanupSnapshot | None = None,
     speech_cleanup_uses_preflight: bool | None = None,
+    clip_id_to_gcs: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Render one narrated walkthrough variant.
 
@@ -22689,12 +22858,14 @@ def _render_narrated_variant(
         # Caption-free twin (same clips + voice + bed, no burned text) so the
         # creator can edit captions live on the video and reburn just the text.
         base_path = os.path.join(variant_dir, "final_base.mp4")
+        narrated_mix_evidence: dict[str, Any] = {}
         caption_cues = assemble_narrated(
             step_timings,
             clip_assignments,
             effective_voiceover_local,
             final_path,
             variant_dir,
+            evidence_out=narrated_mix_evidence,
             landscape_fit=landscape_fit,
             # Burn the transcribed narration as synced captions (the on-screen
             # text IS the spoken voiceover). Reuses the transcript already
@@ -22774,6 +22945,42 @@ def _render_narrated_variant(
                 storage_generation,
             )
             upload_public_read(base_path, base_gcs)
+        cloud_ctx = spec.get("cloud_evidence")
+        cloud_receipt = None
+        if cloud_ctx is not None:
+            from app.pipeline.probe import probe_video  # noqa: PLC0415
+            from app.tasks.template_orchestrate import VoiceoverMixOutcome  # noqa: PLC0415
+
+            by_path = {path: clip_id for clip_id, path in clip_id_to_local.items()}
+            clip_by_step = {
+                str(getattr(a, "step_id", "")): by_path.get(str(getattr(a, "clip_path", "")))
+                for a in clip_assignments
+            }
+            narrated_slots = [
+                (clip_by_step.get(str(t.step_id)) or "", float(t.end_s) - float(t.start_s))
+                for t in step_timings
+            ]
+            narrated_probes: dict[str, Any] = {}
+            for clip_id in {clip_id for clip_id, _d in narrated_slots if clip_id}:
+                try:
+                    narrated_probes[clip_id_to_local[clip_id]] = probe_video(
+                        clip_id_to_local[clip_id]
+                    )
+                except Exception:  # noqa: BLE001 - unknown audio => evidence absent
+                    pass
+            cloud_receipt = _classic_cloud_receipt(
+                cloud_ctx,
+                final_path,
+                slots=narrated_slots,
+                clip_id_to_gcs=clip_id_to_gcs or {},
+                clip_id_to_local=clip_id_to_local,
+                probe_map=narrated_probes,
+                audio_mode="voiceover",
+                voice_outcome=VoiceoverMixOutcome(
+                    applied=bool(narrated_mix_evidence.get("narration_applied")),
+                    footage_audible=bool(narrated_mix_evidence.get("footage_audible")),
+                ),
+            )
         return {
             **base,
             "ok": True,
@@ -22785,6 +22992,7 @@ def _render_narrated_variant(
                 if settings.visual_blocks_enabled
                 else {}
             ),
+            **({"render_receipt": cloud_receipt} if cloud_receipt is not None else {}),
             "base_video_path": base_gcs,
             "caption_cues": caption_cues or None,
             "text_elements": storyboard_elements,
