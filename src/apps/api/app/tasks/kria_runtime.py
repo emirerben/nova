@@ -395,9 +395,11 @@ def _unresolved_choice_plan(
     evaluated for that cohort alone.
     """
 
+    from app.config import settings  # noqa: PLC0415
     from app.services.creator_render_contract import (  # noqa: PLC0415
         CreatorRenderContractError,
         build_render_contract,
+        commitments_from_strategy,
     )
 
     if not strategy:
@@ -436,7 +438,16 @@ def _unresolved_choice_plan(
             )
     try:
         contract = build_render_contract(
-            strategy, generation_id="preflight", brief=contract_brief, media_snapshot=media_snapshot
+            strategy,
+            generation_id="preflight",
+            brief=contract_brief,
+            media_snapshot=media_snapshot,
+            # KRI-479: the dry run resolves the order the dispatch-time contract will.
+            composition=(
+                commitments_from_strategy(strategy)
+                if settings.kria_plan_authority_enabled
+                else None
+            ),
         )
     except CreatorRenderContractError as exc:
         return (

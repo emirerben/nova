@@ -29,7 +29,9 @@ from app.services.choice_questions import (
     CONFLICT_DURATION_VS_COUNT,
     CONFLICT_ORDER_BASIS,
     CONFLICT_TEXT_PLACEMENT,
+    CONFLICT_VOICE_VS_DURATION,
     OPT_ATTACHMENT_ORDER,
+    OPT_SILENT_TAIL,
     OPT_UNORDERED,
 )
 from app.services.clip_order_sequence import (
@@ -688,6 +690,155 @@ def _clip_intents_on() -> bool:
     return bool(settings.clip_intents_enabled)
 
 
+# --- Composition commitments (KRI-479) -------------------------------------------------
+#
+# What the plan commits to about HOW the tracks compose, beside (never inside) the strict
+# contract model: older workers read stamped jobs with `extra="forbid"`, so a new contract
+# field -- even one skipped while unset -- would make them unreadable during a rolling deploy
+# or after a rollback. The commitments are a plain dict on the job
+# (`assembly_plan["creator_composition"]`), keyed by the digest of the contract they were
+# resolved against, written and read only by new code, and only for plan-authority jobs.
+
+COMPOSITION_FIELD = "creator_composition"
+ROUTE_VOICE_BEHIND_FOOTAGE = "voice_behind_footage"
+# Mirrors `phone_recipe_shared.EXPORT_SAFETY_MARGIN_S` (kept literal: the contract module
+# does not import pipeline compilers).
+_VOICE_SAFETY_MARGIN_S = 0.05
+
+
+class CompositionCommitments(BaseModel):
+    """Plan commitments the verifier checks; none of them is a timeline."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+    # The voice clip's own picture is not part of the picture sequence (so it is left out of
+    # `order_ids`; `audio_source_ids` keeps it).
+    voice_picture: Literal["hidden"] | None = None
+    # Seconds of voice the plan promises when that is LESS than the picture (a silent tail
+    # the creator chose). None = the voice covers the whole timeline.
+    voice_span_s: float | None = Field(default=None, gt=0)
+    # Readable-shot floor in force. None = the policy constant (`MIN_READABLE_SHOT_S`).
+    min_shot_s: float | None = Field(default=None, ge=0.4)
+
+
+def commitments_from_strategy(
+    strategy: Mapping[str, Any] | None, *, voice_duration_s: float | None = None
+) -> CompositionCommitments | None:
+    """The commitments a typed strategy implies, or None (no continuous voice).
+
+    Only ``voice_mode == "continuous"`` with exactly ONE named camera-audio source
+    commits anything; several candidates are a question (`which_voice`), not a guess.
+    ``voice_duration_s`` is the voice clip's length (the silent-tail span needs it).
+    """
+
+    typed = _strategy(strategy)
+    if typed is None or typed.voice_mode != "continuous":
+        return None
+    audio = typed.montage_audio
+    ids = list(getattr(audio, "source_media_ids", None) or [])
+    if audio is None or not audio.preserve_source_audio or len(ids) != 1:
+        return None
+    span: float | None = None
+    answers = {a.conflict: a for a in (typed.choice_answers or ())}
+    tail = answers.get(CONFLICT_VOICE_VS_DURATION)
+    if tail is not None and tail.option == OPT_SILENT_TAIL and voice_duration_s:
+        span = max(0.1, round(float(voice_duration_s) - _VOICE_SAFETY_MARGIN_S, 3))
+    return CompositionCommitments(voice_picture="hidden", voice_span_s=span)
+
+
+def _bound_duration_s(assembly: Mapping[str, Any], media_id: str) -> float | None:
+    """The bound original's duration for ``media_id`` from the job's phone-source receipts."""
+
+    from app.services.phone_sources import PHONE_SOURCES_FIELD  # noqa: PLC0415
+
+    for row in assembly.get(PHONE_SOURCES_FIELD) or []:
+        if isinstance(row, Mapping) and row.get("media_id") == media_id:
+            original = row.get("original")
+            value = original.get("duration_s") if isinstance(original, Mapping) else None
+            if isinstance(value, int | float) and not isinstance(value, bool) and value > 0:
+                return float(value)
+    return None
+
+
+def stamp_composition(
+    assembly: Mapping[str, Any],
+    candidates: Mapping[str, Any],
+    *,
+    voice_duration_s: float | None = None,
+) -> dict[str, Any]:
+    """``assembly`` with its ``creator_composition`` key (re)computed -- plan-authority jobs only.
+
+    Call it once at dispatch, right after the route stamp (the stamped route is copied in so
+    there is one source of truth). A job without the plan-authority stamp comes back as the
+    SAME object; a strategy with no continuous voice REMOVES a previous key. Never raises.
+    """
+
+    unchanged = assembly if isinstance(assembly, dict) else dict(assembly)
+    if candidates.get(PLAN_AUTHORITY_FIELD) is None:
+        return unchanged
+    try:
+        contract = read_render_contract(assembly)
+        strategy = candidates.get("creator_strategy")
+        commitments = (
+            commitments_from_strategy(strategy, voice_duration_s=voice_duration_s)
+            if contract is not None
+            else None
+        )
+        if commitments is not None and voice_duration_s is None:
+            # The silent-tail span needs the voice clip's length, from the bound receipts.
+            ids = (strategy.get("montage_audio") or {}).get("source_media_ids") or []
+            known = _bound_duration_s(assembly, str(ids[0])) if ids else None
+            if known is not None:
+                commitments = commitments_from_strategy(strategy, voice_duration_s=known)
+        if contract is None or commitments is None:
+            if COMPOSITION_FIELD not in assembly:
+                return unchanged
+            return {k: v for k, v in assembly.items() if k != COMPOSITION_FIELD}
+        stamp = assembly.get("creator_route")
+        route = stamp.get("route") if isinstance(stamp, Mapping) else None
+        return {
+            **assembly,
+            COMPOSITION_FIELD: {
+                "contract_digest": contract.digest,
+                "route": route if isinstance(route, str) else None,
+                **commitments.model_dump(mode="json"),
+            },
+        }
+    except Exception:  # noqa: BLE001 -- advisory; never block dispatch
+        return unchanged
+
+
+def read_composition(
+    assembly: Mapping[str, Any], contract_digest: str
+) -> CompositionCommitments | None:
+    """The commitments, or None when absent, malformed or stale (another contract's)."""
+
+    raw = assembly.get(COMPOSITION_FIELD)
+    if not isinstance(raw, Mapping) or not contract_digest:
+        return None
+    if raw.get("contract_digest") != contract_digest:
+        return None
+    try:
+        return CompositionCommitments.model_validate(
+            {k: v for k, v in raw.items() if k not in {"contract_digest", "route"}}
+        )
+    except ValidationError:
+        return None
+
+
+def composition_route(assembly: Mapping[str, Any], contract_digest: str) -> str | None:
+    """The route recorded with the commitments (None when absent or stale)."""
+
+    raw = assembly.get(COMPOSITION_FIELD)
+    if (
+        isinstance(raw, Mapping)
+        and contract_digest
+        and raw.get("contract_digest") == contract_digest
+        and isinstance(raw.get("route"), str)
+    ):
+        return raw["route"]
+    return None
+
+
 def build_render_contract(
     strategy: Mapping[str, Any] | None,
     *,
@@ -696,8 +847,15 @@ def build_render_contract(
     media_snapshot: Mapping[str, Any] | None = None,
     clip_order: Sequence[str] = (),
     has_voiceover: bool = False,
+    composition: CompositionCommitments | None = None,
 ) -> CreatorRenderContract | None:
-    """Pin only facts that a portable recipe can objectively demonstrate."""
+    """Pin only facts that a portable recipe can objectively demonstrate.
+
+    ``composition`` (KRI-479) carries plan commitments that change how the order set is
+    derived without touching the contract model: with ``voice_picture == "hidden"`` the
+    camera-audio clip is the voice only, so it is left out of ``order_ids``
+    (``audio_source_ids`` keeps it). ``None`` is byte-identical to before.
+    """
     if strategy is None and brief is None:
         return None
     typed = _strategy(strategy)
@@ -759,7 +917,18 @@ def build_render_contract(
         durations.append(float(raw["target_duration_s"]))
     order_required = bool(typed and typed.ordering_choice == "chronological")
     attachment_order = False
-    order_ids = tuple(str(item) for item in clip_order if str(item).strip())
+    hidden_ids: frozenset[str] = frozenset()
+    if (
+        composition is not None
+        and composition.voice_picture == "hidden"
+        and typed is not None
+        and typed.montage_audio is not None
+        and typed.montage_audio.preserve_source_audio
+    ):
+        hidden_ids = frozenset(str(v) for v in typed.montage_audio.source_media_ids or [])
+    order_ids = tuple(
+        str(item) for item in clip_order if str(item).strip() and str(item) not in hidden_ids
+    )
     order_basis = "confirmed" if order_ids else None
     unresolved: list[str] = []
     song_time_owns_order = bool(
@@ -849,10 +1018,16 @@ def build_render_contract(
     if order_required and attachment_order:
         # An explicit, verifiable basis: the order the clips were added to the project.
         rows = (media_snapshot or {}).get("clip_assignments") or []
-        selected = set(typed.selected_media_ids or ()) if typed else set()
+        selected = set(typed.selected_media_ids or ()) - hidden_ids if typed else set()
         if selected:
             rows = [
                 row for row in rows if isinstance(row, Mapping) and row.get("media_id") in selected
+            ]
+        if hidden_ids:
+            rows = [
+                row
+                for row in rows
+                if not (isinstance(row, Mapping) and str(row.get("media_id")) in hidden_ids)
             ]
         ids = [
             str(row["media_id"]) for row in rows if isinstance(row, Mapping) and row.get("media_id")
@@ -866,10 +1041,16 @@ def build_render_contract(
         from app.services.clip_facts import capture_from_assignment
 
         rows = (media_snapshot or {}).get("clip_assignments") or []
-        selected = set(typed.selected_media_ids or ()) if typed else set()
+        selected = set(typed.selected_media_ids or ()) - hidden_ids if typed else set()
         if selected:
             rows = [
                 row for row in rows if isinstance(row, Mapping) and row.get("media_id") in selected
+            ]
+        if hidden_ids:
+            rows = [
+                row
+                for row in rows
+                if not (isinstance(row, Mapping) and str(row.get("media_id")) in hidden_ids)
             ]
         dates = {}
         for row in rows:

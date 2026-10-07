@@ -401,6 +401,9 @@ CONFLICT_DURATION_VS_COUNT = "duration_vs_count"
 CONFLICT_ORDER_BASIS = "order_basis"
 CONFLICT_TEXT_PLACEMENT = "text_placement"
 CONFLICT_TITLE_TEXT = "title_text"
+# KRI-479 (voice behind footage; only for a `voice_mode == "continuous"` plan).
+CONFLICT_VOICE_VS_DURATION = "voice_vs_duration"
+CONFLICT_WHICH_VOICE = "which_voice"
 # Fixed priority: an answer can change a later detector's inputs, so exactly one question
 # is asked per turn, in this order.
 CONFLICT_PRIORITY = (
@@ -416,6 +419,8 @@ OPT_ATTACHMENT_ORDER = "attachment_order"
 OPT_UNORDERED = "unordered"
 OPT_OWN_SEQUENCE = "own_sequence"
 OPT_NO_TITLE = "no_title"
+OPT_MATCH_VOICE = "match_voice"
+OPT_SILENT_TAIL = "silent_tail"
 
 # What an "order I filmed them" requirement means to the contract (brief order keys).
 ATTACHMENT_ORDER_KEY = "attachment"

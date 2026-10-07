@@ -4716,7 +4716,7 @@ def test_creator_intent_clip_order_basename_fallback_and_guided_noop() -> None:
 # dispatch never stamps a job whose contract it creates; flag off stamps anyway.
 
 
-def _dispatch_with_binding(monkeypatch, *, enabled, factory_stamped):  # noqa: ANN001, ANN202
+def _dispatch_with_binding(monkeypatch, *, enabled, factory_stamped, strategy=None):  # noqa: ANN001, ANN202
     from app.config import settings
     from app.kria.brief_binding import BriefBinding
     from app.services import generative_jobs
@@ -4730,7 +4730,10 @@ def _dispatch_with_binding(monkeypatch, *, enabled, factory_stamped):  # noqa: A
         # Simulate a factory that did (or did not) stamp the job before dispatch.
         job = real_build(**{**kwargs, "creator_strategy": None})
         # The factory persisted a strategy but (in this simulation) no contract yet.
-        job.all_candidates = {**job.all_candidates, "creator_strategy": {"opening_title": "T"}}
+        job.all_candidates = {
+            **job.all_candidates,
+            "creator_strategy": strategy or {"opening_title": "T"},
+        }
         if factory_stamped:
             job.all_candidates = {
                 **job.all_candidates,
@@ -4811,3 +4814,41 @@ def test_dispatch_stamps_the_route_for_a_stamped_job_and_not_for_an_unstamped_on
     unstamped = _dispatch_with_binding(monkeypatch, enabled=False, factory_stamped=False)
     job = unstamped.session.add.call_args.args[0]
     assert "creator_route" not in job.assembly_plan
+
+
+# --- KRI-479: dispatch stamps the composition commitments beside the route ----------------
+
+_VOICE_STRATEGY = {
+    "audio_strategy": "original_audio",
+    "voice_mode": "continuous",
+    "montage_audio": {"preserve_source_audio": True, "source_media_ids": ["talk"]},
+    "ordering_choice": "chronological",
+}
+
+
+def test_dispatch_stamps_composition_for_a_stamped_voice_plan_and_not_an_unstamped_one(
+    monkeypatch,  # noqa: ANN001
+):
+    from app.services.creator_render_contract import read_composition, read_render_contract
+
+    stamped = _dispatch_with_binding(
+        monkeypatch, enabled=True, factory_stamped=False, strategy=_VOICE_STRATEGY
+    )
+    job = stamped.session.add.call_args.args[0]
+    contract = read_render_contract(job.assembly_plan)
+    assert contract is not None and contract.audio_source_ids == ("talk",)
+    composition = job.assembly_plan["creator_composition"]
+    assert composition["contract_digest"] == contract.digest
+    assert composition["voice_picture"] == "hidden"
+    assert composition["route"] == job.assembly_plan.get("creator_route", {}).get("route")
+    assert read_composition(job.assembly_plan, contract.digest) is not None
+    # the strict contract is untouched (older workers reject unknown keys)
+    assert "creator_composition" not in job.assembly_plan["creator_render_requirements"]
+
+    unstamped = _dispatch_with_binding(
+        monkeypatch, enabled=False, factory_stamped=False, strategy=_VOICE_STRATEGY
+    )
+    job = unstamped.session.add.call_args.args[0]
+    assert "creator_composition" not in job.assembly_plan
+    plain = _dispatch_with_binding(monkeypatch, enabled=True, factory_stamped=False)
+    assert "creator_composition" not in plain.session.add.call_args.args[0].assembly_plan
