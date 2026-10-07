@@ -16,6 +16,7 @@ import pytest
 from app.agents._schemas.creator_agent import (
     CapabilityAvailability,
     CreativeStrategy,
+    CreatorRenderIntentEvidence,
     ProposeStrategy,
     ResolvedCreatorManifest,
 )
@@ -272,7 +273,20 @@ async def planner_turn(record: IncidentRecord, monkeypatch: pytest.MonkeyPatch):
         manifest_hash="b" * 64,
     )
     strategy = CreativeStrategy.model_validate(record.approved.strategy or {})
-    action = ProposeStrategy(kind="propose_strategy", strategy=strategy, summary="Recorded plan.")
+    # KRI-506: model-proposed on-screen wording is a candidate unless the creator's own message
+    # grounds it. A record whose strategy carries a title cites the creator's message as evidence
+    # (it contains the words verbatim), exactly as the model does for words the creator typed.
+    evidence = (
+        CreatorRenderIntentEvidence(opening_title=request[:1200])
+        if strategy.opening_title and strategy.opening_title in request
+        else None
+    )
+    action = ProposeStrategy(
+        kind="propose_strategy",
+        strategy=strategy,
+        summary="Recorded plan.",
+        render_intent_evidence=evidence,
+    )
     groups = [_group(g) for g in record.inputs.clip_groups]
     resolver = AsyncMock(
         return_value=PlannedIntentResolution(
