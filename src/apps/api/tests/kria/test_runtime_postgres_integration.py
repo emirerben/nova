@@ -2438,6 +2438,220 @@ async def test_editor_ops_turn_receipts_cover_only_this_turns_requirements(
         await async_engine.dispose()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Add a title “Lisbon” under the text. Anymate typewrite to all texts but "
+        "show lisbon after the current text finished animating",
+        "Add a new title “Lisbon”. Animate it",
+    ],
+)
+async def test_lisbon_followup_atomically_pins_current_request_without_recreation(
+    monkeypatch: pytest.MonkeyPatch,
+    message: str,
+) -> None:
+    """Sanitized four-clip replay crosses turn acceptance, draft commit, and binding."""
+    from app.kria.brief import BriefRequirement, CreativeBrief
+    from app.kria.brief_binding import BriefBinding
+    from app.pipeline.guided_story import compile_execution_plan
+    from app.pipeline.unified_montage import UnifiedClip, brief_view, plan_unified_montage
+    from app.services.kria_editor_ops import build_editor_snapshot
+    from tests.services.test_kria_editor_clip_context import _parse
+
+    user_id, thread_id, session_id = _seed_runtime_project()
+    job_id = uuid.uuid4()
+    original = "Good Morning from the Erbens"
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(id="r1", kind="text", scope="title", literal=original),
+        ],
+    )
+    clips = [
+        UnifiedClip(
+            media_id=f"clip-{i}",
+            proxy_path=f"users/test/morning-{i}.mp4",
+            generation="1",
+            duration_s=3.75,
+            width=1080,
+            height=1920,
+        )
+        for i in range(4)
+    ]
+    montage = plan_unified_montage(
+        clips,
+        brief_view(brief),
+        strategy={
+            "opening_title": original,
+            "target_duration_s": 15,
+        },
+    )
+    guided = montage.guided_edit()
+    execution = compile_execution_plan(guided, track=None)
+    variant = {
+        "variant_id": "guided_story",
+        "resolved_archetype": "guided_story",
+        "render_status": "ready",
+        "render_generation_id": "generation-1",
+        "render_destination": "device",
+        "text_elements": execution["text_elements"],
+    }
+    assembly = {
+        "guided_edit": guided,
+        "guided_story_execution_plan": execution,
+        "variants": [variant],
+    }
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    monkeypatch.setattr(
+        "app.services.kria_editor_ops._editor_capabilities",
+        lambda *_: {"text_elements": True, "timeline": True},
+    )
+    with sync_session() as db:
+        session = db.get(CreatorAgentSession, session_id)
+        item = db.get(PlanItem, session.plan_item_id)
+        job = Job(
+            id=job_id,
+            user_id=user_id,
+            status="variants_ready",
+            mode="generative",
+            raw_storage_path="",
+            selected_platforms=["tiktok"],
+            content_plan_item_id=item.id,
+            content_plan_ownership_epoch=0,
+            assembly_plan=assembly,
+            all_candidates={"clip_paths": [clip.proxy_path for clip in clips]},
+        )
+        db.add(job)
+        db.flush()
+        item.current_job_id = job_id
+        session.target_job_id = job_id
+        session.target_variant_id = "guided_story"
+        session.target_generation_id = "generation-1"
+        session.manifest_hash = "a" * 64
+        db.add(
+            CreativeBriefVersion(
+                thread_id=thread_id,
+                version=1,
+                requirements=[r.model_dump(mode="json") for r in brief.requirements],
+            )
+        )
+        snapshot = build_editor_snapshot(job, variant)
+        db.commit()
+    detailed = "typewrite" in message
+    phase = "typewriter" if detailed else "pop"
+    addition = {
+        "op": "add_text",
+        "text": "Lisbon",
+        "start_s": 0,
+        "end_s": 2,
+        "style_from": "title",
+        "animation_phases": {"entrance": phase},
+    }
+    if detailed:
+        addition.update(below=True, after_animation_of="title")
+    raw_ops = (
+        [
+            {
+                "op": "patch_text",
+                "selector": {"group": "all"},
+                "patch": {"animation_phases": {"entrance": "typewriter"}},
+            }
+        ]
+        if detailed
+        else []
+    ) + [addition]
+    output = _parse(snapshot, raw_ops, message)
+    assert output.ops, output.reply
+    updates = [
+        BriefUpdate(kind="text", scope="title", literal="Lisbon"),
+        BriefUpdate(kind="style", scope="title", description=f"{phase} title animation"),
+    ]
+    if detailed:
+        updates.append(
+            BriefUpdate(
+                kind="timing",
+                scope="title",
+                description="Show Lisbon after the current text finished animating",
+            )
+        )
+
+    async def planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        return PlannedKriaTurn(
+            plan=adapt_editor_action(
+                reply="Review the Lisbon title edit.", request_render=False, ops=output.ops
+            ),
+            manifest_hash="a" * 64,
+            context_hash="b" * 64,
+            brief_updates=tuple(updates),
+            brief_route="editor_ops",
+            brief_expected_version=1,
+            brief_coverage={
+                "applicable_ids": ["r1"],
+                "retrieved_ids": ["r1"],
+                "enforced_ids": [],
+                "unresolved_ids": ["r1"],
+            },
+        )
+
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", planned)
+    try:
+        accepted = await _submit(user_id, thread_id, message, 2)
+        result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        assert result["status"] == "completed"
+        with sync_session() as db:
+            head = db.execute(
+                select(CreatorEditDraft).where(
+                    CreatorEditDraft.item_id == item.id, CreatorEditDraft.is_head.is_(True)
+                )
+            ).scalar_one()
+            pinned = BriefBinding.model_validate(head.snapshot_json["brief_binding"])
+            assert pinned.state == "pinned" and pinned.brief.version == 2
+            assert [r.literal for r in pinned.brief.live() if r.literal] == [original, "Lisbon"]
+            assert {r.kind for r in pinned.brief.live()} >= {"text", "style"}
+            assert message in pinned.creator_request
+            rows = head.snapshot_json["editor_payload"]["text_elements"]
+            title = next(row for row in rows if row["text"] == original)
+            lisbon = next(row for row in rows if row["text"] == "Lisbon")
+            assert lisbon["animation_phases"]["entrance"] == phase
+            if detailed:
+                assert "timing" in {r.kind for r in pinned.brief.live()}
+                assert title["animation_phases"]["entrance"] == "typewriter"
+                assert lisbon["start_s"] == pytest.approx(title["start_s"] + 0.4)
+                assert lisbon["start_s"] < title["end_s"]
+            assert db.get(Job, job_id).assembly_plan == assembly
+            assert (
+                db.execute(
+                    select(func.count())
+                    .select_from(CreatorAgentApproval)
+                    .where(CreatorAgentApproval.turn_id == uuid.UUID(accepted.turn_id))
+                ).scalar_one()
+                == 0
+            )
+            assert (
+                db.execute(
+                    select(func.count())
+                    .select_from(CreativeBriefVersion)
+                    .where(CreativeBriefVersion.thread_id == thread_id)
+                ).scalar_one()
+                == 2
+            )
+        await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        with sync_session() as db:
+            assert (
+                db.execute(
+                    select(func.count())
+                    .select_from(CreativeBriefVersion)
+                    .where(CreativeBriefVersion.thread_id == thread_id)
+                ).scalar_one()
+                == 2
+            )
+    finally:
+        await async_engine.dispose()
+
+
 async def _await_montage_approval(
     monkeypatch: pytest.MonkeyPatch, *, suffix: str
 ) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, str, int, int]:

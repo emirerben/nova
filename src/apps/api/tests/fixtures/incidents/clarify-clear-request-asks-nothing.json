@@ -107,6 +107,10 @@
     },
     "question": {
       "no_question": true
+    },
+    "route": {
+      "platform": "phone",
+      "route": "unified_montage"
     }
   },
   "repro": {

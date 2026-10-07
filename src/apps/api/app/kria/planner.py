@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents._model_client import default_client
 from app.agents._runtime import RunContext, TerminalError
+from app.agents._schemas.brief_extractor import BriefExtractionOutput
 from app.agents._schemas.creator_agent import (
     AskUser,
     ProposeStrategy,
@@ -32,6 +33,7 @@ from app.agents._schemas.creator_agent import (
     ReviewDecision,
 )
 from app.agents._schemas.edit_format import CLIP_INTENT_FREE_EDIT_FORMATS
+from app.agents.brief_extractor import BriefExtractionInput, BriefExtractorAgent
 from app.agents.main_creator import (
     MAIN_CREATOR_CONVERSATION_MAX,
     MainCreatorAgent,
@@ -1121,7 +1123,12 @@ async def _load_creator_inputs(
 
 
 async def _call_main_creator(
-    inputs: _CreatorInputs, *, thread_id: uuid.UUID, creator_id: uuid.UUID
+    inputs: _CreatorInputs,
+    *,
+    thread_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    item_id: uuid.UUID | None = None,
+    creator_agent_session_id: uuid.UUID | None = None,
 ) -> MainCreatorOutput:
     def _run_agent():  # noqa: ANN202 - inferred MainCreatorOutput
         return MainCreatorAgent(default_client()).run(
@@ -1129,6 +1136,10 @@ async def _call_main_creator(
             ctx=RunContext(
                 request_id=str(thread_id),
                 creator_id=str(creator_id),
+                plan_item_id=str(item_id) if item_id else None,
+                creator_agent_session_id=(
+                    str(creator_agent_session_id) if creator_agent_session_id else None
+                ),
             ),
         )
 
@@ -1136,6 +1147,42 @@ async def _call_main_creator(
         return await asyncio.to_thread(_run_agent)
     except TerminalError as exc:
         raise RuntimeError("Kria could not produce a reliable editorial plan") from exc
+
+
+async def _call_brief_extractor(
+    inputs: _CreatorInputs,
+    *,
+    creator_request: str,
+    thread_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    item_id: uuid.UUID,
+    creator_agent_session_id: uuid.UUID | None,
+) -> BriefExtractionOutput:
+    """Extract only brief updates; rendered edits must never invoke Main Creator here."""
+
+    agent_input = BriefExtractionInput(
+        creator_request=creator_request,
+        user_message=inputs.agent_input.user_message,
+        conversation=inputs.agent_input.conversation,
+    )
+
+    def _run_agent():  # noqa: ANN202 - inferred BriefExtractionOutput
+        return BriefExtractorAgent(default_client()).run(
+            agent_input,
+            ctx=RunContext(
+                request_id=str(thread_id),
+                creator_id=str(creator_id),
+                plan_item_id=str(item_id),
+                creator_agent_session_id=(
+                    str(creator_agent_session_id) if creator_agent_session_id else None
+                ),
+            ),
+        )
+
+    try:
+        return await asyncio.to_thread(_run_agent)
+    except TerminalError as exc:
+        raise RuntimeError("Kria could not extract the creative brief reliably") from exc
 
 
 def _clip_understanding_wait_until() -> float:
@@ -1932,6 +1979,172 @@ async def _plan_live_turn(
             context_hash=manifest.context_hash,
         )
     prior_brief = await load_latest_brief(db, thread_id) if brief_on else None
+    creator_agent_session_id = None
+    pre_extracted_updates: tuple[BriefUpdate, ...] = ()
+    pre_extracted_retrieved_ids: list[str] = []
+    # A rendered followup only needs typed requirement extraction before routing.
+    # Keep the wide Main Creator envelope for genuine replans and first drafts.
+    from app.kria.brief import wants_full_replan  # noqa: PLC0415
+
+    if extract_first and not answers_clip_question and not wants_full_replan(user_message):
+        try:
+            extraction_inputs = await _load_creator_inputs(
+                db,
+                thread_id=thread_id,
+                item=item,
+                persona=persona,
+                creator_id=creator_id,
+                user_message=user_message,
+                manifest=manifest,
+                media_context=media_context,
+                prior_brief=prior_brief,
+                brief_on=True,
+            )
+            if isinstance(extraction_inputs, PlannedKriaTurn):
+                return extraction_inputs
+            extraction_outputs = []
+            for batch in extraction_inputs.brief_batches or (None,):
+                request = (
+                    extraction_inputs.agent_input.creator_request if batch is None else batch.text
+                )
+                extraction_outputs.append(
+                    await _call_brief_extractor(
+                        extraction_inputs,
+                        creator_request=request,
+                        thread_id=thread_id,
+                        creator_id=creator_id,
+                        item_id=item_id,
+                        creator_agent_session_id=creator_agent_session_id,
+                    )
+                )
+                if batch is not None:
+                    pre_extracted_retrieved_ids.extend(batch.requirement_ids)
+            unique_extracted = {
+                json.dumps(update.model_dump(mode="json"), sort_keys=True): update
+                for result in extraction_outputs
+                for update in result.brief_updates
+            }
+            pre_extracted_updates = tuple(unique_extracted.values())
+            effective = apply_updates(prior_brief, pre_extracted_updates, source_turn_id=None)
+            fresh = new_requirements(prior_brief, effective)
+            if pending_analysis_ids:
+                return PlannedKriaTurn(
+                    plan=KriaTurnPlan(
+                        mode="respond",
+                        turn_value="recovery",
+                        response=(
+                            f"I'm still checking {len(pending_analysis_ids)} of your clips. "
+                            "Your request and completed answers are saved. "
+                            "Ask me to continue once those clips are ready."
+                        ),
+                    ),
+                    manifest_hash=manifest.manifest_hash,
+                    context_hash=manifest.context_hash,
+                    brief_updates=pre_extracted_updates,
+                    brief_expected_version=prior_brief.version if prior_brief else 0,
+                    brief_coverage={
+                        "applicable_ids": [req.id for req in effective.live()],
+                        "retrieved_ids": list(
+                            dict.fromkeys(
+                                [*pre_extracted_retrieved_ids, *[req.id for req in fresh]]
+                            )
+                        ),
+                        "enforced_ids": [],
+                        "unresolved_ids": [req.id for req in effective.live()],
+                        "stage": "analysis",
+                        "missing_media_ids": pending_analysis_ids,
+                    },
+                )
+            item = await _refetch_item(db, item_id)
+            target = await _load_editor_target(
+                db, thread_id=thread_id, item=item, **_state_kw(editor_state)
+            )
+            if target is None:
+                recovery = _editor_target_recovery(manifest)
+                return replace(
+                    recovery,
+                    brief_updates=pre_extracted_updates,
+                    brief_expected_version=prior_brief.version if prior_brief else 0,
+                    defer_brief=False,
+                )
+            shape = plan_shape_from_editor_snapshot(target.snapshot if target else None)
+            await db.rollback()
+            route = (
+                "replan"
+                if answers_clip_question
+                else route_requirements(fresh, shape, message=user_message)
+            )
+            if route == "editor_ops":
+                editor_plan = (
+                    first_editor_result[0]
+                    if first_editor_result is not None
+                    else await _plan_editor_revision(
+                        db,
+                        thread_id=thread_id,
+                        item=await _refetch_item(db, item_id),
+                        user_message=user_message,
+                        **_state_kw(editor_state),
+                    )
+                )
+                if editor_plan is not None:
+                    return PlannedKriaTurn(
+                        plan=editor_plan,
+                        manifest_hash=manifest.manifest_hash,
+                        context_hash=manifest.context_hash,
+                        brief_updates=pre_extracted_updates,
+                        brief_route=route,
+                        brief_clip_ids=tuple(str(media.media_id) for media in manifest.media),
+                        brief_manifest=manifest,
+                        brief_coverage={
+                            "applicable_ids": [req.id for req in effective.live()],
+                            "retrieved_ids": list(
+                                dict.fromkeys(
+                                    [*pre_extracted_retrieved_ids, *[req.id for req in fresh]]
+                                )
+                            ),
+                            "enforced_ids": [],
+                            "unresolved_ids": [req.id for req in effective.live()],
+                        },
+                        brief_expected_version=prior_brief.version if prior_brief else 0,
+                    )
+            return PlannedKriaTurn(
+                plan=KriaTurnPlan(
+                    mode="respond",
+                    turn_value="recovery",
+                    response=(
+                        "I couldn’t safely apply that change to the current cut. "
+                        "Please clarify the title, style, animation, or title timing "
+                        "you want to change."
+                    ),
+                ),
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
+                brief_updates=pre_extracted_updates,
+                brief_route=route,
+                brief_clip_ids=tuple(str(media.media_id) for media in manifest.media),
+                brief_manifest=manifest,
+                brief_expected_version=prior_brief.version if prior_brief else 0,
+            )
+        except BriefCoverageError as exc:
+            return _request_recovery(manifest, prior_brief, reason=str(exc))
+        except (RuntimeError, ValidationError, BriefUpdateBatchError):
+            if binding_on and brief_on:
+                return _request_recovery(manifest, prior_brief, reason="request_extraction_failed")
+            item = await _refetch_item(db, item_id)
+            editor_plan = await _plan_editor_revision(
+                db,
+                thread_id=thread_id,
+                item=item,
+                user_message=user_message,
+                **_state_kw(editor_state),
+            )
+            if editor_plan is not None:
+                return PlannedKriaTurn(
+                    plan=editor_plan,
+                    manifest_hash=manifest.manifest_hash,
+                    context_hash=manifest.context_hash,
+                )
+            raise
     try:
         inputs = await _load_creator_inputs(
             db,
@@ -1961,7 +2174,13 @@ async def _plan_live_turn(
                 )
             )
             outputs.append(
-                await _call_main_creator(batch_inputs, thread_id=thread_id, creator_id=creator_id)
+                await _call_main_creator(
+                    batch_inputs,
+                    thread_id=thread_id,
+                    creator_id=creator_id,
+                    item_id=item_id,
+                    creator_agent_session_id=creator_agent_session_id,
+                )
             )
             if batch is not None:
                 retrieved_ids.extend(batch.requirement_ids)
@@ -2175,8 +2394,20 @@ async def extract_deferred_brief(
     )
     if isinstance(inputs, PlannedKriaTurn):
         return (), None
-    output = await _call_main_creator(inputs, thread_id=thread_id, creator_id=creator_id)
-    updates = tuple(output.brief_updates)
+    session_id = None
+    extracted = []
+    for batch in inputs.brief_batches or (None,):
+        request = inputs.agent_input.creator_request if batch is None else batch.text
+        output = await _call_brief_extractor(
+            inputs,
+            creator_request=request,
+            thread_id=thread_id,
+            creator_id=creator_id,
+            item_id=item_id,
+            creator_agent_session_id=session_id,
+        )
+        extracted.extend(output.brief_updates)
+    updates = tuple(extracted)
     effective = apply_updates(prior_brief, updates, source_turn_id=None)
     fresh = new_requirements(prior_brief, effective)
     item = await _refetch_item(db, item_id)

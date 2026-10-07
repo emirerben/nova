@@ -89,6 +89,14 @@ _MAX_INTRO_S = 3.0
 _SUPPORTED_TEXT_MODES = {"agent_text", "none"}
 
 
+def voiceover_music_gain(voice_mix: float) -> float:
+    """The matched-track bed's gain under a voice at ``voice_mix`` (the voice-prominence
+    slider): attenuated by ``1 - voice_mix`` and capped so it can never bury the voice.
+    One rule, shared with the authored editor restore."""
+    mix = max(0.0, min(1.0, float(voice_mix)))
+    return max(0.0, min(1.0 - mix, _VOICEOVER_MUSIC_BED_MAX_GAIN))
+
+
 def compile_phone_voiceover_montage_plan(
     decision: GenerativeVariantDecision,
     bindings: tuple[PhoneSourceBinding, ...],
@@ -353,7 +361,7 @@ def compile_phone_voiceover_montage_plan(
         # matched-track bed at `_VOICEOVER_MUSIC_BED_MAX_GAIN` and never mixes
         # footage audio in at all -- mirror that rather than inventing new
         # defaults.
-        music_gain = max(0.0, min(1.0 - voice_mix, _VOICEOVER_MUSIC_BED_MAX_GAIN))
+        music_gain = voiceover_music_gain(voice_mix)
         music_duration_s = max(total_duration_s, 0.1)
         # The cloud trims this bed hard at `-t`; the phone fades both ends
         # instead (KRI-139) -- a bed never starts or stops on a full sample.

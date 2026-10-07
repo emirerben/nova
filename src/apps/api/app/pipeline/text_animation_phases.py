@@ -19,16 +19,23 @@ class TextPhaseSample:
     reveal: float = 1
 
 
+def phase_duration(phases: TextAnimationPhases, duration: float) -> float:
+    """Return the shared entrance/exit envelope used by the phase renderer."""
+    if duration <= 0:
+        return 0.0
+    return min(0.4 / phases.speed, duration / 2)
+
+
 def sample_text_phases(
     phases: TextAnimationPhases, time: float, duration: float
 ) -> TextPhaseSample:
     if duration <= 0 or time < 0 or time >= duration:
         return TextPhaseSample(alpha=0, reveal=0)
-    phase_duration = min(0.4 / phases.speed, duration / 2)
+    edge = phase_duration(phases, duration)
     alpha, scale, x, y, reveal = 1.0, 1.0, 0.0, 0.0, 1.0
     for effect, progress in (
-        (phases.entrance, min(1.0, time / phase_duration)),
-        (phases.exit, min(1.0, (duration - time) / phase_duration)),
+        (phases.entrance, min(1.0, time / edge)),
+        (phases.exit, min(1.0, (duration - time) / edge)),
     ):
         eased = 1 - (1 - progress) ** 3
         if effect == "fade":

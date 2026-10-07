@@ -86,6 +86,11 @@
     "refusal": {
       "reason": "capability_unavailable",
       "field_path": "ordering_choice"
+    },
+    "route": {
+      "platform": "cloud",
+      "refusal": "capability_unavailable",
+      "field_path": "ordering_choice"
     }
   },
   "repro": {

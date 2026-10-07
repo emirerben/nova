@@ -11,6 +11,7 @@ from app.kria.device_render import make_device_request
 from app.pipeline.phone_guided_plan import compile_phone_guided_plan
 from app.routes import generative_jobs as gj
 from app.services.device_render import device_status, pin_device_request
+from app.services.kria_editor_ops import compile_editor_ops
 from app.services.phone_editor import prepare_phone_editor_commit
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD
 from tests.pipeline.test_phone_guided_plan import fixture
@@ -194,6 +195,91 @@ def test_phone_save_atomically_pins_revision_without_cloud_dispatch(monkeypatch)
     assert job.assembly_plan == before
     save(job, generation=prep["generation"])
     assert device_status(job, "guided_story").request.identity.recipe_revision == 3
+
+
+def test_phone_save_compiles_lisbon_title_sequence_and_preserves_device_recipe(monkeypatch):
+    job = phone_job(monkeypatch)
+    monkeypatch.setattr(
+        gj.settings,
+        "phone_render_verified_features",
+        [*gj.settings.phone_render_verified_features, "authoredText"],
+    )
+    variant = job.assembly_plan["variants"][0]
+    before_recipe = device_status(job, "guided_story").request.recipe.model_dump(mode="json")
+    title = variant["text_elements"][0]
+    title.update(
+        {
+            "text": "Good Morning from the Erbens",
+            "animation_phases": {
+                "entrance": "typewriter",
+                "exit": "none",
+                "loop": "none",
+                "speed": 1,
+            },
+        }
+    )
+    plan_text = job.assembly_plan["guided_story_execution_plan"]["text_elements"]
+    plan_text[0].update(title)
+    compiled = compile_editor_ops(
+        job,
+        variant,
+        [
+            {
+                "op": "patch_text",
+                "selector": {"group": "all"},
+                "patch": {
+                    "animation_phases": {
+                        "entrance": "typewriter",
+                        "exit": "none",
+                        "loop": "none",
+                        "speed": 1,
+                    }
+                },
+                "target_ids": ["title"],
+                "expected_count": 1,
+            },
+            {
+                "op": "add_text",
+                "text": "Lisbon",
+                "start_s": 0,
+                "end_s": 3,
+                "style_from": "title",
+                "below": True,
+                "after_animation_of": "title",
+                "animation_phases": {"entrance": "typewriter"},
+            },
+        ],
+    )
+    payload = compiled.payload
+    saved_text = payload.text_elements
+    original = next(row for row in saved_text if row["id"] == "title")
+    lisbon = next(row for row in saved_text if row["text"] == "Lisbon")
+    assert original["text"] == "Good Morning from the Erbens"
+    assert original["animation_phases"]["entrance"] == "typewriter"
+    assert lisbon["animation_phases"]["entrance"] == "typewriter"
+    assert lisbon["start_s"] == pytest.approx(0.4)
+    assert lisbon["y_frac"] > (original.get("y_frac") or 0.5)
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "guided_story",
+        gj.EditorCommitRequest(base_generation="first", text_elements=saved_text),
+    )
+    request = device_status(job, "guided_story").request
+    layers = request.recipe.text_layers
+    rendered = {" ".join(run.text for run in layer.runs): layer for layer in layers}
+    assert "Good Morning from the Erbens" in rendered
+    assert "Lisbon" in rendered
+    assert rendered["Good Morning from the Erbens"].animation_phases.entrance == "typewriter"
+    assert rendered["Lisbon"].animation_phases.entrance == "typewriter"
+    assert rendered["Lisbon"].start == pytest.approx(0.4)
+    assert rendered["Lisbon"].anchor_y > rendered["Good Morning from the Erbens"].anchor_y
+    after_recipe = request.recipe.model_dump(mode="json")
+    assert after_recipe["tracks"] == before_recipe["tracks"]
+    assert after_recipe["audio"] == before_recipe["audio"]
+    assert request.recipe.duration == pytest.approx(3)
+    assert request.recipe.tracks[0].clips[0].source_asset_id == "source"
+    assert prep["generation"] != "first"
 
 
 def test_phone_save_recompiles_with_the_cleaned_narration_bed(monkeypatch):

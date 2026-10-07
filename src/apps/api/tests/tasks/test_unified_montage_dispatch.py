@@ -293,6 +293,8 @@ def test_without_capture_times_the_order_stays_attachment_and_says_so(harness):
     assert record["ordering_basis"] == "attachment"
     assert record["clip_ids"] == [f"clip-{i}" for i in range(CLIPS)]
     receipts = {row["requirement_id"]: row for row in record["requirement_receipts"]}
+    # An unbound job keeps its original verdict ("partly"); the stricter "Couldn't" applies only
+    # where an authority is bound (see the bound-job tests at the end of this file).
     assert receipts["r4"]["status"] == "partial"
 
 
@@ -1000,3 +1002,100 @@ def test_a_landscape_choice_pins_a_1920x1080_canvas_without_bars(harness):
     recipe = device_status(job, "guided_story").request.recipe
     assert (recipe.canvas.width, recipe.canvas.height) == (1920, 1080)
     assert set(_guided_track_scales(job)) == {1.0}
+
+
+# --- KRI-470 PR-G: an unmet required order blocks a bound montage (never a silent success) ---
+
+
+def _bound_job(harness, *, extra_order_facts: dict):
+    """Filming order (which the plan can follow) PLUS a second rule the checker has no key for."""
+    from app.kria.brief_binding import BriefBinding
+
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(
+                id="r4",
+                kind="order",
+                scope="global",
+                description="in the order I filmed",
+                facts={"key": "capture_time"},
+            ),
+            BriefRequirement(
+                id="r5",
+                kind="order",
+                scope="global",
+                description="alphabetically by the place",
+                facts={"key": "alphabetical", **extra_order_facts},
+            ),
+        ],
+    )
+    job, *_ = harness(brief=brief)
+    binding = BriefBinding.create(uuid.uuid4(), brief)
+    job.assembly_plan["creator_brief_binding"] = binding.model_dump(mode="json")
+    return job, copy.deepcopy(job.assembly_plan)
+
+
+def test_a_required_order_the_plan_cannot_follow_asks_before_simplifying(harness):
+    job, snapshot = _bound_job(harness, extra_order_facts={})
+
+    with pytest.raises(UnsupportedPhonePlan) as caught:
+        gb._run_phone_unified_montage_job(
+            str(job.id), snapshot, job.all_candidates, ownership_epoch=3
+        )
+
+    assert "Should I try again or simplify this request?" in str(caught.value)
+    assert "ordering rule" in str(caught.value)
+    recovery = job.assembly_plan["request_recovery"]
+    failed = {
+        row["requirement_id"]: row
+        for row in recovery["requirement_receipts"]
+        if row["verification"] == "checked" and row["status"] != "met"
+    }
+    assert failed["r5"]["status"] == "not_possible"
+    assert "guided_edit" not in job.assembly_plan  # nothing was published to render
+
+
+def test_an_optional_order_preference_the_plan_cannot_follow_does_not_block(harness):
+    job, snapshot = _bound_job(harness, extra_order_facts={"strength": "preference"})
+
+    planned = gb._run_phone_unified_montage_job(
+        str(job.id), snapshot, job.all_candidates, ownership_epoch=3
+    )
+
+    assert planned is not None and isinstance(planned["guided_edit"], dict)
+    receipts = {
+        row["requirement_id"]: row for row in planned["unified_montage"]["requirement_receipts"]
+    }
+    assert receipts["r5"]["verification"] == "unchecked"
+    assert receipts["r4"]["status"] == "met"
+
+
+def test_a_bound_job_without_capture_times_fails_the_required_filming_order(harness):
+    """The same shape as the unbound test above, but bound: "Couldn't", and it blocks."""
+    from app.kria.brief_binding import BriefBinding
+
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(
+                id="r4",
+                kind="order",
+                scope="global",
+                description="in the order I filmed",
+                facts={"key": "capture_time"},
+            )
+        ],
+    )
+    job, *_ = harness(brief=brief, capture=False)
+    job.assembly_plan["creator_brief_binding"] = BriefBinding.create(
+        uuid.uuid4(), brief
+    ).model_dump(mode="json")
+
+    with pytest.raises(UnsupportedPhonePlan):
+        gb._run_phone_unified_montage_job(
+            str(job.id), copy.deepcopy(job.assembly_plan), job.all_candidates, ownership_epoch=3
+        )
+
+    failed = job.assembly_plan["request_recovery"]["requirement_receipts"]
+    assert [(row["requirement_id"], row["status"]) for row in failed] == [("r4", "not_possible")]

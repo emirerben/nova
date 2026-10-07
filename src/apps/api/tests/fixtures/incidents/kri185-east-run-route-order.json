@@ -58,6 +58,10 @@
       "order_required": true,
       "order_ids": [],
       "unresolved_nonempty": true
+    },
+    "route": {
+      "platform": "phone",
+      "choice": "unresolved_requirement"
     }
   },
   "repro": {
