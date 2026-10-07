@@ -616,13 +616,17 @@ def test_reply_never_claims_an_unmet_requirement() -> None:
     reply = reply_from_receipts(brief, receipts, summary="I rebuilt the whole edit around you.")
     assert "rebuilt the whole edit" not in reply  # the model summary is dropped
     assert reply.startswith("Not everything you asked for made it in")
-    assert "Couldn't:" in reply and "Partly:" in reply
+    # KRI-470 PR-G: the required order the plan did not follow is "Couldn't", like the
+    # per-clip text that never landed, not a soft "Partly".
+    assert reply.count("Couldn't:") == 2 and "Partly:" not in reply
     assert len(reply) <= 1200
 
 
 def test_checks_missing_their_facts_get_no_receipt() -> None:
     # A strategy draft never records its clip order, and an editor payload has no
     # length or per-clip structure: those checks can't tell, so no "Partly" line.
+    # (A rendered plan in another order than a required rule is a FAILURE, not a missing
+    # fact: see tests/kria/test_order_verdicts.py.)
     order = apply_updates(
         None, [_upd("order", "global", facts={"key": "capture_time"})], source_turn_id="t"
     )
@@ -631,7 +635,8 @@ def test_checks_missing_their_facts_get_no_receipt() -> None:
     rule = apply_updates(
         None, [_upd("order", "global", facts={"key": "alphabetical"})], source_turn_id="t"
     )
-    assert build_receipts(rule.live(), PlanFacts(ordering_basis="capture_time")) == []
+    [unmet] = build_receipts(rule.live(), PlanFacts(ordering_basis="capture_time"))
+    assert unmet.status == "not_possible"
     brief = apply_updates(
         None,
         [
