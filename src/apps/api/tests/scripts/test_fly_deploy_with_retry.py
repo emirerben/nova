@@ -98,6 +98,8 @@ def _run_script(
     plan_lines: list[str],
     github_step_summary: Path | None = "unset",
     args: list[str] | None = None,
+    extra_env: dict[str, str] | None = None,
+    check_plan: list[int] | None = None,
 ) -> subprocess.CompletedProcess:
     bin_dir = tmp_path / "bin"
     _write_stub_flyctl(bin_dir)
@@ -110,6 +112,29 @@ def _run_script(
     env["FLY_DEPLOY_RETRY_DELAY_SECONDS"] = "0"
     env["STUB_COUNT_FILE"] = str(tmp_path / "count")
     env["STUB_PLAN_FILE"] = str(plan_file)
+    revision_check = tmp_path / "scripts" / "run-video-poster-backfill.sh"
+    revision_check.parent.mkdir(parents=True, exist_ok=True)
+    revision_check.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "count=0\n"
+        '[[ ! -f "$STUB_CHECK_COUNT_FILE" ]] || count=$(cat "$STUB_CHECK_COUNT_FILE")\n'
+        'echo $((count + 1)) > "$STUB_CHECK_COUNT_FILE"\n'
+        'echo "${DEPLOY_GUARD_MIN_REMAINING_S:-unset}" >> "$STUB_CHECK_MIN_LEASE_FILE"\n'
+        'if [[ -n "${STUB_CHECK_PLAN_FILE:-}" ]]; then\n'
+        '  sed -n "$((count + 1))p" "$STUB_CHECK_PLAN_FILE"\n'
+        '  exit "$(sed -n "$((count + 1))p" "$STUB_CHECK_PLAN_FILE")"\n'
+        "fi\n"
+        'exit "${STUB_CHECK_EXIT:-0}"\n'
+    )
+    revision_check.chmod(revision_check.stat().st_mode | stat.S_IEXEC)
+    env["STUB_CHECK_COUNT_FILE"] = str(tmp_path / "check.count")
+    env["STUB_CHECK_MIN_LEASE_FILE"] = str(tmp_path / "check-min-lease")
+    if check_plan is not None:
+        check_plan_file = tmp_path / "check-plan.txt"
+        check_plan_file.write_text("\n".join(map(str, check_plan)) + "\n")
+        env["STUB_CHECK_PLAN_FILE"] = str(check_plan_file)
+    env.update(extra_env or {})
 
     if github_step_summary in ("unset", None):
         env.pop("GITHUB_STEP_SUMMARY", None)
@@ -121,7 +146,7 @@ def _run_script(
     # exec bit entirely).
     return subprocess.run(
         ["bash", str(SCRIPT), *(args if args is not None else ["--remote-only"])],
-        cwd=REPO_ROOT,
+        cwd=tmp_path,
         env=env,
         capture_output=True,
         text=True,
@@ -136,10 +161,36 @@ def _invocation_count(tmp_path: Path) -> int:
     return int(count_file.read_text().strip())
 
 
+def _check_count(tmp_path: Path) -> int:
+    count_file = tmp_path / "check.count"
+    return int(count_file.read_text().strip()) if count_file.exists() else 0
+
+
+def _check_minimum_leases(tmp_path: Path) -> list[str]:
+    return (tmp_path / "check-min-lease").read_text().splitlines()
+
+
 def test_success_first_attempt_single_invocation(tmp_path: Path) -> None:
     result = _run_script(tmp_path, ["0|ok"])
 
     assert result.returncode == 0
+    assert _invocation_count(tmp_path) == 1
+    assert _check_count(tmp_path) == 1
+
+
+def test_revision_validation_failure_never_invokes_or_retries_flyctl(tmp_path: Path) -> None:
+    result = _run_script(tmp_path, ["1|signature"], extra_env={"STUB_CHECK_EXIT": "41"})
+
+    assert result.returncode == 41
+    assert _check_count(tmp_path) == 1
+    assert _invocation_count(tmp_path) == 0
+
+
+def test_retry_rechecks_revision_and_stops_before_second_flyctl_attempt(tmp_path: Path) -> None:
+    result = _run_script(tmp_path, ["1|signature"], check_plan=[0, 41])
+
+    assert result.returncode == 41
+    assert _check_count(tmp_path) == 2
     assert _invocation_count(tmp_path) == 1
 
 
@@ -154,6 +205,8 @@ def test_signature_then_success_retries_once_and_warns(tmp_path: Path) -> None:
 
     assert result.returncode == 0
     assert _invocation_count(tmp_path) == 2
+    assert _check_count(tmp_path) == 2
+    assert _check_minimum_leases(tmp_path) == ["2160", "0"]
     assert "::warning" in result.stderr
     assert "issue #834" in result.stderr
 

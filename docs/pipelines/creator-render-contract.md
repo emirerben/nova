@@ -766,6 +766,7 @@ pins it; legacy / unbound jobs keep the original softer verdicts byte for byte; 
 | plan in the asked order | `met` |
 | some clips had no capture time (honest fallback), some groups of a sequence landed | `partial` |
 | plan in another order (attachment, song time, ...), or the creator's rule was not applied, or none of its groups landed | `not_possible` ("Couldn't") |
+| a capture-order brief whose stated start/end clip is not where the creator put it (KRI-503, see below) | `not_possible` ("Couldn't"); unbound jobs unchanged |
 | a rendered plan (unified / spoken-excerpt montage record) that recorded no order | `not_possible` |
 | a draft (nothing rendered yet) with no recorded order; an optional preference | unchecked (judged when it renders / never) |
 | a rule the checker has no key for, where another authority owns and verifies the order (a lip-sync montage's song placement, #1451; the contract's confirmed / editor / answered order ids) | unchecked (it is not judged here, and does not block) |
@@ -777,6 +778,48 @@ for (alongside one it can follow), and a render record with no order. The key se
 shared `clip_facts.CAPTURE_ORDER_KEYS`. The spoken-excerpt montage job always records the
 order it used (attachment included), so an unstamped brief that followed attachment order is
 `met` rather than a false "couldn't confirm".
+
+**Sequence rules on top of a capture order (KRI-503).** "Chronological order, starting with the
+blue video" is two statements: a basis (filming time, the brief's `order` requirement) and a
+seating of the clips the creator described (a resolved `order` clip intent with
+`position` `first` / `last`, or none for "then ..."). The montage planner has always seated
+those clips on top of the basis; the contract used to pin the PURE basis, so the plan that did
+what the creator said was refused after rendering while the receipt read "met". Now:
+
+* `services/clip_order_sequence.py` is the ONE seating rule (`sequence_rows`,
+  `apply_sequence`): the planner (`unified_montage._apply_sequence`) and `build_render_contract`
+  both call it, so they cannot drift. Leading groups come first, closing groups last, every
+  other clip keeps its basis position, clips inside a group keep basis order, a clip named by
+  two groups belongs to the first. `order_ids` is therefore `[start clip(s)] + [the rest by
+  capture time] + [end clip(s)]`; `order_basis` stays `capture_time` (or `attachment_order`),
+  so no consumer changes: `verify_phone_recipe`, the speech-montage b-roll order, cloud
+  `check_guided_plan_order` / `order_satisfied` and the editor rebind all compare against
+  `order_ids` exactly as before.
+* The start clip comes from the server-resolved intents (`strategy.resolved_clip_intents`),
+  never from the request text, and only for a job with a brief (the brief-binding cohort).
+  The rule is applied only while `CLIP_INTENTS_ENABLED` is on, exactly like the planner, so
+  the two agree after a flag flip. Jobs without a sequence intent (and every brief-less job)
+  get a byte-identical contract and digest; `CreatorRenderContract` gained no field.
+* `unresolved`: an `order` intent that is not `resolved` (it never reaches a draft, the
+  resolver's own `needs_creator` clip question asks first) pins nothing and reports the
+  intent's own question (else its words: "I couldn't tell which clips "the blue video" means");
+  the draft backstop shows it as a plain message. A resolved intent whose clips are not in the
+  edit pins nothing; the plan places nothing and the receipt says so.
+* Receipt: `_check_order` now also reads which stated groups did NOT land, from the plan
+  record's `intent_outcomes` (computed from the FINISHED order; each row carries a `code`
+  so nothing re-parses messages): `misplaced` (a described first/last group is not where it was
+  asked) and `absent` / `unresolved` (none of its clips are in the edit: "I found no clips
+  for ..."). A `then` group wholly inside an earlier group, and a Visuals-only group, are
+  NOT failures. A required order on a strict job is `not_possible` ("these aren't where you
+  asked: the blue video (first)"). Unbound jobs keep today's verdict.
+* No new draft-time question. A start clip the resolver cannot pin is already asked through the
+  resolver's clip question (`needs_creator`); a second `order_start` question would have
+  duplicated it. Known limits: a start clip that is the speaker of a spoken-excerpt montage
+  is not in its b-roll list, so that job still asks "I can't prove the confirmed picture
+  order"; its receipt carries no `intent_outcomes`, the verifier is the authority there. The
+  native render program orders by `content_plan_build.order_paths_by_resolved_intents` (a
+  third copy of the seating rule, not contract-checked). An explicit sequence of clips
+  ("clips 1..8 in that sequence", KRI-491) is not a sequence rule here.
 
 **Last good artifact.** A contract refusal never replaces the last accepted artifact. At
 the editor Save / `pin_device_request` the check runs before any mutation; at the retry

@@ -1,0 +1,184 @@
+{
+  "id": "kri503-order-start-with-clip-follows",
+  "incident": {
+    "ticket": "KRI-503",
+    "summary": "KRI-503: 'chronological order, starting with the teal video' pins the teal clip first, then filming order; a plan that follows it passes the gate and the verifier."
+  },
+  "kind": "contract_pin",
+  "approved": {
+    "strategy": {
+      "pacing": "fast",
+      "archetype": "day_vlog",
+      "direction": "guided_story",
+      "rationale": "(redacted)",
+      "edit_format": "montage",
+      "media_scope": "all",
+      "opening_title_duration_s": 2.0,
+      "target_duration_s": 18,
+      "selected_media_ids": [],
+      "video_reuse_policy": "once",
+      "resolved_clip_intents": [
+        {
+          "op": "order",
+          "status": "resolved",
+          "intent_id": "order_start_clip",
+          "attribute": "the teal video",
+          "position": "first",
+          "assignments": [
+            {
+              "media_id": "clip-e",
+              "evidence": "teal wall",
+              "confidence": 0.9
+            }
+          ]
+        },
+        {
+          "op": "order",
+          "status": "resolved",
+          "intent_id": "order_chronological",
+          "attribute": "everything",
+          "order_by": "capture_time",
+          "assignments": [
+            {
+              "media_id": "clip-a",
+              "evidence": "filming order",
+              "confidence": 1.0
+            },
+            {
+              "media_id": "clip-b",
+              "evidence": "filming order",
+              "confidence": 1.0
+            },
+            {
+              "media_id": "clip-c",
+              "evidence": "filming order",
+              "confidence": 1.0
+            },
+            {
+              "media_id": "clip-d",
+              "evidence": "filming order",
+              "confidence": 1.0
+            },
+            {
+              "media_id": "clip-e",
+              "evidence": "filming order",
+              "confidence": 1.0
+            },
+            {
+              "media_id": "clip-f",
+              "evidence": "filming order",
+              "confidence": 1.0
+            }
+          ]
+        }
+      ]
+    },
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "order",
+          "scope": "global",
+          "description": "chronological order, starting with the teal video",
+          "facts": {
+            "key": "capture_time"
+          },
+          "source_turn_id": "turn-1"
+        }
+      ]
+    },
+    "creator_request": "Show them in chronological order, starting with the teal video.",
+    "provenance": "Synthetic neutral data shaped like the prod job of 2026-10-07 (KRI-503): a chronological brief plus a resolved start-with clip that is not first by capture time. Not a prod capture."
+  },
+  "inputs": {
+    "media": [
+      {
+        "id": "clip-a",
+        "kind": "video",
+        "duration_s": 6.0,
+        "capture_time": "2026-10-04T10:30:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "clip-b",
+        "kind": "video",
+        "duration_s": 6.0,
+        "capture_time": "2026-10-04T10:00:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "clip-c",
+        "kind": "video",
+        "duration_s": 6.0,
+        "capture_time": "2026-10-04T11:30:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "clip-d",
+        "kind": "video",
+        "duration_s": 6.0,
+        "capture_time": "2026-10-04T10:15:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "clip-e",
+        "kind": "video",
+        "duration_s": 6.0,
+        "capture_time": "2026-10-04T11:00:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "clip-f",
+        "kind": "video",
+        "duration_s": 6.0,
+        "capture_time": "2026-10-04T10:45:00Z",
+        "has_audio": true
+      }
+    ],
+    "cloud_preflight": false,
+    "cloud_adapter": "cloud_guided_story",
+    "notes": [
+      "Contract pin, not incident replay: the real contract builder pins [start clip] + the rest by filming time; the real guided compiler lays out a plan in that order; the real pre-render gate and publication verifier accept it. Before KRI-503 the contract pinned pure filming order, so this same plan was declined after rendering."
+    ],
+    "guided_plan": {
+      "order": [
+        "clip-e",
+        "clip-b",
+        "clip-d",
+        "clip-a",
+        "clip-f",
+        "clip-c"
+      ],
+      "opening_title": "Sunday walk",
+      "closing_title": "Home"
+    }
+  },
+  "expect": {
+    "contract": {
+      "order_required": true,
+      "order_basis": "capture_time",
+      "order_ids": [
+        "clip-e",
+        "clip-b",
+        "clip-d",
+        "clip-a",
+        "clip-f",
+        "clip-c"
+      ],
+      "resolved": true
+    },
+    "cloud": {
+      "preflight": "passes",
+      "plan_gate": "passes",
+      "publication": "accepts"
+    }
+  },
+  "repro": {
+    "command": "pytest tests/incidents/test_incident_corpus.py -k kri503-order-start-with-clip-follows",
+    "status": "available"
+  },
+  "sources": [
+    "tests/services/test_order_sequence_contract.py"
+  ]
+}

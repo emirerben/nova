@@ -18,6 +18,23 @@ on-demand repair that heals the long tail as users browse is documented under
 - The backfill and the GitHub **Fly Deploy** workflow acquire the same
   app-unique, unmanaged Fly Machine guard. Do not run bare `fly deploy`; it
   bypasses this serialization contract.
+- **Fly Deploy** accepts only the currently deployed commit or a newer
+  descendant on `main`. It checks the production image's revision before guard
+  acquisition, after acquisition, and immediately before every deploy attempt,
+  including the automatic release-machine retry. Missing revision metadata,
+  unavailable Git history, or lost guard ownership stops the deploy.
+- Before the first deploy attempt, the guard must have at least 2160 seconds
+  remaining to cover the workflow's 2100-second deploy timeout and 60-second
+  termination grace. Retries share that same timeout and recheck ownership.
+- To roll back, merge a new revert commit and deploy it through **Fly Deploy**.
+  Do not retry an older commit to roll production backward. A docs-only advance
+  of `main` does not invalidate a queued commit newer than production.
+- These checks apply to workflows containing the KRI-505 fix. Rerunning a
+  historical workflow uses its old code and can bypass the checks; deployment
+  credentials were deliberately left unchanged in this fix.
+- If validation fails after guard acquisition, the workflow retains the guard
+  under its existing recovery rules. Inspect the error and guard before retrying;
+  do not destroy it to bypass revision validation.
 - The repair excludes the synthetic development user and runs in strict mode.
   It never treats a missing, malformed, foreign, or unverifiable asset as a
   successful repair.

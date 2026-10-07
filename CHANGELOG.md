@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.147.0] - 2026-10-07
+
+### Changed
+- fix(order): chronological order starting with a clip is pinned as the plan seats it, and verified (KRI-503) (#1465) <!-- release-pr: 1465 -->
+
+## [0.78.146.0] - 2026-10-07
+
+### Fixed
+- fix: prevent older Fly deployments (KRI-505) (#1464) <!-- release-pr: 1464 -->
+
 ## [0.78.145.0] - 2026-10-07
 
 ### Changed

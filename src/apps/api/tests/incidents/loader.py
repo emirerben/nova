@@ -65,13 +65,22 @@ def validate_against_current_schemas(record: IncidentRecord) -> None:
 def build_contract(record: IncidentRecord) -> CreatorRenderContract | None:
     """Mirror ``content_plan_build`` dispatch: rebuild against the approved binding."""
     binding = binding_for(record)
-    return build_render_contract(
-        record.approved.strategy,
-        generation_id=f"incident-{record.id}",
-        brief=binding.resolve(),
-        media_snapshot=binding.media_snapshot,
-        has_voiceover=bool(record.inputs.voiceover_id),
-    )
+    # The corpus mirrors prod, where CLIP_INTENTS_ENABLED is on: the contract seats a described
+    # start/end clip only when the planner would (KRI-503), so the resolved intents must count.
+    from app.config import settings  # noqa: PLC0415
+
+    previous = settings.clip_intents_enabled
+    settings.clip_intents_enabled = True
+    try:
+        return build_render_contract(
+            record.approved.strategy,
+            generation_id=f"incident-{record.id}",
+            brief=binding.resolve(),
+            media_snapshot=binding.media_snapshot,
+            has_voiceover=bool(record.inputs.voiceover_id),
+        )
+    finally:
+        settings.clip_intents_enabled = previous
 
 
 def route_job(record: IncidentRecord, platform: str) -> tuple[dict, dict]:

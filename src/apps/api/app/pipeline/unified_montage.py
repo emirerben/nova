@@ -72,6 +72,7 @@ from app.services.clip_facts import (
     format_capture_hour,
     order_by_capture_time,
 )
+from app.services.clip_order_sequence import apply_sequence, sequence_rows
 
 FPS = 30
 # The reading-time rule: 0.8s to notice the text plus 60ms per character,
@@ -627,73 +628,58 @@ def _group_first(
 def _sequence_intents(
     strategy: Mapping[str, Any], enabled: bool
 ) -> list[tuple[str | None, str, list[str], str]]:
-    """The creator's stated sequence: (position, name, member ids, status), listed order.
-
-    Only ``order`` intents with a ``first`` / ``last`` position, or no position and no
-    ``order_by`` ("then the beach volleyball"), describe a sequence of groups. A basis
-    order (``order_by``: capture time / route) is the brief's, not this one's.
-    """
+    """The creator's stated sequence (KRI-458); the rule lives in ``clip_order_sequence``
+    so the render contract pins the exact order this planner lays out (KRI-503)."""
     if not enabled:
         return []
-    rows: list[tuple[str | None, str, list[str], str]] = []
-    for intent in strategy.get("resolved_clip_intents") or []:
-        if not isinstance(intent, Mapping) or intent.get("op") != "order":
-            continue
-        if intent.get("order_by") or intent.get("placeholder"):
-            continue
-        position = intent.get("position")
-        if position not in (None, "first", "last"):
-            continue
-        status = str(intent.get("status") or "resolved")
-        members = _members(intent) if status == "resolved" else []
-        rows.append((position, _nfc(intent.get("attribute")), members, status))
-    return rows
+    return sequence_rows(strategy.get("resolved_clip_intents"))
 
 
 def _apply_sequence(
     ordered: Sequence[UnifiedClip], rows: Sequence[tuple[str | None, str, list[str], str]]
 ) -> list[UnifiedClip]:
-    """Seat the described groups: ``first`` ones lead, ``last`` ones close, the rest follow.
-
-    A group is the clips the server matched to the creator's words (clip facts), kept in
-    the order they already had. A clip named by two groups belongs to the first one. Clips
-    no group names keep their relative order between the leading and the closing groups.
-    """
-    claimed: set[str] = set()
-    buckets: dict[str, list[UnifiedClip]] = {"first": [], "mid": [], "last": []}
-    refs = {clip.ref_id for clip in ordered}
-    for position, _name, members, _status in rows:
-        wanted = {m for m in members if m in refs and m not in claimed}
-        claimed |= wanted
-        buckets[position or "mid"].extend(clip for clip in ordered if clip.ref_id in wanted)
-    if not claimed:
-        return list(ordered)
-    rest = [clip for clip in ordered if clip.ref_id not in claimed]
-    return [*buckets["first"], *buckets["mid"], *rest, *buckets["last"]]
+    """Seat the described groups: ``first`` ones lead, ``last`` ones close, the rest follow."""
+    return apply_sequence(ordered, rows, key=lambda clip: clip.ref_id)
 
 
 def _sequence_outcomes(
     rows: Sequence[tuple[str | None, str, list[str], str]], ordered: Sequence[UnifiedClip]
 ) -> list[dict[str, Any]]:
-    """Did each described group land where the creator said? Read off the finished order."""
+    """Did each described group land where the creator said? Read off the finished order.
+
+    Every row also carries a ``code`` (KRI-503) so the receipt never re-parses ``reason``:
+    ``landed`` / ``misplaced`` (a described group is not where it was asked), ``absent`` (none
+    of its clips are in the edit), ``contained`` (all its clips are already in an earlier
+    group), ``visual`` (its members are Visuals-pool items, which no sequence rule seats) and
+    ``unresolved``. ``status`` keeps its meaning for every other consumer.
+    """
     spot = {clip.ref_id: i for i, clip in enumerate(c for c in ordered if c.lane == "clip")}
+    visuals = {clip.ref_id for clip in ordered if clip.lane != "clip"}
     named = {m for _p, _n, members, _s in rows for m in members if m in spot}
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for position, name, members, status in rows:
         label = f"{position or 'then'}: {name}" if name else "the order you described"
-        row = {"op": "order", "name": label}
+        row = {"op": "order", "name": label, "position": position or "then"}
         mine = [m for m in members if m in spot and m not in seen]
         if status != "resolved":
-            out.append({**row, "status": "not_possible", "reason": "I couldn't tell which clips"})
+            out.append(
+                {
+                    **row,
+                    "status": "not_possible",
+                    "code": "unresolved",
+                    "reason": "I couldn't tell which clips",
+                }
+            )
             continue
         if not mine:
-            reason = (
-                "its clips are already in an earlier group"
-                if any(m in seen for m in members)
-                else "I found no clips of it"
-            )
-            out.append({**row, "status": "not_possible", "reason": reason})
+            if any(m in seen for m in members):
+                code, reason = "contained", "its clips are already in an earlier group"
+            elif members and all(m in visuals for m in members):
+                code, reason = "visual", "I found no clips of it"
+            else:
+                code, reason = "absent", "I found no clips of it"
+            out.append({**row, "status": "not_possible", "code": code, "reason": reason})
             continue
         seen.update(mine)
         ahead = {spot[m] for m in mine}
@@ -708,6 +694,7 @@ def _sequence_outcomes(
             {
                 **row,
                 "status": "met" if met else "partial",
+                "code": "landed" if met else "misplaced",
                 "reason": None if met else "the clips did not end up there",
             }
         )
