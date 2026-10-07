@@ -281,3 +281,108 @@ def test_a_retry_that_cannot_be_re_pinned_records_why_and_keeps_the_state(fixtur
         "ordering_choice",
         "retry",
     )
+
+
+# --- a FIRST render the contract refuses is not left waiting ---------------------------
+
+
+def _first_render_syncing(fixture, monkeypatch):
+    """No accepted artifact exists yet: the job's first export is being published."""
+    job = phone_job(monkeypatch)
+    contract = build_render_contract({"opening_title": "Before"}, generation_id="first")
+    job.assembly_plan[CONTRACT_FIELD] = contract.model_dump(mode="json")
+    fixture.job = job
+    fixture.user.id = job.user_id
+    attempt = str(uuid.uuid4())
+    # Pin under the contract (the worker did), then it starts syncing.
+    from app.kria.device_render import make_device_request
+
+    previous = device_status(job, VARIANT).request
+    svc.pin_device_request(
+        job,
+        make_device_request(job_id=job.id, variant_id=VARIANT, revision=2, recipe=previous.recipe),
+        base_generation="first",
+    )
+    record = device_record(job, VARIANT)
+    record["status"]["phase"] = "syncing"
+    record["attempts"][attempt] = {
+        "path": f"{job.user_id}/{job.id}/device/{attempt}.mp4",
+        "size": 12,
+        "sha256": "a" * 64,
+    }
+    save_device_record(job, VARIANT, record)
+    fixture.request = device_status(job, VARIANT).request
+    mock_storage(fixture, monkeypatch)
+    monkeypatch.setattr(routes, "_verify_export", MagicMock(return_value=None))
+    fixture.db.execute.return_value = scalar(
+        SimpleNamespace(
+            user_id=job.user_id,
+            status="reserved",
+            retention_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    # The approved authority changes underneath the pinned recipe.
+    other = build_render_contract({"opening_title": "Something else"}, generation_id="second")
+    job.assembly_plan[CONTRACT_FIELD] = other.model_dump(mode="json")
+    return attempt
+
+
+def test_a_refused_first_render_fails_visibly_instead_of_waiting_for_a_phone_forever(
+    fixture, monkeypatch
+):
+    attempt = _first_render_syncing(fixture, monkeypatch)
+    job = fixture.job
+    assert not job.assembly_plan["variants"][0].get("video_path")
+
+    response = fixture.client.post(
+        f"/me/jobs/{job.id}/device-render/complete", json=body(fixture, attempt)
+    )
+
+    assert response.status_code == 409
+    variant = job.assembly_plan["variants"][0]
+    assert (variant["ok"], variant["render_status"]) == (False, "needs_attention")
+    assert variant["decline_reason"] == "evidence_missing"
+    assert job.failure_reason == "creator_render_contract_unverified"
+    assert job.error_detail
+    assert not variant.get("video_path")  # nothing was published
+    record = device_record(job, VARIANT)
+    assert record["status"]["phase"] == "needs_attention"
+    # The reaper only rescans awaiting_device / syncing records.
+    from app.tasks.device_render_reaper import _STALE_PHASES
+
+    assert record["status"]["phase"] not in _STALE_PHASES
+
+
+def test_a_repeated_refusal_of_a_first_render_changes_nothing_more(fixture, monkeypatch):
+    attempt = _first_render_syncing(fixture, monkeypatch)
+    job = fixture.job
+    post = lambda: fixture.client.post(  # noqa: E731
+        f"/me/jobs/{job.id}/device-render/complete", json=body(fixture, attempt)
+    )
+    assert post().status_code == 409
+    variant_once = copy.deepcopy(job.assembly_plan["variants"][0])
+    failure_once = (job.failure_reason, job.error_detail)
+
+    assert post().status_code == 409
+
+    assert job.assembly_plan["variants"][0] == variant_once
+    assert (job.failure_reason, job.error_detail) == failure_once
+
+
+def test_a_refused_edit_keeps_the_previous_artifact_and_the_job_state(fixture, monkeypatch):
+    attempt = _syncing(fixture, monkeypatch)
+    job = fixture.job
+    other = build_render_contract({"opening_title": "Something else"}, generation_id="second")
+    job.assembly_plan[CONTRACT_REVISIONS_FIELD][VARIANT] = other.model_dump(mode="json")
+    before = (job.status, getattr(job, "failure_reason", None), _artifact(job))
+    render_status = job.assembly_plan["variants"][0]["render_status"]
+
+    assert (
+        fixture.client.post(
+            f"/me/jobs/{job.id}/device-render/complete", json=body(fixture, attempt)
+        ).status_code
+        == 409
+    )
+
+    assert (job.status, getattr(job, "failure_reason", None), _artifact(job)) == before
+    assert job.assembly_plan["variants"][0]["render_status"] == render_status

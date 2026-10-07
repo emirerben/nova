@@ -107,6 +107,45 @@ def record_contract_decline(
     return decline
 
 
+def has_accepted_artifact(job: Any, variant_id: str) -> bool:
+    """True when this variant already carries a published (last good) artifact."""
+    return any(
+        isinstance(row, dict)
+        and row.get("variant_id") == variant_id
+        and bool(row.get("video_path") or row.get("output_url"))
+        for row in (job.assembly_plan or {}).get("variants") or []
+    )
+
+
+CONTRACT_REFUSED_FAILURE = "creator_render_contract_unverified"
+
+
+def fail_first_render_on_refusal(job: Any, variant_id: str, decline: dict) -> None:
+    """A refused FIRST render has no last good artifact to keep: fail it visibly.
+
+    Without this the variant and job stay ``awaiting_device`` while the record is
+    ``needs_attention``, the reaper never rescans it, and the creator waits for a
+    phone that can no longer publish. The typed decline rides beside the failure.
+    """
+    apply_device_failure_variant_update(
+        job,
+        variant_id,
+        reason_code=CONTRACT_REFUSED_FAILURE,
+        detail=str(decline.get("message") or "")[:1000],
+    )
+    typed = {
+        key: decline[key]
+        for key in ("decline_reason", "field_path", "alternative")
+        if isinstance(decline.get(key), str) and decline[key]
+    }
+    assembly = dict(job.assembly_plan or {})
+    assembly["variants"] = [
+        {**row, **typed} if row.get("variant_id") == variant_id else row
+        for row in assembly.get("variants", [])
+    ]
+    job.assembly_plan = assembly
+
+
 def contract_decline(job: Any, variant_id: str) -> dict | None:
     """The typed refusal recorded on this variant's device record, if any."""
     try:

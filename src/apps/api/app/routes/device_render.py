@@ -62,6 +62,8 @@ from app.services.device_render import (
     apply_retry_variant_reset,
     device_record,
     device_status,
+    fail_first_render_on_refusal,
+    has_accepted_artifact,
     mark_device_failed,
     record_contract_decline,
     retry_device_render,
@@ -155,11 +157,15 @@ async def _refuse_publication(
     """Persist a refused publication WITHOUT touching the last accepted artifact.
 
     The typed decline is written beside the record's intact state, and a record
-    still waiting on the phone moves to `needs_attention` so the creator hears
-    about it instead of waiting for the reaper. The variant (video, poster, URL,
-    `ok`) is not modified: the previously accepted output stays live.
+    still waiting on the phone moves to `needs_attention`. An EDIT (the variant
+    already has an accepted artifact) leaves the variant (video, poster, URL, `ok`)
+    untouched: the previously accepted output stays live. A FIRST render has nothing
+    to keep, so the variant and job are failed visibly with the typed decline.
     """
-    record_contract_decline(job, refusal.variant_id, refusal.cause, stage=stage)
+    decline = record_contract_decline(job, refusal.variant_id, refusal.cause, stage=stage)
+    if decline is not None and not has_accepted_artifact(job, refusal.variant_id):
+        # A first render has no last good output to keep: the job must fail visibly.
+        fail_first_render_on_refusal(job, refusal.variant_id, decline)
     try:
         mark_device_failed(
             job,
