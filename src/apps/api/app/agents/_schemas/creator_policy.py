@@ -14,7 +14,11 @@ from app.agents._schemas.edit_format import (
     coerce_edit_format,
     guided_edit_applicable,
 )
-from app.schemas.edit_proposal import MontageAudioPlan
+from app.schemas.edit_proposal import (
+    MontageAudioPlan,
+    turkish_narrowing_cue,
+    turkish_stated_media_counts,
+)
 
 MAX_MAIN_CREATOR_SELECTED_MEDIA = 12
 
@@ -84,6 +88,27 @@ def _stated_count_matches_manifest(normalized: str, manifest: Any | None) -> boo
     return stated_count is not None and stated_count == _attached_media_count(manifest)
 
 
+def _turkish_stated_count_matches_manifest(
+    request: str, normalized: str, manifest: Any | None
+) -> bool:
+    """KRI-520: "16 klip ile devam et" names the whole manifest like "16 clips" does.
+
+    Only ever stricter than the English rule on shared words: English narrowing cues,
+    English counts and Turkish cues all veto it, so English text reads as before.
+    """
+
+    if manifest is None or re.search(_STATED_COUNT_REDUCTION_CUE, normalized):
+        return False
+    if turkish_narrowing_cue(request):
+        return False
+    counts = set(
+        re.findall(
+            rf"\b(\d{{1,4}})\s+(?:of\s+(?:the|my|your)\s+)?{_MEDIA_COUNT_NOUN}\b", normalized
+        )
+    ) | {str(count) for count in turkish_stated_media_counts(request)}
+    return len(counts) == 1 and int(next(iter(counts))) == _attached_media_count(manifest)
+
+
 def explicit_scope_from_stated_media_count(request: str, manifest: Any | None) -> bool:
     """True when a creator's stated clip count names their whole manifest.
 
@@ -96,7 +121,9 @@ def explicit_scope_from_stated_media_count(request: str, manifest: Any | None) -
     """
 
     normalized = " ".join(str(request or "").casefold().split())
-    return _stated_count_matches_manifest(normalized, manifest)
+    return _stated_count_matches_manifest(normalized, manifest) or (
+        _turkish_stated_count_matches_manifest(request, normalized, manifest)
+    )
 
 
 def states_explicit_media_narrowing_cue(request: str) -> bool:
@@ -110,7 +137,9 @@ def states_explicit_media_narrowing_cue(request: str) -> bool:
     """
 
     normalized = " ".join(str(request or "").casefold().split())
-    return bool(re.search(_STATED_COUNT_REDUCTION_CUE, normalized))
+    return bool(re.search(_STATED_COUNT_REDUCTION_CUE, normalized)) or turkish_narrowing_cue(
+        request
+    )
 
 
 CAPABILITY_DRAFT_GUIDED_PROPOSAL = "draft_guided_proposal"

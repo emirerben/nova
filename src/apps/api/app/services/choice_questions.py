@@ -36,6 +36,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.kria.brief_route import fold_text, loose_text
+from app.kria.reply_language import current_reply_language, say
 from app.services.clip_facts import (
     CAPTURE_ORDER_KEYS,
     capture_from_assignment,
@@ -88,7 +90,39 @@ class ConflictCandidate:
     input_digest: str | None = None
 
 
+def _option(
+    key: str,
+    *,
+    label: tuple[str, str],
+    description: tuple[str, str] | None = None,
+    recommended: bool = False,
+    aliases: Sequence[str] = (),
+    tr_aliases: Sequence[str] = (),
+) -> ConflictOption:
+    """A :class:`ConflictOption` with ``(en, tr)`` copy for the chat's language (KRI-520).
+
+    In a Turkish chat the label is Turkish and the English label stays a typed alias,
+    because the app echoes the label text back and old questions replay. ``tr_aliases``
+    are typed Turkish answers, accepted in every chat language (an English-bound chat
+    can still get a Turkish reply). English chats keep the English label and description.
+    """
+
+    en_label, tr_label = label
+    shown = say(en=en_label, tr=tr_label)
+    extra = (en_label,) if shown != en_label else ()
+    return ConflictOption(
+        key=key,
+        label=shown,
+        description=say(en=description[0], tr=description[1]) if description else None,
+        recommended=recommended,
+        aliases=(*aliases, *tr_aliases, *extra),
+    )
+
+
 # ── Detection: ordering vs grouping ───────────────────────────────────────────
+
+# The only two nouns the planner passes (``planner._ordering_conflict_question``).
+_TR_GROUP_NOUNS = {"sport": "spor", "group": "grup"}
 
 
 def _clean_name(name: str) -> str:
@@ -99,7 +133,7 @@ def _join_names(names: Sequence[str]) -> str:
     shown = [_clean_name(n) for n in names if _clean_name(n)][:3]
     if len(shown) <= 1:
         return "".join(shown)
-    return ", ".join(shown[:-1]) + " and " + shown[-1]
+    return ", ".join(shown[:-1]) + say(en=" and ", tr=" ve ") + shown[-1]
 
 
 def split_groups(
@@ -160,24 +194,51 @@ def detect_order_vs_group(
         return None
     names = _join_names([n for n, _m in live])
     word = noun if noun else "group"
+    tr_word = _TR_GROUP_NOUNS.get(word, word)
+    turkish = current_reply_language() == "tr"
     return ConflictCandidate(
         conflict_id=CONFLICT_ORDER_VS_GROUP,
-        reason=f"your {names} clips were filmed mixed together, so I can't do both.",
-        intro=f"You asked for a chronological video and for the clips grouped by {word}.",
+        reason=say(
+            en=f"your {names} clips were filmed mixed together, so I can't do both.",
+            tr=(
+                f"{names} klipleri birbirine karışık çekilmiş, bu yüzden ikisini birden "
+                "yapamıyorum."
+            ),
+        ),
+        intro=say(
+            en=f"You asked for a chronological video and for the clips grouped by {word}.",
+            tr=(
+                f"Hem kronolojik bir video hem de kliplerin {tr_word} bazında "
+                "gruplanmasını istedin."
+            ),
+        ),
         options=(
-            ConflictOption(
-                key=OPT_GROUP_FIRST,
-                label=f"Group by {word}, chronological inside each {word}",
+            _option(
+                OPT_GROUP_FIRST,
+                label=(
+                    f"Group by {word}, chronological inside each {word}",
+                    f"Her {tr_word} bir blok olsun; blok içinde kronolojik sırala",
+                ),
                 description=(
                     f"Each {word} plays as one block; blocks start in the order they first "
-                    "appear, and clips inside a block keep the order you filmed them."
+                    "appear, and clips inside a block keep the order you filmed them.",
+                    f"Her {tr_word} tek bir blok olarak oynar; bloklar ilk göründükleri sırayla "
+                    "başlar, blok içindeki klipler çektiğin sırayı korur.",
                 ),
                 recommended=True,
+                tr_aliases=("grupla", "gruplandır", "önce grupla") if turkish else (),
             ),
-            ConflictOption(
-                key=OPT_CHRONOLOGICAL,
-                label=f"Keep it strictly chronological; {word}s may interleave",
-                description="Clips play in the exact order you filmed them.",
+            _option(
+                OPT_CHRONOLOGICAL,
+                label=(
+                    f"Keep it strictly chronological; {word}s may interleave",
+                    f"Tam kronolojik kalsın; {tr_word} klipleri iç içe geçebilir",
+                ),
+                description=(
+                    "Clips play in the exact order you filmed them.",
+                    "Klipler tam olarak çektiğin sırayla oynar.",
+                ),
+                tr_aliases=("kronolojik", "kronolojik kalsın", "tam kronolojik") if turkish else (),
             ),
         ),
     )
@@ -224,22 +285,44 @@ def choice_question_text(candidate: ConflictCandidate) -> str:
     options = candidate.options[:MAX_CHOICE_OPTIONS]
     if candidate.kind == CONFLICT_TITLE_TEXT and len(options) == 1:
         # The one option is a way out, not a limit: the typed words are the main path.
-        return (
-            f"{candidate.intro} Type the words you want and I'll use them exactly, "
-            f'or reply "{options[0].label}".'
+        return say(
+            en=(
+                f"{candidate.intro} Type the words you want and I'll use them exactly, "
+                f'or reply "{options[0].label}".'
+            ),
+            tr=(
+                f"{candidate.intro} İstediğin kelimeleri yaz, aynen kullanırım; "
+                f'ya da "{options[0].label}" yaz.'
+            ),
         )
     if len(options) == 1:
         # One way forward is a statement, not a choice.
         only = options[0]
-        return (
-            f"{candidate.intro} Unfortunately {candidate.reason} The most I can do is: "
-            f'{only.label}. Reply "{only.label}" to go with that, or change your request.'
+        return say(
+            en=(
+                f"{candidate.intro} Unfortunately {candidate.reason} The most I can do is: "
+                f'{only.label}. Reply "{only.label}" to go with that, or change your request.'
+            ),
+            tr=(
+                f"{candidate.intro} Maalesef {candidate.reason} Yapabileceğim en fazla şu: "
+                f'{only.label}. Bunu istiyorsan "{only.label}" yaz ya da isteğini değiştir.'
+            ),
         )
-    lines = [f"{candidate.intro} Unfortunately {candidate.reason} Which do you prefer?"]
+    lines = [
+        say(
+            en=f"{candidate.intro} Unfortunately {candidate.reason} Which do you prefer?",
+            tr=f"{candidate.intro} Maalesef {candidate.reason} Hangisini tercih edersin?",
+        )
+    ]
     for index, option in enumerate(options, start=1):
-        mark = " (recommended)" if option.recommended else ""
+        mark = say(en=" (recommended)", tr=" (önerilen)") if option.recommended else ""
         lines.append(f"{index}. {option.label}{mark}")
-    lines.append("Tap an option, or tell me in your own words.")
+    lines.append(
+        say(
+            en="Tap an option, or tell me in your own words.",
+            tr="Bir seçeneğe dokun ya da kendi sözlerinle anlat.",
+        )
+    )
     return "\n".join(lines)
 
 
@@ -584,6 +667,30 @@ def _included_ids(strategy: Mapping[str, Any]) -> set[str] | None:
     return kept if found else None
 
 
+# Typed Turkish answers to the length question; matched in every chat language.
+_EXTEND_TR_ALIASES = (
+    "uzat",
+    "uzatalım",
+    "süreyi uzat",
+    "daha uzun yap",
+    "daha uzun",
+    "uzun olsun",
+    "videoyu uzat",
+    "süreyi artır",
+)
+_FEWER_TR_ALIASES = (
+    "daha az klip",
+    "az klip",
+    "daha az",
+    "kısa kalsın",
+    "kısa tut",
+    "süreyi koru",
+    "süreyi değiştirme",
+    "klip sayısını azalt",
+    "klipleri azalt",
+)
+
+
 def _duration_vs_count(
     strategy: Mapping[str, Any], brief: Any, rows: list[Any], cap: ChoiceCapability
 ) -> UnresolvedChoice | None:
@@ -626,17 +733,23 @@ def _duration_vs_count(
     subset = _evenly_spaced(clip_ids, fit)
     shown = _clean_seconds(needed)
     asked = _clean_seconds(seconds)
-    said = quoted or f"{asked} seconds"
+    said = quoted or say(en=f"{asked} seconds", tr=f"{asked} saniye")
     options = [
-        ConflictOption(
-            key=OPT_FEWER,
-            label=f"Keep {asked} seconds with {len(subset)} clips",
+        _option(
+            OPT_FEWER,
+            label=(
+                f"Keep {asked} seconds with {len(subset)} clips",
+                f"{asked} saniyeyi koru, {len(subset)} klip kullan",
+            ),
             description=(
                 f"Uses {len(subset)} of your {count} clips, spread evenly through your "
-                "footage; the others are left out."
+                "footage; the others are left out.",
+                f"{count} klibinden {len(subset)} tanesini kullanır, çekimlerine eşit "
+                "aralıklarla dağıtır; diğerleri dışarıda kalır.",
             ),
             recommended=not can_extend,
             aliases=("fewer", "fewer clips", "use fewer", "use fewer clips", "keep it short"),
+            tr_aliases=_FEWER_TR_ALIASES,
         )
     ]
     effects: dict[str, Mapping[str, Any]] = {
@@ -652,14 +765,17 @@ def _duration_vs_count(
     if can_extend:
         options.insert(
             0,
-            ConflictOption(
-                key=OPT_EXTEND,
-                label=f"Extend it to {shown} seconds",
+            _option(
+                OPT_EXTEND,
+                label=(f"Extend it to {shown} seconds", f"Süreyi {shown} saniyeye uzat"),
                 description=(
-                    f"Every clip gets at least {floor_s:g} seconds, so all {count} stay in."
+                    f"Every clip gets at least {floor_s:g} seconds, so all {count} stay in.",
+                    f"Her klip en az {floor_s:g} saniye görünür, böylece {count} klibin "
+                    "hepsi kalır.",
                 ),
                 recommended=True,
                 aliases=("extend", "extend it", "longer", "make it longer", "extend the length"),
+                tr_aliases=_EXTEND_TR_ALIASES,
             ),
         )
         effects[OPT_EXTEND] = {
@@ -673,10 +789,19 @@ def _duration_vs_count(
         conflict_id=CONFLICT_DURATION_VS_COUNT,
         field_path="target_duration_s",
         requirement_ids=tuple(requirement_ids),
-        intro=f'Your brief says "{said}" and this edit uses {count} clips.',
-        reason=(
-            f"{count} clips can't each stay on screen long enough to be seen in {asked} "
-            f"seconds (each needs about {floor_s:g} seconds)."
+        intro=say(
+            en=f'Your brief says "{said}" and this edit uses {count} clips.',
+            tr=f'İsteğinde "{said}" yazıyor ama bu düzenlemede {count} klip var.',
+        ),
+        reason=say(
+            en=(
+                f"{count} clips can't each stay on screen long enough to be seen in {asked} "
+                f"seconds (each needs about {floor_s:g} seconds)."
+            ),
+            tr=(
+                f"{asked} saniyede {count} klibin her biri görülecek kadar ekranda kalamaz "
+                f"(her birine yaklaşık {floor_s:g} saniye lazım)."
+            ),
         ),
         options=tuple(options),
         # The creator's inputs only: the model's own selection or length never reopens it.
@@ -693,6 +818,34 @@ _ATTACHMENT_ALIASES = (
     "attachment order",
     "as uploaded",
     "as added",
+)
+# Typed Turkish answers; matched in every chat language. "çektiğim sıra" / "çekim sırası"
+# ("the order I filmed") are deliberately absent: that restates the order this question
+# says can't be checked, it does not accept the order the clips were added.
+_ATTACHMENT_TR_ALIASES = (
+    "eklediğim sıra",
+    "eklediğim sırayla",
+    "yüklediğim sıra",
+    "yüklediğim sırayla",
+    "ekleme sırası",
+    "yükleme sırası",
+    "eklenme sırası",
+    "ekleme sırasına göre",
+    "eklediğim gibi",
+    "yüklediğim gibi",
+)
+_UNORDERED_TR_ALIASES = (
+    "sırasız",
+    "sırasız devam et",
+    "sıra olmasın",
+    "sıra yok",
+    "sıra olmadan",
+    "sıra olmadan devam et",
+    "sabit sıra olmasın",
+    "sabit sıra yok",
+    "sırayı atla",
+    "sıra önemli değil",
+    "fark etmez",
 )
 
 
@@ -748,59 +901,85 @@ def _order_basis(
     if ask_capture:
         many = len(ids)
         some = (
-            "none of your clips have a filming time"
+            say(
+                en="none of your clips have a filming time",
+                tr="hiçbir klibinde çekim saati yok",
+            )
             if len(missing) == many
-            else f"{len(missing)} of your {many} clips have no filming time"
+            else say(
+                en=f"{len(missing)} of your {many} clips have no filming time",
+                tr=f"{many} klibinden {len(missing)} tanesinde çekim saati yok",
+            )
         )
         filmed = strategy.get("ordering_choice") == "chronological" or any(
             str((req.facts or {}).get("key") or "").casefold() in ("capture_time", "chronological")
             for req in _live(brief)
             if req.kind == "order"
         )
-        intro = (
-            "You asked for the clips in the order you filmed them."
-            if filmed
-            else "You asked for the clips in a specific order that follows when they were filmed."
-        )
-        reason = f"{some}, so I can't put them in that order."
-        unordered_label = "Continue without a fixed order"
-        unordered_text = (
-            "I won't promise or check a particular order; the clips still play in a "
-            "sensible sequence."
+        if filmed:
+            intro = say(
+                en="You asked for the clips in the order you filmed them.",
+                tr="Klipleri çektiğin sırayla istedin.",
+            )
+        else:
+            intro = say(
+                en=(
+                    "You asked for the clips in a specific order that follows when they "
+                    "were filmed."
+                ),
+                tr="Klipleri çekildikleri zamana göre belirli bir sırayla istedin.",
+            )
+        reason = say(
+            en=f"{some}, so I can't put them in that order.",
+            tr=f"{some}, bu yüzden onları o sıraya koyamıyorum.",
         )
         covered = capture_ids + (rule_ids if ask_rule else [])
     else:
-        intro = "You gave me a specific order for the clips."
-        reason = "I can't check that order against your clips, so I can't promise it."
-        unordered_label = "Continue without a fixed order"
-        unordered_text = (
-            "I won't promise or check a particular order; the clips still play in a "
-            "sensible sequence."
+        intro = say(
+            en="You gave me a specific order for the clips.",
+            tr="Klipler için belirli bir sıra verdin.",
+        )
+        reason = say(
+            en="I can't check that order against your clips, so I can't promise it.",
+            tr="Bu sırayı kliplerinle karşılaştırıp doğrulayamıyorum, bu yüzden söz veremem.",
         )
         covered = rule_ids
     options = [
-        ConflictOption(
-            key=OPT_ATTACHMENT_ORDER,
-            label="Use the order you added the clips",
-            description="The clips play in the order they were added to this project.",
+        _option(
+            OPT_ATTACHMENT_ORDER,
+            label=("Use the order you added the clips", "Klipleri eklediğin sırayı kullan"),
+            description=(
+                "The clips play in the order they were added to this project.",
+                "Klipler projeye eklendikleri sırayla oynar.",
+            ),
             recommended=True,
             aliases=_ATTACHMENT_ALIASES,
+            tr_aliases=_ATTACHMENT_TR_ALIASES,
         )
     ]
     if cap.creator_sequence_supported:
         options.append(
-            ConflictOption(
-                key=OPT_OWN_SEQUENCE,
-                label="Use the order I give you",
-                description="You tell me the order of the clips.",
+            _option(
+                OPT_OWN_SEQUENCE,
+                label=("Use the order I give you", "Sırayı ben vereyim"),
+                description=(
+                    "You tell me the order of the clips.",
+                    "Klip sırasını sen söylersin.",
+                ),
                 aliases=("my own order", "my own sequence"),
+                tr_aliases=("kendi sıram", "kendi sıramı veririm", "sırayı ben vereyim"),
             )
         )
     options.append(
-        ConflictOption(
-            key=OPT_UNORDERED,
-            label=unordered_label,
-            description=unordered_text,
+        _option(
+            OPT_UNORDERED,
+            label=("Continue without a fixed order", "Sabit bir sıra olmadan devam et"),
+            description=(
+                "I won't promise or check a particular order; the clips still play in a "
+                "sensible sequence.",
+                "Belirli bir sıra vaat etmem ya da kontrol etmem; klipler yine de "
+                "mantıklı bir sırayla oynar.",
+            ),
             aliases=(
                 "without order",
                 "no order",
@@ -808,6 +987,7 @@ def _order_basis(
                 "continue without order",
                 "no fixed order",
             ),
+            tr_aliases=_UNORDERED_TR_ALIASES,
         )
     )
     return UnresolvedChoice(
@@ -843,12 +1023,22 @@ def _text_placement(
             continue
         picked = matching[:MAX_CHOICE_OPTIONS]
         options = tuple(
-            ConflictOption(
-                key=f"shot_{i + 1}",
-                label=f"On shot {i + 1}",
-                description=f"This line belongs on shot {i + 1} of the draft.",
+            _option(
+                f"shot_{i + 1}",
+                label=(f"On shot {i + 1}", f"{i + 1}. sahnede"),
+                description=(
+                    f"This line belongs on shot {i + 1} of the draft.",
+                    f"Bu yazı taslağın {i + 1}. sahnesine ait.",
+                ),
                 recommended=n == 0,
                 aliases=(f"shot {i + 1}", f"shot number {i + 1}"),
+                tr_aliases=(
+                    f"{i + 1}. sahne",
+                    f"sahne {i + 1}",
+                    f"{i + 1} numaralı sahne",
+                    f"sahne numarası {i + 1}",
+                    f"{i + 1}. sahnede",
+                ),
             )
             for n, i in enumerate(picked)
         )
@@ -858,11 +1048,21 @@ def _text_placement(
                 conflict_id=f"{CONFLICT_TEXT_PLACEMENT}:{req.id}",
                 field_path="shot_labels[]",
                 requirement_ids=(str(req.id),),
-                intro=f'You gave me the words "{_clean_name(str(req.literal))}" for one shot.',
-                reason=(
-                    "those words appear on "
-                    f"{_join_names([f'shot {i + 1}' for i in matching])} of the draft, "
-                    "so I can't tell which shot you mean."
+                intro=say(
+                    en=f'You gave me the words "{_clean_name(str(req.literal))}" for one shot.',
+                    tr=f'Bir sahne için "{_clean_name(str(req.literal))}" yazısını verdin.',
+                ),
+                reason=say(
+                    en=(
+                        "those words appear on "
+                        f"{_join_names([f'shot {i + 1}' for i in matching])} of the draft, "
+                        "so I can't tell which shot you mean."
+                    ),
+                    tr=(
+                        "bu yazı taslakta birden fazla sahnede geçiyor "
+                        f"({_join_names([f'{i + 1}. sahne' for i in matching])}), "
+                        "hangisini kastettiğini anlayamıyorum."
+                    ),
                 ),
                 options=options,
                 input_digest=_digest(
@@ -899,6 +1099,19 @@ _NO_TITLE_ALIASES = (
     "başlık olmasın",
     "başlıksız",
     "başlık yok",
+    # Typed Turkish declines (matched in every chat language).
+    "hayır",
+    "hayır teşekkürler",
+    "yok",
+    "atla",
+    "geç",
+    "gerek yok",
+    "başlık istemiyorum",
+    "başlığa gerek yok",
+    "başlık koyma",
+    "başlık ekleme",
+    "başlıksız devam et",
+    "başlık istemem",
 )
 
 
@@ -967,16 +1180,28 @@ def title_text_choice(requirement_ids: Iterable[str]) -> UnresolvedChoice:
         conflict_id=CONFLICT_TITLE_TEXT,
         field_path="opening_title",
         requirement_ids=tuple(ids),
-        intro=(
-            "You asked for a title on the opening, but you didn't tell me the words, and I "
-            "don't write on-screen text for you."
+        intro=say(
+            en=(
+                "You asked for a title on the opening, but you didn't tell me the words, and I "
+                "don't write on-screen text for you."
+            ),
+            tr=(
+                "Açılışa bir başlık istedin ama yazılacak kelimeleri söylemedin; ekrandaki "
+                "yazıları senin yerine yazmıyorum."
+            ),
         ),
-        reason="I can't add a title without them.",
+        reason=say(
+            en="I can't add a title without them.",
+            tr="Kelimeler olmadan başlık ekleyemem.",
+        ),
         options=(
-            ConflictOption(
-                key=OPT_NO_TITLE,
-                label="Continue without a title",
-                description="The video is made without an opening title.",
+            _option(
+                OPT_NO_TITLE,
+                label=("Continue without a title", "Başlıksız devam et"),
+                description=(
+                    "The video is made without an opening title.",
+                    "Video açılış başlığı olmadan hazırlanır.",
+                ),
                 # Never recommended: a delegation ("you decide") must not drop the title the
                 # creator asked for.
                 recommended=False,
@@ -1115,59 +1340,156 @@ _NON_WORD = re.compile(r"[^\w]+", re.UNICODE)
 
 
 def normalize_reply(text: object) -> str:
-    """Case, punctuation and whitespace folded away: the only fuzz a typed reply gets."""
+    """Case, punctuation and whitespace folded away: the only fuzz a typed reply gets.
 
-    folded = unicodedata.normalize("NFKC", str(text)).casefold()
+    Turkish-aware (``fold_text``): "İLERİ" and "ileri" are the same reply, and the dotted
+    capital İ no longer leaves a stray combining dot that splits the word. English text
+    folds exactly as before.
+    """
+
+    folded = fold_text(unicodedata.normalize("NFKC", str(text)))
     return _NON_WORD.sub(" ", folded).strip()
 
 
-_RECOMMENDED_TAG = re.compile(r"\s*\(recommended\)\s*$", re.IGNORECASE)
+def loose_reply(text: object) -> str:
+    """``normalize_reply`` with diacritics dropped too: "baslik yok" == "başlık yok".
+
+    Turkish typed on an English keyboard ("hayir", "ucuncu") must still answer. Used only
+    as a fallback after the exact comparison finds nothing, so two options that differ
+    only by an accent are never merged.
+    """
+
+    folded = loose_text(unicodedata.normalize("NFKC", str(text)))
+    return _NON_WORD.sub(" ", folded).strip()
+
+
+_RECOMMENDED_TAG = re.compile(r"\s*\((?:recommended|önerilen)\)\s*$", re.IGNORECASE)
+
+# "the first one" in Turkish. Digits are matched everywhere ("1", "1.", "1. seçenek");
+# these add the spelled-out forms. Options are capped at ``MAX_CHOICE_OPTIONS`` (6).
+_TR_ORDINALS: dict[int, tuple[str, ...]] = {
+    1: ("birinci", "birincisi", "birincisini", "ilk", "ilki", "ilkini", "bir"),
+    2: ("ikinci", "ikincisi", "ikincisini", "iki"),
+    3: ("üçüncü", "üçüncüsü", "üçüncüsünü", "üç"),
+    4: ("dördüncü", "dördüncüsü", "dördüncüsünü", "dört"),
+    5: ("beşinci", "beşincisi", "beşincisini", "beş"),
+    6: ("altıncı", "altıncısı", "altıncısını", "altı"),
+}
+# Spelled-out cardinals that are also plain Turkish words ("bir" = "a/one") count only
+# next to a noun that makes them a number ("bir numara", "seçenek iki").
+_TR_BARE_CARDINALS = frozenset({"bir", "iki", "üç", "dört", "beş", "altı"})
+
+
+def _ordinal_names(number: int) -> list[str]:
+    """Typed ways to name option ``number``: "ikinci", "2. seçenek", "bir numara", ..."""
+
+    names = [
+        f"{number} seçenek",
+        f"seçenek {number}",
+        f"{number} numara",
+        f"numara {number}",
+        f"{number} numaralı",
+        f"{number} numaralı seçenek",
+        f"{number} nolu",
+        f"{number} şık",
+        f"şık {number}",
+    ]
+    for word in _TR_ORDINALS.get(number, ()):
+        if word in _TR_BARE_CARDINALS:
+            names += [f"{word} numara", f"numara {word}", f"seçenek {word}", f"{word} numaralı"]
+            continue
+        names += [word, f"{word} seçenek", f"{word} şık"]
+    return names
+
+
+def _option_names(number: int, option: Mapping[str, Any]) -> list[str]:
+    """Every raw string a typed reply may use for this option (before normalisation)."""
+
+    label = _RECOMMENDED_TAG.sub("", str(option.get("label") or ""))
+    return [
+        str(option["key"]),
+        label,
+        str(number),
+        f"option {number}",
+        f"number {number}",
+        *_ordinal_names(number),
+        *(str(a) for a in option.get("aliases") or []),
+    ]
 
 
 def match_open_choice(question: Mapping[str, Any], message: object) -> str | None:
     """The option key a plain message names, or ``None``.
 
     Deterministic and exact: after normalisation the message must equal exactly ONE
-    option's key, label, list number ("1", "option 2") or server-defined alias. Anything
-    else (including a message that fits two options) is not an answer.
+    option's key, label, list number ("1", "option 2", "ikinci", "2. seçenek") or
+    server-defined alias. Anything else (including a message that fits two options) is
+    not an answer. When nothing matches exactly, Turkish typed without its special letters
+    gets one more chance against the diacritic-free forms.
     """
 
     reply = normalize_reply(message)
     if not reply:
         return None
-    hits: set[str] = set()
+    loose = loose_reply(message)
+    exact: set[str] = set()
+    fuzzy: set[str] = set()
     for number, option in enumerate(question.get("options") or [], start=1):
         if not isinstance(option, Mapping) or not option.get("key"):
             continue
-        label = _RECOMMENDED_TAG.sub("", str(option.get("label") or ""))
-        names = {
-            normalize_reply(option["key"]),
-            normalize_reply(label),
-            str(number),
-            f"option {number}",
-            f"number {number}",
-            *(normalize_reply(a) for a in option.get("aliases") or []),
-        }
-        names.discard("")
-        if reply in names:
-            hits.add(str(option["key"]))
+        names = _option_names(number, option)
+        if reply in {n for n in map(normalize_reply, names) if n}:
+            exact.add(str(option["key"]))
+        if loose in {n for n in map(loose_reply, names) if n}:
+            fuzzy.add(str(option["key"]))
+    hits = exact or fuzzy
     return next(iter(hits)) if len(hits) == 1 else None
 
 
 # Bare "whatever" / "I don't care" are often a non-answer, so they are NOT delegations.
 _DELEGATION_PHRASES = frozenset(
-    normalize_reply(p) for p in ("you choose", "you decide", "up to you", "surprise me")
+    normalize_reply(p)
+    for p in (
+        "you choose",
+        "you decide",
+        "up to you",
+        "surprise me",
+        # Turkish (KRI-520); compared diacritic-free too, so "sen sec" works.
+        "sen seç",
+        "sen seçersin",
+        "sen karar ver",
+        "sen karar verirsin",
+        "sen bilirsin",
+        "sen belirle",
+        "sana bırakıyorum",
+        "sana bıraktım",
+        "sana kalmış",
+        "kararı sana bırakıyorum",
+        "karar senin",
+        "fark etmez",
+        "sürpriz yap",
+        "beni şaşırt",
+        "hangisi olursa",
+        "hangisi olursa olsun",
+        "dilediğin gibi",
+        "dilediğin gibi yap",
+        "nasıl istersen",
+        "ne istersen",
+    )
 )
+_DELEGATION_LOOSE = frozenset(loose_reply(p) for p in _DELEGATION_PHRASES)
 
 
 def delegated_choice(question: Mapping[str, Any], message: object) -> str | None:
     """The recommended option key when the creator explicitly hands the choice over.
 
-    Only a message that IS a delegation ("you choose", "up to you", "surprise me") counts;
-    repeating the request, or any instruction, never does.
+    Only a message that IS a delegation ("you choose", "up to you", "surprise me", "sen
+    seç", "sana bırakıyorum") counts; repeating the request, or any instruction, never does.
     """
 
-    if normalize_reply(message) not in _DELEGATION_PHRASES:
+    if (
+        normalize_reply(message) not in _DELEGATION_PHRASES
+        and loose_reply(message) not in _DELEGATION_LOOSE
+    ):
         return None
     if question.get("conflict") == "creative_copy":
         # Delegating authorship is not permission to use unreviewed wording.
@@ -1215,6 +1537,28 @@ _DISCLOSURES = {
         "I'm leaving the title off, since you didn't give me the words."
     ),
 }
+# The same notes for a Turkish chat (KRI-520), keyed identically.
+_DISCLOSURES_TR = {
+    (CONFLICT_DURATION_VS_COUNT, OPT_EXTEND): (
+        "Süreyi uzattım, böylece her klip görülecek kadar ekranda kalıyor."
+    ),
+    (CONFLICT_DURATION_VS_COUNT, OPT_FEWER): (
+        "Süreni korudum ve daha az klip kullandım; klipleri çekimlerine eşit aralıklarla dağıttım."
+    ),
+    (CONFLICT_ORDER_BASIS, OPT_ATTACHMENT_ORDER): "Klipleri eklediğin sırayla kullanıyorum.",
+    (CONFLICT_ORDER_BASIS, OPT_UNORDERED): "Belirli bir sıra vaat etmiyorum.",
+    (CONFLICT_TITLE_TEXT, OPT_NO_TITLE): ("Kelimeleri söylemediğin için başlığı koymuyorum."),
+}
+
+
+def _disclosure(kind: object, option: object) -> str | None:
+    """The disclosure note for an answered option, in the chat's language."""
+
+    key = (kind, option)
+    english = _DISCLOSURES.get(key)  # type: ignore[arg-type]
+    if english is None:
+        return None
+    return say(en=english, tr=_DISCLOSURES_TR.get(key, english))  # type: ignore[arg-type]
 
 
 def _emits_answered_value(
@@ -1334,7 +1678,7 @@ def resolve_choices(
             }
         )
         _apply_effect(data, choice, option_key)
-        note = _DISCLOSURES.get((choice.kind, option_key))
+        note = _disclosure(choice.kind, option_key)
         if note:
             notices.append(_disclose(note, source))
     if answers:
@@ -1345,8 +1689,11 @@ def resolve_choices(
 
 
 def _disclose(note: str, source: object) -> str:
-    return (
-        f"{note} (You left it to me, so I went with it.)" if source == "creator_delegated" else note
+    if source != "creator_delegated":
+        return note
+    return say(
+        en=f"{note} (You left it to me, so I went with it.)",
+        tr=f"{note} (Kararı bana bıraktığın için bunu seçtim.)",
     )
 
 
@@ -1419,7 +1766,7 @@ def choice_notices(strategy: Any) -> list[str]:
     for answer in _as_dict(strategy).get("choice_answers") or []:
         if not isinstance(answer, Mapping):
             continue
-        note = _DISCLOSURES.get((answer.get("kind"), answer.get("option")))
+        note = _disclosure(answer.get("kind"), answer.get("option"))
         if note:
             out.append(_disclose(note, answer.get("source")))
     return out
@@ -1453,7 +1800,12 @@ def ask_user_choice(
     )
     lines = [question.strip()]
     lines += [f"{i}. {label}" for i, label in enumerate(labels, start=1)]
-    lines.append("Tap an option, or tell me in your own words.")
+    lines.append(
+        say(
+            en="Tap an option, or tell me in your own words.",
+            tr="Bir seçeneğe dokun ya da kendi sözlerinle anlat.",
+        )
+    )
     text = "\n".join(lines)
     if len(text) > 1200:
         return None

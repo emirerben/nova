@@ -59,6 +59,7 @@ from app.agents.clip_request_resolver import (
     ResolverIntentOut,
 )
 from app.config import settings
+from app.kria.reply_language import current_reply_language, say
 from app.schemas.clip_intents import (
     LABEL_MIN_CONFIDENCE,
     MEMBERSHIP_MIN_CONFIDENCE,
@@ -135,6 +136,17 @@ _GENERIC_QUESTION = (
     "I couldn't match that request to your clips automatically — can you "
     "tell me which clips you mean?"
 )
+
+
+def _generic_question() -> str:
+    return say(
+        en=_GENERIC_QUESTION,
+        tr=(
+            "Bu isteği kliplerinle otomatik olarak eşleştiremedim. "
+            "Hangi klipleri kastettiğini söyler misin?"
+        ),
+    )
+
 
 # Truncate the per-clip transcript excerpt embedded in the resolver prompt.
 # Full transcripts blow up prompt size across a 30-clip batch for no benefit —
@@ -533,7 +545,10 @@ def _membership_question(attribute: str) -> str:
 
 def _caption_question(intent: ClipIntent) -> str:
     """The creator-facing question when a caption never grounds."""
-    return f"What should the caption on the {intent.attribute} say?"
+    return say(
+        en=f"What should the caption on the {intent.attribute} say?",
+        tr=f'"{intent.attribute}" kliplerindeki yazı ne olsun?',
+    )
 
 
 def _caption_authoring_question(intent: ClipIntent) -> str:
@@ -617,12 +632,16 @@ async def _run_vision_candidate(
 def _position_phrase(positions: list[int], *, max_refs: int = 5) -> str:
     ordered = sorted(set(positions))
     if len(ordered) == 1:
-        return f"clip {ordered[0]}"
+        return say(en=f"clip {ordered[0]}", tr=f"klip {ordered[0]}")
     if len(ordered) > max_refs:
         labels = ", ".join(str(p) for p in ordered[:max_refs])
-        return f"clips {labels} and {len(ordered) - max_refs} more"
+        more = len(ordered) - max_refs
+        return say(en=f"clips {labels} and {more} more", tr=f"klip {labels} ve {more} klip daha")
     labels = [str(p) for p in ordered]
-    return f"clips {', '.join(labels[:-1])} and {labels[-1]}"
+    return say(
+        en=f"clips {', '.join(labels[:-1])} and {labels[-1]}",
+        tr=f"klip {', '.join(labels[:-1])} ve {labels[-1]}",
+    )
 
 
 def _build_question(work_items: list[_IntentWork], position_by_media: dict[str, int]) -> str:
@@ -638,40 +657,52 @@ def _build_question(work_items: list[_IntentWork], position_by_media: dict[str, 
             continue
         positions = [position_by_media[m] for m in work.failed_media_ids if m in position_by_media]
         if positions and work.intent.placeholder:
-            phrase = f'I couldn\'t tell if these are "{work.intent.attribute}"'
+            phrase = say(
+                en=f'I couldn\'t tell if these are "{work.intent.attribute}"',
+                tr=f'Şunların "{work.intent.attribute}" olup olmadığını anlayamadım',
+            )
             parts.append(f"{phrase}: {_position_phrase(sorted(positions))}")
             seen.add(phrase)
         elif positions:
-            phrase = f"I couldn't tell the {work.intent.attribute}"
+            phrase = say(
+                en=f"I couldn't tell the {work.intent.attribute}",
+                tr=f"Anlayamadım: {work.intent.attribute}",
+            )
             positions_by_phrase.setdefault(phrase, set()).update(positions)
+            where = _position_phrase(sorted(positions_by_phrase[phrase]))
+            part = say(en=f"{phrase} for {where}", tr=f"{phrase} ({where})")
             if phrase not in part_indexes:
                 part_indexes[phrase] = len(parts)
-                parts.append(
-                    f"{phrase} for {_position_phrase(sorted(positions_by_phrase[phrase]))}"
-                )
+                parts.append(part)
                 seen.add(phrase)
             else:
-                idx = part_indexes[phrase]
-                parts[idx] = f"{phrase} for {_position_phrase(sorted(positions_by_phrase[phrase]))}"
+                parts[part_indexes[phrase]] = part
         elif not work.kept and work.intent.placeholder:
-            phrase = (
-                f'I couldn\'t find any "{work.intent.attribute}" to put the name placeholder on'
+            phrase = say(
+                en=f'I couldn\'t find any "{work.intent.attribute}" to put the name placeholder on',
+                tr=f'İsim yer tutucusunu koyacak "{work.intent.attribute}" klibi bulamadım',
             )
             if phrase not in seen:
                 parts.append(phrase)
                 seen.add(phrase)
         elif not work.kept:
             label = work.intent.creator_text or work.intent.attribute
-            phrase = f'I couldn\'t find any clips for "{label}"'
+            phrase = say(
+                en=f'I couldn\'t find any clips for "{label}"',
+                tr=f'Şunun için klip bulamadım: "{label}"',
+            )
             if phrase not in seen:
                 parts.append(phrase)
                 seen.add(phrase)
     if not parts:
-        return _GENERIC_QUESTION
-    suffix = ". Could you clarify?"
+        return _generic_question()
+    suffix = say(en=". Could you clarify?", tr=". Biraz açıklar mısın?")
     joined = "; ".join(parts)
     if len(joined) + len(suffix) > 300:
-        return "I couldn't resolve all requested clip matches. Could you clarify?"
+        return say(
+            en="I couldn't resolve all requested clip matches. Could you clarify?",
+            tr="İstediğin klip eşleşmelerinin hepsini çözemedim. Biraz açıklar mısın?",
+        )
     return f"{joined}{suffix}"
 
 
@@ -770,6 +801,7 @@ def _build_resolver_input(
         ),
         intents=resolver_intents,
         clips=resolver_clips,
+        reply_language=current_reply_language(),
     )
     return resolver_input, alias_to_media, aliases
 
@@ -831,7 +863,10 @@ async def resolve_clip_intents_for_turn(
     # transcript requests (including forged assignments) to a vision model.
     if any(intent.label_source != "clip" for intent in intents):
         return IntentResolution(
-            question="Narration labels must be resolved against the recorded voiceover."
+            question=say(
+                en="Narration labels must be resolved against the recorded voiceover.",
+                tr="Anlatım etiketleri kaydedilen seslendirmeye göre çözülmeli.",
+            )
         )
     if not intents:
         return IntentResolution(intents=[], question=None, vision_answers={})
@@ -892,11 +927,11 @@ async def resolve_clip_intents_for_turn(
                     position=i.position,
                     status="needs_creator",
                     assignments=[],
-                    question=_GENERIC_QUESTION,
+                    question=_generic_question(),
                 )
                 for i in intents
             ],
-            question=_GENERIC_QUESTION,
+            question=_generic_question(),
             vision_answers={},
             status=status,
             error_code=error_code,
@@ -1730,8 +1765,9 @@ async def resolve_clip_intents_for_turn(
             leftover = [w for w in creator_work if not picker_eligible(w.intent)]
             if leftover:
                 # Mixed case: picker for the tappable intents, text for the rest.
+                also = say(en="Also:", tr="Ayrıca:")
                 turn_question = (
-                    f"{turn_question} Also: {_build_question(leftover, position_by_media)}"
+                    f"{turn_question} {also} {_build_question(leftover, position_by_media)}"
                 )
     final_intents = [
         (i if i.status == "resolved" else i.model_copy(update={"question": turn_question}))

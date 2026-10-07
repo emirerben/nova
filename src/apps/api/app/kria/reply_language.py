@@ -67,7 +67,7 @@ _TR_WORDS = frozenset(
     uzun hizli yavas guzel iyi kotu bitti hazir durum yardim tesekkurler sagol
     merhaba selam istiyorum istemiyorum baska yeni eski ilk son basa sona sirayla
     sira saniye saniyelik dakika gun gece aksam sabah ust alt orta buyuk kucuk renk
-    rengi tekrar yeniden sec secim sana seni bana beni neler hangi nerede burada
+    rengi tekrar yeniden sec secim sana seni bana beni neler hangi nerede burada devam
     """.split()
 )
 _EN_WORDS = frozenset(

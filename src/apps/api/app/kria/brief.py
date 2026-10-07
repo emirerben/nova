@@ -363,6 +363,11 @@ _PER_CLIP_LANE_ROLES = {"shot_label", "clip_label", "per_clip", "label"}
 # Whole-edit redo phrases only. "make the title bigger again" / "cut the intro
 # again" are ordinary edits and must stay on the editor-op path, so "again" only
 # counts right after a whole-edit object or next to prompt/brief/request.
+#
+# The patterns run on ``loose_text`` output (case-folded, Turkish letters reduced
+# to ASCII), so the Turkish phrases are written in that form: "baştan" is
+# "bastan", "yeniden oluştur" is "yeniden olustur", and ASCII-typed Turkish
+# ("hazirla") matches too.
 _REDO_PATTERNS = (
     re.compile(
         r"\b(do|make|create|generate|render|build|try|run)\s+"
@@ -373,8 +378,46 @@ _REDO_PATTERNS = (
     re.compile(r"\bagain\b.{0,20}\b(prompt|brief|request|instructions?)\b"),
     re.compile(r"\b(redo|re-do|start over|from scratch)\b"),
     re.compile(r"\bbased on (my|the) (prompt|brief|request|instructions?)\b"),
-    re.compile(r"\b(ba\u015ftan|bastan)\b"),
-    re.compile(r"\b(yeniden|tekrar)\s+(yap|olu\u015ftur|olustur|haz\u0131rla)\w*"),
+    # "baştan" alone is a redo ("baştan yap"); "baştan sona" is start-to-finish.
+    re.compile(r"\bbastan\b(?!\s+sona\b)"),
+    re.compile(r"\bsifirdan\b"),
+)
+# "yeniden yap", "tekrar dene", "bir daha oluştur", "tekrar hazırla". A trailing
+# -ma/-me is the negative ("tekrar yapma" = don't do it again), so it never counts.
+_TR_REDO_AGAIN = re.compile(
+    r"\b(?:yeniden|tekrar|bir daha)\s+(?:yap|dene|olustur|hazirla)(?!m[ae])\w*"
+)
+# The element a nearby word names ("başlığı tekrar yap" = redo the TITLE): a
+# redo aimed at one element is an ordinary edit, like "make the title bigger again".
+_TR_ELEMENT_STEMS = (
+    "baslik",
+    "baslig",
+    "yazi",
+    "altyazi",
+    "metin",
+    "metn",
+    "etiket",
+    "muzik",
+    "muzig",
+    "sarki",
+    "klip",
+    "klib",
+    "renk",
+    "reng",
+    "font",
+    "ses",
+    "efekt",
+    "gecis",
+    "sure",
+    "hiz",
+    "logo",
+    "intro",
+    "giris",
+    "kapanis",
+    "gorsel",
+    "resim",
+    "resm",
+    "foto",
 )
 
 
@@ -382,16 +425,27 @@ _NEGATED_AGAIN = re.compile(r"\b(don'?t|dont|do not|never|stop)\b[^.!?]{0,20}\ba
 
 
 def _fold_for_redo(message: str) -> str:
-    # Turkish dotted/dotless I: casefold() turns "\u0130" into i + combining dot,
-    # which no pattern would match, so map both capitals first.
-    text = unicodedata.normalize("NFC", message or "").replace("\u0130", "i").replace("I", "\u0131")
-    return " ".join(text.casefold().split())
+    """Case-fold and de-diacritic a message so one pattern reads English and Turkish.
+
+    ``loose_text`` maps every Turkish capital and dotless I to ``i``, so
+    "TRY AGAIN" stays "try again" and "HAZIRLA" matches "hazirla".
+    """
+    return loose_text(message or "")
+
+
+def _asks_turkish_redo(text: str) -> bool:
+    for match in _TR_REDO_AGAIN.finditer(text):
+        before = text[: match.start()].split()[-2:]
+        if any(word.startswith(_TR_ELEMENT_STEMS) for word in before):
+            continue
+        return True
+    return False
 
 
 def wants_full_replan(message: str) -> bool:
     """ "Do it again based on my prompt" is a supported re-plan, not an editor op."""
     text = _NEGATED_AGAIN.sub(" ", _fold_for_redo(message))
-    return any(pattern.search(text) for pattern in _REDO_PATTERNS)
+    return any(pattern.search(text) for pattern in _REDO_PATTERNS) or _asks_turkish_redo(text)
 
 
 def plan_shape_from_editor_snapshot(snapshot: Mapping[str, Any] | None) -> CurrentPlanShape:
@@ -470,6 +524,40 @@ _REMOVE_MESSAGE = re.compile(
     r"|\b(remove|delete|drop|cut|get rid of|take out)\b.{0,20}\b(the\s+)?"
     r"(first|last|second|third|fourth|fifth)\s+(clip|shot|video|segment|scene)\b"
 )
+
+# Turkish: the object and its position come first, the verb last ("2. klibi başa
+# al", "son klibi sil"). Written against ``loose_text`` output (ASCII, lower case).
+# A verb only counts in its imperative / polite-request forms: "silme", "koyma" or
+# "silinmesin" ("don't ...") never match, and the number must be an ordinal ("3.",
+# "ilk", "son") so "3 klibi sil" ("delete 3 clips") still goes to the planner.
+_TR_VERB_SUFFIX = r"(?:in|sana|sene|elim|alim|yalim|abilir\w*|ir\w*|iver\w*|yabilir\w*)?"
+_TR_REMOVE_VERB = rf"(?:(?:sil|cikar|kaldir){_TR_VERB_SUFFIX}|silinsin|cikarilsin|kaldirilsin|at)\b"
+_TR_MOVE_VERB = rf"(?:(?:tasi|getir|koy|al|kaydir|gonder|yerlestir){_TR_VERB_SUFFIX}|at|atsana)\b"
+# A singular clip noun ("klibi", "klipini", "videoyu"); "klipleri" is a group.
+_TR_CLIP_NOUN = r"(?:klib|klip|video|sahne|cekim)(?![a-z]*l[ae]r)[a-z]*"
+_TR_ORDINAL = (
+    r"(?:ilk|son|sonuncu|birinci|ikinci|ucuncu|dorduncu|besinci|altinci|yedinci|sekizinci"
+    r"|dokuzuncu|onuncu|\d{1,3}\s*\.|\d{1,3}\s*'?\s*(?:inci|nci|uncu|ncu)"
+    r"|\d{1,3}\s*(?:numarali|nolu))"
+)
+_TR_REMOVE_MESSAGE = re.compile(
+    rf"\b{_TR_ORDINAL}\s+{_TR_CLIP_NOUN}\s+(?:[a-z]+\s+){{0,2}}{_TR_REMOVE_VERB}"
+    # "klip 3'ü sil", "video no 4'ü çıkar": the noun first, then its number.
+    rf"|\b{_TR_CLIP_NOUN}\s*(?:#|no\.?\s*)?\d{{1,3}}\b\S*\s+(?:[a-z]+\s+){{0,2}}{_TR_REMOVE_VERB}"
+)
+# "başa al", "sona taşı", "en sona koy", "kafe klibinden önce getir". Every anchor is
+# a Turkish-only word (basa, sona, ...), so English text can't collide with it.
+_TR_POSITION = (
+    r"(?:basa|basina|sona|sonuna|ortaya|ortasina|arkaya|arkasina|onune|oncesine|sonrasina"
+    r"|siraya|sirasina|pozisyona"
+    r"|[a-z]+(?:den|dan|ten|tan)\s+(?:hemen\s+)?(?:once|sonra))"
+)
+_TR_MOVE_MESSAGE = re.compile(
+    rf"\b{_TR_POSITION}\s+(?:[a-z]+\s+){{0,2}}{_TR_MOVE_VERB}"
+    # "ilk ve son klibin yerini değiştir": a swap that names its positions.
+    r"|\b(?:ilk|son|ikinci|ucuncu|\d{1,3}\s*\.)\s.{0,60}\byer(?:ini|lerini)?\s+degistir"
+    r"(?:in|sene|elim|ebilir\w*|ir\w*)?\b"
+)
 _POSITIONAL_FACT_KEYS = {
     "index",
     "indices",
@@ -481,6 +569,16 @@ _POSITIONAL_FACT_KEYS = {
 }
 
 
+def _asks_move(text: str) -> bool:
+    """``text`` (already ``loose_text``-folded) asks to move a clip somewhere."""
+    return bool(_MOVE_MESSAGE.search(text) or _TR_MOVE_MESSAGE.search(text))
+
+
+def _asks_remove(text: str) -> bool:
+    """``text`` (already ``loose_text``-folded) asks to drop one named clip."""
+    return bool(_REMOVE_MESSAGE.search(text) or _TR_REMOVE_MESSAGE.search(text))
+
+
 def _structural_reqs_editable(
     reqs: list[BriefRequirement | BriefUpdate], message: str | None
 ) -> bool:
@@ -488,14 +586,14 @@ def _structural_reqs_editable(
     text = _fold_for_redo(message or "")
     for req in reqs:
         if req.kind == "order":
-            if not req.facts.get("key") or _MOVE_MESSAGE.search(text):
+            if not req.facts.get("key") or _asks_move(text):
                 continue
             return False
         if req.kind == "select":
             if (
                 req.scope.startswith("clip:")
                 or _POSITIONAL_FACT_KEYS & set(req.facts)
-                or _REMOVE_MESSAGE.search(text)
+                or _asks_remove(text)
             ):
                 continue
             return False

@@ -17,3 +17,8 @@ contain invented label values. Transcript-sourced labels require the recorded
 topics are grounded later against the recording and final shots. An empty guided
 selection remains correct for that path, and the explicit contract permits a
 guided voiceover strategy despite the general audio-led/native preference.
+
+Reply language (KRI-520): when the input carries `reply_language: "tr"`, every creator-facing
+string (`summary`, `rationale`, `question`, `options`) must be natural Turkish, while
+on-video text stays exactly as the creator wrote it. Without that field, write in the
+creator's own language.

@@ -364,6 +364,12 @@ async def _owned_thread(
     return thread
 
 
+def _thread_say(thread: CreationThread, *, en: str, tr: str) -> str:
+    """Server copy in the chat's own language, for paths that run outside a turn (KRI-520)."""
+    with reply_language_for(thread_reply_language(thread)):
+        return say(en=en, tr=tr)
+
+
 async def _append_event(
     db: AsyncSession,
     thread: CreationThread,
@@ -1562,8 +1568,13 @@ async def _cancel_pending_approval(
     code: str,
     message: str,
     approval_status: str = "cancelled",
+    event_message: str | None = None,
 ) -> None:
-    """Close a pending approval (see `_close_pending_approval`), then raise its 409."""
+    """Close a pending approval (see `_close_pending_approval`), then raise its 409.
+
+    ``message`` is the 409's message (a stable API string); ``event_message`` is the
+    chat text the creator reads, in their language (defaults to ``message``).
+    """
     revision = await _close_pending_approval(
         db,
         thread=thread,
@@ -1573,7 +1584,7 @@ async def _cancel_pending_approval(
         execution=execution,
         plan_item=plan_item,
         code=code,
-        message=message,
+        message=event_message if event_message is not None else message,
         approval_status=approval_status,
     )
     raise RuntimeFailure(
@@ -1587,6 +1598,11 @@ async def _cancel_pending_approval(
 
 
 _APPROVAL_EXPIRED_COPY = "This approval expired. Ask Kria to prepare it again."
+_APPROVAL_STALE_COPY = (
+    "That approval was prepared for an earlier version of the video, so I "
+    "cancelled it. Nothing was rendered; tell me what you want and I'll "
+    "prepare it again."
+)
 
 
 async def _expire_blocking_approval(
@@ -1695,9 +1711,16 @@ async def _expire_blocking_approval(
         execution=execution,
         plan_item=plan_item,
         code="approval_expired",
-        message=(
-            "That approval expired before it was decided, so nothing was rendered. "
-            "Tell me what you want and I'll prepare it again."
+        message=_thread_say(
+            thread,
+            en=(
+                "That approval expired before it was decided, so nothing was rendered. "
+                "Tell me what you want and I'll prepare it again."
+            ),
+            tr=(
+                "Bu onay karara bağlanmadan süresi doldu, o yüzden hiçbir video "
+                "oluşturulmadı. Ne istediğini söyle, yeniden hazırlayayım."
+            ),
         ),
         approval_status="expired",
     )
@@ -1956,10 +1979,15 @@ async def decide_approval(
             execution=execution,
             plan_item=plan_item,
             code="approval_target_stale",
-            message=(
-                "That approval was prepared for an earlier version of the video, so I "
-                "cancelled it. Nothing was rendered; tell me what you want and I'll "
-                "prepare it again."
+            message=_APPROVAL_STALE_COPY,
+            event_message=_thread_say(
+                thread,
+                en=_APPROVAL_STALE_COPY,
+                tr=(
+                    "Bu onay videonun eski bir sürümü için hazırlanmıştı, o yüzden iptal "
+                    "ettim. Hiçbir video oluşturulmadı; ne istediğini söyle, yeniden "
+                    "hazırlayayım."
+                ),
             ),
         )
     if decision == "approve" and not await conversation_revision_matches(
@@ -2007,6 +2035,11 @@ async def decide_approval(
             code="approval_expired",
             message=_APPROVAL_EXPIRED_COPY,
             approval_status="expired",
+            event_message=_thread_say(
+                thread,
+                en=_APPROVAL_EXPIRED_COPY,
+                tr="Bu onayın süresi doldu. Kria'dan yeniden hazırlamasını iste.",
+            ),
         )
     if decision == "approve" and approval.draft_revision != body.expected_draft_revision:
         raise RuntimeFailure(
@@ -2046,14 +2079,16 @@ async def decide_approval(
                 .order_by(CreationThreadEvent.sequence)
             )
         ).all()
-        copy_problem = creative_copy_problem(
-            [
-                tag_event(role, payload, event_type, content)
-                for role, payload, event_type, content in copy_rows
-            ],
-            snapshot_media(copy_item),
-            strategy=copy_document.strategy if copy_document is not None else None,
-        )
+        # KRI-520: the gate words its question in the chat's language.
+        with reply_language_for(thread_reply_language(thread)):
+            copy_problem = creative_copy_problem(
+                [
+                    tag_event(role, payload, event_type, content)
+                    for role, payload, event_type, content in copy_rows
+                ],
+                snapshot_media(copy_item),
+                strategy=copy_document.strategy if copy_document is not None else None,
+            )
         if copy_problem:
             log.info("kria_creative_copy_blocked", phase="approval", thread_id=str(thread.id))
             await _cancel_pending_approval(

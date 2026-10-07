@@ -307,6 +307,36 @@ Visuals cases), `tests/kria/test_runtime_phone_v2.py`
 (`test_a_visuals_refusal_says_what_to_do_instead_of_retry`).
 There is no flag to roll back; revert the PR. In-flight jobs keep their pinned plan.
 
+## Reply language (KRI-520)
+
+A chat replies in the creator's language: Turkish or English. `app/kria/reply_language.py`
+owns the rule; kill switch `KRIA_REPLY_LANGUAGE_ENABLED` (default true; false = every
+reply English and prompts byte-identical).
+
+- **Deciding.** `submit_turn` resolves the language from the creator's own message
+  (`detect_chat_language`: Turkish letters and common Turkish/English chat words, ASCII-typed
+  Turkish included). Stock sentences the apps send for a tap ("Suggest an edit.", "Use this
+  order: clips …") never count. The result sticks to the thread in
+  `CreationThread.state["reply_language"]`; leaving it takes a message with three clear
+  words of the other language. With no clear message and no stored language, the request's
+  `Accept-Language` decides (iOS sends the device languages; only the top preference counts).
+  Other languages resolve to none: server copy stays English and the models mirror the
+  creator as before.
+- **Binding.** Every entry point that writes chat events binds the language for its copy
+  (`reply_language_for` / `bind_reply_language`): `submit_turn`, `run_kria_turn` (from the
+  trusted snapshot), approval dispatch, render observation and expiry. Server copy is written
+  `say(en=..., tr=...)`; unbound means English.
+- **Models.** Main Creator, the edit copilot and the clip-intent agents get
+  `reply_language`; for Turkish their prompt ends with `prompt_language_line("tr")`, which
+  asks for every creator-facing sentence in Turkish while on-video text stays exactly as the
+  creator wrote it. English/unknown adds nothing, so those prompts are unchanged.
+- **Understanding.** Typed answers, status/help questions, redo/move/remove asks, the
+  copilot honesty guard and the follow-up parsers accept Turkish, folded with
+  `brief_route.fold_text`/`loose_text` (İ/I/ı and ASCII spellings match).
+- **Never localized.** HTTP/`KriaProblem` messages and codes, payload machine values, the
+  "Render this draft:" approval prefix and the two command sentences iOS sends
+  ("Retry preparing my clips.", "Keep the same plan with my current footage").
+
 ## Render consent
 
 Every initial render and rerender requires a separate, expiring approval pinned

@@ -37,6 +37,7 @@ from app.schemas.edit_proposal import (
     recognize_round_robin_cadence,
     rejects_round_robin_cadence,
     resolve_video_reuse_policy,
+    turkish_media_scope,
 )
 from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 
@@ -745,4 +746,5 @@ def _explicit_media_scope_from_request(request: str) -> str | None:
         normalized,
     ):
         return "selected"
-    return None
+    # KRI-520: "tüm klipleri kullan", "hepsini kullan", "sadece en iyileri".
+    return turkish_media_scope(request)

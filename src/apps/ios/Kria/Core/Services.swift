@@ -1156,6 +1156,16 @@ struct KriaAPI: KriaAPIClient {
     /// "session expired" and would clear the Keychain / broadcast
     /// `.kriaSessionExpired` for a signed-out user. Every other call site
     /// keeps the default and is unaffected.
+    /// `Accept-Language` from the device's preferred languages, most preferred first
+    /// ("tr-TR, en-US;q=0.9"). nil when the device reports none.
+    static func acceptLanguage(preferred: [String] = Locale.preferredLanguages) -> String? {
+        let tags = preferred.prefix(3).filter { !$0.isEmpty }
+        guard !tags.isEmpty else { return nil }
+        return tags.enumerated().map { index, tag in
+            index == 0 ? tag : "\(tag);q=\(String(format: "%.1f", 1.0 - Double(index) * 0.1))"
+        }.joined(separator: ", ")
+    }
+
     func request<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type, requiresAuth: Bool = true, timeoutInterval: TimeInterval? = nil) async throws -> T {
         var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false)
         components?.queryItems = query.isEmpty ? nil : query
@@ -1168,6 +1178,10 @@ struct KriaAPI: KriaAPIClient {
         guard let url = components?.url else { throw APIError.invalidResponse }
         var request = URLRequest(url: url); request.httpMethod = method; request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let timeoutInterval { request.timeoutInterval = timeoutInterval }
+        // KRI-520: the device language lets the server pick Turkish replies when a chat
+        // message alone doesn't say (a tap, a media-only send). URLSession's automatic
+        // value follows the app's bundled localizations (English only), not the device.
+        if let acceptLanguage = Self.acceptLanguage() { request.setValue(acceptLanguage, forHTTPHeaderField: "Accept-Language") }
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         request.setValue(String(KriaClientProtocolContract.version), forHTTPHeaderField: KriaClientProtocolContract.header)
         let storedSession = requiresAuth ? try tokenStore.read() : nil

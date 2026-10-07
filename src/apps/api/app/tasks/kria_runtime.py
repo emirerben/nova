@@ -10,6 +10,7 @@ import asyncio
 import time
 import uuid
 from collections.abc import Mapping
+from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -45,13 +46,17 @@ from app.kria.language import is_paraphrase_only
 from app.kria.planner import (
     PlannedKriaTurn,
     extract_deferred_brief,
+    localized_editor_state_reply,
     plan_live_turn,
     turn_deadline,
 )
 from app.kria.registry import KRIA_TOOLS
 from app.kria.reply_language import (
     bind_reply_language,
+    current_reply_language,
     release_reply_language,
+    reply_language_for,
+    say,
     thread_reply_language,
 )
 from app.models import (
@@ -281,12 +286,41 @@ def _complete_response_turn(
     )
 
 
+def _bind_thread_language(stack: ExitStack, thread: CreationThread) -> None:
+    """KRI-520: write the rest of this transaction's creator-visible copy in the chat's language.
+
+    ``stack`` rides in the function's own ``with`` header, so the language is released
+    on every exit path without re-indenting the long, lock-ordered body. The thread row
+    is already loaded: this adds no query.
+    """
+    stack.enter_context(reply_language_for(thread_reply_language(thread)))
+
+
+_PACING_TR = {"relaxed": "Sakin", "balanced": "Dengeli", "fast": "Hızlı"}
+_EDIT_FORMAT_TR = {
+    "montage": "Montaj",
+    "talking_head": "Kameraya konuşma",
+    "day_vlog": "Günlük vlog",
+    "single_hero": "Tek kahraman klip",
+    "subtitled": "Altyazılı",
+    "narrated": "Seslendirmeli",
+    "narrated_planned": "Seslendirmeli",
+    "narrated_ready": "Seslendirmeli",
+    "slides": "Slayt",
+}
+
+
 def _strategy_changes(arguments: Any) -> list[str]:
     strategy = arguments.strategy
+    pacing = strategy.pacing.replace("_", " ").title()
+    edit_format = strategy.edit_format.replace("_", " ").title()
     values = [
         arguments.summary,
-        f"{strategy.pacing.replace('_', ' ').title()} pacing",
-        f"{strategy.edit_format.replace('_', ' ').title()} format",
+        say(en=f"{pacing} pacing", tr=f"Tempo: {_PACING_TR.get(strategy.pacing, pacing)}"),
+        say(
+            en=f"{edit_format} format",
+            tr=f"Format: {_EDIT_FORMAT_TR.get(strategy.edit_format, edit_format)}",
+        ),
     ]
     return list(dict.fromkeys(value for value in values if value))[:3]
 
@@ -332,9 +366,15 @@ def _useful_plan(planned: PlannedKriaTurn, *, user_message: str) -> PlannedKriaT
         replacement = plan.model_copy(
             update={
                 "turn_value": "question",
-                "response": (
-                    "I need one concrete creative choice before I can make a useful edit decision. "
-                    "Which moment should viewers remember?"
+                "response": say(
+                    en=(
+                        "I need one concrete creative choice before I can make a useful edit "
+                        "decision. Which moment should viewers remember?"
+                    ),
+                    tr=(
+                        "Anlamlı bir düzenleme kararı verebilmem için net bir yaratıcı seçime "
+                        "ihtiyacım var. İzleyenler hangi anı hatırlamalı?"
+                    ),
                 ),
             }
         )
@@ -352,13 +392,19 @@ def _useful_plan(planned: PlannedKriaTurn, *, user_message: str) -> PlannedKriaT
             if intent.tool_name == "draft.apply_editor_ops":
                 count = len(arguments.get("operations") or [])
                 suffix = "s" if count != 1 else ""
-                arguments["summary"] = f"I prepared {count} reversible editor change{suffix}."
+                arguments["summary"] = say(
+                    en=f"I prepared {count} reversible editor change{suffix}.",
+                    tr=f"Editörde {count} geri alınabilir değişiklik hazırladım.",
+                )
             else:
                 strategy = arguments.get("strategy") or {}
                 pacing = str(strategy.get("pacing") or "focused").replace("_", " ")
                 edit_format = str(strategy.get("edit_format") or "video").replace("_", " ")
-                arguments["summary"] = (
-                    f"I prepared a {pacing} {edit_format} draft around the available footage."
+                arguments["summary"] = say(
+                    en=f"I prepared a {pacing} {edit_format} draft around the available footage.",
+                    # The pace and format words are machine values (English), so the
+                    # Turkish line leaves them out rather than mixing languages.
+                    tr="Elindeki çekimlere göre bir taslak hazırladım.",
                 )
             changed = True
         intents.append(intent.model_copy(update={"arguments": arguments}))
@@ -410,7 +456,11 @@ def _unresolved_choice_plan(
 
     if not strategy:
         return None
-    unchanged = " Your current draft is unchanged." if has_draft else ""
+    unchanged = (
+        say(en=" Your current draft is unchanged.", tr=" Mevcut taslağın değişmedi.")
+        if has_draft
+        else ""
+    )
     history = list(events)
     capability = ChoiceCapability(creator_id=creator_id) if creator_id is not None else None
     for conflict in open_conflicts(strategy, brief, media_snapshot, capability):
@@ -428,16 +478,28 @@ def _unresolved_choice_plan(
                 KEEP_OPEN_REASON,
             )
         if conflict.kind in (CONFLICT_ORDER_BASIS, CONFLICT_TITLE_TEXT):
-            ways = " or ".join(f'"{o.label}"' for o in conflict.options)
+            # The option labels follow the chat's language (the conflict is built under
+            # the turn's binding) and the matcher accepts them, so they are quoted as is.
+            quoted = [f'"{o.label}"' for o in conflict.options]
+            ways = " or ".join(quoted)
+            ways_tr = f"{' veya '.join(quoted)} yaz"
             if conflict.kind == CONFLICT_TITLE_TEXT:
                 ways = f"{ways}, or type the words you want"
+                ways_tr = f"{ways_tr} ya da istediğin kelimeleri yaz"
             return (
                 KriaTurnPlan(
                     mode="respond",
                     turn_value="recovery",
-                    response=(
-                        f"{conflict.intro} {conflict.reason} I won't guess, so I haven't "
-                        f"made an edit yet. To go ahead, reply {ways}.{unchanged}"
+                    response=say(
+                        en=(
+                            f"{conflict.intro} {conflict.reason} I won't guess, so I haven't "
+                            f"made an edit yet. To go ahead, reply {ways}.{unchanged}"
+                        ),
+                        tr=(
+                            f"{conflict.intro} {conflict.reason} Tahmin yürütmeyeceğim, o "
+                            f"yüzden henüz bir düzenleme yapmadım. Devam etmek için {ways_tr}."
+                            f"{unchanged}"
+                        ),
                     ),
                 ),
                 KEEP_OPEN_REASON,
@@ -801,7 +863,10 @@ def _complete_draft_turn(
                     status="partial",
                     verification="unchecked",
                     stage="understood",
-                    reason="This requirement still needs an output check.",
+                    reason=say(
+                        en="This requirement still needs an output check.",
+                        tr="Bu isteğin videoda hâlâ kontrol edilmesi gerekiyor.",
+                    ),
                     target_media_ids=[req.scope.split(":", 1)[1]]
                     if req.scope.startswith("clip:")
                     else [],
@@ -819,16 +884,22 @@ def _complete_draft_turn(
             # at approval) is reported in the receipt instead and never asks.
             db.rollback()
             draft_state = (
-                "Your current draft is unchanged."
+                say(en="Your current draft is unchanged.", tr="Mevcut taslağın değişmedi.")
                 if head is not None
-                else "I haven't started a draft yet."
+                else say(en="I haven't started a draft yet.", tr="Henüz bir taslağa başlamadım.")
             )
             recovery = KriaTurnPlan(
                 mode="respond",
                 turn_value="question",
                 response=(
                     f"{reply_text}\n{draft_state} "
-                    "Should I try a different approach, or make this simpler version?"
+                    + say(
+                        en="Should I try a different approach, or make this simpler version?",
+                        tr=(
+                            "Farklı bir yol mu deneyeyim, yoksa bunun daha basit bir "
+                            "sürümünü mü hazırlayayım?"
+                        ),
+                    )
                 ),
             )
             completed = _complete_response_turn(
@@ -1121,7 +1192,7 @@ def _complete_draft_turn(
             target_ownership_epoch=int(session.ownership_epoch),
             execution_ids=[str(render_execution.id)],
             consequence_summary=f"Render this draft: {arguments.summary}",
-            cost_summary="One render",
+            cost_summary=say(en="One render", tr="Tek bir video"),
             status="pending",
             expires_at=datetime.now(UTC) + _APPROVAL_TTL,
         )
@@ -1565,15 +1636,25 @@ def _project_retryable_failure(
     turn.completed_at = datetime.now(UTC)
     turn.lease_owner = None
     turn.lease_expires_at = None
+    # KRI-520: also reached from `_claim` (claims exhausted) before any turn binding, so
+    # the copy follows the chat's language from the thread row itself.
+    with reply_language_for(thread_reply_language(thread)):
+        failure_copy = say(
+            en=(
+                "I couldn't finish that step, but your project and saved draft are safe. "
+                "Try the request again."
+            ),
+            tr=(
+                "Bu adımı tamamlayamadım ama projen ve kayıtlı taslağın güvende. "
+                "İsteği tekrar dene."
+            ),
+        )
     event = _append_sync_event(
         db,
         thread,
         role="assistant",
         event_type="assistant_error",
-        content=(
-            "I couldn't finish that step, but your project and saved draft are safe. "
-            "Try the request again."
-        ),
+        content=failure_copy,
         payload={
             "turn_id": str(turn.id),
             "code": code,
@@ -1806,7 +1887,10 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                     planned = replace(
                         planned,
                         plan=KriaTurnPlan(
-                            mode="respond", turn_value="recovery", response=exc.reply
+                            mode="respond",
+                            turn_value="recovery",
+                            # KRI-520: the two constants are English; the planner maps them.
+                            response=localized_editor_state_reply(exc.reply),
                         ),
                     )
                     completion = _complete_response_turn(
@@ -1826,9 +1910,15 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         plan=KriaTurnPlan(
                             mode="respond",
                             turn_value="recovery",
-                            response=(
-                                f"I can't do that on this edit: {str(exc).strip().rstrip('.')}. "
-                                "Nothing was changed."
+                            response=say(
+                                en=(
+                                    f"I can't do that on this edit: "
+                                    f"{str(exc).strip().rstrip('.')}. Nothing was changed."
+                                ),
+                                tr=(
+                                    f"Bu düzenlemede bunu yapamıyorum: "
+                                    f"{str(exc).strip().rstrip('.')}. Hiçbir şey değişmedi."
+                                ),
                             ),
                         ),
                     )
@@ -1903,7 +1993,10 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
         )
         message = str(result_json["editorial_decision"])
         if is_paraphrase_only(user_message=user_message, assistant_message=message):
-            message = "I inspected the project, but I need footage evidence before editing."
+            message = say(
+                en="I inspected the project, but I need footage evidence before editing.",
+                tr="Projeyi inceledim ama düzenlemeden önce çekimlerini görmem gerekiyor.",
+            )
         response = KriaObservedTurnResponse(
             turn_value="question" if result_json["next_action"] == "attach_media" else "decision",
             message=message,
@@ -1990,6 +2083,17 @@ _DEFERRED_REPLAN_NOTE = (
 )
 
 
+def _deferred_replan_note() -> str:
+    return say(
+        en=_DEFERRED_REPLAN_NOTE,
+        tr=(
+            "Bu değişikliği editörde yaptım. İsteğinin bir kısmı yerinde bir ayar değil, "
+            "yeni bir düzenleme gerektiriyor: baştan yapmamı söylersen tüm isteğine göre "
+            "planı yeniden kurarım."
+        ),
+    )
+
+
 @celery_app.task(
     bind=True,
     name="tasks.extract_kria_brief",
@@ -2018,16 +2122,19 @@ def extract_kria_brief(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
     if not snapshot.get("item_id"):
         return {"turn_id": turn_id, "status": "ignored"}
     try:
-        updates, route = asyncio.run(_extract_brief_async(snapshot, message))
+        # KRI-520: the extraction runs under the chat's language, like the turn it follows.
+        with reply_language_for(snapshot.get("reply_language")):
+            updates, route = asyncio.run(_extract_brief_async(snapshot, message))
     except Exception:  # noqa: BLE001 - best-effort context
         log.warning("kria_deferred_brief_failed", turn_id=turn_id, exc_info=True)
         return {"turn_id": turn_id, "status": "failed"}
-    with sync_session() as db:
+    with sync_session() as db, ExitStack() as language:
         thread = db.execute(
             select(CreationThread)
             .where(CreationThread.id == uuid.UUID(str(snapshot["thread_id"])))
             .with_for_update()
         ).scalar_one()
+        _bind_thread_language(language, thread)
         if updates:
             persist_brief_version_sync(db, thread_id=thread.id, turn_id=identifier, updates=updates)
         if route == "replan":
@@ -2037,7 +2144,7 @@ def extract_kria_brief(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                 thread,
                 role="assistant",
                 event_type="assistant_response",
-                content=_DEFERRED_REPLAN_NOTE,
+                content=_deferred_replan_note(),
                 payload={
                     "turn_id": turn_id,
                     "turn_value": "recovery",
@@ -2057,7 +2164,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
     leaves ``accepted`` as the recovery ledger for the minute reconciler.
     """
 
-    with sync_session() as db:
+    with sync_session() as db, ExitStack() as language:
         approval_ref = db.get(CreatorAgentApproval, approval_id)
         if approval_ref is None or not approval_ref.execution_ids:
             return None
@@ -2074,6 +2181,9 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
         item_ref = db.get(PlanItem, session_ref.plan_item_id)
         if item_ref is None:
             return None
+        # KRI-520: every refusal this claim writes (and the creative-copy gate's wording)
+        # follows the chat's language; released when the transaction scope exits.
+        _bind_thread_language(language, thread_ref)
 
         # Canonical lock order -- app/db_locks.CANONICAL_LOCK_ORDER is the single
         # source of truth and tests/routes/test_lock_order.py enforces it:
@@ -2292,9 +2402,15 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                 role="assistant",
                 event_type="assistant_error",
                 content=copy_problem
-                or (
-                    "The project changed before I could start that render. "
-                    "I kept your draft; ask me to prepare it again."
+                or say(
+                    en=(
+                        "The project changed before I could start that render. "
+                        "I kept your draft; ask me to prepare it again."
+                    ),
+                    tr=(
+                        "Videoyu başlatamadan önce proje değişti. Taslağını sakladım; "
+                        "tekrar hazırlamamı isteyebilirsin."
+                    ),
                 ),
                 payload={
                     "turn_id": str(turn.id),
@@ -2347,7 +2463,10 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                     thread,
                     role="assistant",
                     event_type="assistant_question",
-                    content="Record a voiceover first, then I can render this direction.",
+                    content=say(
+                        en="Record a voiceover first, then I can render this direction.",
+                        tr="Önce bir seslendirme kaydet, sonra bu yönde videoyu oluşturabilirim.",
+                    ),
                     payload={
                         "turn_id": str(turn.id),
                         "approval_id": str(approval.id),
@@ -2494,7 +2613,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                         thread,
                         role="assistant",
                         event_type="assistant_error",
-                        content=_DEVICE_EDIT_REFUSALS.get(code, _DEVICE_EDIT_REFUSAL_FALLBACK),
+                        content=_device_edit_refusal_copy(code),
                         payload={
                             "turn_id": str(turn.id),
                             "approval_id": str(approval.id),
@@ -2594,6 +2713,34 @@ _DEVICE_EDIT_REFUSALS = {
 _DEVICE_EDIT_REFUSAL_FALLBACK = (
     "I couldn't apply that change on your iPhone, so I left the video as it was."
 )
+# KRI-520: Turkish copy for the same refusal codes (a test pins that no code is missing).
+_DEVICE_EDIT_REFUSALS_TR = {
+    "baseline_conflict": (
+        "Taslağı hazırladığımdan beri iPhone'undaki video değişti, o yüzden olduğu gibi "
+        "bıraktım. Tekrar iste, değişikliği güncel sürümde yapayım."
+    ),
+    "unsupported_phone_edit": (
+        "Bu değişiklik iPhone'unda henüz yapılamıyor, o yüzden videoyu olduğu gibi bıraktım."
+    ),
+    "phone_editor_media_unavailable": (
+        "Bu medyayı eklemek cihaz üzerindeki düzenlemelerde henüz kullanılamıyor, o yüzden "
+        "videoyu olduğu gibi bıraktım."
+    ),
+    "phone_rendering_unavailable": (
+        "Cihaz üzerinde video oluşturma bu hesapta şu anda kullanılamıyor, o yüzden videoyu "
+        "olduğu gibi bıraktım."
+    ),
+}
+_DEVICE_EDIT_REFUSAL_FALLBACK_TR = (
+    "Bu değişikliği iPhone'unda uygulayamadım, o yüzden videoyu olduğu gibi bıraktım."
+)
+
+
+def _device_edit_refusal_copy(code: str) -> str:
+    return say(
+        en=_DEVICE_EDIT_REFUSALS.get(code, _DEVICE_EDIT_REFUSAL_FALLBACK),
+        tr=_DEVICE_EDIT_REFUSALS_TR.get(code, _DEVICE_EDIT_REFUSAL_FALLBACK_TR),
+    )
 
 
 def _is_device_variant(job: Job | None, variant_id: str | None) -> bool:
@@ -2783,32 +2930,105 @@ def _device_refusal_copy(decline: dict[str, str], *, last_good: bool = True) -> 
     version is kept, and a next step that exists. Never promises an automatic rebuild and
     never asks the creator to restate a clear instruction.
     """
-    message = decline.get("message") or "That edit didn't keep something you asked for."
+    message = decline.get("message") or say(
+        en="That edit didn't keep something you asked for.",
+        tr="Bu düzenleme istediğin bir şeyi korumadı.",
+    )
     reason = decline["decline_reason"]
-    kept = _LAST_GOOD_STAYS if last_good else _NOTHING_PUBLISHED
+    kept = (
+        say(en=_LAST_GOOD_STAYS, tr="Son iyi sürümün hâlâ duruyor.")
+        if last_good
+        else say(en=_NOTHING_PUBLISHED, tr="Yeni bir video oluşturulmadı.")
+    )
+    not_applied = say(en="That edit was not applied.", tr="Bu düzenleme uygulanmadı.")
     if reason == "capability_unavailable":
-        return f"{_capability_refusal_copy(decline)} That edit was not applied. {kept}"
+        return f"{_capability_refusal_copy(decline)} {not_applied} {kept}"
     if reason in {"needs_choice", "requirement_conflict"}:
-        alternative = decline.get("alternative") or "Tell me which way you want to go."
-        return f"{message} That edit was not applied. {alternative} {kept}"
-    return f"{message} That edit was not applied. {kept} {_REDO_FROM_APPROVED}"
+        alternative = decline.get("alternative") or say(
+            en="Tell me which way you want to go.",
+            tr="Hangi yoldan gitmek istediğini söyle.",
+        )
+        return f"{message} {not_applied} {alternative} {kept}"
+    redo = say(
+        en=_REDO_FROM_APPROVED,
+        tr="Baştan yapmamı söylersen onayladığın isteğe göre yeni bir sürüm hazırlarım.",
+    )
+    return f"{message} {not_applied} {kept} {redo}"
 
 
 def _capability_refusal_copy(decline: dict[str, str]) -> str:
     """A refusal that names the limit and the supported way forward."""
-    limit = decline.get("message") or "This render path can't keep that requirement."
-    alternative = decline.get("alternative") or (
-        "Tell me what you'd like to change and I'll try a different approach."
+    limit = decline.get("message") or say(
+        en="This render path can't keep that requirement.",
+        tr="Bu video hazırlama yolu bu isteği koruyamıyor.",
     )
+    alternative = decline.get("alternative") or _try_different_approach()
     return f"{limit} {alternative}"
+
+
+def _try_different_approach() -> str:
+    return say(
+        en="Tell me what you'd like to change and I'll try a different approach.",
+        tr="Neyi değiştirmek istediğini söyle, farklı bir yol deneyeyim.",
+    )
+
+
+# KRI-520: Turkish copy for every `content_plan_build.PHONE_GATE_MESSAGES` reason (a test
+# pins that no reason is missing, so a new gate cannot silently stay English).
+_VOICEOVER_UNAVAILABLE_TR = (
+    "iPhone'unda henüz seslendirmeli video oluşturulamıyor ve bu projenin videoları bu "
+    "iPhone'da oluşturuluyor. Bu düzenlemeyi seslendirme olmadan iste. Yedek bir düzenleme "
+    "oluşturulmadı."
+)
+_PHONE_GATE_MESSAGES_TR = {
+    "device_render_unsupported": (
+        "Bu proje tamamen bu iPhone'da oluşturulamıyor. Mevcut videon değişmedi."
+    ),
+    "not_enrolled": (
+        "Bu projenin çekimleri iPhone'unda duruyor ve şu anda bu hesaptan videoya dönüştürülemiyor."
+    ),
+    "unapproved_guided": (
+        "Bu düzenleme planının iPhone'unda videoya dönüşebilmesi için yeniden onaylanması "
+        "gerekiyor."
+    ),
+    "unsupported_format": (
+        "Bu tür bir video şu anda iPhone'unda oluşturulamıyor. iPhone'da oluşturulabilen bir "
+        "format seç (Montaj, ya da uygun olduğunda Kameraya konuşma / Seslendirmeli). Yedek "
+        "bir düzenleme oluşturulmadı."
+    ),
+    "voiceover_unavailable": _VOICEOVER_UNAVAILABLE_TR,
+    "guided_voiceover_unavailable": _VOICEOVER_UNAVAILABLE_TR,
+    "narrated_voiceover_unavailable": _VOICEOVER_UNAVAILABLE_TR,
+    "subtitled_clip_count_unsupported": (
+        "Kameraya konuşma videoları iPhone'unda tam olarak tek klipten oluşturulur. Fazla "
+        "klipleri kaldır (ya da bir klip ekle) ve tekrar dene. Yedek bir düzenleme "
+        "oluşturulmadı."
+    ),
+    "subtitled_clip_too_long": (
+        "Bu klip, iPhone'unda kameraya konuşma videosu için çok uzun. 5 dakikadan kısa bir "
+        "klip kullan ve tekrar dene. Yedek bir düzenleme oluşturulmadı."
+    ),
+    "self_narration_multi_clip": (
+        "Birden fazla klip üzerinde anlatım iPhone'da henüz yok. Bir seslendirme kaydet ya da "
+        "kameraya konuşma için tek klip kullan."
+    ),
+    "user_song_unavailable": (
+        "Kendi şarkın şu anda yalnızca iPhone'unda hazırlanan videolarda kullanılabiliyor. "
+        "Bu düzenlemeyi şarkın olmadan iste. Yedek bir düzenleme oluşturulmadı."
+    ),
+}
 
 
 def _phone_gate_refusal_copy(reason: str) -> str:
     from app.tasks.content_plan_build import PHONE_GATE_MESSAGES  # noqa: PLC0415
 
-    message = PHONE_GATE_MESSAGES.get(reason, (None, None))[1]
-    lead = message or "That kind of edit isn't available for iPhone renders yet."
-    return f"{lead} Tell me what you'd like to change and I'll try a different approach."
+    english = PHONE_GATE_MESSAGES.get(reason, (None, None))[1]
+    message = say(en=english or "", tr=_PHONE_GATE_MESSAGES_TR.get(reason) or english or "")
+    lead = message or say(
+        en="That kind of edit isn't available for iPhone renders yet.",
+        tr="Bu tür bir düzenleme iPhone'da henüz kullanılamıyor.",
+    )
+    return f"{lead} {_try_different_approach()}"
 
 
 # KRI-205: every `DispatchResult("speech_cleanup_*")` outcome
@@ -2859,6 +3079,51 @@ _VISUALS_DISPATCH_REFUSALS: dict[str, str] = {
         "moment, then tap Refresh project and I'll start the render."
     ),
 }
+
+# KRI-520: Turkish copy for every outcome in the two tables above (a test pins that none is
+# missing). The card buttons are not translated in the app, so "Refresh project" and
+# "Visuals" are quoted as the creator sees them.
+_DISPATCH_REFUSALS_TR: dict[str, str] = {
+    "speech_cleanup_analysis_conflict": (
+        'Başlamadan önce konuşma kontrolü değişti. "Refresh project" düğmesine dokun, '
+        "duraklamaları nasıl ele alacağını seçebilmen için yeniden hazırlayayım."
+    ),
+    "speech_cleanup_recovery_conflict": (
+        'Başlamadan önce konuşma kontrolü değişti. "Refresh project" düğmesine dokun, '
+        "duraklamaları nasıl ele alacağını seçebilmen için yeniden hazırlayayım."
+    ),
+    "speech_cleanup_unavailable": (
+        'Bu video için konuşma kontrolü henüz kullanılamıyor. "Refresh project" düğmesine '
+        "dokun, videoyu temizleme olmadan hazırlayayım."
+    ),
+    "speech_cleanup_unavailable_on_phone": (
+        "Konuşma temizleme bu iPhone düzenlemesi için henüz kullanılamıyor. "
+        '"Refresh project" düğmesine dokun ve özgün konuşmayı korumayı seç.'
+    ),
+    "request_binding_stale": (
+        "Bu taslak onaylandıktan sonra kaynak kliplerin değişti. Taslağın kayıtlı; videoyu "
+        "oluşturmadan önce lütfen yeni bir plan hazırlat."
+    ),
+    "guided_edit_bypass_unsafe": (
+        "Visuals bölümündeki görsellerini henüz bu montaja ekleyemiyorum, o yüzden videoyu "
+        'başlatmadım. Onları Visuals bölümünden çıkar, sonra "Refresh project" düğmesine '
+        "dokun; videoyu senin videolarından hazırlayayım."
+    ),
+    "visuals_processing": (
+        "Visuals bölümüne eklediğin bir fotoğraf ya da video hâlâ hazırlanıyor. Biraz bekle, "
+        'sonra "Refresh project" düğmesine dokun, videoyu başlatayım.'
+    ),
+}
+
+
+def _dispatch_refusal_copy(outcome: str) -> str | None:
+    """The fixed refusal sentence for a dispatch outcome that needs a fresh approval."""
+    english = _SPEECH_CLEANUP_DISPATCH_REFUSALS.get(outcome) or _VISUALS_DISPATCH_REFUSALS.get(
+        outcome
+    )
+    if english is None:
+        return None
+    return say(en=english, tr=_DISPATCH_REFUSALS_TR.get(outcome, english))
 
 
 _FINISH_DEADLOCK_ATTEMPTS = 3
@@ -2932,7 +3197,7 @@ def _finish_approval_dispatch(
 ) -> tuple[str, str | None]:
     successful = outcome in {"dispatched", "already_active"} and job_id is not None
     successor_id: str | None = None
-    with sync_session() as db:
+    with sync_session() as db, ExitStack() as language:
         if successful:
             # Canonical order (db_locks): PlanItem -> Job -> Session. Pointing the session and
             # the execution at the NEW Job takes a FOR KEY SHARE on that Job row through the
@@ -2969,6 +3234,8 @@ def _finish_approval_dispatch(
             return "dispatched", None
         if execution.status != "accepted":
             return "ignored", None
+        # KRI-520: the refusal copy below follows the chat's language.
+        _bind_thread_language(language, thread)
 
         now = datetime.now(UTC)
         if successful:
@@ -3045,9 +3312,17 @@ def _finish_approval_dispatch(
                 thread,
                 role="assistant",
                 event_type="assistant_render_failed",
-                content=(
-                    "The render queue did not confirm whether it received this edit. "
-                    "Your approved draft is saved; I won't send it twice until it is reconciled."
+                content=say(
+                    en=(
+                        "The render queue did not confirm whether it received this edit. "
+                        "Your approved draft is saved; I won't send it twice until it is "
+                        "reconciled."
+                    ),
+                    tr=(
+                        "Video sırası bu düzenlemeyi alıp almadığını doğrulamadı. Onayladığın "
+                        "taslak kayıtlı; durum netleşene kadar aynı işi ikinci kez "
+                        "göndermeyeceğim."
+                    ),
                 ),
                 payload={
                     "turn_id": str(turn.id),
@@ -3064,9 +3339,7 @@ def _finish_approval_dispatch(
             db.commit()
             return "outcome_unknown", _promote_queued_successor_sync(thread.id)
 
-        refusal_copy = _SPEECH_CLEANUP_DISPATCH_REFUSALS.get(
-            outcome
-        ) or _VISUALS_DISPATCH_REFUSALS.get(outcome)
+        refusal_copy = _dispatch_refusal_copy(outcome)
         never_retry = refusal_copy is not None or bool(reason)
         execution.status = "failed"
         execution.error = {
@@ -3093,9 +3366,15 @@ def _finish_approval_dispatch(
             content=(
                 refusal_copy
                 or (_phone_gate_refusal_copy(reason) if reason else None)
-                or (
-                    "I couldn't start the render. Your draft is still saved, "
-                    "so you can retry without repeating the edit."
+                or say(
+                    en=(
+                        "I couldn't start the render. Your draft is still saved, "
+                        "so you can retry without repeating the edit."
+                    ),
+                    tr=(
+                        "Videoyu başlatamadım. Taslağın hâlâ kayıtlı, düzenlemeyi baştan "
+                        "anlatmadan tekrar deneyebilirsin."
+                    ),
                 )
             ),
             payload={
@@ -3336,33 +3615,70 @@ def _user_song_note(job: Job) -> str:
     notes: list[str] = []
     if receipt.get("fallback_reason"):
         notes.append(
-            "I couldn't find where your takes sit in the song, so I used it as "
-            "background music cut to the beat. To lip-sync, play the song out loud "
-            "while filming, or sing along clearly so I can match your words "
-            "(earbuds work, but the sync is a bit looser)."
+            say(
+                en=(
+                    "I couldn't find where your takes sit in the song, so I used it as "
+                    "background music cut to the beat. To lip-sync, play the song out loud "
+                    "while filming, or sing along clearly so I can match your words "
+                    "(earbuds work, but the sync is a bit looser)."
+                ),
+                tr=(
+                    "Çekimlerinin şarkının neresine denk geldiğini bulamadım, o yüzden şarkıyı "
+                    "ritme göre kesilmiş fon müziği olarak kullandım. Dudak senkronu için "
+                    "çekim yaparken şarkıyı yüksek sesle çal ya da sözleri net bir şekilde "
+                    "söyleyerek eşlik et, böylece sözlerini eşleştirebilirim (kulaklıkla da "
+                    "olur ama senkron biraz daha gevşek olur)."
+                ),
+            )
         )
     broll = receipt.get("kept_broll_ids")
     if isinstance(broll, list) and broll:
         count = len(broll)
         notes.append(
-            f"{count} take{' has' if count == 1 else 's have'} no usable singing or "
-            f"words, so {'it is' if count == 1 else 'they are'} in as short muted "
-            f"clip{'' if count == 1 else 's'}. Trim or remove "
-            f"{'it' if count == 1 else 'them'} in the editor."
+            say(
+                en=(
+                    f"{count} take{' has' if count == 1 else 's have'} no usable singing or "
+                    f"words, so {'it is' if count == 1 else 'they are'} in as short muted "
+                    f"clip{'' if count == 1 else 's'}. Trim or remove "
+                    f"{'it' if count == 1 else 'them'} in the editor."
+                ),
+                tr=(
+                    f"{count} çekimde kullanılabilir şarkı ya da söz yok, bu yüzden kısa ve "
+                    "sessiz klip olarak eklendi. Editörde kısaltabilir veya "
+                    "kaldırabilirsin."
+                ),
+            )
         )
     low = receipt.get("low_confidence_ids")
     if isinstance(low, list) and low:
         count = len(low)
         notes.append(
-            f"{count} take{' is' if count == 1 else 's are'} placed by my best guess and "
-            f"may be slightly off; check {'it' if count == 1 else 'them'} in the editor."
+            say(
+                en=(
+                    f"{count} take{' is' if count == 1 else 's are'} placed by my best guess "
+                    f"and may be slightly off; check {'it' if count == 1 else 'them'} in the "
+                    "editor."
+                ),
+                tr=(
+                    f"{count} çekimi tahminime göre yerleştirdim, biraz kayık olabilir; "
+                    "editörde kontrol et."
+                ),
+            )
         )
     outside = receipt.get("placed_outside_ids")
     if isinstance(outside, list) and outside:
         count = len(outside)
         notes.append(
-            f"{count} take{' sits' if count == 1 else 's sit'} later in the song than a "
-            "2-minute video can hold."
+            say(
+                en=(
+                    f"{count} take{' sits' if count == 1 else 's sit'} later in the song than "
+                    "a 2-minute video can hold."
+                ),
+                tr=(
+                    f"{count} çekim şarkıda, 2 dakikalık bir videonun sığabileceğinden daha "
+                    "geride kalıyor."
+                ),
+            )
         )
     placed = receipt.get("placed")
     by_lyrics = (
@@ -3371,7 +3687,12 @@ def _user_song_note(job: Job) -> str:
         else 0
     )
     if by_lyrics:
-        notes.append(f"I matched {by_lyrics} take{'' if by_lyrics == 1 else 's'} by your singing.")
+        notes.append(
+            say(
+                en=f"I matched {by_lyrics} take{'' if by_lyrics == 1 else 's'} by your singing.",
+                tr=f"{by_lyrics} çekimi söylediğin sözlere göre eşleştirdim.",
+            )
+        )
     return " ".join(notes)
 
 
@@ -3428,6 +3749,122 @@ def _approved_generation_review(
     ]
 
 
+# KRI-520: Turkish copy for the Job failure sentences a render-failed event shows. The
+# English table lives in `content_plan_build.JOB_FAILURE_MESSAGES`; a test pins that every
+# code there has a Turkish line here, so the two cannot drift apart.
+_JOB_FAILURE_MESSAGES_TR: dict[str, str] = {
+    "user_song_plan_declined": (
+        "Çekimlerini şarkınla hizalayamadım. Şarkı yüksek sesle çalarken çekim yap ya da "
+        "sözleri net söyleyerek eşlik et, sonra tekrar dene."
+    ),
+    "phone_plan_unsupported": (
+        "Bu düzenleme iPhone'unun henüz oluşturamadığı bir şey içeriyor. Farklı bir klip ya da "
+        "formatla yeni bir düzenleme başlat."
+    ),
+    "phone_capability_unavailable": (
+        "Bu düzenleme için gereken bir iPhone özelliği henüz kullanılamıyor. Daha sonra tekrar "
+        "dene ya da farklı bir stil iste."
+    ),
+    "phone_plan_failed": (
+        "Bu düzenleme iPhone'unda oluşturulamadı. Tekrar dene ya da yönde bir değişiklik iste."
+    ),
+    "originals_not_uploaded": (
+        "Orijinal çekimlerin yüklenmedi, bu yüzden iPhone'unda oluşturulamıyor. Kliplerini "
+        "yeniden ekle ve tekrar dene."
+    ),
+    "processing_timeout": (
+        "İşlem zaman aşımına uğradı; kliplerin çok ağır (muhtemelen 4K/HDR). Daha az ya da "
+        "daha kısa klip dene."
+    ),
+    "speech_cleanup_failed": (
+        "Sesi temizleme tamamlanmadı. Tekrar dene ya da konuşma temizlemeyi kapat."
+    ),
+    "no_labeled_tracks": (
+        "Bu düzenleme için uygun müzik bulunamadı. Tekrar dene ya da müziği kendin seç."
+    ),
+    "matching_failed": "Çekimlerini müzikle eşleştirme tamamlanmadı. Tekrar dene.",
+    "auto_music_disabled": "Otomatik müzik eşleştirme şu anda kapalı. Daha sonra tekrar dene.",
+    "cloud_render_disabled": (
+        "Bu proje iPhone ile oluşturmayı gerektiriyor. Kria'yı güncelle, sonra projeyi açıp "
+        "tekrar dene."
+    ),
+    "dispatch_publish_failed": "Video sıraya iletilemedi. Bir kez daha dene.",
+    "drive_import_failed": "Drive'dan içe aktarma tamamlanmadı. Tekrar dene.",
+    "drive_import_dispatch_failed": "Drive'dan içe aktarma tamamlanmadı. Tekrar dene.",
+    "upload_promotion_failed": "Yüklemen kaydedilemedi. Tekrar dene.",
+    "skia_disabled": (
+        "Bu düzenleme şu anda geçici olarak kapalı bir oluşturucuya ihtiyaç duyuyor. Daha "
+        "sonra tekrar dene."
+    ),
+    "cancelled_by_admin": "Bu video iptal edildi.",
+    "render_oom": (
+        "Video hazırlanırken bellek yetmedi; kliplerin çok ağır. Daha az ya da daha kısa klip dene."
+    ),
+    "ffmpeg_failed": "Videon birleştirilirken bir şeyler ters gitti. Tekrar dene.",
+    "gemini_analysis_failed": "Çekimlerinin analizi tamamlanmadı. Tekrar dene.",
+    "analysis_failed": "Çekimlerinin analizi tamamlanmadı. Tekrar dene.",
+    "copy_generation_failed": "Videonun paylaşım metnini yazma tamamlanmadı. Tekrar dene.",
+    "output_upload_failed": "Hazır videon kaydedilemedi. Tekrar dene.",
+    "user_clip_download_failed": "Kliplerinden biri indirilemedi. Yeniden ekle ve tekrar dene.",
+    "user_clip_unusable": (
+        "Kliplerinden biri kullanılamadı (bozuk ya da desteklenmiyor olabilir). Farklı bir "
+        "klip dene."
+    ),
+    "template_misconfigured": "Bu şablonda bir yapılandırma sorunu var. Farklı bir tane dene.",
+    "template_assets_missing": (
+        "Bu şablonun ihtiyaç duyduğu dosyalar eksik. Farklı bir tane dene."
+    ),
+    "artifact_eligibility_revoked": "Bu dışa aktarma artık kullanılamıyor.",
+    "eligibility_changed_during_export": "Dışa aktarma sırasında bir şey değişti. Tekrar dene.",
+}
+_JOB_FAILURE_DEFAULT_TR = (
+    "Bir şeyler ters gitti ve bu video tamamlanmadı. Yönün ve çekimlerin hâlâ kayıtlı; tekrar dene."
+)
+
+
+def _job_failure_copy(failure_code: str | None, detail: str | None) -> str | None:
+    """`content_plan_build.job_failure_message` in the chat's language.
+
+    A Turkish chat gets the Turkish line for the code. The job's own ``error_detail`` for
+    the creator-facing codes is English-only text, so Turkish prefers the code's line.
+    """
+    from app.tasks.content_plan_build import job_failure_message  # noqa: PLC0415
+
+    english = job_failure_message(failure_code, detail)
+    if english is None:
+        return None
+    return say(
+        en=english,
+        tr=_JOB_FAILURE_MESSAGES_TR.get(failure_code or "", _JOB_FAILURE_DEFAULT_TR),
+    )
+
+
+# The three variant ids every generative job renders; any other id is left out of the
+# Turkish sentence rather than mixing an English machine name into it.
+_VARIANT_NAMES_TR = {
+    "song_lyrics": "Şarkı sözlü",
+    "song_text": "Şarkılı yazılı",
+    "original_text": "Orijinal sesli",
+}
+
+
+def _render_ready_review_copy(variant_id: str) -> str:
+    """The default review sentence for a finished render (`{variant}` cut is ready)."""
+    name = _VARIANT_NAMES_TR.get(variant_id)
+    return say(
+        en=(
+            f"The {variant_id.replace('_', ' ')} cut is ready. "
+            "The approved render finished; review the opening, pacing, and text, "
+            "then tell me what you want changed."
+        ),
+        tr=(
+            f"{name + ' versiyon' if name else 'Videon'} hazır. "
+            "Onayladığın video tamamlandı; açılışı, temposunu ve yazıları incele, "
+            "sonra neyi değiştirmek istediğini söyle."
+        ),
+    )
+
+
 def _blocked_title_question(receipts: list[dict[str, Any]]) -> dict[str, Any] | None:
     """The tappable `title_text` question for a render blocked on a wordless title.
 
@@ -3436,7 +3873,7 @@ def _blocked_title_question(receipts: list[dict[str, Any]]) -> dict[str, Any] | 
     copy already tells the creator both ways forward. Only for receipts that carry the
     wordless-title reason, and only while choice questions are on.
     """
-    from app.kria.brief_checks import NO_TITLE_REASON  # noqa: PLC0415
+    from app.kria.brief_checks import is_no_title_reason  # noqa: PLC0415
     from app.services.choice_questions import title_text_choice  # noqa: PLC0415
 
     if not settings.kria_choice_questions_enabled:
@@ -3444,11 +3881,37 @@ def _blocked_title_question(receipts: list[dict[str, Any]]) -> dict[str, Any] | 
     ids = [
         str(r["requirement_id"])
         for r in receipts
-        if r.get("reason") == NO_TITLE_REASON and r.get("requirement_id")
+        # KRI-520: the reason is English or Turkish, depending on the chat.
+        if is_no_title_reason(r.get("reason")) and r.get("requirement_id")
     ]
     if not ids:
         return None
     return build_choice_question(title_text_choice(ids).candidate())
+
+
+def _localized_block_recovery(message: str, receipts: list[dict[str, Any]]) -> str:
+    """KRI-520: a render-block recovery the render worker wrote in English, re-worded for
+    a Turkish chat.
+
+    The worker has no chat language bound. Only a message that is exactly the English
+    ``render_block_recovery`` of these receipts is rebuilt; anything else shows as stored.
+    """
+    if current_reply_language() != "tr" or not receipts:
+        return message
+    from app.kria.brief_checks import render_block_recovery  # noqa: PLC0415
+
+    failures = [
+        row
+        for row in receipts
+        if row.get("verification") == "checked" and row.get("status") != "met"
+    ]
+    if not failures:
+        return message
+    with reply_language_for("en"):
+        english = render_block_recovery(failures).message
+    if english.strip() != message.strip():
+        return message
+    return render_block_recovery(failures).message
 
 
 def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | None]:
@@ -3459,7 +3922,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         PLAN_ITEM_JOB_READY,
     )
 
-    with sync_session() as db:
+    with sync_session() as db, ExitStack() as language:
         execution_ref = db.get(CreatorAgentExecution, execution_id)
         if (
             execution_ref is None
@@ -3511,6 +3974,8 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             return "ignored", None
         if execution.status != "dispatched" or turn.status != "observing":
             return "ignored", None
+        # KRI-520: the review and failure copy below follow the chat's language.
+        _bind_thread_language(language, thread)
 
         exact_target = (
             int(thread.runtime_version) == 2
@@ -3626,9 +4091,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                     job,
                     variant,
                     execution,
-                    f"The {variant_id.replace('_', ' ')} cut is ready. "
-                    "The approved render finished; review the opening, pacing, and text, "
-                    "then tell me what you want changed.",
+                    _render_ready_review_copy(variant_id),
                 )
                 song_note = _user_song_note(job)
                 if song_note:
@@ -3726,10 +4189,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         turn.error = execution.error
         session.status = "awaiting_feedback"
         session.last_error = execution.error
-        from app.tasks.content_plan_build import (  # noqa: PLC0415
-            CREATOR_FACING_DETAIL_CODES,
-            job_failure_message,
-        )
+        from app.tasks.content_plan_build import CREATOR_FACING_DETAIL_CODES  # noqa: PLC0415
 
         recovery_receipts: list[dict[str, Any]] = []
         recovery_message: str | None = None
@@ -3795,12 +4255,18 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 ),
             )
         elif device_failed:
-            failure_content = (
-                "Your iPhone couldn't finish the render. Your approved edit is still saved: "
-                "open the project on your iPhone and tap Retry."
+            failure_content = say(
+                en=(
+                    "Your iPhone couldn't finish the render. Your approved edit is still "
+                    "saved: open the project on your iPhone and tap Retry."
+                ),
+                tr=(
+                    "iPhone'un videoyu tamamlayamadı. Onayladığın düzenleme hâlâ kayıtlı: "
+                    'projeyi iPhone\'unda açıp "Retry" düğmesine dokun.'
+                ),
             )
         elif recovery_message is not None:
-            failure_content = recovery_message
+            failure_content = _localized_block_recovery(recovery_message, recovery_receipts)
         elif typed_decline is not None and (
             typed_decline["decline_reason"] == "capability_unavailable"
             or _cloud_decline_needs_the_creator(failure_code, typed_decline["decline_reason"])
@@ -3814,11 +4280,17 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         }:
             # Retryable, but the generic "didn't finish" copy would hide WHY (KRI-286).
             # Creator-facing codes (KRI-466) show the job's own actionable detail.
-            failure_content = job_failure_message(failure_code, getattr(job, "error_detail", None))
+            failure_content = _job_failure_copy(failure_code, getattr(job, "error_detail", None))
         else:
-            failure_content = (
-                "That render didn't finish. Your approved draft is still saved, "
-                "so you can retry without rebuilding the edit."
+            failure_content = say(
+                en=(
+                    "That render didn't finish. Your approved draft is still saved, "
+                    "so you can retry without rebuilding the edit."
+                ),
+                tr=(
+                    "Bu video tamamlanamadı. Onayladığın taslak hâlâ kayıtlı, düzenlemeyi "
+                    "baştan kurmadan tekrar deneyebilirsin."
+                ),
             )
         if (
             typed_decline is not None
@@ -3942,7 +4414,7 @@ def _expire_pending_approvals() -> list[str]:
         )
     for approval_id in pending:
         try:
-            with sync_session() as db:
+            with sync_session() as db, ExitStack() as language:
                 ref = db.get(CreatorAgentApproval, approval_id)
                 if ref is None:
                     continue
@@ -3989,6 +4461,8 @@ def _expire_pending_approvals() -> list[str]:
                     "strategy_media_before" in execution.result
                 ):
                     continue
+                # KRI-520: this sweep has no turn; the notice follows the chat's language.
+                _bind_thread_language(language, thread)
                 now = datetime.now(UTC)
                 error = {
                     "code": "approval_expired",
@@ -4011,9 +4485,15 @@ def _expire_pending_approvals() -> list[str]:
                     thread,
                     role="assistant",
                     event_type="assistant_error",
-                    content=(
-                        "That approval expired before it was decided, so nothing was rendered. "
-                        "Tell me what you want and I'll prepare it again."
+                    content=say(
+                        en=(
+                            "That approval expired before it was decided, so nothing was "
+                            "rendered. Tell me what you want and I'll prepare it again."
+                        ),
+                        tr=(
+                            "Bu onay karara bağlanmadan süresi doldu, o yüzden hiçbir video "
+                            "oluşturulmadı. Ne istediğini söyle, yeniden hazırlayayım."
+                        ),
                     ),
                     payload={
                         "turn_id": str(turn.id),

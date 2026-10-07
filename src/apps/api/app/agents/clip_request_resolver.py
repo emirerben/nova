@@ -57,6 +57,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
+from app.kria.reply_language import prompt_language_line
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.clip_intents import (
     CAPTION_MAX_WORDS,
@@ -85,6 +86,15 @@ def _sanitize_text(s: str, *, limit: int = _MAX_FREE_TEXT_CHARS) -> str:
         s = s[: limit - 1].rstrip() + "…"
     return s
 
+
+# Appended after the generic language line (Turkish chats only). Everything else this
+# agent returns is machine-read (the vision check expects English questions and answers
+# yes/no or "unknown"; values and captions reuse the clips' own words).
+_REPLY_LANGUAGE_SCOPE = (
+    "In this task only each intent's top-level `question` is shown to the creator, so only "
+    "it is written in that language. Keep every `needs_vision` question in English, and keep "
+    "`evidence`, label `value` and `caption` exactly as instructed above."
+)
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
@@ -116,6 +126,9 @@ class ClipRequestResolverInput(BaseModel):
     creator_request: str = Field(default="", max_length=CREATOR_REQUEST_MAX_CHARS)
     intents: list[ResolverIntentIn]
     clips: list[ResolverClipIn]
+    # KRI-520: the chat's language (app.kria.reply_language). None/"en" => the prompt
+    # stays English, byte-identical.
+    reply_language: str | None = Field(default=None, max_length=8, exclude_if=lambda v: v is None)
 
 
 class ResolverAssignment(BaseModel):
@@ -179,7 +192,7 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.clip_request_resolver",
         prompt_id="clip_request_resolver",
-        prompt_version="2026-10-05.1",  # KRI-454: creator-named places match by look.
+        prompt_version="2026-10-08.1",  # KRI-520: optional Turkish reply-language line.
         # Text-only match against pre-computed clip records; flash + a small
         # thinking budget mirrors clip_plan_matcher's measured setting.
         model="gemini-2.5-flash",
@@ -208,7 +221,7 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
         clip_lines = "\n".join(_format_clip(c) for c in input.clips)
         valid_aliases = ", ".join(c.alias for c in input.clips)
         valid_intent_ids = ", ".join(i.intent_id for i in input.intents)
-        return load_prompt(
+        prompt = load_prompt(
             "clip_request_resolver",
             creator_request=_sanitize_text(input.creator_request, limit=CREATOR_REQUEST_MAX_CHARS),
             intent_count=str(len(input.intents)),
@@ -218,6 +231,12 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
             valid_aliases=valid_aliases,
             valid_intent_ids=valid_intent_ids,
         )
+        # KRI-520: the reply-language instruction goes last. "" for English/unknown:
+        # byte-identical prompt.
+        language_line = prompt_language_line(input.reply_language)
+        if not language_line:
+            return prompt
+        return f"{prompt.rstrip(chr(10))}\n\n{language_line} {_REPLY_LANGUAGE_SCOPE}\n"
 
     def parse(
         self,

@@ -19,6 +19,7 @@ from app.agents.clip_intent_planner import (
     salvage_question,
 )
 from app.config import settings
+from app.kria.reply_language import current_reply_language, say
 from app.schemas.clip_intents import (
     ClipAssignment,
     ClipIntent,
@@ -244,9 +245,15 @@ async def plan_and_resolve_clip_intents(
             [],
             IntentResolution(
                 status="needs_creator",
-                question=(
-                    "Please restate the complete clip instructions in a shorter message "
-                    "so I can preserve all of them."
+                question=say(
+                    en=(
+                        "Please restate the complete clip instructions in a shorter message "
+                        "so I can preserve all of them."
+                    ),
+                    tr=(
+                        "Klip talimatlarının hepsini daha kısa bir mesajda yeniden yazar mısın? "
+                        "Hiçbirini kaçırmak istemiyorum."
+                    ),
                 ),
             ),
         )
@@ -263,6 +270,7 @@ async def plan_and_resolve_clip_intents(
                 generated_brief=generated_brief,
                 candidate_intents=candidate_intents,
                 **({"clip_facts": True} if clip_facts_on else {}),
+                reply_language=current_reply_language(),
             ),
             ctx=run_context,
         )
@@ -288,9 +296,16 @@ async def plan_and_resolve_clip_intents(
         if dropped:
             question = salvage_question(0, dropped)
         else:
-            question = (
-                "I couldn't safely verify the clip-specific instructions. "
-                "Please restate which clips to use, group, order, label, or caption."
+            question = say(
+                en=(
+                    "I couldn't safely verify the clip-specific instructions. "
+                    "Please restate which clips to use, group, order, label, or caption."
+                ),
+                tr=(
+                    "Klip talimatlarını güvenle doğrulayamadım. "
+                    "Hangi klipleri kullanacağımı, gruplayacağımı, sıralayacağımı, "
+                    "etiketleyeceğimi ya da yazı ekleyeceğimi yeniden yazar mısın?"
+                ),
             )
         return PlannedIntentResolution(
             [],

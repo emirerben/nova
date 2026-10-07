@@ -277,6 +277,11 @@ cancel queued turns and pending approvals, keep committed drafts/results readabl
 and render the runtime-v1 compatibility projection where applicable. Do not
 downgrade the additive migration during an incident.
 
+Turkish replies (KRI-520) have their own kill switch: `fly secrets set
+KRIA_REPLY_LANGUAGE_ENABLED=false --app nova-video` + restart api and worker machines.
+Every reply is then English and the Main Creator/copilot prompts are byte-identical to
+before; stored `state.reply_language` values are ignored, not deleted.
+
 ## Alerts and release blockers
 
 - expired lease on an active turn;

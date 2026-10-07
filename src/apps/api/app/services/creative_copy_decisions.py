@@ -15,6 +15,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from app.kria.reply_language import current_reply_language
+
 CREATIVE_COPY_CONFLICT = "creative_copy"
 OPT_WRITE_MY_OWN = "write_my_own"
 OPT_GENERATE = "generate"
@@ -43,7 +45,46 @@ def media_digest(media_snapshot: Mapping[str, Any] | None) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
+# Typed answers that decline the copy (exact match after normalisation). Turkish ones
+# are accepted in every chat language: a reply may arrive in Turkish before the chat's
+# language is known.
+_SKIP_ALIASES: tuple[str, ...] = (
+    "no",
+    "none",
+    "nope",
+    "skip",
+    "skip title",
+    "no title",
+    "no title please",
+    "don't add a title",
+    "without title",
+    "without a title",
+    "leave it off",
+    "başlık olmasın",
+    "başlıksız",
+    "continue without a title",
+    "hayır",
+    "hayır teşekkürler",
+    "yok",
+    "atla",
+    "geç",
+    "başlık yok",
+    "başlık istemiyorum",
+    "başlık istemem",
+    "başlığa gerek yok",
+    "başlık koyma",
+    "başlık ekleme",
+    "başlıksız devam et",
+    "gerek yok",
+)
+
+
 def authorship_question(*, target: Target, dependency_digest: str) -> dict[str, Any]:
+    question = _authorship_question(target=target, dependency_digest=dependency_digest)
+    return _localize_for_current_chat(question)
+
+
+def _authorship_question(*, target: Target, dependency_digest: str) -> dict[str, Any]:
     return {
         "version": 1,
         "question_id": str(uuid.uuid4()),
@@ -59,28 +100,20 @@ def authorship_question(*, target: Target, dependency_digest: str) -> dict[str, 
                 "key": OPT_CANCEL,
                 "label": "Skip it",
                 "recommended": False,
-                "aliases": [
-                    "no",
-                    "none",
-                    "nope",
-                    "skip",
-                    "skip title",
-                    "no title",
-                    "no title please",
-                    "don't add a title",
-                    "without title",
-                    "without a title",
-                    "leave it off",
-                    "başlık olmasın",
-                    "başlıksız",
-                    "continue without a title",
-                ],
+                "aliases": list(_SKIP_ALIASES),
             },
         ],
     }
 
 
 def wording_question(*, target: Target, candidate: str, dependency_digest: str) -> dict[str, Any]:
+    question = _wording_question(
+        target=target, candidate=candidate, dependency_digest=dependency_digest
+    )
+    return _localize_for_current_chat(question)
+
+
+def _wording_question(*, target: Target, candidate: str, dependency_digest: str) -> dict[str, Any]:
     candidate = normalize_copy(candidate)
     return {
         "version": 1,
@@ -99,22 +132,7 @@ def wording_question(*, target: Target, candidate: str, dependency_digest: str) 
                 "key": OPT_CANCEL,
                 "label": "Skip it",
                 "recommended": False,
-                "aliases": [
-                    "no",
-                    "none",
-                    "nope",
-                    "skip",
-                    "skip title",
-                    "no title",
-                    "no title please",
-                    "don't add a title",
-                    "without title",
-                    "without a title",
-                    "leave it off",
-                    "başlık olmasın",
-                    "başlıksız",
-                    "continue without a title",
-                ],
+                "aliases": list(_SKIP_ALIASES),
             },
         ],
     }
@@ -149,8 +167,28 @@ _COPY_LABELS = {
 }
 
 
+# Typed Turkish answers for the non-skip options, added when a question is shown in
+# Turkish. Wording consent stays a deliberate tap or an explicit "use it": a bare
+# "tamam" or "evet" is not an alias, exactly like English "ok" / "yes".
+_TR_TYPED_ALIASES: dict[str, tuple[str, ...]] = {
+    OPT_WRITE_MY_OWN: ("fikrim var", "kendim yazacağım", "kendim yazarım", "kendim yazayım"),
+    OPT_GENERATE: ("sen yaz", "sen bir tane yaz", "bir tane öner", "öner", "sen öner"),
+    OPT_APPROVE: ("bunu kullan", "kullan", "bu ifadeyi kullan"),
+    OPT_REVISE: ("değiştir", "düzenle", "başka bir şey"),
+}
+
+
 def localize_question(question: dict[str, Any], language: str) -> dict[str, Any]:
-    labels = _COPY_LABELS.get(language.lower().split("-")[0])
+    """Relabel the options in ``language``, keeping the previous label as a typed alias.
+
+    Safe to call again (the builders already localize for a Turkish chat and the planner
+    localizes once more with the model's language): a label that is already in the target
+    language is left alone and no alias is added twice, so the English label stays
+    matchable and never duplicates.
+    """
+
+    code = language.lower().split("-")[0]
+    labels = _COPY_LABELS.get(code)
     if labels:
         by_key = dict(
             zip(
@@ -160,8 +198,25 @@ def localize_question(question: dict[str, Any], language: str) -> dict[str, Any]
             )
         )
         for option in question["options"]:
-            option["aliases"] = [*(option.get("aliases") or []), option["label"]]
-            option["label"] = by_key[option["key"]]
+            shown = by_key[option["key"]]
+            aliases = list(option.get("aliases") or [])
+            additions = [option["label"]] if option["label"] != shown else []
+            if code == "tr":
+                additions += _TR_TYPED_ALIASES.get(option["key"], ())
+            for alias in additions:
+                if alias not in aliases:
+                    aliases.append(alias)
+            if aliases:
+                option["aliases"] = aliases
+            option["label"] = shown
+    return question
+
+
+def _localize_for_current_chat(question: dict[str, Any]) -> dict[str, Any]:
+    """Turkish chats get Turkish buttons from every path that builds these questions."""
+
+    if current_reply_language() == "tr":
+        localize_question(question, "tr")
     return question
 
 

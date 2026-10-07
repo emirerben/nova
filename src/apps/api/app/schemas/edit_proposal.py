@@ -249,6 +249,218 @@ def _recognized_frame_aligned_cadence(value: float) -> float | None:
     return round(frame_aligned, 6)
 
 
+# ── Turkish creator wording (KRI-520) ─────────────────────────────────────────────
+# The English recognizers below are unchanged and still read the casefolded text.
+# Turkish is an extra branch read from ``loose_text`` (İ/I/ı folded to i, diacritics
+# stripped), so "fotoğraflar" and "fotograflar" match alike. Turkish suffixes attach
+# to the stem, so footage nouns are matched as stems (``video\w*``). Every pattern
+# needs the footage noun AND the timing/reuse word close together inside one
+# sentence, so an ordinary Turkish sentence about something else does not trigger it.
+
+# klip -> klibi: the final p softens to b before a vowel suffix.
+_TR_MEDIA = r"(?:video\w*|kli[pb]\w*|cekim\w*|goruntu\w*)"
+_TR_PHOTO = r"(?:foto\w*|resim\w*|resm\w*|gorsel\w*)"
+_TR_PHOTO_FAST = r"(?:hizl\w*|cabuk\w*|kisa\s+sure\w*|kisacik)"
+_TR_VIDEO_LONG = (
+    r"(?:daha\s+uzun\b|\buzun\b|uzun\s+sure\w*|daha\s+yavas\w*|\byavas\w*|"
+    r"daha\s+(?:fazla|cok)\s+(?:sure|zaman)\w*|nefes\s*al\w*|"
+    r"biraz\s+daha\s+(?:kal|dur|bekle|uzun)\w*)"
+)
+# A clause-closing negation: olmasın, geçmesin, kalmasın, olmaz, geçmiyor, değil.
+_TR_NEG = (
+    r"(?:\w{2,}m[ae](?:sin|yin|z|mali|meli)\w*|\w+m[iu]yor\w*|degil\b|istemem\b|hayir\b|"
+    r"(?:yap|et|ol|kullan|goster|koy|gec|ekle)m[ae]\b)"
+)
+_TR_SECONDS = r"(?:saniye\w*|sn\b|sny\b)"
+_TR_NUMBER = r"(?<![\d.,])(\d+(?:[.,]\d+)?)"
+
+
+def loose_creator_text(text: object) -> str:
+    """``loose_text`` of ``text``; imported late because ``app.kria`` imports this module."""
+    from app.kria.brief_route import loose_text  # noqa: PLC0415
+
+    return loose_text(str(text or ""))
+
+
+def _tr_float(raw: str) -> float:
+    return float(raw.replace(",", "."))
+
+
+def _tr_not(stem: str, vowel: str) -> str:
+    """A negated Turkish verb: kullanma, kullanmasın, kullanmayın, kullanmaz, kullanmamalı."""
+    return rf"{stem}m{vowel}(?:\b|sin\b|yin\b|z\b|m{vowel}li\b|d{vowel}n\b)"
+
+
+def _tr_without_quotes(loose: str) -> str:
+    """Quoted overlay/caption text is content, not a footage instruction."""
+    loose = re.sub(r"[\"“].*?[\"”]", "", loose)
+    return re.sub(r"(?<!\w)'[^']*'(?!\w)", "", loose)
+
+
+_TR_ALTERNATE = re.compile(
+    r"\b(?:sirayla|donusumlu\w*|ileri\s+geri|"
+    r"arasinda\s+(?:surekli\s+)?(?:gidip\s*gel\w*|gecis\w*)|"
+    r"birer\s+birer\s+degis\w*|"
+    r"(?:diger|obur)\w*\s+(?:(?:video|klip)\w*\s+)?(?:gec|atla|degis)\w*)"
+)
+_TR_ALTERNATION_WORD = r"(?:sirayla|donusumlu\w*|karisik|ileri\s+geri|gidip\s*gel\w*)"
+_TR_REJECT_ALTERNATION = re.compile(
+    rf"\b{_TR_ALTERNATION_WORD}\b[^.!?;]{{0,32}}?"
+    rf"\b(?:{_TR_NEG}|birak\w*|vazgec\w*|durdur\w*|kaldir\w*)"
+    rf"|\bhayir\b[^.!?;]{{0,20}}?\b{_TR_ALTERNATION_WORD}\b"
+)
+_TR_CADENCE_EVERY = re.compile(rf"\bher\s+{_TR_NUMBER}\s*{_TR_SECONDS}")
+_TR_CADENCE_PER = re.compile(
+    rf"{_TR_NUMBER}\s*(?:saniyede\s+bir|saniyelik|saniye\s*arayla|sn['’]?de\s+bir|sn['’]?lik|sn\s*arayla)"
+)
+_TR_CADENCE_ANY = re.compile(rf"{_TR_NUMBER}\s*{_TR_SECONDS}")
+_TR_CADENCE_ONE_SECOND = re.compile(r"\bher\s+(?:bir\s+)?saniye(?:de)?\b|\bbirer\s+saniye\b")
+
+_TR_REUSE_NEG = re.compile(
+    rf"\b(?:tekrar\s*{_tr_not('et', 'e')}|{_tr_not('tekrarla', 'a')}|"
+    rf"tekrar\s+(?:{_tr_not('kullan', 'a')}|{_tr_not('goster', 'e')}|{_tr_not('oynat', 'a')}|"
+    rf"{_tr_not('koy', 'a')}|{_tr_not('ekle', 'e')})|"
+    r"(?:tekrar|dongu)\w*\s+(?:\w+\s+){0,2}?(?:olmasin|olmamali|olmaz|yok|istemiyorum|istemem)\b|"
+    rf"dongu\w*\s+{_tr_not('yap', 'a')}|"
+    r"(?:sadece|yalnizca|yalniz)\s+bir\s+(?:kere|kez|defa)\b(?!\s+daha)|"
+    # "bir kez" inside a cut length ("her 2 saniyede bir kez") is not a reuse rule.
+    rf"(?:hepsi\w*|{_TR_MEDIA})\b(?:(?!\bher\b|\bsaniye|\bsn\b)[^.!?;]){{0,32}}?"
+    r"\bbir\s+(?:kere|kez|defa)\b(?!\s+daha)|"
+    rf"ayni\s+{_TR_MEDIA}[^.!?;]{{0,24}}?\b(?:{_tr_not('kullan', 'a')}|{_tr_not('goster', 'e')}|"
+    rf"{_tr_not('oynat', 'a')}|{_tr_not('koy', 'a')}))"
+)
+_TR_REUSE_ATOMS = (
+    r"(?:tekrar\s+(?:kullan|goster|oynat|et)\w*|yeniden\s+(?:kullan|goster|oynat)\w*|"
+    r"tekrarla(?:\b|[ynstrd]\w*|mak\w*)|tekrar\s+tekrar|"
+    r"bir\s+(?:kez|kere|defa)\s+daha\s+(?:kullan|goster|oynat|koy)\w*|"
+    r"(?:iki|2|uc|3|dort|4)\s+(?:kez|kere|defa)\s+(?:kullan|goster|oynat|yer\s+al|gec|ekle|koy)\w*|"
+    r"dongu\w*)"
+)
+_TR_REUSE_POS = re.compile(
+    rf"\b{_TR_MEDIA}\b[^.!?;]{{0,32}}?\b{_TR_REUSE_ATOMS}"
+    rf"|\b{_TR_REUSE_ATOMS}[^.!?;]{{0,32}}?\b{_TR_MEDIA}"
+)
+_TR_REUSE_EXPLICIT = re.compile(rf"\b{_TR_REUSE_ATOMS}")
+_TR_REUSE_LOOP_IT = re.compile(r"\bdongu(?:ye|ya)\s+al\w*|\bdongu\s+(?:yap\w*|olsun|halinde)")
+_TR_DISTINCT_WORD = r"(?:donusumlu\w*|ileri\s+geri|arasinda\s+(?:surekli\s+)?gidip\s*gel\w*)"
+_TR_DISTINCT = re.compile(
+    rf"\b{_TR_DISTINCT_WORD}[^.!?;]{{0,32}}?\b{_TR_MEDIA}"
+    rf"|\b{_TR_MEDIA}\b[^.!?;]{{0,32}}?\b{_TR_DISTINCT_WORD}"
+)
+_TR_TOTAL_DURATION = (
+    rf"{_TR_NUMBER}\s*(?:saniyelik|sn['’]?lik)\s+(?:bir\s+)?(?:video|montaj|edit|kurgu)\w*",
+    rf"\b(?:video|montaj|edit|kurgu)\w*\s+{_TR_NUMBER}\s*(?:saniye|sn)\w*\s+"
+    r"(?:olsun|olmali|sursun|uzunlugunda)\b",
+    rf"\btoplam\s+(?:sure\s+)?{_TR_NUMBER}\s*(?:saniye|sn)\w*\s+(?:olsun|olmali|sursun|yeter)\b",
+)
+
+
+def _turkish_alternates(loose: str) -> bool:
+    return bool(_TR_ALTERNATE.search(loose))
+
+
+def _turkish_contextual_cadence(loose: str) -> tuple[bool, float | None]:
+    """(found, cadence) for "her 2 saniyede bir", "2 saniyelik", "her saniye"."""
+    for pattern in (_TR_CADENCE_EVERY, _TR_CADENCE_PER):
+        match = pattern.search(loose)
+        if match is not None:
+            return True, _recognized_frame_aligned_cadence(_tr_float(match.group(1)))
+    if _TR_CADENCE_ONE_SECOND.search(loose):
+        return True, 1.0
+    return False, None
+
+
+def _turkish_any_cadence(loose: str) -> float | None:
+    for match in _TR_CADENCE_ANY.finditer(loose):
+        recognized = _recognized_frame_aligned_cadence(_tr_float(match.group(1)))
+        if recognized is not None:
+            return recognized
+    return None
+
+
+def _turkish_total_duration_s(loose: str) -> int | float | None:
+    for pattern in _TR_TOTAL_DURATION:
+        match = re.search(pattern, loose)
+        if match is not None:
+            value = _tr_float(match.group(1))
+            if value == int(value):
+                value = int(value)
+            return value if 3 <= value <= MAX_PROPOSAL_DURATION_S else None
+    return None
+
+
+# Media scope ("use all my clips" / "only the best ones") in Turkish. Plural forms
+# only for "all": a singular "tüm video" usually means "the whole video".
+# "görsel" is left out on purpose: in Kria it names Visuals (overlay media), not the clips.
+_TR_ALL_NOUN = r"(?:kli[pb]|video|fotograf|foto|resim|cekim|goruntu)(?:ler|lar)\w*"
+_TR_COUNT_NOUN = (
+    r"(?:kli[pb]\w*|video\w*|fotograf\w*|foto\w*|resim\w*|resm\w*|cekim\w*|"
+    r"goruntu\w*|medya\w*)"
+)
+_TR_TIME_SUFFIX = r"(?:s|sn|saniye\w*|ms|milisaniye\w*|dk|dakika\w*|saat\w*)"
+_TR_ALL_WORD = r"(?:hepsin\w*|tumun\w*|butunun\w*|her\s*sey\w*)"
+_TR_SCOPE_NEGATIVE = re.compile(
+    rf"\b(?:{_TR_ALL_WORD}|tum\w*|butun\w*)\b[^.!?;]{{0,24}}?\b"
+    rf"(?:{_tr_not('kullan', 'a')}|{_tr_not('koy', 'a')}|{_tr_not('ekle', 'e')}|"
+    rf"{_tr_not('sec', 'e')}|dahil\s+{_tr_not('et', 'e')}|olmasin|istemiyorum|istemem)"
+    r"|\b(?:kullan|koy|ekle)mak\s+(?:istemiyorum|istemem)\b"
+)
+_TR_SCOPE_ALL = re.compile(
+    rf"\b(?:tum|butun)\s+(?:(?:yuklenen|yukledigim|verdigim|sagladigim|elimdeki)\s+)?{_TR_ALL_NOUN}"
+    r"|\b(?:tum|butun)\s+(?:medya|dosya)\w*"
+    rf"|\b{_TR_ALL_WORD}\s+(?:de\s+)?(?:kullan|koy|ekle|dahil\s+et|tut)\w*"
+)
+_TR_SCOPE_SELECTED = re.compile(
+    r"\b(?:sadece|yalnizca|yalniz)\s+(?:secili|secilen|sectigim|belirtilen|belirttigim|listelenen)\w*"
+    r"|\b(?:secili|secilen|sectigim)\s+(?:kli[pb]|video|medya|dosya|fotograf|resim)\w*"
+    r"|\b(?:sadece|yalnizca|yalniz)\s+en\s+(?:iyi|guzel|guclu)\w*"
+    r"|\ben\s+iyi\s+(?:kisim|an|sahne|bolum)\w*"
+)
+# Words that ask for LESS than everything. Turkish-only spellings: nothing here may
+# collide with an English word ("atla" yes, "atlanta" no; no bare "sec").
+# "çıkar"/"atla"/"sil" are everyday verbs, so they count only next to a footage noun.
+_TR_NARROWING_CUE = re.compile(
+    r"\b(?:cok\s+fazla|daha\s+az|az\s+sayida|secili\w*|sectigim\w*|secilen\w*|"
+    r"en\s+(?:iyi|guzel|guclu)\w*|sadece|yalnizca|yalniz|bazi(?:\b|lar\w*|si\w*)|haric|disinda|"
+    r"olmadan|hepsi(?:ni)?\s+degil)\b"
+    r"|\b(?:kli[pb]|video|cekim|goruntu)\w*\s+(?:\w+\s+){0,2}?(?:cikar|atla|sil|kaldir)\w*"
+    r"|\b(?:cikar|atla|sil|kaldir)\w*\s+(?:\w+\s+){0,2}?(?:kli[pb]|video|cekim|goruntu)"
+)
+
+
+def turkish_media_scope(text: str) -> Literal["all", "selected"] | None:
+    """ "all" / "selected" when Turkish wording states a media scope, else None."""
+
+    loose = loose_creator_text(text)
+    if _TR_SCOPE_NEGATIVE.search(loose):
+        return "selected"
+    if _TR_SCOPE_ALL.search(loose):
+        return "all"
+    if _TR_SCOPE_SELECTED.search(loose):
+        return "selected"
+    return None
+
+
+def turkish_narrowing_cue(text: str) -> bool:
+    """True when Turkish wording asks for less than the whole set ("sadece en iyileri")."""
+
+    return bool(_TR_NARROWING_CUE.search(loose_creator_text(text)))
+
+
+def turkish_stated_media_counts(text: str) -> list[int]:
+    """Every media quantity the Turkish text states: "16 klip", "30 tane video"."""
+
+    loose = loose_creator_text(text)
+    counts = [
+        int(match.group(1))
+        for match in re.finditer(rf"(?<!\d)(\d{{1,4}})\s+(?:tane\s+)?{_TR_COUNT_NOUN}\b", loose)
+    ]
+    if counts:
+        return counts
+    match = re.search(rf"\b(?:tum|butun)\s+(\d{{1,4}})\b(?!\s*{_TR_TIME_SUFFIX}\b)", loose)
+    return [int(match.group(1))] if match else []
+
+
 def recognize_round_robin_cadence(text: str) -> float | None:
     """Recognize explicit alternation plus numeric cut timing without an LLM."""
 
@@ -257,7 +469,8 @@ def recognize_round_robin_cadence(text: str) -> float | None:
         re.search(r"\b(?:alternate|alternating|back and forth)\b", normalized)
         or re.search(r"\bswitch\b.{0,40}\b(?:other|between)\b", normalized)
     )
-    if not alternates:
+    loose = loose_creator_text(text)
+    if not alternates and not _turkish_alternates(loose):
         return None
     contextual_patterns = (
         r"\bevery\s+(?P<value>\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
@@ -268,6 +481,9 @@ def recognize_round_robin_cadence(text: str) -> float | None:
         if contextual is not None:
             value = float(contextual.group("value"))
             return _recognized_frame_aligned_cadence(value)
+    found, turkish_cut_s = _turkish_contextual_cadence(loose)
+    if found:
+        return turkish_cut_s
     if re.search(r"\bevery\s+one\s+second\b|\bone\s+second\s+(?:from|of)\b", normalized):
         return 1.0
     matches = re.finditer(
@@ -279,6 +495,9 @@ def recognize_round_robin_cadence(text: str) -> float | None:
         recognized = _recognized_frame_aligned_cadence(value)
         if recognized is not None:
             return recognized
+    turkish_any_s = _turkish_any_cadence(loose)
+    if turkish_any_s is not None:
+        return turkish_any_s
     if re.search(r"\bone second\b", normalized):
         return 1.0
     return None
@@ -294,6 +513,7 @@ def rejects_round_robin_cadence(text: str) -> bool:
             r"\b(?:alternate|alternating|back and forth|switching)\b",
             normalized,
         )
+        or _TR_REJECT_ALTERNATION.search(loose_creator_text(text))
     )
 
 
@@ -314,7 +534,7 @@ def recognize_total_duration_s(text: str) -> int | float | None:
         if match is not None:
             value = float(match.group(1)) if "." in match.group(1) else int(match.group(1))
             return value if 3 <= value <= MAX_PROPOSAL_DURATION_S else None
-    return None
+    return _turkish_total_duration_s(loose_creator_text(text))
 
 
 def recognize_explicit_cadence_reuse_policy(
@@ -323,14 +543,20 @@ def recognize_explicit_cadence_reuse_policy(
     """Recognize an explicit reuse decision, preserving prior intent when absent."""
 
     normalized = " ".join(str(text or "").casefold().split())
+    loose = _tr_without_quotes(loose_creator_text(text))
     if re.search(
         r"\b(?:do not|don't|dont|without|never|not)\b.{0,40}\b(?:repeat|reuse|loop)\b",
         normalized,
-    ):
+    ) or _TR_REUSE_NEG.search(loose):
         return "no_repeat"
-    if re.match(r"(?:please\s+)?(?:repeat|reuse|loop)\b", normalized) or re.search(
-        r"\b(?:allow|okay to|ok to|can|may)\b.{0,64}\b(?:repeat|reuse|loop)\b",
-        normalized,
+    if (
+        re.match(r"(?:please\s+)?(?:repeat|reuse|loop)\b", normalized)
+        or re.search(
+            r"\b(?:allow|okay to|ok to|can|may)\b.{0,64}\b(?:repeat|reuse|loop)\b",
+            normalized,
+        )
+        or _TR_REUSE_EXPLICIT.search(loose)
+        or _TR_REUSE_LOOP_IT.search(loose)
     ):
         return "allow_repeat"
     return None
@@ -357,12 +583,15 @@ def resolve_video_reuse_policy(
     # Quoted overlay/caption text is content, not a footage instruction.
     normalized = re.sub(r"[\"“].*?[\"”]", "", normalized)
     normalized = re.sub(r"(?<!\w)'[^']*'(?!\w)", "", normalized)
+    loose = _tr_without_quotes(loose_creator_text(text))
     if re.search(
         r"\b(?:no|stop|avoid|remove|without|never|do not|don't|dont)\b.{0,32}"
         r"\b(?:repeat\w*|reus\w*|loop\w*)\b|\b(?:each|every)\b.{0,32}\bonly once\b",
         normalized,
-    ):
+    ) or _TR_REUSE_NEG.search(loose):
         return "once"
+    if _TR_REUSE_POS.search(loose) or _TR_REUSE_LOOP_IT.search(loose):
+        return "allow_repeat"
     if re.search(
         r"\b(?:repeat|reuse|loop|replay|duplicate)\s+(?:the\s+|my\s+|these\s+|those\s+|this\s+)?"
         r"(?:(?:first|second|third|last|opening|ending|\d+)\s+)?"
@@ -383,7 +612,7 @@ def resolve_video_reuse_policy(
         r"\b(?:alternate|alternating)\b.{0,32}\b(?:clips?|videos?|shots?)\b|"
         r"\bback and forth\b.{0,32}\b(?:clips?|videos?|shots?)\b",
         normalized,
-    ):
+    ) or _TR_DISTINCT.search(loose):
         return "distinct_windows"
     if cadence is not None:
         return "allow_repeat" if cadence.reuse_policy == "allow_repeat" else "distinct_windows"
@@ -587,6 +816,66 @@ def recognize_mixed_media_timing(text: str) -> MixedMediaTimingProfile | None:
             video_hold="longer",
             boundary_style="cut",
             **sequence_fields,
+        )
+    return _recognize_turkish_mixed_media_timing(text, sequence_fields)
+
+
+# One clause of Turkish: no sentence end and no conjunction that starts the next idea.
+_TR_CLAUSE_TAIL = r"(?:(?!\b(?:ve|ama|fakat|ancak|ile|ise)\b)[^.!?;,]){0,28}"
+
+
+def _recognize_turkish_mixed_media_timing(
+    text: str, sequence_fields: dict[str, object]
+) -> MixedMediaTimingProfile | None:
+    """Turkish "fotoğraflar çok hızlı geçsin, videolar daha uzun kalsın".
+
+    Same contract as the English branch: quick photos AND longer videos, both
+    stated affirmatively. Turkish puts the negation after the timing word
+    ("hızlı olmasın"), so it is read from the rest of the same clause.
+    """
+
+    loose = loose_creator_text(text)
+    if not re.search(rf"\b{_TR_PHOTO}", loose):
+        return None
+    photo_gap = rf"(?:(?!\b{_TR_MEDIA})[^.!?;]){{0,24}}?"
+    video_gap = rf"(?:(?!\b{_TR_PHOTO})[^.!?;]){{0,24}}?"
+
+    def stated(noun: str, gap: str, timing: str) -> bool:
+        matches = list(re.finditer(rf"\b{noun}\b{gap}\b{timing}(?P<tail>{_TR_CLAUSE_TAIL})", loose))
+        return bool(matches) and not any(
+            re.search(rf"\b{_TR_NEG}", match.group("tail")) for match in matches
+        )
+
+    # An exact still length ("fotoğraflar 0,3 saniye"), like the English numeric path.
+    numeric: list[tuple[float, str]] = []
+    for match in re.finditer(
+        rf"\b{_TR_PHOTO}\b(?:(?!\b{_TR_MEDIA})[^!?;]){{0,80}}?{_TR_NUMBER}\s*"
+        rf"(?P<unit>ms\b|milisaniye\w*|saniye\w*|sn\b)(?P<tail>{_TR_CLAUSE_TAIL})",
+        loose,
+    ):
+        value = _tr_float(match.group(1))
+        if match.group("unit").startswith(("ms", "milisaniye")):
+            value /= 1000
+        if 0.1 <= value <= 0.8:
+            numeric.append((value, match.group("tail")))
+    if numeric and re.search(rf"\b{_TR_MEDIA}", loose):
+        value, tail = numeric[-1]
+        if not re.search(rf"\b{_TR_NEG}", tail):
+            return MixedMediaTimingProfile(
+                image_hold="very_fast",
+                image_hold_s=value,
+                video_hold="longer",
+                boundary_style="cut",
+                **sequence_fields,  # type: ignore[arg-type]
+            )
+    if stated(_TR_PHOTO, photo_gap, _TR_PHOTO_FAST) and stated(
+        _TR_MEDIA, video_gap, _TR_VIDEO_LONG
+    ):
+        return MixedMediaTimingProfile(
+            image_hold="very_fast",
+            video_hold="longer",
+            boundary_style="cut",
+            **sequence_fields,  # type: ignore[arg-type]
         )
     return None
 

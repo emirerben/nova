@@ -57,8 +57,9 @@ from app.kria.brief import (
     render_brief_request,
     route_requirements,
 )
+from app.kria.brief_route import loose_text
 from app.kria.contracts import KriaTurnPlan
-from app.kria.reply_language import current_reply_language
+from app.kria.reply_language import current_reply_language, say
 from app.kria.strategy_policy import RefusedStrategy, check_strategy_for_runtime_v2
 from app.models import (
     ContentPlan,
@@ -193,11 +194,18 @@ def adapt_creator_action(
         return KriaTurnPlan(
             mode="respond",
             turn_value="review",
-            response=action.summary or "The current cut is ready for your review.",
+            response=action.summary
+            or say(
+                en="The current cut is ready for your review.",
+                tr="Şu anki kesim incelemen için hazır.",
+            ),
         )
     summary = action.summary.strip() or action.strategy.rationale.strip()
     if not summary:
-        summary = "I shaped a focused draft around the strongest available footage."
+        summary = say(
+            en="I shaped a focused draft around the strongest available footage.",
+            tr="Elindeki en güçlü çekimlerle odaklı bir taslak hazırladım.",
+        )
     server_owned_intents = (
         server_clip_intents is not None or server_resolved_clip_intents is not None
     )
@@ -212,9 +220,15 @@ def adapt_creator_action(
     ]
     if unplaced:
         # KRI-458: the draft must not claim an order the footage cannot back.
-        summary = (
-            f"{summary} I found no clips of {', '.join(unplaced)}, "
-            "so I can't place them where you asked."
+        summary = say(
+            en=(
+                f"{summary} I found no clips of {', '.join(unplaced)}, "
+                "so I can't place them where you asked."
+            ),
+            tr=(
+                f"{summary} {', '.join(unplaced)} ile ilgili klip bulamadım, "
+                "bu yüzden onları istediğin yere yerleştiremiyorum."
+            ),
         )
     requested_intents = (
         server_clip_intents
@@ -294,6 +308,38 @@ _CLIP_INTENT_PENDING_REPLY = (
     'Reply "go ahead" in a moment and I\'ll pick up where I left off. '
     "No need to send the whole request again."
 )
+# KRI-520: "devam" needs no matcher; any message re-runs the planner (see the prompt).
+_CLIP_INTENT_PENDING_REPLY_TR = (
+    "İsteğine göre bazı kliplerini hâlâ kontrol ediyorum. "
+    'Birazdan "devam" yaz, kaldığım yerden sürdüreyim. '
+    "Tüm isteği tekrar göndermene gerek yok."
+)
+
+
+def _clip_intent_pending_reply() -> str:
+    return say(en=_CLIP_INTENT_PENDING_REPLY, tr=_CLIP_INTENT_PENDING_REPLY_TR)
+
+
+def _labels_need_voiceover_reply() -> str:
+    return say(
+        en="Those labels need a recorded voiceover with guided visuals.",
+        tr="Bu etiketler için kaydedilmiş bir seslendirme ve rehberli görseller gerekiyor.",
+    )
+
+
+def _clips_still_checking_reply(count: int) -> str:
+    return say(
+        en=(
+            f"I'm still checking {count} of your clips. "
+            "Your request and completed answers are saved. "
+            "Ask me to continue once those clips are ready."
+        ),
+        tr=(
+            f"Kliplerinden {count} tanesini hâlâ kontrol ediyorum. "
+            "İsteğin ve tamamlanan yanıtlar kaydedildi. "
+            "Bu klipler hazır olunca devam etmemi iste."
+        ),
+    )
 
 
 def _clip_intent_resolution_plan(
@@ -307,7 +353,11 @@ def _clip_intent_resolution_plan(
         return KriaTurnPlan(
             mode="respond",
             turn_value="question",
-            response=question or "Which clips should I use for that part?",
+            response=question
+            or say(
+                en="Which clips should I use for that part?",
+                tr="Bu bölüm için hangi klipleri kullanayım?",
+            ),
             diagnostics=_safe_diagnostics(status, diagnostics),
             clip_question=clip_question,
         )
@@ -318,9 +368,17 @@ def _clip_intent_resolution_plan(
         mode="respond",
         turn_value="recovery",
         response=(
-            _CLIP_INTENT_PENDING_REPLY
+            _clip_intent_pending_reply()
             if status == "pending"
-            else "I couldn't reliably match that request to your clips. Please try again shortly."
+            else say(
+                en=(
+                    "I couldn't reliably match that request to your clips. "
+                    "Please try again shortly."
+                ),
+                tr=(
+                    "Bu isteği kliplerinle güvenilir şekilde eşleştiremedim. Birazdan tekrar dene."
+                ),
+            )
         ),
         diagnostics=_safe_diagnostics(status, diagnostics),
     )
@@ -369,6 +427,10 @@ _SONG_PENDING_REPLY = (
     "I'm still analysing your song and matching your clips to it. "
     "Send your message again in a moment and I'll pick up where I left off."
 )
+_SONG_PENDING_REPLY_TR = (
+    "Şarkını hâlâ analiz ediyorum ve kliplerini ona göre eşleştiriyorum. "
+    "Birazdan mesajını tekrar gönder, kaldığım yerden sürdüreyim."
+)
 
 
 def _song_pending_plan() -> KriaTurnPlan:
@@ -377,7 +439,7 @@ def _song_pending_plan() -> KriaTurnPlan:
     return KriaTurnPlan(
         mode="respond",
         turn_value="recovery",
-        response=_SONG_PENDING_REPLY,
+        response=say(en=_SONG_PENDING_REPLY, tr=_SONG_PENDING_REPLY_TR),
         diagnostics=_safe_diagnostics(
             "pending", {"stage": "song_alignment", "reason": "song_alignment_pending"}
         ),
@@ -631,10 +693,17 @@ def adapt_editor_action(
         return KriaTurnPlan(
             mode="respond",
             turn_value="recovery",
-            response=(
-                "That is more changes than I can apply in one go, so I left the video "
-                "as it was. Ask for it in smaller steps, or for all of one kind of "
-                "change at once (for example every font)."
+            response=say(
+                en=(
+                    "That is more changes than I can apply in one go, so I left the video "
+                    "as it was. Ask for it in smaller steps, or for all of one kind of "
+                    "change at once (for example every font)."
+                ),
+                tr=(
+                    "Bu, tek seferde uygulayabileceğimden fazla değişiklik; o yüzden "
+                    "videoyu olduğu gibi bıraktım. Daha küçük adımlarla iste ya da aynı "
+                    "türden tüm değişiklikleri tek seferde iste (örneğin tüm yazı tipleri)."
+                ),
             ),
         )
     intents = [
@@ -975,21 +1044,31 @@ _REDO_OFFER = (
     ' If you want a fresh version built from your whole request, reply "redo" and I\'ll '
     "render it again."
 )
+# KRI-520: "yeniden yap" is a `wants_full_replan` phrase (brief.py `_REDO_PATTERNS`).
+_REDO_OFFER_TR = (
+    ' Tüm isteğinden yeni bir sürüm istersen "yeniden yap" yaz, videoyu tekrar oluşturayım.'
+)
 _WEB_PROPOSED_REPLY = "I prepared this edit for the editor to validate and stage."
+# The Turkish canned line `routes/_copilot._honest_outcome` writes for a Turkish turn;
+# `tests/kria/test_kri520_planner_copy.py` pins that the two stay in step.
+_WEB_PROPOSED_REPLY_TR = "Bu düzenlemeyi hazırladım, editör kontrol edip uygulayacak."
 _PHONE_STAGED_REPLY = (
     "Updated your edit \u2014 it's in the editor now. Save when you're happy with it."
 )
+_PHONE_STAGED_REPLY_TR = "Düzenlemeni güncelledim, şu an editörde. Memnun kaldığında kaydet."
 
 
 def _phone_editor_reply(reply: str) -> str:
     """The web copilot's canned "validate and stage" wording is wrong on phone:
     the draft is already live in the editor, unsaved until the creator saves."""
     text = reply.strip()
-    if text == _WEB_PROPOSED_REPLY:
-        return _PHONE_STAGED_REPLY
-    if text.startswith(_WEB_PROPOSED_REPLY + " "):
-        # Server notes (time zone, clips without a filming time) ride after the canned line.
-        return f"{_PHONE_STAGED_REPLY} {text[len(_WEB_PROPOSED_REPLY) + 1 :]}"
+    staged = say(en=_PHONE_STAGED_REPLY, tr=_PHONE_STAGED_REPLY_TR)
+    for canned in (_WEB_PROPOSED_REPLY, _WEB_PROPOSED_REPLY_TR):
+        if text == canned:
+            return staged
+        if text.startswith(canned + " "):
+            # Server notes (time zone, clips without a filming time) ride after the canned line.
+            return f"{staged} {text[len(canned) + 1 :]}"
     return reply
 
 
@@ -1009,9 +1088,16 @@ async def _plan_editor_revision(
         return KriaTurnPlan(
             mode="respond",
             turn_value="question",
-            response=(
-                "Your saved request is too large or unavailable for this editor step. "
-                "Your draft is unchanged. Which clip or part should I work on first?"
+            response=say(
+                en=(
+                    "Your saved request is too large or unavailable for this editor step. "
+                    "Your draft is unchanged. Which clip or part should I work on first?"
+                ),
+                tr=(
+                    "Kayıtlı isteğin bu düzenleme adımı için çok büyük ya da şu an "
+                    "ulaşılamıyor. Taslağın değişmedi. Önce hangi klip ya da bölüm "
+                    "üzerinde çalışayım?"
+                ),
             ),
         )
     if target is None:
@@ -1037,7 +1123,9 @@ async def _plan_editor_revision(
         # Cutting silences renders from PERSISTED state, which would drop the creator's
         # unsaved edits: say so instead of crashing at compile time.
         return KriaTurnPlan(
-            mode="respond", turn_value="recovery", response=SPEECH_CUT_NEEDS_SAVE_REPLY
+            mode="respond",
+            turn_value="recovery",
+            response=localized_editor_state_reply(SPEECH_CUT_NEEDS_SAVE_REPLY),
         )
     if response.ops:
         return adapt_editor_action(
@@ -1055,8 +1143,12 @@ async def _plan_editor_revision(
         return None
     if response.outcome in {"clarification", "unsupported", "stale", "failed", "no_effect"}:
         reply = response.reply
-        if response.outcome == "unsupported" and _REDO_OFFER not in reply:
-            reply = f"{reply}{_REDO_OFFER}"
+        if (
+            response.outcome == "unsupported"
+            and _REDO_OFFER not in reply
+            and _REDO_OFFER_TR not in reply
+        ):
+            reply = f"{reply}{say(en=_REDO_OFFER, tr=_REDO_OFFER_TR)}"
         return KriaTurnPlan(
             mode="respond",
             turn_value=("question" if response.outcome == "clarification" else "recovery"),
@@ -1116,9 +1208,16 @@ async def _load_creator_inputs(
                 plan=KriaTurnPlan(
                     mode="respond",
                     turn_value="recovery",
-                    response=(
-                        "Your edit instructions are too long for me to match safely. "
-                        "Please start a new request with the key clip directions."
+                    response=say(
+                        en=(
+                            "Your edit instructions are too long for me to match safely. "
+                            "Please start a new request with the key clip directions."
+                        ),
+                        tr=(
+                            "Düzenleme talimatların, kliplerle güvenle eşleştirmem için çok "
+                            "uzun. Lütfen önemli klip yönlendirmelerini içeren yeni bir istek "
+                            "başlat."
+                        ),
                     ),
                 ),
                 manifest_hash=manifest.manifest_hash,
@@ -1563,7 +1662,7 @@ async def _plan_creator_action(
         ):
             return PlannedKriaTurn(
                 plan=_clip_intent_resolution_plan(
-                    question="Those labels need a recorded voiceover with guided visuals.",
+                    question=_labels_need_voiceover_reply(),
                     status="needs_creator",
                 ),
                 manifest_hash=manifest.manifest_hash,
@@ -1682,7 +1781,7 @@ async def _plan_creator_action(
     ):
         return PlannedKriaTurn(
             plan=_clip_intent_resolution_plan(
-                question="Those labels need a recorded voiceover with guided visuals.",
+                question=_labels_need_voiceover_reply(),
                 status="needs_creator",
             ),
             manifest_hash=manifest.manifest_hash,
@@ -1729,13 +1828,21 @@ def _creative_copy_turn(
             dependency_digest=digest,
         )
         candidate = question["candidate"]
-        message = response or f"I’d try “{candidate}”. Does this wording work?"
+        message = response or say(
+            en=f"I’d try “{candidate}”. Does this wording work?",
+            tr=f"Şunu deneyebilirim: “{candidate}”. Bu ifade sana uyar mı?",
+        )
         if candidate not in message:
             message = f"“{candidate}” — {message}"
     else:
         question = authorship_question(target=decision.target, dependency_digest=digest)
-        message = response or "Do you have an idea, or would you like me to write one?"
-    localize_question(question, decision.language)
+        message = response or say(
+            en="Do you have an idea, or would you like me to write one?",
+            tr="Aklında bir fikir var mı, yoksa ben mi yazayım?",
+        )
+    # KRI-520: a Turkish chat gets Turkish option labels whatever language the wording is
+    # in (English labels stay as aliases, so typed English answers still match).
+    localize_question(question, "tr" if current_reply_language() == "tr" else decision.language)
     return PlannedKriaTurn(
         plan=KriaTurnPlan(
             mode="respond",
@@ -1792,19 +1899,38 @@ def _request_recovery(manifest, prior, *, updates=(), reason="context_limit") ->
     ids = [req.id for req in effective.live()]
     log.info("kria_request_recovery", stage="planning", reason=reason, requirement_ids=ids)
     detail = {
-        "request_extraction_failed": "I couldn't reliably read every requested change.",
-        "planning_batches_disagree": "The separate parts of your brief produced conflicting plans.",
-        "clip_planner_context_limit": (
-            "Your complete brief exceeds the clip planner's 12,000-character limit."
+        "request_extraction_failed": say(
+            en="I couldn't reliably read every requested change.",
+            tr="İstediğin her değişikliği güvenilir şekilde okuyamadım.",
         ),
-    }.get(reason, "Your complete request exceeds the context this planning step can safely read.")
+        "planning_batches_disagree": say(
+            en="The separate parts of your brief produced conflicting plans.",
+            tr="İsteğinin ayrı bölümleri birbiriyle çelişen planlar çıkardı.",
+        ),
+        "clip_planner_context_limit": say(
+            en="Your complete brief exceeds the clip planner's 12,000-character limit.",
+            tr="Tüm isteğin, klip planlayıcının 12.000 karakterlik sınırını aşıyor.",
+        ),
+    }.get(
+        reason,
+        say(
+            en="Your complete request exceeds the context this planning step can safely read.",
+            tr="Tüm isteğin, bu planlama adımının güvenle okuyabileceği sınırı aşıyor.",
+        ),
+    )
     return PlannedKriaTurn(
         plan=KriaTurnPlan(
             mode="respond",
             turn_value="question",
-            response=(
-                f"{detail} Your complete request is saved and your draft is unchanged. "
-                "Which clip or part of the edit should I work on first?"
+            response=say(
+                en=(
+                    f"{detail} Your complete request is saved and your draft is unchanged. "
+                    "Which clip or part of the edit should I work on first?"
+                ),
+                tr=(
+                    f"{detail} Tüm isteğin kaydedildi ve taslağın değişmedi. "
+                    "Önce düzenlemenin hangi klibi ya da bölümü üzerinde çalışayım?"
+                ),
             ),
         ),
         manifest_hash=manifest.manifest_hash,
@@ -1853,12 +1979,38 @@ _FAST_PATH_MAX_CHARS = 280
 # A text/label/caption ask: when the copilot answers it with a question or a refusal, that
 # answer stands (a full re-plan would write labels from place/time facts and re-render).
 _TEXT_EDIT_ASK = re.compile(r"\b(labels?|captions?|texts?|titles?|wording|font)\b")
+# KRI-520: the same ask in Turkish, matched on `loose_text` (diacritics stripped, so
+# "başlığı" and "basligi" both land). Stems take any suffix: baslik/basligi/basliklar,
+# yazi/yazilar/altyazi (alt yazi), metin/metni, etiket, ifade (wording). "font" takes only
+# Turkish case endings, so English "fonts" keeps its old (non-)match.
+_TEXT_EDIT_ASK_TR = re.compile(
+    r"\b(?:(?:bas(?:lik|lig)|(?:alt)?yazi|met(?:in|ni)|etiket|ifade)\w*|"
+    r"font(?:lar|lari|u|un|a|i|ta|tan)?)\b"
+)
 # Wording that needs the planner even when the copilot could stage something.
 _REPLAN_CUES = re.compile(
     r"\b(vibe|different|another version|new (edit|video|version|cut)|recut|re-?cut|re-?do|"
     r"from scratch|best \d+|top \d+|\d+ best|use (only|just)|only (the )?(best|funniest|top)|"
     r"funniest|shuffle|more clips|fewer clips|farkl\w*|yeniden|bastan|ba\u015ftan)\b"
 )
+# KRI-520: Turkish re-plan wording on `loose_text`, at the English cues' precision: a new
+# version, "from scratch", a best/funniest-N selection, shuffle, more/fewer clips. A bare
+# "en iyi" or "tekrar" stays out (they also appear in ordinary edits).
+_REPLAN_CUES_TR = re.compile(
+    r"\b(?:farkl|yeniden|bastan|sifirdan|karistir|en iyi \d|\d+ en iyi|"
+    r"(?:sadece|yalnizca) en (?:iyi|komik)|en komik|"
+    r"daha (?:fazla|cok|az) klip|"
+    r"yeni (?:bir )?(?:video|versiyon|surum|duzenleme|kesim)|"
+    r"baska (?:bir )?(?:versiyon|surum|video|duzenleme|kesim))\w*"
+)
+
+
+def _is_text_edit_ask(message: str) -> bool:
+    """A text/label/caption/title ask, in English or Turkish."""
+    return bool(
+        _TEXT_EDIT_ASK.search(" ".join(message.casefold().split()))
+        or _TEXT_EDIT_ASK_TR.search(loose_text(message))
+    )
 
 
 def _fast_path_eligible(message: str) -> bool:
@@ -1869,6 +2021,7 @@ def _fast_path_eligible(message: str) -> bool:
         0 < len(text) <= _FAST_PATH_MAX_CHARS
         and not wants_full_replan(message)
         and _REPLAN_CUES.search(text) is None
+        and _REPLAN_CUES_TR.search(loose_text(message)) is None
     )
 
 
@@ -1898,10 +2051,16 @@ _EDITOR_TARGET_RECOVERY_REPLY = (
     "I couldn't open your current edit to change it in place. Try again, "
     "or ask me for a new version."
 )
+_EDITOR_TARGET_RECOVERY_REPLY_TR = (
+    "Şu anki düzenlemeni açıp yerinde değiştiremedim. Tekrar dene ya da benden yeni bir sürüm iste."
+)
 
 
 _EDITOR_TARGET_IN_FLIGHT_REPLY = (
     "Your edit is still rendering \u2014 give it a moment, then ask again."
+)
+_EDITOR_TARGET_IN_FLIGHT_REPLY_TR = (
+    "Düzenlemen hâlâ hazırlanıyor, biraz bekle ve sonra tekrar iste."
 )
 
 
@@ -1912,6 +2071,27 @@ def _state_kw(editor_state: Any) -> dict[str, Any]:
 
 def _editor_state_stale() -> bool:
     return _editor_target_miss.get() == "editor_state_stale"
+
+
+_EDITOR_STATE_STALE_REPLY_TR = "Videon değişti. Editörü yeniden açıp tekrar dene."
+_SPEECH_CUT_NEEDS_SAVE_REPLY_TR = "Önce düzenlemelerini kaydet, sonra sessiz kısımları kesebilirim."
+
+
+def _editor_state_stale_reply() -> str:
+    return say(en=EDITOR_STATE_STALE_REPLY, tr=_EDITOR_STATE_STALE_REPLY_TR)
+
+
+def localized_editor_state_reply(reply: str) -> str:
+    """The chat-language wording of an ``EditorStateReplyError.reply`` (KRI-520).
+
+    The two replies are module constants in ``kria_editor_ops`` (English, shared with the
+    compile-time refusal in ``tasks/kria_runtime``); any other text passes through.
+    """
+    if reply == EDITOR_STATE_STALE_REPLY:
+        return _editor_state_stale_reply()
+    if reply == SPEECH_CUT_NEEDS_SAVE_REPLY:
+        return say(en=SPEECH_CUT_NEEDS_SAVE_REPLY, tr=_SPEECH_CUT_NEEDS_SAVE_REPLY_TR)
+    return reply
 
 
 def _editor_target_miss_guarded() -> bool:
@@ -1927,11 +2107,11 @@ def _editor_target_recovery(manifest: object) -> PlannedKriaTurn:
             mode="respond",
             turn_value="recovery",
             response=(
-                _EDITOR_TARGET_IN_FLIGHT_REPLY
+                say(en=_EDITOR_TARGET_IN_FLIGHT_REPLY, tr=_EDITOR_TARGET_IN_FLIGHT_REPLY_TR)
                 if miss == "render_in_flight"
-                else EDITOR_STATE_STALE_REPLY
+                else _editor_state_stale_reply()
                 if miss == "editor_state_stale"
-                else _EDITOR_TARGET_RECOVERY_REPLY
+                else say(en=_EDITOR_TARGET_RECOVERY_REPLY, tr=_EDITOR_TARGET_RECOVERY_REPLY_TR)
             ),
         ),
         manifest_hash=manifest.manifest_hash,  # type: ignore[attr-defined]
@@ -1957,9 +2137,15 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
             plan=KriaTurnPlan(
                 mode="respond",
                 turn_value="recovery",
-                response=(
-                    "Your clips changed while I was planning. Your draft is unchanged; "
-                    "please ask again using the current clips."
+                response=say(
+                    en=(
+                        "Your clips changed while I was planning. Your draft is unchanged; "
+                        "please ask again using the current clips."
+                    ),
+                    tr=(
+                        "Ben planlarken kliplerin değişti. Taslağın değişmedi; lütfen "
+                        "güncel kliplerle tekrar iste."
+                    ),
                 ),
             ),
         )
@@ -2017,11 +2203,25 @@ async def _gate_unresolved_choices(
                     target=state.target, dependency_digest=media_digest(planned.media_snapshot)
                 )
             )
+            if current_reply_language() == "tr":
+                # KRI-520: English option labels stay as aliases.
+                localize_question(question, "tr")
             message = (
-                f"“{state.candidate}” — does this wording work?"
+                say(
+                    en=f"“{state.candidate}” — does this wording work?",
+                    tr=f"“{state.candidate}” — bu ifade sana uyar mı?",
+                )
                 if state.candidate
-                else "Do you have an idea, or would you like me to write one? "
-                "You can also skip this text."
+                else say(
+                    en=(
+                        "Do you have an idea, or would you like me to write one? "
+                        "You can also skip this text."
+                    ),
+                    tr=(
+                        "Aklında bir fikir var mı, yoksa ben mi yazayım? "
+                        "İstersen bu yazıyı atlayabilirsin."
+                    ),
+                )
             )
             return replace(
                 planned,
@@ -2071,16 +2271,22 @@ async def _gate_unresolved_choices(
     )
     if resolution.question is not None:
         if resolution.question.kind == "title_text":
+            title_question = authorship_question(
+                target="opening_title",
+                dependency_digest=media_digest(planned.media_snapshot),
+            )
+            if current_reply_language() == "tr":
+                localize_question(title_question, "tr")
             return replace(
                 planned,
                 plan=KriaTurnPlan(
                     mode="respond",
                     turn_value="question",
-                    response="Do you have an idea, or would you like me to write one?",
-                    choice_question=authorship_question(
-                        target="opening_title",
-                        dependency_digest=media_digest(planned.media_snapshot),
+                    response=say(
+                        en="Do you have an idea, or would you like me to write one?",
+                        tr="Aklında bir fikir var mı, yoksa ben mi yazayım?",
                     ),
+                    choice_question=title_question,
                 ),
             )
         candidate = resolution.question.candidate()
@@ -2226,7 +2432,7 @@ async def _plan_live_turn(
         if (
             fast_plan is not None
             and fast_plan.mode == "respond"
-            and _TEXT_EDIT_ASK.search(" ".join(user_message.casefold().split()))
+            and _is_text_edit_ask(user_message)
         ):
             return PlannedKriaTurn(
                 plan=fast_plan,
@@ -2292,8 +2498,15 @@ async def _plan_live_turn(
             plan=KriaTurnPlan(
                 mode="respond",
                 turn_value="question",
-                response=(
-                    "Add at least one clip and I can shape the edit around what is actually there."
+                response=say(
+                    en=(
+                        "Add at least one clip and I can shape the edit around what is "
+                        "actually there."
+                    ),
+                    tr=(
+                        "En az bir klip ekle, düzenlemeyi gerçekten elindekilere göre "
+                        "şekillendireyim."
+                    ),
                 ),
             ),
             manifest_hash=manifest.manifest_hash,
@@ -2353,11 +2566,7 @@ async def _plan_live_turn(
                     plan=KriaTurnPlan(
                         mode="respond",
                         turn_value="recovery",
-                        response=(
-                            f"I'm still checking {len(pending_analysis_ids)} of your clips. "
-                            "Your request and completed answers are saved. "
-                            "Ask me to continue once those clips are ready."
-                        ),
+                        response=_clips_still_checking_reply(len(pending_analysis_ids)),
                     ),
                     manifest_hash=manifest.manifest_hash,
                     context_hash=manifest.context_hash,
@@ -2432,10 +2641,17 @@ async def _plan_live_turn(
                 plan=KriaTurnPlan(
                     mode="respond",
                     turn_value="recovery",
-                    response=(
-                        "I couldn’t safely apply that change to the current cut. "
-                        "Please clarify the title, style, animation, or title timing "
-                        "you want to change."
+                    response=say(
+                        en=(
+                            "I couldn’t safely apply that change to the current cut. "
+                            "Please clarify the title, style, animation, or title timing "
+                            "you want to change."
+                        ),
+                        tr=(
+                            "Bu değişikliği şu anki kesime güvenle uygulayamadım. "
+                            "Lütfen değiştirmek istediğin başlığı, stili, animasyonu ya da "
+                            "başlık zamanlamasını netleştir."
+                        ),
                     ),
                 ),
                 manifest_hash=manifest.manifest_hash,
@@ -2597,11 +2813,7 @@ async def _plan_live_turn(
             plan=KriaTurnPlan(
                 mode="respond",
                 turn_value="recovery",
-                response=(
-                    f"I'm still checking {len(pending_analysis_ids)} of your clips. "
-                    "Your request and completed answers are saved. "
-                    "Ask me to continue once those clips are ready."
-                ),
+                response=_clips_still_checking_reply(len(pending_analysis_ids)),
             ),
             manifest_hash=manifest.manifest_hash,
             context_hash=manifest.context_hash,
@@ -2763,5 +2975,6 @@ __all__ = [
     "PlannedKriaTurn",
     "adapt_creator_action",
     "adapt_editor_action",
+    "localized_editor_state_reply",
     "plan_live_turn",
 ]
