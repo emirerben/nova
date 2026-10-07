@@ -58,6 +58,7 @@ from app.services.creator_render_contract import (
     CONTRACT_FIELD,
     CreatorRenderContractError,
     TextRequirement,
+    decline_payload,
     read_render_contract,
 )
 from app.services.device_render import CONTRACT_REVISIONS_FIELD, device_status, pin_device_request
@@ -562,7 +563,10 @@ def _unsupported_phone_edit(job: Any, variant_id: str, exc: Exception) -> HTTPEx
         reason=reason,
         exc_info=True,
     )
-    return HTTPException(422, detail={"code": "unsupported_phone_edit", "reason": reason})
+    # A contract refusal keeps its typed reason on the wire (additive keys): the edit was
+    # refused, the last accepted version is untouched, and the client can say why.
+    typed = decline_payload(exc)
+    return HTTPException(422, detail={"code": "unsupported_phone_edit", "reason": reason, **typed})
 
 
 def _pinned_song_bed(recipe: EditRecipeV2, user_song: dict[str, Any]) -> PhoneSongBed:

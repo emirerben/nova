@@ -95,6 +95,9 @@ def test_an_edit_that_moves_the_opening_text_out_of_the_opening_window_is_refuse
 
     assert caught.value.status_code == 422
     assert caught.value.detail["code"] == "unsupported_phone_edit"
+    # The refusal says what was violated, typed, so the client can explain it.
+    assert caught.value.detail["decline_reason"] == "evidence_missing"
+    assert caught.value.detail["field_path"] == "opening_title"
     # The refusal leaves the approved edit exactly as it was.
     assert device_status(job, "guided_story").request == before
     assert job.assembly_plan["variants"] == variants_before
