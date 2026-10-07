@@ -5,102 +5,29 @@ struct ChatWorkspaceView: View {
     @EnvironmentObject private var model: AppModel
     @AppStorage("kria.workspace.last-project-id") private var lastProjectID = ""
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    // Discrete drawer state only. The per-frame drag lives in `ProjectsDrawerContainer`
+    // so a drag tick never re-evaluates the (heavy) workspace below.
     @State private var showsProjects = false
-    @State private var drawerDrag: CGFloat = 0
-    @GestureState private var drawerGestureActive = false
     @State private var drawerMounted = false
-    @State private var horizontalDrawerDrag: Bool?
-    @State private var drawerDragStartTime: Date?
-    @State private var drawerGestureExclusions: [CGRect] = []
     @State private var showsGallery = false
     @State private var showsAccount = false
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        GeometryReader { geometry in
-            let drawerWidth = min(326, max(0, geometry.size.width - 76))
-            let drawerOffset = min(drawerWidth, max(0, (showsProjects ? drawerWidth : 0) + drawerDrag))
-            let drawerActive = showsProjects || drawerOffset > 0
-            let drawerProgress = drawerWidth > 0 ? drawerOffset / drawerWidth : 0
-            let topInset = geometry.safeAreaInsets.top
-            let bottomInset = geometry.safeAreaInsets.bottom
-            ZStack(alignment: .topLeading) {
-                if drawerActive || drawerMounted {
-                    ProjectsDrawer(
-                        close: { setDrawerOpen(false) },
-                        openGallery: { setDrawerOpen(false); showsGallery = true },
-                        openAccount: { setDrawerOpen(false); showsAccount = true }
-                    )
-                    .frame(width: drawerWidth, height: geometry.size.height)
-                    .offset(x: drawerOffset - drawerWidth, y: topInset)
-                    .accessibilityHidden(!drawerActive)
-                    .allowsHitTesting(drawerActive)
-                }
-                NavigationStack {
-                    Group {
-                        if let project = model.selectedProject {
-                            CreationWorkspaceView(
-                                project: project,
-                                openProjects: { setDrawerOpen(!showsProjects) },
-                                openAccount: { showsAccount = true }
-                            )
-                            .id(project.id)
-                        } else {
-                            Group {
-                                if model.isLoading || model.projectsState == .loading || model.projectsState == .idle {
-                                    WorkspaceLoadingView()
-                                } else if model.projectsState == .empty {
-                                    WorkspaceEmptyView { Task { await model.createProject() } }
-                                } else {
-                                    WorkspaceRecoveryView { Task { await model.openWorkspace() } }
-                                }
-                            }
-                            .accessibilityHidden(showsProjects)
-                            .allowsHitTesting(!showsProjects)
-                            .safeAreaInset(edge: .top) {
-                                HStack {
-                                    Button { setDrawerOpen(!showsProjects) } label: {
-                                        KriaIcon(.menu).frame(width: 44, height: 44).background(KriaColor.menu, in: Circle())
-                                    }
-                                    .accessibilityLabel(showsProjects ? "Close projects" : "Open projects")
-                                    .accessibilityIdentifier("workspace-menu-toggle")
-                                    Spacer()
-                                    KriaWordmark().accessibilityHidden(showsProjects)
-                                    Spacer()
-                                    Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
-                                }.padding(.horizontal, 16).frame(minHeight: 64).background(WorkspaceSurface())
-                            }
-                        }
-                    }
-                    .toolbar(.hidden, for: .navigationBar)
-                }
-                .environment(\.projectsDrawerOpen, drawerActive)
-                .frame(width: geometry.size.width, height: geometry.size.height)
-                .padding(.top, topInset)
-                .padding(.bottom, bottomInset)
-                .background(WorkspaceSurface())
-                .clipShape(RoundedRectangle(cornerRadius: 44 * drawerProgress, style: .continuous))
-                .offset(x: drawerOffset)
-            }
-            .environment(\.projectsDrawerProgress, drawerProgress)
-            .frame(width: geometry.size.width, height: geometry.size.height + topInset + bottomInset, alignment: .topLeading)
-            .clipped()
-            .offset(y: -topInset)
-            .background(KriaColor.paper.ignoresSafeArea())
-            .onPreferenceChange(DrawerGestureExclusionPreference.self) { drawerGestureExclusions = $0 }
-            .simultaneousGesture(drawerGesture(width: drawerWidth))
-            .onChange(of: drawerGestureActive) { _, active in
-                // onEnded is not called when another recognizer or the system
-                // cancels a drag. GestureState resets for both outcomes.
-                guard !active else { return }
-                let needsSettlement = horizontalDrawerDrag == true || drawerDrag != 0
-                horizontalDrawerDrag = nil
-                if needsSettlement {
-                    setDrawerOpen(drawerOffset > drawerWidth / 2)
-                }
-            }
-            .accessibilityAction(.escape) { setDrawerOpen(false) }
-        }
+        ProjectsDrawerContainer(
+            isOpen: showsProjects,
+            mounted: drawerMounted,
+            reduceMotion: reduceMotion,
+            commit: commitDrawer,
+            settled: drawerSettled,
+            close: { setDrawerOpen(false) },
+            drawer: ProjectsDrawer(
+                close: { setDrawerOpen(false) },
+                openGallery: { setDrawerOpen(false); showsGallery = true },
+                openAccount: { setDrawerOpen(false); showsAccount = true }
+            ),
+            content: workspace
+        )
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: showsProjects)
         .onChange(of: showsProjects) { _, isOpen in
             if isOpen { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
@@ -126,15 +53,190 @@ struct ChatWorkspaceView: View {
         }
     }
 
+    private var workspace: some View {
+        NavigationStack {
+            Group {
+                if let project = model.selectedProject {
+                    CreationWorkspaceView(
+                        project: project,
+                        openProjects: { setDrawerOpen(!showsProjects) },
+                        openAccount: { showsAccount = true }
+                    )
+                    .id(project.id)
+                } else {
+                    Group {
+                        if model.isLoading || model.projectsState == .loading || model.projectsState == .idle {
+                            WorkspaceLoadingView()
+                        } else if model.projectsState == .empty {
+                            WorkspaceEmptyView { Task { await model.createProject() } }
+                        } else {
+                            WorkspaceRecoveryView { Task { await model.openWorkspace() } }
+                        }
+                    }
+                    .accessibilityHidden(showsProjects)
+                    .allowsHitTesting(!showsProjects)
+                    .safeAreaInset(edge: .top) {
+                        HStack {
+                            Button { setDrawerOpen(!showsProjects) } label: {
+                                KriaIcon(.menu).frame(width: 44, height: 44).background(KriaColor.menu, in: Circle())
+                            }
+                            .accessibilityLabel(showsProjects ? "Close projects" : "Open projects")
+                            .accessibilityIdentifier("workspace-menu-toggle")
+                            Spacer()
+                            KriaWordmark().accessibilityHidden(showsProjects)
+                            Spacer()
+                            Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
+                        }.padding(.horizontal, 16).frame(minHeight: 64).background(WorkspaceSurface())
+                    }
+                }
+            }
+            .toolbar(.hidden, for: .navigationBar)
+        }
+    }
+
+    /// Programmatic open/close (menu button, row taps, gallery return).
     private func setDrawerOpen(_ isOpen: Bool) {
-        // Commit the destination and release the drag in the same transaction.
-        // GestureState's automatic reset previously replayed the closing offset.
+        withAnimation(DrawerMotion.settle(reduceMotion: reduceMotion)) {
+            commitDrawer(isOpen)
+        } completion: {
+            drawerSettled()
+        }
+    }
+
+    private func commitDrawer(_ isOpen: Bool) {
         drawerMounted = true
-        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.24)) {
-            showsProjects = isOpen
+        showsProjects = isOpen
+    }
+
+    private func drawerSettled() {
+        if showsProjects {
+            // Refresh the gallery count once the slide has come to rest, not while it runs.
+            Task { await model.loadLibrary() }
+        } else {
+            drawerMounted = false
+        }
+    }
+}
+
+/// The chat composer's text, kept out of `@State` so a keystroke does not invalidate the workspace.
+@Observable
+final class ChatPromptDraft {
+    var text = ""
+    @ObservationIgnored var onChange: ((String) -> Void)?
+
+    func set(_ newValue: String) {
+        guard newValue != text else { return }
+        text = newValue
+        onChange?(newValue)
+    }
+}
+
+enum DrawerMotion {
+    /// Critically damped, so a release never overshoots the endpoints. `velocity` is in
+    /// SwiftUI's unit-relative terms (fraction of the remaining distance per second).
+    static func settle(reduceMotion: Bool, velocity: CGFloat = 0) -> Animation? {
+        reduceMotion ? nil : .interpolatingSpring(.init(duration: 0.32, bounce: 0), initialVelocity: Double(velocity))
+    }
+}
+
+/// Reference-typed so writes never invalidate a view: scroller frames change every drag
+/// tick (they sit inside the moving content) and velocity samples are only read at release.
+private final class DrawerGestureTracking {
+    var exclusions: [CGRect] = []
+    var previous: (time: Date, x: CGFloat)?
+    var latest: (time: Date, x: CGFloat)?
+
+    func record(time: Date, x: CGFloat) {
+        previous = latest
+        latest = (time, x)
+    }
+
+    /// Instantaneous horizontal velocity (pt/s) from the last two samples, 0 if stale.
+    func releaseVelocity(at time: Date) -> CGFloat {
+        guard let previous, let latest, time.timeIntervalSince(latest.time) < 0.1 else { return 0 }
+        let dt = latest.time.timeIntervalSince(previous.time)
+        return dt > 0.001 ? (latest.x - previous.x) / dt : 0
+    }
+
+    func reset() { previous = nil; latest = nil }
+}
+
+/// Owns the per-frame drag state. `drawer` and `content` arrive as stored values (built
+/// once by the parent) so SwiftUI can skip re-evaluating them while only the offset moves.
+private struct ProjectsDrawerContainer<Drawer: View, Content: View>: View {
+    let isOpen: Bool
+    let mounted: Bool
+    let reduceMotion: Bool
+    let commit: (Bool) -> Void
+    let settled: () -> Void
+    let close: () -> Void
+    let drawer: Drawer
+    let content: Content
+
+    @State private var drawerDrag: CGFloat = 0
+    @GestureState private var drawerGestureActive = false
+    @State private var horizontalDrawerDrag: Bool?
+    @State private var drawerDragStartTime: Date?
+    @State private var tracking = DrawerGestureTracking()
+
+    var body: some View {
+        GeometryReader { geometry in
+            let drawerWidth = min(326, max(0, geometry.size.width - 76))
+            let drawerOffset = min(drawerWidth, max(0, (isOpen ? drawerWidth : 0) + drawerDrag))
+            let drawerActive = isOpen || drawerOffset > 0
+            let drawerProgress = drawerWidth > 0 ? drawerOffset / drawerWidth : 0
+            let topInset = geometry.safeAreaInsets.top
+            let bottomInset = geometry.safeAreaInsets.bottom
+            ZStack(alignment: .topLeading) {
+                if drawerActive || mounted {
+                    drawer
+                        .frame(width: drawerWidth, height: geometry.size.height)
+                        .offset(x: drawerOffset - drawerWidth, y: topInset)
+                        .accessibilityHidden(!drawerActive)
+                        .allowsHitTesting(drawerActive)
+                }
+                content
+                    .environment(\.projectsDrawerOpen, drawerActive)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .padding(.top, topInset)
+                    .padding(.bottom, bottomInset)
+                    .background(WorkspaceSurface())
+                    .clipShape(RoundedRectangle(cornerRadius: 44 * drawerProgress, style: .continuous))
+                    .offset(x: drawerOffset)
+            }
+            .environment(\.projectsDrawerProgress, drawerProgress)
+            .frame(width: geometry.size.width, height: geometry.size.height + topInset + bottomInset, alignment: .topLeading)
+            .clipped()
+            .offset(y: -topInset)
+            .background(KriaColor.paper.ignoresSafeArea())
+            .onPreferenceChange(DrawerGestureExclusionPreference.self) { tracking.exclusions = $0 }
+            .simultaneousGesture(drawerGesture(width: drawerWidth))
+            .onChange(of: drawerGestureActive) { _, active in
+                // onEnded is not called when another recognizer or the system
+                // cancels a drag. GestureState resets for both outcomes.
+                guard !active else { return }
+                let needsSettlement = horizontalDrawerDrag == true || drawerDrag != 0
+                horizontalDrawerDrag = nil
+                if needsSettlement {
+                    settle(open: drawerOffset > drawerWidth / 2, width: drawerWidth, velocity: 0)
+                }
+            }
+            .accessibilityAction(.escape, close)
+        }
+    }
+
+    /// Commit the destination and release the drag in the same transaction.
+    /// GestureState's automatic reset previously replayed the closing offset.
+    private func settle(open: Bool, width: CGFloat, velocity: CGFloat) {
+        let current = min(width, max(0, (isOpen ? width : 0) + drawerDrag))
+        let remaining = max(1, open ? width - current : current)
+        let towardTarget = open ? velocity : -velocity
+        let relative = min(12, max(0, towardTarget / remaining))
+        withAnimation(DrawerMotion.settle(reduceMotion: reduceMotion, velocity: relative)) {
+            commit(open)
             drawerDrag = 0
         } completion: {
-            if !showsProjects && drawerDrag == 0 { drawerMounted = false }
+            if drawerDrag == 0 { settled() }
         }
     }
 
@@ -144,11 +246,13 @@ struct ChatWorkspaceView: View {
             .onChanged { value in
                 // Choose an axis once, without a 20-point dead zone at touch-down.
                 if horizontalDrawerDrag == nil {
-                    let startsInScroller = !showsProjects && drawerGestureExclusions.contains { $0.contains(value.startLocation) }
+                    let startsInScroller = !isOpen && tracking.exclusions.contains { $0.contains(value.startLocation) }
                     horizontalDrawerDrag = !startsInScroller && abs(value.translation.width) > abs(value.translation.height)
                     drawerDragStartTime = value.time
+                    tracking.reset()
                 }
                 guard horizontalDrawerDrag == true else { return }
+                tracking.record(time: value.time, x: value.translation.width)
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
                 withTransaction(transaction) { drawerDrag = value.translation.width }
@@ -168,24 +272,26 @@ struct ChatWorkspaceView: View {
                 let elapsed = startTime.map { value.time.timeIntervalSince($0) } ?? 0
                 let measuredVelocity = elapsed > 0.001 ? value.translation.width / elapsed : 0
                 let isDeliberateFlick = abs(measuredVelocity) > Self.flickVelocityThreshold
-                let isOpen: Bool
+                let isOpenAfter: Bool
                 if isDeliberateFlick {
                     // Honor a deliberate flick's direction outright, regardless
                     // of exactly how far it travelled.
-                    isOpen = measuredVelocity > 0
+                    isOpenAfter = measuredVelocity > 0
                 } else {
                     // Anything slower settles purely by how far it was actually
                     // dragged, landing at the true nearest endpoint.
-                    let settledOffset = (showsProjects ? width : 0) + value.translation.width
-                    isOpen = settledOffset > width / 2
+                    let settledOffset = (isOpen ? width : 0) + value.translation.width
+                    isOpenAfter = settledOffset > width / 2
                 }
-                setDrawerOpen(isOpen)
+                // The decision above uses the average speed; the spring that follows
+                // continues at the finger's instantaneous release speed.
+                settle(open: isOpenAfter, width: width, velocity: tracking.releaseVelocity(at: value.time))
             }
     }
 
     // XCUIGestureVelocity.slow synthesizes ~250pt/s and .fast ~750pt/s; a real
     // deliberate flick is comfortably faster than an intentional slow drag.
-    private static let flickVelocityThreshold: CGFloat = 450
+    private static var flickVelocityThreshold: CGFloat { 450 }
 }
 
 private struct WorkspaceEmptyView: View {
@@ -271,7 +377,16 @@ private struct CreationWorkspaceView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.projectsDrawerOpen) private var projectsDrawerOpen
     @FocusState private var composerFocused: Bool
-    @State private var prompt = ""
+    /// Reference-typed and observation-tracked per reader: typing re-renders only
+    /// `ChatComposer`, not this whole workspace (timeline rebuild + every row).
+    @State private var promptDraft = ChatPromptDraft()
+    private var prompt: String {
+        get { promptDraft.text }
+        nonmutating set { promptDraft.set(newValue) }
+    }
+    private var promptBinding: Binding<String> {
+        Binding(get: { promptDraft.text }, set: { promptDraft.set($0) })
+    }
     /// KRI-207: requirement names for the receipt chips; loaded once a reply carries receipts.
     @State private var briefRequirements: [String: CreativeBriefRequirement] = [:]
     /// The brief loaded (or, after one retry, definitively failed): chips can show their final titles.
@@ -326,6 +441,7 @@ private struct CreationWorkspaceView: View {
     @State private var isThinking = false
     /// Highest transcript sequence known when the thinking turn was accepted; only later events can settle it.
     @State private var thinkingAnchor: Int?
+    @State private var thinkingTurnID: String?
     /// Approvals have no reply message, so a terminal job status also ends the wait (KRI-222).
     @State private var thinkingSettlesOnJobStatus = false
     @State private var failure: ChatFailure?
@@ -557,7 +673,7 @@ private struct CreationWorkspaceView: View {
             }
         }
         if (isThinking || isSending) && workspaceStage != .rendering {
-            if showsPlanFeed { planFeedView } else { ThinkingRow().id("thinking") }
+            ThinkingRow().id("thinking")
         }
         if let approvalNotice { Text(approvalNotice).font(KriaFont.body(13)) }
         if let failure {
@@ -868,8 +984,12 @@ private struct CreationWorkspaceView: View {
         // directly on ChatConversationScroll inside genericChatWorkspace (KRI-197
         // floating chat chrome), which also implicitly gates it on
         // !hasDedicatedSlideWorkspace via the if/else above.
-        .onAppear { if prompt.isEmpty { prompt = model.chatDrafts.draft(for: project.id) } }
-        .onChange(of: prompt) { _, text in model.chatDrafts.setDraft(text, for: project.id) }
+        .onAppear {
+            if prompt.isEmpty { prompt = model.chatDrafts.draft(for: project.id) }
+            // Persisted from the holder, not `.onChange(of: prompt)`: reading `prompt` in
+            // this body would subscribe the whole workspace to every keystroke.
+            promptDraft.onChange = { [chatDrafts = model.chatDrafts, id = project.id] in chatDrafts.setDraft($0, for: id) }
+        }
         .onChange(of: renderShapeScope) { _, scope in renderShapePick.reset(scope: scope) }
         .task {
             // History should not wait for the independent capability request. Requested as soon as the
@@ -1000,7 +1120,7 @@ private struct CreationWorkspaceView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatComposer(
-                text: $prompt,
+                text: promptBinding,
                 isSending: isSending || isActing,
                 canAttach: canAttachMedia,
                 canSendWithoutText: readyMediaCount > 0,
@@ -1022,7 +1142,7 @@ private struct CreationWorkspaceView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatComposer(
-                text: $prompt, isSending: isSending || isActing,
+                text: promptBinding, isSending: isSending || isActing,
                 canAttach: false, blocksSubmission: isThinking || pendingUploadCount > 0, isFocused: $composerFocused, attach: {}, send: { Task { await send() } }
             )
         }
@@ -1338,6 +1458,7 @@ private struct CreationWorkspaceView: View {
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
         conversationAcceptedID = UUID()
         thinkingAnchor = afterSequence
+        thinkingTurnID = accepted.turnID
         thinkingSettlesOnJobStatus = false
         isThinking = true
         failure = await acceptedMutationRefreshError(
@@ -1463,7 +1584,7 @@ private struct CreationWorkspaceView: View {
                 // polling it only while it is unsettled or the thread moved.
                 let deviceSettled = deviceRenderKey.flatMap { model.deviceRenders.presentations[$0]?.phase } == .synced
                 if changed || !deviceSettled || currentProject.status == .rendering { await refreshDeviceRender() }
-                delay = changed || isSending || isActing || currentProject.status == .rendering
+                delay = changed || isSending || isActing || isThinking || currentProject.status == .rendering
                     || fullThread?.preparationIsActive == true || speechCleanupIsChecking
                     ? 1_000_000_000 : min(delay * 2, 8_000_000_000)
             } catch is CancellationError {
@@ -1630,9 +1751,10 @@ private struct CreationWorkspaceView: View {
         guard isThinking, let anchor = thinkingAnchor else { return }
         let jobTerminal = thinkingSettlesOnJobStatus
             && ChatThinkingSettlement.isTerminalJobStatus(fullThread?.job?.status)
-        if ChatThinkingSettlement.isSettled(events: events, after: anchor) || jobTerminal {
+        if ChatThinkingSettlement.isSettled(events: events, after: anchor, turnID: thinkingTurnID) || jobTerminal {
             isThinking = false
             thinkingAnchor = nil
+            thinkingTurnID = nil
             thinkingSettlesOnJobStatus = false
         }
     }
@@ -1772,6 +1894,7 @@ private struct CreationWorkspaceView: View {
             }
             self.approval = nil
             thinkingAnchor = decision == "approve" ? afterSequence : nil
+            thinkingTurnID = decision == "approve" ? approval.turnID : nil
             thinkingSettlesOnJobStatus = decision == "approve"
             isThinking = decision == "approve"
             failure = await acceptedMutationRefreshError(
@@ -1890,8 +2013,17 @@ enum ChatThinkingSettlement {
         ChatTranscriptMessage.from(event: event)?.role == .assistant || settledTypes.contains(event.eventType)
     }
 
-    static func isSettled(events: [ThreadEvent], after anchor: Int) -> Bool {
-        events.contains { $0.sequence > anchor && settles($0) }
+    static func isSettled(events: [ThreadEvent], after anchor: Int, turnID: String? = nil) -> Bool {
+        events.contains { event in
+            guard event.sequence > anchor, settles(event) else { return false }
+            guard let turnID else { return true }
+            if let eventTurnID = event.payload?["turn_id"]?.stringValue {
+                return eventTurnID.caseInsensitiveCompare(turnID) == .orderedSame
+            }
+            // Legacy conversation replies have no turn identifier. Unowned plan/render
+            // events cannot settle a known follow-up turn.
+            return ChatTranscriptMessage.from(event: event)?.role == .assistant
+        }
     }
 
     static func isTerminalJobStatus(_ status: String?) -> Bool {

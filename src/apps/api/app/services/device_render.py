@@ -20,6 +20,7 @@ from app.services.creator_render_contract import (
     CONTRACT_FIELD,
     REQUIREMENT_VERSION_FIELD,
     CreatorRenderContractError,
+    decline_payload,
     read_render_contract,
     verify_phone_recipe,
 )
@@ -28,6 +29,9 @@ from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
 
 DEVICE_RENDER_FIELD = "_device_render_v1"
 CONTRACT_REVISIONS_FIELD = "creator_render_revisions"
+# A typed contract refusal, kept on the device record BESIDE its intact state (the
+# pinned request, its contract receipts, the published attempt). Recovery reads it.
+CONTRACT_DECLINE_FIELD = "contract_decline"
 
 # Human-readable fallback when the reporter (phone client or reaper) sends an
 # empty detail string. Keyed by reason_code; "timed_out" is the reaper's own
@@ -72,6 +76,83 @@ def save_device_record(job: Any, variant_id: str, record: dict) -> None:
     records = assembly.setdefault(DEVICE_RENDER_FIELD, {})
     records[variant_id] = copy.deepcopy(record)
     job.assembly_plan = assembly
+
+
+def record_contract_decline(
+    job: Any, variant_id: str, exc: CreatorRenderContractError, *, stage: str
+) -> dict | None:
+    """Record a refused contract check beside the variant's last accepted state.
+
+    A refusal (an edit that fails ``verify_phone_recipe``, a publication that no
+    longer proves its approved authority, a retry that cannot be re-pinned) NEVER
+    replaces the last accepted artifact: the pinned request, its receipts and the
+    published attempt stay as they were, and so do the variant's video, poster and
+    URL. Only this typed note is added, so recovery can say what was refused and
+    why while the last good output stays live. An untyped refusal is recorded as
+    ``evidence_missing``: the output no longer proves its approved authority.
+    """
+    try:
+        record = device_record(job, variant_id)
+    except KeyError:
+        return None
+    payload = decline_payload(exc) or {"decline_reason": "evidence_missing"}
+    decline = {
+        **payload,
+        "stage": stage,
+        "message": str(exc)[:500],
+        "recorded_at": datetime.now(UTC).isoformat(),
+    }
+    record[CONTRACT_DECLINE_FIELD] = decline
+    save_device_record(job, variant_id, record)
+    return decline
+
+
+def has_accepted_artifact(job: Any, variant_id: str | None) -> bool:
+    """True when this variant (any variant when None) carries a published artifact."""
+    return any(
+        isinstance(row, dict)
+        and (variant_id is None or row.get("variant_id") == variant_id)
+        and bool(row.get("video_path") or row.get("output_url"))
+        for row in (job.assembly_plan or {}).get("variants") or []
+    )
+
+
+CONTRACT_REFUSED_FAILURE = "creator_render_contract_unverified"
+
+
+def fail_first_render_on_refusal(job: Any, variant_id: str, decline: dict) -> None:
+    """A refused FIRST render has no last good artifact to keep: fail it visibly.
+
+    Without this the variant and job stay ``awaiting_device`` while the record is
+    ``needs_attention``, the reaper never rescans it, and the creator waits for a
+    phone that can no longer publish. The typed decline rides beside the failure.
+    """
+    apply_device_failure_variant_update(
+        job,
+        variant_id,
+        reason_code=CONTRACT_REFUSED_FAILURE,
+        detail=str(decline.get("message") or "")[:1000],
+    )
+    typed = {
+        key: decline[key]
+        for key in ("decline_reason", "field_path", "alternative")
+        if isinstance(decline.get(key), str) and decline[key]
+    }
+    assembly = dict(job.assembly_plan or {})
+    assembly["variants"] = [
+        {**row, **typed} if row.get("variant_id") == variant_id else row
+        for row in assembly.get("variants", [])
+    ]
+    job.assembly_plan = assembly
+
+
+def contract_decline(job: Any, variant_id: str) -> dict | None:
+    """The typed refusal recorded on this variant's device record, if any."""
+    try:
+        decline = device_record(job, variant_id).get(CONTRACT_DECLINE_FIELD)
+    except KeyError:
+        return None
+    return decline if isinstance(decline, dict) else None
 
 
 def _brief_digest_for_generation(assembly: dict, generation: str) -> str | None:

@@ -410,12 +410,10 @@ def compile_phone_speech_montage_plan(
         if music_clips:
             tracks.append(TimelineTrack(id=MUSIC_TRACK_ID, kind="audio", clips=music_clips))
             caps |= {"audioMix", "musicBed"}
-            mix = mix.model_copy(
-                update={
-                    "music_asset_id": f"music-{music.catalog_id}",
-                    "music_volume": min(music.volume, _MUSIC_GAIN_CAP),
-                }
-            )
+            # The bed is its audio-track clips (silent under speech). It must NOT also
+            # name `audio.music_asset_id`: the device plays that asset as a second bed
+            # from source 0 on top of the clips (the KRI-481 double play), and the
+            # contract verifier now refuses such a recipe.
             receipt.music = True
 
     if centre_cropped:

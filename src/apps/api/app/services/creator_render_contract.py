@@ -11,7 +11,9 @@ import hashlib
 import json
 import unicodedata
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from dataclasses import dataclass
+from types import UnionType
+from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -21,6 +23,15 @@ from app.kria.brief import CreativeBrief
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
+from app.services.choice_questions import (
+    ATTACHMENT_ORDER_KEY,
+    CAPTURE_ORDER_KEYS,
+    CONFLICT_DURATION_VS_COUNT,
+    CONFLICT_ORDER_BASIS,
+    CONFLICT_TEXT_PLACEMENT,
+    OPT_ATTACHMENT_ORDER,
+    OPT_UNORDERED,
+)
 
 CONTRACT_FIELD = "creator_render_requirements"
 REQUIREMENT_VERSION_FIELD = "creator_render_requirements_version"
@@ -32,52 +43,515 @@ REQUIREMENT_VERSION_FIELD = "creator_render_requirements_version"
 # multi-clip Talking head through the narrated family.
 TAKE_LENGTH_EDIT_FORMATS: frozenset[str] = frozenset({"subtitled", *NARRATED_EDIT_FORMATS})
 
-# Every CreativeStrategy field has an explicit ownership note.  This is not a
-# capability claim: only the small core projected by build_render_contract is
-# verified here; the rest stays under its established planner/capability policy.
-FIELD_ACCOUNTING: dict[str, str] = {
-    "direction": "deferred capability policy",
-    "edit_format": "deferred capability policy",
-    "archetype": "deferred capability policy",
-    "hero_media_id": "deferred capability policy",
-    "audio_strategy": "audio requirement",
-    "execution_contract": "deferred capability policy",
-    "media_scope": "deferred capability policy",
-    "story_structure": "deferred capability policy",
-    "caption_style": "deferred capability policy",
-    "intro_hook": "advisory",
-    "opening_title": "exact text",
-    "opening_title_duration_s": "exact text timing",
-    "shot_labels": "exact text",
-    "closing_title": "exact text",
-    "font_family": "deferred capability policy",
-    "text_color": "deferred capability policy",
-    "clip_intents": "deferred capability policy",
-    "resolved_clip_intents": "deferred capability policy",
-    "ordering_choice": "order requirement",
-    "reaction_beats": "deferred capability policy",
-    "closing_media": "deferred capability policy",
-    "song_sync": "deferred capability policy",
-    "resolved_song_takes": "deferred capability policy",
-    "image_layout": "deferred capability policy",
-    "pacing": "deferred capability policy",
-    "target_duration_s": "duration requirement (not on take-length formats)",
-    "render_program": "deferred capability policy",
-    "selected_media_ids": "deferred capability policy",
-    "optional_treatments": "deferred capability policy",
-    "overlay_display": "deferred capability policy",
-    "licensed_sfx": "deferred capability policy",
-    "mixed_media_timing": "deferred capability policy",
-    "montage_audio": "source-audio requirement",
-    "video_reuse_policy": "deferred capability policy",
-    "montage_cadence": "deferred capability policy",
-    "rationale": "advisory",
-    "target_duration_requested": "server-owned duration provenance",
-}
+# KRI-470 kill-switch stamp in Job.all_candidates. Written once at contract stamp
+# time when KRIA_PLAN_AUTHORITY_ENABLED is on; workers branch on the stamp and
+# never on the live flag. Absent = legacy behaviour.
+PLAN_AUTHORITY_FIELD = "creator_plan_authority_version"
+PLAN_AUTHORITY_VERSION = 1
+
+
+def stamp_plan_authority(all_candidates: Mapping[str, Any], *, enabled: bool) -> dict[str, Any]:
+    """``all_candidates`` plus the KRI-470 stamp when the flag is on (else unchanged).
+
+    Called once per job, where its contract is first stamped.  The flag is read by
+    the caller at that moment and never again: workers branch on the persisted key.
+    """
+
+    stamped = dict(all_candidates)
+    if enabled:
+        stamped[PLAN_AUTHORITY_FIELD] = PLAN_AUTHORITY_VERSION
+    return stamped
+
+
+# Job.assembly_plan key holding the typed decline of a terminal contract failure:
+# {"decline_reason", "field_path"?, "alternative"?}.  Written beside (never in
+# place of) the job's failure_reason so existing matchers keep working.
+CREATOR_DECLINE_FIELD = "creator_decline"
+
+DeclineReason = Literal[
+    "capability_unavailable", "evidence_missing", "requirement_conflict", "needs_choice"
+]
+"""Why a render path declined an approved requirement.
+
+* ``capability_unavailable`` -- this render path can never honour or prove the
+  requirement (the creator needs a different path or a different request).
+* ``evidence_missing`` -- the requirement is supported, but the compiled output
+  did not demonstrate it (repair or retry may fix it).
+* ``requirement_conflict`` -- two approved requirements cannot both hold.
+* ``needs_choice`` -- the requirement is ambiguous until the creator decides.
+"""
+
+DECLINE_REASONS: tuple[str, ...] = get_args(DeclineReason)
 
 
 class CreatorRenderContractError(UnsupportedPhonePlan):
-    """A confirmed creator requirement is absent from a device recipe."""
+    """A confirmed creator requirement is absent from a device recipe.
+
+    ``decline_reason`` / ``field_path`` / ``alternative`` are optional so that
+    legacy raise sites keep working; typed sites let the reason survive every
+    layer between the verifier and the creator thread (see
+    ``decline_payload``).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        decline_reason: DeclineReason | None = None,
+        field_path: str | None = None,
+        alternative: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.decline_reason = decline_reason
+        self.field_path = field_path
+        self.alternative = alternative
+
+
+def decline_payload(exc: BaseException) -> dict[str, str]:
+    """The typed decline persisted next to a failure code (empty when untyped)."""
+
+    reason = getattr(exc, "decline_reason", None)
+    if reason not in DECLINE_REASONS:
+        return {}
+    payload = {"decline_reason": str(reason)}
+    for key in ("field_path", "alternative"):
+        value = getattr(exc, key, None)
+        if isinstance(value, str) and value:
+            payload[key] = value
+    return payload
+
+
+# --- Field matrix ------------------------------------------------------------
+#
+# Every path of ``CreativeStrategy`` (nested, lists marked ``[]``) is assigned a
+# disposition and an owner.  The path set is derived from the pydantic schema,
+# so a new field or nested field fails ``test_every_strategy_path_is_assigned``
+# until it is classified here.
+#
+#   supported          the contract pins it and a verifier produces evidence
+#                      (see the adapter declarations for which adapters).
+#   preference_only    taste; any renderer may adapt it, nothing verifies it.
+#   upstream_resolved  consumed/resolved/repaired before the contract (planner,
+#                      capability policy, server resolvers); not re-verified.
+#   unsupported        a creator can state it, but no component proves it; a
+#                      request that depends on it must not be treated as met.
+#
+# A disposition is NOT evidence that every renderer enforces the field.
+
+Disposition = Literal["supported", "preference_only", "upstream_resolved", "unsupported"]
+
+
+@dataclass(frozen=True)
+class FieldRule:
+    disposition: Disposition
+    owner: str
+    note: str = ""
+
+
+def _rules(
+    disposition: Disposition, owner: str, *paths: str, note: str = ""
+) -> dict[str, FieldRule]:
+    return {path: FieldRule(disposition, owner, note) for path in paths}
+
+
+_CLIP_INTENT_LEAVES = (
+    "intent_id",
+    "op",
+    "attribute",
+    "label_source",
+    "transcript_kind",
+    "creator_text",
+    "caption_attribute",
+    "placeholder",
+    "position",
+    "order_by",
+)
+
+FIELD_MATRIX: dict[str, FieldRule] = {
+    # Hard requirements projected by build_render_contract.
+    **_rules(
+        "supported",
+        "render_contract:duration",
+        "target_duration_s",
+        note="pinned only when target_duration_requested is true; a default is not a requirement",
+    ),
+    **_rules(
+        "supported",
+        "render_contract:duration",
+        "target_duration_requested",
+        note="server provenance: only an explicit request becomes a duration requirement",
+    ),
+    **_rules(
+        "supported",
+        "render_contract:audio",
+        "audio_strategy",
+        note=(
+            "only `voiceover` (require_voiceover) and `original_audio` (original_audio=require) "
+            "are projected; licensed_music and the other values pin nothing"
+        ),
+    ),
+    **_rules(
+        "supported",
+        "render_contract:audio",
+        "montage_audio",
+        "montage_audio.preserve_source_audio",
+        "montage_audio.source_media_ids[]",
+        note="source ids are pinned only while preserve_source_audio is true",
+    ),
+    **_rules(
+        "supported",
+        "render_contract:text",
+        "opening_title",
+        "opening_title_duration_s",
+        "shot_labels[]",
+        "closing_title",
+    ),
+    **_rules(
+        "supported",
+        "render_contract:order",
+        "ordering_choice",
+        note="only `chronological` pins order; `group_first` is resolved upstream, not projected",
+    ),
+    # Taste: no renderer is held to it.
+    **_rules(
+        "preference_only",
+        "creator_capabilities",
+        "direction",
+        "intro_hook",
+        "pacing",
+        "rationale",
+        "story_structure[]",
+        "caption_style",
+        "optional_treatments[]",
+        "image_layout",
+        "montage_audio.preview_source_beds",
+    ),
+    **_rules(
+        "preference_only",
+        "guided_story",
+        "mixed_media_timing",
+        *(
+            f"mixed_media_timing.{leaf}"
+            for leaf in (
+                "image_hold",
+                "image_hold_s",
+                "video_hold",
+                "boundary_style",
+                "image_grouping",
+                "sequence_grouping",
+                "sequence_group_order[]",
+            )
+        ),
+    ),
+    # Resolved or repaired upstream of the contract.
+    **_rules(
+        "upstream_resolved",
+        "creator_capabilities",
+        "edit_format",
+        "archetype",
+        "hero_media_id",
+        "execution_contract",
+        "media_scope",
+        "render_program",
+        note="routing/shape fields repaired by compile_strategy_to_plan; never re-verified",
+    ),
+    **_rules(
+        "upstream_resolved",
+        "creator_capabilities",
+        "selected_media_ids[]",
+        note=(
+            "scopes the clip set whose capture times pin order_ids; that only the selected "
+            "media were used is not verified"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
+        "generative_build",
+        "overlay_display",
+        note=(
+            'flat all_candidates["overlay_display"]="fullscreen" is read by the phone worker, '
+            "gated by the media_overlays:fullscreen capability; the result is not verified"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
+        "generative_build",
+        "font_family",
+        "text_color",
+        note="applied as typed overrides at render time; typography is not verified",
+    ),
+    **_rules(
+        "upstream_resolved",
+        "edit_proposal_planner",
+        "video_reuse_policy",
+        "montage_cadence",
+        "montage_cadence.mode",
+        "montage_cadence.source_media_ids[]",
+        "montage_cadence.cut_duration_s",
+        "montage_cadence.reuse_policy",
+        note="enforced while planning; the contract does not re-verify cadence or reuse",
+    ),
+    **_rules(
+        "upstream_resolved",
+        "clip_intent_resolver",
+        "clip_intents[]",
+        *(f"clip_intents[].{leaf}" for leaf in _CLIP_INTENT_LEAVES),
+        "resolved_clip_intents[]",
+        *(f"resolved_clip_intents[].{leaf}" for leaf in _CLIP_INTENT_LEAVES),
+        "resolved_clip_intents[].status",
+        "resolved_clip_intents[].assignments[]",
+        "resolved_clip_intents[].assignments[].media_id",
+        "resolved_clip_intents[].assignments[].value",
+        "resolved_clip_intents[].assignments[].evidence",
+        "resolved_clip_intents[].assignments[].confidence",
+        "resolved_clip_intents[].assignments[].grounding",
+        "resolved_clip_intents[].question",
+        "resolved_clip_intents[].caption_text",
+        "resolved_clip_intents[].caption_grounding",
+        note="server-resolved per-clip answers; labels reach the render via the plan",
+    ),
+    **_rules(
+        "upstream_resolved",
+        "reaction_beats_grounding",
+        "reaction_beats[]",
+        *(
+            f"reaction_beats[].{leaf}"
+            for leaf in (
+                "beat_id",
+                "trigger",
+                "after",
+                "occurrence",
+                "visual_id",
+                "visual_role",
+                "sound",
+                "hold_s",
+            )
+        ),
+        "closing_media",
+        "closing_media.visual_id",
+        "closing_media.badge_visual_id",
+        "closing_media.from_trigger",
+        note="grounded against the real transcript by the server; placement is not verified",
+    ),
+    **_rules(
+        "upstream_resolved",
+        "choice_questions",
+        "choice_answers[]",
+        *(
+            f"choice_answers[].{leaf}"
+            for leaf in (
+                "conflict",
+                "kind",
+                "option",
+                "input_digest",
+                "requirement_ids[]",
+                "source",
+            )
+        ),
+        note=(
+            "server-owned creator decisions on material conflicts; the planner gate writes "
+            "them, build_render_contract consumes them (order basis, shot placement) and the "
+            "chosen duration/clip subset is already rewritten into target_duration_s / "
+            "selected_media_ids"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
+        "user_song_planner",
+        "song_sync",
+        "resolved_song_takes[]",
+    ),
+    # Named required treatment with no evidence anywhere.
+    **_rules(
+        "unsupported",
+        "none",
+        "licensed_sfx",
+        "licensed_sfx.effect_id",
+        "licensed_sfx.semantics",
+        "licensed_sfx.max_placements",
+        note="a named licensed effect is required but no verifier proves its placement",
+    ),
+}
+
+
+def _model_children(annotation: Any) -> list[type[BaseModel]]:
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        return _model_children(get_args(annotation)[0])
+    if origin is not None:
+        found: list[type[BaseModel]] = []
+        for arg in get_args(annotation):
+            found += _model_children(arg)
+        return found
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return [annotation]
+    return []
+
+
+def _is_list(annotation: Any) -> bool:
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        return _is_list(get_args(annotation)[0])
+    if origin in (Union, UnionType):
+        return any(_is_list(arg) for arg in get_args(annotation))
+    return origin in (list, tuple, set, frozenset)
+
+
+def schema_field_paths(model: type[BaseModel] = CreativeStrategy, prefix: str = "") -> set[str]:
+    """Every nested field path of ``model``; list-typed fields end in ``[]``."""
+
+    paths: set[str] = set()
+    for name, field in model.model_fields.items():
+        path = prefix + name + ("[]" if _is_list(field.annotation) else "")
+        paths.add(path)
+        for child in _model_children(field.annotation):
+            paths |= schema_field_paths(child, path + ".")
+    return paths
+
+
+# --- Adapter declarations ----------------------------------------------------
+#
+# What each render path does with each contract requirement: it `consumes` it
+# (routes from it and the verifier checks it) or `declines` it with a typed
+# reason.  Declarations are grounded in the dispatcher in
+# tasks/generative_build.py, the speech-montage job, and the cloud contract.
+
+CONTRACT_REQUIREMENTS: tuple[str, ...] = (
+    "duration_s",
+    "require_voiceover",
+    "audio_source_ids",
+    "original_audio",
+    "exact_texts",
+    "order_required",
+    "unresolved",
+)
+
+# The matrix path a requirement is about.  ``None``: refined per item at raise
+# time (exact text -> opening_title / closing_title / shot_labels[]) or not
+# attributable to one strategy field (unresolved).
+REQUIREMENT_FIELD_PATHS: dict[str, str | None] = {
+    "duration_s": "target_duration_s",
+    "require_voiceover": "audio_strategy",
+    "audio_source_ids": "montage_audio.source_media_ids[]",
+    "original_audio": "montage_audio.preserve_source_audio",
+    "exact_texts": None,
+    "order_required": "ordering_choice",
+    "unresolved": None,
+}
+
+BRIEF_TEXT_FIELD_PATH = "brief:text"
+
+
+def text_field_path(requirement: TextRequirement) -> str:
+    """The matrix path an exact-text requirement came from."""
+
+    return {
+        "opening": "opening_title",
+        "closing": "closing_title",
+        "clip": "shot_labels[]",
+    }.get(requirement.role, BRIEF_TEXT_FIELD_PATH)
+
+
+@dataclass(frozen=True)
+class Decline:
+    reason: DeclineReason
+    alternative: str = ""
+
+
+@dataclass(frozen=True)
+class AdapterDeclaration:
+    adapter: str
+    consumes: frozenset[str]
+    declines: Mapping[str, Decline]
+
+    def __post_init__(self) -> None:
+        accounted = set(self.consumes) | set(self.declines)
+        if (
+            accounted != set(CONTRACT_REQUIREMENTS)
+            or set(self.consumes) & set(self.declines)
+            or set(self.consumes) - set(CONTRACT_REQUIREMENTS)
+        ):
+            raise ValueError(
+                f"{self.adapter}: every contract requirement must be consumed or declined once"
+            )
+
+
+_ASK_FOR_CHOICE = "Tell me which option you want and I'll continue."
+_PHONE_REPAIR = "I can rebuild the edit so it shows this, or you can relax the requirement."
+_ASK_PHONE = (
+    "Ask for it to be rendered on your iPhone, where I can check it, "
+    "or tell me to drop that requirement."
+)
+
+# What the pin-time phone verifier (`verify_phone_recipe`) does with each
+# requirement for adapters that do not plan toward it: refuse to pin unless the
+# compiled recipe demonstrates it.
+PHONE_VERIFIER_DECLINES: dict[str, Decline] = {
+    "duration_s": Decline("evidence_missing", _PHONE_REPAIR),
+    "require_voiceover": Decline("evidence_missing", _PHONE_REPAIR),
+    "audio_source_ids": Decline("evidence_missing", _PHONE_REPAIR),
+    "original_audio": Decline("evidence_missing", _PHONE_REPAIR),
+    "exact_texts": Decline("evidence_missing", _PHONE_REPAIR),
+    "order_required": Decline("evidence_missing", _PHONE_REPAIR),
+}
+_UNRESOLVED_DECLINE = Decline("needs_choice", _ASK_FOR_CHOICE)
+# The mix would play one source twice (a track clip and the separate music bed).
+_SOUNDTRACK_TWICE = Decline(
+    "requirement_conflict",
+    "I can rebuild the edit with that soundtrack playing once, or you can pick a different one.",
+)
+
+
+def _phone(adapter: str, consumes: set[str], **overrides: Decline) -> AdapterDeclaration:
+    declines = {
+        requirement: overrides.get(requirement, decline)
+        for requirement, decline in PHONE_VERIFIER_DECLINES.items()
+        if requirement not in consumes
+    }
+    declines["unresolved"] = _UNRESOLVED_DECLINE
+    return AdapterDeclaration(adapter, frozenset(consumes), declines)
+
+
+_VOICE_CONFLICT = Decline(
+    "requirement_conflict",
+    "Choose either your recorded voice or the camera audio for this edit.",
+)
+
+ADAPTER_DECLARATIONS: dict[str, AdapterDeclaration] = {
+    declaration.adapter: declaration
+    for declaration in (
+        # services/phone_speech_montage_job.py: the only adapter that routes from
+        # the contract (voice ids, duration, order) and verifies its own recipe.
+        _phone(
+            "phone_speech_montage",
+            {"duration_s", "audio_source_ids", "original_audio", "order_required"},
+            require_voiceover=_VOICE_CONFLICT,
+        ),
+        # _run_phone_unified_montage_job -> _run_phone_guided_job.
+        _phone(
+            "phone_guided_unified_montage",
+            set(),
+            audio_source_ids=Decline(
+                "capability_unavailable",
+                "Ask for a spoken-excerpt montage, which can keep that camera audio.",
+            ),
+        ),
+        # _run_phone_voiceover_montage_job: routed to when the contract needs the voice.
+        _phone(
+            "phone_voiceover_montage",
+            {"require_voiceover"},
+            audio_source_ids=_VOICE_CONFLICT,
+        ),
+        # _run_phone_subtitled_job (also narrated formats without a recording).
+        _phone("phone_subtitled", set()),
+        # _run_phone_narrated_job.
+        _phone(
+            "phone_narrated",
+            {"require_voiceover"},
+            audio_source_ids=_VOICE_CONFLICT,
+        ),
+    )
+}
 
 
 class TextRequirement(BaseModel):
@@ -137,8 +611,24 @@ def _hash(value: object) -> str:
     ).hexdigest()
 
 
+# Fields added to ``CreatorRenderContract`` after v1 shipped, mapped to their
+# JSON-mode default.  A stored v1 contract has no such key, so its digest was
+# computed without it; skipping a field while it holds its default keeps every
+# stored contract readable (``read_render_contract`` would otherwise reject
+# in-flight jobs with "requirements changed").  A field is added here in the
+# same change that adds it to the model, and never removed.
+_POST_V1_FIELD_DEFAULTS: dict[str, Any] = {}
+
+
 def _digest(data: Mapping[str, Any]) -> str:
-    return _hash({key: value for key, value in data.items() if key != "digest"})
+    return _hash(
+        {
+            key: value
+            for key, value in data.items()
+            if key != "digest"
+            and not (key in _POST_V1_FIELD_DEFAULTS and value == _POST_V1_FIELD_DEFAULTS[key])
+        }
+    )
 
 
 def _strategy(raw: Mapping[str, Any] | None) -> CreativeStrategy | None:
@@ -166,6 +656,11 @@ def build_render_contract(
         return None
     typed = _strategy(strategy)
     raw = dict(strategy or {})
+    # KRI-476 (PR-C): the creator's recorded answers to material conflicts. They
+    # resolve the matching requirement; without an answer the legacy behaviour is
+    # unchanged (an unresolved item, never a guess).
+    answers = {a.conflict: a for a in (typed.choice_answers or ())} if typed else {}
+    order_answer = answers.get(CONFLICT_ORDER_BASIS)
     texts: list[TextRequirement] = []
     if typed is not None:
         if typed.opening_title:
@@ -181,34 +676,62 @@ def build_render_contract(
         for index, text in enumerate(typed.shot_labels or ()):
             texts.append(TextRequirement(role="clip", text=text, shot_index=index))
     durations: list[float] = []
-    # A Talking (subtitled / talking_head) edit runs as long as the take and a
-    # voiceover edit (the narrated family, or a montage spined by a recorded
-    # voiceover) as long as the voiceover: no compiler trims those to a named
-    # length, so a length the creator asked for is not a fact the recipe can
-    # prove (the brief receipt already says the length follows the take or the
-    # voiceover). Pinning it would refuse every such edit at the pin step (job
-    # e1c5f89e, 2026-10-06: a 68 s Talking take approved with "keep it under 45
-    # seconds").
+    # The Creator model must always emit ``target_duration_s`` (it picks a length from
+    # the footage when the creator named none), and the server marks it
+    # ``target_duration_requested`` either way, so the marker alone is NOT evidence of a
+    # creator-requested length. When a brief exists, its LIVE timing requirements (below)
+    # are the creator's own lengths; a strategy value only counts alongside one (so a
+    # disagreement stays a conflict) or when the creator answered a duration-vs-count
+    # choice (the answer rewrites it). A user-song item's
+    # length is owned by the song window, never by a model-chosen target. Legacy
+    # brief-less non-song strategies keep the marker behaviour unchanged.
+    # A Talking (subtitled) edit runs as long as the take and a voiceover edit (the
+    # narrated family, or a montage spined by a recorded voiceover) as long as the
+    # voiceover: no compiler trims those to a named length, so a length the creator
+    # asked for is not a fact the recipe can prove (the brief receipt already says
+    # the length follows the take or the voiceover). Pinning it refused every such
+    # edit at the pin step (job e1c5f89e, 2026-10-06: a 68 s Talking take approved
+    # with "keep it under 45 seconds").
     length_is_pinnable = typed is None or not (
         typed.edit_format in TAKE_LENGTH_EDIT_FORMATS or typed.audio_strategy == "voiceover"
     )
+    is_user_song = bool(typed and typed.audio_strategy == "user_song")
+    duration_answered = answers.get(CONFLICT_DURATION_VS_COUNT) is not None
+    brief_names_duration = bool(
+        brief is not None
+        and any(r.kind == "timing" and r.facts.get("duration_s") is not None for r in brief.live())
+    )
+    strategy_duration_is_evidence = duration_answered or (
+        not is_user_song and (brief is None or brief_names_duration)
+    )
     if (
         length_is_pinnable
+        and strategy_duration_is_evidence
         and raw.get("target_duration_requested") is True
         and "target_duration_s" in raw
     ):
         durations.append(float(raw["target_duration_s"]))
     order_required = bool(typed and typed.ordering_choice == "chronological")
+    attachment_order = False
     order_ids = tuple(str(item) for item in clip_order if str(item).strip())
     order_basis = "confirmed" if order_ids else None
     unresolved: list[str] = []
+    song_time_owns_order = bool(
+        typed
+        and typed.audio_strategy == "user_song"
+        and typed.song_sync == "lipsync"
+        and typed.resolved_song_takes
+    )
     if brief:
         for requirement in brief.live():
-            if (
-                length_is_pinnable
-                and requirement.kind == "timing"
-                and requirement.facts.get("duration_s") is not None
-            ):
+            if requirement.kind == "timing" and requirement.facts.get("duration_s") is not None:
+                if not length_is_pinnable:
+                    continue
+                answered = answers.get(CONFLICT_DURATION_VS_COUNT)
+                if answered is not None and requirement.id in answered.requirement_ids:
+                    # The creator chose a different length for exactly this requirement;
+                    # the approved strategy carries it (target_duration_s, requested).
+                    continue
                 durations.append(float(requirement.facts["duration_s"]))
             if requirement.kind == "text" and requirement.literal:
                 shot_index = None
@@ -219,8 +742,18 @@ def build_render_contract(
                         for index, text in enumerate(labels)
                         if _normal(text) == _normal(requirement.literal)
                     ]
+                    placed = answers.get(f"{CONFLICT_TEXT_PLACEMENT}:{requirement.id}")
+                    chosen = (
+                        int(placed.option.rsplit("_", 1)[-1]) - 1
+                        if placed is not None
+                        and placed.option.startswith("shot_")
+                        and placed.option.rsplit("_", 1)[-1].isdigit()
+                        else None
+                    )
                     if len(matching) == 1:
                         shot_index = matching[0]
+                    elif chosen is not None and chosen in matching:
+                        shot_index = chosen
                     else:
                         unresolved.append(
                             "I need an explicit shot assignment for the confirmed text."
@@ -241,10 +774,49 @@ def build_render_contract(
                     )
                 )
             if requirement.kind == "order":
+                if song_time_owns_order and requirement.facts.get("key") not in {
+                    "capture_time",
+                    "chronological",
+                }:
+                    # The song-order answer ("Use this order: clips 1, 2, ..."): the
+                    # server-resolved song placement IS the order authority and the
+                    # render verifies it through the lip-sync receipts, so it is not
+                    # an unverifiable media-order rule (and must never pin capture time).
+                    continue
                 order_required = True
-                if requirement.facts.get("key") not in {"capture_time", "chronological"}:
+                key = requirement.facts.get("key")
+                if order_answer is not None and requirement.id in order_answer.requirement_ids:
+                    continue  # the creator's answer decides how this order is met
+                if key == ATTACHMENT_ORDER_KEY and order_answer is not None:
+                    # Only a recorded creator answer makes "attachment" a verifiable
+                    # basis; a bare brief key stays unresolved exactly as before.
+                    attachment_order = True
+                elif key not in CAPTURE_ORDER_KEYS:
                     unresolved.append("I can't verify this ordering rule from the approved media.")
-    if order_required:
+    if order_answer is not None:
+        if order_answer.option == OPT_UNORDERED:
+            # The creator chose to drop the chronological promise: nothing to verify.
+            order_required = False
+        elif order_answer.option == OPT_ATTACHMENT_ORDER:
+            order_required = True
+            attachment_order = True
+    if order_required and attachment_order:
+        # An explicit, verifiable basis: the order the clips were added to the project.
+        rows = (media_snapshot or {}).get("clip_assignments") or []
+        selected = set(typed.selected_media_ids or ()) if typed else set()
+        if selected:
+            rows = [
+                row for row in rows if isinstance(row, Mapping) and row.get("media_id") in selected
+            ]
+        ids = [
+            str(row["media_id"]) for row in rows if isinstance(row, Mapping) and row.get("media_id")
+        ]
+        if not ids or len(ids) != len(rows) or len(set(ids)) != len(ids):
+            unresolved.append("I need to know which clips are in the edit to verify their order.")
+        else:
+            order_ids = tuple(ids)
+            order_basis = "attachment_order"
+    elif order_required:
         from app.services.clip_facts import capture_from_assignment
 
         rows = (media_snapshot or {}).get("clip_assignments") or []
@@ -279,7 +851,10 @@ def build_render_contract(
             order_basis = "capture_time"
     if durations and any(abs(value - durations[0]) > 0.001 for value in durations[1:]):
         raise CreatorRenderContractError(
-            "Your confirmed edit lengths conflict, so I can't render it safely."
+            "Your confirmed edit lengths conflict, so I can't render it safely.",
+            decline_reason="requirement_conflict",
+            field_path="target_duration_s",
+            alternative="Tell me which length you want.",
         )
     source_ids: tuple[str, ...] = ()
     original_audio: Literal["forbid", "require"] | None = None
@@ -328,6 +903,135 @@ def read_render_contract(assembly: Mapping[str, Any]) -> CreatorRenderContract |
     return contract
 
 
+def _phone_decline(
+    requirement: str, message: str, *, field_path: str | None = None
+) -> CreatorRenderContractError:
+    """A typed refusal for ``requirement`` using the declared phone-verifier reason."""
+
+    decline = PHONE_VERIFIER_DECLINES[requirement]
+    return CreatorRenderContractError(
+        message,
+        decline_reason=decline.reason,
+        field_path=field_path or REQUIREMENT_FIELD_PATHS[requirement],
+        alternative=decline.alternative or None,
+    )
+
+
+def unresolved_decline(message: str) -> CreatorRenderContractError:
+    """The typed refusal for an unresolved approved requirement (needs a choice)."""
+
+    return CreatorRenderContractError(
+        message,
+        decline_reason=_UNRESOLVED_DECLINE.reason,
+        alternative=_UNRESOLVED_DECLINE.alternative,
+    )
+
+
+def check_phone_dispatch_contract(
+    contract: CreatorRenderContract,
+    *,
+    snapshot_generation_id: object,
+    has_voiceover_candidate: bool,
+    user_song: object = None,
+) -> bool:
+    """Gate a phone dispatch on the pinned contract; return the voiceover route.
+
+    Raised declines are typed so the reason survives the worker's
+    ``phone_plan_unsupported`` collapse.  A recording's mere presence never
+    overrides the approved soundtrack: the returned flag is the contract's.
+    """
+
+    if contract.generation_id != snapshot_generation_id:
+        raise CreatorRenderContractError(
+            "This edit belongs to a different approved revision.",
+            decline_reason="requirement_conflict",
+            alternative="Ask me to make the edit again from your latest request.",
+        )
+    if contract.unresolved:
+        raise unresolved_decline(contract.unresolved[0])
+    if contract.require_voiceover and not has_voiceover_candidate:
+        raise CreatorRenderContractError(
+            "This edit needs your confirmed recorded voice.",
+            decline_reason="needs_choice",
+            field_path=REQUIREMENT_FIELD_PATHS["require_voiceover"],
+            alternative="Record or upload your voice, or tell me to use music instead.",
+        )
+    if contract.audio_source_ids and (contract.require_voiceover or user_song):
+        raise CreatorRenderContractError(
+            "This renderer can't combine the confirmed soundtracks.",
+            decline_reason="requirement_conflict",
+            field_path=REQUIREMENT_FIELD_PATHS["audio_source_ids"],
+            alternative="Choose one soundtrack: the camera audio, your voice, or your song.",
+        )
+    return contract.require_voiceover
+
+
+def speech_edit_not_built() -> CreatorRenderContractError:
+    """The speech adapter declined a contract that requires camera-audio sources."""
+
+    return CreatorRenderContractError(
+        "I couldn't build the confirmed camera-audio edit.",
+        decline_reason="capability_unavailable",
+        field_path=REQUIREMENT_FIELD_PATHS["audio_source_ids"],
+        alternative="Pick a different clip to carry the speech, or ask for a plain montage.",
+    )
+
+
+def _clip_audible(recipe: EditRecipeV2, track, clip) -> bool:  # noqa: ANN001
+    """True when this track clip reaches the mix (gain, original volume, mute windows)."""
+
+    if clip.volume <= 0 or (track.kind == "video" and recipe.audio.original_volume <= 0):
+        return False
+    # Mute windows use timeline time. Covering only part of a clip cannot
+    # prove silence; adjacent windows can together cover the whole clip.
+    start = clip.timeline_start
+    end = start + clip.source_duration / clip.rate
+    for window in sorted(recipe.audio.mute_windows, key=lambda item: item.start):
+        if clip.id not in window.clip_ids or window.end <= start:
+            continue
+        if window.start > start:
+            return True
+        start = max(start, window.end)
+        if start >= end:
+            return False
+    return start < end
+
+
+def music_bed_audible(recipe: EditRecipeV2) -> str | None:
+    """The asset id of the separate music bed when it reaches the mix, else None.
+
+    The device plays ``audio.music_asset_id`` as its OWN bed (from source 0, at
+    ``music_volume``) in addition to every audio-track clip. A track clip is not
+    the only way a source becomes audible.
+    """
+
+    asset_id = recipe.audio.music_asset_id
+    if asset_id is None or recipe.audio.music_volume <= 0 or recipe.duration <= 0:
+        return None
+    return asset_id
+
+
+def doubled_soundtrack_assets(recipe: EditRecipeV2) -> list[str]:
+    """Assets the mix plays twice: audible through a track clip AND the music bed.
+
+    KRI-481 (prod job 934811f3): the song lane put the creator's song on a track
+    clip at the chosen window and left the bed at its default volume, so the
+    device also played it from source 0. Neither copy is "wrong" alone, which is
+    why a per-clip check could not see it.
+    """
+
+    bed = music_bed_audible(recipe)
+    if bed is None:
+        return []
+    for track in recipe.tracks:
+        if track.kind not in {"video", "audio"}:
+            continue
+        for clip in track.clips:
+            if clip.source_asset_id == bed and _clip_audible(recipe, track, clip):
+                return [bed]
+    return []
+
+
 def verify_phone_recipe(
     contract: CreatorRenderContract,
     recipe: EditRecipeV2,
@@ -335,34 +1039,29 @@ def verify_phone_recipe(
     source_audio: Mapping[str, bool] | None = None,
 ) -> list[dict[str, Any]]:
     if contract.unresolved:
-        raise CreatorRenderContractError(contract.unresolved[0])
+        raise unresolved_decline(contract.unresolved[0])
     manifest = {asset.id: asset for asset in recipe.asset_manifest.assets}
     receipts: list[dict[str, Any]] = []
     if (
         contract.duration_s is not None
         and abs(recipe.duration - contract.duration_s) / contract.duration_s > 0.1
     ):
-        raise CreatorRenderContractError("This edit couldn't keep the confirmed length.")
+        raise _phone_decline("duration_s", "This edit couldn't keep the confirmed length.")
 
     def audible(track, clip) -> bool:
-        if clip.volume <= 0 or (track.kind == "video" and recipe.audio.original_volume <= 0):
-            return False
-        # Mute windows use timeline time. Covering only part of a clip cannot
-        # prove silence; adjacent windows can together cover the whole clip.
-        start = clip.timeline_start
-        end = start + clip.source_duration / clip.rate
-        for window in sorted(recipe.audio.mute_windows, key=lambda item: item.start):
-            if clip.id not in window.clip_ids or window.end <= start:
-                continue
-            if window.start > start:
-                return True
-            start = max(start, window.end)
-            if start >= end:
-                return False
-        return start < end
+        return _clip_audible(recipe, track, clip)
 
+    doubled = doubled_soundtrack_assets(recipe)
+    if doubled:
+        raise CreatorRenderContractError(
+            "This edit would play its soundtrack twice at once.",
+            decline_reason=_SOUNDTRACK_TWICE.reason,
+            field_path=REQUIREMENT_FIELD_PATHS["require_voiceover"],
+            alternative=_SOUNDTRACK_TWICE.alternative,
+        )
+    bed_asset = manifest.get(music_bed_audible(recipe) or "")
     if contract.require_voiceover:
-        voice_is_audible = any(
+        voice_is_audible = isinstance(bed_asset, VoiceoverRenderAsset) or any(
             track.kind == "audio"
             and audible(track, clip)
             and isinstance(manifest.get(clip.source_asset_id), VoiceoverRenderAsset)
@@ -370,8 +1069,8 @@ def verify_phone_recipe(
             for clip in track.clips
         )
         if not voice_is_audible:
-            raise CreatorRenderContractError(
-                "This edit needs your recorded voice before it can render."
+            raise _phone_decline(
+                "require_voiceover", "This edit needs your recorded voice before it can render."
             )
     original_ids = {
         asset.media_id
@@ -393,15 +1092,25 @@ def verify_phone_recipe(
             for clip in track.clips
         )
     }
+    if isinstance(bed_asset, OriginalRenderAsset) and (
+        source_audio is None or source_audio.get(bed_asset.media_id) is True
+    ):
+        # A bed that names the camera's file plays the camera audio too.
+        original_ids.add(bed_asset.media_id)
     if contract.original_audio == "forbid" and original_ids:
-        raise CreatorRenderContractError("This edit can't use the camera audio you turned off.")
+        raise _phone_decline(
+            "original_audio", "This edit can't use the camera audio you turned off."
+        )
     if (contract.original_audio == "require" or contract.audio_source_ids) and source_audio is None:
-        raise CreatorRenderContractError("I couldn't verify audio in the approved source files.")
+        raise _phone_decline(
+            "audio_source_ids" if contract.audio_source_ids else "original_audio",
+            "I couldn't verify audio in the approved source files.",
+        )
     if contract.original_audio == "require" and not original_ids:
-        raise CreatorRenderContractError("This edit needs audible camera audio.")
+        raise _phone_decline("original_audio", "This edit needs audible camera audio.")
     if contract.audio_source_ids and original_ids != set(contract.audio_source_ids):
-        raise CreatorRenderContractError(
-            "This edit couldn't keep the confirmed camera-audio sources."
+        raise _phone_decline(
+            "audio_source_ids", "This edit couldn't keep the confirmed camera-audio sources."
         )
 
     picture = sorted(
@@ -457,12 +1166,22 @@ def verify_phone_recipe(
     for requirement in contract.exact_texts:
         matches = [row for row in rendered if row[0] == _normal(requirement.text)]
         if not matches:
-            raise CreatorRenderContractError("This edit is missing confirmed on-screen text.")
+            raise _phone_decline(
+                "exact_texts",
+                "This edit is missing confirmed on-screen text.",
+                field_path=text_field_path(requirement),
+            )
         if requirement.duration_s is not None:
             matches = [row for row in matches if row[2] - row[1] + frame >= requirement.duration_s]
             if not matches:
-                raise CreatorRenderContractError(
-                    "This edit couldn't keep confirmed text on screen long enough."
+                raise _phone_decline(
+                    "exact_texts",
+                    "This edit couldn't keep confirmed text on screen long enough.",
+                    field_path=(
+                        "opening_title_duration_s"
+                        if requirement.role == "opening"
+                        else text_field_path(requirement)
+                    ),
                 )
         if requirement.role == "opening":
             matches = [row for row in matches if row[1] <= frame]
@@ -493,18 +1212,25 @@ def verify_phone_recipe(
             ):
                 matches = []
         if not matches:
-            raise CreatorRenderContractError("This edit put confirmed text in the wrong place.")
+            raise _phone_decline(
+                "exact_texts",
+                "This edit put confirmed text in the wrong place.",
+                field_path=text_field_path(requirement),
+            )
     if contract.order_required:
         actual: list[str] = []
         for clip in picture:
             asset = manifest.get(clip.source_asset_id)
             if not isinstance(asset, OriginalRenderAsset):
-                raise CreatorRenderContractError(
-                    "This edit has an unverified picture source in the confirmed order."
+                raise _phone_decline(
+                    "order_required",
+                    "This edit has an unverified picture source in the confirmed order.",
                 )
             if not actual or actual[-1] != asset.media_id:
                 actual.append(asset.media_id)
         if not contract.order_ids or tuple(actual) != contract.order_ids:
-            raise CreatorRenderContractError("This edit couldn't keep the confirmed clip order.")
+            raise _phone_decline(
+                "order_required", "This edit couldn't keep the confirmed clip order."
+            )
     receipts.append({"duration_s": recipe.duration, "verified": True})
     return receipts

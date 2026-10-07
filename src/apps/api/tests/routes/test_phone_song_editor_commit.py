@@ -399,6 +399,25 @@ def test_a_text_only_save_after_a_volume_change_keeps_the_volume():
     assert recipe.audio.original_volume == 0.0
 
 
+@pytest.mark.parametrize("make_job", [background_job, lipsync_job])
+def test_an_editor_save_never_turns_the_silenced_song_bed_back_on(make_job):
+    """KRI-470 PR-G: the editor recompiles through the same song lane, so every Save
+    must keep the song audible once (KRI-481). Judged by the contract verifier, the
+    check the pin runs, not by re-reading one field."""
+    from app.services.creator_render_contract import (
+        CreatorRenderContract,
+        doubled_soundtrack_assets,
+        verify_phone_recipe,
+    )
+
+    job, _result = make_job()
+    for save in (lambda: _song_save(job, volume=0.5), lambda: _text_save(job)):
+        save()
+        recipe = _recipe(job)
+        assert doubled_soundtrack_assets(recipe) == []
+        assert verify_phone_recipe(CreatorRenderContract(generation_id="g"), recipe)
+
+
 def test_a_background_start_move_follows_into_the_recipe():
     job, result = background_job()
     old = result.user_song.window_start_s

@@ -119,11 +119,12 @@ the export bundle, the stitched preview and the cover all carry it.
   `src/apps/api/assets/branding/kria-watermark-mist-standard.png`, written by
   `brand/social/build.py` (`RUNTIME_ASSETS`);
   `test_bundled_watermark_matches_the_brand_kit` fails if it drifts.
-- **Phone (image-only posts rendered on device):**
+- **Phone (supported posts rendered on device):**
   `SlidePostOnDeviceRender.renderSlide` draws the bundled PNG at
   `KriaBranding.watermarkTileRect(canvas:tileSize:)` after the text layer. A
   missing PNG fails the export (`MediaEngineError.missingBrandingResource`)
   rather than saving unbranded slides.
+  `SlidePostVideoRender` uses that same text raster and mark for carousel MP4s.
 - **Re-render of older posts:** `SLIDE_WATERMARK_VERSION` is in every
   normalized key and is stamped on the variant as
   `slide_post.watermark_version`. `_slide_post_export_is_current`
@@ -135,6 +136,75 @@ the export bundle, the stitched preview and the cover all carry it.
 - The slide editor canvases draw the original media and do not show the
   mark; only rendered output (bundle, preview MP4, cover, on-device JPEGs)
   carries it.
+
+## Phone video and look export (KRI-482)
+
+`SLIDE_POST_EXTENDED_DEVICE_EXPORT_ENABLED` defaults to **false**. The creation
+manifest exposes `slide_post_extended_device_export`; missing/false retains the
+server path for video slides and graded photos. Neutral image-only exports keep
+the existing KRI-463 path. The same switch gates live source-look preview and
+removes the “Save to apply” notice only while that preview is enabled. This is
+also the rollback switch; no server renderer is removed.
+
+When enabled, supported drafts export their unsaved edits directly from source
+media. Photos become JPEGs at 2160×2700 (Instagram) or 2160×3840 (TikTok).
+Instagram video slides become 2160×2700 H.264 MP4 Photos assets, retain source
+audio, and stop at 90 seconds. Videos download to temporary files rather than
+memory buffers. The complete ordered batch must render before Photos writes;
+failure, cancellation, or an edited draft aborts and removes temporary output.
+Share keeps the files until the share sheet is dismissed. An expired source URL
+refreshes once. Unknown looks/fonts, unavailable sources, and unsupported video
+profiles retain the server flow; a failure after native rendering starts is
+visible and never silently substitutes neutral footage.
+
+Preview and export share `SlidePostLookRenderer`: cover crop, footage-only look,
+then editable text and finally the export watermark. Original thumbnails/cache
+remain ungraded. Color cubes come from the server's authored filters; five 64³
+float cubes add 20 MiB of uncompressed resources. Spatial treatments use Core
+Image kernels. Grain is deterministic and frozen across video frames, while
+the server's temporal grain varies; Gaussian resampling and 8-bit rounding also
+have bounded differences. They are visual ports, not byte-identical FFmpeg.
+
+Generate cubes and full server references inside the **production Docker
+image** (host FFmpeg differs, particularly the faded mask's limited-range
+conversion). Use the locally built production image and a Docker-visible repo
+path; the container runs offline and needs no credentials:
+
+```bash
+docker run --rm --network none --entrypoint python \
+  -v "$PWD:/work" -w /work nova-render-api:local \
+  scripts/ios/generate-slide-look-cubes.py \
+  --out src/apps/ios/Kria/Resources/Looks \
+  --photo src/apps/web/public/landing/raw-story/lisbon.jpg \
+  --references-dir .gstack/slide-look-parity
+```
+
+The report measures 64³ vs 128³ color interpolation; it does not certify native
+spatial parity. On macOS, compile the native fixture runner next to a `Looks/`
+copy of the app resources, then pass the server reference directory:
+
+```bash
+mkdir -p .gstack/slide-look-parity/Looks
+cp src/apps/ios/Kria/Resources/Looks/* .gstack/slide-look-parity/Looks/
+swiftc src/apps/ios/Kria/Features/SlidePostLookRenderer.swift \
+  scripts/ios/render-slide-look-fixture.swift \
+  -o .gstack/slide-look-parity/native-render
+.gstack/slide-look-parity/native-render .gstack/slide-look-parity
+```
+
+Run the native harness with normal GPU access; a sandbox that denies Core Image
+rendering can leave the bitmap empty without reporting a framework error.
+The runner writes native PNGs and RGB MAE/P95 metrics, and checks repeatability,
+geometry and opaque coverage. Compare visual effects as well as those numbers.
+Native real-MP4 tests verify canvas/codec/audio, shared preview
+grading and text placement. Look tests verify deterministic pixels, opaque
+edges, neutral bypass and the production faded-mask range. The native UI test
+`testLooksAppearOnThePhotoBeforeSavingWhenDeviceCapabilityIsEnabled` captures
+each active look before saving.
+
+Keep the switch off until the [physical-device performance gate](../runbooks/ios-development.md#performance-gate)
+passes on an iPhone 13 and a current iPhone, with real-photo/video visual approval
+and preview/export parity. Simulator timing is not rollout evidence.
 
 ## Rich per-slide text (KRI-298 / KRI-299)
 

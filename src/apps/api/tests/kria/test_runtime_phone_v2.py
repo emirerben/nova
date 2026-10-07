@@ -915,3 +915,332 @@ def test_an_unknown_dispatch_failure_keeps_the_generic_retry_copy() -> None:
 
     assert execution.error["recovery"] == "retry"
     assert "retry without repeating the edit" in events[-1]["content"]
+
+
+# --- KRI-470 PR-A: typed creator-contract declines reach the creator thread ----------
+#
+# Failure modes: a typed reason is persisted but the observer still applies the
+# failure-code default (dead retry loop for a capability refusal, or an ask where a
+# repair/retry is right); the refusal hides the limit or the alternative; a typed
+# reason on a stale/unrelated variant leaks into another failure; untyped failures
+# change behaviour.
+
+
+def _declined_job(
+    failure_reason: str, *, decline: dict | None = None, detail: str | None = None
+) -> SimpleNamespace:
+    job = _device_job(status="processing_failed")
+    job.assembly_plan = {"variants": [{"variant_id": VARIANT}]}
+    if decline is not None:
+        job.assembly_plan["creator_decline"] = decline
+    job.failure_reason = failure_reason
+    job.error_detail = detail
+    return job
+
+
+def test_a_deterministic_phone_decline_stays_an_ask_and_shows_the_alternative() -> None:
+    """A phone `phone_plan_unsupported` fails identically on retry: never offer one."""
+    job = _declined_job(
+        "phone_plan_unsupported",
+        decline={
+            "decline_reason": "evidence_missing",
+            "field_path": "target_duration_s",
+            "alternative": "I can rebuild the edit so it shows this, or relax the requirement.",
+            "failure_reason": "phone_plan_unsupported",
+        },
+        detail="This edit couldn't keep the confirmed length.",
+    )
+    _, execution, events = _observe(job, {})
+    assert execution.error == {
+        "code": "phone_plan_unsupported",
+        "retryable": False,
+        "recovery": "ask_user",
+        "decline_reason": "evidence_missing",
+        "field_path": "target_duration_s",
+    }
+    content = events[-1]["content"]
+    assert "can rebuild the edit" in content
+    assert "retry without rebuilding" not in content
+    assert events[-1]["payload"]["decline_reason"] == "evidence_missing"
+
+
+def test_a_cloud_publication_evidence_gap_is_a_repair_retry() -> None:
+    job = _declined_job("creator_render_contract_unverified")
+    job.assembly_plan = {
+        "variants": [
+            {
+                "variant_id": VARIANT,
+                "render_status": "failed",
+                "error": "This edit couldn't keep the confirmed length.",
+                "error_class": "creator_render_contract_unverified",
+                "decline_reason": "evidence_missing",
+                "field_path": "target_duration_s",
+            }
+        ]
+    }
+    _, execution, events = _observe(job, {"target_variant_id": VARIANT})
+    assert execution.error["recovery"] == "retry"
+    assert execution.error["retryable"] is True
+    assert execution.error["decline_reason"] == "evidence_missing"
+    assert "retry without rebuilding" in events[-1]["content"]
+
+
+def test_a_preflight_evidence_gap_on_the_job_is_a_repair_retry() -> None:
+    job = _declined_job(
+        "creator_render_contract_unsupported",
+        decline={
+            "decline_reason": "evidence_missing",
+            "failure_reason": "creator_render_contract_unsupported",
+        },
+    )
+    _, execution, _events = _observe(job, {})
+    assert execution.error["recovery"] == "retry"
+
+
+def test_capability_unavailable_decline_names_the_limit_and_a_supported_alternative() -> None:
+    job = _declined_job(
+        "creator_render_contract_unsupported",
+        decline={
+            "decline_reason": "capability_unavailable",
+            "field_path": "opening_title",
+            "alternative": "Ask for it to be rendered on your iPhone, where I can check it.",
+            "failure_reason": "creator_render_contract_unsupported",
+        },
+        detail="This cloud renderer can't verify confirmed on-screen text yet.",
+    )
+    _, execution, events = _observe(job, {})
+    assert execution.error["recovery"] == "ask_user"
+    assert execution.error["retryable"] is False
+    assert execution.error["decline_reason"] == "capability_unavailable"
+    content = events[-1]["content"]
+    assert "can't verify confirmed on-screen text" in content
+    assert "rendered on your iPhone" in content
+    assert "retry without rebuilding" not in content
+
+
+@pytest.mark.parametrize("reason", ["requirement_conflict", "needs_choice"])
+def test_conflict_and_choice_declines_keep_todays_ask_behaviour(reason: str) -> None:
+    from app.tasks.content_plan_build import humanize_job_failure_reason
+
+    job = _declined_job(
+        "phone_plan_unsupported",
+        decline={"decline_reason": reason, "failure_reason": "phone_plan_unsupported"},
+    )
+    _, execution, events = _observe(job, {})
+    assert execution.error["recovery"] == "ask_user"
+    assert execution.error["retryable"] is False
+    assert events[-1]["content"] == humanize_job_failure_reason("phone_plan_unsupported")
+
+
+def test_untyped_contract_failure_keeps_its_existing_recovery() -> None:
+    job = _declined_job("creator_render_contract_unsupported")
+    _, execution, events = _observe(job, {})
+    assert execution.error == {
+        "code": "creator_render_contract_unsupported",
+        "retryable": True,
+        "recovery": "retry",
+    }
+    assert "decline_reason" not in events[-1]["payload"]
+
+
+def test_a_stale_decline_from_an_earlier_failure_is_not_applied_to_a_new_one() -> None:
+    """Job failed once with a capability refusal, was re-run, then failed transiently."""
+    job = _declined_job(
+        "phone_plan_failed",
+        decline={
+            "decline_reason": "capability_unavailable",
+            "alternative": "Stale alternative.",
+            "failure_reason": "creator_render_contract_unsupported",
+        },
+        detail="ffmpeg exploded: OOM",
+    )
+    _, execution, events = _observe(job, {})
+    assert execution.error["recovery"] == "retry"
+    assert execution.error["retryable"] is True
+    assert "decline_reason" not in execution.error
+    assert "Stale alternative." not in events[-1]["content"]
+
+
+def test_an_unstamped_job_decline_is_never_honoured() -> None:
+    job = _declined_job(
+        "creator_render_contract_unsupported",
+        decline={"decline_reason": "capability_unavailable"},
+    )
+    _, execution, _events = _observe(job, {})
+    assert "decline_reason" not in execution.error
+
+
+def test_a_published_cloud_decline_on_the_failed_variant_reaches_the_recovery() -> None:
+    job = _declined_job("creator_render_contract_unverified")
+    job.assembly_plan = {
+        "variants": [
+            {"variant_id": "other", "render_status": "ready"},
+            {
+                "variant_id": VARIANT,
+                "render_status": "failed",
+                "error": "This edit couldn't verify confirmed on-screen text.",
+                "error_class": "creator_render_contract_unverified",
+                "decline_reason": "capability_unavailable",
+                "field_path": "closing_title",
+                "alternative": "Tell me to drop that requirement.",
+            },
+        ]
+    }
+    _, execution, events = _observe(job, {"target_variant_id": VARIANT})
+    assert execution.error["decline_reason"] == "capability_unavailable"
+    assert execution.error["field_path"] == "closing_title"
+    assert execution.error["recovery"] == "ask_user"
+    assert "Tell me to drop that requirement." in events[-1]["content"]
+
+
+def test_the_target_variant_never_inherits_another_variants_decline() -> None:
+    job = _declined_job("variant_render_failed")
+    job.status = "variants_ready_partial"
+    job.assembly_plan = {
+        "variants": [
+            {
+                "variant_id": "other",
+                "render_status": "failed",
+                "error_class": "creator_render_contract_unverified",
+                "decline_reason": "capability_unavailable",
+                "alternative": "Other variant's alternative.",
+            },
+            {
+                "variant_id": VARIANT,
+                "render_status": "failed",
+                "error_class": "variant_render_failed",
+            },
+        ]
+    }
+    _, execution, events = _observe(job, {"target_variant_id": VARIANT})
+    assert "decline_reason" not in execution.error
+    assert execution.error["recovery"] == "retry"
+    assert "Other variant's alternative." not in events[-1]["content"]
+
+
+def test_a_variant_decline_does_not_leak_into_an_unrelated_failure_code() -> None:
+    job = _declined_job("render_failed")
+    job.assembly_plan = {
+        "variants": [
+            {
+                "variant_id": VARIANT,
+                "render_status": "failed",
+                "decline_reason": "capability_unavailable",
+            }
+        ]
+    }
+    _, execution, _events = _observe(job, {})
+    assert execution.error["recovery"] == "retry"
+    assert "decline_reason" not in execution.error
+
+
+# ---------------------------------------------------------------- KRI-470 PR-G: refusals
+
+
+def _refused_job(reason: str, *, alternative: str = "", field_path: str | None = "ordering_choice"):
+    """A device job whose edit the contract refused at publication (typed, recorded)."""
+    from app.services.creator_render_contract import CreatorRenderContractError
+    from app.services.device_render import record_contract_decline
+
+    job = _device_job()
+    _publish(job)  # a good version is live ...
+    job.assembly_plan["variants"][0]["render_status"] = "awaiting_device"  # ... then an edit
+    record = device_record(job, VARIANT)
+    record["status"]["phase"] = "syncing"
+    save_device_record(job, VARIANT, record)
+    exc = CreatorRenderContractError(
+        "This edit couldn't keep the confirmed clip order.",
+        decline_reason=reason,
+        field_path=field_path,
+        alternative=alternative or None,
+    )
+    record_contract_decline(job, VARIANT, exc, stage="publication")
+    mark_device_failed(job, VARIANT, reason_code="unsupported_recipe", detail=str(exc))
+    return job
+
+
+def _observe_refusal(job):  # noqa: ANN001, ANN202
+    return _observe(
+        job,
+        {"target_variant_id": VARIANT, "result": {"editor_prep": {"device_recipe_revision": 1}}},
+    )
+
+
+def test_a_refused_edit_says_what_failed_what_was_kept_and_a_next_step_that_exists() -> None:
+    job = _refused_job("evidence_missing")
+    good = dict(job.assembly_plan["variants"][0])
+
+    outcome, execution, events = _observe_refusal(job)
+
+    assert outcome == "failed"
+    error = execution.error
+    # Nothing re-runs a refused phone render and chat retry does not exist for device jobs:
+    # the error must not claim it is retryable or that a replan will happen by itself.
+    assert (error["recovery"], error["retryable"]) == ("ask_user", False)
+    assert (error["decline_reason"], error["field_path"]) == ("evidence_missing", "ordering_choice")
+    failed = events[-1]
+    assert failed["event_type"] == "assistant_render_failed"
+    assert failed["payload"]["decline_reason"] == "evidence_missing"
+    text = failed["content"]
+    assert "confirmed clip order" in text  # what could not be confirmed
+    assert "not applied" in text  # the edit did not happen
+    assert "last good version is still available" in text  # what is kept
+    assert "make a new version from what you already approved" in text  # a path that exists
+    for promise in ("I'll rebuild", "I will rebuild", "tap Retry", "I'll retry"):
+        assert promise not in text  # no unperformed promise
+    for restating in ("tell me again", "re-send", "restate", "which do you want"):
+        assert restating not in text.lower()
+    assert job.assembly_plan["variants"][0] == good  # nothing about the live version changed
+
+
+@pytest.mark.parametrize("reason", ["needs_choice", "requirement_conflict"])
+def test_a_refusal_that_needs_a_new_decision_asks_the_specific_question(reason) -> None:
+    job = _refused_job(
+        reason,
+        alternative="Use the order you added the clips, or continue without a fixed order.",
+        field_path="ordering_choice",
+    )
+
+    outcome, execution, events = _observe_refusal(job)
+
+    assert outcome == "failed"
+    assert (execution.error["recovery"], execution.error["retryable"]) == ("ask_user", False)
+    assert execution.error["decline_reason"] == reason
+    text = events[-1]["content"]
+    assert "Use the order you added the clips" in text
+    assert "not applied" in text and "last good version is still available" in text
+    assert "redo it" not in text  # a question, not a redo offer
+
+
+def test_an_unavailable_capability_refuses_with_the_way_forward() -> None:
+    job = _refused_job("capability_unavailable", alternative="Ask for a plain montage instead.")
+
+    _, execution, events = _observe_refusal(job)
+
+    assert (execution.error["recovery"], execution.error["retryable"]) == ("ask_user", False)
+    text = events[-1]["content"]
+    assert "Ask for a plain montage instead." in text
+    assert "not applied" in text and "last good version is still available" in text
+
+
+def test_a_refused_first_render_does_not_claim_a_last_good_version_exists() -> None:
+    job = _refused_job("evidence_missing")
+    job.assembly_plan["variants"][0].pop("output_url")  # nothing was ever published
+    job.assembly_plan["variants"][0]["ok"] = False
+
+    _, _, events = _observe_refusal(job)
+
+    text = events[-1]["content"]
+    assert "Nothing was published." in text
+    assert "last good version" not in text
+
+
+def test_a_device_failure_with_no_recorded_refusal_keeps_the_phone_retry_copy() -> None:
+    job = _device_job()
+    mark_device_failed(job, VARIANT, reason_code="thermal", detail="")
+
+    _, execution, events = _observe_refusal(job)
+
+    assert execution.error["recovery"] == "manual"
+    assert "tap Retry" in events[-1]["content"]
+    assert "decline_reason" not in execution.error

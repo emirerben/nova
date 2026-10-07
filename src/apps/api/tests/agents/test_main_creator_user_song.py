@@ -29,12 +29,13 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 
 # (clip_intents_enabled, brief_enabled) -> sha256 of the pre-change render.
 # The brief-on hashes were re-captured for KRI-459's stable-ID brief section (prompt v44) on
-# its own commit before KRI-374 merged in: still byte-identical without a song.
+# its own commit before KRI-374 merged in: still byte-identical without a song. Re-captured
+# again for KRI-470's stated-length `timing` instruction (prompt v45; brief section only).
 PRE_CHANGE_PROMPT_SHA = {
     (True, False): "f7c328b0154ed8e4b92fdfbdab3ea8d6db855858f1499e2fbdfe5af11380fddf",
-    (True, True): "ec241aed30a52a51ebefe410ffd2d62ba5b974c419652ebd0207caa60832b47b",
+    (True, True): "64bfc62ea7750c193e15c0eedc838a2c4ce336956a07f9ab3d1524029efc3336",
     (False, False): "cb7e2f936a3adde2756d9cdce8a09eed5b14767161bebbfceb2a0c743fbf2235",
-    (False, True): "ea2ad371f9df565074ede8fb7e9d765cffe05fc099fedaedc6809fa761dc5513",
+    (False, True): "110543f26fd6bc811f322de0359f9307e2f25ecfff71fc8aa27c96e612e384cb",
 }
 
 
@@ -104,7 +105,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-06-v44"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-07-v45"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

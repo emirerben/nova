@@ -1307,7 +1307,14 @@ def _creator_selected_clip_paths(
 
     strategy = CreativeStrategy.model_validate(creator_strategy)
     selected = list(strategy.selected_media_ids)
-    if strategy.render_program != "native" or not selected:
+    # KRI-476: "keep the length, use the clips that fit" is a creator decision that the
+    # guided/unified montage can only follow if the job is dispatched with exactly
+    # those clips (otherwise it would take every attached clip and flash-cut).
+    chose_fewer = any(
+        answer.kind == "duration_vs_count" and answer.option == "fewer"
+        for answer in strategy.choice_answers or ()
+    )
+    if (strategy.render_program != "native" and not chose_fewer) or not selected:
         return clip_paths
     path_by_id: dict[str, str] = {}
     assignments = [value for value in (item.clip_assignments or []) if isinstance(value, dict)]
@@ -2388,12 +2395,15 @@ def _dispatch_item_render(
             # The generation remains the same token the factory assigned.
             strategy_payload = (job.all_candidates or {}).get("creator_strategy")
             if isinstance(strategy_payload, dict) or brief is not None:
+                from app.config import settings  # noqa: PLC0415
                 from app.services.creator_render_contract import (  # noqa: PLC0415
                     CONTRACT_FIELD,
                     REQUIREMENT_VERSION_FIELD,
                     build_render_contract,
+                    stamp_plan_authority,
                 )
 
+                already_stamped = (job.all_candidates or {}).get(REQUIREMENT_VERSION_FIELD) == 1
                 contract = build_render_contract(
                     strategy_payload,
                     generation_id=job.assembly_plan["creator_generation_id"],
@@ -2403,6 +2413,13 @@ def _dispatch_item_render(
                 )
                 if contract is not None:
                     job.all_candidates = {**job.all_candidates, REQUIREMENT_VERSION_FIELD: 1}
+                    # KRI-470: the kill switch is evaluated once, where the contract is
+                    # first stamped. A factory-stamped job already carries (or lacks) the
+                    # key through the spread above and must not be re-decided here.
+                    if not already_stamped:
+                        job.all_candidates = stamp_plan_authority(
+                            job.all_candidates, enabled=settings.kria_plan_authority_enabled
+                        )
                     job.assembly_plan = {
                         **job.assembly_plan,
                         CONTRACT_FIELD: contract.model_dump(mode="json"),
@@ -2526,6 +2543,15 @@ def _dispatch_item_render(
             }
         snapshot["speech_cleanup_outcome"] = dict(preflight_outcome)
     job.assembly_plan = snapshot
+    # KRI-470 PR-D: stamp the plan's route ONCE, now that every input is attached (the
+    # rebuilt contract, the creator song and the guided snapshot). Plan-authority jobs only;
+    # a plan that resolves to a refusal gets no stamp. Stored as the sibling `creator_route`
+    # key, never inside the strict contract model (older workers reject unknown keys).
+    from app.services.render_route import stamp_route  # noqa: PLC0415
+
+    job.assembly_plan = stamp_route(
+        job.assembly_plan or {}, getattr(job, "all_candidates", None) or {}
+    )
     # Caller holds Plan -> Persona -> PlanItem locks and has revalidated this
     # exact epoch. Job is last in the global lock/write order.
     if _plan_epoch(plan) != ownership_epoch:

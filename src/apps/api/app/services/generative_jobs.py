@@ -509,10 +509,12 @@ def build_generative_job(
     # and non-creator render so the baseline remains byte-identical.
     if creator_strategy:
         from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+        from app.config import settings  # noqa: PLC0415
         from app.services.creator_render_contract import (  # noqa: PLC0415
             CONTRACT_FIELD,
             REQUIREMENT_VERSION_FIELD,
             build_render_contract,
+            stamp_plan_authority,
         )
 
         persisted_strategy = CreativeStrategy.model_validate(creator_strategy).model_dump(
@@ -531,6 +533,11 @@ def build_generative_job(
         if contract is not None:
             creator_contract = {CONTRACT_FIELD: contract.model_dump(mode="json")}
             all_candidates[REQUIREMENT_VERSION_FIELD] = 1
+            # KRI-470 kill switch, evaluated once here and persisted as a plain
+            # JSON key (no migration). Workers read the stamp, never the flag.
+            all_candidates = stamp_plan_authority(
+                all_candidates, enabled=settings.kria_plan_authority_enabled
+            )
         all_candidates["creator_render_contract_version"] = CREATOR_RENDER_CONTRACT_VERSION
         # KRI-297: the confirmed strategy's full-screen Visuals choice, surfaced
         # as a flat key for the phone worker (read like `landscape_fit`). Omitted

@@ -819,7 +819,12 @@ def compile_phone_guided_plan(
         # The song REPLACES the footage's own audio (like pinned narration): a
         # lip-sync take's own sound would double the singer, and a montage with
         # a chosen song is that song.
-        audio = AudioMixRecipe(original_volume=0.0, music_asset_id=song_asset.id)
+        # `music_asset_id` stays: the device uses it to resolve the pinned song asset. But
+        # the engine ALSO plays that asset as its own bed from 0s at `music_volume`, on top
+        # of the `song-bed` track above (which starts at the creator's chosen window). Left
+        # at the default 1.0 the song played twice at once (prod job 934811f3, KRI-481).
+        # The audible gain lives on the track clip, so the legacy bed is silenced.
+        audio = AudioMixRecipe(original_volume=0.0, music_asset_id=song_asset.id, music_volume=0.0)
         required_capabilities |= set(USER_SONG_REQUIRED_CAPABILITIES)
     return EditRecipeV2(
         canvas=Canvas(width=canvas.width, height=canvas.height),

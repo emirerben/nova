@@ -39,19 +39,33 @@ from app.models import (
 MAX_DRAFT_BYTES = 2 * 1024 * 1024
 
 
-def _sanitize_strategy_duration_provenance(raw: dict[str, Any]) -> dict[str, Any]:
+def _sanitize_strategy_duration_provenance(
+    raw: dict[str, Any], *, authoritative_answers: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """Persist only server-derived duration approval provenance.
 
     Draft snapshots are client-writable. A client may propose a duration, but
     must not claim it was explicitly approved by supplying the server-owned
     marker. Reconstruct the marker from the raw duration key before schema
     normalization, which otherwise materializes the default 24 seconds.
+
+    ``choice_answers`` (KRI-476) are server-owned the same way: whatever the client wrote
+    is dropped and only the head draft's own answers (the planner gate wrote them) stay.
     """
 
     requested = "target_duration_s" in raw
     strategy = CreativeStrategy.model_validate(
-        {key: value for key, value in raw.items() if key != "target_duration_requested"}
-    ).model_copy(update={"target_duration_requested": True if requested else None})
+        {
+            key: value
+            for key, value in raw.items()
+            if key not in ("target_duration_requested", "choice_answers")
+        }
+    ).model_copy(
+        update={
+            "target_duration_requested": True if requested else None,
+            "choice_answers": authoritative_answers or None,
+        }
+    )
     return strategy.model_dump(mode="json", exclude_none=True)
 
 
@@ -504,7 +518,13 @@ async def write_draft(
             )
         snapshot[field] = authoritative
     if snapshot.get("kind") == "strategy" and isinstance(snapshot.get("strategy"), dict):
-        snapshot["strategy"] = _sanitize_strategy_duration_provenance(snapshot["strategy"])
+        head_strategy = (head.snapshot_json or {}).get("strategy")
+        snapshot["strategy"] = _sanitize_strategy_duration_provenance(
+            snapshot["strategy"],
+            authoritative_answers=(
+                head_strategy.get("choice_answers") if isinstance(head_strategy, dict) else None
+            ),
+        )
     document = KriaDraftDocument.model_validate(snapshot)
     row = await _insert_revision(db, target=target, document=document, parent=head)
     await db.commit()

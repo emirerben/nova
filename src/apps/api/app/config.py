@@ -641,6 +641,13 @@ class Settings(BaseSettings):
     # Default TRUE; kill switch = false + restart (the field is dropped, no question is
     # asked, the montage behaves exactly as before).
     kria_choice_questions_enabled: bool = True
+    # KRI-470: "one plan, obeyed everywhere". Evaluated ONCE, when a creator
+    # render contract is stamped onto a new job (`creator_plan_authority_version`
+    # in `Job.all_candidates`); workers branch on that stamp, never on this live
+    # flag, so a running job cannot change behaviour. False = new jobs are
+    # unstamped = legacy behaviour. Default TRUE; kill switch = false + restart
+    # api and worker (affects new jobs only).
+    kria_plan_authority_enabled: bool = True
     # KRI-189 (KRI-185 P3): clip facts -- capture time, place name and a
     # best-guess landmark per clip, each with provenance. Gates SERVER
     # CONSUMPTION only: the landmark agent run, exposing facts to the Main
@@ -1634,6 +1641,9 @@ class Settings(BaseSettings):
     # 404s. Capability `slide_post_chat_edit`. Apply: `fly secrets set
     # SLIDE_POST_CHAT_EDIT_ENABLED=true --app nova-video` + restart (api).
     slide_post_chat_edit_enabled: bool = False
+    # KRI-482: keep extended phone slide exports off until physical-device parity passes.
+    # False routes video/look slides through the existing server renderer.
+    slide_post_extended_device_export_enabled: bool = False
     main_creator_agent_freeform_uploads_enabled: bool = False
     main_creator_agent_workspace_enabled: bool = False
     main_creator_agent_rollout_percent: int = Field(default=0, ge=0, le=100)

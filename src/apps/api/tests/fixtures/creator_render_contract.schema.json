@@ -1,0 +1,200 @@
+{
+  "$defs": {
+    "TextRequirement": {
+      "additionalProperties": false,
+      "properties": {
+        "duration_s": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration S"
+        },
+        "media_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Media Id"
+        },
+        "role": {
+          "enum": [
+            "opening",
+            "closing",
+            "any",
+            "clip"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "shot_index": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Shot Index"
+        },
+        "text": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "text"
+      ],
+      "title": "TextRequirement",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "audio_source_ids": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Audio Source Ids",
+      "type": "array"
+    },
+    "brief_digest": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Brief Digest"
+    },
+    "digest": {
+      "default": "",
+      "title": "Digest",
+      "type": "string"
+    },
+    "duration_s": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Duration S"
+    },
+    "exact_texts": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/TextRequirement"
+      },
+      "title": "Exact Texts",
+      "type": "array"
+    },
+    "generation_id": {
+      "minLength": 1,
+      "title": "Generation Id",
+      "type": "string"
+    },
+    "order_basis": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Order Basis"
+    },
+    "order_ids": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Order Ids",
+      "type": "array"
+    },
+    "order_required": {
+      "default": false,
+      "title": "Order Required",
+      "type": "boolean"
+    },
+    "original_audio": {
+      "anyOf": [
+        {
+          "enum": [
+            "forbid",
+            "require"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Original Audio"
+    },
+    "require_voiceover": {
+      "default": false,
+      "title": "Require Voiceover",
+      "type": "boolean"
+    },
+    "strategy_digest": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Strategy Digest"
+    },
+    "unresolved": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Unresolved",
+      "type": "array"
+    },
+    "version": {
+      "const": 1,
+      "default": 1,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "generation_id"
+  ],
+  "title": "CreatorRenderContract",
+  "type": "object"
+}

@@ -1963,6 +1963,11 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         state.summary = None
 
     if "text" in state.changed:
+        from app.services.kria_editor_ops_text import normalize_text_relations
+
+        normalize_text_relations(state)
+
+    if "text" in state.changed:
         # An op may set a named position (or clear the size/face) on a storyboard
         # bar; spell its burned look out again so the draft previews where it burns.
         for row in state.text:
@@ -2073,6 +2078,10 @@ def apply_text_lane_ops(
             hook(op, state, "after")
         state.changes.append(state.summary or _summary(op))
         state.summary = None
+    if "text" in state.changed:
+        from app.services.kria_editor_ops_text import normalize_text_relations
+
+        normalize_text_relations(state)
     return state
 
 

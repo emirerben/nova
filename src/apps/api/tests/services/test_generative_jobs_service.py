@@ -735,3 +735,96 @@ def test_empty_topic_intent_omits_persona_key_unchanged() -> None:
         item_idea="",
     )
     assert "persona" not in job.all_candidates
+
+
+# --- KRI-470 PR-A: KRIA_PLAN_AUTHORITY_ENABLED stamp --------------------------------
+#
+# Failure modes: the stamp is written for a job with no contract; flag-off changes any
+# other persisted byte; the flag is re-read after job creation (workers must only see
+# the stamp); the default is not on.
+
+
+def _stamp_job(monkeypatch: pytest.MonkeyPatch, *, enabled: bool, strategy: dict):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "kria_plan_authority_enabled", enabled)
+    # Deterministic generation id so the whole persisted job can be compared.
+    monkeypatch.setattr(uuid, "uuid4", lambda: uuid.UUID(int=7))
+    return build_generative_job(
+        user_id=uuid.UUID(int=1),
+        clip_paths=["users/u/plan/i/a.mp4"],
+        creator_strategy=strategy,
+    )
+
+
+_STAMPED_STRATEGY = {
+    "opening_title": "Exact title",
+    "target_duration_s": 30,
+    "target_duration_requested": True,
+}
+
+
+def test_plan_authority_defaults_on() -> None:
+    from app.config import Settings
+
+    assert Settings.model_fields["kria_plan_authority_enabled"].default is True
+
+
+def test_stamp_is_written_with_the_contract_when_the_flag_is_on(monkeypatch) -> None:
+    job = _stamp_job(monkeypatch, enabled=True, strategy=_STAMPED_STRATEGY)
+    assert job.all_candidates["creator_render_requirements_version"] == 1
+    assert job.all_candidates["creator_plan_authority_version"] == 1
+
+
+def test_flag_off_leaves_every_other_persisted_field_byte_identical(monkeypatch) -> None:
+    on = _stamp_job(monkeypatch, enabled=True, strategy=_STAMPED_STRATEGY)
+    off = _stamp_job(monkeypatch, enabled=False, strategy=_STAMPED_STRATEGY)
+    assert "creator_plan_authority_version" not in off.all_candidates
+    stripped = {k: v for k, v in on.all_candidates.items() if k != "creator_plan_authority_version"}
+    assert stripped == off.all_candidates
+    assert on.assembly_plan == off.assembly_plan
+
+
+def test_a_job_without_a_contract_is_never_stamped(monkeypatch) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "kria_plan_authority_enabled", True)
+    plain = build_generative_job(user_id=uuid.uuid4(), clip_paths=["users/u/plan/i/a.mp4"])
+    assert "creator_render_requirements_version" not in plain.all_candidates
+    assert "creator_plan_authority_version" not in plain.all_candidates
+
+
+def test_a_trivial_creator_contract_is_still_stamped(monkeypatch) -> None:
+    job = _stamp_job(monkeypatch, enabled=True, strategy={"pacing": "fast"})
+    assert job.all_candidates["creator_render_requirements_version"] == 1
+    assert job.all_candidates["creator_plan_authority_version"] == 1
+
+
+def test_stamp_helper_never_mutates_its_input_and_respects_the_flag() -> None:
+    from app.services.creator_render_contract import stamp_plan_authority
+
+    original = {"a": 1}
+    assert stamp_plan_authority(original, enabled=True) == {
+        "a": 1,
+        "creator_plan_authority_version": 1,
+    }
+    assert original == {"a": 1}
+    assert stamp_plan_authority(original, enabled=False) == {"a": 1}
+
+
+# --- KRI-470 PR-D: the route is stamped at dispatch, never at job build -----------------
+#
+# Failure modes: a build-time route (before the creator song, guided snapshot and the
+# brief-bound contract are attached) goes stale; the route lands inside the strict contract
+# model where older workers reject it.
+
+
+def test_build_never_stamps_a_route_or_touches_the_contract_shape(monkeypatch) -> None:
+    from app.services.creator_render_contract import CONTRACT_FIELD
+
+    on = _stamp_job(monkeypatch, enabled=True, strategy={"pacing": "fast"})
+    off = _stamp_job(monkeypatch, enabled=False, strategy={"pacing": "fast"})
+    assert "creator_route" not in on.assembly_plan
+    assert on.assembly_plan == off.assembly_plan
+    assert set(on.assembly_plan[CONTRACT_FIELD]) == set(off.assembly_plan[CONTRACT_FIELD])
+    assert "route" not in on.assembly_plan[CONTRACT_FIELD]

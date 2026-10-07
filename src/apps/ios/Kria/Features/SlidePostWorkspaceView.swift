@@ -35,6 +35,7 @@ struct SlidePostWorkspaceView: View {
     @State private var photoSelections: [String: ProjectPhotoSelection] = [:]
     @State private var previewPlayer: AVPlayer?
     @State private var previewPlayerAssetID: String?
+    @State private var previewLookFailed = false
     @State private var resolvedThread: CreationThread?
     @State private var resolvedCapabilities: CreationCapabilities?
     @State private var showsAttachments = false
@@ -162,25 +163,38 @@ struct SlidePostWorkspaceView: View {
     private func previewMediaView(rich: Bool) -> some View {
         let asset = session.selectedAsset
         let previewURL = previewURL(rich: rich)
+        let liveLook = rich && extendedDeviceExportOn
+        let preset = liveLook ? session.selectedSlide?.edits?.lookPreset ?? "none" : "none"
+        let profile = session.draft?.platformProfile ?? "instagram_carousel"
+        let playerKey = "\(asset?.id ?? "")|\(profile)|\(preset)"
         return ZStack {
             if let asset, let url = previewURL {
                 if asset.kind == "video" {
                     // The poster is the cached thumbnail, so the frame is never blank while the player spins up.
-                    SlidePostCachedImage(assetID: asset.id, variant: .preview, url: asset.previewMediaURL, onExpired: { await refresh() }, showsSpinner: false)
+                    SlidePostCachedImage(assetID: asset.id, variant: .preview, url: asset.previewMediaURL, onExpired: { await refresh() }, showsSpinner: false,
+                                         lookPreset: preset, lookCanvas: SlidePostOnDeviceRender.canvas(for: profile))
                     if previewPlayer != nil, previewPlayerAssetID == asset.id { VideoPlayer(player: previewPlayer) }
+                    if previewLookFailed {
+                        Text("Look preview unavailable").font(KriaFont.body(12)).padding(8).background(KriaColor.paper, in: Capsule())
+                    }
                 } else {
                     SlidePostCachedImage(assetID: asset.id, variant: .preview, url: url, onExpired: { await refresh() },
-                                         loadingIdentifier: "slidepost-preview-loading", showsRetry: true, reportsState: true)
+                                         loadingIdentifier: "slidepost-preview-loading", showsRetry: true, reportsState: true,
+                                         lookPreset: preset, lookCanvas: SlidePostOnDeviceRender.canvas(for: profile))
                 }
             } else { Image(systemName: "photo.on.rectangle").font(.largeTitle).foregroundStyle(KriaColor.zinc) }
         }
-        // Keyed by the stable asset, not the signed URL: a poll that re-signs the same video never rebuilds
-        // the player, and selecting a photo leaves the last video's player warm (paused) for the return.
-        .task(id: asset.map { $0.kind == "video" ? $0.id : "" } ?? "") {
+        // Look/profile changes rebuild the composition; ordinary URL re-signing does not interrupt playback.
+        .task(id: asset?.kind == "video" ? playerKey : "") {
             guard let asset, asset.kind == "video", let previewURL else { previewPlayer?.pause(); return }
-            if previewPlayerAssetID == asset.id, previewPlayer != nil { return }
             previewPlayer?.pause()
-            previewPlayer = AVPlayer(url: previewURL); previewPlayerAssetID = asset.id
+            previewLookFailed = false
+            let item = AVPlayerItem(url: previewURL)
+            do {
+                if liveLook { item.videoComposition = try await SlidePostVideoRender.previewComposition(asset: item.asset, profile: profile, lookPreset: preset) }
+            } catch { if !Task.isCancelled { previewLookFailed = preset != "none" } }
+            guard !Task.isCancelled else { return }
+            previewPlayer = AVPlayer(playerItem: item); previewPlayerAssetID = asset.id
         }
         .task(id: prefetchKey) { prefetchNeighbours() }
         #if DEBUG
@@ -217,6 +231,7 @@ struct SlidePostWorkspaceView: View {
 
     /// Chat-edit staging in the AI sheet is the one genuinely optional piece: unknown or off => propose flow.
     private var chatEditOn: Bool { effectiveCapabilities?.slidePostChatEditEnabled == true }
+    private var extendedDeviceExportOn: Bool { effectiveCapabilities?.slidePostExtendedDeviceExportEnabled == true }
     private func seedAndAppend() {
         session.seedDraftIfNeeded()
         session.appendNewlyReadyAssets()
@@ -347,7 +362,7 @@ struct SlidePostWorkspaceView: View {
                     .frame(maxHeight: .infinity)
                     .padding(.horizontal, 12).padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
             } else if mode == .look, let slide {
-                SlidePostLookPanel(session: session, slideID: slide.id, onDone: finishEditing)
+                SlidePostLookPanel(session: session, slideID: slide.id, onDone: finishEditing, livePreview: extendedDeviceExportOn)
                     .frame(maxHeight: .infinity)
                     .padding(.horizontal, 12).padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
             } else {
@@ -559,7 +574,8 @@ struct SlidePostWorkspaceView: View {
     private func addMedia() { if let onAddMedia { onAddMedia() } else if ownerThread != nil { showsAttachments = true } }
     private func export(_ destination: SlidePostExporter.Destination) async {
         guard let itemID else { return }
-        await exporter.export(destination, session: session, api: model.api, itemID: itemID)
+        await exporter.export(destination, session: session, api: model.api, itemID: itemID,
+                              extendedOnDevice: extendedDeviceExportOn)
     }
     private func undo() async { guard let itemID else { return }; await session.undo(api: model.api, itemID: itemID) }
     private func save() async { guard let itemID else { return }; await session.save(api: model.api, itemID: itemID) }

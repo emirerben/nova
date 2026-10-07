@@ -137,7 +137,7 @@ struct ProjectsDrawer: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity).background(KriaColor.paper)
         .accessibilityAction(.escape, close)
         .foregroundStyle(KriaColor.ink)
-        .task { menuFocused = true; await model.loadLibrary() }
+        .task { menuFocused = true }
     }
 }
 

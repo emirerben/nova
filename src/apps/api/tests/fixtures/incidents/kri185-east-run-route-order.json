@@ -1,0 +1,74 @@
+{
+  "id": "kri185-east-run-route-order",
+  "incident": {
+    "ticket": "KRI-185",
+    "summary": "Contract-construction pin, not incident replay. Shape of: A 20k run edit: keep 15s, include everything, follow the running route. A re-plan dropped the brief and the route order was never honoured."
+  },
+  "kind": "contract_pin",
+  "approved": {
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "order",
+          "scope": "global",
+          "description": "clips follow the route, Arnavutkoy to Eminonu",
+          "facts": {
+            "key": "route_rank"
+          },
+          "source_turn_id": "turn-1"
+        },
+        {
+          "id": "r2",
+          "kind": "timing",
+          "scope": "global",
+          "description": "Keep 15 seconds",
+          "facts": {
+            "duration_s": 15
+          },
+          "source_turn_id": "turn-3"
+        },
+        {
+          "id": "r3",
+          "kind": "select",
+          "scope": "global",
+          "description": "include everything",
+          "facts": {
+            "all": true
+          },
+          "source_turn_id": "turn-3"
+        }
+      ]
+    },
+    "creator_request": "Do an edit highlighting the landmarks and locations of each spot ... I ran from Arnavutkoy to Eminonu. Keep 15 seconds and include everything with faster pacing.",
+    "provenance": "Requirements transcribed from the east_run thread's own `requirements` list (prod thread bf8459ae, captured by tests/evals/request_following/capture_east_run.py); kinds/facts follow the brief schema."
+  },
+  "inputs": {
+    "notes": [
+      "No media snapshot: the thread fixture carries plan states, not capture facts.",
+      "Recorded baseline verdicts (thread fixture): keep-15s partial, route-order unmet, per-clip labels unmet, readability unmet.",
+      "The expected values are read off the record's own approved plan: this pins what the contract builder does for a plan of this shape. It does not replay or prove anything about the original failure.",
+      "Route order is not a capture-time rule, so today the contract carries it as UNRESOLVED with no order ids (a structured fact, not copy). Verification then declines: a dead end the clarification gate (KRI-476) and route resolver (KRI-477) must turn into an answer; when they do, this pin is expected to change."
+    ]
+  },
+  "expect": {
+    "contract": {
+      "duration_s": 15,
+      "order_required": true,
+      "order_ids": [],
+      "unresolved_nonempty": true
+    },
+    "route": {
+      "platform": "phone",
+      "choice": "unresolved_requirement"
+    }
+  },
+  "repro": {
+    "command": "pytest tests/evals/request_following/test_runner.py",
+    "status": "available"
+  },
+  "sources": [
+    "tests/fixtures/request_following/threads/east_run.json"
+  ]
+}

@@ -113,6 +113,20 @@ logs `kria_turn_claims_exhausted`. Look for the kills (`TimeLimitExceeded`,
 - For prompt changes, bump the v2 `AgentSpec.prompt_version`, run structural
   replay evals, and run the required live judged fixtures before cohort rollout.
 
+### Rendered follow-up routing
+
+Once a draft has a rendered snapshot, the planner first runs the narrow
+`nova.creator.brief_extractor` prompt (`2026-10-07-v2`) to turn the follow-up into
+typed brief requirements. Text and style changes, plus timing scoped to a
+title, can stay on the current snapshot through editor operations. Broad clip
+timing, stale or unsupported targets, and clarifying outcomes remain in the
+recovery path; they do not silently create a replacement video. An explicit
+full replan or structured clip picker is the path that invokes Main Creator.
+
+The follow-up binds to the current plan item and draft version before saving.
+Keep that binding and save in the same atomic completion path so a stale turn
+cannot attach its requirements to a newer draft.
+
 Run `make verify-kria` before the wider backend/web suites. Renderer-affecting
 changes still require their existing local-render and overlay gates.
 
@@ -121,6 +135,110 @@ cases for each canonical token. Regenerate it only through
 `src/apps/api/scripts/generate_kria_format_matrix.py`, review the label diff,
 then run the focused gate. These cases freeze requested intent and recovery
 coverage; they do not substitute for the consented live or real-media gates.
+
+## Incident corpus
+
+Every production request-following failure becomes a permanent, redacted fixture
+that CI re-checks (KRI-470 / KRI-480). Records live in
+`src/apps/api/tests/fixtures/incidents/*.json`; the schema and loader are in
+`src/apps/api/tests/incidents/`; the runner is `test_incident_corpus.py`:
+
+```bash
+cd src/apps/api && .venv/bin/python -m pytest tests/incidents -q
+```
+
+It runs in the normal test-api CI shards (every `tests/**/test_*.py` is picked up).
+
+**What the corpus proves, and what it does not.** pytest can prove contract
+construction (real `build_render_contract` over a real `BriefBinding`), that the
+real verifiers decline (`verify_phone_recipe` on a recipe from the real speech
+compiler, `preflight_cloud_contract`) and with which typed reason, and whether the
+planner asks a question. It cannot hear or watch a render. `output` facts (voice
+present, audio playing once, order on screen) are judged against recorded
+*observations*: the incident's own (plan fields, creator report) and, after a fix,
+a `post-fix` observation. Nothing renders in pytest, so an `output` record flips
+only when the owning PR appends a post-fix observation whose `proof` resolves to a
+real repro (a pytest node id that exists, a `make` target, a Swift filter or script
+in the repo; free text is rejected by the loader) and removes the xfail. Real output
+proof belongs to that repro (swift export proof / `make local-render`); a record whose
+repro is `pending` names the ticket that owns it. Never describe the corpus as output
+coverage it does not run.
+
+**Kinds.** `output` (a real incident with output facts), `clarification` (conversation
+turns; must-ask and must-not-ask), `routing`, and `contract_pin`. A `contract_pin` is
+NOT incident replay: it pins what the contract builder does for a plan shaped like a
+past incident, with expected values read off its own approved plan, so a later change
+is noticed. Route assertions (`route`) are deliberately absent until PR-D's resolver.
+
+**Record format** (`tests/incidents/models.py`): `id`, `incident` (Linear id + one
+line), `kind`, `approved` (strategy + brief as persisted, validated against
+`CreativeStrategy`/`CreativeBrief`), `inputs` (redacted media: opaque id, duration,
+capture time, speech facts; the conversation `turns`; optional `phone_recipe`,
+`cloud_preflight`, `cloud_adapter` + `cloud_receipt`/`cloud_evidence`/`guided_plan`,
+`synthetic` clips), `expect`
+(`contract`, `refusal`, `cloud`, `question` or `no_question`, `output_facts`; structured
+facts only, never copy), `observations`,
+`xfail` (`{reason: "KRI-47x / PR-x", scope: contract|refusal|question|output}`; the
+scope must be something the record really asserts), and `repro` (resolved against the
+repo by `test_repro_command_points_at_something_real`, including the `::test` part and
+`-k` ids). `synthetic` clips are deterministic ffmpeg colour/tone substitutes
+regenerated on demand (`tests/incidents/synthetic.py`); generated media is never
+committed. `refusal.reason`/`field_path` are the typed decline (KRI-476 / PR-A) and are
+asserted unconditionally, so a record can stage them as a strict xfail.
+
+**Cloud evidence records (KRI-470 / PR-E).** `expect.cloud` runs the real
+`preflight_cloud_contract(adapter=inputs.cloud_adapter)` and `verify_cloud_variant`
+(`preflight: passes|declines`; `plan_gate` for a guided plan the real compiler builds from
+`inputs.guided_plan`; `publication: accepts|declines` with the typed `reason` /
+`field_path`). Guided evidence is derived from that plan's timeline by the real evidence
+builder; a hand-built `inputs.cloud_evidence` is used only where the point is wrong
+evidence. Whether a renderer emits such evidence on real output is proven by
+`tests/tasks/test_cloud_render_receipts.py`, `tests/pipeline/test_guided_cloud_evidence.py`
+and the PR-E real-output evidence.
+
+**Clarification harness.** It runs the real creator-output adapter and then the real
+clarification gate (`planner._gate_unresolved_choices`), which `plan_live_turn` calls
+once the approved media snapshot is attached (KRI-476 / PR-C). The harness attaches the
+record's media snapshot, supplies the record's brief, and replays the record's
+`choice_question` / `choice_selection` turns as the thread events. A `question`
+expectation asserts the kind, the offered option keys and `min_options`; a
+`no_question` record is the must-not-ask control. `kria_choice_questions_enabled` gates
+the gate.
+
+**Capture-fail-first workflow.**
+
+1. Capture the failing case read-only and add the record first. For prod:
+   `python scripts/admin.py --prod GET /admin/jobs?limit=200`, then
+   `jobs/<id>/debug` and `creation-threads/<thread>/turns` (GET only; see
+   [agent navigation](agent-navigation.md)).
+2. Assert the creator's *request* (the expectation), not the bad behaviour. It must
+   fail for the intended reason: run it with `--runxfail` and read the message.
+   Mark it `xfail(strict=True)` with the owning ticket / PR letter and scope.
+3. The fixing PR makes it pass and flips its own records: for `contract`, `refusal` and
+   `question` records the product change makes them XPASS and strict mode forces the
+   xfail's removal; for `output` records see above (post-fix observation with a real proof).
+4. Keep a passing control next to the failing assertion (the same incident through a
+   path that already works) and cover phone and cloud variants where both exist:
+   `kri469-voice-clip-ignored` (phone) and `kri469-cloud-variant` (cloud) are the pattern.
+
+**Redaction rules.** New prod captures never carry private media, credentials or
+identity: no signed URLs, GCS paths, emails, user/job/thread ids, creator names,
+captions or transcripts that identify a person, places, or tokens. Media ids are
+opaque hashes, capture times are rebased to a synthetic epoch (order and gaps kept),
+speech is reduced to `has_speech`/`to_camera`, and the creator's typed request is
+paraphrased. Exemption: content that is already committed on `main` (for example the
+East Run thread, the KRI-126/129 titles and the KRI-118 shapes) may be reused verbatim
+in a record. Raw prod payloads stay out of git and out of tickets; summarize decision
+names and outcomes.
+
+**Owner and cadence.** Owner: Emir Erben. Review weekly, 15 minutes. Checklist:
+
+- [ ] Contract-decline reasons seen this week (which `unresolved`/refusal messages fired, and for which creator ask)
+- [ ] Escaped failures: bad outputs that shipped without a decline (new records, written failing first)
+- [ ] New capability gaps (asks the product cannot yet honour, with an alternative offered)
+- [ ] Unnecessary questions (asked when the request was already clear)
+- [ ] Refusal dead ends (a refusal with no next step for the creator)
+- [ ] Whether final outputs obeyed the creator's answers to questions
 
 ## Deployment order
 

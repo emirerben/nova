@@ -2,6 +2,81 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.137.0] - 2026-10-07
+
+### Changed
+- fix(ios): Add-text typing + reply reveal smoothness (KRI-484) (#1453) <!-- release-pr: 1453 -->
+
+## [0.78.136.0] - 2026-10-07
+
+### Changed
+- fix(creator): stated video length always becomes a timing requirement; pin live gate cassettes (KRI-476) (#1459) <!-- release-pr: 1459 -->
+
+## [0.78.135.0] - 2026-10-07
+
+### Changed
+- fix(creator): an unrequested model duration no longer gates the render contract (lip-sync + subtitled) (#1456) <!-- release-pr: 1456 -->
+
+## [0.78.134.0] - 2026-10-07
+
+### Changed
+- fix(ios): chat smoothness pass (KRI-484) (#1448) <!-- release-pr: 1448 -->
+
+## [0.78.133.0] - 2026-10-07
+
+### Changed
+- feat(phone): honest order verdicts, song-once proof on a real export, last-good guard (KRI-478) (#1458) <!-- release-pr: 1458 -->
+
+## [0.78.132.0] - 2026-10-07
+
+### Changed
+- feat(route): one route resolver from the approved plan, in shadow mode (KRI-477) (#1457) <!-- release-pr: 1457 -->
+
+## [0.78.131.0] - 2026-10-07
+
+### Fixed
+- fix(creator): make iPhone title follow-ups edit the current cut (KRI-485) (#1454) <!-- release-pr: 1454 -->
+
+## [0.78.130.0] - 2026-10-07
+
+### Changed
+- feat(ios): export slide videos and looks on device (KRI-482) (#1452) <!-- release-pr: 1452 -->
+
+## [0.78.129.0] - 2026-10-07
+
+### Changed
+- fix(creator): a song-order answer on a lip-sync item is no longer an unverifiable ordering rule (KRI-470 follow-up) (#1451) <!-- release-pr: 1451 -->
+
+## [0.78.128.0] - 2026-10-07
+
+### Changed
+- feat(creator): clarification gate with one shared conflict collector (KRI-476) (#1450) <!-- release-pr: 1450 -->
+
+## [0.78.127.0] - 2026-10-07
+
+### Changed
+- feat(cloud): cloud render evidence and honest preflight lifts (KRI-478) (#1449) <!-- release-pr: 1449 -->
+
+## [0.78.126.0] - 2026-10-07
+
+### Changed
+- fix(ios): smooth left-drawer swipe (KRI-474) (#1442) <!-- release-pr: 1442 -->
+
+## [0.78.125.0] - 2026-10-07
+
+### Changed
+- fix(phone): stop the creator's song playing twice at once (KRI-481) (#1441) <!-- release-pr: 1441 -->
+
+## [0.78.124.0] - 2026-10-07
+
+### Changed
+- feat(creator): typed field matrix, adapter declarations and decline reasons (KRI-476) (#1446) <!-- release-pr: 1446 -->
+
+## [0.78.123.0] - 2026-10-07
+
+### Changed
+- test(incidents): permanent regression corpus for request-following failures (KRI-480) (#1444) <!-- release-pr: 1444 -->
+
 ## [0.78.122.0] - 2026-10-06
 
 ### Changed

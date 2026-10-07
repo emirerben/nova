@@ -54,7 +54,9 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # KRI-422: dictated per-shot texts are one per_clip brief entry per shot (they all
 # stay in force); `brief_updates` cap 8 -> 16 (v43).
 # KRI-459: stable IDs make changes and removals unambiguous (v44).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-06-v44"
+# KRI-470: a stated video length ALWAYS becomes a `timing` requirement; the clarification
+# gate cannot compare a number the brief lost (v45; brief_extractor v2 shares the section).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-07-v45"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -268,6 +270,14 @@ I filmed", "order them chronologically", "start the edit at X and finish at Y"):
 "order", "scope": "global", "facts": {"key": "capture_time"}} plus "start"/"end" when named.
 Merely narrating that footage was captured "from A to B", at sunset and then at night, or during
 two activities is not such an ask. Compatible requirements with the same kind and scope coexist.
+ALWAYS add a `timing` requirement ({"kind": "timing", "scope": "global", "facts": {"duration_s":
+N}}) in the SAME turn's `brief_updates` whenever the creator states a length for the video: any
+number of seconds or minutes ("a 60 second montage", "under 15 seconds", "about half a minute" =>
+30), converted to seconds. Do it even when you also set `target_duration_s`, even for long
+lengths, and even when the message carries other requirements ("all my clips", "in chronological
+order"): never drop a stated number because other requirements are present. When the creator
+states no length, emit NO timing requirement; a length you chose yourself in `target_duration_s`
+is never the creator's.
 The exception is exact text the creator dictates for particular shots ("1. The
 bookshop photo: "..." 2. The bowling video: "..."): add one {"operation":"add", "kind": "text",
 "scope":
@@ -523,6 +533,8 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         # KRI-374: server-owned, like `resolved_clip_intents`: a
                         # model-authored per-take song placement is never trusted.
                         "resolved_song_takes": None,
+                        # KRI-476: server-owned conflict answers, never model-authored.
+                        "choice_answers": None,
                         "mixed_media_timing": timing,
                         "montage_cadence": cadence,
                         "video_reuse_policy": reuse,

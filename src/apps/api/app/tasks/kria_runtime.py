@@ -71,6 +71,17 @@ from app.routes.generative_jobs import (
     prepare_editor_commit,
     variant_render_baseline,
 )
+from app.services.choice_questions import (
+    CONFLICT_ORDER_BASIS,
+    KEEP_OPEN_REASON,
+    MAX_ASKS_PER_QUESTION,
+    answered_brief,
+    build_choice_question,
+    choice_question_text,
+    count_asks,
+    open_conflicts,
+    tag_event,
+)
 from app.services.device_render import DEVICE_RENDER_FIELD, device_status
 from app.services.kria_editor_ops import (
     EditorStateReplyError,
@@ -347,6 +358,94 @@ def _state_event_fields(state_id: str | None, trace: dict[str, Any]) -> dict[str
     }
 
 
+def _unresolved_choice_plan(
+    strategy: Mapping[str, Any] | None,
+    brief: Any,
+    media_snapshot: Mapping[str, Any] | None,
+    *,
+    contract_brief: Any = None,
+    events: Any = (),
+    has_draft: bool = False,
+) -> tuple[KriaTurnPlan, str] | None:
+    """KRI-476 backstop: the reply that replaces a draft an unresolved choice blocks.
+
+    A draft must never be approvable while the requirement contract it will pin still
+    has an open question (askable -> the same tappable question the planner gate asks)
+    or an unresolved item (not askable -> a plain refusal). Both used to surface only
+    when the render was dispatched. ``None`` = clear; otherwise ``(plan, reason)``.
+
+    A question already asked ``MAX_ASKS_PER_QUESTION`` times is never asked again and
+    never answered for the creator: a length question lets the plan through (the receipts
+    state what is unmet), an order question becomes ONE plain message that says what
+    cannot be checked and quotes the supported ways forward, which a typed reply still
+    answers (``unresolved_choice`` keeps the question open).
+
+    ``contract_brief`` is the brief the dispatch-time contract will actually read: only a
+    creator with a brief binding has one, so the brief-derived ``unresolved`` items are
+    evaluated for that cohort alone.
+    """
+
+    from app.services.creator_render_contract import (  # noqa: PLC0415
+        CreatorRenderContractError,
+        build_render_contract,
+    )
+
+    if not strategy:
+        return None
+    unchanged = " Your current draft is unchanged." if has_draft else ""
+    history = list(events)
+    for conflict in open_conflicts(strategy, brief, media_snapshot):
+        if count_asks(history, conflict.conflict_id, conflict.input_digest) < (
+            MAX_ASKS_PER_QUESTION
+        ):
+            candidate = conflict.candidate()
+            return (
+                KriaTurnPlan(
+                    mode="respond",
+                    turn_value="question",
+                    response=choice_question_text(candidate),
+                    choice_question=build_choice_question(candidate),
+                ),
+                KEEP_OPEN_REASON,
+            )
+        if conflict.kind == CONFLICT_ORDER_BASIS:
+            ways = " or ".join(f'"{o.label}"' for o in conflict.options)
+            return (
+                KriaTurnPlan(
+                    mode="respond",
+                    turn_value="recovery",
+                    response=(
+                        f"{conflict.intro} {conflict.reason} I won't guess, so I haven't "
+                        f"made an edit yet. To go ahead, reply {ways}.{unchanged}"
+                    ),
+                ),
+                KEEP_OPEN_REASON,
+            )
+    try:
+        contract = build_render_contract(
+            strategy, generation_id="preflight", brief=contract_brief, media_snapshot=media_snapshot
+        )
+    except CreatorRenderContractError as exc:
+        return (
+            KriaTurnPlan(
+                mode="respond",
+                turn_value="recovery",
+                response=f"{exc}{unchanged}",
+            ),
+            "unresolved_requirement",
+        )
+    if contract is not None and contract.unresolved:
+        return (
+            KriaTurnPlan(
+                mode="respond",
+                turn_value="recovery",
+                response=f"{contract.unresolved[0]}{unchanged}",
+            ),
+            "unresolved_requirement",
+        )
+    return None
+
+
 def _complete_draft_turn(
     turn_id: uuid.UUID,
     *,
@@ -578,6 +677,12 @@ def _complete_draft_turn(
                 turn_id=turn.id,
                 updates=planned.brief_updates,
             )
+            if settings.kria_choice_questions_enabled and apply_intent.tool_name == (
+                "draft.apply_strategy"
+            ):
+                # KRI-476: the creator's answers supersede the requirement they
+                # resolved, so receipts judge (and approval pins) what they chose.
+                brief = answered_brief(brief, document.strategy)
             if brief is not None:
                 if apply_intent.tool_name == "draft.apply_strategy":
                     facts = plan_facts_from_strategy(
@@ -674,11 +779,74 @@ def _complete_draft_turn(
                 brief_expected_version=planned.brief_expected_version,
             )
             return replace(completed, response_only=True)
+        choice_gate = (
+            settings.kria_choice_questions_enabled
+            and apply_intent.tool_name == "draft.apply_strategy"
+            and bool(document.strategy)
+        )
+        if choice_gate:
+            from app.kria.brief_binding import snapshot_media as _snapshot_media  # noqa: PLC0415
+
+            binding_on = settings.brief_binding_for(thread.creator_id)
+            gate_brief = brief
+            if gate_brief is None and binding_on:
+                gate_brief = answered_brief(
+                    load_latest_brief_sync(db, thread.id), document.strategy
+                )
+            blocked = _unresolved_choice_plan(
+                document.strategy,
+                gate_brief if binding_on else None,
+                planned.media_snapshot
+                if planned.media_snapshot is not None
+                else _snapshot_media(item),
+                contract_brief=gate_brief if binding_on else None,
+                events=[
+                    tag_event(role, payload, event_type, content)
+                    for role, payload, event_type, content in db.execute(
+                        select(
+                            CreationThreadEvent.role,
+                            CreationThreadEvent.payload,
+                            CreationThreadEvent.event_type,
+                            CreationThreadEvent.content,
+                        )
+                        .where(
+                            CreationThreadEvent.thread_id == thread.id,
+                            CreationThreadEvent.role.in_({"user", "assistant"}),
+                        )
+                        .order_by(CreationThreadEvent.sequence)
+                    ).all()
+                ],
+                has_draft=head is not None,
+            )
+            if blocked is not None:
+                blocked_plan, blocked_reason = blocked
+                # Same rollback-then-respond pattern as the receipts gate above: the
+                # speculative draft/brief work is undone and the reply is persisted in
+                # the normal response transaction (the old draft stays the head).
+                db.rollback()
+                completed = _complete_response_turn(
+                    turn_id,
+                    lease_owner=lease_owner,
+                    lease_epoch=lease_epoch,
+                    claimed_thread_revision=claimed_thread_revision,
+                    plan=blocked_plan,
+                    brief_updates=planned.brief_updates,
+                    requirement_receipts=requirement_receipts,
+                    brief_coverage={
+                        **(planned.brief_coverage or {}),
+                        "stage": "draft",
+                        "reason": blocked_reason,
+                    },
+                    brief_expected_version=planned.brief_expected_version,
+                )
+                return replace(completed, response_only=True)
         if settings.brief_binding_for(thread.creator_id):
             from app.kria.brief_binding import BriefBinding, snapshot_media  # noqa: PLC0415
 
             if brief is None:
                 brief = load_latest_brief_sync(db, thread.id)
+                if choice_gate:
+                    brief = answered_brief(brief, document.strategy)
             source_event = db.get(CreationThreadEvent, turn.source_event_id)
             coverage = dict(planned.brief_coverage or {})
             coverage["enforced_ids"] = [
@@ -702,6 +870,11 @@ def _complete_draft_turn(
                         media_snapshot=planned.media_snapshot
                         if planned.media_snapshot is not None
                         else snapshot_media(item),
+                        choice_answers=(
+                            list(document.strategy.get("choice_answers") or [])
+                            if choice_gate
+                            else None
+                        ),
                     ),
                     "brief_coverage": coverage,
                 }
@@ -2381,6 +2554,126 @@ def _device_render_state(job: Job, execution: CreatorAgentExecution) -> str | No
 _DETERMINISTIC_JOB_FAILURE_CODES = {"phone_plan_unsupported", "user_song_plan_declined"}
 
 
+_VARIANT_DECLINE_FAILURE_CODES = {"variant_render_failed", "creator_render_contract_unverified"}
+
+
+def _typed_creator_decline(
+    job: Job, variant_id: str | None, failure_code: str | None = None
+) -> dict[str, str] | None:
+    """The typed creator-contract decline a failed job persisted, if any.
+
+    Phone/cloud-preflight declines live in ``assembly_plan["creator_decline"]``;
+    a cloud publication decline lives on the failed variant beside its
+    ``error_class``.  The failure code itself is never changed by this (the typed
+    reason rides beside it), so untyped failures keep their exact recovery.
+    """
+    from app.services.creator_render_contract import (  # noqa: PLC0415
+        CREATOR_DECLINE_FIELD,
+        DECLINE_REASONS,
+    )
+
+    plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
+    raw = plan.get(CREATOR_DECLINE_FIELD)
+    message = getattr(job, "error_detail", None)
+    # A job-level decline belongs to the failure code it was stamped with. A job
+    # that failed once with a refusal and later fails for another reason (retry,
+    # re-dispatch) must not inherit the earlier refusal.
+    if not (
+        isinstance(raw, dict)
+        and raw.get("decline_reason") in DECLINE_REASONS
+        and failure_code is not None
+        and raw.get("failure_reason") == failure_code
+    ):
+        raw = None
+        if failure_code not in _VARIANT_DECLINE_FAILURE_CODES:
+            return None
+        variants = [row for row in plan.get("variants") or [] if isinstance(row, dict)]
+        # The target variant only; scan every variant only when none is named.
+        candidates = (
+            [row for row in variants if row.get("variant_id") == variant_id]
+            if variant_id
+            else variants
+        )
+        for row in candidates:
+            if (
+                row.get("render_status") == "failed"
+                and row.get("decline_reason") in DECLINE_REASONS
+            ):
+                raw = row
+                message = row.get("error")
+                break
+    if raw is None:
+        return None
+    decline = {"decline_reason": str(raw["decline_reason"])}
+    for key in ("field_path", "alternative"):
+        if isinstance(raw.get(key), str) and raw[key]:
+            decline[key] = raw[key]
+    if isinstance(message, str) and message.strip():
+        decline["message"] = message.strip()[:500]
+    return decline
+
+
+def _device_contract_decline(job: Job, variant_id: str | None) -> dict[str, str] | None:
+    """The typed refusal recorded on a failed device render's record (KRI-470 PR-G).
+
+    Written beside the record's intact state when the contract refused an edit at
+    publication or retry. ``None`` for a phone-side failure (thermal, storage, cancel):
+    those keep the "tap Retry on your iPhone" recovery.
+    """
+    from app.services.creator_render_contract import DECLINE_REASONS  # noqa: PLC0415
+    from app.services.device_render import contract_decline  # noqa: PLC0415
+
+    records = (job.assembly_plan or {}).get(DEVICE_RENDER_FIELD)
+    if not isinstance(records, dict):
+        return None
+    for record_variant in [variant_id] if variant_id else list(records):
+        raw = contract_decline(job, str(record_variant))
+        if isinstance(raw, dict) and raw.get("decline_reason") in DECLINE_REASONS:
+            decline = {"decline_reason": str(raw["decline_reason"])}
+            for key in ("field_path", "alternative", "message"):
+                if isinstance(raw.get(key), str) and raw[key].strip():
+                    decline[key] = raw[key].strip()[:500]
+            return decline
+    return None
+
+
+_LAST_GOOD_STAYS = "Your last good version is still available."
+_NOTHING_PUBLISHED = "Nothing was published."
+# What a creator can really do next: send a new message. The approved request (the brief)
+# stays in force across turns, so a plain "redo it" builds a new version from it; the
+# runtime has no automatic re-run of a refused phone render and no device-job chat retry.
+_REDO_FROM_APPROVED = (
+    "Tell me to redo it and I'll make a new version from what you already approved."
+)
+
+
+def _device_refusal_copy(decline: dict[str, str], *, last_good: bool = True) -> str:
+    """What the creator hears when the contract refused an edit of a phone render.
+
+    Says what could not be confirmed, that the edit was NOT applied, that the last good
+    version is kept, and a next step that exists. Never promises an automatic rebuild and
+    never asks the creator to restate a clear instruction.
+    """
+    message = decline.get("message") or "That edit didn't keep something you asked for."
+    reason = decline["decline_reason"]
+    kept = _LAST_GOOD_STAYS if last_good else _NOTHING_PUBLISHED
+    if reason == "capability_unavailable":
+        return f"{_capability_refusal_copy(decline)} That edit was not applied. {kept}"
+    if reason in {"needs_choice", "requirement_conflict"}:
+        alternative = decline.get("alternative") or "Tell me which way you want to go."
+        return f"{message} That edit was not applied. {alternative} {kept}"
+    return f"{message} That edit was not applied. {kept} {_REDO_FROM_APPROVED}"
+
+
+def _capability_refusal_copy(decline: dict[str, str]) -> str:
+    """A refusal that names the limit and the supported way forward."""
+    limit = decline.get("message") or "This render path can't keep that requirement."
+    alternative = decline.get("alternative") or (
+        "Tell me what you'd like to change and I'll try a different approach."
+    )
+    return f"{limit} {alternative}"
+
+
 def _phone_gate_refusal_copy(reason: str) -> str:
     from app.tasks.content_plan_build import PHONE_GATE_MESSAGES  # noqa: PLC0415
 
@@ -3225,11 +3518,53 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         # Deterministic compiler rejects fail identically on every retry: ask
         # the creator for a change instead of offering a dead retry loop.
         deterministic = not device_failed and failure_code in _DETERMINISTIC_JOB_FAILURE_CODES
+        # Typed creator-contract decline (additive; the failure code is unchanged):
+        # missing evidence is a repair/retry; an unavailable capability is a refusal
+        # that asks for a different request; conflicts and choices keep the existing
+        # behaviour until the clarification gate wires real questions.
+        device_decline = (
+            _device_contract_decline(job, str(execution.target_variant_id or "") or None)
+            if device_failed
+            else None
+        )
+        typed_decline = (
+            device_decline
+            if device_failed
+            else _typed_creator_decline(
+                job, str(execution.target_variant_id or "") or None, failure_code
+            )
+        )
+        if typed_decline is not None and not device_failed:
+            if (
+                typed_decline["decline_reason"] == "evidence_missing"
+                and failure_code not in _DETERMINISTIC_JOB_FAILURE_CODES
+            ):
+                # Retry only where the evidence can appear on a re-run (cloud
+                # publication / preflight). A phone plan decline is deterministic.
+                deterministic = False
+            elif typed_decline["decline_reason"] == "capability_unavailable":
+                deterministic = True
         recovery = "manual" if device_failed else ("ask_user" if deterministic else "retry")
+        retryable = not device_failed and not deterministic
+        if device_decline is not None:
+            # The contract refused this edit, so the phone's own Retry (which re-pins the
+            # same refused recipe) is a dead end, and nothing re-runs it automatically.
+            # The creator's real next step is a new message, never a retry button.
+            recovery = "ask_user"
+            retryable = False
         execution.error = {
             "code": failure_code,
-            "retryable": not device_failed and not deterministic,
+            "retryable": retryable,
             "recovery": recovery,
+            **(
+                {
+                    key: typed_decline[key]
+                    for key in ("decline_reason", "field_path")
+                    if key in typed_decline
+                }
+                if typed_decline
+                else {}
+            ),
         }
         turn.status = "failed"
         turn.completed_at = now
@@ -3295,13 +3630,27 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             ):
                 recovery_receipts = [receipt.model_dump(mode="json") for receipt in receipts]
                 recovery_message = raw_recovery["message"].strip()
-        if device_failed:
+        if device_decline is not None:
+            from app.services.device_render import has_accepted_artifact  # noqa: PLC0415
+
+            failure_content = _device_refusal_copy(
+                device_decline,
+                last_good=has_accepted_artifact(
+                    job, str(execution.target_variant_id or "") or None
+                ),
+            )
+        elif device_failed:
             failure_content = (
                 "Your iPhone couldn't finish the render. Your approved edit is still saved: "
                 "open the project on your iPhone and tap Retry."
             )
         elif recovery_message is not None:
             failure_content = recovery_message
+        elif (
+            typed_decline is not None
+            and typed_decline["decline_reason"] == "capability_unavailable"
+        ):
+            failure_content = _capability_refusal_copy(typed_decline)
         elif deterministic or failure_code in {
             "phone_capability_unavailable",
             *CREATOR_FACING_DETAIL_CODES,
@@ -3314,6 +3663,16 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 "That render didn't finish. Your approved draft is still saved, "
                 "so you can retry without rebuilding the edit."
             )
+        if (
+            typed_decline is not None
+            and typed_decline.get("alternative")
+            and failure_code in _DETERMINISTIC_JOB_FAILURE_CODES
+            and typed_decline["decline_reason"] != "capability_unavailable"
+            and recovery_message is None
+            and not device_failed
+        ):
+            # A deterministic phone decline keeps its copy and adds the way forward.
+            failure_content = f"{failure_content} {typed_decline['alternative']}"
         event = _append_sync_event(
             db,
             thread,
@@ -3328,6 +3687,15 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 "code": failure_code,
                 "recovery": recovery,
                 "receipt_ids": [str(execution.id)],
+                **(
+                    {
+                        key: typed_decline[key]
+                        for key in ("decline_reason", "field_path")
+                        if key in typed_decline
+                    }
+                    if typed_decline
+                    else {}
+                ),
                 **({"requirement_receipts": recovery_receipts} if recovery_receipts else {}),
             },
         )
