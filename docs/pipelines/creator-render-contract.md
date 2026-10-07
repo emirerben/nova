@@ -103,8 +103,8 @@ A refusal carries a `DeclineReason` and a `field_path` (matrix path, or
 | --- | --- | --- |
 | `capability_unavailable` | The path can never honour or prove it. | Refusal naming the limit and a supported alternative. |
 | `evidence_missing` | Supported, but the output did not demonstrate it. | Repair / retry, only where the evidence can appear on a re-run (cloud publication verification, `creator_render_contract_unverified`; cloud preflight). A phone `phone_plan_unsupported` stays deterministic: it asks, with the original copy plus the typed alternative. |
-| `requirement_conflict` | Two approved requirements cannot both hold. | Existing ask behaviour (real questions arrive with the clarification gate); a typed alternative is appended to phone copy. |
-| `needs_choice` | Ambiguous until the creator decides (includes `unresolved`). | Existing ask behaviour. |
+| `requirement_conflict` | Two approved requirements cannot both hold. | A question for the route-independent conflicts the clarification gate owns (see "Clarification gate"); otherwise the existing ask behaviour, with a typed alternative appended to phone copy. |
+| `needs_choice` | Ambiguous until the creator decides (includes `unresolved`). | The same gate asks before approval; a leftover `unresolved` item is refused at draft time instead of at dispatch. |
 
 The reason is persisted beside, never in place of, the existing failure strings:
 `phone_plan_unsupported`, `creator_render_contract_unsupported` and
@@ -117,6 +117,49 @@ clears it, so a later unrelated failure never inherits an old refusal. A cloud
 publication decline lands on the failed variant next to `error_class`, and
 recovery reads only the targeted variant's own decline. `unresolved` stays a tuple of
 strings; it is reported as `needs_choice` without a field path.
+
+## Clarification gate
+
+An unresolved material choice never becomes an approved plan (KRI-476 / PR-C, flag
+`kria_choice_questions_enabled`; off = the previous behaviour, `unresolved` still refuses
+at dispatch). `services/choice_questions.py:collect_conflicts(strategy, brief,
+media_snapshot, capability)` is the ONLY place that turns an ambiguity into a question.
+It reads the strategy, the brief and the approved media snapshot, never chat text or a
+render route, and returns typed `UnresolvedChoice` items (`kind`, `field_path`,
+`requirement_ids`, `options`, `input_digest`) in a fixed priority order. One question per
+turn.
+
+| Kind | Detector | Options (all executable today) | Persisted answer |
+| --- | --- | --- | --- |
+| `order_basis` | A capture-time/chronological order is required and some selected clip has no capture time (the contract's own `unresolved` condition). | `attachment_order` (the order the clips were added), `unordered` (no chronological promise). A creator-typed sequence is NOT offered: nothing can receive one yet. | `choice_answers[]`; the contract carries `order_basis="attachment_order"` + `order_ids`, or `order_required=false`. |
+| `duration_vs_count` | An explicit length and a montage whose N clips cannot each get the readable-shot floor (`unified_montage.MIN_READABLE_SHOT_S`, 0.8 s). 30 clips in 15 s asks; 30 in 60 s, a default length, fewer clips than fit, a creator cadence or a selected subset never ask. | `extend` (the length N x floor needs, e.g. 24 s), `fewer` (the clips that fit, evenly spaced). Flash-cutting is never offered. | `target_duration_s` (+ `target_duration_requested`) or `selected_media_ids` + `media_scope="selected"`; the pinned brief timing requirement is updated to match. |
+| `text_placement` | A dictated shot text whose literal appears on two or more draft shots. | One option per matching shot. | `choice_answers[]`; the contract sets that requirement's `shot_index`. |
+
+Not questions: a text with no matching label, a rule the contract cannot verify, a
+technical failure, and any combination no renderer supports (typed declines above).
+
+**Where it runs.** `planner.plan_live_turn` runs the gate AFTER the media snapshot is
+attached, on the same snapshot approval binds (`_plan_from_creator_output` runs before
+it and would invent "missing capture dates"). `_complete_draft_turn` re-checks as a
+backstop: with an open choice, or a contract that still has `unresolved` items, it rolls
+back to a respond turn instead of minting an approvable draft.
+
+**Answers.** A tapped `choice_selection` or a plain message that normalises (case,
+punctuation, whitespace) to exactly one option key, label, list number or server alias
+(`submit_turn` -> `match_open_choice`) is stored on the thread and replayed on every
+later turn. `resolve_choices` applies it only when the question's `input_digest` still
+equals the digest of the current inputs, so a changed media set or length reopens just
+that question and an old answer never answers a different one. Applied answers are
+server-owned strategy fields (`CreativeStrategy.choice_answers`, a model-authored value
+is discarded), link to the brief requirement ids they resolve, are part of the
+`BriefBinding` digest when present, and are disclosed in the draft summary. The same
+question is asked at most twice; after the single re-ask the recommended option is
+applied with `source="default"` and said so, never a loop.
+
+**Known gaps.** `group_first` is not yet an explicit contract order basis: the
+arrangement is computed at render time (visual scatter, sequence intents), so pinning it
+needs the route resolver (PR-D). Questions render through the generic v1
+`ChoiceQuestionCard` on iOS; web has no question card and shows the plain-text list.
 
 ## Stored-contract compatibility
 

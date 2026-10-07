@@ -182,11 +182,14 @@ evidence. Whether a renderer emits such evidence on real output is proven by
 `tests/tasks/test_cloud_render_receipts.py`, `tests/pipeline/test_guided_cloud_evidence.py`
 and the PR-E real-output evidence.
 
-**Clarification harness.** It calls the planner like `plan_live_turn` does today (the
-capture-order flag is read off the brief, the brief request rides along, target length
-reaches the planner through the strategy). PR-C (KRI-476) moves the gate into
-`plan_live_turn` after the media snapshot is attached, so PR-C must adapt this harness
-and flip the `KRI-476 / PR-C` records.
+**Clarification harness.** It runs the real creator-output adapter and then the real
+clarification gate (`planner._gate_unresolved_choices`), which `plan_live_turn` calls
+once the approved media snapshot is attached (KRI-476 / PR-C). The harness attaches the
+record's media snapshot, supplies the record's brief, and replays the record's
+`choice_question` / `choice_selection` turns as the thread events. A `question`
+expectation asserts the kind, the offered option keys and `min_options`; a
+`no_question` record is the must-not-ask control. `kria_choice_questions_enabled` gates
+the gate.
 
 **Capture-fail-first workflow.**
 

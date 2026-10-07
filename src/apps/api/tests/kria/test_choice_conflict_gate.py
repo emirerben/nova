@@ -651,3 +651,57 @@ def test_binding_digest_includes_answers_only_when_present() -> None:
     forged = frozen.model_dump(mode="json") | {"choice_answers": []}
     with pytest.raises(ValueError, match="digest mismatch"):
         BriefBinding.model_validate(forged)
+
+
+def test_fewer_answer_dispatches_exactly_the_chosen_clips_and_nothing_else_changes() -> None:
+    from app.tasks.content_plan_build import _creator_selected_clip_paths
+
+    item = SimpleNamespace(
+        clip_assignments=[{"media_id": f"c{i}", "gcs_path": f"p{i}"} for i in range(5)]
+    )
+    paths = [f"p{i}" for i in range(5)]
+    base = {
+        "edit_format": "montage",
+        "render_program": "guided",
+        "media_scope": "selected",
+        "selected_media_ids": ["c0", "c4"],
+    }
+    fewer = {
+        "conflict": "duration_vs_count",
+        "kind": "duration_vs_count",
+        "option": "fewer",
+        "input_digest": "d",
+    }
+    assert _creator_selected_clip_paths(item, paths, base | {"choice_answers": [fewer]}) == [
+        "p0",
+        "p4",
+    ]
+    # No answer, or the other answer: a guided job keeps every attached clip as before.
+    assert _creator_selected_clip_paths(item, paths, base) == paths
+    extend = fewer | {"option": "extend"}
+    assert _creator_selected_clip_paths(item, paths, base | {"choice_answers": [extend]}) == paths
+
+
+def test_ask_user_options_reach_the_plan_as_a_question_and_flag_off_is_text_only(
+    monkeypatch,
+) -> None:
+    from app.agents._schemas.creator_agent import AskUser
+
+    action = AskUser(
+        kind="ask_user",
+        question="Which clip should open the edit?",
+        reason_code="needs_opening",
+        options=["The pier", "The bridge"],
+    )
+    plan = planner.adapt_creator_action(action)
+    assert plan.mode == "respond" and plan.turn_value == "question"
+    assert [o["label"] for o in plan.choice_question["options"]] == ["The pier", "The bridge"]
+    assert plan.choice_question["conflict"] == "ask_user:needs_opening"
+    assert "1. The pier" in plan.response  # a client without the card still shows every choice
+
+    no_options = AskUser(kind="ask_user", question="Which one?", reason_code="x")
+    assert planner.adapt_creator_action(no_options).choice_question is None
+
+    monkeypatch.setattr(planner.settings, "kria_choice_questions_enabled", False)
+    off = planner.adapt_creator_action(action)
+    assert off.choice_question is None and off.response == "Which clip should open the edit?"

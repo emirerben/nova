@@ -412,9 +412,7 @@ class CreativeStrategy(_CreatorModel):
     # ``ordering_choice``: the planner gate writes it from the thread's stored
     # ``choice_selection`` events and every model-authored value is discarded. Omitted
     # from the dump when unset so stored strategies stay byte-identical.
-    choice_answers: SkipJsonSchema[list[ChoiceAnswer] | None] = Field(
-        default=None, max_length=8
-    )
+    choice_answers: SkipJsonSchema[list[ChoiceAnswer] | None] = Field(default=None, max_length=8)
     # KRI-178 (flag PHONE_SUBTITLED_REACTION_BEATS_ENABLED). Same rationale as
     # clip_intents immediately above: default None keeps stored strategies and
     # every exclude_none hash byte-identical when unused, and SkipJsonSchema

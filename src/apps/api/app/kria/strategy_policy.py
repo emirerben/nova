@@ -205,6 +205,11 @@ def _drops_requested_action(before: CreativeStrategy, after: CreativeStrategy) -
         "mixed_media_timing",
         "licensed_sfx",
         "target_duration_s",
+        # KRI-476: the creator's own seconds for the title and their explicit ask for
+        # full-screen Visuals are creator-stated; a renderer that cannot honour them used
+        # to drop them silently inside `compile_strategy_to_plan`.
+        "opening_title_duration_s",
+        "overlay_display",
     )
     if any(
         prior.get(key) not in (None, [], "") and prior.get(key) != next_values.get(key)
@@ -212,6 +217,22 @@ def _drops_requested_action(before: CreativeStrategy, after: CreativeStrategy) -
     ):
         return True
     return prior.get("caption_style") == "none" and next_values.get("caption_style") != "none"
+
+
+def _repair_detail(before: CreativeStrategy, after: CreativeStrategy) -> str:
+    """Plain words for the creator-stated settings a silent repair would have dropped."""
+
+    lines: list[str] = []
+    if before.opening_title_duration_s is not None and (
+        after.opening_title_duration_s != before.opening_title_duration_s
+    ):
+        lines.append(
+            f"This edit can't hold your title for exactly {before.opening_title_duration_s:g} "
+            "seconds."
+        )
+    if before.overlay_display == "fullscreen" and after.overlay_display != "fullscreen":
+        lines.append("Full-screen Visuals aren't available for this edit.")
+    return " ".join(lines)
 
 
 def check_strategy_for_runtime_v2(
@@ -261,6 +282,7 @@ def check_strategy_for_runtime_v2(
     if ask_before_simplifying and _drops_requested_action(original, checked):
         details = (
             " ".join(all_notices)
+            or _repair_detail(original, checked)
             or "This edit cannot carry out that exact combination of requests."
         )
         return RefusedStrategy(
