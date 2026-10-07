@@ -168,7 +168,7 @@ coverage it does not run.
 turns; must-ask and must-not-ask), `routing`, and `contract_pin`. A `contract_pin` is
 NOT incident replay: it pins what the contract builder does for a plan shaped like a
 past incident, with expected values read off its own approved plan, so a later change
-is noticed. Route assertions (`route`) are deliberately absent until PR-D's resolver.
+is noticed. Route assertions (`route`) are deliberately absent until PR-D's resolver. The corpus builds contracts with `CLIP_INTENTS_ENABLED` on (as prod), so a record's resolved `order` intents seat a described start/end clip in `order_ids` (KRI-503).
 
 **Record format** (`tests/incidents/models.py`): `id`, `incident` (Linear id + one
 line), `kind`, `approved` (strategy + brief as persisted, validated against
