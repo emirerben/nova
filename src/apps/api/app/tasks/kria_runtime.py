@@ -3331,6 +3331,29 @@ def _approved_generation_review(
     ]
 
 
+def _blocked_title_question(receipts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The tappable `title_text` question for a render blocked on a wordless title.
+
+    Same conflict and digest as the draft-time question (`title_text_choice`), so the
+    existing free-text / tap machinery answers it and the gate replays the answer; the
+    copy already tells the creator both ways forward. Only for receipts that carry the
+    wordless-title reason, and only while choice questions are on.
+    """
+    from app.kria.brief_checks import NO_TITLE_REASON  # noqa: PLC0415
+    from app.services.choice_questions import title_text_choice  # noqa: PLC0415
+
+    if not settings.kria_choice_questions_enabled:
+        return None
+    ids = [
+        str(r["requirement_id"])
+        for r in receipts
+        if r.get("reason") == NO_TITLE_REASON and r.get("requirement_id")
+    ]
+    if not ids:
+        return None
+    return build_choice_question(title_text_choice(ids).candidate())
+
+
 def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | None]:
     """Settle one dispatched receipt from durable Job truth."""
 
@@ -3710,6 +3733,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
         ):
             # A deterministic phone decline keeps its copy and adds the way forward.
             failure_content = f"{failure_content} {typed_decline['alternative']}"
+        title_question = _blocked_title_question(recovery_receipts)
         event = _append_sync_event(
             db,
             thread,
@@ -3723,6 +3747,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 "status": "failed",
                 "code": failure_code,
                 "recovery": recovery,
+                **({"choice_question": title_question} if title_question else {}),
                 "receipt_ids": [str(execution.id)],
                 **(
                     {

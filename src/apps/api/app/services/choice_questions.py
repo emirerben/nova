@@ -222,6 +222,12 @@ def build_choice_question(
 def choice_question_text(candidate: ConflictCandidate) -> str:
     """Self-sufficient plain text (old builds show only this)."""
     options = candidate.options[:MAX_CHOICE_OPTIONS]
+    if candidate.kind == CONFLICT_TITLE_TEXT and len(options) == 1:
+        # The one option is a way out, not a limit: the typed words are the main path.
+        return (
+            f"{candidate.intro} Type the words you want and I'll use them exactly, "
+            f'or reply "{options[0].label}".'
+        )
     if len(options) == 1:
         # One way forward is a statement, not a choice.
         only = options[0]
@@ -867,6 +873,35 @@ def _text_placement(
     return found
 
 
+# Exact (after `normalize_reply`) replies that decline the title: never a substring match, so
+# real words ("No Plans", "none of us slept") are never taken for an answer.
+_NO_TITLE_ALIASES = (
+    "no",
+    "none",
+    "nope",
+    "no thanks",
+    "skip",
+    "skip it",
+    "skip title",
+    "skip the title",
+    "no title",
+    "no title please",
+    "no title thanks",
+    "no hook",
+    "without title",
+    "without a title",
+    "continue without title",
+    "dont add a title",
+    "don t add a title",
+    "do not add a title",
+    "leave it off",
+    "leave the title off",
+    "başlık olmasın",
+    "başlıksız",
+    "başlık yok",
+)
+
+
 def _title_text(
     strategy: Mapping[str, Any],
     brief: Any,
@@ -897,6 +932,15 @@ def _title_text(
     ]
     if not wanted:
         return None
+    audio = strategy.get("montage_audio")
+    if (
+        isinstance(audio, Mapping)
+        and audio.get("preserve_source_audio")
+        and audio.get("source_media_ids")
+    ):
+        # `contract.audio_source_ids` takes the speech-excerpt lane
+        # (`run_phone_speech_montage_job`): it has no title handling and never blocks on one.
+        return None
     if not defers_to_unified_montage(
         creator_id=cap.creator_id,
         edit_format=strategy.get("edit_format") or "montage",
@@ -906,7 +950,18 @@ def _title_text(
         return None  # the draft-time receipts judge this format themselves
     if title_source_exists(strategy, brief):
         return None
-    ids = sorted(str(req.id) for req in wanted)
+    return title_text_choice(str(req.id) for req in wanted)
+
+
+def title_text_choice(requirement_ids: Iterable[str]) -> UnresolvedChoice:
+    """The ``title_text`` question for these wordless title requirements.
+
+    Shared by the draft-time detector and the observer that re-opens the same question
+    after the render-time block, so both carry the same ``conflict_id`` / ``input_digest``
+    and an answer given to either is the answer the gate replays.
+    """
+
+    ids = sorted({str(i) for i in requirement_ids})
     return UnresolvedChoice(
         kind=CONFLICT_TITLE_TEXT,
         conflict_id=CONFLICT_TITLE_TEXT,
@@ -916,23 +971,16 @@ def _title_text(
             "You asked for a title on the opening, but you didn't tell me the words, and I "
             "don't write on-screen text for you."
         ),
-        reason=(
-            "I can't add a title without them. Type the words you want and I'll use them exactly."
-        ),
+        reason="I can't add a title without them.",
         options=(
             ConflictOption(
                 key=OPT_NO_TITLE,
                 label="Continue without a title",
                 description="The video is made without an opening title.",
-                recommended=True,
-                aliases=(
-                    "no title",
-                    "without a title",
-                    "without title",
-                    "continue without title",
-                    "skip the title",
-                    "no hook",
-                ),
+                # Never recommended: a delegation ("you decide") must not drop the title the
+                # creator asked for.
+                recommended=False,
+                aliases=_NO_TITLE_ALIASES,
             ),
         ),
         input_digest=_digest(CONFLICT_TITLE_TEXT, ids),
@@ -1120,6 +1168,10 @@ def delegated_choice(question: Mapping[str, Any], message: object) -> str | None
     """
 
     if normalize_reply(message) not in _DELEGATION_PHRASES:
+        return None
+    if question.get("kind") == CONFLICT_TITLE_TEXT:
+        # Handing over a wordless title would drop the title the creator asked for (and we
+        # never write on-screen words): not a delegation. The gate asks once more.
         return None
     options = [o for o in question.get("options") or [] if isinstance(o, Mapping) and o.get("key")]
     if not options:
@@ -1416,6 +1468,7 @@ __all__ = [
     "OPT_FEWER",
     "OPT_NO_TITLE",
     "OPT_UNORDERED",
+    "title_text_choice",
     "ChoiceCapability",
     "ChoiceResolution",
     "ScopedAnswer",

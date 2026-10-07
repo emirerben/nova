@@ -1214,4 +1214,6 @@ def test_a_wordless_title_next_to_another_blocker_keeps_the_generic_ask_but_hone
     assert not isinstance(caught.value, CreatorRenderContractError)  # two blockers: untyped
     assert "I couldn't make the video yet" in message and "I didn't add a title" not in message
     assert "stay in the order you attached them" in message
-    assert message.endswith("Should I try again or simplify this request?")
+    assert "Should I try again or simplify this request?" in message
+    # The title's own way forward is not lost behind the generic ask.
+    assert message.endswith('For the title, tell me the words or say "continue without a title".')

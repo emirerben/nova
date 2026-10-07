@@ -382,3 +382,80 @@ def test_typed_words_on_a_new_requirement_also_satisfy_the_old_wordless_one() ->
     assert record["title"] == WORDS
     assert not _blocks(receipts)
     assert {r["requirement_id"]: r["status"] for r in receipts}["r2"] == "met"
+
+
+# -- review fixes: matcher breadth, delegation, copy, speech lane ------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_option_matcher_is_broad_but_exact(monkeypatch) -> None:
+    first = await _gate(monkeypatch, _planned(), brief=_incident_brief())
+    question = first.plan.choice_question
+    for reply in (
+        "no",
+        "None",
+        "nope",
+        "skip",
+        "Skip it",
+        "skip title",
+        "No title please",
+        "don't add a title",
+        "without title",
+        "leave it off",
+        "başlık olmasın",
+        "Başlıksız",
+    ):
+        assert match_open_choice(question, reply) == "no_title", reply
+    # Words, even words that START with an alias, are never an answer.
+    for reply in (
+        WORDS,
+        "No Plans",
+        "No title needed here, call it Weekend away",
+        "none of us slept",
+        "skip the line",
+        "make it fun",
+        "Başlık: Hafta sonu",
+    ):
+        assert match_open_choice(question, reply) is None, reply
+
+
+@pytest.mark.asyncio
+async def test_an_option_is_not_recommended_and_delegation_never_drops_the_title(
+    monkeypatch,
+) -> None:
+    from app.services.choice_questions import delegated_choice
+
+    brief = _incident_brief()
+    first = await _gate(monkeypatch, _planned(), brief=brief)
+    question = first.plan.choice_question
+    assert all(o["recommended"] is False for o in question["options"])
+    for phrase in ("you decide", "Surprise me", "up to you", "you choose"):
+        assert delegated_choice(question, phrase) is None, phrase
+    # A delegation is not an answer: the gate asks once more (within the cap) and explains.
+    asked = _asked(first)
+    again = await _gate(
+        monkeypatch, _planned(), brief=brief, events=(asked, ("user", {"_content": "you decide"}))
+    )
+    assert again.plan.choice_question["kind"] == CONFLICT_TITLE_TEXT
+    assert "don't write on-screen text for you" in again.plan.response
+
+
+@pytest.mark.asyncio
+async def test_the_single_option_reads_as_an_option_not_a_limit(monkeypatch) -> None:
+    result = await _gate(monkeypatch, _planned(), brief=_incident_brief())
+    text = result.plan.response
+    assert 'or reply "Continue without a title"' in text
+    assert "Type the words you want and I'll use them exactly" in text
+    assert "The most I can do" not in text and "Unfortunately" not in text
+
+
+@pytest.mark.asyncio
+async def test_a_speech_montage_never_asks_about_a_title(monkeypatch) -> None:
+    # `contract.audio_source_ids` takes `run_phone_speech_montage_job`, which has no title.
+    audio = {"preserve_source_audio": True, "source_media_ids": ["c0"]}
+    result = await _gate(monkeypatch, _planned(montage_audio=audio), brief=_incident_brief())
+    assert result.plan.turn_value != "question"
+    # A montage_audio that keeps no source audio is not the speech lane.
+    quiet = {"preserve_source_audio": False, "source_media_ids": []}
+    asked = await _gate(monkeypatch, _planned(montage_audio=quiet), brief=_incident_brief())
+    assert asked.plan.turn_value == "question"
