@@ -63,6 +63,7 @@ from app.services.device_render import (
     device_record,
     device_status,
     mark_device_failed,
+    record_contract_decline,
     retry_device_render,
     save_device_record,
     touch_device_poll,
@@ -135,6 +136,42 @@ async def _owned_job(db: AsyncSession, user_id: uuid.UUID, job_id: uuid.UUID) ->
     return job
 
 
+class _ContractRefusal(HTTPException):
+    """The recorded recipe no longer proves its approved creator requirements.
+
+    Still the same 409 every caller already maps; the cause rides along so the
+    publication path can record the typed refusal (`_refuse_publication`).
+    """
+
+    def __init__(self, cause: CreatorRenderContractError, variant_id: str) -> None:
+        super().__init__(409, "Device recipe changed")
+        self.cause = cause
+        self.variant_id = variant_id
+
+
+async def _refuse_publication(
+    db: AsyncSession, job: Job, refusal: _ContractRefusal, *, stage: str = "publication"
+) -> None:
+    """Persist a refused publication WITHOUT touching the last accepted artifact.
+
+    The typed decline is written beside the record's intact state, and a record
+    still waiting on the phone moves to `needs_attention` so the creator hears
+    about it instead of waiting for the reaper. The variant (video, poster, URL,
+    `ok`) is not modified: the previously accepted output stays live.
+    """
+    record_contract_decline(job, refusal.variant_id, refusal.cause, stage=stage)
+    try:
+        mark_device_failed(
+            job,
+            refusal.variant_id,
+            reason_code="unsupported_recipe",
+            detail=str(refusal.cause)[:500],
+        )
+    except (KeyError, ValueError):
+        pass  # already terminal (published / needs_attention): the decline is enough
+    await db.commit()
+
+
 def _record(job: Job, identity: DeviceRenderIdentity) -> tuple[dict, DeviceRenderStatus]:
     try:
         record = device_record(job, identity.variant_id)
@@ -151,7 +188,7 @@ def _record(job: Job, identity: DeviceRenderIdentity) -> tuple[dict, DeviceRende
         # legacy record merely because that root authority disappeared.
         verify_device_record_contract(job, record, status)
     except CreatorRenderContractError as exc:
-        raise HTTPException(409, "Device recipe changed") from exc
+        raise _ContractRefusal(exc, identity.variant_id) from exc
     variant = next(
         (
             v
@@ -682,11 +719,21 @@ async def retry_device_export(
     """
     identity = body.identity
     job = await _owned_job(db, user.id, job_id)
-    _, status = _record(job, identity)
+    try:
+        _, status = _record(job, identity)
+    except _ContractRefusal as refusal:
+        await _refuse_publication(db, job, refusal, stage="retry")
+        raise
     if status.phase != "needs_attention":
         raise HTTPException(409, "Render is not awaiting a retry")
     try:
         new_status = retry_device_render(job, identity.variant_id)
+    except CreatorRenderContractError as exc:
+        # The same recipe can no longer be re-pinned: say so (typed), keep the old
+        # state, and never replace the last accepted artifact.
+        record_contract_decline(job, identity.variant_id, exc, stage="retry")
+        await db.commit()
+        raise HTTPException(409, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     apply_retry_variant_reset(job, identity.variant_id)
@@ -801,7 +848,11 @@ async def complete_device_export(
 ) -> DeviceExportCompleteOut:
     user_id = user.id
     job = await _owned_job(db, user_id, job_id)
-    record, status = _record(job, body.identity)
+    try:
+        record, status = _record(job, body.identity)
+    except _ContractRefusal as refusal:
+        await _refuse_publication(db, job, refusal)
+        raise
     attempt_id = str(body.attempt_id)
     if status.phase == "published":
         if record.get("published_attempt") != attempt_id:
@@ -841,7 +892,11 @@ async def complete_device_export(
     # PLAYBACK_URL_TTL_MIN docstring in generative_jobs.py).
     url = await asyncio.to_thread(storage.signed_get_url, attempt["path"], PLAYBACK_URL_TTL_MIN)
     job = await _owned_job(db, user_id, job_id)
-    record, status = _record(job, body.identity)
+    try:
+        record, status = _record(job, body.identity)
+    except _ContractRefusal as refusal:
+        await _refuse_publication(db, job, refusal)
+        raise
     if status.phase == "published":
         if record.get("published_attempt") != attempt_id:
             raise HTTPException(409, "Another export was published")
@@ -853,6 +908,9 @@ async def complete_device_export(
         # byte probe above only proves the file against the recipe; publication
         # must also prove that recipe still has its approved creator authority.
         verify_device_record_contract(job, record, status)
+    except CreatorRenderContractError as exc:
+        await _refuse_publication(db, job, _ContractRefusal(exc, body.identity.variant_id))
+        raise HTTPException(422, "Export does not match the approved recipe") from exc
     except ValueError as exc:
         raise HTTPException(422, "Export does not match the approved recipe") from exc
     cleanup = (
