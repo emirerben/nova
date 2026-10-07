@@ -1,6 +1,6 @@
 {
   "agent": "nova.creator.main",
-  "prompt_version": "2026-10-06-v44",
+  "prompt_version": "2026-10-07-v45",
   "input": {
     "user_message": "Make a fast montage of my clips in chronological order.",
     "creator_context": "City-break creator who posts short travel montages.",
@@ -201,7 +201,7 @@
     },
     "brief_enabled": true
   },
-  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"order\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"chronological order\",\n      \"facts\": {\n        \"key\": \"capture_time\"\n      }\n    }\n  ],\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"archetype\": \"day_vlog\",\n      \"audio_strategy\": \"licensed_music\",\n      \"media_scope\": \"all\",\n      \"story_structure\": [\n        \"Morning walk and terrace coffee\",\n        \"Exploring the city streets and markets\",\n        \"Sunset and night views\",\n        \"Departure at the train platform\"\n      ],\n      \"pacing\": \"fast\",\n      \"target_duration_s\": 24,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"rationale\": \"Cutting all 12 clips in chronological order creates a natural 'day in the life' city break progression. A fast pace keeps the energy up, giving each clip about 1.5 to 2.5 seconds, set to the warm acoustic music track.\",\n      \"optional_treatments\": []\n    },\n    \"summary\": \"I'll create a fast-paced day vlog montage, setting all of your clips in chronological order from morning to night to tell the complete story of your city break.\",\n    \"render_intent_evidence\": {\n      \"opening_title\": null,\n      \"font_family\": null,\n      \"text_color\": null,\n      \"opening_title_duration_s\": null,\n      \"shot_labels\": null,\n      \"closing_title\": null,\n      \"licensed_sfx\": null\n    }\n  }\n}",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"order\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"chronological order\",\n      \"facts\": {\n        \"key\": \"capture_time\"\n      }\n    }\n  ],\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"archetype\": \"day_vlog\",\n      \"hero_media_id\": null,\n      \"audio_strategy\": \"licensed_music\",\n      \"execution_contract\": null,\n      \"media_scope\": \"all\",\n      \"clip_intents\": [],\n      \"story_structure\": [\n        \"Morning stroll and coffee\",\n        \"Afternoon markets and transit\",\n        \"Sunset views and night lights\"\n      ],\n      \"caption_style\": \"none\",\n      \"intro_hook\": \"A full day in the city\",\n      \"opening_title\": null,\n      \"opening_title_duration_s\": null,\n      \"shot_labels\": null,\n      \"closing_title\": null,\n      \"font_family\": null,\n      \"text_color\": null,\n      \"pacing\": \"fast\",\n      \"target_duration_s\": 18,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"optional_treatments\": [],\n      \"overlay_display\": null,\n      \"licensed_sfx\": null,\n      \"rationale\": \"With 12 scenic clips, a fast pacing of 1-2 seconds per clip keeps the energy up while smoothly navigating from the morning river to the final night train. Using a 18-second duration ensures we hit all locations quickly.\"\n    },\n    \"summary\": \"I'm cutting this as a day vlog, in the order you shot it. We'll use all your clips to build a fast-paced, chronological journey through your city break set to a warm acoustic track.\",\n    \"render_intent_evidence\": {\n      \"opening_title\": null,\n      \"font_family\": null,\n      \"text_color\": null,\n      \"opening_title_duration_s\": null,\n      \"shot_labels\": null,\n      \"closing_title\": null,\n      \"licensed_sfx\": null\n    }\n  }\n}",
   "output": {
     "action": {
       "kind": "propose_strategy",
@@ -214,18 +214,19 @@
         "execution_contract": null,
         "media_scope": "all",
         "story_structure": [
-          "Morning walk and terrace coffee",
-          "Exploring the city streets and markets",
-          "Sunset and night views",
-          "Departure at the train platform"
+          "Morning stroll and coffee",
+          "Afternoon markets and transit",
+          "Sunset views and night lights"
         ],
-        "caption_style": "auto",
-        "intro_hook": null,
+        "caption_style": "none",
+        "intro_hook": "A full day in the city",
         "opening_title": null,
         "font_family": null,
         "text_color": null,
+        "clip_intents": [],
         "image_layout": null,
         "pacing": "fast",
+        "target_duration_s": 18,
         "target_duration_requested": true,
         "render_program": "guided",
         "selected_media_ids": [],
@@ -234,10 +235,9 @@
         "mixed_media_timing": null,
         "montage_audio": null,
         "video_reuse_policy": "once",
-        "rationale": "Cutting all 12 clips in chronological order creates a natural 'day in the life' city break progression. A fast pace keeps the energy up, giving each clip about 1.5 to 2.5 seconds, set to the warm acoustic music track.",
-        "target_duration_s": 24
+        "rationale": "With 12 scenic clips, a fast pacing of 1-2 seconds per clip keeps the energy up while smoothly navigating from the morning river to the final night train. Using a 18-second duration ensures we hit all locations quickly."
       },
-      "summary": "I'll create a fast-paced day vlog montage, setting all of your clips in chronological order from morning to night to tell the complete story of your city break.",
+      "summary": "I'm cutting this as a day vlog, in the order you shot it. We'll use all your clips to build a fast-paced, chronological journey through your city break set to a warm acoustic track.",
       "render_intent_evidence": {
         "opening_title": null,
         "font_family": null,
@@ -260,11 +260,12 @@
     ]
   },
   "meta": {
-    "source": "live_recorded 2026-10-07 prompt 2026-10-06-v44",
+    "source": "live_recorded 2026-10-07 prompt 2026-10-07-v45",
     "ticket": "KRI-470",
     "gate_case": "c_undated",
     "dated": false,
-    "contract": "Contract: same request as c_dated but NO clip carries a capture_time => the gate asks order_basis (the order cannot be honoured silently).",
-    "note": "Recorded from the real model in the owner-approved KRI-470 gate experiment (test_run_id kri470-gate-20261007). Replay is structural only; the cassette ignores the prompt text."
+    "contract": "Contract (v45): same request, no capture times => order{capture_time} only, no invented timing; the gate asks order_basis.",
+    "note": "Re-recorded from the real model under prompt 2026-10-07-v45 (owner-approved run, real spend ~$0.24). Replay is structural only; the cassette ignores the prompt text.",
+    "test_run_id": "kri470-v45-rerecord-20261007"
   }
 }

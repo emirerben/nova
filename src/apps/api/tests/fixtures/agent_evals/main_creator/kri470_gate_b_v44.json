@@ -1,8 +1,8 @@
 {
   "agent": "nova.creator.main",
-  "prompt_version": "2026-10-07-v45",
+  "prompt_version": "2026-10-06-v44",
   "input": {
-    "user_message": "Make a fast montage of my clips in chronological order.",
+    "user_message": "Make a 60 second montage of all my clips.",
     "creator_context": "City-break creator who posts short travel montages.",
     "item_context": "Untitled video; montage; no recorded voiceover.",
     "media_context": [
@@ -285,7 +285,7 @@
     },
     "brief_enabled": true
   },
-  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"order\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"chronological order\",\n      \"facts\": {\n        \"key\": \"capture_time\"\n      }\n    }\n  ],\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"archetype\": \"day_vlog\",\n      \"hero_media_id\": null,\n      \"audio_strategy\": \"licensed_music\",\n      \"execution_contract\": null,\n      \"media_scope\": \"all\",\n      \"clip_intents\": [],\n      \"story_structure\": [\n        \"Morning sights and terrace coffee\",\n        \"Afternoon markets and ferry ride\",\n        \"Sunset views and night departure\"\n      ],\n      \"caption_style\": \"none\",\n      \"intro_hook\": null,\n      \"opening_title\": null,\n      \"opening_title_duration_s\": null,\n      \"shot_labels\": null,\n      \"closing_title\": null,\n      \"font_family\": null,\n      \"text_color\": null,\n      \"pacing\": \"fast\",\n      \"target_duration_s\": 20,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"optional_treatments\": [],\n      \"overlay_display\": null,\n      \"licensed_sfx\": null,\n      \"mixed_media_timing\": null,\n      \"montage_cadence\": null,\n      \"rationale\": \"Structuring the edit as a chronologically ordered day vlog, keeping the pacing fast to fit all clips naturally within a 20-second travel montage set to the warm acoustic bed.\"\n    },\n    \"summary\": \"I'm cutting this as a fast-paced day vlog, in the order you shot it, tracking your journey from the morning river walk to the night train.\",\n    \"render_intent_evidence\": {\n      \"opening_title\": null,\n      \"font_family\": null,\n      \"text_color\": null,\n      \"opening_title_duration_s\": null,\n      \"shot_labels\": null,\n      \"closing_title\": null,\n      \"licensed_sfx\": null\n    }\n  }\n}",
+  "raw_text": "{\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"archetype\": \"day_vlog\",\n      \"hero_media_id\": null,\n      \"audio_strategy\": \"licensed_music\",\n      \"media_scope\": \"all\",\n      \"story_structure\": [\n        \"Morning start with river walk and terrace coffee\",\n        \"Midday exploration through markets and streets\",\n        \"Evening transition to rooftop views and night lights\"\n      ],\n      \"caption_style\": \"none\",\n      \"intro_hook\": \"A full day in the city\",\n      \"pacing\": \"balanced\",\n      \"target_duration_s\": 60,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"rationale\": \"Cutting this as a day vlog in chronological order allows us to naturally progress from the morning coffee to the night lights. A balanced 60-second duration ensures all 12 clips get enough breathing room to set the scene.\",\n      \"optional_treatments\": []\n    },\n    \"summary\": \"I'll create a 60-second montage using all your clips, styled as a chronological day vlog that flows naturally from morning to night.\",\n    \"render_intent_evidence\": {}\n  },\n  \"brief_updates\": []\n}",
   "output": {
     "action": {
       "kind": "propose_strategy",
@@ -298,19 +298,18 @@
         "execution_contract": null,
         "media_scope": "all",
         "story_structure": [
-          "Morning sights and terrace coffee",
-          "Afternoon markets and ferry ride",
-          "Sunset views and night departure"
+          "Morning start with river walk and terrace coffee",
+          "Midday exploration through markets and streets",
+          "Evening transition to rooftop views and night lights"
         ],
         "caption_style": "none",
-        "intro_hook": null,
+        "intro_hook": "A full day in the city",
         "opening_title": null,
         "font_family": null,
         "text_color": null,
-        "clip_intents": [],
         "image_layout": null,
-        "pacing": "fast",
-        "target_duration_s": 20,
+        "pacing": "balanced",
+        "target_duration_s": 60,
         "target_duration_requested": true,
         "render_program": "guided",
         "selected_media_ids": [],
@@ -319,37 +318,22 @@
         "mixed_media_timing": null,
         "montage_audio": null,
         "video_reuse_policy": "once",
-        "rationale": "Structuring the edit as a chronologically ordered day vlog, keeping the pacing fast to fit all clips naturally within a 20-second travel montage set to the warm acoustic bed."
+        "rationale": "Cutting this as a day vlog in chronological order allows us to naturally progress from the morning coffee to the night lights. A balanced 60-second duration ensures all 12 clips get enough breathing room to set the scene."
       },
-      "summary": "I'm cutting this as a fast-paced day vlog, in the order you shot it, tracking your journey from the morning river walk to the night train.",
+      "summary": "I'll create a 60-second montage using all your clips, styled as a chronological day vlog that flows naturally from morning to night.",
       "render_intent_evidence": {
         "opening_title": null,
         "font_family": null,
         "text_color": null
       }
-    },
-    "brief_updates": [
-      {
-        "operation": "add",
-        "target_requirement_id": null,
-        "expected_version": null,
-        "kind": "order",
-        "scope": "global",
-        "literal": null,
-        "description": "chronological order",
-        "facts": {
-          "key": "capture_time"
-        }
-      }
-    ]
+    }
   },
   "meta": {
-    "source": "live_recorded 2026-10-07 prompt 2026-10-07-v45",
+    "source": "live_recorded 2026-10-07 prompt 2026-10-06-v44",
     "ticket": "KRI-470",
-    "gate_case": "c_dated",
+    "gate_case": "b_v44",
     "dated": true,
-    "contract": "Contract (v45): 'in chronological order' => order{capture_time} only, no invented timing; every clip dated so the gate stays silent.",
-    "note": "Re-recorded from the real model under prompt 2026-10-07-v45 (owner-approved run, real spend ~$0.24). Replay is structural only; the cassette ignores the prompt text.",
-    "test_run_id": "kri470-v45-rerecord-20261007"
+    "contract": "Before-picture (v44, the PROMPT GAP): empty brief_updates for a stated 60 s; the number never reached the brief.",
+    "note": "Kept alongside the v45 re-record: this is what prompt 2026-10-06-v44 emitted for the same input (superseded; pinned by the chain test as the before-picture)."
   }
 }

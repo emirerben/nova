@@ -1,8 +1,8 @@
 {
   "agent": "nova.creator.main",
-  "prompt_version": "2026-10-07-v45",
+  "prompt_version": "2026-10-06-v44",
   "input": {
-    "user_message": "Make a fast montage of my clips in chronological order.",
+    "user_message": "Make a 20 second montage of my 6 best clips.",
     "creator_context": "City-break creator who posts short travel montages.",
     "item_context": "Untitled video; montage; no recorded voiceover.",
     "media_context": [
@@ -285,43 +285,49 @@
     },
     "brief_enabled": true
   },
-  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"order\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"chronological order\",\n      \"facts\": {\n        \"key\": \"capture_time\"\n      }\n    }\n  ],\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"archetype\": \"day_vlog\",\n      \"hero_media_id\": null,\n      \"audio_strategy\": \"licensed_music\",\n      \"execution_contract\": null,\n      \"media_scope\": \"all\",\n      \"clip_intents\": [],\n      \"story_structure\": [\n        \"Morning sights and terrace coffee\",\n        \"Afternoon markets and ferry ride\",\n        \"Sunset views and night departure\"\n      ],\n      \"caption_style\": \"none\",\n      \"intro_hook\": null,\n      \"opening_title\": null,\n      \"opening_title_duration_s\": null,\n      \"shot_labels\": null,\n      \"closing_title\": null,\n      \"font_family\": null,\n      \"text_color\": null,\n      \"pacing\": \"fast\",\n      \"target_duration_s\": 20,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"optional_treatments\": [],\n      \"overlay_display\": null,\n      \"licensed_sfx\": null,\n      \"mixed_media_timing\": null,\n      \"montage_cadence\": null,\n      \"rationale\": \"Structuring the edit as a chronologically ordered day vlog, keeping the pacing fast to fit all clips naturally within a 20-second travel montage set to the warm acoustic bed.\"\n    },\n    \"summary\": \"I'm cutting this as a fast-paced day vlog, in the order you shot it, tracking your journey from the morning river walk to the night train.\",\n    \"render_intent_evidence\": {\n      \"opening_title\": null,\n      \"font_family\": null,\n      \"text_color\": null,\n      \"opening_title_duration_s\": null,\n      \"shot_labels\": null,\n      \"closing_title\": null,\n      \"licensed_sfx\": null\n    }\n  }\n}",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"timing\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"20 second duration\",\n      \"facts\": {\n        \"duration_s\": 20\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"select\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"6 best clips\",\n      \"facts\": {}\n    }\n  ],\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"audio_strategy\": \"licensed_music\",\n      \"media_scope\": \"selected\",\n      \"story_structure\": [\n        \"Lively street scenes (coffee, market)\",\n        \"Atmospheric transition (sunset on bridge)\",\n        \"Nighttime energy (rooftop, night lights)\"\n      ],\n      \"pacing\": \"balanced\",\n      \"target_duration_s\": 20,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [\n        \"clip-2\",\n        \"clip-4\",\n        \"clip-5\",\n        \"clip-6\",\n        \"clip-10\",\n        \"clip-11\"\n      ],\n      \"optional_treatments\": [],\n      \"rationale\": \"Selecting 6 strong, visually diverse clips covering day to night. Fitting them into exactly 20 seconds means each clip will get roughly 3-4 seconds of screen time, providing a balanced and engaging pace driven by licensed music.\"\n    },\n    \"summary\": \"I'll create a 20-second montage using 6 of your most cinematic clips, taking the viewer from morning coffee through the market to a rooftop sunset and city night lights.\",\n    \"render_intent_evidence\": {}\n  }\n}",
   "output": {
     "action": {
       "kind": "propose_strategy",
       "strategy": {
         "direction": "fast_montage",
         "edit_format": "montage",
-        "archetype": "day_vlog",
+        "archetype": null,
         "hero_media_id": null,
         "audio_strategy": "licensed_music",
         "execution_contract": null,
-        "media_scope": "all",
+        "media_scope": "selected",
         "story_structure": [
-          "Morning sights and terrace coffee",
-          "Afternoon markets and ferry ride",
-          "Sunset views and night departure"
+          "Lively street scenes (coffee, market)",
+          "Atmospheric transition (sunset on bridge)",
+          "Nighttime energy (rooftop, night lights)"
         ],
-        "caption_style": "none",
+        "caption_style": "auto",
         "intro_hook": null,
         "opening_title": null,
         "font_family": null,
         "text_color": null,
-        "clip_intents": [],
         "image_layout": null,
-        "pacing": "fast",
+        "pacing": "balanced",
         "target_duration_s": 20,
         "target_duration_requested": true,
         "render_program": "guided",
-        "selected_media_ids": [],
+        "selected_media_ids": [
+          "clip-2",
+          "clip-4",
+          "clip-5",
+          "clip-6",
+          "clip-10",
+          "clip-11"
+        ],
         "optional_treatments": [],
         "licensed_sfx": null,
         "mixed_media_timing": null,
         "montage_audio": null,
         "video_reuse_policy": "once",
-        "rationale": "Structuring the edit as a chronologically ordered day vlog, keeping the pacing fast to fit all clips naturally within a 20-second travel montage set to the warm acoustic bed."
+        "rationale": "Selecting 6 strong, visually diverse clips covering day to night. Fitting them into exactly 20 seconds means each clip will get roughly 3-4 seconds of screen time, providing a balanced and engaging pace driven by licensed music."
       },
-      "summary": "I'm cutting this as a fast-paced day vlog, in the order you shot it, tracking your journey from the morning river walk to the night train.",
+      "summary": "I'll create a 20-second montage using 6 of your most cinematic clips, taking the viewer from morning coffee through the market to a rooftop sunset and city night lights.",
       "render_intent_evidence": {
         "opening_title": null,
         "font_family": null,
@@ -333,23 +339,32 @@
         "operation": "add",
         "target_requirement_id": null,
         "expected_version": null,
-        "kind": "order",
+        "kind": "timing",
         "scope": "global",
         "literal": null,
-        "description": "chronological order",
+        "description": "20 second duration",
         "facts": {
-          "key": "capture_time"
+          "duration_s": 20
         }
+      },
+      {
+        "operation": "add",
+        "target_requirement_id": null,
+        "expected_version": null,
+        "kind": "select",
+        "scope": "global",
+        "literal": null,
+        "description": "6 best clips",
+        "facts": {}
       }
     ]
   },
   "meta": {
-    "source": "live_recorded 2026-10-07 prompt 2026-10-07-v45",
+    "source": "live_recorded 2026-10-07 prompt 2026-10-06-v44",
     "ticket": "KRI-470",
-    "gate_case": "c_dated",
+    "gate_case": "e_v44",
     "dated": true,
-    "contract": "Contract (v45): 'in chronological order' => order{capture_time} only, no invented timing; every clip dated so the gate stays silent.",
-    "note": "Re-recorded from the real model under prompt 2026-10-07-v45 (owner-approved run, real spend ~$0.24). Replay is structural only; the cassette ignores the prompt text.",
-    "test_run_id": "kri470-v45-rerecord-20261007"
+    "contract": "Before-picture (v44): timing(20) + select, 6 selected clips.",
+    "note": "Kept alongside the v45 re-record: this is what prompt 2026-10-06-v44 emitted for the same input (superseded; pinned by the chain test as the before-picture)."
   }
 }

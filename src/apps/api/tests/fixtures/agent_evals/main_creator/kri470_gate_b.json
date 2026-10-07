@@ -1,6 +1,6 @@
 {
   "agent": "nova.creator.main",
-  "prompt_version": "2026-10-06-v44",
+  "prompt_version": "2026-10-07-v45",
   "input": {
     "user_message": "Make a 60 second montage of all my clips.",
     "creator_context": "City-break creator who posts short travel montages.",
@@ -285,7 +285,7 @@
     },
     "brief_enabled": true
   },
-  "raw_text": "{\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"archetype\": \"day_vlog\",\n      \"hero_media_id\": null,\n      \"audio_strategy\": \"licensed_music\",\n      \"media_scope\": \"all\",\n      \"story_structure\": [\n        \"Morning start with river walk and terrace coffee\",\n        \"Midday exploration through markets and streets\",\n        \"Evening transition to rooftop views and night lights\"\n      ],\n      \"caption_style\": \"none\",\n      \"intro_hook\": \"A full day in the city\",\n      \"pacing\": \"balanced\",\n      \"target_duration_s\": 60,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"rationale\": \"Cutting this as a day vlog in chronological order allows us to naturally progress from the morning coffee to the night lights. A balanced 60-second duration ensures all 12 clips get enough breathing room to set the scene.\",\n      \"optional_treatments\": []\n    },\n    \"summary\": \"I'll create a 60-second montage using all your clips, styled as a chronological day vlog that flows naturally from morning to night.\",\n    \"render_intent_evidence\": {}\n  },\n  \"brief_updates\": []\n}",
+  "raw_text": "{\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"archetype\": \"day_vlog\",\n      \"audio_strategy\": \"licensed_music\",\n      \"media_scope\": \"all\",\n      \"story_structure\": [\n        \"Morning walk and coffee\",\n        \"Exploring the market and street scenes\",\n        \"Ferry ride and sunset\",\n        \"Rooftop views and night lights\"\n      ],\n      \"pacing\": \"balanced\",\n      \"target_duration_s\": 60,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"rationale\": \"Since you want a 60-second montage using all 12 clips, a balanced pace will allow each moment enough screen time to breathe. The footage flows naturally from early morning to late night, making it perfect for a chronological sequence set to a warm acoustic track.\",\n      \"optional_treatments\": []\n    },\n    \"summary\": \"I'll create a 60-second montage using all your clips. I'm cutting this as a day vlog, in the order you shot it, smoothly transitioning from your morning walk to the night lights.\",\n    \"render_intent_evidence\": {}\n  },\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"timing\",\n      \"scope\": \"global\",\n      \"literal\": \"60 second\",\n      \"description\": \"60 second montage\",\n      \"facts\": {\n        \"duration_s\": 60\n      }\n    }\n  ]\n}",
   "output": {
     "action": {
       "kind": "propose_strategy",
@@ -298,12 +298,13 @@
         "execution_contract": null,
         "media_scope": "all",
         "story_structure": [
-          "Morning start with river walk and terrace coffee",
-          "Midday exploration through markets and streets",
-          "Evening transition to rooftop views and night lights"
+          "Morning walk and coffee",
+          "Exploring the market and street scenes",
+          "Ferry ride and sunset",
+          "Rooftop views and night lights"
         ],
-        "caption_style": "none",
-        "intro_hook": "A full day in the city",
+        "caption_style": "auto",
+        "intro_hook": null,
         "opening_title": null,
         "font_family": null,
         "text_color": null,
@@ -318,22 +319,37 @@
         "mixed_media_timing": null,
         "montage_audio": null,
         "video_reuse_policy": "once",
-        "rationale": "Cutting this as a day vlog in chronological order allows us to naturally progress from the morning coffee to the night lights. A balanced 60-second duration ensures all 12 clips get enough breathing room to set the scene."
+        "rationale": "Since you want a 60-second montage using all 12 clips, a balanced pace will allow each moment enough screen time to breathe. The footage flows naturally from early morning to late night, making it perfect for a chronological sequence set to a warm acoustic track."
       },
-      "summary": "I'll create a 60-second montage using all your clips, styled as a chronological day vlog that flows naturally from morning to night.",
+      "summary": "I'll create a 60-second montage using all your clips. I'm cutting this as a day vlog, in the order you shot it, smoothly transitioning from your morning walk to the night lights.",
       "render_intent_evidence": {
         "opening_title": null,
         "font_family": null,
         "text_color": null
       }
-    }
+    },
+    "brief_updates": [
+      {
+        "operation": "add",
+        "target_requirement_id": null,
+        "expected_version": null,
+        "kind": "timing",
+        "scope": "global",
+        "literal": "60 second",
+        "description": "60 second montage",
+        "facts": {
+          "duration_s": 60
+        }
+      }
+    ]
   },
   "meta": {
-    "source": "live_recorded 2026-10-07 prompt 2026-10-06-v44",
+    "source": "live_recorded 2026-10-07 prompt 2026-10-07-v45",
     "ticket": "KRI-470",
     "gate_case": "b",
     "dated": true,
-    "contract": "Contract (PROMPT GAP, pins v44 behaviour): 'Make a 60 second montage of all my clips' => brief_updates NULL, the stated 60 s was LOST so the gate has no timing requirement to compare. Superseded by a live re-record under v45; keep until then.",
-    "note": "Recorded from the real model in the owner-approved KRI-470 gate experiment (test_run_id kri470-gate-20261007). Replay is structural only; the cassette ignores the prompt text."
+    "contract": "Contract (v45): 'Make a 60 second montage of all my clips' => timing(duration_s 60) in brief_updates (v44 returned none: the prompt gap this PR fixes); 12 clips fit 60 s so the gate stays silent.",
+    "note": "Re-recorded from the real model under prompt 2026-10-07-v45 (owner-approved run, real spend ~$0.24). Replay is structural only; the cassette ignores the prompt text.",
+    "test_run_id": "kri470-v45-rerecord-20261007"
   }
 }

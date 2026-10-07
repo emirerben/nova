@@ -139,11 +139,17 @@ compare a length the live brief carries. Main Creator prompt `2026-10-06-v44` em
 my clips" (`brief_updates` empty), so a lost number meant a silent gate. Prompt `2026-10-07-v45`
 (and `brief_extractor` `2026-10-07-v2`, which shares the brief section) tells the model to emit a
 `timing` requirement with `duration_s` in the same turn for ANY stated length, alongside
-`target_duration_s`, and never to invent one when none was stated. Whether the model obeys can
-only be verified by a live re-record: the committed live cassettes
-(`tests/fixtures/agent_evals/main_creator/kri470_gate_*`) replay structurally and ignore the
-prompt text; `tests/kria/test_creator_gate_live_cassettes.py` pins the model-output -> gate chain
-(including the v44 "60 second" gap as `test_prompt_gap_recorded_model_drops_a_stated_60s`).
+`target_duration_s`, and never to invent one when none was stated. Verified by a live re-record
+(2026-10-07, 6 Main Creator calls, real spend about $0.24): "60 second montage of all my clips"
+now yields `timing{duration_s: 60}` (v44 returned nothing), "8 second" and "20 second" keep
+their timing, and "chronological order" / the talk-to-camera request invent no length. One
+recording per case, so treat it as evidence, not a guarantee. The same run showed two
+side effects: the model now often drops the `select` requirement ("all my clips", "6 best
+clips") and, on 12-clip montages, picks `archetype: day_vlog`, which EXEMPTS the length question
+(the 8 s request no longer asks). The committed cassettes
+(`tests/fixtures/agent_evals/main_creator/kri470_gate_*`, with `_v44` before-pictures) replay
+structurally and ignore the prompt text; `tests/kria/test_creator_gate_live_cassettes.py` pins the
+model-output -> gate chain, including the archetype exemption.
 
 | Kind | Evidence required | Detector | Options (all executable today) | Persisted field | Exempt (never asks) |
 | --- | --- | --- | --- | --- | --- |
@@ -226,7 +232,8 @@ picks the recommended option, recorded as `source="creator_delegated"` and discl
   15 s" passes if the 15 never reached the brief), and a length question also needs a resolved
   clip set (a resolved `include` intent or a selection on the strategy): no include intent from the
   clip-request resolver means no count to compare. `montage_audio` and the other archetype
-  exemptions in the table keep BOTH questions silent; the KRI-469 route gap on those plans (cloud
+  exemptions in the table keep BOTH questions silent (including an archetype the model picks on
+  its own for a plain "N second montage"); the KRI-469 route gap on those plans (cloud
   declines `montage_audio.source_media_ids[]`, phone renders `speech_montage`) is pinned in
   `test_montage_audio_route_shape_is_the_documented_kri469_gap` until the PR-H slice changes it.
 * Questions render through the generic v1 `ChoiceQuestionCard` on iOS; web has no question

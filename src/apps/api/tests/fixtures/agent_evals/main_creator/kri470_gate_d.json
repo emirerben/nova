@@ -1,6 +1,6 @@
 {
   "agent": "nova.creator.main",
-  "prompt_version": "2026-10-06-v44",
+  "prompt_version": "2026-10-07-v45",
   "input": {
     "user_message": "Use the voice from the talk to camera video behind a fast montage of the remaining clips, in chronological order.",
     "creator_context": "City-break creator who posts short travel montages.",
@@ -295,7 +295,7 @@
     },
     "brief_enabled": true
   },
-  "raw_text": "{\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"brief_updates\": [\n      {\n        \"operation\": \"add\",\n        \"kind\": \"audio\",\n        \"scope\": \"global\",\n        \"literal\": null,\n        \"description\": \"Use the voice from the talk to camera video behind the montage\",\n        \"facts\": {}\n      },\n      {\n        \"operation\": \"add\",\n        \"kind\": \"select\",\n        \"scope\": \"global\",\n        \"literal\": null,\n        \"description\": \"the remaining clips (excluding the talk to camera video)\",\n        \"facts\": {}\n      },\n      {\n        \"operation\": \"add\",\n        \"kind\": \"order\",\n        \"scope\": \"global\",\n        \"literal\": null,\n        \"description\": \"chronological order\",\n        \"facts\": {\n          \"key\": \"capture_time\"\n        }\n      }\n    ],\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"archetype\": \"day_vlog\",\n      \"hero_media_id\": null,\n      \"audio_strategy\": \"original_audio\",\n      \"execution_contract\": null,\n      \"media_scope\": \"selected\",\n      \"clip_intents\": [],\n      \"montage_audio\": {\n        \"preserve_source_audio\": true,\n        \"preview_source_beds\": false,\n        \"source_media_ids\": [\n          \"clip-1\"\n        ]\n      },\n      \"story_structure\": [\n        \"Creator explains the plan using source audio\",\n        \"Fast chronological montage of the day's sights\"\n      ],\n      \"caption_style\": \"none\",\n      \"intro_hook\": null,\n      \"opening_title\": null,\n      \"opening_title_duration_s\": null,\n      \"shot_labels\": null,\n      \"closing_title\": null,\n      \"font_family\": null,\n      \"text_color\": null,\n      \"pacing\": \"fast\",\n      \"target_duration_s\": 8,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"optional_treatments\": [],\n      \"overlay_display\": null,\n      \"licensed_sfx\": null,\n      \"rationale\": \"I'm setting up a day vlog cut in chronological order. I'll use the audio from your intro clip as the driving track, accompanied by a fast-paced sequence of the 11 remaining sights, aiming for an 8-second duration to keep it tight and match your speech.\",\n      \"mixed_media_timing\": null,\n      \"montage_cadence\": null\n    },\n    \"summary\": \"I'm cutting this as a day vlog, in the order you shot it. I'll use your intro clip's audio overlaid on a fast 8-second chronological montage of the rest of your footage.\",\n    \"render_intent_evidence\": {\n      \"opening_title\": null,\n      \"font_family\": null,\n      \"text_color\": null,\n      \"opening_title_duration_s\": null,\n      \"shot_labels\": null,\n      \"closing_title\": null,\n      \"licensed_sfx\": null\n    }\n  }\n}",
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"order\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"chronological order\",\n      \"facts\": {\n        \"key\": \"capture_time\"\n      }\n    }\n  ],\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"archetype\": \"day_vlog\",\n      \"hero_media_id\": null,\n      \"audio_strategy\": \"original_audio\",\n      \"execution_contract\": null,\n      \"media_scope\": \"selected\",\n      \"clip_intents\": [],\n      \"montage_audio\": {\n        \"preserve_source_audio\": true,\n        \"preview_source_beds\": false,\n        \"source_media_ids\": [\n          \"clip-1\"\n        ]\n      },\n      \"story_structure\": [\n        \"Use the audio from the talk-to-camera explanation to anchor the edit\",\n        \"Rapid-fire montage of the day's sights in chronological sequence\",\n        \"Resolve as the narration completes\"\n      ],\n      \"caption_style\": \"clean\",\n      \"intro_hook\": null,\n      \"opening_title\": null,\n      \"opening_title_duration_s\": null,\n      \"shot_labels\": null,\n      \"closing_title\": null,\n      \"font_family\": null,\n      \"text_color\": null,\n      \"pacing\": \"fast\",\n      \"target_duration_s\": 6,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"optional_treatments\": [],\n      \"overlay_display\": null,\n      \"licensed_sfx\": null,\n      \"mixed_media_timing\": null,\n      \"montage_cadence\": null,\n      \"rationale\": \"The talking head clip is exactly 6 seconds long, so I've matched the total duration to that audio. The remaining 11 clips will be cut into a highly kinetic, half-second-per-shot chronological montage serving as the visual bed for your explanation.\"\n    },\n    \"summary\": \"I'm cutting this as a day vlog, in the order you shot it. I'll use the audio from your explanation clip as the main track behind a rapid, 6-second montage of the rest of the day's sights.\",\n    \"render_intent_evidence\": {\n      \"opening_title\": null,\n      \"font_family\": null,\n      \"text_color\": null,\n      \"opening_title_duration_s\": null,\n      \"shot_labels\": null,\n      \"closing_title\": null,\n      \"licensed_sfx\": null\n    }\n  }\n}",
   "output": {
     "action": {
       "kind": "propose_strategy",
@@ -308,10 +308,11 @@
         "execution_contract": null,
         "media_scope": "selected",
         "story_structure": [
-          "Creator explains the plan using source audio",
-          "Fast chronological montage of the day's sights"
+          "Use the audio from the talk-to-camera explanation to anchor the edit",
+          "Rapid-fire montage of the day's sights in chronological sequence",
+          "Resolve as the narration completes"
         ],
-        "caption_style": "none",
+        "caption_style": "clean",
         "intro_hook": null,
         "opening_title": null,
         "font_family": null,
@@ -319,7 +320,7 @@
         "clip_intents": [],
         "image_layout": null,
         "pacing": "fast",
-        "target_duration_s": 8,
+        "target_duration_s": 6,
         "target_duration_requested": true,
         "render_program": "guided",
         "selected_media_ids": [],
@@ -334,9 +335,9 @@
           ]
         },
         "video_reuse_policy": "once",
-        "rationale": "I'm setting up a day vlog cut in chronological order. I'll use the audio from your intro clip as the driving track, accompanied by a fast-paced sequence of the 11 remaining sights, aiming for an 8-second duration to keep it tight and match your speech."
+        "rationale": "The talking head clip is exactly 6 seconds long, so I've matched the total duration to that audio. The remaining 11 clips will be cut into a highly kinetic, half-second-per-shot chronological montage serving as the visual bed for your explanation."
       },
-      "summary": "I'm cutting this as a day vlog, in the order you shot it. I'll use your intro clip's audio overlaid on a fast 8-second chronological montage of the rest of your footage.",
+      "summary": "I'm cutting this as a day vlog, in the order you shot it. I'll use the audio from your explanation clip as the main track behind a rapid, 6-second montage of the rest of the day's sights.",
       "render_intent_evidence": {
         "opening_title": null,
         "font_family": null,
@@ -344,26 +345,6 @@
       }
     },
     "brief_updates": [
-      {
-        "operation": "add",
-        "target_requirement_id": null,
-        "expected_version": null,
-        "kind": "audio",
-        "scope": "global",
-        "literal": null,
-        "description": "Use the voice from the talk to camera video behind the montage",
-        "facts": {}
-      },
-      {
-        "operation": "add",
-        "target_requirement_id": null,
-        "expected_version": null,
-        "kind": "select",
-        "scope": "global",
-        "literal": null,
-        "description": "the remaining clips (excluding the talk to camera video)",
-        "facts": {}
-      },
       {
         "operation": "add",
         "target_requirement_id": null,
@@ -379,11 +360,12 @@
     ]
   },
   "meta": {
-    "source": "live_recorded 2026-10-07 prompt 2026-10-06-v44",
+    "source": "live_recorded 2026-10-07 prompt 2026-10-07-v45",
     "ticket": "KRI-470",
     "gate_case": "d",
     "dated": true,
-    "contract": "Contract: 'voice from the talk to camera video behind a fast montage of the remaining clips, in chronological order' => audio+select+order requirements, montage_audio.source_media_ids=['clip-1'], no gate question; documented KRI-469 route shape (cloud capability_unavailable on montage_audio.source_media_ids[], phone speech_montage) that the PR-H slice will change.",
-    "note": "Recorded from the real model in the owner-approved KRI-470 gate experiment (test_run_id kri470-gate-20261007). Replay is structural only; the cassette ignores the prompt text."
+    "contract": "Contract (v45): voice from the talk-to-camera clip behind a montage => only order{capture_time} recorded (audio and select requirements dropped vs v44), NO timing, montage_audio.source_media_ids=['clip-1']; KRI-469 route shape (cloud capability_unavailable on montage_audio.source_media_ids[], phone speech_montage) pinned for PR-H.",
+    "note": "Re-recorded from the real model under prompt 2026-10-07-v45 (owner-approved run, real spend ~$0.24). Replay is structural only; the cassette ignores the prompt text.",
+    "test_run_id": "kri470-v45-rerecord-20261007"
   }
 }

@@ -1,19 +1,23 @@
 """KRI-470 / KRI-476: REAL model output -> clarification gate, chained end to end.
 
 The cassettes under ``tests/fixtures/agent_evals/{main_creator,clip_intent_planner,
-clip_request_resolver}/kri470_gate_*.json`` are live recordings (2026-10-07, Main Creator prompt
-``2026-10-06-v44``) from the owner-approved gate experiment. Each case here feeds the recorded
-Main Creator ``raw_text`` through the same pair ``plan_live_turn`` runs:
+clip_request_resolver}/kri470_gate_*.json`` are live recordings from the owner-approved gate
+experiment. The Main Creator ones were recorded twice on 2026-10-07: under prompt
+``2026-10-06-v44`` (``kri470_gate_<case>_v44.json``, kept as the before-picture) and re-recorded
+under ``2026-10-07-v45`` (``kri470_gate_<case>.json``, the primary cassettes). Each case here
+feeds the recorded Main Creator ``raw_text`` through the same pair ``plan_live_turn`` runs:
 
     brief_updates -> ``apply_updates`` -> ``planner._plan_from_creator_output``
     -> media snapshot -> ``planner._gate_unresolved_choices``
 
 and asserts whether the gate asks. This pins model-output -> gate ONLY. The eval replay of these
-cassettes ignores the prompt text, so it cannot prove a prompt wording change works: whether the
-v45 "always emit a `timing` requirement for a stated length" instruction actually reaches the
-model needs a LIVE re-record of ``main_creator/kri470_gate_b`` (and a, e). Until then
-``test_prompt_gap_recorded_model_drops_a_stated_60s`` documents the v44 behaviour: the model lost
-"60 second" and the gate had nothing to compare.
+cassettes ignores the prompt text, so replay cannot prove a prompt change works; the v45
+re-record is what showed it: a stated "60 second" now reaches the brief
+(``test_stated_60s_reaches_the_brief_and_stays_silent``) where v44 lost it.
+
+What the v45 recording ALSO showed (pinned, not hidden): the model chose ``archetype: day_vlog``
+on 12-clip montages, and an archetype exempts the length question, so a brief that carries the
+creator's 8 s no longer asks (``test_v45_8s_brief_is_exempted_by_the_models_own_archetype``).
 
 Dependencies the cases make explicit:
 
@@ -22,7 +26,7 @@ Dependencies the cases make explicit:
   selection on the strategy. Without the resolved include intent the gate stays silent
   (``test_no_include_intent_keeps_duration_gate_silent``).
 * ``order_basis`` fires when the brief asks for capture order and the clips carry no capture time.
-* Montage-audio plans (case d) are exempt from both questions.
+* A strategy ``archetype`` or ``montage_audio`` exempts both questions (case d, v45 a).
 """
 
 from __future__ import annotations
@@ -235,14 +239,16 @@ def _timing_update(seconds: int) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------------------------
-# A: "8 second fast montage using all my clips" -- timing + select both recorded
+# A: "8 second fast montage using all my clips"
 # ---------------------------------------------------------------------------------------------
 
 
-async def test_stated_8s_with_all_12_clips_asks_duration_vs_count(monkeypatch):
-    cassette, raw = _raw("a")
+async def test_v44_stated_8s_with_all_12_clips_asks_duration_vs_count(monkeypatch):
+    """Before-picture (v44): timing + select recorded, a plain montage (no archetype): asks."""
+    cassette, raw = _raw("a_v44")
     kinds = {u["kind"] for u in raw["brief_updates"]}
     assert {"timing", "select"} <= kinds
+    assert raw["action"]["strategy"].get("archetype") is None
     ids = _clip_ids(cassette)
     resolved = _recorded_intents("a", ids)
     assert len(resolved) == 1 and len(resolved[0].assignments) == 12
@@ -253,42 +259,62 @@ async def test_stated_8s_with_all_12_clips_asks_duration_vs_count(monkeypatch):
     assert {o["key"] for o in question["options"]} == {"extend", "fewer"}
 
 
-async def test_no_include_intent_keeps_duration_gate_silent(monkeypatch):
-    """DEPENDENCY: the length-vs-count question needs a RESOLVED clip set. If the clip-intent
-    resolver yields no include intent for "all my clips" the gate has no count to compare and
-    stays silent, even though the brief carries the 8 s timing requirement."""
-    cassette, raw = _raw("a")
+async def test_no_include_intent_keeps_duration_gate_silent_when_a_select_is_live(monkeypatch):
+    """DEPENDENCY: with a live `select` requirement the length-vs-count question needs a
+    RESOLVED clip set. If the clip-intent resolver yields no include intent for "all my clips"
+    the gate never guesses N and stays silent, even with the 8 s timing requirement."""
+    cassette, raw = _raw("a_v44")
 
     gated = await _gate_turn(monkeypatch, cassette, raw_output=raw, resolved=[])
 
     _assert_silent(gated)
 
 
-# ---------------------------------------------------------------------------------------------
-# B: "60 second montage of all my clips" -- the recorded model LOST the stated length
-# ---------------------------------------------------------------------------------------------
+async def test_v45_8s_brief_is_exempted_by_the_models_own_archetype(monkeypatch):
+    """v45 keeps the stated 8 s (timing duration_s 8) but drops the `select` requirement and
+    picks `archetype: day_vlog`. Every archetype is exempt from the length question, so the
+    gate stays silent although 12 clips cannot fit 8 s. KNOWN LIMIT, pinned honestly: the
+    model's own archetype choice can silence the gate for a plain 'N second montage'."""
+    cassette, raw = _raw("a")
+    assert [(u["kind"], u["facts"]) for u in raw["brief_updates"]] == [
+        ("timing", {"duration_s": 8})
+    ]
+    assert raw["action"]["strategy"]["archetype"] == "day_vlog"
 
-
-async def test_prompt_gap_recorded_model_drops_a_stated_60s(monkeypatch):
-    """Pins the v44 prompt gap: brief_updates is empty although the creator said 60 seconds, so
-    the gate has no timing requirement. (Silent is also the right outcome here because 12 clips
-    fit 60 s -- the point is that the stated number never reached the brief.) The v45 prompt
-    wording targets this; only a live re-record can confirm it."""
-    cassette, raw = _raw("b")
-    assert not raw["brief_updates"]
-    assert "60 second" in cassette["input"]["user_message"]
-    ids = _clip_ids(cassette)
-
-    gated = await _gate_turn(monkeypatch, cassette, raw_output=raw, resolved=[_include_all(ids)])
+    gated = await _gate_turn(monkeypatch, cassette, raw_output=raw, resolved=[])
 
     _assert_silent(gated)
 
 
-async def test_60s_requirement_added_by_hand_stays_silent_because_12_clips_fit(monkeypatch):
-    """Same recorded brief plus the timing requirement a correct model emits: 12 clips in 60 s
-    is fine, the gate must NOT ask."""
+async def test_v45_8s_brief_asks_once_the_archetype_exemption_is_removed(monkeypatch):
+    """The same v45 recording with only the archetype cleared (a synthetic edit): the timing
+    requirement the v45 prompt now guarantees is, on its own, enough for the gate to ask."""
+    cassette, raw = _raw("a")
+    raw = json.loads(json.dumps(raw))
+    raw["action"]["strategy"]["archetype"] = None
+
+    gated = await _gate_turn(monkeypatch, cassette, raw_output=raw, resolved=[])
+
+    question = _assert_asks(gated, "duration_vs_count")
+    assert {o["key"] for o in question["options"]} == {"extend", "fewer"}
+
+
+# ---------------------------------------------------------------------------------------------
+# B: "60 second montage of all my clips" -- v44 LOST the stated length, v45 keeps it
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_stated_60s_reaches_the_brief_and_stays_silent(monkeypatch):
+    """The v45 prompt fix, as recorded live: the creator's 60 seconds is now a `timing`
+    requirement (v44 returned an empty `brief_updates` for the same input, pinned below as the
+    before-picture). 12 clips fit 60 s, so the gate must NOT ask."""
     cassette, raw = _raw("b")
-    raw = {**raw, "brief_updates": [_timing_update(60)]}
+    assert "60 second" in cassette["input"]["user_message"]
+    assert [(u["kind"], u["facts"]) for u in raw["brief_updates"]] == [
+        ("timing", {"duration_s": 60})
+    ]
+    _, v44 = _raw("b_v44")
+    assert not v44["brief_updates"]
     ids = _clip_ids(cassette)
 
     gated = await _gate_turn(monkeypatch, cassette, raw_output=raw, resolved=[_include_all(ids)])
@@ -297,7 +323,8 @@ async def test_60s_requirement_added_by_hand_stays_silent_because_12_clips_fit(m
 
 
 async def test_30_clips_in_15s_synthetic_brief_asks(monkeypatch):
-    """What a lost/limited timing requirement would have hidden: 30 clips in 15 s must ask."""
+    """What a lost/limited timing requirement would have hidden: 30 clips in 15 s must ask
+    (a plain montage: the recorded archetype exemption is cleared, see case A)."""
     cassette, raw = _raw("a")
     media = [
         {
@@ -309,8 +336,9 @@ async def test_30_clips_in_15s_synthetic_brief_asks(monkeypatch):
         for i in range(1, 31)
     ]
     raw = json.loads(json.dumps(raw))
-    raw["brief_updates"][0] = _timing_update(15)
+    raw["brief_updates"] = [_timing_update(15)]
     raw["action"]["strategy"]["target_duration_s"] = 15
+    raw["action"]["strategy"]["archetype"] = None
     ids = [m["media_id"] for m in media]
 
     gated = await _gate_turn(
@@ -323,6 +351,20 @@ async def test_30_clips_in_15s_synthetic_brief_asks(monkeypatch):
 
     question = _assert_asks(gated, "duration_vs_count")
     assert {o["key"] for o in question["options"]} == {"extend", "fewer"}
+
+
+@pytest.mark.parametrize(("case", "seconds"), [("a", 8), ("b", 60), ("e", 20)])
+def test_v45_model_emits_a_timing_requirement_for_every_stated_length(case, seconds):
+    _, raw = _raw(case)
+    timings = [u["facts"] for u in raw["brief_updates"] if u["kind"] == "timing"]
+    assert timings == [{"duration_s": seconds}]
+
+
+@pytest.mark.parametrize("case", ["c_dated", "c_undated", "d"])
+def test_v45_model_invents_no_length_when_the_creator_stated_none(case):
+    _, raw = _raw(case)
+    brief_updates = raw.get("brief_updates") or raw["action"].get("brief_updates") or []
+    assert all(u["kind"] != "timing" for u in brief_updates)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -365,6 +407,8 @@ async def test_montage_audio_plan_reaches_approval_without_a_question(monkeypatc
     silent)."""
     cassette, raw = _raw("d")
     ids = _clip_ids(cassette)
+    # The recorded planner/resolver outputs come from the v44 run (v45 dropped the `select`
+    # requirement, so prod would not have asked the resolver); they still describe the include.
     resolved = _recorded_intents("d", ids)
     assert len(resolved) == 1 and len(resolved[0].assignments) == 11
     assert "clip-1" not in {a.media_id for a in resolved[0].assignments}
@@ -430,13 +474,15 @@ def test_montage_audio_route_shape_is_the_documented_kri469_gap():
 
 
 # ---------------------------------------------------------------------------------------------
-# E: "20 second montage of my 6 best clips" -- timing + select, the 6 fit
+# E: "20 second montage of my 6 best clips" -- timing recorded, the 6 fit
 # ---------------------------------------------------------------------------------------------
 
 
 async def test_20s_with_6_selected_clips_is_silent(monkeypatch):
     cassette, raw = _raw("e")
-    assert {"timing", "select"} <= {u["kind"] for u in raw["brief_updates"]}
+    assert [u["facts"] for u in raw["brief_updates"] if u["kind"] == "timing"] == [
+        {"duration_s": 20}
+    ]
     selected = raw["action"]["strategy"]["selected_media_ids"]
     assert len(selected) == 6
 
@@ -450,7 +496,7 @@ async def test_20s_with_6_selected_clips_is_silent(monkeypatch):
 def test_main_creator_manifest_has_the_runtime_format_capability():
     """The cassettes carry `edit_format:montage` the way `creator_capabilities` adds it at
     runtime, so the strategy-policy check runs unmodified."""
-    for case in ("a", "b", "c_dated", "c_undated", "d", "e"):
+    for case in ("a", "b", "c_dated", "c_undated", "d", "e", "a_v44", "b_v44", "d_v44", "e_v44"):
         cassette = _load("main_creator", case)
         assert cassette is not None
         manifest = ResolvedCreatorManifest.model_validate(cassette["input"]["capability_manifest"])
