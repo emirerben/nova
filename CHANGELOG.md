@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.125.0] - 2026-10-07
+
+### Changed
+- fix(phone): stop the creator's song playing twice at once (KRI-481) (#1441) <!-- release-pr: 1441 -->
+
 ## [0.78.124.0] - 2026-10-07
 
 ### Changed
