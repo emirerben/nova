@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.136.0] - 2026-10-07
+
+### Changed
+- fix(creator): stated video length always becomes a timing requirement; pin live gate cassettes (KRI-476) (#1459) <!-- release-pr: 1459 -->
+
 ## [0.78.135.0] - 2026-10-07
 
 ### Changed
