@@ -14,6 +14,8 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostRichText: Bool? = nil
     /// Server edits slide posts from a chat message (KRI-298 Lane C); nil/false (or not yet loaded) keeps the AI sheet on the propose flow.
     var slidePostChatEdit: Bool? = nil
+    /// KRI-482 rollback gate for video/look slide exports. Missing stays on the server path.
+    var slidePostExtendedDeviceExport: Bool? = nil
     /// Server sends `clip_question` payloads and accepts `clip_selection` on a turn (KRI-282). Nil/false = text question only.
     var clipSelectionQuestions: Bool? = nil
     /// Server sends `song_order_question` payloads and accepts `song_order` on a turn (KRI-374). Nil/false = no order card.
@@ -30,6 +32,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var editorStateTurnsEnabled: Bool { editorStateTurns == true }
     var slidePostRichTextEnabled: Bool { slidePostRichText == true }
     var slidePostChatEditEnabled: Bool { slidePostChatEdit == true }
+    var slidePostExtendedDeviceExportEnabled: Bool { slidePostExtendedDeviceExport == true }
     var clipSelectionQuestionsEnabled: Bool { clipSelectionQuestions == true }
     var songOrderQuestionsEnabled: Bool { songOrderQuestions == true }
     /// The server's limits for a creator-uploaded song (KRI-374). Nil hides every "Add your song" surface:
@@ -48,6 +51,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case editorStateTurns = "editor_state_turns", editorStateMaxBytes = "editor_state_max_bytes"
         case slidePostRichText = "slide_post_rich_text"
         case slidePostChatEdit = "slide_post_chat_edit"
+        case slidePostExtendedDeviceExport = "slide_post_extended_device_export"
         case clipSelectionQuestions = "clip_selection_questions"
         case songOrderQuestions = "song_order_questions"
         case choiceQuestions = "choice_questions"
@@ -71,6 +75,7 @@ extension CreationCapabilities {
         editorStateMaxBytes = try container.decodeIfPresent(Int.self, forKey: .editorStateMaxBytes)
         slidePostRichText = try container.decodeIfPresent(Bool.self, forKey: .slidePostRichText)
         slidePostChatEdit = try container.decodeIfPresent(Bool.self, forKey: .slidePostChatEdit)
+        slidePostExtendedDeviceExport = try container.decodeIfPresent(Bool.self, forKey: .slidePostExtendedDeviceExport)
         clipSelectionQuestions = try container.decodeIfPresent(Bool.self, forKey: .clipSelectionQuestions)
         songOrderQuestions = try container.decodeIfPresent(Bool.self, forKey: .songOrderQuestions)
         choiceQuestions = try container.decodeIfPresent(Bool.self, forKey: .choiceQuestions)

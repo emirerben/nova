@@ -37,6 +37,71 @@ import XCTest
         }
     }
 
+    func testExtendedOnDeviceExportWritesMixedKindsWithoutServerRender() async {
+        var value = state()
+        value.assets = value.assets.map { asset in
+            var result = asset
+            result.sourceURL = URL(string: "https://source/\(asset.id)")
+            return result
+        }
+        value.draft?.slides[0].edits = SlidePostEdits(lookPreset: "golden_hour")
+        let session = await session(value)
+        var resources: [SlidePostExporter.PhotoResource] = []
+        var sourceIDs: [String] = []
+        let exporter = SlidePostExporter(
+            downloadFile: { _ in XCTFail("Must not download server derivatives"); throw URLError(.badURL) },
+            authorizePhotos: { .authorized }, writePhotos: { resources = $0 },
+            onDeviceRender: { _, asset, _ in sourceIDs.append(asset.id); return Data("jpeg".utf8) },
+            onDeviceVideoRender: { _, asset, _, url in sourceIDs.append(asset.id); try Data("mp4".utf8).write(to: url) }
+        )
+        NativeEditorURLProtocol.handler = { _ in XCTFail("Must not save, generate or poll"); return (500, Data()) }
+        await exporter.export(.photos, session: session, api: NativeEditorTestSupport.api(), itemID: itemID, extendedOnDevice: true)
+        XCTAssertEqual(sourceIDs, ["a", "b"])
+        XCTAssertEqual(resources.map(\.kind), ["image", "video"])
+        XCTAssertEqual(resources.map(\.url.lastPathComponent), ["01.jpg", "02.mp4"])
+        XCTAssertEqual(exporter.status, .savedToPhotos(2))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: resources[0].url.deletingLastPathComponent().path))
+    }
+
+    func testSecondLocalVideoFailureNeverWritesPhotosAndCleansFiles() async {
+        var value = state()
+        value.assets = value.assets.map { asset in
+            var result = asset; result.sourceURL = URL(string: "https://source/\(asset.id)"); return result
+        }
+        let session = await session(value)
+        var writes = 0
+        var output: URL?
+        let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 },
+            onDeviceRender: { _, _, _ in Data("jpeg".utf8) },
+            onDeviceVideoRender: { _, _, _, url in output = url; try Data("partial".utf8).write(to: url); throw URLError(.cannotDecodeContentData) })
+        await exporter.export(.photos, session: session, api: NativeEditorTestSupport.api(), itemID: itemID, extendedOnDevice: true)
+        XCTAssertEqual(writes, 0)
+        if let output { XCTAssertFalse(FileManager.default.fileExists(atPath: output.deletingLastPathComponent().path)) }
+        else { XCTFail("Video render did not run") }
+        guard case .failed = exporter.status else { return XCTFail("Failure should be visible") }
+    }
+
+    func testEditingDuringLocalVideoExportPreventsStalePhotoCommit() async {
+        var value = state()
+        value.assets = value.assets.map { asset in
+            var result = asset; result.sourceURL = URL(string: "https://source/\(asset.id)"); return result
+        }
+        let session = await session(value)
+        var writes = 0
+        var output: URL?
+        let exporter = SlidePostExporter(authorizePhotos: { .authorized }, writePhotos: { _ in writes += 1 },
+            onDeviceRender: { _, _, _ in Data("jpeg".utf8) },
+            onDeviceVideoRender: { _, _, _, url in
+                output = url
+                session.draft?.caption = "Edited while rendering"
+                try Data("mp4".utf8).write(to: url)
+            })
+        await exporter.export(.photos, session: session, api: NativeEditorTestSupport.api(), itemID: itemID, extendedOnDevice: true)
+        XCTAssertEqual(writes, 0)
+        if let output { XCTAssertFalse(FileManager.default.fileExists(atPath: output.deletingLastPathComponent().path)) }
+        guard case .failed = exporter.status else { return XCTFail("Changed draft should require a new export") }
+    }
+
     func testShareKeepsOrderedMixedFilesAndCaption() async {
         let session = await session(state()); var requested: [URL] = []
         let exporter = SlidePostExporter(downloadFile: downloader { requested.append($0) }, authorizePhotos: { .authorized }, writePhotos: { _ in })

@@ -1,13 +1,14 @@
+import CoreImage
 import ImageIO
 import KriaMediaEngine
 import SwiftUI
 import UIKit
 
-/// Renders an image-only slide post on the phone from the ORIGINAL photos: cover-fit centre-crop into the
+/// Renders photo slides on the phone from the ORIGINAL photos: cover-fit centre-crop into the
 /// profile canvas at 2x, then the same `SlidePostTextLayerView` the editor shows, drawn at real pixel size,
 /// then the Kria watermark the server render also puts on every slide (KRI-472). No server render, no
-/// polling. Anything it cannot reproduce faithfully (video, looks, unknown fonts, no photo URL) is
-/// `supports == false` and takes the server path instead.
+/// polling. The gated extension supports authored looks and delegates video slides to AVFoundation.
+/// Unsupported profiles, looks, fonts, or sources take the server path.
 @MainActor enum SlidePostOnDeviceRender {
     typealias Fetch = SlidePostImageCache.Fetcher
     enum RenderError: Error { case undecodable, encodeFailed }
@@ -20,12 +21,17 @@ import UIKit
         profile == "instagram_carousel" ? CGSize(width: 1080, height: 1350) : CGSize(width: 1080, height: 1920)
     }
 
-    static func supports(_ draft: SlidePostDraft?, assets: [SlidePostAsset]) -> Bool {
+    static func supports(_ draft: SlidePostDraft?, assets: [SlidePostAsset], extended: Bool = false) -> Bool {
         guard let draft, !draft.slides.isEmpty else { return false }
         let byID = Dictionary(assets.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return draft.slides.allSatisfy { slide in
-            guard slide.kind == "image", [nil, "none"].contains(slide.edits?.lookPreset),
-                  let asset = byID[slide.assetID], asset.kind == "image", asset.sourceURL ?? asset.displayURL != nil else { return false }
+            guard let asset = byID[slide.assetID] else { return false }
+            if slide.kind == "video" {
+                return extended && SlidePostVideoRender.supports(slide: slide, asset: asset, profile: draft.platformProfile)
+            }
+            let preset = slide.edits?.lookPreset ?? "none"
+            guard slide.kind == "image", asset.kind == "image", asset.sourceURL ?? asset.displayURL != nil,
+                  preset == "none" || (extended && SlidePostLookRenderer.supports(preset)) else { return false }
             return (slide.edits?.effectiveTexts ?? []).allSatisfy {
                 NativeFontCatalog.shared.ctFont($0.fontFamily, size: 12) != nil
             }
@@ -43,6 +49,8 @@ import UIKit
         let canvas = canvas(for: profile)
         let pixels = CGSize(width: canvas.width * scale, height: canvas.height * scale)
         guard let photo = decode(data, maxPixel: max(pixels.width, pixels.height)) else { throw RenderError.undecodable }
+        let preset = slide.edits?.lookPreset ?? "none"
+        let graded = preset == "none" ? nil : try lookedImage(photo, pixels: pixels, preset: preset)
         let texts = slide.edits?.effectiveTexts ?? []
         let overlay = texts.isEmpty ? nil : textLayer(texts, pixels: pixels)
         let mark = try watermark()
@@ -51,7 +59,8 @@ import UIKit
         format.scale = 1; format.opaque = true; format.preferredRange = .standard
         let image = UIGraphicsImageRenderer(size: pixels, format: format).image { context in
             UIColor.black.setFill(); UIRectFill(CGRect(origin: .zero, size: pixels))
-            photo.draw(in: coverRect(image: photo.size, in: pixels))
+            if let graded { graded.draw(in: CGRect(origin: .zero, size: pixels)) }
+            else { photo.draw(in: coverRect(image: photo.size, in: pixels)) }
             overlay?.draw(in: CGRect(origin: .zero, size: pixels))
             // Last, so no text buries it: the stacking the video engine and the server render use.
             context.cgContext.interpolationQuality = .high
@@ -61,9 +70,37 @@ import UIKit
         return jpeg
     }
 
+    /// Grade the cropped media, before graphics. The preview uses the same profile geometry.
+    nonisolated static let lookContext = CIContext(options: [.workingColorSpace: NSNull()])
+    nonisolated static func lookedImage(_ photo: UIImage, pixels: CGSize, preset: String) throws -> UIImage {
+        // Cache thumbnails retain their source color profile; export decoding
+        // already normalizes to sRGB. Normalize both before encoded-RGB LUTs.
+        guard let cg = photo.cgImage, let srgb = CGColorSpace(name: CGColorSpace.sRGB),
+              pixels.width > 0, pixels.height > 0 else { throw RenderError.undecodable }
+        let normalized: CGImage
+        if cg.colorSpace?.name == CGColorSpace.sRGB { normalized = cg }
+        else {
+            guard let context = CGContext(data: nil, width: cg.width, height: cg.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                          space: srgb, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { throw RenderError.undecodable }
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+            guard let image = context.makeImage() else { throw RenderError.undecodable }
+            normalized = image
+        }
+        let source = CIImage(cgImage: normalized, options: [.colorSpace: NSNull()])
+        let extent = CGRect(origin: .zero, size: pixels)
+        let rect = coverRect(image: source.extent.size, in: pixels)
+        let cropped = source.transformed(by: CGAffineTransform(translationX: -source.extent.minX, y: -source.extent.minY))
+            .transformed(by: CGAffineTransform(scaleX: rect.width / source.extent.width, y: rect.height / source.extent.height))
+            .transformed(by: CGAffineTransform(translationX: rect.minX, y: rect.minY)).cropped(to: extent)
+        let looked = try SlidePostLookRenderer.apply(cropped, preset: preset)
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let output = lookContext.createCGImage(looked, from: extent, format: .RGBA8, colorSpace: colorSpace) else { throw RenderError.encodeFailed }
+        return UIImage(cgImage: output)
+    }
+
     /// The phone's default mark, with its opacity and shadow baked in. Missing from the bundle is a build
     /// defect, so it fails the export instead of saving unbranded slides (as `KriaBranding.preflight` does).
-    private static func watermark() throws -> UIImage {
+    static func watermark() throws -> UIImage {
         let variant = KriaBranding.Variant.mist
         guard let url = KriaBranding.watermarkURL(variant), let image = UIImage(contentsOfFile: url.path) else {
             throw MediaEngineError.missingBrandingResource(KriaBranding.watermarkFileName(variant))
@@ -72,7 +109,7 @@ import UIKit
     }
 
     /// Cover-fit, centre-crop: the photo scaled to fill `canvas`, centred (the overflow is clipped by the bitmap).
-    static func coverRect(image: CGSize, in canvas: CGSize) -> CGRect {
+    nonisolated static func coverRect(image: CGSize, in canvas: CGSize) -> CGRect {
         let factor = max(canvas.width / image.width, canvas.height / image.height)
         let size = CGSize(width: image.width * factor, height: image.height * factor)
         return CGRect(x: (canvas.width - size.width) / 2, y: (canvas.height - size.height) / 2, width: size.width, height: size.height)
@@ -98,7 +135,7 @@ import UIKit
 
     /// The text layer rendered at the real pixel size (text scales by width / 1080, so rendering at the output
     /// size, not up-scaling a 1080 render, keeps glyph edges sharp).
-    private static func textLayer(_ texts: [SlidePostTextElement], pixels: CGSize) -> UIImage? {
+    static func textLayer(_ texts: [SlidePostTextElement], pixels: CGSize) -> UIImage? {
         let renderer = ImageRenderer(content: SlidePostTextLayerView(texts: texts, size: pixels))
         renderer.scale = 1
         renderer.isOpaque = false

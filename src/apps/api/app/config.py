@@ -1641,6 +1641,9 @@ class Settings(BaseSettings):
     # 404s. Capability `slide_post_chat_edit`. Apply: `fly secrets set
     # SLIDE_POST_CHAT_EDIT_ENABLED=true --app nova-video` + restart (api).
     slide_post_chat_edit_enabled: bool = False
+    # KRI-482: keep extended phone slide exports off until physical-device parity passes.
+    # False routes video/look slides through the existing server renderer.
+    slide_post_extended_device_export_enabled: bool = False
     main_creator_agent_freeform_uploads_enabled: bool = False
     main_creator_agent_workspace_enabled: bool = False
     main_creator_agent_rollout_percent: int = Field(default=0, ge=0, le=100)
