@@ -16,7 +16,7 @@ from app.agents.main_creator import _BRIEF_PROMPT_SECTION
 from app.kria.brief import BriefUpdateBatchError, parse_brief_updates
 from app.pipeline.prompt_loader import load_prompt
 
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-07-v1"
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-07-v2"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
@@ -32,6 +32,16 @@ _NARROW_BRIEF_SECTION = (
     .replace(
         "requirements -- propose a full strategy that honours EVERY requirement in the contract.",
         "requirements.",
+    )
+    # KRI-470: the narrow extractor has no strategy, so drop the `target_duration_s` clauses.
+    .replace(
+        "Do it even when you also set `target_duration_s`, even for long\nlengths, and even",
+        "Do it even for long\nlengths, and even",
+    )
+    .replace(
+        "When the creator\nstates no length, emit NO timing requirement; a length you chose "
+        "yourself in `target_duration_s`\nis never the creator's.",
+        "When the creator\nstates no length, emit NO timing requirement.",
     )
 )
 

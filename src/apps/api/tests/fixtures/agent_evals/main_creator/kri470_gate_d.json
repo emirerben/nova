@@ -1,0 +1,389 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-10-06-v44",
+  "input": {
+    "user_message": "Use the voice from the talk to camera video behind a fast montage of the remaining clips, in chronological order.",
+    "creator_context": "City-break creator who posts short travel montages.",
+    "item_context": "Untitled video; montage; no recorded voiceover.",
+    "media_context": [
+      {
+        "media_id": "clip-1",
+        "kind": "video",
+        "duration_s": 6.0,
+        "creator_note": "me explaining the plan to camera",
+        "analysis_only_not_copy": {
+          "subject": "creator talking directly to the camera",
+          "setting": "street",
+          "activity": "talking directly to the camera",
+          "speech": {
+            "has_speech": true,
+            "to_camera": true,
+            "transcript": "so this is how our day in the city went and what we saw"
+          }
+        },
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T07:00:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-2",
+        "kind": "video",
+        "duration_s": 8.5,
+        "creator_note": "coffee on the terrace",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T07:25:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-3",
+        "kind": "video",
+        "duration_s": 4.5,
+        "creator_note": "old tram passing",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T07:50:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-4",
+        "kind": "video",
+        "duration_s": 7.0,
+        "creator_note": "market stalls",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T08:15:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-5",
+        "kind": "video",
+        "duration_s": 5.5,
+        "creator_note": "sunset on the bridge",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T08:40:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-6",
+        "kind": "video",
+        "duration_s": 9.0,
+        "creator_note": "street musician",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T09:05:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-7",
+        "kind": "video",
+        "duration_s": 4.0,
+        "creator_note": "park bench",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T09:30:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-8",
+        "kind": "video",
+        "duration_s": 6.5,
+        "creator_note": "ferry crossing",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T09:55:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-9",
+        "kind": "video",
+        "duration_s": 7.5,
+        "creator_note": "bakery window",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T10:20:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-10",
+        "kind": "video",
+        "duration_s": 5.0,
+        "creator_note": "rooftop view",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T10:45:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-11",
+        "kind": "video",
+        "duration_s": 8.0,
+        "creator_note": "night lights",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T11:10:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-12",
+        "kind": "video",
+        "duration_s": 6.0,
+        "creator_note": "train platform",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T11:35:00Z",
+            "provenance": "exif"
+          }
+        ]
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-gate-1",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "has_voiceover": false,
+      "media": [
+        {
+          "media_id": "clip-1",
+          "kind": "video",
+          "duration_s": 6.0,
+          "label": "me explaining the plan to camera"
+        },
+        {
+          "media_id": "clip-2",
+          "kind": "video",
+          "duration_s": 8.5,
+          "label": "coffee on the terrace"
+        },
+        {
+          "media_id": "clip-3",
+          "kind": "video",
+          "duration_s": 4.5,
+          "label": "old tram passing"
+        },
+        {
+          "media_id": "clip-4",
+          "kind": "video",
+          "duration_s": 7.0,
+          "label": "market stalls"
+        },
+        {
+          "media_id": "clip-5",
+          "kind": "video",
+          "duration_s": 5.5,
+          "label": "sunset on the bridge"
+        },
+        {
+          "media_id": "clip-6",
+          "kind": "video",
+          "duration_s": 9.0,
+          "label": "street musician"
+        },
+        {
+          "media_id": "clip-7",
+          "kind": "video",
+          "duration_s": 4.0,
+          "label": "park bench"
+        },
+        {
+          "media_id": "clip-8",
+          "kind": "video",
+          "duration_s": 6.5,
+          "label": "ferry crossing"
+        },
+        {
+          "media_id": "clip-9",
+          "kind": "video",
+          "duration_s": 7.5,
+          "label": "bakery window"
+        },
+        {
+          "media_id": "clip-10",
+          "kind": "video",
+          "duration_s": 5.0,
+          "label": "rooftop view"
+        },
+        {
+          "media_id": "clip-11",
+          "kind": "video",
+          "duration_s": 8.0,
+          "label": "night lights"
+        },
+        {
+          "media_id": "clip-12",
+          "kind": "video",
+          "duration_s": 6.0,
+          "label": "train platform"
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Warm acoustic bed"
+        }
+      ],
+      "capabilities": {
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "media_overlays": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "edit_format:montage": {
+          "available": true
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "brief_enabled": true
+  },
+  "raw_text": "{\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"brief_updates\": [\n      {\n        \"operation\": \"add\",\n        \"kind\": \"audio\",\n        \"scope\": \"global\",\n        \"literal\": null,\n        \"description\": \"Use the voice from the talk to camera video behind the montage\",\n        \"facts\": {}\n      },\n      {\n        \"operation\": \"add\",\n        \"kind\": \"select\",\n        \"scope\": \"global\",\n        \"literal\": null,\n        \"description\": \"the remaining clips (excluding the talk to camera video)\",\n        \"facts\": {}\n      },\n      {\n        \"operation\": \"add\",\n        \"kind\": \"order\",\n        \"scope\": \"global\",\n        \"literal\": null,\n        \"description\": \"chronological order\",\n        \"facts\": {\n          \"key\": \"capture_time\"\n        }\n      }\n    ],\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"archetype\": \"day_vlog\",\n      \"hero_media_id\": null,\n      \"audio_strategy\": \"original_audio\",\n      \"execution_contract\": null,\n      \"media_scope\": \"selected\",\n      \"clip_intents\": [],\n      \"montage_audio\": {\n        \"preserve_source_audio\": true,\n        \"preview_source_beds\": false,\n        \"source_media_ids\": [\n          \"clip-1\"\n        ]\n      },\n      \"story_structure\": [\n        \"Creator explains the plan using source audio\",\n        \"Fast chronological montage of the day's sights\"\n      ],\n      \"caption_style\": \"none\",\n      \"intro_hook\": null,\n      \"opening_title\": null,\n      \"opening_title_duration_s\": null,\n      \"shot_labels\": null,\n      \"closing_title\": null,\n      \"font_family\": null,\n      \"text_color\": null,\n      \"pacing\": \"fast\",\n      \"target_duration_s\": 8,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"optional_treatments\": [],\n      \"overlay_display\": null,\n      \"licensed_sfx\": null,\n      \"rationale\": \"I'm setting up a day vlog cut in chronological order. I'll use the audio from your intro clip as the driving track, accompanied by a fast-paced sequence of the 11 remaining sights, aiming for an 8-second duration to keep it tight and match your speech.\",\n      \"mixed_media_timing\": null,\n      \"montage_cadence\": null\n    },\n    \"summary\": \"I'm cutting this as a day vlog, in the order you shot it. I'll use your intro clip's audio overlaid on a fast 8-second chronological montage of the rest of your footage.\",\n    \"render_intent_evidence\": {\n      \"opening_title\": null,\n      \"font_family\": null,\n      \"text_color\": null,\n      \"opening_title_duration_s\": null,\n      \"shot_labels\": null,\n      \"closing_title\": null,\n      \"licensed_sfx\": null\n    }\n  }\n}",
+  "output": {
+    "action": {
+      "kind": "propose_strategy",
+      "strategy": {
+        "direction": "fast_montage",
+        "edit_format": "montage",
+        "archetype": "day_vlog",
+        "hero_media_id": null,
+        "audio_strategy": "original_audio",
+        "execution_contract": null,
+        "media_scope": "selected",
+        "story_structure": [
+          "Creator explains the plan using source audio",
+          "Fast chronological montage of the day's sights"
+        ],
+        "caption_style": "none",
+        "intro_hook": null,
+        "opening_title": null,
+        "font_family": null,
+        "text_color": null,
+        "clip_intents": [],
+        "image_layout": null,
+        "pacing": "fast",
+        "target_duration_s": 8,
+        "target_duration_requested": true,
+        "render_program": "guided",
+        "selected_media_ids": [],
+        "optional_treatments": [],
+        "licensed_sfx": null,
+        "mixed_media_timing": null,
+        "montage_audio": {
+          "preserve_source_audio": true,
+          "preview_source_beds": false,
+          "source_media_ids": [
+            "clip-1"
+          ]
+        },
+        "video_reuse_policy": "once",
+        "rationale": "I'm setting up a day vlog cut in chronological order. I'll use the audio from your intro clip as the driving track, accompanied by a fast-paced sequence of the 11 remaining sights, aiming for an 8-second duration to keep it tight and match your speech."
+      },
+      "summary": "I'm cutting this as a day vlog, in the order you shot it. I'll use your intro clip's audio overlaid on a fast 8-second chronological montage of the rest of your footage.",
+      "render_intent_evidence": {
+        "opening_title": null,
+        "font_family": null,
+        "text_color": null
+      }
+    },
+    "brief_updates": [
+      {
+        "operation": "add",
+        "target_requirement_id": null,
+        "expected_version": null,
+        "kind": "audio",
+        "scope": "global",
+        "literal": null,
+        "description": "Use the voice from the talk to camera video behind the montage",
+        "facts": {}
+      },
+      {
+        "operation": "add",
+        "target_requirement_id": null,
+        "expected_version": null,
+        "kind": "select",
+        "scope": "global",
+        "literal": null,
+        "description": "the remaining clips (excluding the talk to camera video)",
+        "facts": {}
+      },
+      {
+        "operation": "add",
+        "target_requirement_id": null,
+        "expected_version": null,
+        "kind": "order",
+        "scope": "global",
+        "literal": null,
+        "description": "chronological order",
+        "facts": {
+          "key": "capture_time"
+        }
+      }
+    ]
+  },
+  "meta": {
+    "source": "live_recorded 2026-10-07 prompt 2026-10-06-v44",
+    "ticket": "KRI-470",
+    "gate_case": "d",
+    "dated": true,
+    "contract": "Contract: 'voice from the talk to camera video behind a fast montage of the remaining clips, in chronological order' => audio+select+order requirements, montage_audio.source_media_ids=['clip-1'], no gate question; documented KRI-469 route shape (cloud capability_unavailable on montage_audio.source_media_ids[], phone speech_montage) that the PR-H slice will change.",
+    "note": "Recorded from the real model in the owner-approved KRI-470 gate experiment (test_run_id kri470-gate-20261007). Replay is structural only; the cassette ignores the prompt text."
+  }
+}

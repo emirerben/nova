@@ -1,0 +1,270 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-10-06-v44",
+  "input": {
+    "user_message": "Make a fast montage of my clips in chronological order.",
+    "creator_context": "City-break creator who posts short travel montages.",
+    "item_context": "Untitled video; montage; no recorded voiceover.",
+    "media_context": [
+      {
+        "media_id": "clip-1",
+        "kind": "video",
+        "duration_s": 6.0,
+        "creator_note": "walk by the river"
+      },
+      {
+        "media_id": "clip-2",
+        "kind": "video",
+        "duration_s": 8.5,
+        "creator_note": "coffee on the terrace"
+      },
+      {
+        "media_id": "clip-3",
+        "kind": "video",
+        "duration_s": 4.5,
+        "creator_note": "old tram passing"
+      },
+      {
+        "media_id": "clip-4",
+        "kind": "video",
+        "duration_s": 7.0,
+        "creator_note": "market stalls"
+      },
+      {
+        "media_id": "clip-5",
+        "kind": "video",
+        "duration_s": 5.5,
+        "creator_note": "sunset on the bridge"
+      },
+      {
+        "media_id": "clip-6",
+        "kind": "video",
+        "duration_s": 9.0,
+        "creator_note": "street musician"
+      },
+      {
+        "media_id": "clip-7",
+        "kind": "video",
+        "duration_s": 4.0,
+        "creator_note": "park bench"
+      },
+      {
+        "media_id": "clip-8",
+        "kind": "video",
+        "duration_s": 6.5,
+        "creator_note": "ferry crossing"
+      },
+      {
+        "media_id": "clip-9",
+        "kind": "video",
+        "duration_s": 7.5,
+        "creator_note": "bakery window"
+      },
+      {
+        "media_id": "clip-10",
+        "kind": "video",
+        "duration_s": 5.0,
+        "creator_note": "rooftop view"
+      },
+      {
+        "media_id": "clip-11",
+        "kind": "video",
+        "duration_s": 8.0,
+        "creator_note": "night lights"
+      },
+      {
+        "media_id": "clip-12",
+        "kind": "video",
+        "duration_s": 6.0,
+        "creator_note": "train platform"
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-gate-1",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "has_voiceover": false,
+      "media": [
+        {
+          "media_id": "clip-1",
+          "kind": "video",
+          "duration_s": 6.0,
+          "label": "walk by the river"
+        },
+        {
+          "media_id": "clip-2",
+          "kind": "video",
+          "duration_s": 8.5,
+          "label": "coffee on the terrace"
+        },
+        {
+          "media_id": "clip-3",
+          "kind": "video",
+          "duration_s": 4.5,
+          "label": "old tram passing"
+        },
+        {
+          "media_id": "clip-4",
+          "kind": "video",
+          "duration_s": 7.0,
+          "label": "market stalls"
+        },
+        {
+          "media_id": "clip-5",
+          "kind": "video",
+          "duration_s": 5.5,
+          "label": "sunset on the bridge"
+        },
+        {
+          "media_id": "clip-6",
+          "kind": "video",
+          "duration_s": 9.0,
+          "label": "street musician"
+        },
+        {
+          "media_id": "clip-7",
+          "kind": "video",
+          "duration_s": 4.0,
+          "label": "park bench"
+        },
+        {
+          "media_id": "clip-8",
+          "kind": "video",
+          "duration_s": 6.5,
+          "label": "ferry crossing"
+        },
+        {
+          "media_id": "clip-9",
+          "kind": "video",
+          "duration_s": 7.5,
+          "label": "bakery window"
+        },
+        {
+          "media_id": "clip-10",
+          "kind": "video",
+          "duration_s": 5.0,
+          "label": "rooftop view"
+        },
+        {
+          "media_id": "clip-11",
+          "kind": "video",
+          "duration_s": 8.0,
+          "label": "night lights"
+        },
+        {
+          "media_id": "clip-12",
+          "kind": "video",
+          "duration_s": 6.0,
+          "label": "train platform"
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Warm acoustic bed"
+        }
+      ],
+      "capabilities": {
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "media_overlays": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "edit_format:montage": {
+          "available": true
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "brief_enabled": true
+  },
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"order\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"chronological order\",\n      \"facts\": {\n        \"key\": \"capture_time\"\n      }\n    }\n  ],\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"archetype\": \"day_vlog\",\n      \"audio_strategy\": \"licensed_music\",\n      \"media_scope\": \"all\",\n      \"story_structure\": [\n        \"Morning walk and terrace coffee\",\n        \"Exploring the city streets and markets\",\n        \"Sunset and night views\",\n        \"Departure at the train platform\"\n      ],\n      \"pacing\": \"fast\",\n      \"target_duration_s\": 24,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"rationale\": \"Cutting all 12 clips in chronological order creates a natural 'day in the life' city break progression. A fast pace keeps the energy up, giving each clip about 1.5 to 2.5 seconds, set to the warm acoustic music track.\",\n      \"optional_treatments\": []\n    },\n    \"summary\": \"I'll create a fast-paced day vlog montage, setting all of your clips in chronological order from morning to night to tell the complete story of your city break.\",\n    \"render_intent_evidence\": {\n      \"opening_title\": null,\n      \"font_family\": null,\n      \"text_color\": null,\n      \"opening_title_duration_s\": null,\n      \"shot_labels\": null,\n      \"closing_title\": null,\n      \"licensed_sfx\": null\n    }\n  }\n}",
+  "output": {
+    "action": {
+      "kind": "propose_strategy",
+      "strategy": {
+        "direction": "fast_montage",
+        "edit_format": "montage",
+        "archetype": "day_vlog",
+        "hero_media_id": null,
+        "audio_strategy": "licensed_music",
+        "execution_contract": null,
+        "media_scope": "all",
+        "story_structure": [
+          "Morning walk and terrace coffee",
+          "Exploring the city streets and markets",
+          "Sunset and night views",
+          "Departure at the train platform"
+        ],
+        "caption_style": "auto",
+        "intro_hook": null,
+        "opening_title": null,
+        "font_family": null,
+        "text_color": null,
+        "image_layout": null,
+        "pacing": "fast",
+        "target_duration_requested": true,
+        "render_program": "guided",
+        "selected_media_ids": [],
+        "optional_treatments": [],
+        "licensed_sfx": null,
+        "mixed_media_timing": null,
+        "montage_audio": null,
+        "video_reuse_policy": "once",
+        "rationale": "Cutting all 12 clips in chronological order creates a natural 'day in the life' city break progression. A fast pace keeps the energy up, giving each clip about 1.5 to 2.5 seconds, set to the warm acoustic music track.",
+        "target_duration_s": 24
+      },
+      "summary": "I'll create a fast-paced day vlog montage, setting all of your clips in chronological order from morning to night to tell the complete story of your city break.",
+      "render_intent_evidence": {
+        "opening_title": null,
+        "font_family": null,
+        "text_color": null
+      }
+    },
+    "brief_updates": [
+      {
+        "operation": "add",
+        "target_requirement_id": null,
+        "expected_version": null,
+        "kind": "order",
+        "scope": "global",
+        "literal": null,
+        "description": "chronological order",
+        "facts": {
+          "key": "capture_time"
+        }
+      }
+    ]
+  },
+  "meta": {
+    "source": "live_recorded 2026-10-07 prompt 2026-10-06-v44",
+    "ticket": "KRI-470",
+    "gate_case": "c_undated",
+    "dated": false,
+    "contract": "Contract: same request as c_dated but NO clip carries a capture_time => the gate asks order_basis (the order cannot be honoured silently).",
+    "note": "Recorded from the real model in the owner-approved KRI-470 gate experiment (test_run_id kri470-gate-20261007). Replay is structural only; the cassette ignores the prompt text."
+  }
+}

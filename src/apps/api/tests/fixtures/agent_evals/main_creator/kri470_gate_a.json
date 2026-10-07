@@ -1,0 +1,362 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-10-06-v44",
+  "input": {
+    "user_message": "Make an 8 second fast montage using all my clips.",
+    "creator_context": "City-break creator who posts short travel montages.",
+    "item_context": "Untitled video; montage; no recorded voiceover.",
+    "media_context": [
+      {
+        "media_id": "clip-1",
+        "kind": "video",
+        "duration_s": 6.0,
+        "creator_note": "walk by the river",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T07:00:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-2",
+        "kind": "video",
+        "duration_s": 8.5,
+        "creator_note": "coffee on the terrace",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T07:25:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-3",
+        "kind": "video",
+        "duration_s": 4.5,
+        "creator_note": "old tram passing",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T07:50:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-4",
+        "kind": "video",
+        "duration_s": 7.0,
+        "creator_note": "market stalls",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T08:15:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-5",
+        "kind": "video",
+        "duration_s": 5.5,
+        "creator_note": "sunset on the bridge",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T08:40:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-6",
+        "kind": "video",
+        "duration_s": 9.0,
+        "creator_note": "street musician",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T09:05:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-7",
+        "kind": "video",
+        "duration_s": 4.0,
+        "creator_note": "park bench",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T09:30:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-8",
+        "kind": "video",
+        "duration_s": 6.5,
+        "creator_note": "ferry crossing",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T09:55:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-9",
+        "kind": "video",
+        "duration_s": 7.5,
+        "creator_note": "bakery window",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T10:20:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-10",
+        "kind": "video",
+        "duration_s": 5.0,
+        "creator_note": "rooftop view",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T10:45:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-11",
+        "kind": "video",
+        "duration_s": 8.0,
+        "creator_note": "night lights",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T11:10:00Z",
+            "provenance": "exif"
+          }
+        ]
+      },
+      {
+        "media_id": "clip-12",
+        "kind": "video",
+        "duration_s": 6.0,
+        "creator_note": "train platform",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-09-20T11:35:00Z",
+            "provenance": "exif"
+          }
+        ]
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-gate-1",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "has_voiceover": false,
+      "media": [
+        {
+          "media_id": "clip-1",
+          "kind": "video",
+          "duration_s": 6.0,
+          "label": "walk by the river"
+        },
+        {
+          "media_id": "clip-2",
+          "kind": "video",
+          "duration_s": 8.5,
+          "label": "coffee on the terrace"
+        },
+        {
+          "media_id": "clip-3",
+          "kind": "video",
+          "duration_s": 4.5,
+          "label": "old tram passing"
+        },
+        {
+          "media_id": "clip-4",
+          "kind": "video",
+          "duration_s": 7.0,
+          "label": "market stalls"
+        },
+        {
+          "media_id": "clip-5",
+          "kind": "video",
+          "duration_s": 5.5,
+          "label": "sunset on the bridge"
+        },
+        {
+          "media_id": "clip-6",
+          "kind": "video",
+          "duration_s": 9.0,
+          "label": "street musician"
+        },
+        {
+          "media_id": "clip-7",
+          "kind": "video",
+          "duration_s": 4.0,
+          "label": "park bench"
+        },
+        {
+          "media_id": "clip-8",
+          "kind": "video",
+          "duration_s": 6.5,
+          "label": "ferry crossing"
+        },
+        {
+          "media_id": "clip-9",
+          "kind": "video",
+          "duration_s": 7.5,
+          "label": "bakery window"
+        },
+        {
+          "media_id": "clip-10",
+          "kind": "video",
+          "duration_s": 5.0,
+          "label": "rooftop view"
+        },
+        {
+          "media_id": "clip-11",
+          "kind": "video",
+          "duration_s": 8.0,
+          "label": "night lights"
+        },
+        {
+          "media_id": "clip-12",
+          "kind": "video",
+          "duration_s": 6.0,
+          "label": "train platform"
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Warm acoustic bed"
+        }
+      ],
+      "capabilities": {
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "media_overlays": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "edit_format:montage": {
+          "available": true
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "brief_enabled": true
+  },
+  "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"timing\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"8 second fast montage\",\n      \"facts\": {\n        \"duration_s\": 8\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"select\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"using all my clips\",\n      \"facts\": {}\n    }\n  ],\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"audio_strategy\": \"licensed_music\",\n      \"media_scope\": \"all\",\n      \"pacing\": \"fast\",\n      \"target_duration_s\": 8,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"story_structure\": [\n        \"Rapid-fire sequence of city sights\",\n        \"Quick cuts keeping the energy high\"\n      ],\n      \"rationale\": \"Fitting all 12 clips into exactly 8 seconds requires rapid, sub-second cuts. I'll use a fast-paced rhythm to ensure every clip gets a brief, energetic feature.\",\n      \"optional_treatments\": []\n    },\n    \"summary\": \"I'll create an energetic 8-second montage, using rapid cuts to feature a brief moment from all 12 of your clips.\",\n    \"render_intent_evidence\": {}\n  }\n}",
+  "output": {
+    "action": {
+      "kind": "propose_strategy",
+      "strategy": {
+        "direction": "fast_montage",
+        "edit_format": "montage",
+        "archetype": null,
+        "hero_media_id": null,
+        "audio_strategy": "licensed_music",
+        "execution_contract": null,
+        "media_scope": "all",
+        "story_structure": [
+          "Rapid-fire sequence of city sights",
+          "Quick cuts keeping the energy high"
+        ],
+        "caption_style": "auto",
+        "intro_hook": null,
+        "opening_title": null,
+        "font_family": null,
+        "text_color": null,
+        "image_layout": null,
+        "pacing": "fast",
+        "target_duration_s": 8,
+        "target_duration_requested": true,
+        "render_program": "guided",
+        "selected_media_ids": [],
+        "optional_treatments": [],
+        "licensed_sfx": null,
+        "mixed_media_timing": null,
+        "montage_audio": null,
+        "video_reuse_policy": "once",
+        "rationale": "Fitting all 12 clips into exactly 8 seconds requires rapid, sub-second cuts. I'll use a fast-paced rhythm to ensure every clip gets a brief, energetic feature."
+      },
+      "summary": "I'll create an energetic 8-second montage, using rapid cuts to feature a brief moment from all 12 of your clips.",
+      "render_intent_evidence": {
+        "opening_title": null,
+        "font_family": null,
+        "text_color": null
+      }
+    },
+    "brief_updates": [
+      {
+        "operation": "add",
+        "target_requirement_id": null,
+        "expected_version": null,
+        "kind": "timing",
+        "scope": "global",
+        "literal": null,
+        "description": "8 second fast montage",
+        "facts": {
+          "duration_s": 8
+        }
+      },
+      {
+        "operation": "add",
+        "target_requirement_id": null,
+        "expected_version": null,
+        "kind": "select",
+        "scope": "global",
+        "literal": null,
+        "description": "using all my clips",
+        "facts": {}
+      }
+    ]
+  },
+  "meta": {
+    "source": "live_recorded 2026-10-07 prompt 2026-10-06-v44",
+    "ticket": "KRI-470",
+    "gate_case": "a",
+    "dated": true,
+    "contract": "Contract: a stated 8 s + 'all my clips' => the model emits BOTH a timing(duration_s 8) and a select requirement; with an include-all intent resolved over 12 clips the clarification gate asks duration_vs_count (extend/fewer).",
+    "note": "Recorded from the real model in the owner-approved KRI-470 gate experiment (test_run_id kri470-gate-20261007). Replay is structural only; the cassette ignores the prompt text."
+  }
+}
