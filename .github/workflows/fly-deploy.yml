@@ -59,6 +59,8 @@ jobs:
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
 
       - name: Install flyctl
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
@@ -77,6 +79,7 @@ jobs:
       - name: Deploy
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          EXPECTED_SHA: ${{ github.sha }}
         run: |
           chmod +x scripts/fly-deploy-with-retry.sh
           timeout --signal=TERM --kill-after=60s 2100s \

@@ -304,6 +304,7 @@ def _run(
     now_epoch: int = NOW_EPOCH,
     github_event_name: str = "workflow_dispatch",
     github_ref: str = "refs/heads/main",
+    git_repo: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
@@ -316,6 +317,22 @@ def _run(
     date = bin_dir / "date"
     date.write_text(f"#!/usr/bin/env bash\nprintf '%s\\n' '{now_epoch}'\n")
     date.chmod(date.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    # Most existing guard-contract fixtures use symbolic SHA values.  They
+    # exercise Fly receipts rather than Git; focused order tests below use a
+    # real temporary repository.  This shim keeps those established fixtures
+    # isolated from the new Git transport contract.
+    if git_repo is None:
+        git = bin_dir / "git"
+        git.write_text(
+            "#!/usr/bin/env bash\n"
+            'case "$1" in\n'
+            "  rev-parse) printf '%s\\n' \"$EXPECTED_SHA\" ;;\n"
+            "  fetch) exit 0 ;;\n"
+            "  merge-base) exit 0 ;;\n"
+            "  *) exit 97 ;;\n"
+            "esac\n"
+        )
+        git.chmod(git.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
     paths = {
         "STUB_LIST_COUNT": tmp_path / "list.count",
@@ -341,7 +358,8 @@ def _run(
             "POSTER_BACKFILL_POLL_INTERVAL_S": "0",
             "POSTER_BACKFILL_MAX_WAIT_S": "5",
             "FLY_PRODUCTION_SETTLE_ATTEMPTS": "3",
-            "STUB_IMAGE_JSON": raw_image_json or json.dumps(images or []),
+            "STUB_IMAGE_JSON": raw_image_json
+            or json.dumps(images if images is not None else [_image()]),
             "STUB_IMAGE_EXIT": str(image_exit),
             "STUB_MACHINE_SEQUENCE": json.dumps(
                 _default_sequence() if machine_sequence is None else machine_sequence
@@ -359,7 +377,7 @@ def _run(
     )
     return subprocess.run(
         ["bash", str(SCRIPT), *(args or [])],
-        cwd=REPO_ROOT,
+        cwd=git_repo or REPO_ROOT,
         env=env,
         capture_output=True,
         text=True,
@@ -765,11 +783,13 @@ def test_deploy_guard_acquisition_sweeps_a_guard_that_never_ran(tmp_path: Path) 
         [_image()],
         args=["--acquire-deploy-guard"],
         machine_sequence=[
+            _inventory(),  # pre-acquisition deploy-order proof
             _inventory(never_ran),
             _inventory(never_ran),
             _inventory(never_ran),
             _inventory(),
             _inventory(),
+            _inventory(_deploy_guard()),
             _inventory(_deploy_guard()),
             _inventory(_deploy_guard()),
         ],
@@ -837,9 +857,11 @@ def test_sweep_refuses_to_proceed_when_the_destroy_never_settles(tmp_path: Path)
     # It really did attempt the destroy — this is the post-destroy proof failing,
     # not an earlier guard rejecting the Machine.
     assert MACHINE_ID in (tmp_path / "destroy.args").read_text()
-    assert "CALL" not in (tmp_path / "create.args").read_text() if (
-        tmp_path / "create.args"
-    ).exists() else True
+    assert (
+        "CALL" not in (tmp_path / "create.args").read_text()
+        if (tmp_path / "create.args").exists()
+        else True
+    )
 
 
 def test_deploy_guard_acquisition_still_retains_a_guard_that_ran(tmp_path: Path) -> None:
@@ -1160,7 +1182,7 @@ def test_deploy_guard_acquire_is_dormant_and_exact_release_is_forced(
     acquire_dir = tmp_path / "acquire"
     acquired = _run(
         acquire_dir,
-        [_image(labels={})],
+        [_image()],
         args=["--acquire-deploy-guard"],
         machine_sequence=[
             _inventory(),
@@ -1206,7 +1228,7 @@ def test_deploy_guard_lost_create_response_resolves_owned_stable_name(
     guard = _deploy_guard()
     result = _run(
         tmp_path,
-        [_image(labels={})],
+        [_image()],
         args=["--acquire-deploy-guard"],
         create_exit=52,
         machine_sequence=[
@@ -1700,6 +1722,9 @@ def test_workflows_pin_revision_keep_historical_lock_and_gate_deploy() -> None:
     )
     assert "GITHUB_EVENT_NAME: ${{ github.event_name }}" in deploy
     assert "GITHUB_REF: ${{ github.ref }}" in deploy
+    assert "fetch-depth: 0" in deploy
+    deploy_step = deploy.split("      - name: Deploy\n", 1)[1].split("      - name:", 1)[0]
+    assert "EXPECTED_SHA: ${{ github.sha }}" in deploy_step
     assert deploy.index("Acquire durable Fly mutation guard") < deploy.index("      - name: Deploy")
     assert deploy.index("Verify exact deployed image") < deploy.index(
         "Release durable Fly mutation guard"
