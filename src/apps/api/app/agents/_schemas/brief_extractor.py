@@ -19,4 +19,3 @@ class BriefExtractionOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     brief_updates: list[BriefUpdate] = Field(default_factory=list)
-

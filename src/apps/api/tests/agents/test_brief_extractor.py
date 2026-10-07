@@ -84,7 +84,7 @@ def test_runtime_context_has_pre_render_owner_fields() -> None:
             "show lisbon after the current text finished animating",
             ("Lisbon", "style", "timing"),
         ),
-        ('Add a new title “Lisbon”. Animate it', ("Lisbon", "style")),
+        ("Add a new title “Lisbon”. Animate it", ("Lisbon", "style")),
     ],
 )
 def test_original_rendered_followups_replay_through_brief_only_schema(
@@ -129,10 +129,10 @@ def test_original_rendered_followups_replay_through_brief_only_schema(
     )
     context = (
         "Creative brief v1 (everything the creator has asked for, still in force):\n"
-        'text/title: “Good Morning from the Erbens”\n'
+        "text/title: “Good Morning from the Erbens”\n"
         "text/per_clip: the generic morning clips\n"
         "Current on-screen title: Good Morning from the Erbens\n"
-        "References: four generic morning clips, each 15s"
+        "References: four generic morning clips, each 3.75s; total cut 15s"
     )
     output = BriefExtractorAgent(client).run(
         BriefExtractionInput(

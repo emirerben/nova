@@ -156,6 +156,7 @@ def _wire(monkeypatch, *, miss, plan_after=None):  # noqa: ANN001, ANN202
             return SimpleNamespace(action=AskUser(**_ASK), brief_updates=[_upd("select", "global")])
 
     monkeypatch.setattr(planner, "MainCreatorAgent", FakeAgent)
+
     class FakeBriefExtractor:
         def __init__(self, _client) -> None:  # noqa: ANN001
             pass
@@ -285,6 +286,7 @@ def _wire_real(monkeypatch, *, render_status, copilot=None):  # noqa: ANN001, AN
             return SimpleNamespace(action=AskUser(**_ASK), brief_updates=[_upd("select", "global")])
 
     monkeypatch.setattr(planner, "MainCreatorAgent", FakeAgent)
+
     class FakeBriefExtractor:
         def __init__(self, _client) -> None:  # noqa: ANN001
             pass
