@@ -24,7 +24,17 @@ from typing import Any
 from app.agents.editor_ops_v2 import OpSpec, is_v2_snapshot
 
 _FAMILY = frozenset({"text", "text_timeline"})
-ADD_TEXT_EXTRAS = ("style_from", "patch", "position", "animation_phases", "clip_id")
+ADD_TEXT_EXTRAS = (
+    "style_from",
+    "patch",
+    "position",
+    "animation_phases",
+    "clip_id",
+    # Relations are normalized against the authoritative title/text bar by the
+    # compiler. They keep the model from guessing a renderer-specific offset.
+    "below",
+    "after_animation_of",
+)
 
 
 def _clarify(state: Any, message: str) -> None:
@@ -330,6 +340,24 @@ def coerce_add_text_extras(out: dict, snapshot: dict, state: Any) -> dict | None
         if patch is None:
             return None
         result["patch"] = patch
+    if "below" in out:
+        if not isinstance(out["below"], bool):
+            state.invalid_value()
+            return None
+        result["below"] = out["below"]
+    if "after_animation_of" in out:
+        target = out["after_animation_of"]
+        if not isinstance(target, str) or not target:
+            state.invalid_value()
+            return None
+        valid_ids = {bar["id"] for bar in bars}
+        if target == "title":
+            result["after_animation_of"] = target
+        elif target in valid_ids:
+            result["after_animation_of"] = target
+        else:
+            state.invalid_value()
+            return None
     clip_id = out.get("clip_id")
     if clip_id is not None:
         slots = snapshot.get("slots") if isinstance(snapshot.get("slots"), list) else []

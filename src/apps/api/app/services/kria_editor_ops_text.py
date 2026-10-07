@@ -66,6 +66,80 @@ _COPY_STYLE_KEYS = (
 )
 
 
+def _entrance_settle_s(row: dict[str, Any]) -> float:
+    """Canonical phase timing for a text bar's entrance animation."""
+    duration = max(0.0, float(row.get("end_s") or 0.0) - float(row.get("start_s") or 0.0))
+    explicit = row.get("animation_phases")
+    if isinstance(explicit, dict):
+        from app.agents._schemas.text_animation_phases import TextAnimationPhases  # noqa: PLC0415
+        from app.pipeline.text_animation_phases import phase_duration  # noqa: PLC0415
+
+        try:
+            phases = TextAnimationPhases(**explicit)
+        except (TypeError, ValueError):
+            return 0.0
+        return phase_duration(phases, duration) if phases.entrance != "none" else 0.0
+
+    # Legacy phone text uses the same renderer timing math as authored v2
+    # motion, with default parameters when no motion object is present. Keep
+    # this separate from explicit phase timing, which has its own envelope.
+    effect = str(row.get("effect") or "none")
+    if effect in {"none", "static"}:
+        return 0.0
+    from app.pipeline.text_motion_v2 import renderer_settle_duration_s  # noqa: PLC0415
+
+    motion = row.get("motion")
+    raw_motion = motion if isinstance(motion, dict) and motion.get("version") == 2 else {}
+    return min(
+        duration,
+        renderer_settle_duration_s(effect, str(row.get("text") or ""), raw_motion),
+    )
+
+
+def _relation_source(state: _DraftState, relation: str) -> dict[str, Any] | None:
+    if relation == "title":
+        return _style_source(state, "title")
+    return next((row for row in state.text if row.get("id") == relation), None)
+
+
+def normalize_text_relations(state: _DraftState) -> None:
+    """Resolve relative add-text placement/timing after every bundle op ran."""
+    total = _variant_total(state)
+    from app.agents.edit_copilot import _resolve_placement  # noqa: PLC0415
+
+    for row in state.text:
+        relation = row.pop("_after_animation_of", None)
+        below = row.pop("_below", False)
+        source_id = row.pop("_below_source_id", None)
+        source = _relation_source(state, relation) if relation else None
+        below_source = _relation_source(state, source_id) if source_id else None
+        if relation and source is None:
+            raise KriaEditorOpError(_DRIFT)
+        if below and below_source is None:
+            raise KriaEditorOpError(_DRIFT)
+        if source is not None:
+            row["start_s"] = round(
+                float(source.get("start_s") or 0.0) + _entrance_settle_s(source), 3
+            )
+        if below_source is not None:
+            source_position = below_source.get("position")
+            source_y = below_source.get("y_frac")
+            if isinstance(source_position, str) and source_y is None:
+                source_y = _resolve_placement({"position": source_position}).get("y_frac")
+            if not isinstance(source_y, (int, float)):
+                source_y = {"top": 0.12, "middle": 0.5, "bottom": 0.85}.get(source_position, 0.5)
+            target_y = float(source_y) + 0.1
+            if target_y > 0.94:
+                raise KriaEditorOpError("That text would fall outside the phone-safe area")
+            row["position"] = "custom"
+            row["y_frac"] = round(target_y, 3)
+        if relation or below:
+            start = float(row.get("start_s") or 0.0)
+            end = float(row.get("end_s") or 0.0)
+            if start < 0 or end <= start or (total > 0 and end > total + 1e-6):
+                raise KriaEditorOpError("That text timing does not fit on the video")
+
+
 # ----------------------------------------------------------------------- folding
 
 
@@ -777,6 +851,11 @@ def add_text_v2(state: _DraftState, op: dict[str, Any]) -> None:
                 if key in source and source[key] is not None
             }
         )
+    if op.get("after_animation_of"):
+        row["_after_animation_of"] = op["after_animation_of"]
+    if op.get("below"):
+        row["_below"] = True
+        row["_below_source_id"] = source.get("id") if source is not None else None
     clip_id = op.get("clip_id")
     if clip_id:
         new_id = f"{_CLIP_LABEL_MEDIA_PREFIX}{clip_id}"

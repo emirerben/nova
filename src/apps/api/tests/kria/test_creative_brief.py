@@ -56,7 +56,7 @@ from app.kria.brief_checks import (
 )
 from app.kria.contracts import KriaObservedTurnResponse, KriaTurnPlan, RequirementReceipt
 from app.kria.planner import PlannedKriaTurn, plan_live_turn
-from app.models import ContentPlan, Persona, PlanItem
+from app.models import ContentPlan, CreationThread, Persona, PlanItem
 from app.tasks.kria_runtime import _useful_plan, _validate_draft_plan
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "kria_turns" / "east-run-brief.json"
@@ -911,11 +911,17 @@ def _planner_db(item):  # noqa: ANN001, ANN202
     creator_id = uuid.uuid4()
     content_plan = SimpleNamespace(id=plan_id, user_id=creator_id, persona_id=uuid.uuid4())
     persona = SimpleNamespace(user_id=creator_id)
+    thread = SimpleNamespace(active_creator_agent_session_id=None)
 
     async def get(model, _identifier, **_kwargs):  # noqa: ANN001, ANN202
         if model is PlanItem:
             item.expired = False  # a get() refreshes an expired row
-        return {PlanItem: item, ContentPlan: content_plan, Persona: persona}[model]
+        return {
+            PlanItem: item,
+            ContentPlan: content_plan,
+            Persona: persona,
+            CreationThread: thread,
+        }[model]
 
     async def rollback():  # noqa: ANN202
         item.expired = True
@@ -977,6 +983,15 @@ def _wire_planner(monkeypatch, *, output, editor_plan, snapshot):  # noqa: ANN00
             return output
 
     monkeypatch.setattr(planner, "MainCreatorAgent", FakeAgent)
+
+    class FakeBriefExtractor:
+        def __init__(self, _client) -> None:  # noqa: ANN001
+            pass
+
+        def run(self, *_args, **_kwargs):  # noqa: ANN002, ANN003
+            return SimpleNamespace(brief_updates=list(output.brief_updates) if output else [])
+
+    monkeypatch.setattr(planner, "BriefExtractorAgent", FakeBriefExtractor)
     monkeypatch.setattr(planner, "default_client", lambda: object())
     return db, item, creator_id, copilot, runs
 
@@ -1007,7 +1022,7 @@ async def test_order_requirement_skips_the_copilot_and_replans(
     assert [(u.kind, u.scope) for u in result.brief_updates] == [("order", "global")]
     # The receipt checks resolve reaction beats against this same manifest.
     assert result.brief_manifest is not None
-    assert runs and runs[0].brief_enabled is True
+    assert runs == []
 
 
 @pytest.mark.asyncio
@@ -1055,20 +1070,26 @@ async def test_brief_off_keeps_the_original_copilot_first_order(
         user_message="Order them by when I filmed them",
     )
     assert result.plan is editor_plan
-    assert result.brief_route is None and result.brief_updates == ()
+    assert result.brief_route is None
+    assert result.brief_updates == ()
     assert runs == []  # the Main Creator never ran
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("rendered", [False, True])
 async def test_replan_strategy_request_reaches_the_planner_from_the_brief(
     monkeypatch: pytest.MonkeyPatch,
+    rendered: bool,
 ) -> None:
     output = SimpleNamespace(
         action=AskUser(**_ASK),
         brief_updates=[_upd("text", "per_clip", description="the landmark in each clip")],
     )
     db, item, creator_id, _copilot, runs = _wire_planner(
-        monkeypatch, output=output, editor_plan=None, snapshot=None
+        monkeypatch,
+        output=output,
+        editor_plan=None,
+        snapshot={"text_bars": [{"text": "20K Koşu"}]} if rendered else None,
     )
     prior = apply_updates(None, [_upd("text", "title", literal="20K Koşu")], source_turn_id="t0")
     monkeypatch.setattr(planner, "load_latest_brief", AsyncMock(return_value=prior))
@@ -1079,9 +1100,48 @@ async def test_replan_strategy_request_reaches_the_planner_from_the_brief(
         creator_id=creator_id,
         user_message="Do it again based on my prompt",
     )
-    # No editable target -> re-plan; the model saw the brief, not chat text.
+    # Explicit recreation reaches creation planning even with a completed cut.
     assert result.brief_route == "replan"
     assert '"20K Koşu"' in runs[0].creator_request
+
+
+@pytest.mark.asyncio
+async def test_bound_rendered_extraction_failure_recovers_without_creation_or_editor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.agents._runtime import TerminalError
+
+    db, item, creator_id, copilot, runs = _wire_planner(
+        monkeypatch, output=None, editor_plan=_editor_plan(), snapshot={"text_bars": []}
+    )
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    monkeypatch.setattr(planner, "load_intent_clips_for_item", AsyncMock(return_value=[]))
+    prior = apply_updates(
+        None, [_upd("text", "title", literal="Good Morning from the Erbens")], source_turn_id="t0"
+    )
+    monkeypatch.setattr(planner, "load_latest_brief", AsyncMock(return_value=prior))
+
+    class FailedExtractor:
+        def __init__(self, _client) -> None:  # noqa: ANN001
+            pass
+
+        def run(self, *_args, **_kwargs):  # noqa: ANN002, ANN003, ANN201
+            raise TerminalError("schema retries exhausted")
+
+    monkeypatch.setattr(planner, "BriefExtractorAgent", FailedExtractor)
+    result = await plan_live_turn(
+        db,
+        thread_id=uuid.uuid4(),
+        item_id=item.id,
+        creator_id=creator_id,
+        user_message="Add a new title “Lisbon”. Animate it",
+    )
+    assert result.plan.mode == "respond" and result.plan.turn_value == "question"
+    assert "couldn't reliably read" in result.plan.response
+    assert result.plan.intents == []
+    assert result.brief_updates == () and result.brief_expected_version == prior.version
+    assert runs == []
+    copilot.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1109,20 +1169,20 @@ async def test_main_creator_failure_falls_back_to_the_copilot_for_plain_edits(
         user_message="make the title bigger",
     )
     assert result.plan is editor_plan
-    assert result.brief_route is None and result.brief_updates == ()
+    assert result.brief_route == "editor_ops" and result.brief_updates == ()
     copilot.assert_awaited_once()
 
     # With no copilot plan to fall back on, the failure still surfaces.
     copilot.side_effect = None
     copilot.return_value = None
-    with pytest.raises(RuntimeError, match="reliable editorial plan"):
-        await plan_live_turn(
-            db,
-            thread_id=uuid.uuid4(),
-            item_id=item.id,
-            creator_id=creator_id,
-            user_message="make the title bigger",
-        )
+    result = await plan_live_turn(
+        db,
+        thread_id=uuid.uuid4(),
+        item_id=item.id,
+        creator_id=creator_id,
+        user_message="make the title bigger",
+    )
+    assert result.plan is not None
 
 
 @pytest.mark.parametrize(
@@ -1466,8 +1526,8 @@ async def test_fast_path_declines_replan_structural_and_long_asks(
     result = await plan_live_turn(
         db, thread_id=uuid.uuid4(), item_id=item.id, creator_id=creator_id, user_message=message
     )
-    assert runs, "the extraction ran on the critical path"
-    assert result.defer_brief is False and result.brief_route == "replan"
+    assert (not runs) if message != "Do it again based on my prompt" else runs
+    assert result.defer_brief is False and result.plan.turn_value in {"recovery", "question"}
 
 
 @pytest.mark.asyncio
@@ -1489,7 +1549,7 @@ async def test_fast_path_kill_switch_restores_extract_first(
         creator_id=creator_id,
         user_message="Change the title to N",
     )
-    assert runs and result.defer_brief is False
+    assert runs == [] and result.defer_brief is False
     assert [u.literal for u in result.brief_updates] == ["N"]
 
 

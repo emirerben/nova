@@ -118,6 +118,27 @@ final class ChatWorkspaceTests: XCTestCase {
         XCTAssertTrue(ChatThinkingSettlement.isSettled(events: events + [event(id: "new", sequence: 8)], after: 7))
     }
 
+    func testLatePriorRenderCannotSettleEditorFollowup() {
+        let oldEvents = ["plan_block", "generation_ready", "assistant_response"].map { type in
+            ThreadEvent(id: type, sequence: 9, revision: 9, role: type == "assistant_response" ? "assistant" : "system",
+                        eventType: type, content: type == "assistant_response" ? "The old cut is ready." : nil,
+                        payload: ["turn_id": .string("old-turn")], createdAt: .now)
+        }
+        XCTAssertFalse(ChatThinkingSettlement.isSettled(events: oldEvents, after: 8, turnID: "editor-turn"))
+        let reply = ThreadEvent(id: "editor-reply", sequence: 10, revision: 10, role: "assistant",
+                                eventType: "assistant_response", content: "Review the title edit.",
+                                payload: ["turn_id": .string("EDITOR-TURN")], createdAt: .now)
+        XCTAssertTrue(ChatThinkingSettlement.isSettled(events: oldEvents + [reply], after: 8, turnID: "editor-turn"))
+    }
+
+    func testUntaggedLegacyReplyStillSettlesButUntaggedPlanDoesNot() {
+        let legacyReply = event(id: "reply", sequence: 9)
+        let untaggedPlan = ThreadEvent(id: "plan", sequence: 9, revision: 9, role: "system",
+                                      eventType: "plan_block", content: nil, payload: nil, createdAt: .now)
+        XCTAssertTrue(ChatThinkingSettlement.isSettled(events: [legacyReply], after: 8, turnID: "new-turn"))
+        XCTAssertFalse(ChatThinkingSettlement.isSettled(events: [untaggedPlan], after: 8, turnID: "new-turn"))
+    }
+
     func testAcceptedMutationRefreshFailureDoesNotReportTheMutationAsRejected() async throws {
         let failure = await acceptedMutationRefreshError(
             "Your message was sent, but the conversation couldn’t refresh.",

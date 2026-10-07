@@ -81,6 +81,8 @@ final class CreationChatFixture: @unchecked Sendable {
     private var planStages: [String: Int] = [:]
     private var planTicks: [String: Int] = [:]
     private var planTurnIDs: [String: String] = [:]
+    private var editorTurnIDs: [String: String] = [:]
+    private var editorTurnTicks: [String: Int] = [:]
     private let approvalID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     private var runtime: Int { ProcessInfo.processInfo.environment["KRIA_CHAT_CREATION_FLOW"] == "v2" ? 2 : 1 }
     /// Returns nil when the request should fail without any HTTP response.
@@ -285,7 +287,11 @@ final class CreationChatFixture: @unchecked Sendable {
             if let order = body["song_order"] as? [String: Any] { userPayload["song_order"] = order }
             if let selection = body["choice_selection"] as? [String: Any] { userPayload["choice_selection"] = selection }
             append("user_message", role: "user", text: body["message"] as? String, payload: userPayload, clientEventID: turnID)
-            if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] != nil {
+            if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_FOLLOWUP"] == "1",
+               (thread["job"] as? [String: Any])?["status"] as? String == "ready" {
+                editorTurnIDs[id] = turnID
+                editorTurnTicks[id] = 0
+            } else if runtime == 2, ProcessInfo.processInfo.environment["KRIA_CHAT_SONG_ORDER"] != nil {
                 if let order = body["song_order"] as? [String: Any] {
                     // Echo what the server received so the UI test can pin the structured payload.
                     let ids = (order["ordered_media_ids"] as? [String] ?? []).joined(separator: "+")
@@ -410,12 +416,24 @@ final class CreationChatFixture: @unchecked Sendable {
                 planStages[id] = stage + 1
             }
         }
+        if parts.last == "delta", let tick = editorTurnTicks[id], let turnID = editorTurnIDs[id] {
+            if tick == 0 {
+                let oldTurnID = planTurnIDs[id] ?? id
+                append("plan_block", role: "system", payload: ["turn_id": oldTurnID, "job_id": id, "blocks": Self.planScript.last ?? []])
+                append("assistant_review", text: "Late prior render event", payload: ["turn_id": oldTurnID])
+            }
+            if tick >= 6 {
+                append("assistant_response", text: "Review the Lisbon title edit before saving.", payload: ["turn_id": turnID])
+                append("draft_applied", payload: ["turn_id": turnID, "draft_id": id])
+                editorTurnTicks[id] = nil
+            } else { editorTurnTicks[id] = tick + 1 }
+        }
         thread["state"] = state; thread["events"] = events; thread["revision"] = revision; threads[id] = thread
         if parts.last == "delta" {
             let after = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "after_sequence" })?.value.flatMap(Int.init) ?? -1
             return response(["thread_id": id, "runtime_version": runtime, "status": "active", "after_sequence": after, "has_more": false, "thread_revision": revision, "events": events.filter { ($0["sequence"] as? Int ?? 0) > after }, "next_after_sequence": events.count - 1])
         }
-        if parts.last == "turns" { return response(["turn_id": id, "thread_revision": revision, "status": "queued"], status: 202) }
+        if parts.last == "turns" { return response(["turn_id": editorTurnIDs[id] ?? id, "thread_revision": revision, "status": "queued"], status: 202) }
         if parts.last == "approve" { return response(["approval_id": approvalID, "thread_id": id, "status": "approved", "thread_revision": revision]) }
         return response(withRenderShape(thread))
     }

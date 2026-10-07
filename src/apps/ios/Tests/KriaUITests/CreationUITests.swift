@@ -1251,13 +1251,14 @@ final class CreationUITests: XCTestCase {
     /// on the live feed.
     private func launchLivePlanFeed(
         reduceMotion: Bool, reduceTransparency: Bool = false, cancel: String? = nil, capability: Bool = true,
-        device: Bool = false
+        device: Bool = false, followup: Bool = false
     ) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         if capability { app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS"] = "1" }
+        if followup { app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_FOLLOWUP"] = "1" }
         if device {
             app.launchEnvironment["KRIA_CHAT_DEVICE_RENDER"] = "ready"
             app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_DEVICE"] = "1"
@@ -1325,6 +1326,28 @@ final class CreationUITests: XCTestCase {
         // ReadyStage is unchanged once the render finishes.
         XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 60))
         XCTAssertFalse(feed.exists)
+    }
+
+    func testReadyVideoFollowupWaitsWithoutReplayingPriorPlan() {
+        let app = launchLivePlanFeed(reduceMotion: true, followup: true)
+        XCTAssertTrue(app.buttons["Open editor"].waitForExistence(timeout: 100))
+        XCTAssertFalse(app.otherElements["plan-feed"].exists)
+        let composer = app.textFields["Message Kria"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        composer.tap()
+        composer.typeText("Add a new title Lisbon. Animate it")
+        app.buttons["Send message"].tap()
+        let thinking = app.descendants(matching: .any)["chat-thinking"]
+        XCTAssertTrue(thinking.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.otherElements["plan-feed"].exists, "the old render plan must not become the edit's waiting row")
+        // The fixture delivers an old render event before the current edit's response.
+        XCTAssertTrue(eventually(timeout: 5) { app.staticTexts["Kria: Late prior render event"].exists })
+        XCTAssertTrue(thinking.exists, "a late event from the prior turn must not end the edit wait")
+        XCTAssertFalse(app.otherElements["plan-feed"].exists)
+        XCTAssertTrue(app.staticTexts["Kria: Review the Lisbon title edit before saving."].waitForExistence(timeout: 20))
+        XCTAssertTrue(eventually(timeout: 5) { !thinking.exists })
+        XCTAssertFalse(app.otherElements["plan-feed"].exists)
+        attach(app, "ready-video-editor-followup")
     }
 
     /// iPhone accounts: the server plans in ~1s (all decided) and the phone builds the video. The feed must stay
