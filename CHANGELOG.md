@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.130.0] - 2026-10-07
+
+### Changed
+- feat(ios): export slide videos and looks on device (KRI-482) (#1452) <!-- release-pr: 1452 -->
+
 ## [0.78.129.0] - 2026-10-07
 
 ### Changed
