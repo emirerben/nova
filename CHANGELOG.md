@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.145.0] - 2026-10-07
+
+### Changed
+- fix(editor): a title delete on a song video keeps the song; refuse clip deletes there; log editor-commit 422s (#1463) <!-- release-pr: 1463 -->
+
 ## [0.78.144.0] - 2026-10-07
 
 ### Changed
