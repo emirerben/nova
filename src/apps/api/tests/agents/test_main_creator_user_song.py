@@ -1,9 +1,8 @@
 """KRI-374 lane C: the Main Creator learns about an uploaded song.
 
 The song section of the prompt is rendered ONLY when the manifest carries a
-usable song, so every prompt without one is byte-identical to before. The
-no-song hashes below were captured on the commit immediately BEFORE this lane
-(same `_input()` fixture, `creator_montage_shapes_enabled` off).
+usable song. The no-song hashes below are the KRI-506 v46 rebaseline for the
+same `_input()` fixture with `creator_montage_shapes_enabled` off.
 """
 
 from __future__ import annotations
@@ -27,15 +26,12 @@ from app.agents.main_creator import (
 from app.config import settings
 from tests.agents.test_main_creator_agent import _input, _manifest
 
-# (clip_intents_enabled, brief_enabled) -> sha256 of the pre-change render.
-# The brief-on hashes were re-captured for KRI-459's stable-ID brief section (prompt v44) on
-# its own commit before KRI-374 merged in: still byte-identical without a song. Re-captured
-# again for KRI-470's stated-length `timing` instruction (prompt v45; brief section only).
+# (clip_intents_enabled, brief_enabled) -> sha256 of the KRI-506 v46 render without a song.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, False): "f7c328b0154ed8e4b92fdfbdab3ea8d6db855858f1499e2fbdfe5af11380fddf",
-    (True, True): "64bfc62ea7750c193e15c0eedc838a2c4ce336956a07f9ab3d1524029efc3336",
-    (False, False): "cb7e2f936a3adde2756d9cdce8a09eed5b14767161bebbfceb2a0c743fbf2235",
-    (False, True): "110543f26fd6bc811f322de0359f9307e2f25ecfff71fc8aa27c96e612e384cb",
+    (True, False): "47fdf325d8c20b5851bf5f88aca7c4609349f12d697bba36da23f6e6be9dc8f5",
+    (True, True): "b7d2b67861fdd19dc9c3d9a64cc2a505a0026ea32c76afbb9a25735fcc31549b",
+    (False, False): "8818499503544a04696940bc5c752dbb51739ded19e70fc4abe0e1f20b0e62d5",
+    (False, True): "cfa4f20b7698078a0b5c8c3f2dfcafe4219253951053a0176e7e04268407073b",
 }
 
 
@@ -105,7 +101,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-07-v45"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-07-v46"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

@@ -246,6 +246,15 @@ FIELD_MATRIX: dict[str, FieldRule] = {
     # Resolved or repaired upstream of the contract.
     **_rules(
         "upstream_resolved",
+        "creative_copy_decisions/unified_montage",
+        "omitted_copy_targets[]",
+        note=(
+            "server-folded cancellation clears title requirements and suppresses title "
+            "fallbacks; the contract does not independently verify absence of text"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
         "creator_capabilities",
         "edit_format",
         "archetype",

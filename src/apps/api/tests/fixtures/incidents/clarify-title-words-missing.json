@@ -84,16 +84,18 @@
       }
     ],
     "notes": [
-      "Gate: `collect_conflicts` title_text: kind=text scope=title with no literal, no strategy.opening_title, no brief facts to title from, on a draft the unified phone montage renders (its text receipts are skipped at draft time and BLOCK the render). Only 'Continue without a title' is offered: on-screen words are never written for the creator; typed words become the literal."
+      "KRI-506 gate: a requested hook without exact words opens a durable creative-copy authorship question. The creator can supply an idea, ask Kria to write one, or skip it; generated wording requires separate wording approval before the edit plan can be approved."
     ]
   },
   "expect": {
     "question": {
-      "kind": "title_text",
+      "kind": "creative_copy_authorship",
       "option_keys": [
-        "no_title"
+        "write_my_own",
+        "generate",
+        "cancel"
       ],
-      "min_options": 1
+      "min_options": 3
     }
   },
   "repro": {
