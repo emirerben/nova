@@ -1,0 +1,88 @@
+{
+  "id": "kri470-cloud-classic-original-audio-declined",
+  "incident": {
+    "ticket": "KRI-470",
+    "summary": "KRI-470 PR-E: classic's song variants replace camera audio and its track-less ones keep it, so a camera-audio requirement is declined up front."
+  },
+  "kind": "contract_pin",
+  "approved": {
+    "strategy": {
+      "pacing": "fast",
+      "archetype": "day_vlog",
+      "direction": "guided_story",
+      "rationale": "(redacted)",
+      "edit_format": "montage",
+      "media_scope": "all",
+      "target_duration_s": 9,
+      "target_duration_requested": true,
+      "selected_media_ids": [
+        "run-1",
+        "run-2",
+        "run-3"
+      ],
+      "video_reuse_policy": "once",
+      "audio_strategy": "original_audio"
+    },
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r2",
+          "kind": "timing",
+          "scope": "global",
+          "description": "keep 9 seconds",
+          "facts": {
+            "duration_s": 9
+          },
+          "source_turn_id": "turn-1"
+        }
+      ]
+    },
+    "creator_request": "Keep my camera audio, keep 9 seconds.",
+    "provenance": "Synthetic plan shaped like the east_run thread (KRI-185): chronological order, a short length and an exact opening title. Not a prod capture."
+  },
+  "inputs": {
+    "media": [
+      {
+        "id": "run-1",
+        "kind": "video",
+        "duration_s": 6.0,
+        "capture_time": "2026-10-04T11:00:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "run-2",
+        "kind": "video",
+        "duration_s": 6.0,
+        "capture_time": "2026-10-04T10:00:00Z",
+        "has_audio": true
+      },
+      {
+        "id": "run-3",
+        "kind": "video",
+        "duration_s": 6.0,
+        "capture_time": "2026-10-04T12:00:00Z",
+        "has_audio": true
+      }
+    ],
+    "cloud_preflight": true,
+    "cloud_adapter": "cloud_classic",
+    "notes": [
+      "Contract pin, not incident replay: drives the real cloud preflight, the real pre-render plan gate on a plan compiled by the real guided compiler from the recorded media order, and the real publication verifier on evidence the real evidence builder derives from that plan's timeline.",
+      "Order and text are removed from this plan so camera audio is the blocker: capability_unavailable on the audio field."
+    ]
+  },
+  "expect": {
+    "refusal": {
+      "reason": "capability_unavailable",
+      "field_path": "montage_audio.preserve_source_audio"
+    }
+  },
+  "repro": {
+    "command": "pytest tests/incidents/test_incident_corpus.py -k kri470-cloud-classic-original-audio-declined",
+    "status": "available"
+  },
+  "sources": [
+    "tests/fixtures/request_following/threads/east_run.json"
+  ]
+}

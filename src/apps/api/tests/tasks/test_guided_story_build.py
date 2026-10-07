@@ -841,7 +841,10 @@ def test_guided_revision_regen_dispatches_persisted_revision_without_montage(
     ]
 
 
-def test_guided_text_reburn_pins_base_and_refreshes_output_receipt(monkeypatch) -> None:
+@pytest.mark.parametrize("with_evidence", [False, True])
+def test_guided_text_reburn_pins_base_and_refreshes_output_receipt(
+    monkeypatch, with_evidence
+) -> None:
     from app import storage
     from app.pipeline import guided_story
     from app.schemas.edit_proposal import (
@@ -980,6 +983,25 @@ def test_guided_text_reburn_pins_base_and_refreshes_output_receipt(monkeypatch) 
         "text_elements": plan["text_elements"],
         "render_receipt": receipt,
     }
+    if with_evidence:
+        # A contract-bound variant: its evidence describes the artifact being replaced, with a
+        # sentinel text row that the reburn must not carry forward.
+        from app.agents._schemas.text_element import TextElement
+
+        stale = guided_story.guided_cloud_evidence(
+            plan,
+            receipt["moment_stages"],
+            receipt["text_stages"],
+            [TextElement.model_validate(row) for row in plan["text_elements"]],
+            [],
+            narration_applied=False,
+            music_applied=False,
+            actual_duration_s=15,
+        )
+        stale["text_evidence"] = [
+            {"role": "any", "text": "STALE WORDS", "start_s": 0.0, "end_s": 1.0}
+        ]
+        existing["cloud_evidence"] = stale
     exact_downloads: list[tuple[str, str]] = []
 
     def metadata(path: str):
@@ -1054,6 +1076,15 @@ def test_guided_text_reburn_pins_base_and_refreshes_output_receipt(monkeypatch) 
     persisted.update(song_reference_variant_fields(plan))
 
     assert exact_downloads == [(base_path, "base-gen")]
+    if with_evidence:
+        fresh = result["cloud_evidence"]
+        texts = {row["text"] for row in fresh["text_evidence"]}
+        assert "STALE WORDS" not in texts
+        assert texts == {row["text"] for row in plan["text_elements"] if row["text"].strip()}
+        # the untouched picture of the base is carried forward
+        assert fresh["actual_clip_order"] == existing["cloud_evidence"]["actual_clip_order"]
+    else:
+        assert "cloud_evidence" not in result
     assert result["render_receipt"]["output_storage"] == {
         "path": result["video_path"],
         "generation": "reburn-gen",

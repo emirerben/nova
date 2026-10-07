@@ -1513,3 +1513,27 @@ def test_publication_replaces_stale_cloud_poster_when_poster_fails(fixture, monk
     variant = fixture.job.assembly_plan["variants"][0]
     assert variant["video_path"] == path
     assert variant["poster_path"] is None
+
+
+def test_phone_publication_drops_the_cloud_artifacts_evidence(fixture, monkeypatch):
+    """Cloud evidence describes the cloud file; the phone export that replaces it must not
+    inherit it (KRI-470)."""
+    attempt, path = prepared(fixture)
+    variant = fixture.job.assembly_plan["variants"][0]
+    variant["cloud_evidence"] = {"schema_version": 1, "actual_clip_order": ["old"]}
+    mock_storage(fixture, monkeypatch)
+    monkeypatch.setattr(routes, "_verify_export", MagicMock(return_value=None))
+    fixture.db.execute.return_value = scalar(
+        SimpleNamespace(
+            user_id=fixture.user.id,
+            status="reserved",
+            retention_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    response = fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/complete", json=body(fixture, attempt)
+    )
+    assert response.status_code == 200, response.text
+    published = fixture.job.assembly_plan["variants"][0]
+    assert published["video_path"] == path
+    assert "cloud_evidence" not in published

@@ -81,7 +81,11 @@ def refusal_message(record: IncidentRecord, contract: CreatorRenderContract) -> 
     if record.inputs.cloud_preflight:
         assembly = {CONTRACT_FIELD: contract.model_dump(mode="json")}
         try:
-            preflight_cloud_contract(assembly, candidates={REQUIREMENT_VERSION_FIELD: 1})
+            preflight_cloud_contract(
+                assembly,
+                candidates={REQUIREMENT_VERSION_FIELD: 1},
+                adapter=record.inputs.cloud_adapter,
+            )
         except Exception as exc:  # the verifier's own typed error
             return exc
     else:
@@ -91,6 +95,128 @@ def refusal_message(record: IncidentRecord, contract: CreatorRenderContract) -> 
         except Exception as exc:
             return exc
     raise AssertionError("the verifier accepted the recorded plan; a refusal was expected")
+
+
+def _guided_plan(record: IncidentRecord) -> dict:
+    """Compile a guided plan with the REAL compiler from the recorded media order."""
+    from app.pipeline.guided_story import compile_execution_plan
+    from app.schemas.edit_proposal import (
+        EditProposalSnapshot,
+        MediaRef,
+        StoryBeat,
+        canonical_media_digest,
+    )
+
+    spec = record.inputs.guided_plan
+    assert spec is not None
+    media = [
+        MediaRef(
+            lane="clip",
+            media_id=media_id,
+            gcs_path=f"incident/{media_id}.mp4",
+            generation="1",
+            kind="video",
+            duration_s=6,
+            analysis={"best_moments": [{"start_s": 0, "end_s": 6, "description": "run"}]},
+        )
+        for media_id in spec.order
+    ]
+    snapshot = EditProposalSnapshot(
+        direction="guided_story",
+        goal="Show the run",
+        duration_s=3 * len(media),
+        title=spec.opening_title or "Run",
+        closing_title=spec.closing_title,
+        media=media,
+        story_beats=[
+            StoryBeat(
+                beat_id=f"beat-{index}",
+                topic="Run",
+                thought="Keep going.",
+                media_ids=[media_id],
+                duration_s=3,
+            )
+            for index, media_id in enumerate(spec.order)
+        ],
+    )
+    guided = {
+        "proposal_version": 1,
+        "media_digest": canonical_media_digest(media),
+        "approved_proposal": snapshot.model_dump(mode="json"),
+        "media_identities": [
+            {k: getattr(m, k) for k in ("lane", "media_id", "gcs_path", "generation", "kind")}
+            for m in media
+        ],
+    }
+    return compile_execution_plan(guided, track=None)
+
+
+def cloud_verdicts(record: IncidentRecord, contract: CreatorRenderContract) -> dict:
+    """Run the real cloud preflight, plan gate and publication verifier for the record.
+
+    Returns ``{"preflight"|"plan_gate"|"publication": exc|None}``: the typed error each real
+    entry point raised, or ``None`` when it let the plan / evidence through.
+    """
+    from app.agents._schemas.text_element import TextElement
+    from app.pipeline.guided_story import guided_cloud_evidence
+    from app.services.cloud_render_contract import (
+        CloudRenderContractError,
+        check_guided_plan,
+        verify_cloud_variant,
+    )
+
+    adapter = record.inputs.cloud_adapter
+    assert adapter, "a cloud expectation needs inputs.cloud_adapter"
+    assembly = {CONTRACT_FIELD: contract.model_dump(mode="json")}
+    candidates = {REQUIREMENT_VERSION_FIELD: 1}
+    archetype = {
+        "cloud_guided_story": "guided_story",
+        "cloud_classic": "montage",
+        "cloud_slides": "slides",
+    }[adapter]
+    out: dict = {"preflight": None, "plan_gate": None, "publication": None}
+    try:
+        preflight_cloud_contract(assembly, candidates=candidates, adapter=adapter)
+    except CloudRenderContractError as exc:
+        out["preflight"] = exc
+    receipt = record.inputs.cloud_receipt
+    evidence = record.inputs.cloud_evidence
+    if record.inputs.guided_plan is not None:
+        plan = _guided_plan(record)
+        try:
+            check_guided_plan(assembly, candidates=candidates, plan=plan)
+        except CloudRenderContractError as exc:
+            out["plan_gate"] = exc
+        if evidence is None:
+            moments = [
+                {"moment_id": m["moment_id"], "media_id": m["media_id"]}
+                for m in plan["story_timeline"]
+            ]
+            texts = [{"element_id": e["id"], "visible": True} for e in plan["text_elements"]]
+            evidence = guided_cloud_evidence(
+                plan,
+                moments,
+                texts,
+                [TextElement.model_validate(e) for e in plan["text_elements"]],
+                list(plan["selected_media_ids"]),
+                narration_applied=False,
+                music_applied=False,
+                actual_duration_s=plan["resolved_duration_s"],
+            )
+        receipt = receipt or {"verified": True, "actual_duration_s": plan["resolved_duration_s"]}
+    variant = {
+        "ok": True,
+        "render_status": "ready",
+        "video_path": "incident/output.mp4",
+        "resolved_archetype": archetype,
+        **({"render_receipt": receipt} if receipt else {}),
+        **({"cloud_evidence": evidence} if evidence else {}),
+    }
+    try:
+        verify_cloud_variant(assembly, variant, candidates=candidates)
+    except CloudRenderContractError as exc:
+        out["publication"] = exc
+    return out
 
 
 def _intent_clips(record: IncidentRecord) -> list[IntentClip]:

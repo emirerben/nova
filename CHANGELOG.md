@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.127.0] - 2026-10-07
+
+### Changed
+- feat(cloud): cloud render evidence and honest preflight lifts (KRI-478) (#1449) <!-- release-pr: 1449 -->
+
 ## [0.78.126.0] - 2026-10-07
 
 ### Changed
