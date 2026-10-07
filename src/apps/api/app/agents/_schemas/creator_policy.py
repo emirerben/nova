@@ -875,6 +875,12 @@ def repair_creator_user_song(
     return strategy.model_copy(update=update), notices
 
 
+VOICE_MODE_SHAPE_NOTICE = (
+    "Your voice plays straight through under the other clips, so I'm not using a day-vlog "
+    "or single-hero shape for this edit."
+)
+
+
 def repair_creator_voice_mode(strategy: CreativeStrategy) -> tuple[CreativeStrategy, list[str]]:
     """KRI-479: a ``voice_mode`` only means something under a camera-audio montage.
 
@@ -904,11 +910,15 @@ def repair_creator_voice_mode(strategy: CreativeStrategy) -> tuple[CreativeStrat
         # The creator asked for one voice under the other clips; a day-vlog / single-hero
         # SHAPE the model added on top is not part of that request and the voice composer has
         # no use for it (KRI-469's recorded strategy carried `archetype: day_vlog`).
-        return strategy.model_copy(update={"archetype": None, "hero_media_id": None}), []
+        return (
+            strategy.model_copy(update={"archetype": None, "hero_media_id": None}),
+            [VOICE_MODE_SHAPE_NOTICE],
+        )
     return strategy, []
 
 
 __all__ = [
+    "VOICE_MODE_SHAPE_NOTICE",
     "repair_creator_voice_mode",
     "CAPABILITY_USER_SONG",
     "USER_SONG_CONTRACT_NOTICE",

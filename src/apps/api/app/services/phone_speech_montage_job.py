@@ -401,6 +401,28 @@ def _voice_decline(
     )
 
 
+def _capture_tie_note(snapshot: dict, ordered_ids: list[str]) -> str:
+    """Clips that share a capture time keep the order they were added in: say so."""
+    from app.services.clip_facts import capture_from_assignment  # noqa: PLC0415
+
+    binding = snapshot.get("creator_brief_binding")
+    media = binding.get("media_snapshot") if isinstance(binding, dict) else None
+    rows = (media or {}).get("clip_assignments") or []
+    times: dict[str, str] = {}
+    for row in rows:
+        if isinstance(row, dict) and row.get("media_id") in ordered_ids:
+            capture = capture_from_assignment(row)
+            if capture and capture.capture_time:
+                times[str(row["media_id"])] = str(capture.capture_time)
+    counts: dict[str, int] = {}
+    for stamp in times.values():
+        counts[stamp] = counts.get(stamp, 0) + 1
+    tied = sum(n for n in counts.values() if n > 1)
+    if not tied:
+        return ""
+    return f"{tied} clips share a capture time, so I kept them in the order they were added"
+
+
 def run_phone_voice_behind_footage_job(
     job_id: str,
     snapshot: dict,
@@ -515,6 +537,7 @@ def run_phone_voice_behind_footage_job(
             "Ask me to make the edit again from your latest request.",
         )
     picture = tuple(binding_by_media[m] for m in ordered_ids)
+    tie_note = _capture_tie_note(snapshot, ordered_ids) if ordering_basis == "capture_time" else ""
 
     if load_words is None:
         from app.services.speech_segments import transcribe_stored_clip  # noqa: PLC0415
@@ -606,7 +629,7 @@ def run_phone_voice_behind_footage_job(
         ],
         "cut_count": len(receipt.shots),
         "ordering_basis": ordering_basis,
-        "adjustments": [*adjustments, *receipt.adjustments],
+        "adjustments": [*adjustments, *receipt.adjustments, *([tie_note] if tie_note else [])],
     }
     _user_id, _assignments, brief = gb._load_unified_montage_inputs(job_id)
     if brief is not None and brief.live():

@@ -174,4 +174,32 @@ def test_a_model_added_story_shape_does_not_demote_a_continuous_voice() -> None:
     )
     repaired, notices = repair_creator_voice_mode(strategy)
     assert repaired.voice_mode == "continuous" and repaired.archetype is None
-    assert notices == []
+    assert len(notices) == 1 and "day-vlog" in notices[0]  # not silent: the creator is told
+
+
+def test_the_cleared_story_shape_reaches_the_creator_through_the_plan_notices() -> None:
+    from app.agents._schemas.creator_policy import VOICE_MODE_SHAPE_NOTICE
+    from app.services import creator_capabilities
+    from app.services.creator_capabilities import compile_strategy_to_plan, resolve_creator_manifest
+
+    before = creator_capabilities.settings.guided_edit_capability_enabled
+    creator_capabilities.settings.guided_edit_capability_enabled = True
+    try:
+        manifest = resolve_creator_manifest(
+            item_id="item-1",
+            edit_format="montage",
+            media=[{"media_id": f"m{i}", "kind": "video", "duration_s": 12.0} for i in range(4)],
+        )
+        plan = compile_strategy_to_plan(
+            manifest,
+            CreativeStrategy(
+                audio_strategy="original_audio",
+                voice_mode="continuous",
+                archetype="day_vlog",
+                montage_audio=MontageAudioPlan(preserve_source_audio=True, source_media_ids=["m0"]),
+            ),
+        )
+    finally:
+        creator_capabilities.settings.guided_edit_capability_enabled = before
+    assert plan.strategy.voice_mode == "continuous" and plan.strategy.archetype is None
+    assert VOICE_MODE_SHAPE_NOTICE in plan.notices

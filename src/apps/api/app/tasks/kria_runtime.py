@@ -3373,6 +3373,26 @@ def _user_song_note(job: Job) -> str:
     return " ".join(notes)
 
 
+def _voice_behind_footage_note(job: Job) -> str:
+    """What the continuous-voice composer changed, in the creator's words (KRI-479).
+
+    Reads the composer's own receipt (`assembly_plan["speech_montage"]["adjustments"]`, set only
+    for `route == "voice_behind_footage"`): a trimmed voice, a length extended so every clip is
+    shown, a silent stretch, clips sharing a capture time. Empty when nothing changed.
+    """
+    record = (job.assembly_plan or {}).get("speech_montage")
+    if not isinstance(record, dict) or record.get("route") != "voice_behind_footage":
+        return ""
+    sentences: list[str] = []
+    for raw in record.get("adjustments") or []:
+        text = " ".join(str(raw).split())
+        if not text:
+            continue
+        text = text[0].upper() + text[1:]
+        sentences.append(text if text.endswith((".", "!", "?")) else f"{text}.")
+    return " ".join(sentences)
+
+
 def _approved_generation_review(
     db: Any,
     thread: CreationThread,
@@ -3631,6 +3651,9 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 song_note = _user_song_note(job)
                 if song_note:
                     review_text = f"{review_text} {song_note}"
+                voice_note = _voice_behind_footage_note(job)
+                if voice_note:
+                    review_text = f"{review_text} {voice_note}"
                 review = _append_sync_event(
                     db,
                     thread,

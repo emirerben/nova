@@ -381,3 +381,19 @@ def test_a_creator_stated_length_is_never_stretched_to_fit_the_clips(monkeypatch
     exc = _decline(info)
     assert (exc.decline_reason, exc.field_path) == ("requirement_conflict", "target_duration_s")
     assert world.db.commits == 0
+
+
+def test_clips_sharing_a_capture_time_are_disclosed_not_asked(monkeypatch):
+    world = _world(monkeypatch)
+    rows = [
+        {"media_id": "b0", "capture": {"capture_time": "2026-06-01T09:00:00Z"}},
+        {"media_id": "b1", "capture": {"capture_time": "2026-06-01T09:01:00Z"}},
+        {"media_id": "b2", "capture": {"capture_time": "2026-06-01T09:01:00Z"}},
+        {"media_id": "b3", "capture": {"capture_time": "2026-06-01T09:03:00Z"}},
+    ]
+    world.snapshot["creator_brief_binding"] = {"media_snapshot": {"clip_assignments": rows}}
+    assert _run(world) is True
+    adjustments = world.job.assembly_plan["speech_montage"]["adjustments"]
+    assert (
+        "2 clips share a capture time, so I kept them in the order they were added" in adjustments
+    )
