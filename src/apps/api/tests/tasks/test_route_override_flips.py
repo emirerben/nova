@@ -644,7 +644,6 @@ def test_unstamped_phone_self_narration_without_speech_keeps_the_untyped_failure
 
 def _narrated_render(monkeypatch, tmp_path, *, plan_authority: bool, opening_title=None):
     """The real narrated renderer with the creator's words asking for intro/players/scores."""
-    from types import SimpleNamespace
 
     from app.pipeline.transcribe import Transcript, Word
 
