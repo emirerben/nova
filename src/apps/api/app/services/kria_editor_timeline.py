@@ -43,6 +43,14 @@ _SEGMENT_FIT_TOLERANCE_S = 0.15
 # Whole-video bars are identified by id BEFORE the segment fit test: a title
 # exactly one clip long must not travel with that clip on a reorder.
 _ANCHORED_IDS = frozenset({"guided-title", "guided-closing-title"})
+# KRI-523: whole-video corner text (`guided-pinned-<i>`) is anchored to the timeline,
+# never to a clip.
+_ANCHORED_PREFIX = "guided-pinned-"
+
+
+def _is_anchored(bar_id: str) -> bool:
+    return bar_id in _ANCHORED_IDS or bar_id.startswith(_ANCHORED_PREFIX)
+
 
 _CODE_TEXT = {
     "TIMELINE_EMPTY": "The video needs at least one clip",
@@ -357,7 +365,7 @@ def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
         if is_label:
             old_segment = _identify_old_segment(bar, media_id, old_segments)
             clip_bound = True
-        elif bar.get("segment_id") and str(bar.get("id") or "") not in _ANCHORED_IDS:
+        elif bar.get("segment_id") and not _is_anchored(str(bar.get("id") or "")):
             candidate = _identify_old_segment(bar, None, old_segments)
             if (
                 candidate is not None

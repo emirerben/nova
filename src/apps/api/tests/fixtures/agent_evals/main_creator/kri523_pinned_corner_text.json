@@ -1,0 +1,111 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-10-08-v49",
+  "input": {
+    "user_message": "Add the title “Free to do in Lisbon” and “Part 1”. They should stay the whole video and place them one under the other. Place them on bottom left. On the top left, write “Miradouro de Santa Catarina”.",
+    "creator_context": "City-break creator who posts short travel montages.",
+    "item_context": "Untitled video; montage; no recorded voiceover.",
+    "media_context": [
+      {
+        "media_id": "clip-1",
+        "kind": "video",
+        "duration_s": 5.0
+      },
+      {
+        "media_id": "clip-2",
+        "kind": "video",
+        "duration_s": 5.0
+      },
+      {
+        "media_id": "clip-3",
+        "kind": "video",
+        "duration_s": 5.0
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-kri523",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "has_voiceover": false,
+      "media": [
+        {
+          "media_id": "clip-1",
+          "kind": "video",
+          "duration_s": 5.0
+        },
+        {
+          "media_id": "clip-2",
+          "kind": "video",
+          "duration_s": 5.0
+        },
+        {
+          "media_id": "clip-3",
+          "kind": "video",
+          "duration_s": 5.0
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Warm acoustic bed"
+        }
+      ],
+      "capabilities": {
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "media_overlays": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "edit_format:montage": {
+          "available": true
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "brief_enabled": true
+  },
+  "raw_text": "{\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"audio_strategy\": \"licensed_music\",\n      \"media_scope\": \"all\",\n      \"pacing\": \"balanced\",\n      \"target_duration_s\": 15,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"pinned_texts\": [\n        {\n          \"text\": \"Free to do in Lisbon\",\n          \"corner\": \"bottom_left\"\n        },\n        {\n          \"text\": \"Part 1\",\n          \"corner\": \"bottom_left\"\n        },\n        {\n          \"text\": \"Miradouro de Santa Catarina\",\n          \"corner\": \"top_left\"\n        }\n      ],\n      \"rationale\": \"A short montage of your clips; your three text lines stay pinned in their corners for the whole video.\",\n      \"optional_treatments\": []\n    },\n    \"summary\": \"I'll cut your clips and keep “Free to do in Lisbon” over “Part 1” at the bottom left and “Miradouro de Santa Catarina” at the top left for the whole video.\",\n    \"render_intent_evidence\": {\n      \"pinned_texts\": \"Add the title “Free to do in Lisbon” and “Part 1”. They should stay the whole video and place them one under the other. Place them on bottom left. On the top left, write “Miradouro de Santa Catarina”.\"\n    }\n  },\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"Free to do in Lisbon\",\n      \"description\": \"pinned bottom left, whole video\"\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"Part 1\",\n      \"description\": \"pinned bottom left under the title, whole video\"\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"Miradouro de Santa Catarina\",\n      \"description\": \"pinned top left, whole video\"\n    }\n  ]\n}",
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "kri523_pinned_corner_text",
+    "ticket": "KRI-523",
+    "note": "Hand-authored contract fixture (no paid run): corner + whole-video text goes in pinned_texts, never opening_title; replay is structural only.",
+    "pinned_texts": [
+      {
+        "text": "Free to do in Lisbon",
+        "corner": "bottom_left"
+      },
+      {
+        "text": "Part 1",
+        "corner": "bottom_left"
+      },
+      {
+        "text": "Miradouro de Santa Catarina",
+        "corner": "top_left"
+      }
+    ]
+  }
+}

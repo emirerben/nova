@@ -291,7 +291,10 @@ def classify(bars: list[dict[str, Any]]) -> dict[str, str]:
             for bar in live
             if not is_label(bar)
             and bar["role"] in (None, "title", "generative_intro", "generative_sequence")
-            and (bar["role"] == "title" or not str(bar["id"]).startswith("kria-"))
+            and (
+                bar["role"] == "title"
+                or not str(bar["id"]).startswith(("kria-", "guided-pinned-"))
+            )
             and bar["start_s"] is not None
             and bar["start_s"] <= 0.5
         ]

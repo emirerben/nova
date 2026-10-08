@@ -65,8 +65,10 @@ from app.pipeline.unified_montage import (
     BriefView,
     UnifiedClip,
     UnifiedMontagePlan,
+    _fit_pins,
     _fit_typography,
     _nfc,
+    _pinned_texts,
     _story_beats,
     _title,
     _window_start_s,
@@ -876,16 +878,20 @@ def plan_lipsync_montage(
     # ── title and typography (creator-confirmed only) ────────────────────────
     title, title_source = _title(strategy, view)
     closing = _nfc(strategy.get("closing_title")) or None
+    pins = _pinned_texts(strategy)
     requested_font = strategy.get("font_family")
     requested_font = requested_font if isinstance(requested_font, str) and requested_font else None
     family, title, closing, _labels = _fit_typography(
-        font_covers, requested_font, title, closing, {}
+        font_covers, requested_font, title, closing, {}, extra_texts=[pin.text for pin in pins]
     )
+    pins = _fit_pins(pins, family or requested_font or "Fraunces", font_covers)
     if not title:
         title_source = "none"
     snapshot_kwargs: dict[str, Any] = {}
     if closing:
         snapshot_kwargs["closing_title"] = closing
+    if pins:
+        snapshot_kwargs["pinned_texts"] = pins
     hold = strategy.get("opening_title_duration_s")
     if isinstance(hold, (int, float)) and not isinstance(hold, bool):
         snapshot_kwargs["opening_title_duration_s"] = hold

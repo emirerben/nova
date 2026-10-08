@@ -1,0 +1,46 @@
+{
+  "overlays": [
+    {
+      "text": "Free to do in Lisbon",
+      "effect": "static",
+      "text_size_px": 52,
+      "position_x_frac": 0.08,
+      "position_y_frac": 0.822,
+      "text_color": "#FFF8F0",
+      "text_anchor": "left",
+      "start_s": 0.0,
+      "end_s": 3.6,
+      "font_family": "Fraunces",
+      "position": "center",
+      "max_width_frac": 0.84
+    },
+    {
+      "text": "Part 1",
+      "effect": "static",
+      "text_size_px": 52,
+      "position_x_frac": 0.08,
+      "position_y_frac": 0.86,
+      "text_color": "#FFF8F0",
+      "text_anchor": "left",
+      "start_s": 0.0,
+      "end_s": 3.6,
+      "font_family": "Fraunces",
+      "position": "center",
+      "max_width_frac": 0.84
+    },
+    {
+      "text": "Miradouro de Santa Catarina",
+      "effect": "static",
+      "text_size_px": 52,
+      "position_x_frac": 0.08,
+      "position_y_frac": 0.12,
+      "text_color": "#FFF8F0",
+      "text_anchor": "left",
+      "start_s": 0.0,
+      "end_s": 3.6,
+      "font_family": "Fraunces",
+      "position": "center",
+      "max_width_frac": 0.84
+    }
+  ]
+}

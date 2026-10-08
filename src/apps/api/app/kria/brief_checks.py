@@ -268,6 +268,15 @@ def _video_clip_count(strategy: Mapping[str, Any], manifest: ResolvedCreatorMani
     return len(videos)
 
 
+def _pinned_text_values(pins: object) -> list[str]:
+    """KRI-523: the exact lines of whole-video corner text (strategy or unified record)."""
+    return [
+        str(pin["text"])
+        for pin in (pins if isinstance(pins, list) else [])
+        if isinstance(pin, Mapping) and pin.get("text")
+    ]
+
+
 def plan_facts_from_strategy(
     strategy: Mapping[str, Any] | None,
     *,
@@ -310,6 +319,7 @@ def plan_facts_from_strategy(
             strategy.get("closing_title"),
             *labels,
             *per_clip.values(),
+            *_pinned_text_values(strategy.get("pinned_texts")),
         )
         if value
     ]
@@ -467,7 +477,14 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         sequence_unmet=_sequence_problems(record, ("misplaced", None, "contained")),
         sequence_absent=_sequence_problems(record, ("absent", "unresolved")),
         texts=tuple(
-            str(text) for text in (title, record.get("closing_title"), *per_clip.values()) if text
+            str(text)
+            for text in (
+                title,
+                record.get("closing_title"),
+                *per_clip.values(),
+                *_pinned_text_values(record.get("pinned_texts")),
+            )
+            if text
         ),
         label_scope_clip_ids=tuple(str(c) for c in record.get("label_scope_clip_ids") or []),
         unreadable_label_clip_ids=tuple(str(c) for c in record.get("short_label_clip_ids") or []),
