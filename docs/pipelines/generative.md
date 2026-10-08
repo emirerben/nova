@@ -593,6 +593,19 @@ limit, since the bed only ducks). A variant with neither field behaves as before
 `unchecked`, "Couldn't verify". Guards: `tests/kria/test_brief_marathon_receipts.py`,
 `tests/tasks/test_marathon_render_ready_review.py`.
 
+KRI-541: the same facts also carry what the render did for captions and speech cleanup.
+For a `narrated` / `subtitled` variant `plan_facts_from_phone_variant` sets
+`rendered_variant=True` (keeping `editor=True` for the text lanes), `edit_format`,
+`caption_style` (non-empty `caption_cues` + `voiceover_caption_style` "sentence" → clean,
+"word" → karaoke; a device render with no cues → none) and `speech_cleanup_outcome`
+(`silence_cut_outcome` applied / no_change; a device render without one → not_run). The
+captions and cleanup checkers judge those when `rendered_variant` is set; a real editor
+turn still answers "can't check". Cleanup never cuts a named line or retake ("the restart
+of the kilometer thirty sentence"), so such an ask stays "Partly" with the editor note. A
+cloud variant whose fields are not filled yet stays unknown. Guards:
+`tests/kria/test_brief_rendered_speech_facts.py`, the KRI-541 cases in
+`tests/tasks/test_marathon_render_ready_review.py`.
+
 ### Narrated render receipts (KRI-533)
 
 A phone Voiceover draft used to list every order / timing / caption-language ask as

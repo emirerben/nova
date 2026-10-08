@@ -329,6 +329,128 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertNotNil(state, "a failed sync never blocks the send")
     }
 
+    // MARK: KRI-535 — first open, and a render that changed under unsaved edits
+
+    /// Opens the editor while the source preview is held in `.preparing`, the window in which
+    /// the OLD rendered video used to be shown as if it were current.
+    private func openedWhilePreparing(_ snapshot: DraftSnapshot) async throws -> (NativeEditorSession, EditorCommitSpy, Task<Void, Never>) {
+        let fake = EditorCommitSpy(draftSnapshot: snapshot, authoritativeVariant: Self.variant())
+        fake.suspendNextSourcePool = true
+        let project = threadProject(UUID(), revision: 5)
+        let session = NativeEditorSession(project: project)
+        let loading = Task { await session.load(project: project, api: fake) }
+        for _ in 0..<200 where !fake.sourcePoolIsSuspended {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(fake.sourcePoolIsSuspended, "the source-pool gate did not suspend in time")
+        return (session, fake, loading)
+    }
+
+    func testFirstOpenHidesTheOldRenderWhileAStagedChatEditPrepares() async throws {
+        let (session, fake, loading) = try await openedWhilePreparing(Self.chatSnapshot(shape: .flatOnly))
+        XCTAssertEqual(session.sourcePreviewState, .preparing)
+        XCTAssertTrue(session.hasOnlyChatStagedChanges, "the AI edit is already staged in the document")
+        XCTAssertNotNil(session.player, "the old render stays installed as the failure fallback")
+        XCTAssertFalse(session.canDisplayCurrentPlayer, "the old render predates the AI edit: never show it as current")
+        fake.resumeSourcePool()
+        await loading.value
+    }
+
+    func testFirstOpenWithNothingStagedStillShowsTheCurrentRender() async throws {
+        // A draft built on another render is dropped, so the rendered video IS current.
+        let (session, fake, loading) = try await openedWhilePreparing(Self.chatSnapshot(base: "g0", shape: .flatOnly))
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertTrue(session.canDisplayCurrentPlayer)
+        fake.resumeSourcePool()
+        await loading.value
+    }
+
+    func testFirstOpenFallsBackToTheOldRenderWhenTheEditCannotBePreviewed() async throws {
+        let fake = EditorCommitSpy(draftSnapshot: Self.chatSnapshot(shape: .flatOnly), authoritativeVariant: Self.variant())
+        fake.sourcePoolResult = nil  // the source pool is unavailable, so the local preview fails
+        let project = threadProject(UUID(), revision: 5)
+        let session = NativeEditorSession(project: project)
+        await session.load(project: project, api: fake)
+        XCTAssertTrue(session.sourcePreviewState.isFailure)
+        XCTAssertTrue(session.isShowingRenderedFallback)
+        XCTAssertTrue(session.canDisplayCurrentPlayer, "better the last finished video, labelled, than a blank editor")
+        XCTAssertTrue(session.hasUnsavedChanges, "the staged AI edit is still there to save")
+    }
+
+    func testReopenAsksBeforeReloadingOverANewerRenderWithManualEdits() async throws {
+        let id = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant())
+        let session = NativeEditorSession(project: threadProject(id, revision: 5))
+        await session.load(project: threadProject(id, revision: 5), api: fake)
+        session.setClipTiming(clipID: "s1", durationS: 1.1)  // the creator's own unsaved edit
+        let variantFetches = fake.editorVariantJobIDs.count
+        fake.authoritativeVariant = Self.variant(generation: "g2")  // a newer render of the same job
+
+        let handled = await session.reconcileOnOpen(project: threadProject(id, revision: 7), api: fake)
+
+        XCTAssertTrue(handled, "no silent reload")
+        XCTAssertEqual(session.newerJobPrompt?.serverRevision, 7)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertEqual(session.document.clips.first { $0.id == "s1" }?.durationS, 1.1)
+        XCTAssertEqual(fake.editorVariantJobIDs.count, variantFetches + 1, "only the check ran, not a reload")
+        XCTAssertTrue(session.needsReload(for: threadProject(id, revision: 7)), "the next open asks again")
+
+        session.keepEditingCurrentJob()
+        XCTAssertNil(session.newerJobPrompt)
+        XCTAssertEqual(session.document.clips.first { $0.id == "s1" }?.durationS, 1.1, "keep editing keeps the work")
+    }
+
+    func testSwitchingToTheNewerRenderDiscardsOnlyBecauseTheCreatorChose() async throws {
+        let id = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant())
+        let session = NativeEditorSession(project: threadProject(id, revision: 5))
+        await session.load(project: threadProject(id, revision: 5), api: fake)
+        session.setClipTiming(clipID: "s1", durationS: 1.1)
+        fake.authoritativeVariant = Self.variant(generation: "g2")
+        _ = await session.reconcileOnOpen(project: threadProject(id, revision: 7), api: fake)
+        let prompt = try XCTUnwrap(session.newerJobPrompt)
+
+        await session.switchToLatestJob(prompt, api: fake)
+
+        XCTAssertNil(session.newerJobPrompt)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertFalse(session.needsReload(for: threadProject(id, revision: 7)))
+    }
+
+    func testReopenOverANewerRenderReloadsWithoutAskingWhenNothingOfTheirsIsAtStake() async throws {
+        let id = UUID()
+        // Clean editor, and an editor holding only the AI's staged edit (the render replaces it).
+        for snapshot in [Self.bootstrapSnapshot(), Self.chatSnapshot(shape: .flatOnly)] {
+            let fake = EditorCommitSpy(draftSnapshot: snapshot, authoritativeVariant: Self.variant())
+            let session = NativeEditorSession(project: threadProject(id, revision: 5))
+            await session.load(project: threadProject(id, revision: 5), api: fake)
+            fake.authoritativeVariant = Self.variant(generation: "g2")
+            let handled = await session.reconcileOnOpen(project: threadProject(id, revision: 7), api: fake)
+            XCTAssertFalse(handled)
+            XCTAssertNil(session.newerJobPrompt)
+        }
+    }
+
+    func testReopenKeepsManualEditsThroughADroppedConnectionButNotThroughASupersededJob() async throws {
+        let id = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: Self.variant())
+        let session = NativeEditorSession(project: threadProject(id, revision: 5))
+        await session.load(project: threadProject(id, revision: 5), api: fake)
+        session.setClipTiming(clipID: "s1", durationS: 1.1)
+
+        fake.editorVariantError = .offline
+        let offline = await session.reconcileOnOpen(project: threadProject(id, revision: 7), api: fake)
+        XCTAssertTrue(offline, "a dropped connection must not wipe the creator's edits or error the editor")
+        XCTAssertEqual(session.loadState, .loaded)
+        XCTAssertTrue(session.hasUnsavedChanges)
+
+        for superseded in [APIError.contentPlanUnavailable, APIError.conflict] {
+            fake.editorVariantError = superseded
+            let handled = await session.reconcileOnOpen(project: threadProject(id, revision: 7), api: fake)
+            XCTAssertFalse(handled, "a superseded job takes the full path that follows the thread")
+        }
+    }
+
     func testChatStagedEditsAloneNeedNoFlushButLocalEditsDo() async throws {
         let (session, fake) = await loaded(Self.chatSnapshot(shape: .flatOnly))
         XCTAssertTrue(session.hasOnlyChatStagedChanges, "send must not commit/render chat-staged edits")

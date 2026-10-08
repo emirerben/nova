@@ -80,3 +80,21 @@ brief extractor (prompt v5) only for what the creator named:
 - Measure the green rate after deploy: style receipts with `verification == "checked"` versus
   `unchecked` in `scripts/admin.py --prod GET creation-threads/<id>/events`. Invest in target
   resolution only if the anaphoric asks dominate.
+
+## Editor-turn reply and extraction failures (KRI-534, KRI-536)
+
+- An editor-operations turn whose only open items are requirements no checker can
+  judge (for example a style ask) replies "Updated your edit." followed by "I can't
+  check this automatically, so have a look: <request>". It never echoes the model's
+  summary. A judged miss keeps the "I couldn't verify every requested change" wording,
+  and drafts, renders and the post-render review keep it too.
+- When requirement extraction fails on a rendered follow-up, the turn is served by the
+  edit copilot only if the message is one short text ask (a single sentence with no
+  "and"/"also"/comma, no re-plan cue) and the copilot answers with in-place text ops
+  alone. The full message is recorded as one unchecked `style`/`global` requirement, so
+  the request is preserved. Anything else (compound asks, structural ops, no editor
+  target, any error in this path) keeps the recovery reply and leaves the draft as it was.
+- Every recovery reply and every degraded turn carries `brief_coverage.cause`
+  (`stage`, `error_type`, `cause_type`: class names only, never the error text), readable
+  with `python scripts/admin.py [--prod] GET creation-threads/<id>/events`.
+  `cause_type: TerminalSchemaError` means the extractor produced invalid output.

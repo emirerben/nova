@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.kria.brief import CreativeBrief
+from app.kria.brief_route import chapter_list
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
@@ -893,6 +894,7 @@ def build_render_contract(
     clip_order: Sequence[str] = (),
     has_voiceover: bool = False,
     composition: CompositionCommitments | None = None,
+    duplicate_aliases: Mapping[str, str] | None = None,
 ) -> CreatorRenderContract | None:
     """Pin only facts that a portable recipe can objectively demonstrate.
 
@@ -900,9 +902,20 @@ def build_render_contract(
     derived without touching the contract model: with ``voice_picture == "hidden"`` the
     camera-audio clip is the voice only, so it is left out of ``order_ids``
     (``audio_source_ids`` keeps it). ``None`` is byte-identical to before.
+
+    ``duplicate_aliases`` (KRI-544) is dispatch's ``{dropped: kept}`` collapse of
+    byte-identical uploads (``app.kria.duplicate_uploads``): a dropped copy is not in the
+    edit, so it is left out of ``order_ids`` like a hidden voice clip, and the clip intents
+    are read with the kept copy in its place. ``strategy_digest`` still hashes the strategy
+    as approved. ``None``/empty is byte-identical to before.
     """
     if strategy is None and brief is None:
         return None
+    digest_source = dict(strategy or {})
+    if duplicate_aliases and strategy is not None:
+        from app.kria.duplicate_uploads import collapse_strategy  # noqa: PLC0415
+
+        strategy = collapse_strategy(strategy, duplicate_aliases)
     typed = _strategy(strategy)
     raw = dict(strategy or {})
     # KRI-476 (PR-C): the creator's recorded answers to material conflicts. They
@@ -978,6 +991,9 @@ def build_render_contract(
         and typed.montage_audio.preserve_source_audio
     ):
         hidden_ids = frozenset(str(v) for v in typed.montage_audio.source_media_ids or [])
+    if duplicate_aliases:
+        # KRI-544: a byte-identical copy dispatch left out is not in the picture either.
+        hidden_ids = hidden_ids | frozenset(str(v) for v in duplicate_aliases)
     order_ids = tuple(
         str(item) for item in clip_order if str(item).strip() and str(item) not in hidden_ids
     )
@@ -1218,7 +1234,7 @@ def build_render_contract(
     data: dict[str, Any] = dict(
         version=1,
         generation_id=generation_id,
-        strategy_digest=_hash(raw) if strategy is not None else None,
+        strategy_digest=_hash(digest_source) if strategy is not None else None,
         brief_digest=_hash(brief.model_dump(mode="json")) if brief else None,
         duration_s=durations[0] if durations else None,
         audio_source_ids=source_ids,
@@ -1674,6 +1690,16 @@ def verify_phone_recipe(
     rendered = text_layers()
     for requirement in contract.exact_texts:
         matches = [row for row in rendered if row[0] == _normal(requirement.text)]
+        if (
+            not matches
+            and requirement.role == "any"
+            and requirement.duration_s is None
+            and chapter_list(requirement.text, [row[0] for row in rendered]) is not None
+        ):
+            # KRI-545: a brief literal that lists chapter names ("Sabah, Üniversite, Akşam")
+            # is drawn as those names, each its own label layer on its clips, never as one
+            # line. Every name must still be a whole visible layer.
+            continue
         if not matches:
             raise _phone_decline(
                 "exact_texts",

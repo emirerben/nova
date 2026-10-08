@@ -120,6 +120,78 @@ def test_english_unchecked_header_is_unchanged() -> None:
     )
 
 
+def _edit_reply(reqs, facts, **kwargs) -> str:
+    receipts = build_receipts(reqs, facts, include_unchecked=True)
+    brief = CreativeBrief(version=1, requirements=list(reqs))
+    return reply_from_receipts(brief, receipts, summary="Done!", edit_applied=True, **kwargs)
+
+
+def test_applied_edit_with_an_unjudgeable_ask_reads_calmly_not_as_a_failure() -> None:
+    """KRI-534: "add fade-in" applied; "I couldn't verify every change" read as an error."""
+    reqs = [_req("style", "Add fade-in animation to all of them")]
+    text = _edit_reply(reqs, PlanFacts(editor=True))
+    assert text == (
+        "Updated your edit.\n"
+        "I can't check this automatically, so have a look: Add fade-in animation to all of them"
+    )
+    assert "verify" not in text.lower()
+    assert "Done!" not in text  # the model's own summary is never echoed
+
+
+def test_applied_edit_lists_several_unjudgeable_asks_and_keeps_the_notices() -> None:
+    reqs = [
+        _req("style", "fade in the text", rid="r1"),
+        _req("style", "left-align the text", rid="r2"),
+    ]
+    text = _edit_reply(reqs, PlanFacts(editor=True), notices=("I kept your clip order.",))
+    assert text == (
+        "Updated your edit.\n"
+        "I can't check these automatically, so have a look:\n"
+        "- fade in the text\n- left-align the text\n"
+        "I kept your clip order."
+    )
+
+
+def test_applied_edit_reads_in_turkish() -> None:
+    reqs = [_req("style", "yazılara animasyon ekle")]
+    with reply_language_for("tr"):
+        text = _edit_reply(reqs, PlanFacts(editor=True))
+    assert text == (
+        "Düzenlemeni güncelledim.\n"
+        "Bunu otomatik olarak kontrol edemiyorum, bir göz at: yazılara animasyon ekle"
+    )
+
+
+def test_applied_edit_keeps_judged_lines_next_to_the_open_ask() -> None:
+    reqs = [
+        _req("text", "title", scope="title", literal="Galata", rid="r1"),
+        _req("style", "fade in the text", rid="r2"),
+    ]
+    facts = PlanFacts(editor=True, title="Galata", texts=("Galata",), title_source="creator")
+    text = _edit_reply(reqs, facts)
+    assert text.startswith("Updated your edit.\n- Done: ")
+    assert text.endswith("I can't check this automatically, so have a look: fade in the text")
+
+
+def test_applied_edit_with_a_judged_miss_keeps_the_honest_failure_wording() -> None:
+    """Never say "Updated your edit" next to a requirement that was checked and missed."""
+    reqs = [
+        _req("text", "title", scope="title", literal="Galata", rid="r1"),
+        _req("style", "fade in the text", rid="r2"),
+    ]
+    facts = PlanFacts(editor=True, title="Something else", texts=("Something else",))
+    text = _edit_reply(reqs, facts)
+    assert text.startswith("I couldn't verify every requested change:")
+    assert "Updated your edit" not in text
+
+
+def test_the_default_reply_is_unchanged_for_drafts_and_renders() -> None:
+    reqs = [_req("style", "fade in the text")]
+    assert _reply(reqs, PlanFacts(editor=True)).startswith(
+        "I couldn't verify every requested change:"
+    )
+
+
 def test_turkish_guess_line_and_chosen_outcome() -> None:
     reqs = [_req("text", "etiket", scope="per_clip", literal="Galata")]
     facts = PlanFacts(

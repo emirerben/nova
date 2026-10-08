@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.180.0] - 2026-10-08
+
+### Changed
+- fix(kria): render byte-identical iPhone uploads once under "each video once" (KRI-544) (#1502) <!-- release-pr: 1502 -->
+
+## [0.78.179.0] - 2026-10-08
+
+### Changed
+- fix(kria): chapter-title list never becomes the montage's opening title (KRI-545) (#1501) <!-- release-pr: 1501 -->
+
+## [0.78.178.0] - 2026-10-08
+
+### Changed
+- fix(kria): judge captions and speech cleanup on a finished phone render (KRI-541) (#1495) <!-- release-pr: 1495 -->
+
 ## [0.78.177.0] - 2026-10-08
 
 ### Changed

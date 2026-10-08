@@ -27,6 +27,7 @@ from app.kria.brief import BriefRequirement, CreativeBrief, normalize_style_inte
 from app.kria.brief_route import (
     END_KEYS,
     START_KEYS,
+    chapter_list,
     first_text,
     fold_text,
     loose_text,
@@ -199,6 +200,11 @@ class PlanFacts:
     # spoken-excerpt montage record), not a draft that has not been laid out yet. A
     # required order a rendered plan cannot show is a failure; a draft's is pending.
     rendered_output: bool = False
+    # KRI-541: True when the facts were read off a finished phone render
+    # (`plan_facts_from_phone_variant`). `editor` stays True for its text lanes, but the
+    # edit format, caption style and speech cleanup below are what the render did, so the
+    # captions and cleanup checkers judge them instead of answering "can't check".
+    rendered_variant: bool = False
     # True only where the order requirement is bound to an authority that can verify it
     # (a contract-stamped job, or a brief-binding cohort: `build_receipts` sets it from the
     # writer's binding). Legacy / unbound jobs keep the original, softer order verdicts.
@@ -227,6 +233,10 @@ class PlanFacts:
     # Whether approving this draft offers "Clean up speech" (the preflight check is
     # enforced and this project is in its cohort). None = unknown, never assumed.
     speech_cleanup_offered: bool | None = None
+    # What speech cleanup did on a rendered variant: "applied" (pauses were cut),
+    # "no_change" (it ran and found nothing to cut), "not_run" (the render kept the whole
+    # take). None = unknown or a draft.
+    speech_cleanup_outcome: str | None = None
     # The strategy's caption style ("none", "clean", "kinetic", "karaoke",
     # "editorial", "auto"); None when the draft carries no strategy.
     caption_style: str | None = None
@@ -982,7 +992,44 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
         changes["audio_strategy"] = "voiceover"
     elif variant.get("resolved_archetype") == "narrated":
         changes["audio_strategy"] = "voiceover"
+    changes.update(_rendered_speech_facts(variant))
     return dataclasses.replace(base, **changes) if changes else base
+
+
+# KRI-541: the speech-spined archetypes a phone render records, as the brief's edit format.
+# A multi-clip phone Talking edit keeps `resolved_archetype == "subtitled"` too.
+_RENDERED_EDIT_FORMATS = {"narrated": "narrated", "subtitled": "subtitled"}
+
+
+def _rendered_speech_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    """Edit format, caption style and speech cleanup off a rendered Voiceover/Talking variant.
+
+    Both phone writers persist ``caption_cues``, ``voiceover_caption_style`` ("sentence"
+    or "word") and, only when cleanup ran, ``silence_cut_outcome``. A device render
+    always writes its cues, so no cues there means no captions and no outcome means the
+    take was kept whole; a cloud render fills those fields later, so their absence stays
+    unknown. Any other archetype adds nothing (the checkers keep today's answers).
+    """
+    edit_format = _RENDERED_EDIT_FORMATS.get(str(variant.get("resolved_archetype") or ""))
+    if edit_format is None:
+        return {}
+    device = variant.get("render_destination") == "device"
+    facts: dict[str, Any] = {"rendered_variant": True, "edit_format": edit_format}
+    cues = variant.get("caption_cues")
+    if isinstance(cues, list) and cues:
+        facts["caption_style"] = (
+            "karaoke" if variant.get("voiceover_caption_style") == "word" else "clean"
+        )
+    elif device:
+        facts["caption_style"] = "none"
+    outcome = variant.get("silence_cut_outcome")
+    if outcome in ("applied", "no_change"):
+        facts["speech_cleanup_enabled"] = True
+        facts["speech_cleanup_outcome"] = outcome
+    elif outcome is None and device:
+        facts["speech_cleanup_enabled"] = False
+        facts["speech_cleanup_outcome"] = "not_run"
+    return facts
 
 
 def _receipt(
@@ -1612,7 +1659,8 @@ _CLEANUP_VERB_RE = re.compile(
 # A specific stretch of speech named for removal ("the part where I say ...", a retake,
 # a quoted line): speech cleanup cuts pauses and non-word sounds, never spoken words.
 _NAMED_CUT_RE = re.compile(
-    r"\bretakes?\b|\bfalse starts?\b|\b(the )?(part|bit|place|section|moment) where\b"
+    r"\bretakes?\b|\brestart(s|ed|ing)?\b|\bfalse starts?\b"
+    r"|\b(the )?(part|bit|place|section|moment) where\b"
     r"|\bwhere i (say|said|start|stumble)|\blet me (start|try|say|do) (that|it|this|again|over|one)"
     r"|\bstart (that|it|this|one) (again|over)\b|\bstart (again|over)\b"
     r"|\btry (that|it|this) again\b"
@@ -1998,6 +2046,10 @@ _NAMED_CUTS_NEED_EDITOR = (
     "a retake or a specific line isn't cut automatically yet, so trim that in the editor"
 )
 _CAPTIONS_WORD_BY_WORD = "words light up as you say them"
+# KRI-541: what speech cleanup did on a finished render.
+_CLEANUP_DONE = "Speech cleanup cut the long pauses"
+_CLEANUP_NOTHING_TO_CUT = "Speech cleanup found no long pauses to cut"
+_CLEANUP_NOT_RUN = "Speech cleanup didn't run on this video, so the long pauses stay"
 
 # The Turkish twin of every static reason above (KRI-520). Reasons are written into
 # receipts when a turn runs, in that turn's language, so everything that tells one
@@ -2050,6 +2102,9 @@ _REASON_TR: dict[str, str] = {
         "tekrar çekim ya da belirli bir cümle henüz otomatik kesilmiyor, onu editörde kırp"
     ),
     _CAPTIONS_WORD_BY_WORD: "kelimeler sen söylerken yanıyor",
+    _CLEANUP_DONE: "Konuşma temizliği uzun duraklamaları kesti",
+    _CLEANUP_NOTHING_TO_CUT: "Konuşma temizliği kesilecek uzun bir duraklama bulmadı",
+    _CLEANUP_NOT_RUN: ("Konuşma temizliği bu videoda çalışmadı, o yüzden uzun duraklamalar kaldı"),
 }
 
 
@@ -2102,6 +2157,9 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _CLEANUP_AT_APPROVAL,
     _CLEANUP_IF_OFFERED,
     _CLEANUP_UNAVAILABLE,
+    _CLEANUP_DONE,
+    _CLEANUP_NOTHING_TO_CUT,
+    _CLEANUP_NOT_RUN,
     _BED_STILL_PLAYS,
 )
 _FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
@@ -2454,10 +2512,12 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     Every honest outcome here is a limit of the format, not a simplification.
     """
     fmt = facts.edit_format
-    if fmt is None or facts.editor or fmt not in _SPEECH_FORMATS:
+    if fmt is None or (facts.editor and not facts.rendered_variant) or fmt not in _SPEECH_FORMATS:
         # Only a speech-spined edit is judged here; a montage's cut is its own
         # planner's to report, so the ask stays "can't verify" there, as before.
         return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
+    if facts.rendered_variant:
+        return _check_rendered_cleanup(req, facts)
     if facts.speech_cleanup_enabled:
         lead, status = _CLEANUP_PLANNED, "met"
     elif facts.speech_cleanup_offered is True:
@@ -2486,6 +2546,39 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     return _receipt(req, status, "; ".join(notes) if status == "partial" else None)
 
 
+def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """KRI-541: the cleanup ask against what a finished render's speech cleanup did."""
+    outcome = facts.speech_cleanup_outcome
+    if outcome == "applied":
+        lead, status = _CLEANUP_DONE, "met"
+    elif outcome == "no_change":
+        lead, status = _CLEANUP_NOTHING_TO_CUT, "met"
+    elif outcome == "not_run":
+        lead, status = _CLEANUP_NOT_RUN, "partial"
+    else:
+        return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
+    notes = [_loc(lead)]
+    if _wants_named_cuts(req):
+        # The cut removes pauses and filler sounds; a named line or retake stays.
+        notes.append(_loc(_NAMED_CUTS_NEED_EDITOR))
+        status = "partial"
+    if _has_duration_target(req):
+        target = float(req.facts["duration_s"])
+        notes.append(
+            say(
+                en=f"the length follows what's left of your take, so it isn't held to {target:g}s",
+                tr=(
+                    "uzunluk çekimin geriye kalan kısmına göre belirlendi, "
+                    f"{target:g} sn'ye göre ayarlanmadı"
+                ),
+            )
+        )
+        status = "partial"
+    if status == "met" and outcome == "applied":
+        return _receipt(req, "met", None)
+    return _receipt(req, status, "; ".join(notes))
+
+
 def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Captions on / off / word-by-word, against the strategy's caption style.
 
@@ -2499,9 +2592,10 @@ def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
             return _check_caption_language(req, facts, asked)
     fmt = facts.edit_format
     text = _req_text(req)
+    rendered = facts.rendered_variant
     if (
         facts.caption_style is None
-        or facts.editor
+        or (facts.editor and not rendered)
         or fmt not in _SPEECH_FORMATS
         or _CAPTION_DETAIL_RE.search(text)
     ):
@@ -2516,15 +2610,22 @@ def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
             req,
             "partial",
             say(
-                en="Captions are still on in this draft.",
-                tr="Bu taslakta altyazılar hâlâ açık.",
+                en="Captions are on in this video."
+                if rendered
+                else "Captions are still on in this draft.",
+                tr="Bu videoda altyazılar açık."
+                if rendered
+                else "Bu taslakta altyazılar hâlâ açık.",
             ),
         )
     if style == "none":
         return _receipt(
             req,
             "partial",
-            say(en="Captions are off in this draft.", tr="Bu taslakta altyazılar kapalı."),
+            say(
+                en="This video has no captions." if rendered else "Captions are off in this draft.",
+                tr="Bu videoda altyazı yok." if rendered else "Bu taslakta altyazılar kapalı.",
+            ),
         )
     if _wants_word_captions(req):
         if style in {"karaoke", "kinetic"}:
@@ -3136,7 +3237,9 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         )
     else:
         found = any(_contains_text(t, wanted) for t in facts.texts)
-    if found:
+    # KRI-545: "chapter titles: Sabah, Üniversite, ..." is on screen as those names, each its
+    # own text on its clips, never as one line.
+    if found or chapter_list(req.literal, facts.texts) is not None:
         return _receipt(req, "met", None)
     return _receipt(
         req,
@@ -3178,7 +3281,11 @@ def _has_checker(req: BriefRequirement) -> bool:
 
 
 def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
-    if _wants_cleanup(req) and facts.edit_format in _SPEECH_FORMATS and not facts.editor:
+    if (
+        _wants_cleanup(req)
+        and facts.edit_format in _SPEECH_FORMATS
+        and (not facts.editor or facts.rendered_variant)
+    ):
         # "Cut out the long pauses ... keep it under 45 s" on a Talking or voiceover
         # edit: the cleanup ask owns the sentence; the length it names is judged
         # inside it. Elsewhere the sentence takes its kind's usual path.
@@ -3204,6 +3311,8 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         # those asks.
         and not (facts.reaction_beats is not None and (_wants_beats(req) or _wants_closing(req)))
         and not (_wants_bed_under_voice(req) or _wants_bed_muted(req))
+        # KRI-541: "clean captions" on a rendered variant is judged against its captions.
+        and not (facts.rendered_variant and _wants_captions(req))
     ):
         return _check_style(req, facts)
     elif req.kind in _BEAT_KINDS and _wants_speech(req) and facts.speech_sections is not None:
@@ -3483,6 +3592,7 @@ def reply_from_receipts(
     summary: str | None = None,
     notices: Sequence[str] = (),
     outcomes: Sequence[Mapping[str, Any]] = (),
+    edit_applied: bool = False,
 ) -> str:
     """Compose the creator-facing reply from receipts only.
 
@@ -3492,6 +3602,12 @@ def reply_from_receipts(
     carries them, so they are added back only when the summary is replaced.
     An unjudged receipt (stored before ``build_receipts`` dropped them) gets no
     line and never turns the reply into a failure notice.
+
+    ``edit_applied`` (KRI-534) is set only by an editor-operations turn, whose compiled
+    draft already exists. When nothing failed and the only open items are requirements
+    no checker can judge, say what happened ("Updated your edit") and which requirements
+    the creator should look at, instead of the alarming "I couldn't verify every change".
+    The model's own summary is still never echoed.
     """
     by_id = {req.id: req for req in brief.requirements}
     judged = [r for r in receipts if is_judged(by_id.get(r.requirement_id), r)]
@@ -3535,7 +3651,23 @@ def reply_from_receipts(
             )
         )
     body = "\n".join(f"- {line}" for line in lines)
-    if unchecked:
+    if unchecked and edit_applied and not failed and all(r.status == "met" for r in judged):
+        names = [by_id[r.requirement_id].text() for r in unchecked]
+        if len(names) == 1:
+            ask = say(
+                en=f"I can't check this automatically, so have a look: {names[0]}",
+                tr=f"Bunu otomatik olarak kontrol edemiyorum, bir göz at: {names[0]}",
+            )
+        else:
+            ask = say(
+                en="I can't check these automatically, so have a look:\n",
+                tr="Şunları otomatik olarak kontrol edemiyorum, bir göz at:\n",
+            ) + "\n".join(f"- {name}" for name in names)
+        done = say(en="Updated your edit.", tr="Düzenlemeni güncelledim.")
+        text = "\n".join(part for part in (done, body, ask) if part)
+        if notices:
+            text += "\n" + " ".join(notices)
+    elif unchecked:
         unchecked_lines = []
         for receipt in unchecked:
             verify = say(en="Couldn't verify", tr="Doğrulayamadım")
