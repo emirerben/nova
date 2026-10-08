@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.agents._schemas.creator_agent import CreativeStrategy
+from app.agents._schemas.creator_agent import CreativeStrategy, CreatorEditSnapshot
 from app.agents._schemas.creator_policy import (
     GUIDED_VOICEOVER_EXECUTION_CONTRACT,
     USER_SONG_CONTRACT_NOTICE,
@@ -34,6 +34,13 @@ from tests.kria.test_strategy_policy import (
     _talking,
     _talking_manifest,
 )
+
+
+def _with_draft(manifest):
+    """KRI-519: "Your current draft is unchanged" is said only when a draft exists."""
+    return manifest.model_copy(
+        update={"current_edit": CreatorEditSnapshot(revision=1, status="ready")}
+    )
 
 
 def _guided_strategy() -> CreativeStrategy:
@@ -114,6 +121,11 @@ def test_title_refusal_on_voiceover_edit_in_turkish(prod_profile, monkeypatch) -
 def test_simplification_question_in_turkish(prod_profile) -> None:
     with reply_language_for("tr"):
         refused = check_strategy_for_runtime_v2(
+            _with_draft(_talking_manifest()),
+            _talking(caption_style="none"),
+            ask_before_simplifying=True,
+        )
+        first = check_strategy_for_runtime_v2(
             _talking_manifest(),
             _talking(caption_style="none"),
             ask_before_simplifying=True,
@@ -125,11 +137,18 @@ def test_simplification_question_in_turkish(prod_profile) -> None:
         "Bu tür düzenleme şu an her zaman altyazı gösteriyor, o yüzden altyazıları bıraktım. "
         "Mevcut taslağın değişmedi. Daha sade bir sürüm yapayım mı?"
     )
+    assert isinstance(first, RefusedStrategy)
+    assert first.question == (
+        "Bu tür düzenleme şu an her zaman altyazı gösteriyor, o yüzden altyazıları bıraktım. "
+        "Daha sade bir sürüm yapayım mı?"
+    )
 
 
 def test_simplification_question_in_english_is_unchanged(prod_profile) -> None:
     refused = check_strategy_for_runtime_v2(
-        _talking_manifest(), _talking(caption_style="none"), ask_before_simplifying=True
+        _with_draft(_talking_manifest()),
+        _talking(caption_style="none"),
+        ask_before_simplifying=True,
     )
 
     assert isinstance(refused, RefusedStrategy)
@@ -142,7 +161,7 @@ def test_stated_title_length_question_in_turkish(prod_profile) -> None:
     strategy = _narrated(opening_title="My Trip", opening_title_duration_s=3.0)
     with reply_language_for("tr"):
         asked = check_strategy_for_runtime_v2(
-            _narrated_manifest(),
+            _with_draft(_narrated_manifest()),
             strategy,
             ask_before_simplifying=True,
             ask_about_stated_settings=True,

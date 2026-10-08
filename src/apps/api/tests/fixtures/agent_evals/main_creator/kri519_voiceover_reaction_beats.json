@@ -1,0 +1,569 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-10-08-v51",
+  "input": {
+    "conversation": [
+      {
+        "role": "assistant",
+        "content": "What are we making? Pick a format and we’ll shape it together."
+      },
+      {
+        "role": "user",
+        "content": "My first marathon story with my voiceover. Cut my long pauses and the part where I restart the kilometer thirty sentence. When I say \"the medal\", show my medal photo. When I say \"four hours and twelve minutes\", show the watch photo. Keep the crowd noise quiet under my voice. Clean captions."
+      }
+    ],
+    "item_context": "{'idea': 'Untitled video', 'theme': '', 'creator_notes': '', 'filming_guide': [], 'current_edit_format': 'narrated_planned', 'current_audio_mode': 'voiceover', 'has_recorded_voiceover': True}",
+    "user_message": "My first marathon story with my voiceover. Cut my long pauses and the part where I restart the kilometer thirty sentence. When I say \"the medal\", show my medal photo. When I say \"four hours and twelve minutes\", show the watch photo. Keep the crowd noise quiet under my voice. Clean captions.",
+    "brief_enabled": true,
+    "media_context": [
+      {
+        "kind": "video",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-10-05T12:47:17Z",
+            "provenance": "exif"
+          }
+        ],
+        "media_id": "analysis-proxy-ios-E99E2280-D3AE-406F-8179-D7080B55C16C.mp4",
+        "duration_s": 5.033333,
+        "creator_note": null,
+        "analysis_only_not_copy": {
+          "people": {
+            "note": "runners and volunteers",
+            "count": 20,
+            "speaks_to_camera": false
+          },
+          "speech": {
+            "segments": [
+              {
+                "e": 1.2,
+                "s": 0.0,
+                "text": "Yeah!"
+              },
+              {
+                "e": 3.0,
+                "s": 2.0,
+                "text": "Blanket, great run!"
+              }
+            ],
+            "to_camera": false,
+            "has_speech": true,
+            "transcript": "Black it, great run."
+          },
+          "setting": "outdoor street, likely a city street converted for a race",
+          "subject": "marathon runners",
+          "summary": "Runners cross the finish line of a marathon, with spectators cheering and volunteers handing out space blankets.",
+          "activity": "marathon running, crossing finish line",
+          "audio_type": "mixed",
+          "content_type": "action",
+          "notable_moments": [
+            {
+              "end_s": 2.5,
+              "start_s": 0.0,
+              "description": "runners crossing finish line"
+            },
+            {
+              "end_s": 4.5,
+              "start_s": 2.8,
+              "description": "volunteer handing out blankets"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "video",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-10-05T12:47:13Z",
+            "provenance": "exif"
+          }
+        ],
+        "media_id": "analysis-proxy-ios-5BA46B81-7137-4393-B880-558C3CE8C6E7.mp4",
+        "duration_s": 5.033333,
+        "creator_note": null,
+        "analysis_only_not_copy": {
+          "people": {
+            "note": "runners in athletic wear and a dense crowd of cheering spectators",
+            "count": 99,
+            "speaks_to_camera": false
+          },
+          "setting": "city street during a race",
+          "subject": "marathon runners and cheering crowd",
+          "summary": "A large group of runners competes in a race, running down a city street while a cheering crowd lines the sidewalk, holding signs and offering support.",
+          "activity": "running a marathon, spectators cheering",
+          "audio_type": "ambient",
+          "content_type": "action",
+          "notable_moments": [
+            {
+              "end_s": 1.5,
+              "start_s": 0.0,
+              "description": "runners passing cheering crowd"
+            },
+            {
+              "end_s": 3.5,
+              "start_s": 2.0,
+              "description": "crowd cheering with signs"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "video",
+        "facts": [
+          {
+            "kind": "capture_time",
+            "value": "2026-10-05T12:47:09Z",
+            "provenance": "exif"
+          }
+        ],
+        "media_id": "analysis-proxy-ios-01B72E27-4B95-428B-8142-A95EE7BD7925.mp4",
+        "duration_s": 5.033333,
+        "creator_note": null,
+        "analysis_only_not_copy": {
+          "people": {
+            "note": "a person in running attire",
+            "count": 1,
+            "speaks_to_camera": false
+          },
+          "setting": "outdoor urban area",
+          "subject": "person tying shoelaces",
+          "summary": "A person wearing running gear sits down and carefully ties their shoelaces before an activity.",
+          "activity": "tying running shoe laces",
+          "audio_type": "ambient",
+          "content_type": "broll",
+          "notable_moments": [
+            {
+              "end_s": 2.5,
+              "start_s": 0.0,
+              "description": "runner tying first shoelace"
+            },
+            {
+              "end_s": 4.8,
+              "start_s": 2.8,
+              "description": "runner finishing shoelace knot"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "image",
+        "filename": "A5E3C3DC-9272-4E01-BC05-FADDFA82597C-N3_06_visual.jpeg",
+        "media_id": "asset-dbaef1a5-4d75-4ade-beb2-5172f8932c0d",
+        "duration_s": null,
+        "creator_context": null,
+        "analysis_only_not_copy": {
+          "subject": "Marathon race day essentials",
+          "summary": "A flat lay photograph displays a runner's marathon gear laid out on a light-colored bed, including Brooks running shoes, a Boston Marathon bib, a GPS watch, various energy gels, a blue Tracksmith runn",
+          "on_screen_text": "ADIDAS 2417 BOSTON MARATHON Joe Aman BROOKS GHOST 14 Maurten Tracksmith"
+        }
+      },
+      {
+        "kind": "image",
+        "filename": "993106E5-4AE3-4921-8BFC-EDC93F1A3696-N3_05_visual.jpeg",
+        "media_id": "asset-d0440903-c273-4865-abc9-ba8f162f540e",
+        "duration_s": null,
+        "creator_context": null,
+        "analysis_only_not_copy": {
+          "subject": "Wet arm with sports watch",
+          "summary": "A close-up photo shows a person's wet arm wearing a black Garmin sports watch with a digital display showing '4:12:37', next to a silver thermal blanket.",
+          "on_screen_text": "4:12:37 GARMIN MODE UP DOWN START STOP LIGHT BACK LAP GPS ULTRA RUN"
+        }
+      },
+      {
+        "kind": "image",
+        "filename": "DE71534B-7699-4F1E-BFEF-C79D747C0062-N3_04_visual.jpeg",
+        "media_id": "asset-01871fb4-18fb-430c-b95a-c32644ccbd06",
+        "duration_s": null,
+        "creator_context": null,
+        "analysis_only_not_copy": {
+          "subject": "runner's medal at finish line",
+          "summary": "A close-up photo shows a person's arm and hand holding a gold medal with a runner design on a colorful ribbon, positioned in front of a finish line arch with a digital clock displaying 3:45:12 and a c",
+          "on_screen_text": "FINISH 3:45:12 POLAR"
+        }
+      }
+    ],
+    "creator_context": "Runner who films their races and narrates the story afterwards.",
+    "creator_request": "",
+    "creator_direction": "",
+    "capability_manifest": {
+      "media": [
+        {
+          "kind": "video",
+          "label": null,
+          "media_id": "analysis-proxy-ios-E99E2280-D3AE-406F-8179-D7080B55C16C.mp4",
+          "duration_s": 5.033333
+        },
+        {
+          "kind": "video",
+          "label": null,
+          "media_id": "analysis-proxy-ios-5BA46B81-7137-4393-B880-558C3CE8C6E7.mp4",
+          "duration_s": 5.033333
+        },
+        {
+          "kind": "video",
+          "label": null,
+          "media_id": "analysis-proxy-ios-01B72E27-4B95-428B-8142-A95EE7BD7925.mp4",
+          "duration_s": 5.033333
+        },
+        {
+          "kind": "image",
+          "label": null,
+          "media_id": "asset-dbaef1a5-4d75-4ade-beb2-5172f8932c0d",
+          "duration_s": null
+        },
+        {
+          "kind": "image",
+          "label": null,
+          "media_id": "asset-d0440903-c273-4865-abc9-ba8f162f540e",
+          "duration_s": null
+        },
+        {
+          "kind": "image",
+          "label": null,
+          "media_id": "asset-01871fb4-18fb-430c-b95a-c32644ccbd06",
+          "duration_s": null
+        }
+      ],
+      "limits": {
+        "max_commands": 4,
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_output_duration_s": 120.0
+      },
+      "catalog": [
+        {
+          "kind": "music",
+          "label": "PALMITO - La Cuarta Estrella [Versión Hinchada] (Vídeo Oficial) — PALMITO",
+          "catalog_id": "music-efa00333-4f19-4531-8366-681adf6736be"
+        },
+        {
+          "kind": "music",
+          "label": "Maquina Do Tempo",
+          "catalog_id": "music-cfa8b844-0c8d-420a-bc8e-d23e44442af5"
+        },
+        {
+          "kind": "music",
+          "label": "Coldplay - Clocks (Official Video) — Coldplay",
+          "catalog_id": "music-f1a1774a-2c94-416e-809d-fe10687f8801"
+        },
+        {
+          "kind": "music",
+          "label": "Sidewalks and Skeletons - GOTH — Sidewalks and Skeletons",
+          "catalog_id": "music-e54b041d-2d12-4a07-92a1-4712848a6504"
+        },
+        {
+          "kind": "music",
+          "label": "Malcolm Todd - I Saw Your Face (Official Video) — Malcolm Todd",
+          "catalog_id": "music-e0e0fa00-b72f-4b7e-b29c-b6406b63a621"
+        },
+        {
+          "kind": "music",
+          "label": "Yo Voy (feat. Daddy Yankee) — Zion & Lennox",
+          "catalog_id": "music-dfd8dc9e-ca7d-4ac6-8580-cf99f4fb565e"
+        }
+      ],
+      "item_id": "54485e87-4bde-4cdd-9445-8429c9fdc20f",
+      "narration": {
+        "gcs_path": "users/9fa7014d-6240-469f-8824-26dfb20497c3/creation-threads/a5ecf210-9b01-4a1b-b510-8d437be467ba/ios-2062A898-3BDF-4F19-A1AE-409897B4DFAE.m4a",
+        "duration_s": 47.42,
+        "generation": "1791406745118245"
+      },
+      "edit_format": "narrated_planned",
+      "capabilities": {
+        "review": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "execution": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "wide_looks": {
+          "reason": "wide_looks cannot render on the iPhone yet",
+          "available": false,
+          "reason_code": "unsupported_on_phone"
+        },
+        "transitions": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "guided_story": {
+          "reason": "this edit format or audio contract requires the native renderer",
+          "available": false,
+          "reason_code": "native_render_required"
+        },
+        "automatic_cut": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "caption_style": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "motion_scenes": {
+          "reason": "motion_scenes cannot render on the iPhone yet",
+          "available": false,
+          "reason_code": "unsupported_on_phone"
+        },
+        "native_render": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "sound_effects": {
+          "reason": "sound_effects cannot render on the iPhone yet",
+          "available": false,
+          "reason_code": "unsupported_on_phone"
+        },
+        "visual_blocks": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "auto_iteration": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "media_overlays": {
+          "reason": "media_overlays cannot render on the iPhone yet",
+          "available": false,
+          "reason_code": "unsupported_on_phone"
+        },
+        "reaction_beats": {
+          "available": true,
+          "reason": null,
+          "reason_code": null
+        },
+        "dispatch_render": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "set_item_intent": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "guided_voiceover": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "edit_format:slides": {
+          "reason": "slides is disabled or has no production renderer for this media snapshot",
+          "available": false,
+          "reason_code": "format_unavailable"
+        },
+        "guided_auto_design": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "main_creator_agent": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_source_audio": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_still_images": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "edit_format:montage": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "guided_conversation": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:slides": {
+          "reason": "slides does not render on this iPhone yet",
+          "available": false,
+          "reason_code": "phone_format_unavailable"
+        },
+        "phone_visual_videos": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "edit_format:day_vlog": {
+          "reason": "day_vlog uses the guided renderer and cannot carry a voiceover",
+          "available": false,
+          "reason_code": "native_render_required"
+        },
+        "edit_format:narrated": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:montage": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "select_ready_variant": {
+          "reason": "a ready variant is required before selection",
+          "available": false,
+          "reason_code": "no_ready_variant"
+        },
+        "draft_guided_proposal": {
+          "reason": "this edit format or audio contract requires the native renderer",
+          "available": false,
+          "reason_code": "native_render_required"
+        },
+        "edit_format:subtitled": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:day_vlog": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:narrated": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:subtitled": {
+          "reason": "talking-to-camera rendering on this iPhone requires exactly one clip and no recorded voiceover",
+          "available": false,
+          "reason_code": "phone_format_unavailable"
+        },
+        "edit_format:single_hero": {
+          "reason": "single_hero uses the guided renderer and cannot carry a voiceover",
+          "available": false,
+          "reason_code": "native_render_required"
+        },
+        "edit_format:talking_head": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:single_hero": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:talking_head": {
+          "reason": "talking_head does not render on this iPhone yet",
+          "available": false,
+          "reason_code": "phone_format_unavailable"
+        },
+        "edit_format:narrated_ready": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:narrated_ready": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "edit_format:narrated_planned": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "guided_direction_confirmation": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format:narrated_planned": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format_pending_voiceover:narrated": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format_pending_voiceover:narrated_ready": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        },
+        "phone_format_pending_voiceover:narrated_planned": {
+          "reason": null,
+          "available": true,
+          "reason_code": null
+        }
+      },
+      "context_hash": "7944cf70ed426b45bd8e3fc6b937d4f531cf3fedc00dc719f8b48361c02f3ebb",
+      "current_edit": null,
+      "has_voiceover": true,
+      "manifest_hash": "6815b5d935ff159831da5bdb0e4c08b6b3726d02b3219f407695f2db53399d1f",
+      "render_program": "native",
+      "schema_version": 1
+    },
+    "creative_copy_state": []
+  },
+  "raw_text": "{\"action\": {\"kind\": \"propose_strategy\", \"strategy\": {\"direction\": \"native\", \"edit_format\": \"narrated_planned\", \"audio_strategy\": \"voiceover\", \"render_program\": \"native\", \"target_duration_s\": 47, \"selected_media_ids\": [\"analysis-proxy-ios-E99E2280-D3AE-406F-8179-D7080B55C16C.mp4\", \"analysis-proxy-ios-5BA46B81-7137-4393-B880-558C3CE8C6E7.mp4\", \"analysis-proxy-ios-01B72E27-4B95-428B-8142-A95EE7BD7925.mp4\"], \"caption_style\": \"auto\", \"rationale\": \"The recorded voiceover sets the length, about 47 seconds.\", \"reaction_beats\": [{\"beat_id\": \"medal\", \"trigger\": \"the medal\", \"visual_id\": \"asset-01871fb4-18fb-430c-b95a-c32644ccbd06\", \"visual_role\": \"photo\"}, {\"beat_id\": \"finish-time\", \"trigger\": \"four hours and twelve minutes\", \"visual_id\": \"asset-d0440903-c273-4865-abc9-ba8f162f540e\", \"visual_role\": \"photo\"}]}, \"summary\": \"Your marathon story over your voiceover, with the medal and watch photos popping up when you say them.\"}}",
+  "output": {
+    "action": {
+      "kind": "propose_strategy",
+      "strategy": {
+        "direction": "native",
+        "edit_format": "narrated_planned",
+        "audio_strategy": "voiceover",
+        "story_structure": [],
+        "caption_style": "auto",
+        "reaction_beats": [
+          {
+            "beat_id": "medal",
+            "trigger": "the medal",
+            "occurrence": "first",
+            "visual_id": "asset-01871fb4-18fb-430c-b95a-c32644ccbd06",
+            "visual_role": "photo"
+          },
+          {
+            "beat_id": "finish-time",
+            "trigger": "four hours and twelve minutes",
+            "occurrence": "first",
+            "visual_id": "asset-d0440903-c273-4865-abc9-ba8f162f540e",
+            "visual_role": "photo"
+          }
+        ],
+        "pacing": "balanced",
+        "target_duration_s": 47,
+        "target_duration_requested": true,
+        "render_program": "native",
+        "selected_media_ids": [
+          "analysis-proxy-ios-E99E2280-D3AE-406F-8179-D7080B55C16C.mp4",
+          "analysis-proxy-ios-5BA46B81-7137-4393-B880-558C3CE8C6E7.mp4",
+          "analysis-proxy-ios-01B72E27-4B95-428B-8142-A95EE7BD7925.mp4"
+        ],
+        "optional_treatments": [],
+        "video_reuse_policy": "once",
+        "rationale": "The recorded voiceover sets the length, about 47 seconds."
+      },
+      "summary": "Your marathon story over your voiceover, with the medal and watch photos popping up when you say them."
+    }
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "voiceover_reaction_beats": {
+      "the medal": "asset-01871fb4-18fb-430c-b95a-c32644ccbd06",
+      "four hours and twelve minutes": "asset-d0440903-c273-4865-abc9-ba8f162f540e"
+    }
+  }
+}

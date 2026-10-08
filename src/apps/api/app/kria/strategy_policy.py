@@ -532,9 +532,18 @@ def check_strategy_for_runtime_v2(
                 tr="Bu düzenleme istediklerinin bu birleşimini aynen yapamıyor.",
             )
         )
-        tail = say(
-            en="Your current draft is unchanged. Should I make a simpler version?",
-            tr="Mevcut taslağın değişmedi. Daha sade bir sürüm yapayım mı?",
+        # KRI-519: a first request has no draft to be "unchanged".
+        has_edit = manifest.current_edit is not None and manifest.current_edit.status != "none"
+        tail = (
+            say(
+                en="Your current draft is unchanged. Should I make a simpler version?",
+                tr="Mevcut taslağın değişmedi. Daha sade bir sürüm yapayım mı?",
+            )
+            if has_edit
+            else say(
+                en="Should I make a simpler version?",
+                tr="Daha sade bir sürüm yapayım mı?",
+            )
         )
         return RefusedStrategy(
             question=f"{details} {tail}",

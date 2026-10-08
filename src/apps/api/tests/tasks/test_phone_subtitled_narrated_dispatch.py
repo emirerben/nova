@@ -2890,3 +2890,201 @@ def test_request_recovery_never_overwrites_a_newer_approved_job(monkeypatch, sta
         str(job.id), snapshot, ownership_epoch=3, message="Should I try again?"
     )
     assert "request_recovery" not in job.assembly_plan
+
+
+# --- KRI-519: reaction beats on a phone Voiceover edit -----------------------
+#
+# Stress kit N3 (prod thread a5ecf210): "When I say "the medal", show my medal
+# photo. When I say "four hours and twelve minutes", show the watch photo." on a
+# phone Voiceover edit. The real grounding, lane compile and editor projection
+# run; only the DB seams (pool assets, SFX catalog) and asset binding are faked.
+
+_MEDAL_ID = "01871fb4-18fb-430c-b95a-c32644ccbd06"
+_WATCH_ID = "d0440903-c273-4865-abc9-ba8f162f540e"
+_MARATHON_WORDS = (
+    ("I", 0.0, 0.2),
+    ("ran", 0.2, 0.5),
+    ("my", 0.5, 0.7),
+    ("first", 0.7, 1.0),
+    ("marathon.", 1.0, 1.6),
+    ("They", 2.8, 3.0),
+    ("put", 3.0, 3.2),
+    ("the", 3.4, 3.5),
+    ("medal", 3.5, 3.9),
+    ("around", 3.9, 4.2),
+    ("my", 4.2, 4.3),
+    ("neck.", 4.3, 4.7),
+    ("I", 6.6, 6.7),
+    ("finished", 6.7, 7.0),
+    ("in", 7.0, 7.1),
+    ("4", 7.2, 7.4),
+    ("hours", 7.4, 7.7),
+    ("and", 7.7, 7.8),
+    ("12", 7.8, 8.1),
+    ("minutes.", 8.1, 8.6),
+)
+
+
+def _pool_asset(asset_id: str, filename: str) -> dict:
+    return {
+        "id": asset_id,
+        "gcs_path": f"users/u1/plan/item1/pool/{asset_id}.jpg",
+        "gcs_generation": "7",
+        "kind": "image",
+        "source_filename": filename,
+        "duration_s": None,
+        "aspect": 0.5625,
+        "user_context": "",
+        "analysis": {},
+    }
+
+
+def _setup_voiceover_beats(monkeypatch, *, beats_flag=True):
+    job, snapshot, session, bindings = _setup_narrated(
+        monkeypatch, spoken_words=_words(*_MARATHON_WORDS)
+    )
+    _enable_beats(monkeypatch)
+    monkeypatch.setattr(gb.settings, "phone_voiceover_editor_lanes_enabled", True)
+    monkeypatch.setattr(gb.settings, "phone_voiceover_reaction_beats_enabled", beats_flag)
+    monkeypatch.setattr(
+        phone_reaction_grounding_mod,
+        "_load_ready_pool_assets",
+        lambda *a, **k: [
+            _pool_asset(_MEDAL_ID, "N3_04_visual.jpeg"),
+            _pool_asset(_WATCH_ID, "N3_05_visual.jpeg"),
+        ],
+    )
+    monkeypatch.setattr(phone_reaction_grounding_mod, "_load_sfx_entries", lambda *a, **k: [])
+    bind_calls: list = []
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind(bind_calls))
+    job.all_candidates["creator_strategy"] = {
+        "edit_format": "narrated_planned",
+        "reaction_beats": [
+            _beat_dict("medal", "the medal", visual_id=f"asset-{_MEDAL_ID}", visual_role="photo"),
+            _beat_dict(
+                "finish-time",
+                "four hours and twelve minutes",
+                visual_id=f"asset-{_WATCH_ID}",
+                visual_role="photo",
+            ),
+        ],
+    }
+    transcribe = Mock(return_value=Transcript(words=_words(*_MARATHON_WORDS), language="en"))
+    monkeypatch.setattr("app.pipeline.transcribe.transcribe_whisper", transcribe)
+    return job, snapshot, bind_calls, transcribe
+
+
+def test_voiceover_beats_show_each_photo_when_the_voice_says_it(monkeypatch):
+    job, snapshot, bind_calls, transcribe = _setup_voiceover_beats(monkeypatch)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    recipe = device_status(job, "narrated").request.recipe
+    overlays = next(track for track in recipe.tracks if track.id == "subtitled-overlays")
+    starts = sorted(clip.timeline_start for clip in overlays.clips)
+    assert starts == [pytest.approx(3.4), pytest.approx(7.2)]
+    assert {"visualBlocks", "alphaOverlay"} <= set(recipe.required_capabilities)
+    # Whisper is seeded with the creator's phrases so "medal" isn't heard as "metal".
+    assert transcribe.call_args.kwargs["verbatim_prompt"] == (
+        "the medal, four hours and twelve minutes."
+    )
+    [variant] = job.assembly_plan["variants"]
+    receipt = variant["phone_beat_receipt"]
+    assert [entry["beat_id"] for entry in receipt["placed"]] == ["medal", "finish-time"]
+    assert receipt["unplaced"] == []
+    assert {row["media_id"] for row in job.assembly_plan[PHONE_VISUALS_FIELD]} == {
+        _MEDAL_ID,
+        _WATCH_ID,
+    }
+    assert set(bind_calls[0]) == {_MEDAL_ID, _WATCH_ID}
+
+    # The editor sees both cards and can move or delete them (KRI-281 lanes).
+    from app.services.phone_subtitled_editor import project_phone_subtitled_editor_sections
+
+    sections = project_phone_subtitled_editor_sections(job.assembly_plan, variant)
+    assert sections is not None
+    assert len(sections["media_overlays"]) == 2
+
+
+def test_voiceover_beats_kill_switch_keeps_the_render_byte_identical(monkeypatch):
+    job, snapshot, bind_calls, transcribe = _setup_voiceover_beats(monkeypatch, beats_flag=False)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    recipe = device_status(job, "narrated").request.recipe
+    assert [track.id for track in recipe.tracks] == ["narrated", "narration"]
+    assert "verbatim_prompt" not in transcribe.call_args.kwargs
+    [variant] = job.assembly_plan["variants"]
+    assert "phone_beat_receipt" not in variant
+    assert PHONE_VISUALS_FIELD not in job.assembly_plan
+    assert bind_calls == []
+
+
+def test_voiceover_beat_never_heard_is_reported_not_fatal(monkeypatch):
+    job, snapshot, _bind_calls, _transcribe = _setup_voiceover_beats(monkeypatch)
+    job.all_candidates["creator_strategy"]["reaction_beats"].append(
+        _beat_dict("bib", "my race bib", visual_id=f"asset-{_MEDAL_ID}")
+    )
+    record_mock = Mock()
+    monkeypatch.setattr("app.services.pipeline_trace.record_pipeline_event", record_mock)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    [variant] = job.assembly_plan["variants"]
+    assert [entry["trigger"] for entry in variant["phone_beat_receipt"]["unplaced"]] == [
+        "my race bib"
+    ]
+    beats_events = [
+        call.args[2]
+        for call in record_mock.call_args_list
+        if call.args[:2] == ("phone", "subtitled_reaction_beats")
+    ]
+    assert beats_events == [
+        {
+            "placed": 2,
+            "unplaced": 1,
+            "missed": ["my race bib"],
+            "missed_reasons": ["never_heard"],
+            "closing": "none",
+        }
+    ]
+
+
+def test_voiceover_beat_grounding_failure_still_renders(monkeypatch):
+    job, snapshot, _bind_calls, _transcribe = _setup_voiceover_beats(monkeypatch)
+    monkeypatch.setattr(
+        phone_reaction_grounding_mod,
+        "ground_phone_reaction_beats",
+        Mock(side_effect=RuntimeError("boom")),
+    )
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    recipe = device_status(job, "narrated").request.recipe
+    assert "subtitled-overlays" not in {track.id for track in recipe.tracks}
+    [variant] = job.assembly_plan["variants"]
+    assert variant["phone_beat_receipt"]["matcher"] == "failed"
+
+
+def test_voiceover_beat_lane_compile_error_drops_the_lane_not_the_job(monkeypatch):
+    import app.pipeline.phone_narrated_plan as narrated_plan_mod
+    from app.pipeline.phone_subtitled_lanes import _lane_error
+
+    job, snapshot, _bind_calls, _transcribe = _setup_voiceover_beats(monkeypatch)
+
+    def _broken_lanes(*_args, **_kwargs):
+        raise _lane_error("overlays", "card outside the canvas", capability="visualBlocks")
+
+    monkeypatch.setattr(narrated_plan_mod, "replace_editor_lanes", _broken_lanes)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    [variant] = job.assembly_plan["variants"]
+    receipt = variant["phone_beat_receipt"]
+    assert receipt["placed"] == []
+    assert {entry["reason"] for entry in receipt["unplaced"]} == {"compile_dropped"}
+    assert PHONE_VISUALS_FIELD not in job.assembly_plan

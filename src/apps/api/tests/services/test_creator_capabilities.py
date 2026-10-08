@@ -19,6 +19,7 @@ from app.services.phone_rollout import (
     PHONE_SUBTITLED_OVERLAY_FEATURES,
     PHONE_SUBTITLED_SFX_FEATURES,
     PHONE_SUBTITLED_VIDEO_OVERLAY_FEATURES,
+    PHONE_VOICEOVER_EDITOR_FEATURES,
 )
 
 
@@ -2742,3 +2743,101 @@ def test_pinned_texts_are_refused_where_the_guided_compiler_cannot_draw_them(
             ),
         )
     assert exc_info.value.code == "unsupported_treatment"
+
+
+# --- KRI-519: reaction beats on a phone Voiceover edit ------------------------
+
+
+def _voiceover_beats_manifest(monkeypatch, *, has_voiceover=True, phone=True, **flags):
+    _enable_guided(monkeypatch)
+    _enable_narrated_and_subtitled_flags(monkeypatch)
+    _enable_phone_subtitled_reaction_beats(monkeypatch)
+    monkeypatch.setattr(capabilities.settings, "phone_voiceover_editor_lanes_enabled", True)
+    monkeypatch.setattr(
+        capabilities.settings,
+        "phone_render_verified_features",
+        [
+            *PHONE_SUBTITLED_OVERLAY_FEATURES,
+            *PHONE_SUBTITLED_SFX_FEATURES,
+            *PHONE_VOICEOVER_EDITOR_FEATURES,
+            "narrationAudio",
+        ],
+    )
+    for name, value in flags.items():
+        monkeypatch.setattr(capabilities.settings, name, value)
+    media = [
+        {"media_id": "phone-a", "kind": "video"},
+        {"media_id": "phone-b", "kind": "video"},
+        {"media_id": "asset-medal", "kind": "image", "label": "Medal"},
+        {"media_id": "asset-watch", "kind": "image", "label": "Watch"},
+    ]
+    return capabilities.resolve_creator_manifest(
+        item_id="item-phone",
+        edit_format="narrated_planned",
+        media=media,
+        has_voiceover=has_voiceover,
+        narration=(
+            {
+                "gcs_path": "users/u/creation-threads/t/voice.m4a",
+                "generation": "1791406745118245",
+                "duration_s": 47.42,
+            }
+            if has_voiceover
+            else None
+        ),
+        **(
+            {"phone_source_media_ids": ["phone-a", "phone-b"], "phone_rendering_allowed": True}
+            if phone
+            else {}
+        ),
+    )
+
+
+def test_phone_voiceover_advertises_reaction_beats_and_keeps_them(monkeypatch):
+    """Stress kit N3: the photo asks survive compile instead of a dead-end question."""
+    manifest = _voiceover_beats_manifest(monkeypatch)
+    assert manifest.capabilities[capabilities.CAPABILITY_REACTION_BEATS].available is True
+
+    plan = capabilities.compile_strategy_to_plan(
+        manifest,
+        CreativeStrategy(
+            edit_format="narrated_planned",
+            audio_strategy="voiceover",
+            render_program="native",
+            selected_media_ids=["phone-a", "phone-b"],
+            reaction_beats=[
+                {"beat_id": "medal", "trigger": "the medal", "visual_id": "asset-medal"},
+                {
+                    "beat_id": "finish",
+                    "trigger": "four hours and twelve minutes",
+                    "visual_id": "Watch",
+                },
+            ],
+        ),
+    )
+
+    assert [(b.beat_id, b.visual_id) for b in plan.strategy.reaction_beats] == [
+        ("medal", "asset-medal"),
+        ("finish", "asset-watch"),
+    ]
+    assert plan.notices == []
+
+
+@pytest.mark.parametrize(
+    ("overrides", "flags"),
+    [
+        ({}, {"phone_voiceover_reaction_beats_enabled": False}),
+        ({}, {"phone_voiceover_editor_lanes_enabled": False}),
+        ({}, {"phone_subtitled_reaction_beats_enabled": False}),
+        ({"has_voiceover": False}, {}),
+        ({"phone": False}, {}),
+    ],
+    ids=["kill-switch", "voiceover-lanes-off", "beats-off", "no-voiceover", "cloud"],
+)
+def test_voiceover_reaction_beats_stay_talking_only_without_every_gate(
+    monkeypatch, overrides, flags
+):
+    manifest = _voiceover_beats_manifest(monkeypatch, **overrides, **flags)
+    entry = manifest.capabilities[capabilities.CAPABILITY_REACTION_BEATS]
+    assert entry.available is False
+    assert entry.reason_code == "phone_talking_only"
