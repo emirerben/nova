@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.167.0] - 2026-10-08
+
+### Changed
+- fix(kria): compose complete requests across editing capabilities (KRI-524) (#1481) <!-- release-pr: 1481 -->
+
 ## [0.78.166.0] - 2026-10-08
 
 ### Changed
