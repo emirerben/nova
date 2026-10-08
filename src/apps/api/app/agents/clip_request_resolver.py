@@ -179,7 +179,8 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.clip_request_resolver",
         prompt_id="clip_request_resolver",
-        prompt_version="2026-10-05.1",  # KRI-454: creator-named places match by look.
+        # KRI-516: chapter captions under a filming-time order are consecutive runs.
+        prompt_version="2026-10-08.1",
         # Text-only match against pre-computed clip records; flash + a small
         # thinking budget mirrors clip_plan_matcher's measured setting.
         model="gemini-2.5-flash",

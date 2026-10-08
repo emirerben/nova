@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.162.0] - 2026-10-08
+
+### Changed
+- fix(clip-intents): chapter captions read forward under a filming-time order (KRI-516) (#1477) <!-- release-pr: 1477 -->
+
 ## [0.78.161.0] - 2026-10-08
 
 ### Changed
