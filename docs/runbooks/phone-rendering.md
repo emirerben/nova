@@ -930,6 +930,30 @@ restart <id>` (api + worker) -- no Vercel twin, render-only gate. Enabling is
 the mirror: flip the Fly secret, restart api + worker; nothing to build on
 the web side first.
 
+**Voiceover edits (KRI-519).** The same beats work on a phone Voiceover edit
+(`narrated*` with a recorded voiceover): "when I say the medal, show my medal
+photo". Runtime v2 has no guided-proposal step, so the guided
+`guided_voiceover_v1` lane the manifest used to advertise could only end in
+"Should I make a simpler version?"; beats are now the iPhone chat's way to time
+a Visual to the voice. Gate `phone_rollout.phone_voiceover_reaction_beats_supported()`
+= `PHONE_VOICEOVER_REACTION_BEATS_ENABLED` (default true) +
+`phone_subtitled_reaction_beats_supported()` + the KRI-281 Voiceover lanes gate.
+The manifest advertises `reaction_beats` on that edit and the Main Creator gets
+the Voiceover wording of the section (`_VOICEOVER_REACTION_BEATS_PROMPT_SECTION`,
+same field contract). `_run_phone_narrated_job` seeds whisper with the trigger
+phrases, grounds against the voiceover's own words (a cleaned voiceover's words
+are already on the cut timeline; no speaker clip, so `clip_path=None` keeps the
+fallback face box clear), and compiles the cards / sounds into the Voiceover
+`subtitled-overlays` / `sfx` lanes via `compile_phone_narrated_plan(lanes=...)`,
+the same swap an editor Save uses, so the editor shows and edits them. Photo
+receipts land in `PHONE_VISUALS_FIELD`, the receipt in `phone_beat_receipt`;
+a failed grounding, bind or lane compile drops the beat onto the receipt,
+never the job. Cards are picture-in-picture; full-screen cutaways on Voiceover
+need the KRI-297 track in `replace_editor_lanes` first. Tests:
+`test_voiceover_beat*` in `tests/tasks/test_phone_subtitled_narrated_dispatch.py`.
+Rollback: `fly secrets set PHONE_VOICEOVER_REACTION_BEATS_ENABLED=false --app
+nova-video` + `fly machine restart <id>` (api + worker + light).
+
 #### Phase 2c: video Visuals as PiP cards (KRI-183)
 
 Flag `PHONE_SUBTITLED_VIDEO_OVERLAYS_ENABLED` (default false), gate

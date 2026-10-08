@@ -617,6 +617,34 @@ def phone_voiceover_editor_lanes_supported(*, require_client: bool | None = None
     return protocol is not None and protocol >= settings.phone_voiceover_editor_min_client_protocol
 
 
+def phone_voiceover_reaction_beats_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "can a phone-rendered Voiceover edit
+    (`narrated*` with a recorded voiceover) carry KRI-178 reaction beats --
+    photo/sticker pop-ins and sound effects at phrases of the voiceover --
+    right now" (KRI-519).
+
+    Consulted by `app.services.creator_capabilities.resolve_creator_manifest`
+    (whether `reaction_beats` is advertised on a phone Voiceover manifest) and
+    by `app.tasks.generative_build._run_phone_narrated_job` (whether the
+    worker grounds beats against the voiceover at all), so the Main Creator is
+    never offered a lane the worker then skips.
+
+    True iff ALL of:
+      - `phone_voiceover_reaction_beats_enabled` (this lane's kill switch).
+      - `phone_subtitled_reaction_beats_supported()`: the beats grounding,
+        overlay and sound-effect gates Talking already rolls out.
+      - `phone_voiceover_editor_lanes_supported(require_client=...)`: the
+        beats compile into the KRI-281 Voiceover lanes, so the device and the
+        editor can draw and edit them. ``require_client`` means the same as
+        there; the worker passes ``False``.
+    """
+    return bool(
+        settings.phone_voiceover_reaction_beats_enabled
+        and phone_subtitled_reaction_beats_supported()
+        and phone_voiceover_editor_lanes_supported(require_client=require_client)
+    )
+
+
 # Device features a photo or video added in the phone editor needs (KRI-287):
 # the set the guided editor's own media import is gated on
 # (`generative_jobs._phone_editor_media_available`).

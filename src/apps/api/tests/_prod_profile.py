@@ -118,6 +118,8 @@ PROD_TRUE_FLAGS: tuple[str, ...] = (
     "phone_subtitled_media_lanes_enabled",
     "phone_subtitled_reaction_beats_enabled",
     "phone_subtitled_video_overlays_enabled",
+    # Re-derived 2026-10-08 (KRI-519): same digest as PHONE_RENDERING_ENABLED.
+    "phone_voiceover_editor_lanes_enabled",
 )
 
 # `PHONE_RENDER_VERIFIED_FEATURES` as read from the production api machine on

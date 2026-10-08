@@ -78,6 +78,28 @@ def test_main_creator_eval(
             "A strategy cannot remove manual media layers; it must not clear text instead"
         )
 
+    voiceover_beats = fixture.meta.get("voiceover_reaction_beats")
+    if voiceover_beats:
+        # KRI-519: photos timed to an iPhone voiceover are reaction beats, never the
+        # guided contract runtime v2 cannot run. Triggers compare as plain lowercase
+        # words (the grounding module itself needs the render stack, absent on the
+        # eval runner).
+        def _words(text: object) -> list[str]:
+            return re.findall(r"[a-z0-9]+", str(text or "").casefold())
+
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        strategy = action["strategy"]
+        assert not strategy.get("execution_contract")
+        beats = strategy.get("reaction_beats") or []
+        for trigger, visual_id in voiceover_beats.items():
+            assert any(
+                _words(beat.get("trigger")) == _words(trigger)
+                and beat.get("visual_id") == visual_id
+                for beat in beats
+            ), f"no beat shows {visual_id} on {trigger!r}: {beats}"
+
     expected = fixture.meta.get("text_intent")
     if expected:
         from app.agents._schemas.creator_agent import (
