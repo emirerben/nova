@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.171.0] - 2026-10-08
+
+### Changed
+- feat(kria): phone Voiceover renders judge order, clip timing and caption language from what they pinned (KRI-533) (#1491) <!-- release-pr: 1491 -->
+
 ## [0.78.170.0] - 2026-10-08
 
 ### Changed
