@@ -1726,6 +1726,90 @@ final class NativeEditorInspectorUITests: XCTestCase {
         waitForExpectations(timeout: 3)
     }
 
+    /// KRI-508: one tap selects a text on the video, a second tap types on it in
+    /// place; Done keeps the words and one Undo takes the typing back.
+    func testSecondTapOnPreviewTextTypesOnTheVideo() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-two-text"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+
+        let text = app.descendants(matching: .any)["native-editor-preview-text-00000000-0000-4000-8000-000000000100"].firstMatch
+        XCTAssertTrue(text.waitForExistence(timeout: 8))
+        let original = (text.label as NSString).replacingOccurrences(of: "Text: ", with: "")
+        text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.28)).tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-text-context"].firstMatch.waitForExistence(timeout: 3))
+        let field = app.textViews["native-editor-inline-text-field"]
+        XCTAssertFalse(field.exists, "the first tap only selects")
+        attachShot("KRI-508 selected text", app)
+
+        text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.28)).tap()
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-inline-text-bar"].firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-inline-text-size"].firstMatch.exists)
+        field.typeText(" now")
+        expectation(for: NSPredicate(format: "value == %@", original + " now"), evaluatedWith: field)
+        waitForExpectations(timeout: 5)
+        attachShot("KRI-508 typing on the video", app)
+        app.buttons["native-editor-inline-text-done"].tap()
+
+        let updated = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Text: " + original + " now")).firstMatch
+        XCTAssertTrue(updated.waitForExistence(timeout: 3))
+        XCTAssertFalse(field.exists)
+        let undo = app.buttons["native-editor-undo"]
+        XCTAssertTrue(undo.waitForExistence(timeout: 3))
+        undo.tap()
+        let restored = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Text: " + original)).firstMatch
+        XCTAssertTrue(restored.waitForExistence(timeout: 3), "one Undo restores the words from before typing")
+    }
+
+    /// KRI-508: typing a text empty removes it, and the notice's Undo brings it back.
+    /// A tap on the empty video with a text selected only deselects it.
+    func testTypingATextEmptyRemovesItWithUndo() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-two-text"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+
+        let id = "native-editor-preview-text-00000000-0000-4000-8000-000000000100"
+        let text = app.descendants(matching: .any)[id].firstMatch
+        XCTAssertTrue(text.waitForExistence(timeout: 8))
+        let original = (text.label as NSString).replacingOccurrences(of: "Text: ", with: "")
+        text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.28)).tap()
+        let edit = app.buttons["native-editor-text-edit-action"].firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 3))
+        edit.tap()
+        let field = app.textViews["native-editor-inline-text-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: original.count + 2))
+        // The video's own text empties as the words go (typeText can return before the last key lands).
+        expectation(for: NSPredicate(format: "NOT (label CONTAINS %@)", String(original.prefix(4))), evaluatedWith: text)
+        waitForExpectations(timeout: 5)
+        app.buttons["native-editor-inline-text-done"].tap()
+
+        let notice = app.descendants(matching: .any)["native-editor-text-removed"].firstMatch
+        XCTAssertTrue(notice.waitForExistence(timeout: 3))
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.descendants(matching: .any)[id].firstMatch)
+        waitForExpectations(timeout: 3)
+        app.buttons["native-editor-text-removed-action"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)[id].firstMatch.waitForExistence(timeout: 3))
+        XCTAssertEqual(app.descendants(matching: .any)[id].firstMatch.label, "Text: " + original)
+
+        // Select it again, then tap empty video: that deselects instead of going fullscreen.
+        text.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.28)).tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-text-context"].firstMatch.waitForExistence(timeout: 3))
+        app.descendants(matching: .any)["native-editor-preview"].firstMatch
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.06, dy: 0.04)).tap()
+        expectation(for: NSPredicate(format: "exists == false"),
+                    evaluatedWith: app.descendants(matching: .any)["native-editor-text-context"].firstMatch)
+        waitForExpectations(timeout: 3)
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-preview-fullscreen"].firstMatch.exists)
+    }
+
     /// KRI-281: a DragGesture on the caption rows fought the ScrollView, so a long list (narrated /
     /// voiceover captions) could not be scrolled by hand to its last blocks.
     func testLongCaptionListScrollsByHandToLastLines() {

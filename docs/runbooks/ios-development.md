@@ -410,6 +410,46 @@ play/pause, and keyboard visibility (including a source-pixel check).
 cleanup ownership and preview timing; `AppleTextAccessibilityUITests` exercises
 the controls at 320pt width with accessibility text sizes.
 
+### Text on the video (KRI-508)
+
+Plan 027 owns the design. The preview already moved, resized and rotated text
+(`NativeTextTransformLayer`); KRI-508 adds editing the words there and makes the
+existing gestures findable.
+
+- **Select → type.** `NativeVideoPreview.selectPreviewObject` selects the topmost
+  text on the first tap (pausing playback, `onTextFocus`). A tap on the text that
+  is already selected calls `onEditText` instead of cycling, and the editor opens
+  `NativeEditorPanel.textInline(id)`. The timeline keeps its own rule: a second
+  tap on a text bar still opens the Text panel.
+- **Text focus.** `NativeEditorView.previewTextFocusID` grows the preview to
+  `NativeEditorLayoutMetrics.maxPreviewHeight` while a text a preview gesture
+  selected stays selected and no panel is open. Growth waits for the gesture to
+  end (`settleDirectManipulation` reports the text afterwards).
+- **Actions.** `NativeTextActionPill` (Edit text / Style / Delete) is drawn above
+  the canvas, not inside it, so its buttons never also count as a canvas tap.
+  It carries the island strip's identifiers (`native-editor-text-context`,
+  `native-editor-text-edit-action`, `native-editor-text-delete`); the editor shows
+  exactly one of the two (`NativeTextPillPlacement.fits`, never at accessibility
+  sizes).
+- **Typing.** The typing layer draws the selected text's prepared
+  `TextInteractionFrame` (below + above layers), dims it 24% (45% with no frame,
+  e.g. fixtures), and places `NativeTextInlineField` (an `ExplicitLineTextView`
+  in the text's face, colour, background and alignment) on the anchor plus the
+  measured block-centre offset. `NativeTextInlineLayout.displaySize` keeps the
+  field at least 15pt. The editor hides the project header and reuses the caption
+  edit-bar layout path (`captionEditBarHeight`) for `NativeTextInlineBar`. One
+  transaction spans the whole typing session; Done or a tap on the dimmed video
+  commits, and an emptied text is deleted inside it so one Undo restores it.
+- **Sizes.** Gestures and the slider clamp to `NativeTextSizeRange` (24–320)
+  without jumping a stored value outside it.
+- **Tests.** `NativeTextOnVideoTests` (placement, ranges, layout, guides);
+  `testSecondTapOnPreviewTextTypesOnTheVideo` and
+  `testTypingATextEmptyRemovesItWithUndo` in `NativeEditorInspectorUITests`;
+  `testNativeEditorLongTextEditPreservesDurationAndClipGeometry` types through
+  the strip's Edit text.
+- **Not yet:** the covers-a-face warning (plan 027 D13), tapping a caption on the
+  video to open its line (D14), and "+ → Text" going straight to typing (D15).
+
 ## Native chat creation (KRI-24)
 
 The capabilities endpoint advertises `formats`, per-role `media` limits,
