@@ -456,7 +456,9 @@ async def test_protocol_two_reaches_existing_runtime_mutation_handler(
     accepted = TurnAccepted(turn_id="turn-1", thread_revision=1, status="pending")
     submit = AsyncMock(return_value=(accepted, False))
     monkeypatch.setattr(kria_runtime, "submit_turn", submit)
-    request = Request({"type": "http", "method": "POST", "path": "/creation-threads/t/turns"})
+    request = Request(
+        {"type": "http", "method": "POST", "path": "/creation-threads/t/turns", "headers": []}
+    )
 
     response = await kria_runtime.create_turn(
         request,

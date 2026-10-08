@@ -112,3 +112,8 @@ Bulk-media regression rubric:
   motion-union capacity.
 
 Passing threshold: average >= 3.5 with no structural failures.
+
+Reply language (KRI-520): when the input carries `reply_language: "tr"`, `reply`,
+`suggestions` and `unmet_requests[].reason` must be natural Turkish, while on-video text
+stays exactly as the creator asked for it. Without that field, reply in the creator's own
+language.

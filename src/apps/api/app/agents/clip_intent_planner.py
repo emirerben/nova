@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
+from app.kria.reply_language import current_reply_language, prompt_language_line
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.clip_intents import (
     CREATOR_CAPTION_MAX_CHARS,
@@ -39,6 +40,15 @@ _ORDER_BY_NOTE = (
 )
 
 _ORDER_BY_FIELD = ',"order_by":"capture_time|route|null"'
+
+# Appended after the generic language line (Turkish chats only): the JSON stays machine
+# shaped and the provenance fence needs the creator's own words.
+_REPLY_LANGUAGE_SCOPE = (
+    "In this task only the top-level `question` is shown to the creator, so only it is "
+    "written in that language. `source_quote` stays an exact copy of the creator's own "
+    "words, and `attribute`, `creator_text` and `caption_attribute` stay in the creator's "
+    "own words."
+)
 
 
 def _sanitize_text(value: str) -> str:
@@ -75,7 +85,8 @@ _KNOWN_OPS = {"label", "group", "order", "include", "caption"}
 # Flash does not reliably set `placeholder: true` (it has mapped this to a
 # creator_text caption or a grounded "person's name" label), so a quote that
 # literally asks for a placeholder is the deterministic signal.
-_PLACEHOLDER_REQUEST = re.compile(r"\bplace[\s-]?holders?\b", re.IGNORECASE)
+# KRI-520: "yer tutucu" is the Turkish phrase for the same request.
+_PLACEHOLDER_REQUEST = re.compile(r"\bplace[\s-]?holders?\b|\byer\s*tutucu\w*", re.IGNORECASE)
 _STOPWORDS = frozenset(
     "a an the and or of to for in on at by with all my our your their clips clip shots shot "
     "videos video content footage".split()
@@ -83,8 +94,17 @@ _STOPWORDS = frozenset(
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?\n])\s+")
 # Flash sometimes writes prose into the first/last `position` enum ("at the
 # start", "in this chapter order"). Word-bounded so "lasting" never reads as last.
-_POSITION_FIRST = re.compile(r"\b(first|start|beginning|opening|open)\b", re.IGNORECASE)
-_POSITION_LAST = re.compile(r"\b(last|end|ending|close|closing|finish)\b", re.IGNORECASE)
+# KRI-520: the same prose in Turkish ("en başta", "sonunda"); "sonra" (after) is not "sona".
+_POSITION_FIRST = re.compile(
+    r"\b(first|start|beginning|opening|open|[iİıI]lk\w*|ba[sş]ta|ba[sş]ında|basinda|"
+    r"ba[sş]lang[ıi]ç\w*|baslangic\w*|a[cç][ıi]l[ıi][sş]\w*|acilis\w*)\b",
+    re.IGNORECASE,
+)
+_POSITION_LAST = re.compile(
+    r"\b(last|end|ending|close|closing|finish|son|sonda|sonunda|sona|"
+    r"biti[sş]\w*|bitis\w*|kapan[ıi][sş]\w*|kapanis\w*)\b",
+    re.IGNORECASE,
+)
 
 
 def _norm(value: str) -> str:
@@ -130,35 +150,79 @@ class _IntentRejected(Exception):  # noqa: N818 - internal control flow
         self.detail = detail
 
 
-def _preview(raw_intent: object) -> str:
+# KRI-520: operation names as the creator reads them in a Turkish question.
+_OP_NAMES_TR = {
+    "label": "etiket",
+    "group": "grup",
+    "order": "sıra",
+    "include": "dahil etme",
+    "caption": "yazı",
+}
+
+
+def _copy(language: str | None, *, en: str, tr: str) -> str:
+    """Server copy for ``language`` (the input's), else the turn's bound language."""
+    return tr if (language or current_reply_language()) == "tr" else en
+
+
+def _preview(raw_intent: object, language: str | None = None) -> str:
     """Short, sanitized description of a returned intent, for a creator question."""
+    fallback = _copy(language, en="an instruction", tr="bir talimat")
     if not isinstance(raw_intent, dict):
-        return "an instruction"
+        return fallback
     attribute = raw_intent.get("attribute")
     op = raw_intent.get("op")
     text = " ".join(_sanitize_text(attribute).split()) if isinstance(attribute, str) else ""
-    text = text[:_LABEL_PREVIEW_CHARS].strip() or "an instruction"
-    return f"{op}: {text}" if isinstance(op, str) and op in _KNOWN_OPS else text
+    text = text[:_LABEL_PREVIEW_CHARS].strip() or fallback
+    if isinstance(op, str) and op in _KNOWN_OPS:
+        return f"{_copy(language, en=op, tr=_OP_NAMES_TR[op])}: {text}"
+    return text
 
 
-def salvage_question(kept: int, labels: list[str], overflow: int = 0) -> str:
+def salvage_question(
+    kept: int, labels: list[str], overflow: int = 0, *, language: str | None = None
+) -> str:
     """One focused question naming what could not be verified (labels are previews)."""
     named = "; ".join(f'"{label}"' for label in labels[:3])
     extra = len(labels) - 3
     if extra > 0:
-        named += f" (and {extra} more)"
+        named += _copy(language, en=f" (and {extra} more)", tr=f" (ve {extra} tane daha)")
     pieces: list[str] = []
     if named:
-        pieces.append(f"I couldn't safely verify {named}")
+        pieces.append(
+            _copy(
+                language,
+                en=f"I couldn't safely verify {named}",
+                tr=f"Şunları güvenle doğrulayamadım: {named}",
+            )
+        )
     if overflow:
         pieces.append(
-            f"I can apply at most {MAX_CLIP_INTENTS} clip instructions at a time, "
-            f"so {overflow} more weren't included"
+            _copy(
+                language,
+                en=(
+                    f"I can apply at most {MAX_CLIP_INTENTS} clip instructions at a time, "
+                    f"so {overflow} more weren't included"
+                ),
+                tr=(
+                    f"Bir seferde en fazla {MAX_CLIP_INTENTS} klip talimatı uygulayabiliyorum, "
+                    f"bu yüzden {overflow} talimat daha eklenmedi"
+                ),
+            )
         )
-    lead = f"I understood {kept} of your clip instructions"
+    lead = _copy(
+        language,
+        en=f"I understood {kept} of your clip instructions",
+        tr=f"Klip talimatlarından {kept} tanesini anladım",
+    )
     body = "; ".join(pieces)
     text = f"{lead}. {body}." if body else f"{lead}."
-    return (text + " Please restate just those so I can add them.")[:_QUESTION_MAX_CHARS]
+    tail = _copy(
+        language,
+        en=" Please restate just those so I can add them.",
+        tr=" Sadece bunları yeniden yazar mısın, ekleyeyim.",
+    )
+    return (text + tail)[:_QUESTION_MAX_CHARS]
 
 
 def _unique_intent_id(intent_id: str, taken: set[str]) -> str:
@@ -406,11 +470,23 @@ _WHOLE_VIDEO_TARGETS = frozenset(
         "the whole video",
         "entire video",
         "the entire video",
+        # KRI-520
+        "başlık",
+        "baslik",
+        "video başlığı",
+        "videonun başlığı",
+        "açılış başlığı",
+        "giriş başlığı",
+        "videoya",
+        "tüm video",
+        "bütün video",
+        "videonun tamamı",
     }
 )
 # Verbs that may wrap a bare style ask in the creator's quote ("add captions").
 _CAPTION_ASK_VERBS = frozenset(
-    "add put turn give make use show want please ekle ver aç let lets i would like can you".split()
+    "add put turn give make use show want please ekle ver aç koy yaz olsun lütfen let lets i would "
+    "like can you".split()
 )
 _TITLE_QUOTE_PREFIX = re.compile(r"^(title|başlık)\s*:", re.IGNORECASE)
 _WORDS = re.compile(r"[^\W_]+")
@@ -507,6 +583,9 @@ class ClipIntentPlannerInput(BaseModel):
     # KRI-189: CLIP_FACTS is on for this creator, so the prompt also teaches the
     # fact-based `order_by` field. Omitted from dumps when off (byte-identical).
     clip_facts: bool = Field(default=False, exclude_if=lambda value: not value)
+    # KRI-520: the chat's language (app.kria.reply_language). None/"en" => the prompt
+    # and the server-written question stay English, byte-identical.
+    reply_language: str | None = Field(default=None, max_length=8, exclude_if=lambda v: v is None)
 
 
 class ClipIntentPlannerOutput(BaseModel):
@@ -535,7 +614,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.clip_intent_planner",
         prompt_id="clip_intent_planner",
-        prompt_version="2026-10-07.1",
+        prompt_version="2026-10-08.1",  # KRI-520: optional Turkish reply-language line.
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -577,7 +656,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
 
     def render_prompt(self, input: ClipIntentPlannerInput) -> str:  # noqa: A002
         candidates = [intent.model_dump(mode="json") for intent in (input.candidate_intents or [])]
-        return load_prompt(
+        prompt = load_prompt(
             "clip_intent_planner",
             creator_request=_sanitize_text(input.creator_request),
             latest_user_message=_sanitize_text(input.latest_user_message or ""),
@@ -587,6 +666,12 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             order_by_note=_ORDER_BY_NOTE if input.clip_facts else "",
             order_by_field=_ORDER_BY_FIELD if input.clip_facts else "",
         )
+        # KRI-520: the reply-language instruction goes last. "" for English/unknown:
+        # byte-identical prompt.
+        language_line = prompt_language_line(input.reply_language)
+        if not language_line:
+            return prompt
+        return f"{prompt.rstrip(chr(10))}\n\n{language_line} {_REPLY_LANGUAGE_SCOPE}\n"
 
     def parse(self, raw_text: str, input: ClipIntentPlannerInput) -> ClipIntentPlannerOutput:  # noqa: A002
         try:
@@ -629,7 +714,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             try:
                 intent = self._build_intent(raw_intent, sources, input, index=index, silent=silent)
             except _IntentRejected as rejected:
-                dropped.append(_preview(raw_intent))
+                dropped.append(_preview(raw_intent, input.reply_language))
                 drop_classes.append(rejected.error_class)
                 failures.append(f"intents[{index}]: {rejected.detail}")
                 continue
@@ -676,11 +761,13 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             kept = _collapse_captioned_groups(kept)
         # Over the cap: keep the first valid ones in the creator's order and ask about
         # the rest instead of failing the whole inventory.
-        overflow = [_preview(raw) for _, raw in kept[MAX_CLIP_INTENTS:]]
+        overflow = [_preview(raw, input.reply_language) for _, raw in kept[MAX_CLIP_INTENTS:]]
         kept = kept[:MAX_CLIP_INTENTS]
         salvage = None
         if dropped or overflow:
-            salvage = salvage_question(len(kept), dropped + overflow, len(overflow))
+            salvage = salvage_question(
+                len(kept), dropped + overflow, len(overflow), language=input.reply_language
+            )
             if overflow:
                 reasons.append("over_cap")
         try:

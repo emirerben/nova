@@ -27,6 +27,7 @@ from app.agents._schemas.creator_policy import (
 )
 from app.config import settings
 from app.kria.brief import BriefUpdate, parse_brief_updates
+from app.kria.reply_language import prompt_language_line
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import (
     MAX_OPENING_TITLE_DURATION_S,
@@ -37,6 +38,7 @@ from app.schemas.edit_proposal import (
     recognize_round_robin_cadence,
     rejects_round_robin_cadence,
     resolve_video_reuse_policy,
+    turkish_media_scope,
 )
 from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 
@@ -63,7 +65,9 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # (`Settings.voice_behind_footage_enabled`) (v47).
 # KRI-522: brief facts for first_clip/last_clip, animation, position, placeholder (v48).
 # KRI-523: `pinned_texts` (whole-video corner text) + choice-answer brief rule (v49).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-08-v49"
+# KRI-520: a Turkish chat gets a reply-language line at the end of the prompt; English is
+# byte-identical (v50).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-08-v50"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -375,6 +379,9 @@ class MainCreatorInput(BaseModel):
     # KRI-188: True only when the Creative Brief is on for this creator. Off =>
     # the prompt is byte-identical and no `brief_updates` are read from output.
     brief_enabled: bool = False
+    # KRI-520: the chat's language (app.kria.reply_language). None/"en" => the
+    # prompt is byte-identical and the field is left out of input dumps.
+    reply_language: str | None = Field(default=None, max_length=8, exclude_if=lambda v: v is None)
 
 
 class MainCreatorOutput(BaseModel):
@@ -449,7 +456,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             exclude_none=True,
             exclude={"narration": True},
         )
-        return load_prompt(
+        prompt = load_prompt(
             "main_creator",
             creator_context=input.creator_context or "(not available)",
             creator_direction=input.creator_direction or "(none)",
@@ -510,6 +517,10 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 else ""
             ),
         )
+        # KRI-520: the reply-language instruction goes last, where it wins over the
+        # English examples above. "" for English/unknown: byte-identical prompt.
+        language_line = prompt_language_line(input.reply_language)
+        return f"{prompt.rstrip(chr(10))}\n\n{language_line}\n" if language_line else prompt
 
     def parse(self, raw_text: str, input: MainCreatorInput) -> MainCreatorOutput:  # noqa: A002
         self._schema_feedback = ""
@@ -825,4 +836,5 @@ def _explicit_media_scope_from_request(request: str) -> str | None:
         normalized,
     ):
         return "selected"
-    return None
+    # KRI-520: "tüm klipleri kullan", "hepsini kullan", "sadece en iyileri".
+    return turkish_media_scope(request)

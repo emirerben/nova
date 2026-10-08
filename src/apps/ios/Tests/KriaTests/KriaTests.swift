@@ -245,6 +245,21 @@ final class KriaTests: XCTestCase {
         XCTAssertEqual(thread.summary.posterURL, URL(string: "https://cdn.example.test/song.jpg"))
     }
 
+    /// KRI-520: every request names the device languages so the server can reply in Turkish
+    /// when a chat message alone doesn't say.
+    func testRequestsCarryTheDeviceLanguages() async throws {
+        XCTAssertEqual(KriaAPI.acceptLanguage(preferred: ["tr-TR", "en-US", "de-DE", "fr-FR"]), "tr-TR, en-US;q=0.9, de-DE;q=0.8")
+        XCTAssertNil(KriaAPI.acceptLanguage(preferred: []))
+        let expected = KriaAPI.acceptLanguage()
+        URLProtocolStub.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Accept-Language"), expected)
+            return (200, Data(#"{"formats":[{"id":"montage","edit_format":"montage","max_clips":20}]}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+
+        _ = try await api.creationCapabilities()
+    }
+
     func testCreationCapabilitiesUseServerFormatAvailability() async throws {
         URLProtocolStub.handler = { request in
             XCTAssertEqual(request.httpMethod, "GET")

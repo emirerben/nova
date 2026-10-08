@@ -20,12 +20,14 @@ type. It never commits -- see `refreshed`/`refreshed_analysis_id` below.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.kria.reply_language import say
 from app.models import PlanItem, SpeechCleanupAnalysis
 from app.services.active_narration_source import ActiveNarrationResolution
 
@@ -44,7 +46,7 @@ SpeechCleanupConflictCode = Literal[
 # equivalent card copy of its own, so `decide_approval` uses this for its
 # `RuntimeFailure` message. v1 itself does not use this dict: it has always
 # raised a bare `HTTPException(409, detail=<code>)` and that stays unchanged.
-SPEECH_CLEANUP_CONFLICT_COPY: dict[str, str] = {
+_SPEECH_CLEANUP_CONFLICT_COPY_EN: dict[str, str] = {
     "speech_cleanup_analysis_changed": (
         "The speech check changed before I could start. Approve again to choose "
         "how to handle the pauses."
@@ -63,6 +65,46 @@ SPEECH_CLEANUP_CONFLICT_COPY: dict[str, str] = {
         "Choose how to handle the pauses and filler words before I render."
     ),
 }
+
+# The same messages for a Turkish chat (KRI-520). Clients branch on the CODE, never on this
+# text (it reaches them only as the problem's display message), so it may be localized.
+_SPEECH_CLEANUP_CONFLICT_COPY_TR: dict[str, str] = {
+    "speech_cleanup_analysis_changed": (
+        "Konuşma kontrolü ben başlamadan önce değişti. Duraklamaları nasıl ele alacağımı "
+        "seçmek için tekrar onayla."
+    ),
+    "speech_cleanup_pending": ("Konuşma kontrolü hâlâ sürüyor. Bitince sana tekrar soracağım."),
+    "speech_cleanup_failed": (
+        "Konuşma kontrolü tamamlanamadı. Onsuz videoyu oluşturmak için tekrar onayla ya da "
+        "kontrolü yeniden yapmamı iste."
+    ),
+    "speech_cleanup_choice_not_allowed": (
+        "Duraklama ya da dolgu sözcüğü bulunmadı, yani yapılacak bir temizleme seçimi yok. "
+        "Tekrar onayla."
+    ),
+    "speech_cleanup_choice_required": (
+        "Videoyu oluşturmadan önce duraklamaların ve dolgu sözcüklerinin nasıl ele alınacağını seç."
+    ),
+}
+
+
+class _ConflictCopy(Mapping[str, str]):
+    """The conflict copy, picked in the chat's language each time a code is read."""
+
+    def __getitem__(self, code: str) -> str:
+        return say(
+            en=_SPEECH_CLEANUP_CONFLICT_COPY_EN[code],
+            tr=_SPEECH_CLEANUP_CONFLICT_COPY_TR[code],
+        )
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(_SPEECH_CLEANUP_CONFLICT_COPY_EN)
+
+    def __len__(self) -> int:
+        return len(_SPEECH_CLEANUP_CONFLICT_COPY_EN)
+
+
+SPEECH_CLEANUP_CONFLICT_COPY: Mapping[str, str] = _ConflictCopy()
 
 
 @dataclass(frozen=True)
