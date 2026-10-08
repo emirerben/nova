@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
-from app.kria.brief import BriefRequirement, CreativeBrief
+from app.kria.brief import BriefRequirement, CreativeBrief, normalize_style_intent
 from app.kria.brief_route import (
     END_KEYS,
     START_KEYS,
@@ -121,6 +121,24 @@ class NarratedStepFact:
 
 
 @dataclass(frozen=True)
+class TextStyleRow:
+    """One non-caption on-screen text row's style as saved (KRI-543).
+
+    ``kind`` is the editor's own title/label/text classification. A style field is None
+    when the saved row does not say (an unset font or color falls back to a renderer
+    default we do not read), so a check on it stays "can't verify" instead of guessing.
+    """
+
+    id: str
+    kind: str = "text"
+    entrance: str | None = None
+    alignment: str | None = None
+    text_case: str | None = None
+    font_family: str | None = None
+    color: str | None = None
+
+
+@dataclass(frozen=True)
 class PlanFacts:
     """What a drafted plan verifiably contains. Missing facts stay None/empty."""
 
@@ -196,6 +214,9 @@ class PlanFacts:
     # was not available and must remain unchecked.
     text_spans: tuple[tuple[str, str, float, float], ...] = ()
     text_timing_incomplete: bool = False
+    # Per-row style of the saved non-caption text rows (KRI-543). None means the text lane
+    # was not available (a draft or render), which keeps a style ask unchecked.
+    text_styles: tuple[TextStyleRow, ...] | None = None
     # The strategy's edit format, and how many video clips it renders (None when
     # the footage list was not available to count).
     edit_format: str | None = None
@@ -681,6 +702,97 @@ def _editor_payload_duration(payload: Mapping[str, Any]) -> float | None:
     return total or None
 
 
+_LEGACY_EFFECT_ENTRANCE = {
+    "static": "none",
+    "none": "none",
+    "fade-in": "fade",
+    "pop-in": "pop",
+    "slide-in": "slide",
+    "typewriter": "typewriter",
+}
+_HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_ENTRANCES = frozenset({"none", "fade", "pop", "slide", "typewriter"})
+_TEXT_CASES = frozenset({"none", "upper", "lower", "title"})
+_ALIGNMENTS = frozenset({"left", "center", "right"})
+
+
+def _row_entrance(row: Mapping[str, Any]) -> str | None:
+    """The entrance a saved row plays: explicit phases win, else the legacy effect's."""
+    phases = row.get("animation_phases")
+    if isinstance(phases, Mapping):
+        entrance = phases.get("entrance")
+        return entrance if entrance in _ENTRANCES else None
+    effect = row.get("effect")
+    return _LEGACY_EFFECT_ENTRANCE.get(effect) if effect is not None else "none"
+
+
+def _row_choice(
+    row: Mapping[str, Any], key: str, allowed: frozenset[str], default: str
+) -> str | None:
+    value = row.get(key)
+    if value is None:
+        return default
+    return value if value in allowed else None
+
+
+def _text_style_rows(rows: Iterable[Any]) -> tuple[TextStyleRow, ...]:
+    """Style of the editor's live, non-caption text rows, typed by the editor's own classifier."""
+    from app.services.kria_editor_ops import is_caption_text_bar  # noqa: PLC0415
+    from app.services.kria_editor_ops_text import classify  # noqa: PLC0415
+
+    live = [
+        row
+        for row in rows
+        if isinstance(row, Mapping)
+        and isinstance(row.get("id"), str)
+        and isinstance(row.get("text"), str)
+        and row["text"].strip()
+        and not row.get("removed")
+        and row.get("role") != "lyric_line"
+        and not is_caption_text_bar(dict(row))
+    ]
+    bars = []
+    for index, row in enumerate(live):
+        params = row.get("source_params")
+        source = row.get("sequence_source_id")
+        if not isinstance(source, str) and isinstance(params, Mapping):
+            source = params.get("sequence_source_id")
+        clip = row.get("clip_id")
+        start = row.get("start_s")
+        bars.append(
+            {
+                "index": index,
+                "id": row["id"],
+                "text": str(row.get("text") or ""),
+                "role": row.get("role"),
+                "sequence_source_id": source if isinstance(source, str) else None,
+                "clip_id": clip if isinstance(clip, str) and clip else None,
+                "removed": False,
+                "start_s": float(start)
+                if isinstance(start, (int, float)) and not isinstance(start, bool)
+                else None,
+                "caption": False,
+            }
+        )
+    kinds = classify(bars)
+    out = []
+    for row in live:
+        color = row.get("color")
+        font = row.get("font_family")
+        out.append(
+            TextStyleRow(
+                id=row["id"],
+                kind=kinds.get(row["id"], "text"),
+                entrance=_row_entrance(row),
+                alignment=_row_choice(row, "alignment", _ALIGNMENTS, "center"),
+                text_case=_row_choice(row, "text_case", _TEXT_CASES, "none"),
+                font_family=font if isinstance(font, str) and font else None,
+                color=color.upper() if isinstance(color, str) and _HEX_COLOR.match(color) else None,
+            )
+        )
+    return tuple(out)
+
+
 def plan_facts_from_editor_payload(
     payload: Mapping[str, Any] | None,
     text_diff: Iterable[Mapping[str, Any]] | None = None,
@@ -778,6 +890,11 @@ def plan_facts_from_editor_payload(
         title=title,
         text_spans=tuple(text_spans),
         text_timing_incomplete=text_timing_incomplete,
+        text_styles=(
+            _text_style_rows(payload["text_elements"])
+            if isinstance(payload, Mapping) and isinstance(payload.get("text_elements"), list)
+            else None
+        ),
     )
 
 
@@ -1865,6 +1982,7 @@ _CANT_CHECK_TIMING = "I can't verify this timing automatically."
 _CANT_CHECK_CLEANUP = "I can't check the speech cleanup on this draft yet."
 _CANT_CHECK_CAPTIONS = "I can't check the captions on this draft yet."
 _NO_CHECKER = "I can't verify this one automatically yet."
+_CANT_CHECK_STYLE = "I can't check this text style automatically."
 _CANT_CHECK_MIX = "I can't check the sound mix on this draft yet."
 # Start of the reason on a "mute the footage sound" ask the voiceover mix cannot fully meet
 # (the footage sound is a quiet bed under the voice, never off): a limit of the format.
@@ -1915,6 +2033,7 @@ _REASON_TR: dict[str, str] = {
     _CANT_CHECK_CLEANUP: "Bu taslakta konuşma temizliğini henüz kontrol edemiyorum.",
     _CANT_CHECK_CAPTIONS: "Bu taslaktaki altyazıları henüz kontrol edemiyorum.",
     _NO_CHECKER: "Bunu henüz otomatik olarak doğrulayamıyorum.",
+    _CANT_CHECK_STYLE: "Bu yazı stilini otomatik olarak kontrol edemiyorum.",
     _CANT_CHECK_MIX: "Bu taslakta ses karışımını henüz kontrol edemiyorum.",
     _BED_STILL_PLAYS: "Çekim sesi hâlâ çalıyor",
     _CLEANUP_PLANNED: "Konuşma temizliği uzun duraklamaları keser",
@@ -1964,6 +2083,7 @@ _NEUTRAL_EN = frozenset(
         _CANT_CHECK_CLEANUP,
         _CANT_CHECK_CAPTIONS,
         _CANT_CHECK_MIX,
+        _CANT_CHECK_STYLE,
         _NO_CHECKER,
     }
 )
@@ -2517,11 +2637,54 @@ def _check_voice_bed(req: BriefRequirement, facts: PlanFacts) -> RequirementRece
     )
 
 
+_STYLE_FIELD_NAMES = {
+    "entrance": ("entrance animation", "giriş animasyonu"),
+    "alignment": ("alignment", "hizalama"),
+    "text_case": ("letter case", "harf biçimi"),
+    "font_family": ("font", "yazı tipi"),
+    "color": ("color", "renk"),
+}
+
+
+def _style_intent(req: BriefRequirement) -> dict[str, Any] | None:
+    """The well-formed structured style intent of a style requirement, else None (KRI-543)."""
+    if req.kind != "style":
+        return None
+    return normalize_style_intent(req.facts.get("style_intent"))
+
+
 def _check_style(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
-    # A changed text lane proves a mutation, not that the requested fields,
-    # targets, or animation relationships were satisfied. Until the requirement
-    # carries independently checkable style intent, retain an unchecked receipt.
-    return _receipt(req, "partial", _NO_CHECKER)
+    # A changed text lane proves a mutation, not that the requested fields, targets, or
+    # animation relationships were satisfied (KRI-524). Only a closed-vocabulary
+    # `style_intent` is compared, and only against rows whose saved value is known.
+    intent = _style_intent(req)
+    if intent is None or facts.text_styles is None:
+        return _receipt(req, "partial", _NO_CHECKER)
+    target = intent.get("target")
+    rows = [
+        row
+        for row in facts.text_styles
+        if target in (None, "all_text") or row.kind == {"title": "title", "labels": "label"}[target]
+    ]
+    wanted = {item["field"]: item["value"] for item in intent["set"]}
+    if not rows or any(getattr(row, field) is None for row in rows for field in wanted):
+        return _receipt(req, "partial", _CANT_CHECK_STYLE)
+    off = [row for row in rows if any(getattr(row, f) != v for f, v in wanted.items())]
+    if not off:
+        return _receipt(req, "met", None)
+    if target is None:
+        # "…to all of them" may mean a subset: a mismatch is not evidence of a miss.
+        return _receipt(req, "partial", _CANT_CHECK_STYLE)
+    names_en = ", ".join(_STYLE_FIELD_NAMES[f][0] for f in wanted)
+    names_tr = ", ".join(_STYLE_FIELD_NAMES[f][1] for f in wanted)
+    return _receipt(
+        req,
+        "partial",
+        say(
+            en=f"{len(off)} of {len(rows)} texts don't have the requested {names_en} yet",
+            tr=f"{len(rows)} metinden {len(off)} tanesinde istenen {names_tr} henüz yok",
+        ),
+    )
 
 
 def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -3001,6 +3164,8 @@ def _has_checker(req: BriefRequirement) -> bool:
             or _wants_beats(req)
             or _wants_clip_timing(req)
         )
+    if _style_intent(req) is not None:
+        return True
     if req.kind in _BEAT_KINDS:
         return (
             _wants_beats(req)
