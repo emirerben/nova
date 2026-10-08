@@ -7672,14 +7672,15 @@ def _phone_speaker_framing(
 
 
 def _phone_face_box_mapper(binding: Any, position_x: float) -> Any:
-    """Raw source face box -> protected face box on the KRI-547 face-filled
-    canvas (`phone_speaker_framing.face_box_mapper`) for card grounding."""
+    """Raw source face box -> the face core (eyes, nose, mouth) on the KRI-547
+    face-filled canvas (`phone_speaker_framing.face_core_mapper`), for beat and
+    PiP card grounding only; titles and captions keep the full protection."""
     from app.pipeline.phone_recipe_shared import display_dims  # noqa: PLC0415
-    from app.pipeline.phone_speaker_framing import face_box_mapper  # noqa: PLC0415
+    from app.pipeline.phone_speaker_framing import face_core_mapper  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
 
     display_width, display_height = display_dims(binding.original)
-    return face_box_mapper(
+    return face_core_mapper(
         display_width=display_width,
         display_height=display_height,
         canvas=_STORY_CANVAS,

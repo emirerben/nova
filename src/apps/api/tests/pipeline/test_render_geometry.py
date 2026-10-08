@@ -593,3 +593,81 @@ def test_raw_boxes_skip_the_protection_box_on_every_path(monkeypatch):
     assert receipt["decoded"] == 1
     default, _ = geometry.sample_face_regions("/tmp/c.mp4", [1.0])
     assert default[0].box == geometry._face_protection_box(NormalizedBox(**raw))
+
+
+# ── KRI-547 follow-up: strict face-core regions and flush corners for PiP cards ──
+
+
+def _card(**extra):
+    return {
+        "id": "c1",
+        "position": "custom",
+        "x_frac": 0.74,
+        "y_frac": 0.22,
+        "scale": 0.36,
+        "start_s": 0.0,
+        "end_s": 5.0,
+        **extra,
+    }
+
+
+def test_a_strict_region_rejects_an_overlap_the_iou_gate_tolerates():
+    from app.pipeline.render_geometry import (  # noqa: PLC0415
+        MediaFootprint,
+        _box_for_overlay,
+        arbitrate_media_overlays,
+    )
+
+    footprint = {"c1": MediaFootprint(aspect_ratio=1.0)}
+    card = _box_for_overlay(_card(), footprint=footprint["c1"])
+    # A sliver of face core under the card's bottom-left corner: IoU far below 0.02.
+    sliver = NormalizedBox(
+        card.left - 0.2, card.bottom - 0.005, card.left + 0.005, card.bottom + 0.2
+    )
+    assert 0 < card.iou(sliver) <= 0.02
+    tolerant, _ = arbitrate_media_overlays(
+        [_card()],
+        protected_boxes=[ProtectedRegion(0.0, 9.0, sliver, "face_core")],
+        footprints_by_id=footprint,
+    )
+    assert (tolerant[0]["x_frac"], tolerant[0]["y_frac"]) == (0.74, 0.22)
+    strict, receipts = arbitrate_media_overlays(
+        [_card()],
+        protected_boxes=[ProtectedRegion(0.0, 9.0, sliver, "face_core")],
+        footprints_by_id=footprint,
+        strict_kinds=frozenset({"face_core"}),
+    )
+    moved = _box_for_overlay(strict[0], footprint=footprint["c1"])
+    assert moved.intersection_area(sliver) == 0
+    assert receipts[0]["decision"] in ("moved", "shrunk")
+
+
+def test_flush_corners_are_tried_only_when_asked():
+    from app.pipeline.render_geometry import (  # noqa: PLC0415
+        MediaFootprint,
+        _box_for_overlay,
+        arbitrate_media_overlays,
+    )
+
+    # A head filling the middle of a close-up and the caption band: the 0.2/0.8 grid
+    # misses the thin strip beside the head even at the smallest shrink.
+    protected = [
+        ProtectedRegion(0.0, 9.0, NormalizedBox(0.12, 0.23, 0.79, 0.7), "face_core"),
+        ProtectedRegion(0.0, 9.0, NormalizedBox(0.0, 0.6, 1.0, 1.0), "captions"),
+    ]
+    footprint = {"c1": MediaFootprint(aspect_ratio=1080 / 1920)}
+    kwargs = {"protected_boxes": protected, "footprints_by_id": footprint}
+    grid, receipts = arbitrate_media_overlays(
+        [_card()], strict_kinds=frozenset({"face_core"}), **kwargs
+    )
+    assert grid == [] and receipts[0]["decision"] == "omitted_no_safe_candidate"
+    hugged, _ = arbitrate_media_overlays(
+        [_card()], strict_kinds=frozenset({"face_core"}), hug_corners=True, **kwargs
+    )
+    box = _box_for_overlay(hugged[0], footprint=footprint["c1"])
+    assert box.right == pytest.approx(0.98) and box.top == pytest.approx(0.02)
+    assert box.intersection_area(protected[0].box) == 0
+    # Defaults are the pre-KRI-547 behaviour exactly.
+    assert arbitrate_media_overlays([_card()], **kwargs) == arbitrate_media_overlays(
+        [_card()], strict_kinds=frozenset(), hug_corners=False, **kwargs
+    )

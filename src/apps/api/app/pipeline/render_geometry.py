@@ -12,7 +12,7 @@ import json
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -948,6 +948,43 @@ def _center_for_overlay(overlay: dict[str, Any]) -> tuple[float, float]:
     return x, y
 
 
+# KRI-547 `hug_corners`: how far a flush corner card sits from the frame edges
+# (canvas width for x, canvas height for y) -- about 22 px and 38 px on 1080x1920.
+_CORNER_INSET_FRAC = 0.02
+_SHRINKS = (1.0, 0.85, 0.70, 0.55)
+
+
+def _flush_corner_trial(
+    overlay: dict[str, Any],
+    *,
+    footprint: MediaFootprint,
+    canvas: Canvas,
+    original_x: float,
+    fits: Callable[[NormalizedBox], bool],
+) -> dict[str, Any] | None:
+    """The first top corner (the card's own side first), flush against the frame
+    edges, and the largest shrink at which the card ``fits``; ``None`` if none."""
+    base_scale = float(overlay.get("scale") or 0.3)
+    sides = (1, -1) if original_x >= 0.5 else (-1, 1)
+    for side in sides:
+        for shrink in _SHRINKS:
+            scale = base_scale * shrink
+            width = min(1.0, max(0.05, scale))
+            height = width * canvas.width / canvas.height / max(0.01, footprint.aspect_ratio)
+            half_w = width / 2
+            x_frac = 1 - _CORNER_INSET_FRAC - half_w if side > 0 else _CORNER_INSET_FRAC + half_w
+            trial = {
+                **overlay,
+                "position": "custom",
+                "x_frac": round(x_frac, 4),
+                "y_frac": round(_CORNER_INSET_FRAC + height / 2, 4),
+                "scale": scale,
+            }
+            if fits(_box_for_overlay(trial, footprint=footprint, canvas=canvas)):
+                return trial
+    return None
+
+
 def arbitrate_media_overlays(
     overlays: list[dict[str, Any]],
     *,
@@ -955,8 +992,20 @@ def arbitrate_media_overlays(
     footprints_by_id: dict[str, MediaFootprint] | None = None,
     max_iou: float = 0.02,
     canvas: Canvas = PORTRAIT,
+    strict_kinds: frozenset[str] = frozenset(),
+    hug_corners: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Reposition, shrink, then omit decorative PiP overlays on collisions."""
+    """Reposition, shrink, then omit decorative PiP overlays on collisions.
+
+    KRI-547 (both default off, so every existing caller is unchanged): a
+    protected region whose ``kind`` is in ``strict_kinds`` tolerates NO overlap
+    at all instead of ``max_iou`` (the face core of a face-filled speaker: a card
+    may sit on hair or background, never on the eyes, nose or mouth), and
+    ``hug_corners`` adds, after the fixed grid, the two TOP corners with the
+    card flush against the frame edges (`_CORNER_INSET_FRAC`) at every shrink --
+    on a close-up the only free space is the strip beside the head, which the
+    grid's 0.2/0.8 centres miss.
+    """
 
     resolved: list[dict[str, Any]] = []
     receipts: list[dict[str, Any]] = []
@@ -1001,12 +1050,21 @@ def arbitrate_media_overlays(
             continue
         footprint = footprints_by_id.get(str(overlay.get("id")), MediaFootprint())
         collision_boxes = [
-            *[region.box for region in protected_regions if region.overlaps(start_s, end_s)],
+            *[
+                region.box
+                for region in protected_regions
+                if region.overlaps(start_s, end_s) and region.kind not in strict_kinds
+            ],
             *[
                 box
                 for occupied_start, occupied_end, box in occupied
                 if start_s < occupied_end and occupied_start < end_s
             ],
+        ]
+        strict_boxes = [
+            region.box
+            for region in protected_regions
+            if region.overlaps(start_s, end_s) and region.kind in strict_kinds
         ]
         accepted: dict[str, Any] | None = None
         original_x, original_y = _center_for_overlay(overlay)
@@ -1043,11 +1101,24 @@ def arbitrate_media_overlays(
                     "scale": float(overlay.get("scale") or 0.3) * shrink,
                 }
                 box = _box_for_overlay(trial, footprint=footprint, canvas=canvas)
-                if all(box.iou(protected) <= max_iou for protected in collision_boxes):
+                if all(box.iou(protected) <= max_iou for protected in collision_boxes) and all(
+                    box.intersection_area(protected) <= 0 for protected in strict_boxes
+                ):
                     accepted = trial
                     break
             if accepted is not None:
                 break
+        if accepted is None and hug_corners:
+            accepted = _flush_corner_trial(
+                overlay,
+                footprint=footprint,
+                canvas=canvas,
+                original_x=original_x,
+                fits=lambda box: (
+                    all(box.iou(protected) <= max_iou for protected in collision_boxes)
+                    and all(box.intersection_area(protected) <= 0 for protected in strict_boxes)
+                ),
+            )
         if accepted is None:
             receipts.append({"id": overlay.get("id"), "decision": "omitted_no_safe_candidate"})
             continue

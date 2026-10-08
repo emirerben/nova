@@ -255,6 +255,10 @@ class PlanFacts:
     # draft, or a render that does not record one): nothing about framing is claimed.
     speaker_framing: str | None = None
     speaker_framing_reason: str | None = None
+    # KRI-547: pop-ins the render dropped for lack of room, as (trigger, "no_room") when
+    # no spot cleared the face and captions, or (trigger, "overlap") when another pop-in
+    # held the spot at that moment (`phone_beat_receipt.unplaced[]`).
+    beat_room_drops: tuple[tuple[str, str], ...] = ()
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -883,6 +887,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
         changes["audio_strategy"] = "voiceover"
     changes.update(_rendered_speech_facts(variant))
     changes.update(_speaker_framing_facts(variant))
+    changes.update(_beat_room_facts(variant.get("phone_beat_receipt")))
     return dataclasses.replace(base, **changes) if changes else base
 
 
@@ -2145,6 +2150,80 @@ def _never_heard_problem(triggers: Iterable[str]) -> str:
     )
 
 
+# KRI-547: why a pop-in that WAS heard still didn't show. Card geometry drops a card
+# with "no_safe_spot" when no spot clears the face and the captions, and the beat lane
+# with "overlap" (or arbitration with "duplicate") when another pop-in holds the spot.
+_NO_ROOM_REASONS = frozenset({"no_safe_spot"})
+_OVERLAP_REASONS = frozenset({"overlap", "duplicate"})
+
+
+def _beat_room_facts(receipt: object) -> dict[str, Any]:
+    """``beat_room_drops`` off a variant's ``phone_beat_receipt`` (``{}`` when none)."""
+    if not isinstance(receipt, Mapping) or receipt.get("matcher") in ("manual", "failed", None):
+        return {}
+    drops: list[tuple[str, str]] = []
+    unplaced = receipt.get("unplaced")
+    for entry in unplaced if isinstance(unplaced, list) else []:
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("trigger"), str):
+            continue
+        reason = entry.get("reason")
+        if reason in _NO_ROOM_REASONS:
+            drops.append((entry["trigger"], "no_room"))
+        elif reason in _OVERLAP_REASONS:
+            drops.append((entry["trigger"], "overlap"))
+    return {"beat_room_drops": tuple(dict.fromkeys(drops))} if drops else {}
+
+
+def _beat_room_drop(facts: PlanFacts, name: str) -> str | None:
+    """``no_room`` / ``overlap`` when the render dropped ``name``'s pop-in for lack of room."""
+    return next(
+        (kind for trigger, kind in facts.beat_room_drops if _trigger_heard(name, trigger)), None
+    )
+
+
+def _beat_room_problem(req: BriefRequirement, facts: PlanFacts, names: Sequence[str]) -> str | None:
+    """The honest sentence for this ask's pop-ins that had no room (``None`` if none).
+
+    A pop-in is this ask's when it matches one of ``names``, or -- for an ask whose
+    trigger words could not be named ("'İlk durak' dediğinde ...") -- when its trigger
+    appears in the requirement's own words."""
+    text = _req_text(req)
+    drops = [
+        (trigger, kind)
+        for trigger, kind in facts.beat_room_drops
+        if (
+            any(_trigger_heard(n, trigger) for n in names)
+            if names
+            else _contains_text(text, _fold(trigger))
+        )
+    ]
+    if not drops:
+        return None
+    parts: list[str] = []
+    no_room = [trigger for trigger, kind in drops if kind == "no_room"]
+    overlap = [trigger for trigger, kind in drops if kind == "overlap"]
+    if no_room:
+        parts.append(
+            say(
+                en=(
+                    f"There was no room on screen for {_names(no_room)} without covering "
+                    "your face or the captions"
+                ),
+                tr=(
+                    f"{_names(no_room)} için yüzünü ya da altyazıları kapatmadan ekranda yer yoktu"
+                ),
+            )
+        )
+    if overlap:
+        parts.append(
+            say(
+                en=f"{_names(overlap)} would have landed on another pop-in at the same moment",
+                tr=f"{_names(overlap)} aynı anda başka bir görselin üstüne denk gelirdi",
+            )
+        )
+    return "; ".join(parts)
+
+
 def _placement_reason(placements: Sequence[BeatFact]) -> str | None:
     """Where the met pop-ins landed, in time order; None when the render gave no times."""
     timed = sorted((b for b in placements if b.at_s is not None), key=lambda b: b.at_s or 0.0)
@@ -2193,8 +2272,11 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
         elif not beats:
             # Nothing was placed at all: every unheard word is this ask's problem.
             unheard = list(facts.unheard_beat_triggers) if not names else _unheard_for(facts, names)
+            room = _beat_room_problem(req, facts, names)
             if unheard:
                 problems.append(_never_heard_problem(unheard))
+            elif room:
+                problems.append(room)
             else:
                 problems.append(
                     say(
@@ -2221,8 +2303,12 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                 placements = list(beats)
             elif matched:
                 placements = matched
-            elif all(any(_trigger_heard(n, u) for u in unheard) for n in names):
-                # Everything this ask is about was never said: nothing of it landed.
+            elif all(
+                any(_trigger_heard(n, u) for u in unheard) or _beat_room_drop(facts, n)
+                for n in names
+            ):
+                # Everything this ask is about was never said, or had no room on
+                # screen (KRI-547): nothing of it landed.
                 placements = []
             else:
                 # The sentence's own words matched no beat: judge the pop-ins as a whole
@@ -2239,6 +2325,11 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
             ]
             if unheard:
                 problems.append(_never_heard_problem(unheard))
+            # Named words: only the ones that didn't land; unnamed: the ask's own words.
+            room = None if named and not missing else _beat_room_problem(req, facts, missing)
+            if room:
+                problems.append(room)
+                missing = [n for n in missing if not _beat_room_drop(facts, n)]
             unresolved = [
                 t
                 for t in facts.dropped_beat_triggers
@@ -2268,7 +2359,11 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                             tr="Çıkan görsellerin hiçbiri ses çalmıyor",
                         )
                     )
-                if _VISUAL_RE.search(text) and not any(b.visual_id for b in placements):
+                if (
+                    _VISUAL_RE.search(text)
+                    and not any(b.visual_id for b in placements)
+                    and not room  # KRI-547: the dropped card is the reason, told above
+                ):
                     problems.append(
                         say(
                             en="None of the pop-ins shows a photo or sticker",

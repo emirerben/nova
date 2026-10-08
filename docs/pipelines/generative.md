@@ -636,11 +636,21 @@ face_under_captions / not_landscape / creator_chose_bars / creator_chose_crop, `
 `brief_checks._check_speaker_framing` answers the ask from it at render-ready
 (`plan_facts_from_phone_variant`): Done for face_fill (or an already-vertical clip),
 Partly with the reason for a fallback, unchecked at draft. Face geometry downstream uses
-the crop: the opening/closing title (`place_talking_title(position_x=...)`) and the
-beat/PiP card arbitration (`resolve_phone_card_geometry(face_box_to_canvas=...)`, raw
-face boxes mapped then padded on the canvas). On a face-filled close-up the face spans
-most of the frame, so a PiP card often has no safe spot and is reported `no_safe_spot`
-rather than covering the face. Editor Save (`editor_speaker_framing`): keeps the crop,
+the crop: the opening/closing title (`place_talking_title(position_x=...)`, full face
+protection as before) and the beat/PiP card arbitration
+(`resolve_phone_card_geometry(face_box_to_canvas=...)`). On a face-filled close-up the
+head fills most of the frame, so cards protect only the face CORE
+(`phone_speaker_framing.face_core_mapper`): the raw Haar box's x 0.15-0.85, y 0.20-0.92
+(brows to below the lower lip; on the Kadıköy take eyes sit at 0.35-0.42 of the box
+height, mouth 0.75-0.85, outer eye corners 0.22-0.26 / 0.73-0.75 of its width), mapped
+through the crop plus a 0.02-canvas margin. A card may cover hair and background but
+never the core: `arbitrate_media_overlays(strict_kinds={"face_core"})` allows zero
+overlap with it, and `hug_corners=True` adds flush top corners after the usual grid.
+Kadıköy r4 (the brewing video, 7.72-12.75 s) lands top-right at scale 0.198. When even
+the core leaves no room the card is still dropped (`no_safe_spot`), and the brief receipt
+says so ("There was no room on screen for X without covering your face or the
+captions"; an `overlap`/`duplicate` drop: "X would have landed on another pop-in at the
+same moment") via `PlanFacts.beat_room_drops`. Editor Save (`editor_speaker_framing`): keeps the crop,
 drops it when the creator picks bars (`creator_chose_bars`), restores it on crop. The
 native editor's live preview compiles its own recipe (`NativeEditorRenderCompiler`), which
 knows bars/crop but not this shift, so it previews a centre crop (iOS follow-up).

@@ -14,9 +14,11 @@ from app.kria.recipes import Canvas, MediaTransform
 from app.pipeline.phone_recipe_shared import face_fill_transform, max_cover_shift_px
 from app.pipeline.phone_speaker_framing import (
     FACE_BOTTOM_LIMIT_FRAC,
+    FACE_CORE_MARGIN_FRAC,
     decide_speaker_framing,
     editor_speaker_framing,
-    face_box_mapper,
+    face_core_box,
+    face_core_mapper,
     face_fill_window,
     sample_anchors,
 )
@@ -261,25 +263,38 @@ def test_the_default_sampler_is_looked_up_per_call(monkeypatch):
 # ── downstream geometry ─────────────────────────────────────────────────────
 
 
-def test_the_card_mapper_puts_the_face_where_the_crop_draws_it():
+def test_the_face_core_is_the_eyes_nose_mouth_part_of_the_raw_box():
+    core = face_core_box(_box(0.2, 0.45, top=0.15, bottom=0.6))
+    assert (core.left, core.right) == pytest.approx((0.2 + 0.15 * 0.25, 0.2 + 0.85 * 0.25))
+    assert (core.top, core.bottom) == pytest.approx((0.15 + 0.20 * 0.45, 0.15 + 0.92 * 0.45))
+    # A background merge is narrowed first, so its core cannot blank the frame.
+    merged = face_core_box(_box(0.05, 0.85))
+    assert merged.width == pytest.approx(0.7 * 0.55)
+
+
+def test_the_card_mapper_puts_the_face_core_where_the_crop_draws_it():
     window = _window([_box(0.2, 0.45)])
-    mapped = face_box_mapper(
+    raw = _box(0.2, 0.45, top=0.15, bottom=0.6)
+    mapped = face_core_mapper(
         display_width=1920, display_height=1080, canvas=CANVAS, position_x=window.position_x
-    )(_box(0.2, 0.45, top=0.15, bottom=0.6))
-    # The face spans most of the crop, centred; padded in canvas units afterwards.
-    raw_left = 0.5 + (0.2 - 0.5) * SHOWN_W / 1080 + window.position_x / 1080
-    raw_right = 0.5 + (0.45 - 0.5) * SHOWN_W / 1080 + window.position_x / 1080
-    assert mapped.left == pytest.approx(max(0.0, raw_left - 0.06), abs=1e-6)
-    assert mapped.right == pytest.approx(min(1.0, raw_right + 0.06), abs=1e-6)
-    assert mapped.top == pytest.approx(0.13, abs=1e-6)
-    assert mapped.bottom == pytest.approx(0.68, abs=1e-6)
-    # Unlike the source-frame protection box, a wide face on the zoomed crop is
-    # not narrowed to a 0.55-wide "background merge".
-    assert mapped.width > 0.55
+    )(raw)
+    core = face_core_box(raw)
+    shift = window.position_x / 1080
+    left = 0.5 + (core.left - 0.5) * SHOWN_W / 1080 + shift
+    right = 0.5 + (core.right - 0.5) * SHOWN_W / 1080 + shift
+    margin = FACE_CORE_MARGIN_FRAC
+    assert mapped.left == pytest.approx(left - margin, abs=1e-6)
+    assert mapped.right == pytest.approx(right + margin, abs=1e-6)
+    assert mapped.top == pytest.approx(core.top - margin, abs=1e-6)
+    assert mapped.bottom == pytest.approx(core.bottom + margin, abs=1e-6)
+    # Tighter than the whole head: room is left beside it for a corner card.
+    assert mapped.right < 0.8 and mapped.left > 0.1
 
 
 def test_the_card_mapper_drops_a_face_outside_the_crop():
-    mapper = face_box_mapper(display_width=1920, display_height=1080, canvas=CANVAS, position_x=0.0)
+    mapper = face_core_mapper(
+        display_width=1920, display_height=1080, canvas=CANVAS, position_x=0.0
+    )
     assert mapper(_box(0.0, 0.1)) is None
 
 

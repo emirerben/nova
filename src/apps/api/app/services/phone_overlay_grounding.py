@@ -82,6 +82,8 @@ _MAX_ARBITRATION_IOU = 0.02
 # 0.26/0.24/0.28, square footprint) still lands a shrunk, accepted spot in
 # the opposite upper corner rather than being omitted.
 _FALLBACK_FACE_BOX = NormalizedBox(0.28, 0.02, 0.72, 0.52)
+# KRI-547: a face-filled speaker's eyes-nose-mouth core, which no card may touch.
+_FACE_CORE_KIND = "face_core"
 
 _MAX_FACE_ANCHORS_PER_CARD = 4
 _MAX_FACE_ANCHORS_TOTAL = 12
@@ -218,8 +220,12 @@ def resolve_phone_card_geometry(
     ``face_box_to_canvas`` (KRI-547, default ``None`` = unchanged): when the
     speaker clip is drawn through a face-filled crop, the sampled faces are
     taken RAW and mapped onto the canvas with it
-    (`phone_speaker_framing.face_box_mapper`, which pads them there), so cards
-    avoid the face where it is actually drawn. A face outside the crop drops.
+    (`phone_speaker_framing.face_core_mapper`: the eyes-nose-mouth core plus a
+    small margin), so cards avoid the face where it is actually drawn. On that
+    close-up the head fills most of the frame, so a card may cover hair and
+    background but never the core: those regions tolerate NO overlap
+    (``strict_kinds``), and flush top corners are tried after the usual grid
+    (``hug_corners``). A face outside the crop drops.
     """
 
     anchors: list[float] = []
@@ -245,7 +251,7 @@ def resolve_phone_card_geometry(
             )
             if face_box_to_canvas is not None:
                 face_regions = [
-                    ProtectedRegion(region.start_s, region.end_s, mapped, kind=region.kind)
+                    ProtectedRegion(region.start_s, region.end_s, mapped, kind=_FACE_CORE_KIND)
                     for region in face_regions
                     if (mapped := face_box_to_canvas(region.box)) is not None
                 ]
@@ -281,6 +287,11 @@ def resolve_phone_card_geometry(
         protected_boxes=protected_boxes,
         footprints_by_id=footprints_by_id,
         max_iou=_MAX_ARBITRATION_IOU,
+        **(
+            {"strict_kinds": frozenset({_FACE_CORE_KIND}), "hug_corners": True}
+            if face_box_to_canvas is not None
+            else {}
+        ),
     )
     resolved_by_id: dict[str, dict[str, Any]] = {str(o.get("id")): o for o in resolved}
     reason_by_id: dict[str, str] = {}

@@ -522,8 +522,9 @@ def ground_phone_reaction_beats(
     closing shot and badge stay photo-only.
 
     ``face_box_to_canvas`` (KRI-547, default ``None`` = unchanged) maps the
-    sampled faces through a face-filled speaker crop before cards are placed
-    (`phone_overlay_grounding.resolve_phone_card_geometry`).
+    sampled faces' eyes-nose-mouth core through a face-filled speaker crop
+    before cards are placed; a card may then cover hair or background, never
+    the core (`phone_overlay_grounding.resolve_phone_card_geometry`).
 
     Fails open at every stage: a broken face sampler leaves no face regions
     protected (`face_sampling == "failed"`), a bad DB row is skipped, and any

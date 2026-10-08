@@ -137,3 +137,71 @@ def test_the_kadikoy_reply_stops_overclaiming_when_the_crop_fell_back():
     assert "Doğrulayamadım" not in reply and "Kısmen" in reply
     assert done_reply.startswith(summary)
     assert "Yapıldı" in done_reply
+
+
+# --- KRI-547 follow-up: a pop-in dropped for lack of room says so ---------------------
+
+R3 = "her 'kahve' kelimesinde küçük bir fincan sesi koy"
+R4 = "'İlk durak' dediğinde kahve demleme videosunu köşede küçük göster"
+_KAHVE = {"beat_id": "kahve-sesi", "trigger": "kahve", "at_s": 5.08, "sound_label": "Glass clink"}
+
+
+def _beats_variant(placed: list, unplaced: list) -> dict:
+    return _variant(
+        _framing("face_fill", "face_in_window"),
+        phone_beat_receipt={
+            "version": 1,
+            "matcher": "phrase",
+            "face_sampling": "ok",
+            "placed": placed,
+            "unplaced": unplaced,
+            "closing": {"status": "none", "badge": "none"},
+        },
+    )
+
+
+_NO_ROOM = [{"beat_id": "ilk-durak-video", "trigger": "İlk durak", "reason": "no_safe_spot"}]
+
+
+@pytest.mark.parametrize(("placed", "status"), [([_KAHVE], "partial"), ([], "not_possible")])
+def test_the_kadikoy_card_without_room_is_told_as_that(placed, status):
+    variant = _beats_variant(placed, _NO_ROOM)
+    assert plan_facts_from_phone_variant(variant).beat_room_drops == (("İlk durak", "no_room"),)
+    with reply_language_for("tr"):
+        tr = _receipt(variant, _req(R4))
+    with reply_language_for("en"):
+        en = _receipt(variant, _req(R4))
+    assert (tr.status, tr.verification) == (status, "checked")
+    assert tr.reason == "İlk durak için yüzünü ya da altyazıları kapatmadan ekranda yer yoktu."
+    assert en.reason == (
+        "There was no room on screen for İlk durak without covering your face or the captions."
+    )
+    assert "sözlerine göre çıkan görsel yok" not in tr.reason
+
+
+def test_another_asks_dropped_card_is_not_blamed_on_the_sound_ask():
+    with reply_language_for("en"):
+        placed = _receipt(_beats_variant([_KAHVE], _NO_ROOM), _req(R3, kind="audio"))
+        nothing = _receipt(_beats_variant([], _NO_ROOM), _req(R3, kind="audio"))
+    assert placed.status == "met"
+    assert "no room" not in (nothing.reason or "")
+
+
+def test_a_pop_in_that_collided_with_another_says_so():
+    variant = _beats_variant(
+        [_KAHVE], [{"beat_id": "moda", "trigger": "Moda", "reason": "overlap"}]
+    )
+    with reply_language_for("en"):
+        receipt = _receipt(variant, _req('when I say "Moda" show my photo'))
+    assert receipt.status == "not_possible"
+    assert receipt.reason == "Moda would have landed on another pop-in at the same moment."
+
+
+def test_a_never_heard_word_is_still_never_heard():
+    variant = _beats_variant(
+        [_KAHVE], [{"beat_id": "moda", "trigger": "Moda", "reason": "never_heard"}]
+    )
+    assert plan_facts_from_phone_variant(variant).beat_room_drops == ()
+    with reply_language_for("en"):
+        receipt = _receipt(variant, _req('when I say "Moda" show my photo'))
+    assert "never heard" in receipt.reason

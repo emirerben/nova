@@ -38,7 +38,7 @@ render-ready, and the phone editor Save (`editor_speaker_framing`) keeps the cro
 or resets it when the creator picks black bars.
 
 Everything that places text or cards against the speaker's face on this canvas
-must map the face through the same crop (`face_box_mapper`, and
+must map the face through the same crop (`face_core_mapper` for cards, and
 `phone_subtitled_title.place_talking_title(position_x=...)`).
 """
 
@@ -58,7 +58,6 @@ from app.pipeline.render_geometry import (
     _dominant_face_cluster,
     _union_box,
     clamp_face_width,
-    pad_face_box,
     sample_face_regions,
 )
 
@@ -102,6 +101,18 @@ _TIMEOUT_PER_ANCHOR_S = 0.35
 _MIN_DECODED_SHARE = 0.8
 _MIN_PRESENCE = 0.6
 _MIN_FACE_SAMPLES = 3
+# KRI-547 follow-up: the part of a RAW Haar frontal-face box that holds the eyes,
+# nose and mouth -- the only part a beat/PiP card may never cover on a
+# face-filled close-up. The OpenCV frontal cascade is trained on square windows
+# framed brow-to-chin with the eyes about a third of the way down and the mouth
+# about four fifths; measured on the Kadıköy take (3 frames, 8.3-12.1 s): brows at
+# 0.27 of the box height, eyes 0.35-0.42, mouth 0.75-0.85, outer eye corners at
+# 0.22-0.26 and 0.73-0.75 of its width. The core runs from just above the brows
+# to below the lower lip, and keeps >= 0.07 box widths of cheek beyond each outer
+# eye corner; the canvas margin adds ~22 px across and ~38 px down on 1080x1920.
+FACE_CORE_X = (0.15, 0.85)
+FACE_CORE_Y = (0.20, 0.92)
+FACE_CORE_MARGIN_FRAC = 0.02
 # The speaker's face is the recurring detection's size: a detection more than
 # 1.5x its median width is a detector merge with the background, one under 0.6x
 # is a face in the background (the sampler keeps each frame's largest face, so
@@ -347,29 +358,56 @@ def decide_speaker_framing(
     )
 
 
-def face_box_mapper(
+def face_core_box(raw: NormalizedBox) -> NormalizedBox:
+    """The eyes-nose-mouth core of a RAW Haar face box, in the box's own frame.
+
+    `FACE_CORE_X` / `FACE_CORE_Y` of the detector box: see their comment for the
+    measurement. The background-merge clamp runs first (a 70%-wide "face" is a
+    detector merge, and its core would blank the whole frame)."""
+    box = clamp_face_width(raw)
+    width, height = box.width, box.height
+    return NormalizedBox(
+        box.left + FACE_CORE_X[0] * width,
+        box.top + FACE_CORE_Y[0] * height,
+        box.left + FACE_CORE_X[1] * width,
+        box.top + FACE_CORE_Y[1] * height,
+    )
+
+
+def face_core_mapper(
     *,
     display_width: float,
     display_height: float,
     canvas: _Canvas,
     position_x: float,
 ) -> Callable[[NormalizedBox], NormalizedBox | None]:
-    """A RAW source face box -> the protected face box on the face-filled canvas.
+    """A RAW source face box -> the protected face CORE on the face-filled canvas.
 
-    The detector's background-merge clamp is a source-frame judgment, so it runs
-    first; the protection padding is a canvas-frame margin, so it runs after the
-    crop maps the box (padding first would triple the side margin through the
-    zoom). ``None`` when the face is outside the window."""
+    Cards only (KRI-547 follow-up): on a face-filled close-up the speaker's head
+    fills most of the frame, so the padded protection box every other placement
+    uses leaves no corner for a PiP card. A card may cover hair, ears and
+    background, never the eyes, nose or mouth: the core (`face_core_box`) is
+    mapped through the crop and grown by `FACE_CORE_MARGIN_FRAC` of the canvas;
+    `resolve_phone_card_geometry` then allows NO overlap with it. Titles,
+    closing text and captions keep the full protection. ``None`` when the core
+    is outside the window."""
 
     def mapped(raw: NormalizedBox) -> NormalizedBox | None:
         box = source_box_to_canvas(
-            clamp_face_width(raw),
+            face_core_box(raw),
             display_width=display_width,
             display_height=display_height,
             canvas=canvas,
             position_x=position_x,
         )
-        return pad_face_box(box) if box is not None else None
+        if box is None:
+            return None
+        return NormalizedBox(
+            max(0.0, box.left - FACE_CORE_MARGIN_FRAC),
+            max(0.0, box.top - FACE_CORE_MARGIN_FRAC),
+            min(1.0, box.right + FACE_CORE_MARGIN_FRAC),
+            min(1.0, box.bottom + FACE_CORE_MARGIN_FRAC),
+        )
 
     return mapped
 
@@ -430,7 +468,11 @@ __all__ = [
     "SpeakerFraming",
     "decide_speaker_framing",
     "editor_speaker_framing",
-    "face_box_mapper",
+    "FACE_CORE_MARGIN_FRAC",
+    "FACE_CORE_X",
+    "FACE_CORE_Y",
+    "face_core_box",
+    "face_core_mapper",
     "face_fill_window",
     "sample_anchors",
     "speaker_face_boxes",

@@ -24,6 +24,7 @@ import app.services.phone_visuals as phone_visuals_mod
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_binding import BriefBinding
 from app.kria.brief_checks import build_receipts, plan_facts_from_phone_variant
+from app.pipeline.phone_subtitled_plan import _STORY_CANVAS
 from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
 from app.services.device_render import device_status
 from app.services.phone_sources import PHONE_SOURCES_FIELD
@@ -231,9 +232,20 @@ def test_beat_and_overlay_cards_avoid_the_face_on_the_crop(monkeypatch):
     [clip] = _speaker(job)
     mapper = beats.call_args.kwargs["face_box_to_canvas"]
     assert overlays.call_args.kwargs["face_box_to_canvas"] is mapper
-    # The left-third face lands mid-canvas, not at the source's left edge.
-    mapped = mapper(NormalizedBox(0.2, 0.15, 0.45, 0.6))
+    # The left-third face lands mid-canvas, not at the source's left edge, and cards
+    # protect only its eyes-nose-mouth core (titles keep the full face box).
+    raw = NormalizedBox(0.2, 0.15, 0.45, 0.6)
+    mapped = mapper(raw)
     assert mapped is not None and mapped.left < 0.5 < mapped.right
+    expected = framing_mod.face_core_mapper(
+        display_width=1920,
+        display_height=1080,
+        canvas=_STORY_CANVAS,
+        position_x=clip.transform.position_x,
+    )(raw)
+    assert (mapped.left, mapped.top, mapped.right, mapped.bottom) == pytest.approx(
+        (expected.left, expected.top, expected.right, expected.bottom), abs=1e-4
+    )
     assert clip.transform.position_x > 0
 
 
