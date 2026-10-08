@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.175.0] - 2026-10-08
+
+### Changed
+- fix(kria): preserve intent through brief and edit planning (KRI-524) (#1496) <!-- release-pr: 1496 -->
+
 ## [0.78.174.0] - 2026-10-08
 
 ### Changed
