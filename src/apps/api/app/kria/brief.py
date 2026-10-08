@@ -710,12 +710,18 @@ def route_requirements(
     current_plan: CurrentPlanShape | None,
     *,
     message: str | None = None,
+    full_replan: bool | None = None,
 ) -> Route:
-    """Deterministic scope router. See the module docstring for the rules."""
+    """Deterministic scope router. See the module docstring for the rules.
+
+    ``full_replan=False`` is a semantic extractor verdict and suppresses the
+    legacy message regex. ``None`` preserves the historical fallback for callers
+    that do not have a semantic verdict yet.
+    """
     reqs = list(new_reqs)
     if current_plan is None or not current_plan.has_render:
         return "replan"
-    if message and wants_full_replan(message):
+    if full_replan is True or (full_replan is None and message and wants_full_replan(message)):
         return "replan"
     if not reqs:
         return "editor_ops"

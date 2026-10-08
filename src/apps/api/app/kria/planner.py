@@ -1371,6 +1371,7 @@ async def _call_brief_extractor(
         user_message=inputs.agent_input.user_message,
         conversation=inputs.agent_input.conversation,
         current_brief=prior_brief,
+        require_request_scope=True,
     )
 
     def _run_agent():  # noqa: ANN202 - inferred BriefExtractionOutput
@@ -1390,6 +1391,35 @@ async def _call_brief_extractor(
         return await asyncio.to_thread(_run_agent)
     except TerminalError as exc:
         raise RuntimeError("Kria could not extract the creative brief reliably") from exc
+
+
+def _extraction_request_scope(
+    outputs: Sequence[BriefExtractionOutput],
+) -> tuple[str, str | None]:
+    """Resolve one semantic routing verdict across bounded brief batches.
+
+    The live extractor always supplies a scope.  The ``edit`` fallback preserves
+    old injected fixtures/direct callers whose output predates this contract; it
+    is unreachable through ``_call_brief_extractor`` because that call requires
+    the field at schema validation time.
+    """
+    scoped = [output for output in outputs if getattr(output, "request_scope", None) is not None]
+    if not scoped:
+        return "edit", None
+    scopes = {getattr(output, "request_scope") for output in scoped}
+    if len(scopes) != 1:
+        raise BriefUpdateBatchError("brief extractor batches disagree on request scope")
+    scope = scopes.pop()
+    if scope == "clarify":
+        clarifications = {
+            clarification.strip()
+            for output in scoped
+            if (clarification := getattr(output, "clarification", None))
+        }
+        if len(clarifications) != 1:
+            raise BriefUpdateBatchError("brief extractor clarification is ambiguous")
+        return scope, clarifications.pop()
+    return scope, None
 
 
 def _clip_understanding_wait_until() -> float:
@@ -2566,11 +2596,10 @@ async def _plan_live_turn(
     extraction_complete = False
     pre_extracted_updates: tuple[BriefUpdate, ...] = ()
     pre_extracted_retrieved_ids: list[str] = []
+    semantic_request_scope: str | None = None
     # A rendered followup only needs typed requirement extraction before routing.
     # Keep the wide Main Creator envelope for genuine replans and first drafts.
-    from app.kria.brief import wants_full_replan  # noqa: PLC0415
-
-    if extract_first and not answers_clip_question and not wants_full_replan(user_message):
+    if extract_first and not answers_clip_question:
         try:
             extraction_inputs = await _load_creator_inputs(
                 db,
@@ -2604,6 +2633,19 @@ async def _plan_live_turn(
                 )
                 if batch is not None:
                     pre_extracted_retrieved_ids.extend(batch.requirement_ids)
+            semantic_request_scope, clarification = _extraction_request_scope(extraction_outputs)
+            # A retry that cannot be distinguished from a remake must not mutate
+            # the ledger or fall through to an editor/default rebuild decision.
+            if semantic_request_scope == "clarify":
+                return PlannedKriaTurn(
+                    plan=KriaTurnPlan(
+                        mode="respond",
+                        turn_value="question",
+                        response=clarification or "What would you like me to revise?",
+                    ),
+                    manifest_hash=manifest.manifest_hash,
+                    context_hash=manifest.context_hash,
+                )
             unique_extracted = {
                 json.dumps(update.model_dump(mode="json"), sort_keys=True): update
                 for result in extraction_outputs
@@ -2637,25 +2679,26 @@ async def _plan_live_turn(
                         "missing_media_ids": pending_analysis_ids,
                     },
                 )
-            item = await _refetch_item(db, item_id)
-            target = await _load_editor_target(
-                db, thread_id=thread_id, item=item, **_state_kw(editor_state)
-            )
-            if target is None:
-                recovery = _editor_target_recovery(manifest)
-                return replace(
-                    recovery,
-                    brief_updates=pre_extracted_updates,
-                    brief_expected_version=prior_brief.version if prior_brief else 0,
-                    defer_brief=False,
+            # A semantic rebuild goes straight to main planning.  Do not load an
+            # editor target first: a missing/stale target is irrelevant and must
+            # not replace the rebuild verdict with a recovery response.
+            route = "replan"
+            if semantic_request_scope != "rebuild":
+                item = await _refetch_item(db, item_id)
+                target = await _load_editor_target(
+                    db, thread_id=thread_id, item=item, **_state_kw(editor_state)
                 )
-            shape = plan_shape_from_editor_snapshot(target.snapshot if target else None)
-            await db.rollback()
-            route = (
-                "replan"
-                if answers_clip_question
-                else route_requirements(fresh, shape, message=user_message)
-            )
+                if target is None:
+                    recovery = _editor_target_recovery(manifest)
+                    return replace(
+                        recovery,
+                        brief_updates=pre_extracted_updates,
+                        brief_expected_version=prior_brief.version if prior_brief else 0,
+                        defer_brief=False,
+                    )
+                shape = plan_shape_from_editor_snapshot(target.snapshot)
+                await db.rollback()
+                route = route_requirements(fresh, shape, message=user_message, full_replan=False)
             if route == "editor_ops":
                 editor_plan = (
                     first_editor_result[0]
@@ -2898,7 +2941,7 @@ async def _plan_live_turn(
     # Every rollback above expires loaded rows; an expired attribute read on an
     # AsyncSession raises MissingGreenlet, so re-read the item before using it.
     item = await _refetch_item(db, item_id)
-    if item.current_job_id is not None:
+    if item.current_job_id is not None and semantic_request_scope != "rebuild":
         _editor_target_miss.set(None)
         target = await _load_editor_target(
             db, thread_id=thread_id, item=item, **_state_kw(editor_state)
@@ -2912,7 +2955,16 @@ async def _plan_live_turn(
         ):
             # The route below would be a re-plan caused solely by the missing target.
             return _editor_target_recovery(manifest)
-    route = route_requirements(fresh, shape, message=user_message)
+    route = route_requirements(
+        fresh,
+        shape,
+        message=user_message,
+        full_replan=True
+        if semantic_request_scope == "rebuild"
+        else False
+        if semantic_request_scope == "edit"
+        else None,
+    )
     if (
         answers_clip_question
         or creative_copy_pending
@@ -3015,7 +3067,7 @@ async def extract_deferred_brief(
     if isinstance(inputs, PlannedKriaTurn):
         return (), None
     session_id = None
-    extracted = []
+    extraction_outputs = []
     for batch in inputs.brief_batches or (None,):
         request = inputs.agent_input.creator_request if batch is None else batch.text
         output = await _call_brief_extractor(
@@ -3027,17 +3079,25 @@ async def extract_deferred_brief(
             creator_agent_session_id=session_id,
             prior_brief=prior_brief,
         )
-        extracted.extend(output.brief_updates)
-    updates = tuple(extracted)
+        extraction_outputs.append(output)
+    scope, _clarification = _extraction_request_scope(extraction_outputs)
+    if scope == "clarify":
+        return (), None
+    updates = tuple(update for output in extraction_outputs for update in output.brief_updates)
     effective = apply_updates(prior_brief, updates, source_turn_id=None)
     fresh = new_requirements(prior_brief, effective)
     item = await _refetch_item(db, item_id)
     shape = CurrentPlanShape(has_render=False)
-    if item.current_job_id is not None:
+    if item.current_job_id is not None and scope != "rebuild":
         target = await _load_editor_target(db, thread_id=thread_id, item=item)
         shape = plan_shape_from_editor_snapshot(target.snapshot if target else None)
         await db.rollback()
-    return updates, route_requirements(fresh, shape, message=user_message)
+    return updates, route_requirements(
+        fresh,
+        shape,
+        message=user_message,
+        full_replan=True if scope == "rebuild" else False,
+    )
 
 
 __all__ = [

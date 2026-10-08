@@ -2,6 +2,16 @@
 
 Nova's editor has two distinct AI paths:
 
+For rendered, brief-enabled conversation follow-ups, the narrow brief extractor
+first classifies the latest request as `edit`, `rebuild`, or `clarify`. The live
+response must include that scope. Retry wording cannot override a semantic edit
+with a full remake; the capability router still checks which operations the
+current editor supports. A rebuild does not require an editable old snapshot,
+and ambiguity or conflicting batch scopes produces no edit or brief update.
+This also applies to deferred brief extraction. The legacy lexical router remains
+for callers without semantic extraction. Scope does not grant render approval or
+bypass ownership, revision, or Save checks.
+
 - `nova.edit.copilot` defaults to Gemini 3.1 Pro via `EDIT_COPILOT_MODEL`, with
   high thinking, a 40-second provider timeout and at most two attempts for
   schema/refusal failures. An unknown provider outcome is terminal and is never
