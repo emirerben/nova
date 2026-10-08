@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.158.0] - 2026-10-08
+
+### Changed
+- fix(kria): draw a confirmed closing text on phone Talking edits (KRI-514) (#1476) <!-- release-pr: 1476 -->
+
 ## [0.78.157.0] - 2026-10-08
 
 ### Changed
