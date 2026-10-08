@@ -2520,10 +2520,14 @@ def test_narrated_alignment_puts_each_clip_where_the_voice_describes_it(monkeypa
     for (_c, _s, end), (_c2, nxt, _e2) in zip(windows, windows[1:]):
         assert end == pytest.approx(nxt)
 
-    # The agent saw the creator's labels, visual descriptions and a locked order,
-    # and never the clip's hallucinated transcript.
+    # The agent saw the creator's labels, visual descriptions and the described sequence
+    # as ordered groups (KRI-532: unpositioned `order` intents do not lock the whole
+    # order), and never the clip's hallucinated transcript.
     (agent_input,) = seen
-    assert agent_input.order_locked is True
+    assert agent_input.order_locked is False
+    assert agent_input.pinned_first == []
+    assert agent_input.pinned_last == []
+    assert agent_input.ordered_groups == [[f"c{i}"] for i in range(7)]
     assert [c.clip_id for c in agent_input.clips] == [f"c{i}" for i in range(7)]
     assert agent_input.clips[1].creator_label == "grating the pecorino"
     assert "hand grating cheese" in agent_input.clips[1].description
@@ -2535,7 +2539,11 @@ def test_narrated_alignment_puts_each_clip_where_the_voice_describes_it(monkeypa
     (event,) = [e for e in events if e[1] == "narrated_clip_alignment"]
     assert event[0] == "narrated"
     assert event[2]["status"] == "aligned"
-    assert event[2]["order_locked"] is True
+    assert event[2]["order_locked"] is False
+    assert event[2]["pinned_first"] == []
+    assert event[2]["pinned_last"] == []
+    assert event[2]["ordered_groups"] == [[f"c{i}"] for i in range(7)]
+    assert event[2]["resorted"] is False
     assert [c["clip_id"] for c in event[2]["clips"]] == [f"c{i}" for i in range(7)]
     assert event[2]["clips"][1]["start_s"] == pytest.approx(10.07)
 
@@ -2551,6 +2559,113 @@ def test_narrated_alignment_may_reorder_when_the_brief_did_not_fix_the_order(mon
 
     assert seen[0].order_locked is False
     assert [w[0] for w in _windows(job)][:3] == ["clip_1", "clip_0", "clip_2"]
+
+
+def test_narrated_alignment_pins_first_last_and_groups_the_rest(monkeypatch):
+    """KRI-532: an unpositioned `order` intent ("the balloons") must not lock the
+    whole order: first/last positions become pins and unpositioned intents become
+    ordered groups in listed order."""
+    job, snapshot, _session, _bindings = _setup_cacio(monkeypatch)
+    intents = [
+        {
+            "op": "order",
+            "status": "resolved",
+            "attribute": "boil",
+            "position": "first",
+            "assignments": [{"media_id": "analysis-proxy-c0.mp4"}],
+        },
+        {  # unpositioned: not a pin
+            "op": "order",
+            "status": "resolved",
+            "attribute": "grate",
+            "assignments": [{"media_id": "analysis-proxy-c1.mp4"}],
+        },
+        {  # capture-time ordering is a basis order, not a pin
+            "op": "order",
+            "status": "resolved",
+            "attribute": "pepper",
+            "position": "last",
+            "order_by": "capture_time",
+            "assignments": [{"media_id": "analysis-proxy-c2.mp4"}],
+        },
+        {  # unresolved: not a pin
+            "op": "order",
+            "status": "ambiguous",
+            "attribute": "water",
+            "position": "last",
+            "assignments": [{"media_id": "analysis-proxy-c3.mp4"}],
+        },
+        {  # include is not an order
+            "op": "include",
+            "status": "resolved",
+            "attribute": "toss",
+            "position": "last",
+            "assignments": [{"media_id": "analysis-proxy-c4.mp4"}],
+        },
+        {
+            "op": "order",
+            "status": "resolved",
+            "attribute": "eat",
+            "position": "last",
+            "assignments": [{"media_id": "analysis-proxy-c6.mp4"}],
+        },
+        {
+            "op": "order",
+            "status": "resolved",
+            "attribute": "plate",
+            "position": "last",
+            "assignments": [{"media_id": "analysis-proxy-c5.mp4"}],
+        },
+    ]
+    candidates = {
+        **job.all_candidates,
+        "creator_strategy": {"resolved_clip_intents": intents},
+    }
+    seen = []
+    events = _capture_pipeline_events(monkeypatch)
+    _mock_alignment_agent(monkeypatch, [f"c{i}" for i in range(7)], _CACIO_STARTS, seen=seen)
+
+    gb._run_phone_narrated_job(str(job.id), snapshot, candidates, ownership_epoch=3)
+
+    (agent_input,) = seen
+    assert agent_input.order_locked is False
+    assert agent_input.pinned_first == ["c0"]
+    assert agent_input.pinned_last == ["c6", "c5"]
+    assert agent_input.ordered_groups == [["c1"]]
+    (event,) = [e for e in events if e[1] == "narrated_clip_alignment"]
+    assert event[2]["pinned_first"] == ["c0"]
+    assert event[2]["pinned_last"] == ["c6", "c5"]
+
+
+def test_narrated_clip_labels_return_pins_and_groups_not_a_bare_order_flag():
+    candidates = {
+        "creator_strategy": {
+            "resolved_clip_intents": [
+                {
+                    "op": "order",
+                    "status": "resolved",
+                    "attribute": "the balloons",
+                    "assignments": [{"media_id": "a.mp4"}, {"media_id": "b.mp4"}],
+                },
+                {
+                    "op": "order",
+                    "status": "resolved",
+                    "attribute": "the sunset valley",
+                    "position": "last",
+                    "assignments": [{"media_id": "bound-z"}],
+                },
+            ]
+        }
+    }
+    labels, first, last, groups = gb._narrated_creator_clip_labels(
+        candidates,
+        {"x": "u/a.mp4", "y": "u/b.mp4", "z": "u/zzz.mp4"},
+        lambda clip_id: {"z": "bound-z"}.get(clip_id),
+    )
+    assert labels == {"x": "the balloons", "y": "the balloons", "z": "the sunset valley"}
+    assert first == []
+    assert last == ["z"]
+    assert groups == [["x", "y"]]
 
 
 def test_narrated_alignment_is_locked_by_a_filming_guide_order(monkeypatch):
@@ -2634,7 +2749,14 @@ def test_narrated_alignment_skips_without_clip_metadata(monkeypatch):
     assert calls == []
     assert job.status == "awaiting_device"
     (event,) = [e for e in events if e[1] == "narrated_clip_alignment"]
-    assert event[2] == {"status": "fallback", "reason": "missing_clip_meta", "order_locked": True}
+    assert event[2] == {
+        "status": "fallback",
+        "reason": "missing_clip_meta",
+        "order_locked": False,
+        "pinned_first": [],
+        "pinned_last": [],
+        "ordered_groups": [[f"c{i}"] for i in range(7)],
+    }
 
 
 def test_narrated_alignment_flag_off_never_calls_the_agent(monkeypatch):

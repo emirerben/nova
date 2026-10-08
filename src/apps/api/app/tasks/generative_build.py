@@ -8154,8 +8154,10 @@ def _run_phone_narrated_job(
                 # failure returns None and the legacy split below runs unchanged.
                 aligned = None
                 if settings.narrated_clip_alignment_enabled:
-                    creator_labels, brief_orders_clips = _narrated_creator_clip_labels(
-                        all_candidates, clip_id_to_gcs, _media_id_for_clip
+                    creator_labels, pinned_first, pinned_last, ordered_groups = (
+                        _narrated_creator_clip_labels(
+                            all_candidates, clip_id_to_gcs, _media_id_for_clip
+                        )
                     )
                     aligned = _narrated_clip_alignment_steps(
                         transcript=transcript,
@@ -8163,7 +8165,10 @@ def _run_phone_narrated_job(
                         clip_metas=list(ingest.get("clip_metas") or []),
                         labels_by_clip=creator_labels,
                         creator_request=str(all_candidates.get("creator_request") or ""),
-                        order_locked=bool(guide_narrative_order) or brief_orders_clips,
+                        order_locked=bool(guide_narrative_order),
+                        pinned_first=pinned_first,
+                        pinned_last=pinned_last,
+                        ordered_groups=ordered_groups,
                         timeline_end_s=timeline_end,
                         job_id=job_id,
                     )
@@ -22936,13 +22941,16 @@ def _narrated_creator_clip_labels(
     all_candidates: Mapping[str, Any],
     clip_id_to_gcs: Mapping[str, str],
     media_id_for_clip: Callable[[str], str | None],
-) -> tuple[dict[str, str], bool]:
-    """Creator brief labels per clip id, and whether the brief ordered the shots.
+) -> tuple[dict[str, str], list[str], list[str], list[list[str]]]:
+    """Creator brief labels per clip id, plus the order the creator described.
 
     A resolved clip intent names a shot ("grating the pecorino") and the media
     it matched; ``media_id`` is the basename of the clip's proxy path (or the
-    phone source binding id). Any ``op == "order"`` intent means the creator
-    fixed the clip order.
+    phone source binding id). Returns ``(labels, pinned_first, pinned_last,
+    ordered_groups)`` from the resolved ``op == "order"`` intents without ``order_by``:
+    ``first`` / ``last`` intents are pins; intents with no position are a described
+    SEQUENCE, one group of clip ids each in listed order. None of it locks the whole
+    order, so the narration may still place every other clip (KRI-532).
     """
     strategy = all_candidates.get("creator_strategy")
     strategy = strategy if isinstance(strategy, Mapping) else {}
@@ -22951,10 +22959,6 @@ def _narrated_creator_clip_labels(
         for intent in (strategy.get("resolved_clip_intents") or [])
         if isinstance(intent, Mapping)
     ]
-    ordered = any(
-        isinstance(intent, Mapping) and intent.get("op") == "order"
-        for intent in [*resolved, *(strategy.get("clip_intents") or [])]
-    )
     labels_by_media: dict[str, list[str]] = {}
     for intent in resolved:
         attribute = " ".join(str(intent.get("attribute") or "").split())
@@ -22965,6 +22969,7 @@ def _narrated_creator_clip_labels(
             if media_id and attribute not in labels_by_media.setdefault(str(media_id), []):
                 labels_by_media[str(media_id)].append(attribute)
     labels: dict[str, str] = {}
+    clip_by_media: dict[str, str] = {}
     for clip_id, gcs_path in clip_id_to_gcs.items():
         keys = [os.path.basename(str(gcs_path))]
         try:
@@ -22980,7 +22985,38 @@ def _narrated_creator_clip_labels(
                     found.append(label)
         if found:
             labels[clip_id] = "; ".join(found)[:240]
-    return labels, ordered
+        for key in keys:
+            clip_by_media.setdefault(key, clip_id)
+
+    # Same seating as `clip_order_sequence.apply_sequence`: walk the order intents in
+    # listed order; a clip named by two intents belongs to the first one.
+    pinned: dict[str, list[str]] = {"first": [], "last": []}
+    groups: list[list[str]] = []
+    claimed: set[str] = set()
+    for intent in resolved:
+        position = intent.get("position")
+        if (
+            intent.get("op") != "order"
+            or position not in (None, "first", "last")
+            or intent.get("order_by")
+            or intent.get("placeholder")
+            or intent.get("status") not in (None, "resolved")
+        ):
+            continue
+        members: list[str] = []
+        for assignment in intent.get("assignments") or []:
+            media_id = assignment.get("media_id") if isinstance(assignment, Mapping) else None
+            clip_id = clip_by_media.get(str(media_id)) if media_id else None
+            if clip_id and clip_id not in claimed and clip_id not in members:
+                members.append(clip_id)
+        claimed.update(members)
+        if not members:
+            continue
+        if position is None:
+            groups.append(members)
+        else:
+            pinned[position].extend(members)
+    return labels, pinned["first"], pinned["last"], groups
 
 
 def _narrated_clip_alignment_steps(
@@ -22993,21 +23029,44 @@ def _narrated_clip_alignment_steps(
     order_locked: bool,
     timeline_end_s: float,
     job_id: str,
+    pinned_first: list[str] | None = None,
+    pinned_last: list[str] | None = None,
+    ordered_groups: list[list[str]] | None = None,
 ) -> tuple[list[str], list[Any]] | None:
     """Ask the alignment agent where each clip should start, failing open.
 
     Returns ``(clip_ids_in_screen_order, step_timings)`` or ``None`` when the
     caller must use the legacy equal-bucket split (any precondition miss, agent
     failure, invalid placement or timeline too short). Every outcome is recorded
-    on the job's pipeline trace; this function never raises.
+    on the job's pipeline trace; this function never raises. ``order_locked`` fixes
+    the whole order (filming guide); ``pinned_first`` / ``pinned_last`` fix only
+    how the video opens / closes (a creator's "end on X"); ``ordered_groups`` is the
+    creator's described sequence. Clips not in ``clip_ids`` are dropped from both.
     """
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    in_play = set(clip_ids)
+    pinned_first = [c for c in (pinned_first or []) if c in in_play]
+    pinned_last = [c for c in (pinned_last or []) if c in in_play and c not in pinned_first]
+    groups = [[c for c in group if c in in_play] for group in (ordered_groups or [])]
+    groups = [g for g in groups if g and not set(g) & {*pinned_first, *pinned_last}]
+    pins = {
+        "pinned_first": pinned_first,
+        "pinned_last": pinned_last,
+        "ordered_groups": groups,
+    }
 
     def _fallback(reason: str, **extra: Any) -> None:
         record_pipeline_event(
             "narrated",
             "narrated_clip_alignment",
-            {"status": "fallback", "reason": reason, "order_locked": order_locked, **extra},
+            {
+                "status": "fallback",
+                "reason": reason,
+                "order_locked": order_locked,
+                **pins,
+                **extra,
+            },
         )
         log.warning("narrated_clip_alignment_fallback", job_id=job_id, reason=reason, **extra)
         return None
@@ -23048,6 +23107,9 @@ def _narrated_clip_alignment_steps(
                 ],
                 creator_request=creator_request or "",
                 order_locked=order_locked,
+                pinned_first=pinned_first,
+                pinned_last=pinned_last,
+                ordered_groups=groups,
                 language=str(getattr(transcript, "language", "") or ""),
             ),
             ctx=RunContext(job_id=job_id),
@@ -23069,6 +23131,8 @@ def _narrated_clip_alignment_steps(
             {
                 "status": "aligned",
                 "order_locked": order_locked,
+                **pins,
+                "resorted": output.resorted,
                 "prompt_version": NarratedClipAlignmentAgent.spec.prompt_version,
                 "clips": [
                     {
