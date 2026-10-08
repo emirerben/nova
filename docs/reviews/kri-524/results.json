@@ -1,0 +1,85 @@
+{
+  "base": "141a59c86",
+  "live": {
+    "runs": 0,
+    "spent_usd": 0,
+    "total_cap_usd": 5,
+    "per_run_cap_usd": 2
+  },
+  "offline_replay": {
+    "command": ".venv/bin/python -m tests.evals.prompt_coverage --replay",
+    "suites": [
+      "tests/evals/request_following",
+      "tests/evals/test_edit_copilot_evals.py",
+      "tests/evals/test_main_creator_evals.py",
+      "tests/evals/test_clip_intent_planner_evals.py",
+      "tests/incidents"
+    ],
+    "passed": 682,
+    "xfailed": 2,
+    "exit_code": 0,
+    "library_cases_executed": 0
+  },
+  "kria_gate": {
+    "command": "make verify-kria",
+    "passed": 1491,
+    "skipped": 6,
+    "exit_code": 0,
+    "database": "isolated local test database"
+  },
+  "focused_and_render_contracts": {
+    "passed": 271,
+    "exit_code": 0,
+    "scope": [
+      "prompt corpus",
+      "creative brief",
+      "local PNG anchoring",
+      "Skia overlay fixtures",
+      "device export contract",
+      "editor compiler/save validation"
+    ]
+  },
+  "preship": {
+    "exit_code": 0,
+    "python_files": 10,
+    "web_typecheck": "not applicable: no web changes",
+    "release_metadata": "unchanged by feature"
+  },
+  "verification_limits": [
+    "All252 library inputs unexecuted; replay is not live-model reliability",
+    "Original graded-title conversation not found",
+    "Synthetic pixels do not prove original full-video export",
+    "Audio-level contract is not audible continuity"
+  ],
+  "review": {
+    "status": "clean after corrections",
+    "reviewers": [
+      "parent critical pass",
+      "independent evaluation review",
+      "read-only plan/coverage audit"
+    ],
+    "fixed": [
+      "extra source occurrences accepted",
+      "generated-title identity lost",
+      "incomplete title timing treated as complete",
+      "unknown output duration treated as complete",
+      "playback speed lost across turns"
+    ],
+    "scope": "one runtime receipt module; internal evaluations; corpus and documentation"
+  },
+  "capability_gaps": {
+    "related_linear": [
+      "KRI-519",
+      "KRI-514",
+      "KRI-523",
+      "KRI-522"
+    ],
+    "new_tickets": 0,
+    "deduplication": "existing tickets linked to KRI-524; KRI-514 merged upstream during task"
+  },
+  "release": {
+    "merged": false,
+    "deployed": false,
+    "approval": "required"
+  }
+}

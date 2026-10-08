@@ -117,6 +117,103 @@ def title_exact(
     return "unmet", f"title is {title.text!r}, wanted {literal!r}"
 
 
+def title_persistent(
+    req: Requirement, plan: FinalPlan, _f: Footage, _p: FinalPlan | None
+) -> CheckResult:
+    """Require one exact title bar to cover the complete output duration."""
+    titles = [text for text in plan.texts if text.role == "title"]
+    if not titles:
+        return "unmet", "no title in the edit"
+    literal = req.params.get("literal")
+    title_ids = req.params.get("title_ids")
+    if title_ids:
+        wanted_ids = {str(value) for value in title_ids}
+        titles = [title for title in titles if title.id in wanted_ids]
+        if len(titles) != len(wanted_ids):
+            return "unmet", "one or more expected title bars are missing"
+    if plan.duration_s <= 0:
+        return "unmet", "output duration is unverified"
+    if not plan.timing_verified:
+        return "unmet", "output duration is unverified: timeline contains unresolved timing"
+    bad = []
+    for title in titles:
+        if literal is not None and nfc(title.text) != nfc(str(literal)):
+            bad.append(f"{title.id}: text is {title.text!r}")
+        elif title.start_s > 1e-9 or title.end_s + 1e-9 < plan.duration_s:
+            bad.append(f"{title.id}: range {title.start_s:.2f}-{title.end_s:.2f}s")
+    return (
+        ("unmet", "; ".join(bad))
+        if bad
+        else ("met", "all title bars persist through the full output")
+    )
+
+
+def source_preserved(
+    req: Requirement, plan: FinalPlan, _f: Footage, _p: FinalPlan | None
+) -> CheckResult:
+    """Compare compiled source ranges with fixture-owned expected values."""
+    expected = req.params.get("clips") or req.params.get("source_ranges") or []
+    if not isinstance(expected, (dict, list)) or not expected:
+        return "unmet", "no independent source ranges supplied"
+    actual = list(plan.clips)
+    bad: list[str] = []
+    entries = (
+        list(expected.items())
+        if isinstance(expected, dict)
+        else [(str(row.get("clip_id")), row) for row in expected if isinstance(row, dict)]
+    )
+    if len(entries) != len(expected):
+        return "unmet", "invalid independent source ranges supplied"
+    if len(actual) != len(entries):
+        return "unmet", f"source occurrence count {len(actual)} != expected {len(entries)}"
+    for clip_id, wanted in entries:
+        match_index = next(
+            (index for index, clip in enumerate(actual) if clip.clip_id == str(clip_id)), None
+        )
+        clip = actual.pop(match_index) if match_index is not None else None
+        if clip is None:
+            bad.append(f"{clip_id}: missing")
+            continue
+        if not isinstance(wanted, dict):
+            bad.append(f"{clip_id}: invalid expected range")
+            continue
+        start, end = clip.source_start_s, clip.source_end_s
+        expected_start = wanted.get("source_start_s", wanted.get("start_s"))
+        expected_end = wanted.get("source_end_s", wanted.get("end_s"))
+        if (
+            start is None
+            or end is None
+            or expected_start is None
+            or expected_end is None
+            or abs(start - float(expected_start)) > 1e-9
+            or abs(end - float(expected_end)) > 1e-9
+        ):
+            bad.append(f"{clip_id}: {(start, end)} != {(expected_start, expected_end)}")
+    if bad:
+        return "unmet", "; ".join(bad)
+    return "met", f"{len(entries)} source ranges preserved"
+
+
+def text_geometry(
+    req: Requirement, plan: FinalPlan, _f: Footage, _p: FinalPlan | None
+) -> CheckResult:
+    """Check compiled placement fields against fixture-owned expected geometry."""
+    expected = req.params.get("texts") or {}
+    if not isinstance(expected, dict) or not expected:
+        return "unmet", "no independent text geometry supplied"
+    actual = {text.id: text for text in plan.texts}
+    bad: list[str] = []
+    for text_id, wanted in expected.items():
+        text = actual.get(str(text_id))
+        if text is None:
+            bad.append(f"{text_id}: missing")
+            continue
+        for field in ("position", "alignment", "x_frac", "y_frac"):
+            if field in wanted and getattr(text, field) != wanted[field]:
+                bad.append(f"{text_id}.{field}: {getattr(text, field)!r} != {wanted[field]!r}")
+    return ("unmet", "; ".join(bad)) if bad else ("met", f"{len(expected)} text geometries match")
+
+
 def text_contains(
     req: Requirement, plan: FinalPlan, _f: Footage, _p: FinalPlan | None
 ) -> CheckResult:
@@ -545,6 +642,9 @@ def speech_excerpts(
 CHECKERS: dict[str, Checker] = {
     "speech_excerpts": speech_excerpts,
     "title_exact": title_exact,
+    "title_persistent": title_persistent,
+    "source_preserved": source_preserved,
+    "text_geometry": text_geometry,
     "text_contains": text_contains,
     "label_coverage": label_coverage,
     "label_exact": label_exact,

@@ -28,6 +28,7 @@ from .models import (
     FinalPlan,
     Footage,
     ObservedLiveBudget,
+    PlanClip,
     PlanText,
     RFFixture,
     RolloutGateResult,
@@ -152,24 +153,96 @@ def _plan_with_texts(plan: FinalPlan, elements: list[dict[str, Any]]) -> FinalPl
         if element.get("removed"):
             continue
         known = roles.get(str(element.get("id")))
+        compiled_role = element.get("role")
+        projected_role = (
+            "title"
+            if compiled_role in {"title", "generative_intro"}
+            else "label"
+            if compiled_role in {"label", "generative_sequence"}
+            else "other"
+        )
         texts.append(
             PlanText(
                 id=str(element.get("id")),
-                role=(
-                    known.role
-                    if known
-                    else element.get("role")
-                    if element.get("role") in {"title", "label", "other"}
-                    else "other"
-                ),
+                role=(known.role if known else projected_role),
                 text=str(element.get("text") or ""),
                 start_s=float(element.get("start_s") or 0.0),
                 end_s=float(element.get("end_s") or 0.0),
                 font_family=element.get("font_family"),
+                position=element.get("position"),
+                alignment=element.get("alignment"),
+                x_frac=(float(element["x_frac"]) if element.get("x_frac") is not None else None),
+                y_frac=(float(element["y_frac"]) if element.get("y_frac") is not None else None),
+                source_start_s=(
+                    float(element["source_start_s"])
+                    if element.get("source_start_s") is not None
+                    else None
+                ),
+                source_end_s=(
+                    float(element["source_end_s"])
+                    if element.get("source_end_s") is not None
+                    else None
+                ),
                 clip_id=known.clip_id if known else None,
             )
         )
     return plan.model_copy(update={"texts": texts})
+
+
+def _plan_with_timeline_slots(plan: FinalPlan, slots: list[Any]) -> FinalPlan:
+    """Project the compiler's output timeline, including source-clock ranges.
+
+    ``expected_outcome`` is intentionally not consulted here.  A cassette's compiled
+    rows are the only source for the observed projection.
+    """
+    rows = [slot.model_dump(mode="json") if hasattr(slot, "model_dump") else slot for slot in slots]
+    clips: list[PlanClip] = []
+    cursor = 0.0
+    # A projected subset must not erase an earlier unresolved active slot.
+    timing_verified = plan.timing_verified
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict) or row.get("removed"):
+            continue
+        duration = float(row.get("duration_s") or 0.0)
+        try:
+            rate = float(row.get("playback_rate") or 1.0)
+        except (TypeError, ValueError):
+            rate = 0.0
+        start = row.get("output_start_s")
+        end = row.get("output_end_s")
+        start_s = float(start) if start is not None else cursor
+        if end is None:
+            if duration <= 0:
+                # Beat-sized or otherwise unresolved rows carry no factual output
+                # window in a TimelineSlotEdit; do not manufacture a zero-length clip.
+                timing_verified = False
+                continue
+            if rate <= 0:
+                timing_verified = False
+                continue
+            end_s = start_s + duration / rate
+        else:
+            end_s = float(end)
+        source_start = row.get("source_start_s", row.get("in_s"))
+        # TimelineSlotEdit has no source_end_s.  Do not infer it from output duration:
+        # playback_rate and missing source evidence make that assumption unsafe.
+        source_end = row.get("source_end_s")
+        clip_id = row.get("media_id") or row.get("slot_id") or row.get("clip_id") or f"slot-{index}"
+        clips.append(
+            PlanClip(
+                clip_id=str(clip_id),
+                start_s=start_s,
+                end_s=end_s,
+                source_start_s=float(source_start) if source_start is not None else None,
+                source_end_s=float(source_end) if source_end is not None else None,
+                source_duration_s=duration if duration > 0 else None,
+                playback_rate=rate if duration > 0 else None,
+            )
+        )
+        cursor = end_s
+    return plan.model_copy(
+        update={"clips": clips, "total_duration_s": cursor, "timing_verified": timing_verified}
+    )
 
 
 def replay_v1_copilot(
@@ -216,7 +289,7 @@ def replay_v1_copilot(
     elements = compiled.payload.text_elements
     plan_after = _plan_with_texts(plan_before, elements) if elements is not None else plan_before
     if compiled.payload.timeline_slots is not None:
-        notes.append("timeline_slots changed but are not projected by this harness")
+        plan_after = _plan_with_timeline_slots(plan_after, compiled.payload.timeline_slots)
     return plan_after, f"{_applied_summary(changes)}. Everything else is unchanged.", notes
 
 
@@ -275,6 +348,24 @@ def replay_v2_editor(
             {**seed_rows.get(text.id, {}), **text.model_dump(exclude_none=True)}
             for text in plan_before.texts
         ]
+    if plan_before.clips:
+        seed_slots = {str(row.get("media_id")): row for row in snapshot.get("slots") or []}
+        snapshot["slots"] = [
+            {
+                **seed_slots.get(clip.clip_id, {}),
+                "media_id": clip.clip_id,
+                "output_start_s": clip.start_s,
+                "output_end_s": clip.end_s,
+                "in_s": clip.source_start_s,
+                "duration_s": clip.source_duration_s
+                if clip.source_duration_s is not None
+                else clip.duration_s * (clip.playback_rate or 1.0),
+                **({"playback_rate": clip.playback_rate} if clip.playback_rate is not None else {}),
+                **({"source_end_s": clip.source_end_s} if clip.source_end_s is not None else {}),
+            }
+            for clip in plan_before.clips
+        ]
+        snapshot["total_duration_s"] = plan_before.duration_s
     agent_input = EditCopilotInput.model_validate(
         {
             "utterance": payload.get("utterance") or turn.user_message,
@@ -299,8 +390,13 @@ def replay_v2_editor(
     )
     if not ops:
         snapshot_plan = _plan_with_texts(
-            FinalPlan(), list(agent_input.variant_snapshot.get("text_bars") or [])
+            FinalPlan(total_duration_s=agent_input.variant_snapshot.get("total_duration_s")),
+            list(agent_input.variant_snapshot.get("text_bars") or []),
         )
+        if agent_input.variant_snapshot.get("slots"):
+            snapshot_plan = _plan_with_timeline_slots(
+                snapshot_plan, agent_input.variant_snapshot["slots"]
+            )
         return (
             (plan_before if (plan_before.clips or plan_before.texts) else snapshot_plan),
             reply,
@@ -316,8 +412,13 @@ def replay_v2_editor(
     registered = KRIA_TOOLS.get(intent.tool_name, intent.tool_version)
     operations = registered.arguments_model.model_validate(intent.arguments).operations
     snapshot_plan = _plan_with_texts(
-        FinalPlan(), list(agent_input.variant_snapshot.get("text_bars") or [])
+        FinalPlan(total_duration_s=agent_input.variant_snapshot.get("total_duration_s")),
+        list(agent_input.variant_snapshot.get("text_bars") or []),
     )
+    if agent_input.variant_snapshot.get("slots"):
+        snapshot_plan = _plan_with_timeline_slots(
+            snapshot_plan, agent_input.variant_snapshot["slots"]
+        )
     source_plan = plan_before if (plan_before.clips or plan_before.texts) else snapshot_plan
     job, variant = build_synthetic_variant_and_job(agent_input.variant_snapshot, operations)
     try:
@@ -329,7 +430,7 @@ def replay_v2_editor(
     elements = compiled.payload.text_elements
     plan_after = _plan_with_texts(source_plan, elements) if elements is not None else source_plan
     if compiled.payload.timeline_slots is not None:
-        notes.append("timeline slots compiled but cannot be projected into FinalPlan")
+        plan_after = _plan_with_timeline_slots(plan_after, compiled.payload.timeline_slots)
     return (
         plan_after,
         f"{_applied_summary(list(compiled.changes))}. Everything else is unchanged.",
