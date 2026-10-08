@@ -688,7 +688,13 @@ def op_replace_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
     if not isinstance(sequence_source_id, str) or not sequence_source_id:
         sequence_source_id = source_id
     existing_ids = {str(row.get("id")) for row in state.text if row is not source}
-    child_ids = [f"{source_id}::sequence-{index + 1}" for index in range(len(clean_segments))]
+    if len(clean_segments) == 1 and "patch" not in op:
+        raise KriaEditorOpError("One unchanged segment does not split the text")
+    child_ids = (
+        [source_id]
+        if len(clean_segments) == 1
+        else [f"{source_id}::sequence-{index + 1}" for index in range(len(clean_segments))]
+    )
     if len(set(child_ids)) != len(child_ids) or existing_ids.intersection(child_ids):
         raise KriaEditorOpError("Those sequence text ids already exist")
     duration = end - start
@@ -701,8 +707,9 @@ def op_replace_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
         row["id"] = child_ids[index]
         child_params = row.get("source_params")
         child_params = copy.deepcopy(child_params) if isinstance(child_params, dict) else {}
-        child_params["sequence_source_id"] = sequence_source_id
-        row["source_params"] = child_params
+        if len(clean_segments) > 1:
+            child_params["sequence_source_id"] = sequence_source_id
+            row["source_params"] = child_params
         row["text"] = segment
         row["start_s"] = round(start + duration * index / len(clean_segments), 6)
         row["end_s"] = round(start + duration * (index + 1) / len(clean_segments), 6)
@@ -719,7 +726,11 @@ def op_replace_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
     position = next(index for index, row in enumerate(state.text) if row is source)
     state.text[position : position + 1] = replacements
     state.changed.add("text")
-    state.summary = f"Split one text into {_plural(len(replacements), 'segment')}"
+    state.summary = (
+        "Update text style"
+        if len(replacements) == 1
+        else f"Split one text into {_plural(len(replacements), 'segment')}"
+    )
 
 
 def _merge_phases(row: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:

@@ -2,8 +2,16 @@
 
 Nova's editor has two distinct AI paths:
 
-- `nova.edit.copilot` uses `EDIT_COPILOT_MODEL` with low thinking and a 20-second
-  request timeout for responsive chat-to-operation conversion.
+- `nova.edit.copilot` defaults to Gemini 3.1 Pro via `EDIT_COPILOT_MODEL`, with
+  high thinking, a 40-second provider timeout and at most two attempts for
+  schema/refusal failures. An unknown provider outcome is terminal and is never
+  retried. The editor carries compatible accumulated brief constraints through
+  follow-up edits; its negotiated operation capabilities remain authoritative.
+  KRI-524 replay found Flash dropped fade constraints or chose a whole-title
+  typewriter effect; Pro produced the complete word sequence. This trades higher
+  latency and cost for constraint composition (about 21–23 seconds in two live
+  checks, not a fleet latency estimate). The override remains independently
+  reversible, and existing environment overrides must be checked at deployment.
 - `nova.edit.director` uses `EDIT_DIRECTOR_MODEL` with high thinking and a
   single 30-second attempt for proactive editorial review. A timeout, rate
   limit, refusal, unavailable model, or schema failure ends that explicit

@@ -51,7 +51,6 @@ def _change(*, expected_version: int, target: str = "r6") -> dict:
 @pytest.mark.parametrize(
     "updates",
     [
-        [_change(expected_version=2)],
         [_change(expected_version=3, target="missing")],
         [_change(expected_version=3), _change(expected_version=3)],
     ],
@@ -69,7 +68,7 @@ def test_context_validation_is_schema_retryable() -> None:
     client = MockModelClient()
     client.queue(
         BriefExtractorAgent.spec.model,
-        {"brief_updates": [_change(expected_version=2)]},
+        {"brief_updates": [_change(expected_version=3, target="missing")]},
         {"brief_updates": [_change(expected_version=3)]},
     )
     output = BriefExtractorAgent(client).run(
@@ -83,16 +82,16 @@ def test_context_validation_is_schema_retryable() -> None:
     )
     assert output.brief_updates[0].expected_version == 3
     assert len(client.invocations) == 2
-    assert "exact current brief version" in client.invocations[1]["prompt"]
+    assert "target requirement is missing or superseded" in client.invocations[1]["prompt"]
 
 
 def test_context_validation_exhaustion_fails_closed() -> None:
     client = MockModelClient()
     client.queue(
         BriefExtractorAgent.spec.model,
-        {"brief_updates": [_change(expected_version=2)]},
-        {"brief_updates": [_change(expected_version=2)]},
-        {"brief_updates": [_change(expected_version=2)]},
+        {"brief_updates": [_change(expected_version=3, target="missing")]},
+        {"brief_updates": [_change(expected_version=3, target="missing")]},
+        {"brief_updates": [_change(expected_version=3, target="missing")]},
     )
     with pytest.raises(TerminalSchemaError):
         BriefExtractorAgent(client).run(_input())

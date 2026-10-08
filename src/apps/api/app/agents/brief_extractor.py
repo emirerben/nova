@@ -21,7 +21,7 @@ from app.kria.brief import (
 )
 from app.pipeline.prompt_loader import load_prompt
 
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-08-v3"
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-08-v4"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
@@ -48,6 +48,8 @@ _NARROW_BRIEF_SECTION = (
         "yourself in `target_duration_s`\nis never the creator's.",
         "When the creator\nstates no length, emit NO timing requirement.",
     )
+    .replace(" and `expected_version`", "")
+    .replace("`target_requirement_id`, and\n`expected_version`", "`target_requirement_id`")
 )
 
 
@@ -84,7 +86,20 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
             data = json.loads(raw_text)
             if not isinstance(data, dict) or set(data) != {"brief_updates"}:
                 raise ValueError("response must contain only brief_updates")
-            updates = parse_brief_updates(data["brief_updates"])
+            raw_updates = data["brief_updates"]
+            if "current_brief" in input.model_fields_set and isinstance(raw_updates, list):
+                # The model owns semantic targets/content, not concurrency tokens.
+                # Bind to the immutable snapshot supplied BEFORE inference. Never
+                # read/rebind to a newer ledger here: apply_updates and the final
+                # persistence CAS must still reject genuinely stale work.
+                version = input.current_brief.version if input.current_brief else 0
+                raw_updates = [
+                    {**update, "expected_version": version}
+                    if isinstance(update, dict) and update.get("operation") in {"change", "remove"}
+                    else update
+                    for update in raw_updates
+                ]
+            updates = parse_brief_updates(raw_updates)
             # Keep old direct callers compatible: only planner-supplied context
             # enables ledger validation.  The planner always supplies the field,
             # including an empty brief, so non-additive updates fail closed.
