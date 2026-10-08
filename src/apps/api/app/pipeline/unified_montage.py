@@ -54,11 +54,10 @@ from app.kria.brief_route import (
     wants_filming_time_text,
     wants_hour_only_text,
 )
-from app.pipeline.pinned_text import resolve_pin_windows
+from app.pipeline.pinned_text import pins_from_strategy, resolve_pin_windows
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.edit_proposal import (
     CREATOR_SELECTED_ORIENTATION_REASON,
-    MAX_CREATOR_PINNED_TEXTS,
     MAX_PROPOSAL_DURATION_S,
     ClipLabel,
     EditProposalSnapshot,
@@ -1510,19 +1509,8 @@ def _fit_typography(
 
 
 def _pinned_texts(strategy: Mapping[str, Any]) -> list[PinnedText]:
-    """KRI-523: the creator's whole-video corner text, as confirmed on the strategy."""
-    pins: list[PinnedText] = []
-    for raw in strategy.get("pinned_texts") or []:
-        if not isinstance(raw, Mapping):
-            continue
-        try:
-            # model_validate (not a field-by-field rebuild) so KRI-525's range fields survive.
-            pins.append(PinnedText.model_validate({**raw, "text": _nfc(raw.get("text"))}))
-        except ValidationError:
-            continue
-    # Defence in depth: the capability check refuses an over-limit ask with a question, so
-    # this only trims a strategy stored before that check existed.
-    return [pin for pin in pins if pin.fits_a_corner][:MAX_CREATOR_PINNED_TEXTS]
+    """KRI-523: the creator's corner text, as confirmed on the strategy."""
+    return pins_from_strategy(strategy)
 
 
 def _fit_pins(

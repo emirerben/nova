@@ -555,6 +555,8 @@ def plan_facts_from_speech_montage(record: Mapping[str, Any] | None) -> PlanFact
         speech_sections=sections,
         speech_dropped_quotes=dropped,
         ordering_basis=str(basis) if basis else None,
+        # KRI-527: corner text the writer actually drew (a pin with no window is not claimed).
+        texts=tuple(_pinned_text_values(record.get("pinned_texts"))),
         rendered_output=True,
     )
 

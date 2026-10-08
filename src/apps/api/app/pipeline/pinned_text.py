@@ -14,14 +14,16 @@ left/right aligned at the margin; centre pins are centred.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Sequence
+import unicodedata
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 import structlog
+from pydantic import ValidationError
 
 from app.agents._schemas.text_element import TextElement
-from app.schemas.edit_proposal import PinnedText
+from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS, PinnedText
 
 log = structlog.get_logger()
 
@@ -37,6 +39,27 @@ LABEL_Y_CLEAR_OF_BOTTOM_PIN = 0.70
 # A ranged pin shorter than this after clamping is not worth a layer (matches the editor's
 # minimum text bar).
 MIN_PIN_WINDOW_S = 0.2
+
+
+def pins_from_strategy(strategy: Mapping[str, Any] | None) -> list[PinnedText]:
+    """The creator's corner text as confirmed on the strategy dict (every phone writer's source).
+
+    ``model_validate`` (not a field-by-field rebuild) so the range fields survive. A pin that
+    does not validate is skipped, and the limits are re-applied as defence in depth: the
+    capability check refuses an over-limit ask with a question, so this only trims a strategy
+    stored before that check existed.
+    """
+
+    pins: list[PinnedText] = []
+    for raw in (strategy or {}).get("pinned_texts") or []:
+        if not isinstance(raw, Mapping):
+            continue
+        text = unicodedata.normalize("NFC", str(raw.get("text") or "")).strip()
+        try:
+            pins.append(PinnedText.model_validate({**raw, "text": text}))
+        except ValidationError:
+            continue
+    return [pin for pin in pins if pin.fits_a_corner][:MAX_CREATOR_PINNED_TEXTS]
 
 
 @dataclass(frozen=True)

@@ -181,9 +181,12 @@ from app.pipeline.phone_recipe_shared import (
 from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from app.agents._schemas.text_element import TextElement
     from app.pipeline.phone_captions import PhoneCaptionLook
     from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes
+    from app.schemas.edit_proposal import PinnedText
 
 # Only text layers (captions and the opening title) ask for these in a
 # narrated recipe. `authoredText` is added by the `EditRecipeV2` validator for
@@ -359,7 +362,11 @@ def narrated_title_text_elements(
 
 
 def _compile_title_layers(
-    elements: list[TextElement], *, canvas: Canvas, timeline_duration_s: float
+    elements: list[TextElement],
+    *,
+    canvas: Canvas,
+    timeline_duration_s: float,
+    first_index: int = 0,
 ) -> list[Any]:
     from app.pipeline.generative_overlays import build_overlays_from_text_elements
     from app.pipeline.portable_text_layout import compile_text_overlay
@@ -371,14 +378,64 @@ def _compile_title_layers(
         return [
             compile_text_overlay(
                 overlay,
-                layer_id=f"{TITLE_LAYER_PREFIX}{index}",
+                layer_id=f"{TITLE_LAYER_PREFIX}{first_index + index}",
                 canvas=canvas,
-                dissolve_seed=101 + index * 37,
+                dissolve_seed=101 + (first_index + index) * 37,
             )[0]
             for index, overlay in enumerate(overlays)
         ]
     except Exception as exc:  # noqa: BLE001 - untrusted title text
         raise UnsupportedPhonePlan(f"unable to compile the title: {exc}") from exc
+
+
+def with_pinned_text_layers(
+    recipe: EditRecipeV2,
+    pins: Sequence[PinnedText] | None,
+    *,
+    font_family: str | None = None,
+    text_color: str | None = None,
+) -> tuple[EditRecipeV2, list[dict]]:
+    """``recipe`` plus the creator's pinned corner text (KRI-523/525/527), and its rows.
+
+    The layers use the ``title-`` id prefix so every title/caption Save keeps treating them as
+    authored text; their indices continue after any layer the recipe already has. A clip scope
+    resolves against the recipe's video clips in timeline order. The returned rows
+    (``guided-pinned-<i>`` TextElements) are what the variant row carries, because the editor
+    preview compiles text from the variant, never from the pinned recipe. A pin with no usable
+    window is dropped, so the caller must read what was drawn from the rows.
+    """
+
+    from app.agents._schemas.text_element import TextElement
+    from app.pipeline.pinned_text import pinned_text_elements, resolve_pin_windows
+
+    if not pins:
+        return recipe, []
+    clips = [clip for track in recipe.tracks for clip in track.clips]
+    duration = timeline_end_s(clips)
+    clip_windows = sorted(
+        (
+            clip.timeline_start,
+            clip.timeline_start + clip.source_duration / clip.rate + (clip.hold_duration or 0),
+        )
+        for track in recipe.tracks
+        if track.kind == "video"
+        for clip in track.clips
+    )
+    rows = pinned_text_elements(
+        resolve_pin_windows(pins, duration, clip_windows),
+        font_family=font_family,
+        text_color=text_color,
+    )
+    if not rows:
+        return recipe, []
+    existing = list(recipe.text_layers)
+    layers = _compile_title_layers(
+        [TextElement.model_validate(row) for row in rows],
+        canvas=recipe.canvas,
+        timeline_duration_s=duration,
+        first_index=sum(1 for layer in existing if _is_title_layer(layer)),
+    )
+    return _with_text_layers(recipe, [*existing, *layers]), rows
 
 
 def narrated_authored_text_elements(rows: list[dict] | None) -> list[dict]:

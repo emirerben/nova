@@ -176,3 +176,36 @@ def test_over_limit_pins_become_specific_questions() -> None:
         _strategy([TOP]),
     )
     assert generic.code == "pinned_text_unavailable" and "whole video" not in generic.question
+
+
+# -- the phone writers now draw pins (KRI-527) ----------------------------------------------
+
+
+def test_pins_are_allowed_on_a_phone_voiceover_montage() -> None:
+    """The recorded-voiceover montage writer draws pins on a phone, so a voiceover manifest (whose
+    program is "native") is no longer refused them. The voice-behind-footage and spoken-excerpt
+    routes are guided montages and were only ever blocked by the `voice_mode` clause removed
+    here; `edit_format == "subtitled"` still asks (that condition is unchanged)."""
+    from app.kria.strategy_policy import RefusedStrategy, check_strategy_for_runtime_v2
+    from app.services.creator_capabilities import (
+        CAPABILITY_PHONE_SOURCE_AUDIO,
+        CapabilityAvailability,
+    )
+    from tests.agents.test_main_creator_agent import _manifest
+
+    manifest = _manifest()
+    phone = manifest.model_copy(
+        update={
+            "has_voiceover": True,
+            "capabilities": {
+                **manifest.capabilities,
+                CAPABILITY_PHONE_SOURCE_AUDIO: CapabilityAvailability(available=True),
+            },
+        }
+    )
+    own_clip = phone.media[0].media_id
+    voiceover = check_strategy_for_runtime_v2(
+        phone, _strategy([TOP]).model_copy(update={"selected_media_ids": [own_clip]})
+    )
+    assert not isinstance(voiceover, RefusedStrategy)
+    assert [pin.text for pin in voiceover.strategy.pinned_texts] == ["Part 1"]

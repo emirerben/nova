@@ -780,6 +780,7 @@ def compile_phone_voice_behind_footage_plan(
     min_shot_s: float | None = None,
     allow_silent_tail: bool = False,
     target_lufs: float | None = None,
+    pinned_texts: Sequence[Any] | None = None,
 ) -> tuple[EditRecipeV2, VoiceBehindFootageReceipt]:
     """One clip's voice plays under the whole edit; the other clips are the silent picture.
 
@@ -961,6 +962,32 @@ def compile_phone_voice_behind_footage_plan(
         title = narrated_title_element(
             opening_title, end_s=hold, timeline_duration_s=duration, canvas=_STORY_CANVAS
         )
+        if title is not None and pinned_texts:
+            # KRI-526/527: the title steps below a top corner pin that shares its hold. The
+            # pins themselves are added by the job (`with_pinned_text_layers`), which resolves
+            # them against the same clips.
+            from app.pipeline.pinned_text import (  # noqa: PLC0415
+                resolve_pin_windows,
+                title_y_clear_of_pins,
+                top_pin_edge,
+            )
+
+            windows = resolve_pin_windows(
+                pinned_texts,
+                duration,
+                sorted(
+                    (clip.timeline_start, clip.timeline_start + clip.source_duration / clip.rate)
+                    for clip in footage
+                ),
+            )
+            moved = title_y_clear_of_pins(
+                float(title.y_frac or 0.15),
+                top_pin_edge(windows, float(title.start_s), float(title.end_s)),
+                text=title.text,
+                size_px=float(title.size_px or 120),
+                max_width_frac=float(title.max_width_frac or 0.9),
+            )
+            title = title.model_copy(update={"y_frac": moved})
         if title is not None:
             recipe = _with_text_layers(
                 recipe,
