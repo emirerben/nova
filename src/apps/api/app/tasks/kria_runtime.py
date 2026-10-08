@@ -868,6 +868,8 @@ def _complete_draft_turn(
                         receipts,
                         summary=arguments.summary,
                         notices=planned.policy_notices,
+                        # KRI-534: compiled editor ops already produced the draft.
+                        edit_applied=apply_intent.tool_name == "draft.apply_editor_ops",
                     )
         # KRI-529: list the untouched requirements only when a NEW cut is drafted (the
         # approval moment). An editor turn reports on what it was asked, instead of a
