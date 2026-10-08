@@ -703,6 +703,16 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     f"{MAX_OPENING_TITLE_DURATION_S:g}s): text that must stay on screen the "
                     "whole video belongs in pinned_texts, not in a longer title hold"
                 )
+            if any(
+                "pinned_texts" in map(str, error["loc"])
+                for error in exc.errors(include_input=False, include_context=False)
+            ):
+                # KRI-525/526: name the pin rules the retry broke (a range is seconds OR a
+                # clip, start before end, and the line limits) instead of a bare error type.
+                self._schema_feedback += (
+                    "; pinned_texts: at most 4 lines of at most 120 characters, each with "
+                    "either start_s/end_s (start before end) or clip, never both"
+                )
             raise SchemaError(f"main_creator: invalid output: {exc}") from exc
         except Exception as exc:  # noqa: BLE001
             if isinstance(exc, UserSongUnavailableError):

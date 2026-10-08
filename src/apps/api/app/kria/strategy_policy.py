@@ -40,6 +40,7 @@ from app.agents._schemas.creator_policy import (
 )
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.kria.reply_language import current_reply_language, say
+from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS, PINNED_TEXT_MAX_CHARS
 from app.services.creator_capabilities import (
     TALKING_CLIP_INTENTS_DROPPED_NOTICE,
     CreatorSfxUnavailableError,
@@ -287,6 +288,38 @@ def _refusal_question(exc: ValueError, strategy: CreativeStrategy) -> RefusedStr
                 )
             )
             return RefusedStrategy(question=question, code="title_unavailable")
+        if message.startswith("pinned_texts_too_many"):
+            return RefusedStrategy(
+                question=say(
+                    en=(
+                        f"I can keep up to {MAX_CREATOR_PINNED_TEXTS} lines of corner text. "
+                        "Which ones should stay?"
+                    ),
+                    tr=(
+                        f"Köşede en fazla {MAX_CREATOR_PINNED_TEXTS} satır yazı tutabilirim. "
+                        "Hangileri kalsın?"
+                    ),
+                ),
+                code="pinned_text_too_many",
+            )
+        if message.startswith("pinned_texts_too_long"):
+            long_line = next(
+                (pin.text for pin in strategy.pinned_texts or () if not pin.fits_a_corner), ""
+            )
+            shown = long_line[:40].rstrip() + "…"
+            return RefusedStrategy(
+                question=say(
+                    en=(
+                        f'"{shown}" is too long to fit on one line in a corner (about '
+                        f"{PINNED_TEXT_MAX_CHARS} characters at most). Can you shorten it?"
+                    ),
+                    tr=(
+                        f'"{shown}" köşede tek satıra sığmayacak kadar uzun (en fazla yaklaşık '
+                        f"{PINNED_TEXT_MAX_CHARS} karakter). Kısaltır mısın?"
+                    ),
+                ),
+                code="pinned_text_too_long",
+            )
         if message.startswith("pinned_texts"):
             return RefusedStrategy(
                 question=(

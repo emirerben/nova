@@ -114,6 +114,65 @@ def bottom_pin_overlaps(windows: Sequence[PinWindow], start_s: float, end_s: flo
     return any(w.is_bottom and w.overlaps(start_s, end_s) for w in windows)
 
 
+# KRI-526: an opening title is centred at y 0.16, which a top pin (y 0.12, one line is ~0.038
+# tall) overlaps for the whole title hold. Pins are fixed at the top of the safe band, so the
+# TITLE moves down while a top pin is on screen.
+TITLE_PIN_GAP = 0.012
+TITLE_MAX_Y = 0.40
+_TITLE_GLYPH_WIDTH = 0.55  # average advance as a fraction of the font size
+_TITLE_LINE_HEIGHT = 1.15
+
+
+def title_y_clear_of_pins(
+    default_y: float,
+    pin_edge: float | None,
+    *,
+    text: str,
+    size_px: float,
+    max_width_frac: float,
+) -> float:
+    """The title's centre y: ``default_y`` unless a top pin's lower edge reaches its block.
+
+    ``pin_edge`` is the bottom edge of the lowest top pin on screen with the title (None =
+    none). The block's height comes from an estimated line count (the title wraps at
+    ``max_width_frac`` of the 1080 px canvas), so a two-line title is moved further.
+    """
+
+    if pin_edge is None:
+        return default_y
+    per_line = max(1.0, max_width_frac * 1080 / (_TITLE_GLYPH_WIDTH * size_px))
+    lines = max(1, math.ceil(len(text) / per_line))
+    half_block = lines * size_px * _TITLE_LINE_HEIGHT / 1920 / 2
+    return round(min(TITLE_MAX_Y, max(default_y, pin_edge + TITLE_PIN_GAP + half_block)), 4)
+
+
+def top_pin_edge(windows: Sequence[PinWindow], start_s: float, end_s: float) -> float | None:
+    """Lower edge of the lowest top-corner pin on screen at any point of ``[start_s, end_s)``."""
+
+    ranks = _stack_ranks(windows)
+    edges = [
+        PIN_TOP_Y + ranks[w.index] * PIN_LINE_STEP + PIN_LINE_STEP / 2
+        for w in windows
+        if not w.is_bottom and w.overlaps(start_s, end_s)
+    ]
+    return max(edges) if edges else None
+
+
+def top_pin_edge_from_rows(rows: Sequence[dict], start_s: float, end_s: float) -> float | None:
+    """`top_pin_edge` for already-compiled text rows (`guided-pinned-*`), used by face placement."""
+
+    edges = [
+        float(row["y_frac"]) + PIN_LINE_STEP / 2
+        for row in rows
+        if str(row.get("id", "")).startswith("guided-pinned-")
+        and row.get("y_frac") is not None
+        and float(row["y_frac"]) < 0.5
+        and float(row.get("start_s", 0.0)) < end_s
+        and start_s < float(row.get("end_s", end_s))
+    ]
+    return max(edges) if edges else None
+
+
 def _stack_ranks(windows: Sequence[PinWindow]) -> dict[int, int]:
     """Line slot per pin: the lowest slot no overlapping pin in the same corner already holds.
 

@@ -1520,7 +1520,9 @@ def _pinned_texts(strategy: Mapping[str, Any]) -> list[PinnedText]:
             pins.append(PinnedText.model_validate({**raw, "text": _nfc(raw.get("text"))}))
         except ValidationError:
             continue
-    return pins[:MAX_CREATOR_PINNED_TEXTS]
+    # Defence in depth: the capability check refuses an over-limit ask with a question, so
+    # this only trims a strategy stored before that check existed.
+    return [pin for pin in pins if pin.fits_a_corner][:MAX_CREATOR_PINNED_TEXTS]
 
 
 def _fit_pins(

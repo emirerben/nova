@@ -54,6 +54,7 @@ from app.agents._schemas.edit_format import (
     render_program_for_intent,
 )
 from app.config import settings
+from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS
 from app.services.creator_errors import CreatorCapabilityError, CreatorStrategyError
 from app.services.phone_destination import phone_drawable_visual_kinds
 from app.services.phone_rollout import (
@@ -1149,6 +1150,20 @@ def compile_strategy_to_plan(
         and phone_capability.available
         and phone_subtitled_closing_title_supported()
     )
+    # KRI-526: the strategy parses up to 12 lines / 400 characters so an over-limit ask lands
+    # here and becomes a question about the pins (strategy_policy), not a schema failure.
+    if len(strategy.pinned_texts or ()) > MAX_CREATOR_PINNED_TEXTS:
+        raise CreatorStrategyError(
+            "pinned_texts_too_many: more corner lines than fit",
+            code="unsupported_treatment",
+            edit_format=strategy.edit_format,
+        )
+    if any(not pin.fits_a_corner for pin in strategy.pinned_texts or ()):
+        raise CreatorStrategyError(
+            "pinned_texts_too_long: a corner line is longer than one line",
+            code="unsupported_treatment",
+            edit_format=strategy.edit_format,
+        )
     if strategy.pinned_texts and (
         strategy.edit_format == "subtitled"
         or strategy.render_program != "guided"

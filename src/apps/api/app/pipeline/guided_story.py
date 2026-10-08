@@ -46,6 +46,9 @@ from app.pipeline.pinned_text import (
     clip_windows_from_moments,
     pinned_text_elements,
     resolve_pin_windows,
+    title_y_clear_of_pins,
+    top_pin_edge,
+    top_pin_edge_from_rows,
 )
 from app.pipeline.probe import probe_video
 from app.schemas.edit_proposal import (
@@ -1423,6 +1426,17 @@ def _base_text_elements(
     # unless the creator supplied one.
     show_title = bool(snapshot.opening_title) or not (snapshot.shot_labels or snapshot.pinned_texts)
 
+    def title_y(default_y: float, text: str, size_px: int, max_width_frac: float) -> float:
+        """The opening title steps down while a top pin shares its window (KRI-526)."""
+
+        return title_y_clear_of_pins(
+            default_y,
+            top_pin_edge(pin_windows, 0.0, title_end),
+            text=text,
+            size_px=size_px,
+            max_width_frac=max_width_frac,
+        )
+
     def lane_y(default_y: float, start_s: float, end_s: float) -> float:
         """A lane keeps its usual y unless a bottom pin is on screen during its window."""
 
@@ -1514,7 +1528,7 @@ def _base_text_elements(
                     role="generative_intro",
                     position="custom",
                     x_frac=0.5,
-                    y_frac=0.16,
+                    y_frac=title_y(0.16, snapshot.opening_title, 76, 0.84),
                     font_family=snapshot.font_family or "Fraunces",
                     size_px=76,
                     color=snapshot.text_color or "#FFF8F0",
@@ -1630,7 +1644,9 @@ def _base_text_elements(
                         role="generative_intro",
                         position="custom" if compiler_version >= 3 else "top",
                         x_frac=0.5 if compiler_version >= 3 else None,
-                        y_frac=0.16 if compiler_version >= 3 else None,
+                        y_frac=title_y(0.16, snapshot.title, 92, 0.8)
+                        if compiler_version >= 3
+                        else None,
                         font_family=snapshot.font_family
                         or ("Fraunces" if compiler_version >= 3 else "Inter-Bold"),
                         size_px=(92 if compiler_version >= 3 else 78),
@@ -1705,7 +1721,9 @@ def _base_text_elements(
                 role="generative_intro",
                 position="custom",
                 x_frac=0.5,
-                y_frac=0.16,
+                y_frac=title_y(
+                    0.16, snapshot.title, 92 if snapshot.direction == "fast_montage" else 104, 0.8
+                ),
                 font_family=snapshot.font_family or "Fraunces",
                 size_px=92 if snapshot.direction == "fast_montage" else 104,
                 color=snapshot.text_color or "#FFF8F0",
@@ -5401,12 +5419,25 @@ def _apply_guided_text_face_placement(
             probe_box = NormalizedBox(
                 measured["left"], measured["top"], measured["right"], measured["bottom"]
             )
+            candidates = _guided_text_y_candidates(default_y)
+            if element_id == "guided-title":
+                # KRI-526: the title never moves back up into a top pin's band.
+                floor = title_y_clear_of_pins(
+                    0.0,
+                    top_pin_edge_from_rows(text_element_rows, start_s, end_s),
+                    text=str(row.get("text", "")),
+                    size_px=float(row.get("size_px") or 92),
+                    max_width_frac=float(row.get("max_width_frac") or 0.8),
+                )
+                candidates = tuple(
+                    value for value in candidates if value == default_y or value >= floor
+                )
             chosen_y, receipt = choose_guided_text_y_frac(
                 face_regions,
                 face_receipt,
                 probe_box,
                 [],
-                _guided_text_y_candidates(default_y),
+                candidates,
             )
         except Exception as exc:  # noqa: BLE001 - fail open to the authored default
             log.warning(

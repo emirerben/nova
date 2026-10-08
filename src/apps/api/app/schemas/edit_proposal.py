@@ -160,6 +160,12 @@ def clean_creator_shot_labels(value: object) -> list[str] | None:
 # line; list order is the top-to-bottom stack order inside a corner.
 MAX_CREATOR_PINNED_TEXTS = 4
 PINNED_TEXT_MAX_CHARS = 120
+# KRI-526: the Main Creator's strategy is parsed leniently (up to these) so an over-limit ask
+# reaches the capability check and becomes a question about the pins, instead of failing the
+# whole strategy's schema (retry, then a planning failure). Everything downstream of the
+# check (snapshot, brief, renderer) is strict at the limits above.
+PINNED_TEXT_PARSE_MAX_LINES = 12
+PINNED_TEXT_PARSE_MAX_CHARS = 400
 PinnedCorner = Literal[
     "top_left",
     "top_center",
@@ -181,7 +187,7 @@ class PinnedText(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    text: str = Field(min_length=1, max_length=PINNED_TEXT_MAX_CHARS)
+    text: str = Field(min_length=1, max_length=PINNED_TEXT_PARSE_MAX_CHARS)
     corner: PinnedCorner
     start_s: float | None = Field(default=None, ge=0, exclude_if=lambda value: value is None)
     end_s: float | None = Field(default=None, gt=0, exclude_if=lambda value: value is None)
@@ -190,7 +196,9 @@ class PinnedText(BaseModel):
     @field_validator("text", mode="before")
     @classmethod
     def _clean_text(cls, value: object) -> str:
-        return clean_creator_copy(value, field_name="pinned_texts", max_chars=PINNED_TEXT_MAX_CHARS)
+        return clean_creator_copy(
+            value, field_name="pinned_texts", max_chars=PINNED_TEXT_PARSE_MAX_CHARS
+        )
 
     @model_validator(mode="after")
     def _check_range(self) -> PinnedText:
@@ -200,6 +208,10 @@ class PinnedText(BaseModel):
         if self.start_s is not None and self.end_s is not None and self.start_s >= self.end_s:
             raise ValueError("pinned_texts start_s must be before end_s")
         return self
+
+    @property
+    def fits_a_corner(self) -> bool:
+        return len(self.text) <= PINNED_TEXT_MAX_CHARS
 
     @property
     def is_whole_video(self) -> bool:
@@ -213,12 +225,24 @@ def clean_creator_pinned_texts(value: object) -> list[PinnedText] | None:
         return None
     if not isinstance(value, list | tuple):
         raise ValueError("pinned_texts must be a list")
-    if len(value) > MAX_CREATOR_PINNED_TEXTS:
-        raise ValueError(f"pinned_texts must contain at most {MAX_CREATOR_PINNED_TEXTS} entries")
+    if len(value) > PINNED_TEXT_PARSE_MAX_LINES:
+        raise ValueError(f"pinned_texts must contain at most {PINNED_TEXT_PARSE_MAX_LINES} entries")
     pins = [
         item if isinstance(item, PinnedText) else PinnedText.model_validate(item) for item in value
     ]
     return pins or None
+
+
+def require_drawable_pins(value: list[PinnedText] | None) -> list[PinnedText] | None:
+    """Strict limits for everything that renders (snapshot, brief): 4 lines of <= 120 chars."""
+
+    if value is None:
+        return None
+    if len(value) > MAX_CREATOR_PINNED_TEXTS:
+        raise ValueError(f"pinned_texts must contain at most {MAX_CREATOR_PINNED_TEXTS} entries")
+    if not all(pin.fits_a_corner for pin in value):
+        raise ValueError(f"pinned_texts lines must be at most {PINNED_TEXT_MAX_CHARS} characters")
+    return value
 
 
 def creator_copy_match_key(text: str) -> str:
@@ -1240,6 +1264,12 @@ class EditProposalSnapshot(BaseModel):
         max_length=MAX_CREATOR_PINNED_TEXTS,
         exclude_if=lambda value: value is None,
     )
+
+    @field_validator("pinned_texts")
+    @classmethod
+    def _pins_fit_a_corner(cls, value: list[PinnedText] | None) -> list[PinnedText] | None:
+        return require_drawable_pins(value)
+
     font_family: str | None = Field(
         default=None,
         max_length=160,
@@ -1788,6 +1818,12 @@ class ProposalBrief(BaseModel):
         max_length=MAX_CREATOR_PINNED_TEXTS,
         exclude_if=lambda value: value is None,
     )
+
+    @field_validator("pinned_texts")
+    @classmethod
+    def _pins_fit_a_corner(cls, value: list[PinnedText] | None) -> list[PinnedText] | None:
+        return require_drawable_pins(value)
+
     font_family: str | None = Field(default=None, max_length=160)
     text_color: str | None = Field(default=None, max_length=16)
 
