@@ -12,6 +12,8 @@ from app.kria.replay import load_fixture as load_kria_fixture
 from .models import FinalPlan, PlanClip, PlanText, RFFixture, Turn
 from .runner import (
     FIXTURE_ROOT,
+    _plan_with_texts,
+    _plan_with_timeline_slots,
     evaluate_rollout_gate,
     load_fixture,
     replay_turns,
@@ -148,6 +150,59 @@ def test_scored_plan_text_roles_survive_an_editor_round_trip():
     turn = next(t for t in replay_turns(fixture) if t.turn_id == "t1-brief")
     assert [t.role for t in turn.plan_after.texts] == ["title", "label", "label", "label"]
     assert all(isinstance(t, PlanText) for t in turn.plan_after.texts)
+
+
+def test_projection_retains_compiled_geometry_and_source_ranges():
+    plan = FinalPlan(texts=[PlanText(id="title", role="title", text="old", start_s=0, end_s=2)])
+    projected = _plan_with_texts(
+        plan,
+        [
+            {
+                "id": "title",
+                "text": "new",
+                "start_s": 0,
+                "end_s": 5,
+                "position": "custom",
+                "alignment": "left",
+                "x_frac": 0.2,
+                "y_frac": 0.15,
+                "source_start_s": 1.5,
+                "source_end_s": 6.5,
+            }
+        ],
+    )
+    text = projected.texts[0]
+    assert (text.position, text.alignment, text.x_frac, text.y_frac) == (
+        "custom",
+        "left",
+        0.2,
+        0.15,
+    )
+    assert (text.source_start_s, text.source_end_s) == (1.5, 6.5)
+
+    clips = _plan_with_timeline_slots(
+        FinalPlan(),
+        [
+            {
+                "media_id": "source-a",
+                "in_s": 2.0,
+                "duration_s": 3.0,
+                "output_start_s": 0.0,
+                "output_end_s": 3.0,
+            }
+        ],
+    )
+    assert clips.clips[0].clip_id == "source-a"
+    assert (clips.clips[0].source_start_s, clips.clips[0].source_end_s) == (2.0, None)
+
+
+def test_projection_preserves_generative_intro_as_title_identity():
+    plan = FinalPlan()
+    projected = _plan_with_texts(
+        plan,
+        [{"id": "title", "role": "generative_intro", "text": "Run", "start_s": 0, "end_s": 4}],
+    )
+    assert projected.texts[0].role == "title"
 
 
 def test_v2_cassette_compiles_the_actual_plan_instead_of_using_recorded_plan_after():

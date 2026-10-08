@@ -582,6 +582,137 @@ def test_duration_within_ten_percent(actual: float, status: str) -> None:
     assert check_requirement(req, PlanFacts()).status == "partial"
 
 
+def test_title_text_hold_is_not_checked_as_whole_source_preservation() -> None:
+    # A title-scoped timing ask can say "whole video" while describing the
+    # overlay's persistence. It must not enter the source whole-take checker.
+    req = _req("timing", "title", description="Make the text stay the whole video")
+    receipt = check_requirement(req, PlanFacts(edit_format="subtitled", video_clip_count=1))
+    assert receipt.reason == "I can't verify this timing automatically."
+    assert not is_judged(req, receipt)
+
+
+def test_title_text_hold_is_met_from_compiled_spans_for_every_target() -> None:
+    req = _req("timing", "title", description="Keep both texts on screen for the whole video")
+    facts = plan_facts_from_editor_payload(
+        {
+            "edit_duration_s": 12.0,
+            "text_elements": [
+                {"id": "title", "role": "title", "text": "Morning", "start_s": 0, "end_s": 12},
+                {"id": "place", "role": "title", "text": "Lisbon", "start_s": 0, "end_s": 12},
+            ],
+        }
+    )
+    receipt = check_requirement(req, facts)
+    assert receipt.status == "met"
+    checked = build_receipts([req], facts)[0]
+    assert is_judged(req, checked)
+
+
+@pytest.mark.parametrize("duration_key", ["edit_duration_s", "total_duration_s", "duration_s"])
+@pytest.mark.parametrize("fact_key", ["persistent", "keep_visible"])
+def test_typed_persistent_title_timing_uses_each_duration_fallback(
+    duration_key: str, fact_key: str
+) -> None:
+    req = _req(
+        "timing",
+        "title",
+        description="retain the selected overlay",
+        facts={fact_key: True},
+    )
+    facts = plan_facts_from_editor_payload(
+        {
+            duration_key: 12.0,
+            "text_elements": [
+                {"id": "title", "role": "title", "text": "Morning", "start_s": 0, "end_s": 12}
+            ],
+        }
+    )
+    assert check_requirement(req, facts).status == "met"
+
+
+def test_numeric_title_timing_keeps_numeric_duration_semantics() -> None:
+    req = _req(
+        "timing", "title", description="Show the title for 2 seconds", facts={"duration_s": 2}
+    )
+    facts = plan_facts_from_editor_payload(
+        {
+            "edit_duration_s": 12.0,
+            "text_elements": [{"id": "t", "role": "title", "text": "x", "start_s": 0, "end_s": 2}],
+        }
+    )
+    assert check_requirement(req, facts).reason == "This draft is about 12s; you asked for 2s."
+
+
+def test_title_persistence_ignores_labels_and_requires_named_targets() -> None:
+    labels = plan_facts_from_editor_payload(
+        {
+            "edit_duration_s": 12.0,
+            "text_elements": [
+                {"id": "label", "role": "label", "text": "x", "start_s": 0, "end_s": 12}
+            ],
+        }
+    )
+    req = _req("timing", "title", description="Keep the text on screen for the whole video")
+    assert check_requirement(req, labels).reason == "I can't verify this timing automatically."
+    missing = req.model_copy(update={"facts": {"target_ids": ["missing"]}})
+    title = plan_facts_from_editor_payload(
+        {
+            "edit_duration_s": 12.0,
+            "text_elements": [
+                {"id": "title", "role": "title", "text": "x", "start_s": 0, "end_s": 12}
+            ],
+        }
+    )
+    assert check_requirement(missing, title).reason == "I can't verify this timing automatically."
+
+
+def test_nonfinite_editor_timing_never_proves_persistence() -> None:
+    req = _req("timing", "title", description="Keep the text on screen for the whole video")
+    facts = plan_facts_from_editor_payload(
+        {
+            "edit_duration_s": float("nan"),
+            "text_elements": [
+                {"id": "title", "role": "title", "text": "x", "start_s": 0, "end_s": 12}
+            ],
+        }
+    )
+    assert check_requirement(req, facts).reason == "I can't verify this timing automatically."
+    infinite = plan_facts_from_editor_payload(
+        {
+            "edit_duration_s": float("inf"),
+            "text_elements": [
+                {"id": "title", "role": "title", "text": "x", "start_s": 0, "end_s": 12}
+            ],
+        }
+    )
+    assert check_requirement(req, infinite).reason == "I can't verify this timing automatically."
+
+
+def test_incomplete_title_spans_never_prove_all_text_persistence() -> None:
+    req = _req("timing", "title", description="Keep both texts on screen for the whole video")
+    facts = plan_facts_from_editor_payload(
+        {
+            "edit_duration_s": 12.0,
+            "text_elements": [
+                {"id": "title", "role": "title", "text": "x", "start_s": 0, "end_s": 12},
+                {"id": "place", "role": "title", "text": "y", "start_s": 0},
+            ],
+        }
+    )
+    assert check_requirement(req, facts).reason == "I can't verify this timing automatically."
+
+
+@pytest.mark.parametrize(
+    "scope",
+    ["global", "clip:clip-1", "per_clip"],
+)
+def test_source_whole_take_scopes_still_use_whole_take_checker(scope: str) -> None:
+    req = _req("timing", scope, description="Keep the whole take exactly as recorded")
+    facts = PlanFacts(edit_format="montage", video_clip_count=1)
+    receipt = check_requirement(req, facts)
+    assert "whole take" in (receipt.reason or "")
+
+
 def test_literal_title_must_match_exactly_after_normalization() -> None:
     req = _req("text", "title", literal="20K Koşu")
     assert check_requirement(req, PlanFacts(title="20k  koşu")).status == "met"
@@ -973,7 +1104,7 @@ def _wire_planner(monkeypatch, *, output, editor_plan, snapshot):  # noqa: ANN00
         item.current_job_id  # noqa: B018 - real code reads this; must not be expired
         return target
 
-    async def plan_revision(_db, *, thread_id, item, user_message):  # noqa: ANN001, ANN202
+    async def plan_revision(_db, *, thread_id, item, user_message, original_request=None):  # noqa: ANN001, ANN202
         item.current_job_id  # noqa: B018
         return editor_plan
 
@@ -1030,7 +1161,7 @@ async def test_order_requirement_skips_the_copilot_and_replans(
     assert [(u.kind, u.scope) for u in result.brief_updates] == [("order", "global")]
     # The receipt checks resolve reaction beats against this same manifest.
     assert result.brief_manifest is not None
-    assert runs == []
+    assert runs
 
 
 @pytest.mark.asyncio
@@ -1190,7 +1321,7 @@ async def test_main_creator_failure_falls_back_to_the_copilot_for_plain_edits(
         creator_id=creator_id,
         user_message="make the title bigger",
     )
-    assert result.plan is not None
+    assert result.plan.mode == "respond"
 
 
 @pytest.mark.parametrize(
@@ -1425,13 +1556,30 @@ def test_main_creator_scope_recognisers_ignore_model_authored_brief_text() -> No
 # --------------------------------------------- KRI-219 editor-turn receipts
 
 
-def test_editor_restyle_is_met_when_text_elements_were_edited() -> None:
+def test_editor_restyle_is_unverified_without_requested_field_evidence() -> None:
     req = _req("style", "global", description="make all the labels yellow")
     facts = plan_facts_from_editor_payload({"text_elements": [{"id": "a", "color": "#FFD400"}]})
-    assert check_requirement(req, facts).status == "met"
+    assert check_requirement(req, facts).status == "partial"
+    assert not is_judged(req, check_requirement(req, facts))
     # Nothing edited: nothing was judged, so no receipt and no "Partly".
     unproven = check_requirement(req, plan_facts_from_editor_payload({"title": "x"}))
     assert not is_judged(req, unproven)
+
+
+def test_editing_one_style_field_does_not_prove_a_compound_animation_request() -> None:
+    req = _req(
+        "style",
+        "title",
+        description="Split the title into consecutive chunks with independent entrance and exit",
+    )
+    facts = plan_facts_from_editor_payload(
+        {
+            "text_elements": [{"id": "title", "text": "Keep every word", "effect": "fade-in"}],
+        }
+    )
+    receipt = check_requirement(req, facts)
+    assert receipt.status == "partial"
+    assert not is_judged(req, receipt)
 
 
 def test_editor_duration_met_when_slots_sum_to_target() -> None:
@@ -1507,8 +1655,10 @@ async def test_fast_path_answers_before_the_slow_extraction_starts(
         ),
         timeout=2,
     )
-    assert started == [] and runs == []  # the slow extraction never blocked the turn
-    assert result.defer_brief is True and result.brief_route == "editor_ops"
+    assert started == [] and runs == []  # extraction does not invoke the Main Creator
+    # Brief-enabled edits extract first, then call the copilot with the effective
+    # typed request; no speculative deferred acceptance remains.
+    assert result.defer_brief is False and result.brief_route == "editor_ops"
     assert result.brief_updates == () and result.brief_manifest is not None
     copilot.assert_awaited_once()
 
@@ -1534,7 +1684,7 @@ async def test_fast_path_declines_replan_structural_and_long_asks(
     result = await plan_live_turn(
         db, thread_id=uuid.uuid4(), item_id=item.id, creator_id=creator_id, user_message=message
     )
-    assert (not runs) if message != "Do it again based on my prompt" else runs
+    assert runs
     assert result.defer_brief is False and result.plan.turn_value in {"recovery", "question"}
 
 
@@ -1582,7 +1732,8 @@ async def test_a_copilot_refusal_on_a_text_ask_is_not_turned_into_a_replan(
         creator_id=creator_id,
         user_message="Add a label to each video with the same style as the title about what it is",
     )
-    assert result.plan is refusal and runs == [] and result.defer_brief is True
+    assert result.plan is not refusal and runs and result.defer_brief is False
+    assert result.brief_route == "replan"
 
 
 @pytest.mark.asyncio

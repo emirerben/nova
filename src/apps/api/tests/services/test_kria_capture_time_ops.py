@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import replace
 
 import pytest
 
@@ -398,7 +399,7 @@ def test_time_ask_routes_to_editor_ops_not_a_replan(guided) -> None:
     assert route_requirements([order], shape, message="order by time filmed") == "editor_ops"
 
 
-def test_semantic_selection_and_place_labels_with_order_still_replan(guided) -> None:
+def test_semantic_selection_replans_but_supported_order_and_labels_compose(guided) -> None:
     job, variant, _rev = guided
     shape = plan_shape_from_editor_snapshot(_snapshot(job, variant))
     order = BriefRequirement(
@@ -411,7 +412,11 @@ def test_semantic_selection_and_place_labels_with_order_still_replan(guided) -> 
         id="r3", kind="text", scope="per_clip", description="the landmark on each clip"
     )
     assert route_requirements([order, select], shape, message="only funniest") == "replan"
-    # place labels + order is still the planner's job unless the label is the hour
+    # Location facts and editable label lanes let the editor combine both requests.
+    assert shape.can_fill_per_clip_text
+    assert route_requirements([order, place], shape, message="landmarks, in order") == "editor_ops"
+    # Removing the label capability still requires a plan that can satisfy it.
+    shape = replace(shape, can_fill_per_clip_text=False, can_edit_captions=False)
     assert route_requirements([order, place], shape, message="landmarks, in order") == "replan"
 
 

@@ -19,6 +19,7 @@ top level (circular); import lazily inside functions.
 
 from __future__ import annotations
 
+import unicodedata
 from typing import Any
 
 from app.agents.editor_ops_v2 import OpSpec, is_v2_snapshot
@@ -229,6 +230,61 @@ def _coerce_remove_texts(name: str, payload: dict, snapshot: dict, state: Any) -
     return {"selector": selector, "target_ids": matched, "expected_count": len(matched)}
 
 
+def _sequence_canonical(value: str) -> str:
+    """Canonical comparison form for text conservation (NFC + whitespace)."""
+    return " ".join(unicodedata.normalize("NFC", value).split())
+
+
+def _coerce_replace_text_sequence(
+    name: str, payload: dict, snapshot: dict, state: Any
+) -> dict | None:
+    from app.services.kria_editor_ops_text import bars_from_snapshot  # noqa: PLC0415
+
+    if not is_v2_snapshot(snapshot):
+        state.invalid_value()
+        return None
+    picked = _selected(payload, snapshot, state)
+    if picked is None:
+        return None
+    selector, matched = picked
+    if len(matched) != 1:
+        _clarify(state, "Which single text should I split into a sequence?")
+        return None
+    segments = payload.get("segments")
+    if not isinstance(segments, list) or not 0 < len(segments) <= 100:
+        state.invalid_value()
+        return None
+    clean_segments = []
+    for segment in segments:
+        if not isinstance(segment, str):
+            state.invalid_value()
+            return None
+        clean = " ".join(unicodedata.normalize("NFC", segment).split())
+        if not clean or len(clean) > 500:
+            state.invalid_value()
+            return None
+        clean_segments.append(clean)
+    row = next((bar for bar in bars_from_snapshot(snapshot) if bar["id"] == matched[0]), None)
+    if row is None or _sequence_canonical(row["text"]) != _sequence_canonical(
+        " ".join(clean_segments)
+    ):
+        state.invalid_value()
+        return None
+    out = {
+        "selector": selector,
+        "segments": clean_segments,
+        "expected_source_text": row["text"],
+        "target_ids": matched,
+        "expected_count": 1,
+    }
+    if "patch" in payload:
+        patch = coerce_text_patch(payload["patch"], state)
+        if patch is None:
+            return None
+        out["patch"] = patch
+    return out
+
+
 def _coerce_set_texts_timing(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
     from app.agents.edit_copilot import _as_float  # noqa: PLC0415
 
@@ -407,6 +463,13 @@ SPECS: list[OpSpec] = [
         coerce=_coerce_remove_texts,
     ),
     OpSpec(
+        name="replace_text_sequence",
+        required=frozenset({"selector", "segments"}),
+        fields=frozenset({"patch"}),
+        family=_FAMILY,
+        coerce=_coerce_replace_text_sequence,
+    ),
+    OpSpec(
         name="set_texts_timing",
         required=frozenset({"selector"}),
         fields=frozenset({"start_s", "end_s", "shift_s"}),
@@ -432,5 +495,6 @@ def register_handlers() -> None:
     ops.register_handler("rewrite_text", text.op_rewrite_text)
     ops.register_handler("patch_text", text.op_patch_text)
     ops.register_handler("remove_texts", text.op_remove_texts)
+    ops.register_handler("replace_text_sequence", text.op_replace_text_sequence)
     ops.register_handler("set_texts_timing", text.op_set_texts_timing)
     ops.register_handler("realign_labels", text.op_realign_labels)

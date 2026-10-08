@@ -1107,6 +1107,7 @@ async def _plan_editor_revision(
     item: PlanItem,
     user_message: str,
     editor_state: Any = None,
+    original_request: str | None = None,
 ) -> KriaTurnPlan | None:
     try:
         target = await _load_editor_target(
@@ -1137,6 +1138,7 @@ async def _plan_editor_revision(
         CopilotTurnBody(
             message=user_message,
             turns=target.conversation,
+            original_request=original_request,
             snapshot=target.snapshot,
             client_contract_version=2,
         ),
@@ -1359,6 +1361,7 @@ async def _call_brief_extractor(
     creator_id: uuid.UUID,
     item_id: uuid.UUID,
     creator_agent_session_id: uuid.UUID | None,
+    prior_brief: CreativeBrief | None = None,
 ) -> BriefExtractionOutput:
     """Extract only brief updates; rendered edits must never invoke Main Creator here."""
 
@@ -1366,6 +1369,7 @@ async def _call_brief_extractor(
         creator_request=creator_request,
         user_message=inputs.agent_input.user_message,
         conversation=inputs.agent_input.conversation,
+        current_brief=prior_brief,
     )
 
     def _run_agent():  # noqa: ANN202 - inferred BriefExtractionOutput
@@ -2000,6 +2004,10 @@ def _request_recovery(manifest, prior, *, updates=(), reason="context_limit") ->
             en="I couldn't turn that into a plan this time.",
             tr="Bu sefer bunu bir plana dönüştüremedim.",
         ),
+        "editor_planning_failed": say(
+            en="I couldn't prepare those edits this time.",
+            tr="Bu sefer bu düzenlemeleri hazırlayamadım.",
+        ),
     }.get(
         reason,
         say(
@@ -2012,7 +2020,7 @@ def _request_recovery(manifest, prior, *, updates=(), reason="context_limit") ->
             en="Try again, or tell me the most important change first.",
             tr="Tekrar dene ya da önce en önemli değişikliği söyle.",
         )
-        if reason == "creator_planning_failed"
+        if reason in {"creator_planning_failed", "editor_planning_failed"}
         else say(
             en="Which clip or part of the edit should I work on first?",
             tr="Önce düzenlemenin hangi klibi ya da bölümü üzerinde çalışayım?",
@@ -2420,7 +2428,7 @@ async def _plan_live_turn(
     item_id: uuid.UUID,
     creator_id: uuid.UUID,
     user_message: str,
-    allow_fast_path: bool = True,
+    allow_fast_path: bool = True,  # Compatibility only; brief-enabled turns always extract first.
     first_editor_result: tuple[KriaTurnPlan | None] | None = None,
     editor_state: Any = None,
     answers_clip_question: bool = False,
@@ -2430,8 +2438,6 @@ async def _plan_live_turn(
     # clip 21"). That message must never reach the editor copilot, which reads it
     # as a text edit and prints the label on whatever montage bar the number hits.
     # Only the re-plan folds the selection, so it forces the re-plan.
-    if answers_clip_question:
-        allow_fast_path = False
     item = await db.get(PlanItem, item_id)
     if item is None:
         raise RuntimeError("Kria target item is unavailable")
@@ -2480,14 +2486,8 @@ async def _plan_live_turn(
     # A copy-bearing edit stays on the planner path, including revisions: editor
     # text rewrites cannot silently replace separately approved words.
     creative_copy_pending = bool(creative_copy_states)
-    if creative_copy_pending:
-        allow_fast_path = False
     brief_on = settings.creative_brief_for(creator_id)
     binding_on = settings.brief_binding_for(creator_id)
-    if binding_on:
-        # The fast path defers extraction until after the draft is accepted.
-        # A bound draft must include this turn before it can be approved.
-        allow_fast_path = False
     # KRI-188: with a render present and the brief on, the requirement router
     # decides between the editor-op tool and a re-plan, so the Main Creator
     # (which extracts the requirements) runs FIRST. Everything else keeps the
@@ -2505,69 +2505,8 @@ async def _plan_live_turn(
         and not creative_copy_pending
         and manifest.capabilities["dispatch_render"].available
     )
-    if (
-        extract_first
-        and allow_fast_path
-        and settings.kria_copilot_first_enabled
-        and _fast_path_eligible(user_message)
-    ):
-        # KRI-219 latency: the copilot (flash, ~2-4 s) answers a short in-place
-        # text/label/order tweak before the pro-model extraction (~12 s) is even
-        # started. Only a plan made of in-place ops is taken; anything else (a
-        # question, a structural op, a refusal) falls through to the router below,
-        # unchanged. The requirement extraction still runs, off the critical path.
-        _editor_target_miss.set(None)
-        fast_plan = await _plan_editor_revision(
-            db, thread_id=thread_id, item=item, user_message=user_message, **_state_kw(editor_state)
-        )
-        if fast_plan is None and _editor_target_miss_guarded():
-            return _editor_target_recovery(manifest)
-        if _is_fast_path_plan(fast_plan):
-            return PlannedKriaTurn(
-                plan=fast_plan,
-                manifest_hash=manifest.manifest_hash,
-                context_hash=manifest.context_hash,
-                brief_route="editor_ops",
-                brief_clip_ids=tuple(str(media.media_id) for media in manifest.media),
-                brief_manifest=manifest,
-                defer_brief=True,
-            )
-        if (
-            fast_plan is not None
-            and fast_plan.mode == "respond"
-            and _is_text_edit_ask(user_message)
-        ):
-            return PlannedKriaTurn(
-                plan=fast_plan,
-                manifest_hash=manifest.manifest_hash,
-                context_hash=manifest.context_hash,
-                defer_brief=True,
-            )
-        log.info(
-            "kria_copilot_skipped_replan",
-            reason="fast_path_not_taken",
-            route="fast_path",
-            thread_id=str(thread_id),
-            item_id=str(item_id),
-            copilot_mode=fast_plan.mode if fast_plan is not None else None,
-        )
-        # The copilot call rolled the session back, which EXPIRES every loaded row
-        # (item, plan, persona): reading one from async code raises MissingGreenlet.
-        # Re-enter the planner from the top so the extract-first path re-reads
-        # everything it needs, exactly as if the fast path had not been tried.
-        return await plan_live_turn(
-            db,
-            thread_id=thread_id,
-            item_id=item_id,
-            creator_id=creator_id,
-            user_message=user_message,
-            allow_fast_path=False,
-            # The copilot already answered this exact message against this exact draft:
-            # the router below reuses that answer instead of paying for a second call.
-            first_editor_result=(fast_plan,),
-            answers_clip_question=answers_clip_question,
-            **_state_kw(editor_state),
-        )
+    # A brief-enabled edit must route the complete typed request before choosing
+    # operations. Accepting a speculative subset here used to bypass that contract.
     if (
         not extract_first
         and not answers_clip_question
@@ -2617,6 +2556,8 @@ async def _plan_live_turn(
         )
     prior_brief = await load_latest_brief(db, thread_id) if brief_on else None
     creator_agent_session_id = None
+    planning_brief = prior_brief
+    extraction_complete = False
     pre_extracted_updates: tuple[BriefUpdate, ...] = ()
     pre_extracted_retrieved_ids: list[str] = []
     # A rendered followup only needs typed requirement extraction before routing.
@@ -2652,6 +2593,7 @@ async def _plan_live_turn(
                         creator_id=creator_id,
                         item_id=item_id,
                         creator_agent_session_id=creator_agent_session_id,
+                        prior_brief=prior_brief,
                     )
                 )
                 if batch is not None:
@@ -2663,6 +2605,7 @@ async def _plan_live_turn(
             }
             pre_extracted_updates = tuple(unique_extracted.values())
             effective = apply_updates(prior_brief, pre_extracted_updates, source_turn_id=None)
+            extraction_complete = True
             fresh = new_requirements(prior_brief, effective)
             if pending_analysis_ids:
                 return PlannedKriaTurn(
@@ -2716,6 +2659,9 @@ async def _plan_live_turn(
                         thread_id=thread_id,
                         item=await _refetch_item(db, item_id),
                         user_message=user_message,
+                        original_request=render_brief_request(
+                            effective, latest_message=user_message
+                        ),
                         **_state_kw(editor_state),
                     )
                 )
@@ -2740,33 +2686,25 @@ async def _plan_live_turn(
                         },
                         brief_expected_version=prior_brief.version if prior_brief else 0,
                     )
-            return PlannedKriaTurn(
-                plan=KriaTurnPlan(
-                    mode="respond",
-                    turn_value="recovery",
-                    response=say(
-                        en=(
-                            "I couldn’t safely apply that change to the current cut. "
-                            "Please clarify the title, style, animation, or title timing "
-                            "you want to change."
-                        ),
-                        tr=(
-                            "Bu değişikliği şu anki kesime güvenle uygulayamadım. "
-                            "Lütfen değiştirmek istediğin başlığı, stili, animasyonu ya da "
-                            "başlık zamanlamasını netleştir."
-                        ),
-                    ),
-                ),
-                manifest_hash=manifest.manifest_hash,
-                context_hash=manifest.context_hash,
-                brief_updates=pre_extracted_updates,
-                brief_route=route,
-                brief_clip_ids=tuple(str(media.media_id) for media in manifest.media),
-                brief_manifest=manifest,
-                brief_expected_version=prior_brief.version if prior_brief else 0,
-            )
+            # Reuse the normal full planning pipeline below, including batching,
+            # clip-intent resolution and brief binding. The extractor already owns
+            # this turn's ledger update; Main Creator now only proposes the plan.
+            planning_brief = effective
+            extraction_complete = True
+            item = await _refetch_item(db, item_id)
+            plan = await db.get(ContentPlan, item.content_plan_id)
+            if plan is None or plan.user_id != creator_id:
+                raise RuntimeError("Kria target item ownership changed")
+            persona = await db.get(Persona, plan.persona_id)
+            if persona is None or persona.user_id != creator_id:
+                raise RuntimeError("Kria creator context is unavailable")
         except BriefCoverageError as exc:
-            return _request_recovery(manifest, prior_brief, reason=str(exc))
+            return _request_recovery(
+                manifest,
+                prior_brief,
+                updates=pre_extracted_updates if extraction_complete else (),
+                reason=str(exc),
+            )
         except (RuntimeError, ValidationError, BriefUpdateBatchError) as exc:
             log.warning(
                 "kria_request_recovery_cause",
@@ -2775,8 +2713,15 @@ async def _plan_live_turn(
                 error=str(exc)[:500],
                 exc_info=True,
             )
-            if binding_on and brief_on:
-                return _request_recovery(manifest, prior_brief, reason="request_extraction_failed")
+            if brief_on:
+                return _request_recovery(
+                    manifest,
+                    prior_brief,
+                    updates=pre_extracted_updates if extraction_complete else (),
+                    reason="editor_planning_failed"
+                    if extraction_complete
+                    else "request_extraction_failed",
+                )
             item = await _refetch_item(db, item_id)
             editor_plan = await _plan_editor_revision(
                 db,
@@ -2802,13 +2747,17 @@ async def _plan_live_turn(
             user_message=user_message,
             manifest=manifest,
             media_context=media_context,
-            prior_brief=prior_brief,
+            prior_brief=planning_brief,
             brief_on=brief_on,
         )
         if isinstance(inputs, PlannedKriaTurn):
             return inputs
+        if extraction_complete:
+            inputs = replace(
+                inputs, agent_input=inputs.agent_input.model_copy(update={"brief_enabled": False})
+            )
         outputs = []
-        retrieved_ids = []
+        retrieved_ids = list(pre_extracted_retrieved_ids)
         for batch in inputs.brief_batches or (None,):
             batch_inputs = (
                 inputs
@@ -2842,12 +2791,13 @@ async def _plan_live_turn(
             error=str(exc)[:500],
             exc_info=True,
         )
-        if binding_on and brief_on:
+        if brief_on:
             # A malformed brief update is a reading failure; anything else is the planner.
             reading = isinstance(exc, BriefUpdateBatchError)
             return _request_recovery(
                 manifest,
                 prior_brief,
+                updates=pre_extracted_updates,
                 reason="request_extraction_failed" if reading else "creator_planning_failed",
             )
         if not extract_first or answers_clip_question:
@@ -2880,8 +2830,11 @@ async def _plan_live_turn(
 
     unique_updates = {
         json.dumps(update.model_dump(mode="json"), sort_keys=True): update
-        for result in outputs
-        for update in result.brief_updates
+        for update in (
+            pre_extracted_updates
+            if extraction_complete
+            else tuple(update for result in outputs for update in result.brief_updates)
+        )
     }
     updates = tuple(unique_updates.values())
     try:
@@ -2970,6 +2923,7 @@ async def _plan_live_turn(
                 thread_id=thread_id,
                 item=item,
                 user_message=user_message,
+                original_request=effective_request,
                 **_state_kw(editor_state),
             )
         if editor_plan is not None:
@@ -3065,6 +3019,7 @@ async def extract_deferred_brief(
             creator_id=creator_id,
             item_id=item_id,
             creator_agent_session_id=session_id,
+            prior_brief=prior_brief,
         )
         extracted.extend(output.brief_updates)
     updates = tuple(extracted)

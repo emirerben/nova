@@ -98,6 +98,12 @@ class PlanClip(_Strict):
     clip_id: str
     start_s: float = Field(ge=0)
     end_s: float = Field(gt=0)
+    # Source media range, when the editor compiler provides it.  Output timing above
+    # is deliberately separate: a trim or speed change can move either clock.
+    source_start_s: float | None = Field(default=None, ge=0)
+    source_end_s: float | None = Field(default=None, gt=0)
+    source_duration_s: float | None = Field(default=None, gt=0)
+    playback_rate: float | None = Field(default=None, gt=0)
 
     @property
     def duration_s(self) -> float:
@@ -111,6 +117,14 @@ class PlanText(_Strict):
     start_s: float = Field(ge=0)
     end_s: float = Field(ge=0)
     font_family: str | None = None
+    # Compiled appearance, retained so evals judge the actual editor result.
+    position: str | None = None
+    alignment: str | None = None
+    x_frac: float | None = None
+    y_frac: float | None = None
+    # Optional source-clock range for text attached to source media.
+    source_start_s: float | None = Field(default=None, ge=0)
+    source_end_s: float | None = Field(default=None, gt=0)
     # Set when the engine binds the text to one clip; otherwise time overlap decides.
     clip_id: str | None = None
 
@@ -135,6 +149,9 @@ class FinalPlan(_Strict):
     # Empty (and so absent from every existing fixture) unless the edit plays speech excerpts.
     speech: list[PlanSpeech] = Field(default_factory=list)
     total_duration_s: float | None = None
+    # False when active timeline rows have unresolved output timing (for example
+    # beat-sized slots without a compiled duration).
+    timing_verified: bool = True
 
     @property
     def duration_s(self) -> float:

@@ -58,6 +58,40 @@ _PORTABLE_FAMILIES = {
     "transition",
     "visual_media",
 }
+
+
+def timeline_patch_capabilities(job: Any, variant: dict[str, Any]) -> dict[str, bool]:
+    """Project field-level timeline support from the same predicates as compile.
+
+    This is advisory model context only; ``_op_patch_slots`` remains the final
+    enforcement point. Missing fields stay compatible with older snapshots.
+    """
+    caps = _editor_capabilities(job, variant)
+    clips = caps.get("clips") if isinstance(caps, dict) else {}
+    clips = clips if isinstance(clips, dict) else {}
+    guided = _is_guided_native(job, variant)
+    device = variant.get("render_destination") == "device"
+
+    def enabled(key: str, default: bool = True) -> bool:
+        value = clips.get(key)
+        return (
+            default
+            if value is None
+            else value is True or (isinstance(value, dict) and value.get("editable") is True)
+        )
+
+    return {
+        "duration_s": enabled("duration"),
+        "in_s": enabled("in_s"),
+        "removed": enabled("remove"),
+        "transition_after": enabled("transitions"),
+        "transition_duration_s": enabled("transitions"),
+        "look_preset": enabled("looks") and not device,
+        "playback_rate": enabled("playback_rate") and guided and not device,
+        "source_crop": enabled("source_crop") and guided and not device,
+    }
+
+
 _TEXT_STYLE_FIELDS = {
     "alignment",
     "color",
@@ -744,6 +778,14 @@ def build_editor_snapshot(
                 }
             },
             **_bar_clip_link(row, label_links),
+            # Sequence identity travels in existing round-trip-safe metadata;
+            # expose only its selector descriptor to the model.
+            **(
+                {"sequence_source_id": row["source_params"]["sequence_source_id"]}
+                if isinstance(row.get("source_params"), dict)
+                and isinstance(row["source_params"].get("sequence_source_id"), str)
+                else {}
+            ),
             # Caption/narration bars: selector groups must not sweep them up.
             **({"caption_cue": True} if is_caption_text_bar(row) else {}),
             # Tombstoned generated text: selector ops must not match it.
@@ -791,6 +833,7 @@ def build_editor_snapshot(
     if isinstance(timeline_max_slots, int) and timeline_max_slots > 0:
         snapshot["editor_limits"] = {"max_timeline_slots": timeline_max_slots}
     if "clip" in families:
+        snapshot["timeline_patch_capabilities"] = timeline_patch_capabilities(job, variant)
         # Unlocks add_unused_sources/set_media_duration/stack_images bulk
         # selectors — see `_source_pool_rows`.
         snapshot["source_pool"] = _source_pool_rows(job, variant)
@@ -803,16 +846,22 @@ def build_editor_snapshot(
         snapshot["text_appearance_version"] = 1
         snapshot["text_appearance"] = _text_appearance_inventory(text_bars, cues_present=bool(cues))
     if cues or snapshot["has_narrated_captions"]:
+        from app.pipeline.captions import margin_v_to_y_frac  # noqa: PLC0415
+
+        caption_y = variant.get("caption_y_frac")
+        if variant.get("caption_margin_v") is not None:
+            caption_y = margin_v_to_y_frac(variant["caption_margin_v"])
         snapshot["captions"] = {
             "cues": cues,
             "cues_editable": bool(cues),
             "meta": {
                 "enabled": variant.get("captions_enabled", True),
-                "style": variant.get("caption_style", "sentence"),
-                "font": variant.get("caption_font"),
-                "y_frac": variant.get("caption_y_frac"),
+                "style": variant.get("voiceover_caption_style")
+                or variant.get("caption_style", "sentence"),
+                "font": variant.get("voiceover_caption_font", variant.get("caption_font")),
+                "y_frac": caption_y,
                 "size_px": variant.get("caption_size_px"),
-                "color": variant.get("caption_color"),
+                "color": variant.get("caption_text_color", variant.get("caption_color")),
                 "highlight_color": variant.get("caption_highlight_color"),
                 "stroke_width": variant.get("caption_stroke_width"),
                 "shadow_enabled": variant.get("caption_shadow_enabled"),

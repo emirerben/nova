@@ -88,6 +88,109 @@ def test_title_exact_unmet_without_title():
     assert _check(req, _plan(["a"]))[0] == "unmet"
 
 
+def test_title_persistent_requires_exact_title_through_the_full_output():
+    req = _req("title_persistent", {"literal": "Run day"})
+    plan = FinalPlan(
+        clips=[PlanClip(clip_id="a", start_s=0, end_s=4)],
+        texts=[PlanText(id="title", role="title", text="Run day", start_s=0, end_s=4)],
+    )
+    assert _check(req, plan)[0] == "met"
+    late = plan.model_copy(update={"texts": [plan.texts[0].model_copy(update={"end_s": 3.9})]})
+    assert _check(req, late)[0] == "unmet"
+    wrong = plan.model_copy(update={"texts": [plan.texts[0].model_copy(update={"text": "Other"})]})
+    assert _check(req, wrong)[0] == "unmet"
+    unknown = plan.model_copy(update={"total_duration_s": None, "clips": []})
+    assert _check(req, unknown)[0] == "unmet"
+
+
+def test_title_persistent_checks_all_expected_stacked_title_bars():
+    req = _req("title_persistent", {"literal": "Run day", "title_ids": ["top", "bottom"]})
+    plan = FinalPlan(
+        total_duration_s=4,
+        texts=[
+            PlanText(id="top", role="title", text="Run day", start_s=0, end_s=4),
+            PlanText(id="bottom", role="title", text="Run day", start_s=0, end_s=4),
+        ],
+    )
+    assert _check(req, plan)[0] == "met"
+    missing = plan.model_copy(update={"texts": plan.texts[:1]})
+    assert _check(req, missing)[0] == "unmet"
+
+
+def test_source_preserved_uses_independent_expected_ranges():
+    req = _req(
+        "source_preserved",
+        {"clips": {"a": {"source_start_s": 2.0, "source_end_s": 5.0}}},
+        kind="select",
+    )
+    plan = FinalPlan(
+        clips=[PlanClip(clip_id="a", start_s=0, end_s=3, source_start_s=2, source_end_s=5)]
+    )
+    assert _check(req, plan)[0] == "met"
+    changed = plan.model_copy(
+        update={"clips": [plan.clips[0].model_copy(update={"source_start_s": 0})]}
+    )
+    assert _check(req, changed)[0] == "unmet"
+
+
+def test_source_preserved_does_not_collapse_duplicate_source_occurrences():
+    req = _req(
+        "source_preserved",
+        {
+            "source_ranges": [
+                {"clip_id": "a", "source_start_s": 0, "source_end_s": 2},
+                {"clip_id": "a", "source_start_s": 4, "source_end_s": 6},
+            ]
+        },
+        kind="select",
+    )
+    plan = FinalPlan(
+        clips=[
+            PlanClip(clip_id="a", start_s=0, end_s=2, source_start_s=0, source_end_s=2),
+            PlanClip(clip_id="a", start_s=2, end_s=4, source_start_s=4, source_end_s=6),
+        ]
+    )
+    assert _check(req, plan)[0] == "met"
+    assert _check(req, plan.model_copy(update={"clips": plan.clips[:1]}))[0] == "unmet"
+    extra = plan.model_copy(
+        update={
+            "clips": plan.clips
+            + [PlanClip(clip_id="b", start_s=4, end_s=5, source_start_s=8, source_end_s=9)]
+        }
+    )
+    assert _check(req, extra)[0] == "unmet"
+
+
+def test_text_geometry_checks_compiled_position_and_alignment():
+    req = _req(
+        "text_geometry",
+        {
+            "texts": {
+                "title": {"position": "custom", "alignment": "left", "x_frac": 0.1, "y_frac": 0.9}
+            }
+        },
+    )
+    plan = _plan(
+        ["a"],
+        texts=[
+            PlanText(
+                id="title",
+                role="title",
+                text="x",
+                start_s=0,
+                end_s=2,
+                position="custom",
+                alignment="left",
+                x_frac=0.1,
+                y_frac=0.9,
+            )
+        ],
+    )
+    assert _check(req, plan)[0] == "met"
+    shifted = plan.model_copy(update={"texts": [plan.texts[0].model_copy(update={"y_frac": 0.1})]})
+    assert _check(req, shifted)[0] == "unmet"
+
+
 # ── text_contains ────────────────────────────────────────────────────────────
 
 

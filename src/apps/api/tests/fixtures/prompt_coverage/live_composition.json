@@ -1,0 +1,4699 @@
+{
+  "schema_version": 1,
+  "description": "Redacted synthetic KRI-524 model captures; no rendered export evidence.",
+  "cases": [
+    {
+      "case_id": "kri524-live-persistent",
+      "capture_batch": "a",
+      "capture_index": 2,
+      "prompt": "Keep both titles visible for the whole video, stacked in the bottom left. Keep the current cut exactly as it is.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "title",
+            "text": "An afternoon in Kadıköy",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "middle",
+            "alignment": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5
+          },
+          {
+            "id": "title-sub",
+            "role": "title",
+            "text": "Istanbul food walk",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "middle",
+            "alignment": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5
+          },
+          {
+            "id": "location",
+            "role": "label",
+            "text": "Kadıköy Market",
+            "start_s": 2.0,
+            "end_s": 5.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.16
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"set_text_timing\",\n      \"bar_index\": 0,\n      \"start_s\": 0.0,\n      \"end_s\": 12.0\n    },\n    {\n      \"op\": \"set_text_timing\",\n      \"bar_index\": 1,\n      \"start_s\": 0.0,\n      \"end_s\": 12.0\n    },\n    {\n      \"op\": \"patch_text_style\",\n      \"bar_index\": 0,\n      \"patch\": {\n        \"position\": \"custom\",\n        \"alignment\": \"left\",\n        \"x_frac\": 0.08,\n        \"y_frac\": 0.82\n      }\n    },\n    {\n      \"op\": \"patch_text_style\",\n      \"bar_index\": 1,\n      \"patch\": {\n        \"position\": \"custom\",\n        \"alignment\": \"left\",\n        \"x_frac\": 0.08,\n        \"y_frac\": 0.88\n      }\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"I've extended both titles to stay visible for the entire 12-second video and stacked them in the bottom-left corner while leaving your cuts exactly as they are.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "set_text_timing",
+            "bar_index": 0,
+            "start_s": 0.0,
+            "end_s": 12.0
+          },
+          {
+            "op": "set_text_timing",
+            "bar_index": 1,
+            "start_s": 0.0,
+            "end_s": 12.0
+          },
+          {
+            "op": "patch_text_style",
+            "bar_index": 0,
+            "patch": {
+              "position": "custom",
+              "alignment": "left",
+              "x_frac": 0.08,
+              "y_frac": 0.82
+            }
+          },
+          {
+            "op": "patch_text_style",
+            "bar_index": 1,
+            "patch": {
+              "position": "custom",
+              "alignment": "left",
+              "x_frac": 0.08,
+              "y_frac": 0.88
+            }
+          }
+        ],
+        "confidence": 1.0,
+        "reply": "I've extended both titles to stay visible for the entire 12-second video and stacked them in the bottom-left corner while leaving your cuts exactly as they are.",
+        "suggestions": [],
+        "needs_clarification": false,
+        "outcome": "proposed",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": null,
+      "expected": {
+        "kind": "edit",
+        "title_texts": [
+          "An afternoon in Kadıköy",
+          "Istanbul food walk"
+        ],
+        "expected_duration": 12.0,
+        "expected_geometry": [
+          [
+            0.08,
+            0.82
+          ],
+          [
+            0.08,
+            0.88
+          ]
+        ]
+      },
+      "capture_error": "'EditorCommitRequest' object has no attribute 'get'",
+      "save_evidence": "unverified_synthetic_title_role"
+    },
+    {
+      "case_id": "kri524-live-placement",
+      "capture_batch": "a",
+      "capture_index": 3,
+      "prompt": "Move only the main title down to 85 percent of the frame height; do not change its horizontal position or timing.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "title",
+            "text": "An afternoon in Kadıköy",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "middle",
+            "alignment": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5
+          },
+          {
+            "id": "title-sub",
+            "role": "title",
+            "text": "Istanbul food walk",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "middle",
+            "alignment": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5
+          },
+          {
+            "id": "location",
+            "role": "label",
+            "text": "Kadıköy Market",
+            "start_s": 2.0,
+            "end_s": 5.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.16
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"patch_text_style\",\n      \"bar_index\": 0,\n      \"patch\": {\n        \"position\": \"custom\",\n        \"y_frac\": 0.85\n      }\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Moved the main title down to 85% of the frame height.\",\n  \"suggestions\": [\n    \"Move it back to middle\",\n    \"Make the title larger\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "patch_text_style",
+            "bar_index": 0,
+            "patch": {
+              "position": "custom",
+              "y_frac": 0.85
+            }
+          }
+        ],
+        "confidence": 1.0,
+        "reply": "Moved the main title down to 85% of the frame height.",
+        "suggestions": [
+          "Move it back to middle",
+          "Make the title larger"
+        ],
+        "needs_clarification": false,
+        "outcome": "proposed",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": null,
+      "expected": {
+        "kind": "edit",
+        "expected_y": 0.85,
+        "preserve_x": 0.5,
+        "preserve_duration": [
+          0.0,
+          2.0
+        ]
+      },
+      "capture_error": "'EditorCommitRequest' object has no attribute 'get'",
+      "save_evidence": "unverified_synthetic_title_role"
+    },
+    {
+      "case_id": "kri524-live-sequence_words",
+      "capture_batch": "b",
+      "capture_index": 0,
+      "prompt": "Animate the text with fade in. Each word should fade in and the other following word should fade in after the first word fades out.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "title",
+            "text": "Come with me to my favorite restaurant and ice cream place in Lisbon.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF"
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"segments\": [\n        \"Come\",\n        \"with\",\n        \"me\",\n        \"to\",\n        \"my\",\n        \"favorite\",\n        \"restaurant\",\n        \"and\",\n        \"ice\",\n        \"cream\",\n        \"place\",\n        \"in\",\n        \"Lisbon.\"\n      ],\n      \"patch\": {\n        \"animation_phases\": {\n          \"entrance\": \"fade\",\n          \"exit\": \"fade\",\n          \"loop\": \"none\"\n        }\n      }\n    }\n  ],\n  \"confidence\": 0.95,\n  \"reply\": \"I've split the text word-by-word with fade in and fade out transitions.\",\n  \"suggestions\": [\n    \"Make animation faster\",\n    \"Change font\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "replace_text_sequence",
+            "selector": {
+              "ids": [
+                "title-main"
+              ]
+            },
+            "segments": [
+              "Come",
+              "with",
+              "me",
+              "to",
+              "my",
+              "favorite",
+              "restaurant",
+              "and",
+              "ice",
+              "cream",
+              "place",
+              "in",
+              "Lisbon."
+            ],
+            "expected_source_text": "Come with me to my favorite restaurant and ice cream place in Lisbon.",
+            "target_ids": [
+              "title-main"
+            ],
+            "expected_count": 1,
+            "patch": {
+              "animation_phases": {
+                "entrance": "fade",
+                "exit": "fade",
+                "loop": "none"
+              }
+            }
+          }
+        ],
+        "confidence": 0.95,
+        "reply": "I've split the text word-by-word with fade in and fade out transitions.",
+        "suggestions": [
+          "Make animation faster",
+          "Change font"
+        ],
+        "needs_clarification": false,
+        "outcome": "proposed",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": {
+        "variant_id": "original_text",
+        "render_status": "ready",
+        "render_generation_id": "kri524-gen",
+        "resolved_archetype": "montage",
+        "duration_s": 12.0,
+        "text_elements": [
+          {
+            "id": "title-main::sequence-1",
+            "role": "title",
+            "text": "Come",
+            "start_s": 0.0,
+            "end_s": 0.923077,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-2",
+            "role": "title",
+            "text": "with",
+            "start_s": 0.923077,
+            "end_s": 1.846154,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-3",
+            "role": "title",
+            "text": "me",
+            "start_s": 1.846154,
+            "end_s": 2.769231,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-4",
+            "role": "title",
+            "text": "to",
+            "start_s": 2.769231,
+            "end_s": 3.692308,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-5",
+            "role": "title",
+            "text": "my",
+            "start_s": 3.692308,
+            "end_s": 4.615385,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-6",
+            "role": "title",
+            "text": "favorite",
+            "start_s": 4.615385,
+            "end_s": 5.538462,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-7",
+            "role": "title",
+            "text": "restaurant",
+            "start_s": 5.538462,
+            "end_s": 6.461538,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-8",
+            "role": "title",
+            "text": "and",
+            "start_s": 6.461538,
+            "end_s": 7.384615,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-9",
+            "role": "title",
+            "text": "ice",
+            "start_s": 7.384615,
+            "end_s": 8.307692,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-10",
+            "role": "title",
+            "text": "cream",
+            "start_s": 8.307692,
+            "end_s": 9.230769,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-11",
+            "role": "title",
+            "text": "place",
+            "start_s": 9.230769,
+            "end_s": 10.153846,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-12",
+            "role": "title",
+            "text": "in",
+            "start_s": 10.153846,
+            "end_s": 11.076923,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-13",
+            "role": "title",
+            "text": "Lisbon.",
+            "start_s": 11.076923,
+            "end_s": 12.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          }
+        ],
+        "ai_timeline": {
+          "slots": [
+            {
+              "slot_id": "shot-1",
+              "clip_index": 0,
+              "in_s": 1.0,
+              "duration_s": 6.0,
+              "source_duration_s": 20.0,
+              "removed": false
+            },
+            {
+              "slot_id": "shot-2",
+              "clip_index": 1,
+              "in_s": 4.0,
+              "duration_s": 6.0,
+              "source_duration_s": 15.0,
+              "removed": false
+            }
+          ]
+        }
+      },
+      "expected": {
+        "kind": "sequence",
+        "segments": [
+          "Come",
+          "with",
+          "me",
+          "to",
+          "my",
+          "favorite",
+          "restaurant",
+          "and",
+          "ice",
+          "cream",
+          "place",
+          "in",
+          "Lisbon."
+        ],
+        "expected_duration": 12.0
+      },
+      "save_evidence": "unverified_synthetic_title_role"
+    },
+    {
+      "case_id": "kri524-live-sequence_phrases",
+      "capture_batch": "b",
+      "capture_index": 1,
+      "prompt": "Show this title one sentence at a time. Each sentence should fade away before the next fades in. Keep the footage and wording unchanged.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "title",
+            "text": "Morning coffee. Afternoon walk. Evening lights.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "position": "middle",
+            "alignment": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF"
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"segments\": [\n        \"Morning coffee.\",\n        \"Afternoon walk.\",\n        \"Evening lights.\"\n      ],\n      \"patch\": {\n        \"animation_phases\": {\n          \"entrance\": \"fade\",\n          \"exit\": \"fade\",\n          \"loop\": \"none\"\n        }\n      }\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Split the title into three sequential sentence blocks with fade animations.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "replace_text_sequence",
+            "selector": {
+              "ids": [
+                "title-main"
+              ]
+            },
+            "segments": [
+              "Morning coffee.",
+              "Afternoon walk.",
+              "Evening lights."
+            ],
+            "expected_source_text": "Morning coffee. Afternoon walk. Evening lights.",
+            "target_ids": [
+              "title-main"
+            ],
+            "expected_count": 1,
+            "patch": {
+              "animation_phases": {
+                "entrance": "fade",
+                "exit": "fade",
+                "loop": "none"
+              }
+            }
+          }
+        ],
+        "confidence": 1.0,
+        "reply": "Split the title into three sequential sentence blocks with fade animations.",
+        "suggestions": [],
+        "needs_clarification": false,
+        "outcome": "proposed",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": {
+        "variant_id": "original_text",
+        "render_status": "ready",
+        "render_generation_id": "kri524-gen",
+        "resolved_archetype": "montage",
+        "duration_s": 12.0,
+        "text_elements": [
+          {
+            "id": "title-main::sequence-1",
+            "role": "title",
+            "text": "Morning coffee.",
+            "start_s": 0.0,
+            "end_s": 4.0,
+            "position": "middle",
+            "alignment": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-2",
+            "role": "title",
+            "text": "Afternoon walk.",
+            "start_s": 4.0,
+            "end_s": 8.0,
+            "position": "middle",
+            "alignment": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-3",
+            "role": "title",
+            "text": "Evening lights.",
+            "start_s": 8.0,
+            "end_s": 12.0,
+            "position": "middle",
+            "alignment": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          }
+        ],
+        "ai_timeline": {
+          "slots": [
+            {
+              "slot_id": "shot-1",
+              "clip_index": 0,
+              "in_s": 1.0,
+              "duration_s": 6.0,
+              "source_duration_s": 20.0,
+              "removed": false
+            },
+            {
+              "slot_id": "shot-2",
+              "clip_index": 1,
+              "in_s": 4.0,
+              "duration_s": 6.0,
+              "source_duration_s": 15.0,
+              "removed": false
+            }
+          ]
+        }
+      },
+      "expected": {
+        "kind": "sequence",
+        "segments": [
+          "Morning coffee.",
+          "Afternoon walk.",
+          "Evening lights."
+        ],
+        "expected_duration": 12.0
+      },
+      "save_evidence": "unverified_synthetic_title_role"
+    },
+    {
+      "case_id": "kri524-live-heldout_chunks",
+      "capture_batch": "c",
+      "capture_index": 0,
+      "prompt": "Turn the title into three successive cards: \"North wind,\" then \"clear sky,\" then \"calm water.\" Let each fade up and disappear before the next. Keep its exact look and the video cut.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "title",
+            "text": "North wind, clear sky, calm water.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF"
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"segments\": [\n        \"North wind, \",\n        \"clear sky, \",\n        \"calm water.\"\n      ],\n      \"patch\": {\n        \"animation_phases\": {\n          \"entrance\": \"fade\",\n          \"exit\": \"fade\"\n        }\n      }\n    }\n  ],\n  \"confidence\": 0.98,\n  \"reply\": \"I split the title into three sequential fading cards while keeping the original style and video timing.\",\n  \"suggestions\": [\n    \"Make the text bigger\",\n    \"Change font to Playfair Display\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "replace_text_sequence",
+            "selector": {
+              "ids": [
+                "title-main"
+              ]
+            },
+            "segments": [
+              "North wind,",
+              "clear sky,",
+              "calm water."
+            ],
+            "expected_source_text": "North wind, clear sky, calm water.",
+            "target_ids": [
+              "title-main"
+            ],
+            "expected_count": 1,
+            "patch": {
+              "animation_phases": {
+                "entrance": "fade",
+                "exit": "fade"
+              }
+            }
+          }
+        ],
+        "confidence": 0.98,
+        "reply": "I split the title into three sequential fading cards while keeping the original style and video timing.",
+        "suggestions": [
+          "Make the text bigger",
+          "Change font to Playfair Display"
+        ],
+        "needs_clarification": false,
+        "outcome": "proposed",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": {
+        "variant_id": "original_text",
+        "render_status": "ready",
+        "render_generation_id": "kri524-gen",
+        "resolved_archetype": "montage",
+        "duration_s": 12.0,
+        "text_elements": [
+          {
+            "id": "title-main::sequence-1",
+            "role": "title",
+            "text": "North wind,",
+            "start_s": 0.0,
+            "end_s": 4.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-2",
+            "role": "title",
+            "text": "clear sky,",
+            "start_s": 4.0,
+            "end_s": 8.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-3",
+            "role": "title",
+            "text": "calm water.",
+            "start_s": 8.0,
+            "end_s": 12.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          }
+        ],
+        "ai_timeline": {
+          "slots": [
+            {
+              "slot_id": "shot-1",
+              "clip_index": 0,
+              "in_s": 1.0,
+              "duration_s": 6.0,
+              "source_duration_s": 20.0,
+              "removed": false
+            },
+            {
+              "slot_id": "shot-2",
+              "clip_index": 1,
+              "in_s": 4.0,
+              "duration_s": 6.0,
+              "source_duration_s": 15.0,
+              "removed": false
+            }
+          ]
+        }
+      },
+      "expected": {
+        "kind": "sequence",
+        "segments": [
+          "North wind,",
+          "clear sky,",
+          "calm water."
+        ],
+        "expected_duration": 12.0
+      },
+      "save_evidence": "unverified_synthetic_title_role"
+    },
+    {
+      "case_id": "kri524-live-heldout_correction",
+      "capture_batch": "c",
+      "capture_index": 1,
+      "prompt": "No, I meant one word on screen at a time, not the entire sentence fading together. Each word fades away before the next one fades in. Keep the original title duration.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "title",
+            "text": "Small steps make great journeys.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF"
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [0]\n      },\n      \"segments\": [\n        \"Small\",\n        \"steps\",\n        \"make\",\n        \"great\",\n        \"journeys.\"\n      ],\n      \"patch\": {\n        \"animation_phases\": {\n          \"entrance\": \"fade\",\n          \"exit\": \"fade\",\n          \"loop\": \"none\"\n        }\n      }\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"I've split the title into single-word segments with fade animations across the original duration.\",\n  \"suggestions\": [\n    \"Make the font bigger\",\n    \"Change font to Montserrat\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "replace_text_sequence",
+            "selector": {
+              "ids": [
+                "title-main"
+              ]
+            },
+            "segments": [
+              "Small",
+              "steps",
+              "make",
+              "great",
+              "journeys."
+            ],
+            "expected_source_text": "Small steps make great journeys.",
+            "target_ids": [
+              "title-main"
+            ],
+            "expected_count": 1,
+            "patch": {
+              "animation_phases": {
+                "entrance": "fade",
+                "exit": "fade",
+                "loop": "none"
+              }
+            }
+          }
+        ],
+        "confidence": 1.0,
+        "reply": "I've split the title into single-word segments with fade animations across the original duration.",
+        "suggestions": [
+          "Make the font bigger",
+          "Change font to Montserrat"
+        ],
+        "needs_clarification": false,
+        "outcome": "proposed",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": {
+        "variant_id": "original_text",
+        "render_status": "ready",
+        "render_generation_id": "kri524-gen",
+        "resolved_archetype": "montage",
+        "duration_s": 12.0,
+        "text_elements": [
+          {
+            "id": "title-main::sequence-1",
+            "role": "title",
+            "text": "Small",
+            "start_s": 0.0,
+            "end_s": 2.4,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-2",
+            "role": "title",
+            "text": "steps",
+            "start_s": 2.4,
+            "end_s": 4.8,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-3",
+            "role": "title",
+            "text": "make",
+            "start_s": 4.8,
+            "end_s": 7.2,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-4",
+            "role": "title",
+            "text": "great",
+            "start_s": 7.2,
+            "end_s": 9.6,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-5",
+            "role": "title",
+            "text": "journeys.",
+            "start_s": 9.6,
+            "end_s": 12.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          }
+        ],
+        "ai_timeline": {
+          "slots": [
+            {
+              "slot_id": "shot-1",
+              "clip_index": 0,
+              "in_s": 1.0,
+              "duration_s": 6.0,
+              "source_duration_s": 20.0,
+              "removed": false
+            },
+            {
+              "slot_id": "shot-2",
+              "clip_index": 1,
+              "in_s": 4.0,
+              "duration_s": 6.0,
+              "source_duration_s": 15.0,
+              "removed": false
+            }
+          ]
+        }
+      },
+      "expected": {
+        "kind": "sequence",
+        "segments": [
+          "Small",
+          "steps",
+          "make",
+          "great",
+          "journeys."
+        ],
+        "expected_duration": 12.0
+      },
+      "save_evidence": "unverified_synthetic_title_role"
+    },
+    {
+      "case_id": "kri524-live-wholebar_negative",
+      "capture_batch": "c",
+      "capture_index": 2,
+      "prompt": "Fade the whole sentence in and out as one title. Do not split it or change its wording, timing, or placement.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "title",
+            "text": "North wind, clear sky, calm water.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF"
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"patch_text\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"patch\": {\n        \"animation_phases\": {\n          \"entrance\": \"fade\",\n          \"exit\": \"fade\"\n        }\n      }\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Added fade-in and fade-out animations to the title.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "patch_text",
+            "selector": {
+              "ids": [
+                "title-main"
+              ]
+            },
+            "patch": {
+              "animation_phases": {
+                "entrance": "fade",
+                "exit": "fade"
+              }
+            },
+            "target_ids": [
+              "title-main"
+            ],
+            "expected_count": 1
+          }
+        ],
+        "confidence": 1.0,
+        "reply": "Added fade-in and fade-out animations to the title.",
+        "suggestions": [],
+        "needs_clarification": false,
+        "outcome": "proposed",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": {
+        "variant_id": "original_text",
+        "render_status": "ready",
+        "render_generation_id": "kri524-gen",
+        "resolved_archetype": "montage",
+        "duration_s": 12.0,
+        "text_elements": [
+          {
+            "id": "title-main",
+            "role": "title",
+            "text": "North wind, clear sky, calm water.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          }
+        ],
+        "ai_timeline": {
+          "slots": [
+            {
+              "slot_id": "shot-1",
+              "clip_index": 0,
+              "in_s": 1.0,
+              "duration_s": 6.0,
+              "source_duration_s": 20.0,
+              "removed": false
+            },
+            {
+              "slot_id": "shot-2",
+              "clip_index": 1,
+              "in_s": 4.0,
+              "duration_s": 6.0,
+              "source_duration_s": 15.0,
+              "removed": false
+            }
+          ]
+        }
+      },
+      "expected": {
+        "kind": "whole_bar",
+        "expected_text": "North wind, clear sky, calm water.",
+        "expected_duration": 12.0
+      },
+      "save_evidence": "unverified_synthetic_title_role"
+    },
+    {
+      "case_id": "kri524-live-already_satisfied",
+      "capture_batch": "c",
+      "capture_index": 4,
+      "prompt": "Set the entire title to fade in and fade out, keeping everything else unchanged.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "title",
+            "text": "North wind, clear sky, calm water.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1
+            }
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [],\n  \"confidence\": 1.0,\n  \"reply\": \"The title is already set to fade in and fade out, so no changes were needed.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [],
+        "confidence": 1.0,
+        "reply": "The title is already set to fade in and fade out, so no changes were needed.",
+        "suggestions": [],
+        "needs_clarification": false,
+        "outcome": "no_effect",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": null,
+      "expected": {
+        "kind": "no_effect",
+        "expected_text": "North wind, clear sky, calm water.",
+        "expected_duration": 12.0
+      },
+      "save_evidence": "unverified_synthetic_title_role"
+    },
+    {
+      "case_id": "kri524-live-whole_edit_preserved",
+      "capture_batch": "c",
+      "capture_index": 5,
+      "prompt": "Keep the whole video exactly as edited, just make the main title white. Do not restore any trimmed footage.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "title",
+            "text": "An afternoon in Kadıköy",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "middle",
+            "alignment": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5
+          },
+          {
+            "id": "title-sub",
+            "role": "title",
+            "text": "Istanbul food walk",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "middle",
+            "alignment": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5
+          },
+          {
+            "id": "location",
+            "role": "label",
+            "text": "Kadıköy Market",
+            "start_s": 2.0,
+            "end_s": 5.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.16
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"patch_text\",\n      \"selector\": {\n        \"group\": \"title\"\n      },\n      \"patch\": {\n        \"color\": \"#FFFFFF\"\n      }\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Updated the main title text color to white.\",\n  \"suggestions\": [\n    \"Make the title bigger\",\n    \"Change title font\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [],
+        "confidence": 1.0,
+        "reply": "I couldn't find a title, so I changed nothing. Which text did you mean?",
+        "suggestions": [
+          "Make the title bigger",
+          "Change title font"
+        ],
+        "needs_clarification": true,
+        "outcome": "clarification",
+        "rejection_reasons": [],
+        "clarification_context": {
+          "selector": {
+            "scope": "timeline",
+            "media_kind": "video",
+            "quantifier": "all"
+          },
+          "referent": "videos"
+        },
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": null,
+      "expected": {
+        "kind": "edit",
+        "expected_color": "#FFFFFF",
+        "preserve_timeline": true
+      },
+      "save_evidence": "unverified_synthetic_title_role"
+    },
+    {
+      "case_id": "kri524-live-compound_final",
+      "capture_batch": "d",
+      "capture_index": 0,
+      "prompt": "Reveal the title one word at a time with a fade in and fade out, and make it yellow. Keep the current font and lower-left position, and leave the clips alone.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "title",
+            "text": "Every corner tells a story.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF"
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [0]\n      },\n      \"segments\": [\n        \"Every\",\n        \"corner\",\n        \"tells\",\n        \"a\",\n        \"story.\"\n      ],\n      \"patch\": {\n        \"color\": \"#FFD60A\",\n        \"animation_phases\": {\n          \"entrance\": \"fade\",\n          \"exit\": \"fade\",\n          \"loop\": \"none\"\n        }\n      }\n    }\n  ],\n  \"confidence\": 0.98,\n  \"reply\": \"Split the title into word-by-word fade reveals in yellow, keeping the current font, position, and clip timings intact.\",\n  \"suggestions\": [\n    \"Make the text bigger\",\n    \"Change font family\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "replace_text_sequence",
+            "selector": {
+              "ids": [
+                "title-main"
+              ]
+            },
+            "segments": [
+              "Every",
+              "corner",
+              "tells",
+              "a",
+              "story."
+            ],
+            "expected_source_text": "Every corner tells a story.",
+            "target_ids": [
+              "title-main"
+            ],
+            "expected_count": 1,
+            "patch": {
+              "color": "#FFD60A",
+              "animation_phases": {
+                "entrance": "fade",
+                "exit": "fade",
+                "loop": "none"
+              }
+            }
+          }
+        ],
+        "confidence": 0.98,
+        "reply": "Split the title into word-by-word fade reveals in yellow, keeping the current font, position, and clip timings intact.",
+        "suggestions": [
+          "Make the text bigger",
+          "Change font family"
+        ],
+        "needs_clarification": false,
+        "outcome": "proposed",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": {
+        "variant_id": "original_text",
+        "render_status": "ready",
+        "render_generation_id": "kri524-gen",
+        "resolved_archetype": "montage",
+        "duration_s": 12.0,
+        "text_elements": [
+          {
+            "id": "title-main::sequence-1",
+            "role": "title",
+            "text": "Every",
+            "start_s": 0.0,
+            "end_s": 2.4,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFD60A",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-2",
+            "role": "title",
+            "text": "corner",
+            "start_s": 2.4,
+            "end_s": 4.8,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFD60A",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-3",
+            "role": "title",
+            "text": "tells",
+            "start_s": 4.8,
+            "end_s": 7.2,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFD60A",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-4",
+            "role": "title",
+            "text": "a",
+            "start_s": 7.2,
+            "end_s": 9.6,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFD60A",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-5",
+            "role": "title",
+            "text": "story.",
+            "start_s": 9.6,
+            "end_s": 12.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFD60A",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          }
+        ],
+        "ai_timeline": {
+          "slots": [
+            {
+              "slot_id": "shot-1",
+              "clip_index": 0,
+              "in_s": 1.0,
+              "duration_s": 6.0,
+              "source_duration_s": 20.0,
+              "removed": false
+            },
+            {
+              "slot_id": "shot-2",
+              "clip_index": 1,
+              "in_s": 4.0,
+              "duration_s": 6.0,
+              "source_duration_s": 15.0,
+              "removed": false
+            }
+          ]
+        }
+      },
+      "expected": {
+        "kind": "sequence",
+        "segments": [
+          "Every",
+          "corner",
+          "tells",
+          "a",
+          "story."
+        ],
+        "expected_color": "#FFD60A",
+        "expected_duration": 12.0
+      },
+      "save_evidence": "unverified_synthetic_title_role"
+    },
+    {
+      "case_id": "kri524-live-compound_failed",
+      "capture_batch": "c",
+      "capture_index": 3,
+      "prompt": "Reveal the title one word at a time with a fade in and fade out, and make it yellow. Keep the current font and lower-left position, and leave the clips alone.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "title",
+            "text": "Every corner tells a story.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF"
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"patch_text\",\n      \"selector\": {\n        \"group\": \"title\"\n      },\n      \"patch\": {\n        \"color\": \"#FFFF00\",\n        \"effect\": \"typewriter\",\n        \"animation_phases\": {\n          \"entrance\": \"fade\",\n          \"exit\": \"fade\"\n        }\n      }\n    }\n  ],\n  \"confidence\": 0.95,\n  \"reply\": \"Updated the title to yellow with a word-by-word typewriter reveal and fade in/out transitions.\",\n  \"suggestions\": [\n    \"Make font bigger\",\n    \"Change font\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [],
+        "confidence": 0.95,
+        "reply": "I couldn't find a title, so I changed nothing. Which text did you mean?",
+        "suggestions": [
+          "Make font bigger",
+          "Change font"
+        ],
+        "needs_clarification": true,
+        "outcome": "clarification",
+        "rejection_reasons": [],
+        "clarification_context": {
+          "selector": {
+            "scope": "timeline",
+            "media_kind": "all",
+            "quantifier": "all"
+          },
+          "referent": "clips"
+        },
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": null,
+      "expected": {
+        "kind": "sequence",
+        "segments": [
+          "Reveal",
+          "the",
+          "title",
+          "one",
+          "word",
+          "at",
+          "a",
+          "time"
+        ],
+        "expected_color": "#FFFF00",
+        "expected_duration": 12.0
+      },
+      "save_evidence": "unverified_synthetic_title_role"
+    },
+    {
+      "case_id": "kri524-live-sequence_baseline",
+      "capture_batch": "a",
+      "capture_index": 0,
+      "prompt": "Animate the text with fade in. Each word should fade in and the other following word should fade in after the first word fades out.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "title",
+            "text": "Come with me to my favorite restaurant and ice cream place in Lisbon.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF"
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"patch_text_style\",\n      \"bar_index\": 0,\n      \"patch\": {\n        \"effect\": \"fade-in\"\n      }\n    }\n  ],\n  \"confidence\": 0.95,\n  \"reply\": \"Applied the fade-in animation to the text.\",\n  \"suggestions\": [\n    \"Try typewriter effect\",\n    \"Change font style\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "patch_text_style",
+            "bar_index": 0,
+            "patch": {
+              "effect": "fade-in"
+            }
+          }
+        ],
+        "confidence": 0.95,
+        "reply": "Applied the fade-in animation to the text.",
+        "suggestions": [
+          "Try typewriter effect",
+          "Change font style"
+        ],
+        "needs_clarification": false,
+        "outcome": "proposed",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": null,
+      "capture_error": "'EditorCommitRequest' object has no attribute 'get'",
+      "expected": {
+        "kind": "sequence",
+        "segments": [
+          "Every",
+          "corner",
+          "tells",
+          "a",
+          "story."
+        ],
+        "expected_duration": 12.0
+      },
+      "save_evidence": "unverified_synthetic_title_role"
+    },
+    {
+      "case_id": "kri524-canonical-heldout_chunks",
+      "capture_batch": "final",
+      "capture_index": 0,
+      "prompt": "Turn the title into three successive cards: \"North wind,\" then \"clear sky,\" then \"calm water.\" Let each fade up and disappear before the next. Keep its exact look and the video cut.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "layer": "canonical_save_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "generative_intro",
+            "text": "North wind, clear sky, calm water.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF"
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"segments\": [\n        \"North wind, \",\n        \"clear sky, \",\n        \"calm water.\"\n      ],\n      \"patch\": {\n        \"animation_phases\": {\n          \"entrance\": \"fade\",\n          \"exit\": \"fade\"\n        }\n      }\n    }\n  ],\n  \"confidence\": 0.95,\n  \"reply\": \"Split the title into three successive fade-in/fade-out text cards while keeping the original styling and video structure.\",\n  \"suggestions\": [\n    \"Adjust text duration\",\n    \"Change font style\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "replace_text_sequence",
+            "selector": {
+              "ids": [
+                "title-main"
+              ]
+            },
+            "segments": [
+              "North wind,",
+              "clear sky,",
+              "calm water."
+            ],
+            "expected_source_text": "North wind, clear sky, calm water.",
+            "target_ids": [
+              "title-main"
+            ],
+            "expected_count": 1,
+            "patch": {
+              "animation_phases": {
+                "entrance": "fade",
+                "exit": "fade"
+              }
+            }
+          }
+        ],
+        "confidence": 0.95,
+        "reply": "Split the title into three successive fade-in/fade-out text cards while keeping the original styling and video structure.",
+        "suggestions": [
+          "Adjust text duration",
+          "Change font style"
+        ],
+        "needs_clarification": false,
+        "outcome": "proposed",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": {
+        "variant_id": "original_text",
+        "render_status": "ready",
+        "render_generation_id": "kri524-gen",
+        "resolved_archetype": "montage",
+        "duration_s": 12.0,
+        "text_elements": [
+          {
+            "id": "title-main::sequence-1",
+            "role": "generative_intro",
+            "text": "North wind,",
+            "start_s": 0.0,
+            "end_s": 4.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-2",
+            "role": "generative_intro",
+            "text": "clear sky,",
+            "start_s": 4.0,
+            "end_s": 8.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-3",
+            "role": "generative_intro",
+            "text": "calm water.",
+            "start_s": 8.0,
+            "end_s": 12.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          }
+        ],
+        "ai_timeline": {
+          "slots": [
+            {
+              "slot_id": "shot-1",
+              "clip_index": 0,
+              "in_s": 1.0,
+              "duration_s": 6.0,
+              "source_duration_s": 20.0,
+              "removed": false
+            },
+            {
+              "slot_id": "shot-2",
+              "clip_index": 1,
+              "in_s": 4.0,
+              "duration_s": 6.0,
+              "source_duration_s": 15.0,
+              "removed": false
+            }
+          ]
+        }
+      },
+      "save_validation": "passed",
+      "save_evidence": "passed",
+      "expected": {
+        "kind": "sequence",
+        "segments": [
+          "North wind,",
+          "clear sky,",
+          "calm water."
+        ],
+        "expected_duration": 12.0
+      }
+    },
+    {
+      "case_id": "kri524-canonical-heldout_correction",
+      "capture_batch": "final",
+      "capture_index": 1,
+      "prompt": "No, I meant one word on screen at a time, not the entire sentence fading together. Each word fades away before the next one fades in. Keep the original title duration.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "layer": "canonical_save_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "generative_intro",
+            "text": "Small steps make great journeys.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF"
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"segments\": [\n        \"Small\",\n        \"steps\",\n        \"make\",\n        \"great\",\n        \"journeys.\"\n      ],\n      \"patch\": {\n        \"animation_phases\": {\n          \"entrance\": \"fade\",\n          \"exit\": \"fade\",\n          \"loop\": \"none\"\n        }\n      }\n    }\n  ],\n  \"confidence\": 0.98,\n  \"reply\": \"Split the text into word-by-word sequential segments with fade transitions across the full 12-second duration.\",\n  \"suggestions\": [\n    \"Make the words bigger\",\n    \"Change the font\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "replace_text_sequence",
+            "selector": {
+              "ids": [
+                "title-main"
+              ]
+            },
+            "segments": [
+              "Small",
+              "steps",
+              "make",
+              "great",
+              "journeys."
+            ],
+            "expected_source_text": "Small steps make great journeys.",
+            "target_ids": [
+              "title-main"
+            ],
+            "expected_count": 1,
+            "patch": {
+              "animation_phases": {
+                "entrance": "fade",
+                "exit": "fade",
+                "loop": "none"
+              }
+            }
+          }
+        ],
+        "confidence": 0.98,
+        "reply": "Split the text into word-by-word sequential segments with fade transitions across the full 12-second duration.",
+        "suggestions": [
+          "Make the words bigger",
+          "Change the font"
+        ],
+        "needs_clarification": false,
+        "outcome": "proposed",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": {
+        "variant_id": "original_text",
+        "render_status": "ready",
+        "render_generation_id": "kri524-gen",
+        "resolved_archetype": "montage",
+        "duration_s": 12.0,
+        "text_elements": [
+          {
+            "id": "title-main::sequence-1",
+            "role": "generative_intro",
+            "text": "Small",
+            "start_s": 0.0,
+            "end_s": 2.4,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-2",
+            "role": "generative_intro",
+            "text": "steps",
+            "start_s": 2.4,
+            "end_s": 4.8,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-3",
+            "role": "generative_intro",
+            "text": "make",
+            "start_s": 4.8,
+            "end_s": 7.2,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-4",
+            "role": "generative_intro",
+            "text": "great",
+            "start_s": 7.2,
+            "end_s": 9.6,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-5",
+            "role": "generative_intro",
+            "text": "journeys.",
+            "start_s": 9.6,
+            "end_s": 12.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          }
+        ],
+        "ai_timeline": {
+          "slots": [
+            {
+              "slot_id": "shot-1",
+              "clip_index": 0,
+              "in_s": 1.0,
+              "duration_s": 6.0,
+              "source_duration_s": 20.0,
+              "removed": false
+            },
+            {
+              "slot_id": "shot-2",
+              "clip_index": 1,
+              "in_s": 4.0,
+              "duration_s": 6.0,
+              "source_duration_s": 15.0,
+              "removed": false
+            }
+          ]
+        }
+      },
+      "save_validation": "passed",
+      "save_evidence": "passed",
+      "expected": {
+        "kind": "sequence",
+        "segments": [
+          "Small",
+          "steps",
+          "make",
+          "great",
+          "journeys."
+        ],
+        "expected_duration": 12.0
+      }
+    },
+    {
+      "case_id": "kri524-canonical-wholebar_negative",
+      "capture_batch": "final",
+      "capture_index": 2,
+      "prompt": "Fade the whole sentence in and out as one title. Do not split it or change its wording, timing, or placement.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "layer": "canonical_save_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "generative_intro",
+            "text": "North wind, clear sky, calm water.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF"
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"patch_text\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"patch\": {\n        \"animation_phases\": {\n          \"entrance\": \"fade\",\n          \"exit\": \"fade\"\n        }\n      }\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Added fade-in and fade-out animations to the title while keeping its wording, timing, and placement intact.\",\n  \"suggestions\": [\n    \"Change font\",\n    \"Adjust timing\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "patch_text",
+            "selector": {
+              "ids": [
+                "title-main"
+              ]
+            },
+            "patch": {
+              "animation_phases": {
+                "entrance": "fade",
+                "exit": "fade"
+              }
+            },
+            "target_ids": [
+              "title-main"
+            ],
+            "expected_count": 1
+          }
+        ],
+        "confidence": 1.0,
+        "reply": "Added fade-in and fade-out animations to the title while keeping its wording, timing, and placement intact.",
+        "suggestions": [
+          "Change font",
+          "Adjust timing"
+        ],
+        "needs_clarification": false,
+        "outcome": "proposed",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": {
+        "variant_id": "original_text",
+        "render_status": "ready",
+        "render_generation_id": "kri524-gen",
+        "resolved_archetype": "montage",
+        "duration_s": 12.0,
+        "text_elements": [
+          {
+            "id": "title-main",
+            "role": "generative_intro",
+            "text": "North wind, clear sky, calm water.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          }
+        ],
+        "ai_timeline": {
+          "slots": [
+            {
+              "slot_id": "shot-1",
+              "clip_index": 0,
+              "in_s": 1.0,
+              "duration_s": 6.0,
+              "source_duration_s": 20.0,
+              "removed": false
+            },
+            {
+              "slot_id": "shot-2",
+              "clip_index": 1,
+              "in_s": 4.0,
+              "duration_s": 6.0,
+              "source_duration_s": 15.0,
+              "removed": false
+            }
+          ]
+        }
+      },
+      "save_validation": "passed",
+      "save_evidence": "passed",
+      "expected": {
+        "kind": "whole_bar",
+        "expected_text": "North wind, clear sky, calm water.",
+        "expected_duration": 12.0
+      }
+    },
+    {
+      "case_id": "kri524-canonical-compound",
+      "capture_batch": "final",
+      "capture_index": 3,
+      "prompt": "Reveal the title one word at a time with a fade in and fade out, and make it yellow. Keep the current font and lower-left position, and leave the clips alone.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "layer": "canonical_save_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "generative_intro",
+            "text": "Every corner tells a story.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF"
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"segments\": [\n        \"Every\",\n        \"corner\",\n        \"tells\",\n        \"a\",\n        \"story.\"\n      ],\n      \"patch\": {\n        \"color\": \"#FFFF00\",\n        \"animation_phases\": {\n          \"entrance\": \"fade\",\n          \"exit\": \"fade\",\n          \"loop\": \"none\"\n        }\n      }\n    }\n  ],\n  \"confidence\": 0.95,\n  \"reply\": \"Split your title word-by-word with fade in/out transitions and updated the text color to yellow while keeping the font, position, and video clips unchanged.\",\n  \"suggestions\": [\n    \"Make the words appear faster\",\n    \"Change title color back to white\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "replace_text_sequence",
+            "selector": {
+              "ids": [
+                "title-main"
+              ]
+            },
+            "segments": [
+              "Every",
+              "corner",
+              "tells",
+              "a",
+              "story."
+            ],
+            "expected_source_text": "Every corner tells a story.",
+            "target_ids": [
+              "title-main"
+            ],
+            "expected_count": 1,
+            "patch": {
+              "color": "#FFFF00",
+              "animation_phases": {
+                "entrance": "fade",
+                "exit": "fade",
+                "loop": "none"
+              }
+            }
+          }
+        ],
+        "confidence": 0.95,
+        "reply": "Split your title word-by-word with fade in/out transitions and updated the text color to yellow while keeping the font, position, and video clips unchanged.",
+        "suggestions": [
+          "Make the words appear faster",
+          "Change title color back to white"
+        ],
+        "needs_clarification": false,
+        "outcome": "proposed",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": {
+        "variant_id": "original_text",
+        "render_status": "ready",
+        "render_generation_id": "kri524-gen",
+        "resolved_archetype": "montage",
+        "duration_s": 12.0,
+        "text_elements": [
+          {
+            "id": "title-main::sequence-1",
+            "role": "generative_intro",
+            "text": "Every",
+            "start_s": 0.0,
+            "end_s": 2.4,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFF00",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-2",
+            "role": "generative_intro",
+            "text": "corner",
+            "start_s": 2.4,
+            "end_s": 4.8,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFF00",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-3",
+            "role": "generative_intro",
+            "text": "tells",
+            "start_s": 4.8,
+            "end_s": 7.2,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFF00",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-4",
+            "role": "generative_intro",
+            "text": "a",
+            "start_s": 7.2,
+            "end_s": 9.6,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFF00",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-5",
+            "role": "generative_intro",
+            "text": "story.",
+            "start_s": 9.6,
+            "end_s": 12.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFF00",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          }
+        ],
+        "ai_timeline": {
+          "slots": [
+            {
+              "slot_id": "shot-1",
+              "clip_index": 0,
+              "in_s": 1.0,
+              "duration_s": 6.0,
+              "source_duration_s": 20.0,
+              "removed": false
+            },
+            {
+              "slot_id": "shot-2",
+              "clip_index": 1,
+              "in_s": 4.0,
+              "duration_s": 6.0,
+              "source_duration_s": 15.0,
+              "removed": false
+            }
+          ]
+        }
+      },
+      "save_validation": "passed",
+      "save_evidence": "passed",
+      "expected": {
+        "kind": "sequence",
+        "segments": [
+          "Every",
+          "corner",
+          "tells",
+          "a",
+          "story."
+        ],
+        "expected_color": "#FFFF00",
+        "expected_duration": 12.0
+      }
+    },
+    {
+      "case_id": "kri524-canonical-already_satisfied",
+      "capture_batch": "final",
+      "capture_index": 4,
+      "prompt": "Set the entire title to fade in and fade out, keeping everything else unchanged.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "layer": "canonical_save_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "generative_intro",
+            "text": "North wind, clear sky, calm water.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1
+            }
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [],\n  \"confidence\": 1.0,\n  \"reply\": \"The title is already set to fade in and fade out, so no changes were made.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [],
+        "confidence": 1.0,
+        "reply": "The title is already set to fade in and fade out, so no changes were made.",
+        "suggestions": [],
+        "needs_clarification": false,
+        "outcome": "no_effect",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": null,
+      "save_validation": null,
+      "save_evidence": "not_applicable",
+      "expected": {
+        "kind": "no_effect",
+        "expected_text": "North wind, clear sky, calm water.",
+        "expected_duration": 12.0
+      }
+    },
+    {
+      "case_id": "kri524-canonical-whole_edit_preserved",
+      "capture_batch": "final",
+      "capture_index": 5,
+      "prompt": "Keep the whole video exactly as edited, just make the main title white. Do not restore any trimmed footage.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "layer": "canonical_save_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "generative_intro",
+            "text": "An afternoon in Kadıköy",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "middle",
+            "alignment": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5
+          },
+          {
+            "id": "title-sub",
+            "role": "generative_intro",
+            "text": "Istanbul food walk",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "middle",
+            "alignment": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5
+          },
+          {
+            "id": "location",
+            "role": "generative_sequence",
+            "text": "Kadıköy Market",
+            "start_s": 2.0,
+            "end_s": 5.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.16
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"patch_text\",\n      \"selector\": {\n        \"group\": \"title\"\n      },\n      \"patch\": {\n        \"color\": \"#FFFFFF\"\n      }\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Updated the main title text color to white.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "patch_text",
+            "selector": {
+              "group": "title"
+            },
+            "patch": {
+              "color": "#FFFFFF"
+            },
+            "target_ids": [
+              "title-main"
+            ],
+            "expected_count": 1
+          }
+        ],
+        "confidence": 1.0,
+        "reply": "Updated the main title text color to white.",
+        "suggestions": [],
+        "needs_clarification": false,
+        "outcome": "proposed",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": {
+        "variant_id": "original_text",
+        "render_status": "ready",
+        "render_generation_id": "kri524-gen",
+        "resolved_archetype": "montage",
+        "duration_s": 12.0,
+        "text_elements": [
+          {
+            "id": "title-main",
+            "role": "generative_intro",
+            "text": "An afternoon in Kadıköy",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "middle",
+            "alignment": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "color": "#FFFFFF"
+          },
+          {
+            "id": "title-sub",
+            "role": "generative_intro",
+            "text": "Istanbul food walk",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "middle",
+            "alignment": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5
+          },
+          {
+            "id": "location",
+            "role": "generative_sequence",
+            "text": "Kadıköy Market",
+            "start_s": 2.0,
+            "end_s": 5.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.16
+          }
+        ],
+        "ai_timeline": {
+          "slots": [
+            {
+              "slot_id": "shot-1",
+              "clip_index": 0,
+              "in_s": 1.0,
+              "duration_s": 6.0,
+              "source_duration_s": 20.0,
+              "removed": false
+            },
+            {
+              "slot_id": "shot-2",
+              "clip_index": 1,
+              "in_s": 4.0,
+              "duration_s": 6.0,
+              "source_duration_s": 15.0,
+              "removed": false
+            }
+          ]
+        }
+      },
+      "save_validation": "passed",
+      "save_evidence": "passed",
+      "expected": {
+        "kind": "edit",
+        "expected_color": "#FFFFFF",
+        "preserve_timeline": true
+      }
+    },
+    {
+      "case_id": "kri524-canonical-unavailable",
+      "capture_batch": "final",
+      "capture_index": 6,
+      "prompt": "Translate the speech in the video into Japanese and replace the speaker with a Japanese voice.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "layer": "canonical_save_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "generative_intro",
+            "text": "North wind, clear sky, calm water.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF"
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"reject\",\n  \"ops\": [],\n  \"confidence\": 1.0,\n  \"reply\": \"Use the caption controls on the video page.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [\n    {\n      \"request\": \"Translate the speech in the video into Japanese and replace the speaker with a Japanese voice.\",\n      \"reason\": \"Speech translation and voice replacement are not supported in chat.\"\n    }\n  ]\n}",
+      "output": {
+        "intent": "reject",
+        "ops": [],
+        "confidence": 1.0,
+        "reply": "Use the caption controls on the video page.",
+        "suggestions": [],
+        "needs_clarification": false,
+        "outcome": "unsupported",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [
+          {
+            "request": "Translate the speech in the video into Japanese and replace the speaker with a Japanese voice.",
+            "reason": "Speech translation and voice replacement are not supported in chat."
+          }
+        ],
+        "reply_notes": ""
+      },
+      "after": null,
+      "save_validation": null,
+      "save_evidence": "not_applicable",
+      "expected": {
+        "kind": "unsupported"
+      }
+    },
+    {
+      "case_id": "kri524-canonical-exact_correction",
+      "capture_batch": "final",
+      "capture_index": 7,
+      "prompt": "Split that text into words. Then animate each word by word.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "layer": "canonical_save_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "generative_intro",
+            "text": "A little adventure starts here.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF"
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"segments\": [\n        \"A\",\n        \"little\",\n        \"adventure\",\n        \"starts\",\n        \"here.\"\n      ],\n      \"patch\": {\n        \"animation_phases\": {\n          \"entrance\": \"fade\",\n          \"exit\": \"fade\",\n          \"loop\": \"none\"\n        }\n      }\n    }\n  ],\n  \"confidence\": 0.95,\n  \"reply\": \"Split the text into word-by-word sequence with fade animations.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "replace_text_sequence",
+            "selector": {
+              "ids": [
+                "title-main"
+              ]
+            },
+            "segments": [
+              "A",
+              "little",
+              "adventure",
+              "starts",
+              "here."
+            ],
+            "expected_source_text": "A little adventure starts here.",
+            "target_ids": [
+              "title-main"
+            ],
+            "expected_count": 1,
+            "patch": {
+              "animation_phases": {
+                "entrance": "fade",
+                "exit": "fade",
+                "loop": "none"
+              }
+            }
+          }
+        ],
+        "confidence": 0.95,
+        "reply": "Split the text into word-by-word sequence with fade animations.",
+        "suggestions": [],
+        "needs_clarification": false,
+        "outcome": "proposed",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": {
+        "variant_id": "original_text",
+        "render_status": "ready",
+        "render_generation_id": "kri524-gen",
+        "resolved_archetype": "montage",
+        "duration_s": 12.0,
+        "text_elements": [
+          {
+            "id": "title-main::sequence-1",
+            "role": "generative_intro",
+            "text": "A",
+            "start_s": 0.0,
+            "end_s": 2.4,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-2",
+            "role": "generative_intro",
+            "text": "little",
+            "start_s": 2.4,
+            "end_s": 4.8,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-3",
+            "role": "generative_intro",
+            "text": "adventure",
+            "start_s": 4.8,
+            "end_s": 7.2,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-4",
+            "role": "generative_intro",
+            "text": "starts",
+            "start_s": 7.2,
+            "end_s": 9.6,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          },
+          {
+            "id": "title-main::sequence-5",
+            "role": "generative_intro",
+            "text": "here.",
+            "start_s": 9.6,
+            "end_s": 12.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.82,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "sequence_source_id": "title-main",
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none",
+              "speed": 1.0
+            }
+          }
+        ],
+        "ai_timeline": {
+          "slots": [
+            {
+              "slot_id": "shot-1",
+              "clip_index": 0,
+              "in_s": 1.0,
+              "duration_s": 6.0,
+              "source_duration_s": 20.0,
+              "removed": false
+            },
+            {
+              "slot_id": "shot-2",
+              "clip_index": 1,
+              "in_s": 4.0,
+              "duration_s": 6.0,
+              "source_duration_s": 15.0,
+              "removed": false
+            }
+          ]
+        }
+      },
+      "save_validation": "passed",
+      "save_evidence": "passed",
+      "expected": {
+        "kind": "sequence",
+        "segments": [
+          "A",
+          "little",
+          "adventure",
+          "starts",
+          "here."
+        ],
+        "expected_duration": 12.0
+      }
+    },
+    {
+      "case_id": "kri524-canonical-persistent_final",
+      "capture_batch": "final",
+      "capture_index": 8,
+      "prompt": "Keep both titles visible for the whole video, stacked in the bottom left. Keep the current cut exactly as it is.",
+      "provenance": {
+        "kind": "live_model_capture",
+        "layer": "canonical_save_capture",
+        "model": "gemini-3.6-flash",
+        "model_used": "gemini-3.6-flash"
+      },
+      "input_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "kri524-gen",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 1.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 20.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          },
+          {
+            "key": "shot-2",
+            "slot_id": "shot-2",
+            "parent_segment_id": null,
+            "clip_index": 1,
+            "in_s": 4.0,
+            "duration_s": 6.0,
+            "duration_beats": null,
+            "source_duration_s": 15.0,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title-main",
+            "role": "generative_intro",
+            "text": "An afternoon in Kadıköy",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "middle",
+            "alignment": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5
+          },
+          {
+            "id": "title-sub",
+            "role": "generative_intro",
+            "text": "Istanbul food walk",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "middle",
+            "alignment": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5
+          },
+          {
+            "id": "location",
+            "role": "generative_sequence",
+            "text": "Kadıköy Market",
+            "start_s": 2.0,
+            "end_s": 5.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.16
+          }
+        ],
+        "total_duration_s": 12.0,
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "raw_output": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"set_text_timing\",\n      \"bar_index\": 0,\n      \"start_s\": 0.0,\n      \"end_s\": 12.0\n    },\n    {\n      \"op\": \"patch_text_style\",\n      \"bar_index\": 0,\n      \"patch\": {\n        \"alignment\": \"left\",\n        \"position\": \"custom\",\n        \"x_frac\": 0.08,\n        \"y_frac\": 0.8\n      }\n    },\n    {\n      \"op\": \"set_text_timing\",\n      \"bar_index\": 1,\n      \"start_s\": 0.0,\n      \"end_s\": 12.0\n    },\n    {\n      \"op\": \"patch_text_style\",\n      \"bar_index\": 1,\n      \"patch\": {\n        \"alignment\": \"left\",\n        \"position\": \"custom\",\n        \"x_frac\": 0.08,\n        \"y_frac\": 0.86\n      }\n    }\n  ],\n  \"confidence\": 0.95,\n  \"reply\": \"I've extended both titles to remain on screen for the full 12 seconds and stacked them neatly in the bottom left, keeping your clip cuts untouched.\",\n  \"suggestions\": [\n    \"Move text to top left\",\n    \"Adjust text size\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+      "output": {
+        "intent": "edit",
+        "ops": [
+          {
+            "op": "set_text_timing",
+            "bar_index": 0,
+            "start_s": 0.0,
+            "end_s": 12.0
+          },
+          {
+            "op": "patch_text_style",
+            "bar_index": 0,
+            "patch": {
+              "alignment": "left",
+              "position": "custom",
+              "x_frac": 0.08,
+              "y_frac": 0.8
+            }
+          },
+          {
+            "op": "set_text_timing",
+            "bar_index": 1,
+            "start_s": 0.0,
+            "end_s": 12.0
+          },
+          {
+            "op": "patch_text_style",
+            "bar_index": 1,
+            "patch": {
+              "alignment": "left",
+              "position": "custom",
+              "x_frac": 0.08,
+              "y_frac": 0.86
+            }
+          }
+        ],
+        "confidence": 0.95,
+        "reply": "I've extended both titles to remain on screen for the full 12 seconds and stacked them neatly in the bottom left, keeping your clip cuts untouched.",
+        "suggestions": [
+          "Move text to top left",
+          "Adjust text size"
+        ],
+        "needs_clarification": false,
+        "outcome": "proposed",
+        "rejection_reasons": [],
+        "clarification_context": null,
+        "pending_actions": [],
+        "unmet_requests": [],
+        "reply_notes": ""
+      },
+      "after": {
+        "variant_id": "original_text",
+        "render_status": "ready",
+        "render_generation_id": "kri524-gen",
+        "resolved_archetype": "montage",
+        "duration_s": 12.0,
+        "text_elements": [
+          {
+            "id": "title-main",
+            "role": "generative_intro",
+            "text": "An afternoon in Kadıköy",
+            "start_s": 0.0,
+            "end_s": 12.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.08,
+            "y_frac": 0.8
+          },
+          {
+            "id": "title-sub",
+            "role": "generative_intro",
+            "text": "Istanbul food walk",
+            "start_s": 0.0,
+            "end_s": 12.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.08,
+            "y_frac": 0.86
+          },
+          {
+            "id": "location",
+            "role": "generative_sequence",
+            "text": "Kadıköy Market",
+            "start_s": 2.0,
+            "end_s": 5.0,
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.16
+          }
+        ],
+        "ai_timeline": {
+          "slots": [
+            {
+              "slot_id": "shot-1",
+              "clip_index": 0,
+              "in_s": 1.0,
+              "duration_s": 6.0,
+              "source_duration_s": 20.0,
+              "removed": false
+            },
+            {
+              "slot_id": "shot-2",
+              "clip_index": 1,
+              "in_s": 4.0,
+              "duration_s": 6.0,
+              "source_duration_s": 15.0,
+              "removed": false
+            }
+          ]
+        }
+      },
+      "save_validation": "passed",
+      "save_evidence": "passed",
+      "expected": {
+        "kind": "persistent",
+        "expected_duration": 12.0,
+        "expected_geometry": [
+          [
+            0.08,
+            0.8
+          ],
+          [
+            0.08,
+            0.86
+          ]
+        ]
+      }
+    }
+  ],
+  "whole_chain_capture": {
+    "provenance": {
+      "kind": "live_model_capture",
+      "layer": "brief_extractor_then_editor_router",
+      "model_calls": [
+        "gemini-3.1-pro-preview"
+      ]
+    },
+    "input": {
+      "creator_request": "Creative brief v3 (everything the creator has asked for, still in force):\n- [r1] [text/title] \"Come with me to my favorite restaurant and ice cream place in Lisbon.\"\n- [r6] [style/title] Each word fades in and fades out before the following word appears.\nLatest message: Split that text into words. Then animate each word by word.",
+      "user_message": "Split that text into words. Then animate each word by word.",
+      "conversation": [],
+      "current_brief": {
+        "version": 3,
+        "requirements": [
+          {
+            "id": "r1",
+            "kind": "text",
+            "scope": "title",
+            "literal": "Come with me to my favorite restaurant and ice cream place in Lisbon.",
+            "description": null,
+            "facts": {},
+            "source_turn_id": null,
+            "status": "open"
+          },
+          {
+            "id": "r6",
+            "kind": "style",
+            "scope": "title",
+            "literal": null,
+            "description": "Each word fades in and fades out before the following word appears.",
+            "facts": {},
+            "source_turn_id": null,
+            "status": "open"
+          }
+        ]
+      }
+    },
+    "prompt_version": "2026-10-08-v3",
+    "brief_output": {
+      "brief_updates": []
+    },
+    "effective_brief": {
+      "version": 3,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "text",
+          "scope": "title",
+          "literal": "Come with me to my favorite restaurant and ice cream place in Lisbon.",
+          "description": null,
+          "facts": {},
+          "source_turn_id": null,
+          "status": "open"
+        },
+        {
+          "id": "r6",
+          "kind": "style",
+          "scope": "title",
+          "literal": null,
+          "description": "Each word fades in and fades out before the following word appears.",
+          "facts": {},
+          "source_turn_id": null,
+          "status": "open"
+        }
+      ]
+    },
+    "route": "editor_ops",
+    "editor_input": {
+      "utterance": "Split that text into words. Then animate each word by word.",
+      "variant_snapshot": {
+        "allowed_op_families": [
+          "text",
+          "title"
+        ],
+        "base_generation": "sequence-test",
+        "has_narrated_captions": false,
+        "max_duration_s": 120,
+        "remaining_duration_s": 108.0,
+        "slots": [
+          {
+            "key": "shot-1",
+            "slot_id": "shot-1",
+            "parent_segment_id": null,
+            "clip_index": 0,
+            "in_s": 2,
+            "duration_s": 12,
+            "duration_beats": null,
+            "source_duration_s": 20,
+            "output_start_s": null,
+            "output_end_s": null,
+            "removed": false,
+            "transition_after": "cut",
+            "transition_duration_s": null,
+            "look_preset": "none",
+            "media_kind": "video"
+          }
+        ],
+        "text_bars": [
+          {
+            "id": "title",
+            "role": "generative_intro",
+            "text": "Come with me to my favorite restaurant and ice cream place in Lisbon.",
+            "start_s": 0.0,
+            "end_s": 12,
+            "font_family": "Inter",
+            "size_px": 64,
+            "color": "#FFFFFF",
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.12,
+            "y_frac": 0.18,
+            "effect": "fade-in"
+          }
+        ],
+        "total_duration_s": 12.0,
+        "brief": "Creative brief v3 (everything the creator has asked for, still in force):\n- [r1] [text/title] \"Come with me to my favorite restaurant and ice cream place in Lisbon.\"\n- [r6] [style/title] Each word fades in and fades out before the following word appears.",
+        "editor_limits": {
+          "max_timeline_slots": 120
+        },
+        "editor_ops_version": 2
+      },
+      "prior_turns": []
+    },
+    "editor_output": {
+      "intent": "edit",
+      "ops": [
+        {
+          "op": "replace_text_sequence",
+          "selector": {
+            "ids": [
+              "title"
+            ]
+          },
+          "segments": [
+            "Come",
+            "with",
+            "me",
+            "to",
+            "my",
+            "favorite",
+            "restaurant",
+            "and",
+            "ice",
+            "cream",
+            "place",
+            "in",
+            "Lisbon."
+          ],
+          "expected_source_text": "Come with me to my favorite restaurant and ice cream place in Lisbon.",
+          "target_ids": [
+            "title"
+          ],
+          "expected_count": 1,
+          "patch": {
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade"
+            }
+          }
+        }
+      ],
+      "confidence": 0.95,
+      "reply": "I've split the text into individual word sequence steps with a fade animation for each word.",
+      "suggestions": [
+        "Change the font style",
+        "Adjust word timing"
+      ],
+      "needs_clarification": false,
+      "outcome": "proposed",
+      "rejection_reasons": [],
+      "clarification_context": null,
+      "pending_actions": [],
+      "unmet_requests": [],
+      "reply_notes": ""
+    },
+    "after": {
+      "variant_id": "original_text",
+      "render_status": "ready",
+      "render_generation_id": "sequence-test",
+      "resolved_archetype": "montage",
+      "duration_s": 12,
+      "text_elements": [
+        {
+          "id": "title::sequence-1",
+          "role": "generative_intro",
+          "text": "Come",
+          "start_s": 0.0,
+          "end_s": 0.923077,
+          "font_family": "Inter",
+          "size_px": 64,
+          "color": "#FFFFFF",
+          "position": "custom",
+          "alignment": "left",
+          "x_frac": 0.12,
+          "y_frac": 0.18,
+          "effect": "fade-in",
+          "sequence_source_id": "title",
+          "animation_phases": {
+            "entrance": "fade",
+            "exit": "fade",
+            "loop": "none",
+            "speed": 1.0
+          }
+        },
+        {
+          "id": "title::sequence-2",
+          "role": "generative_intro",
+          "text": "with",
+          "start_s": 0.923077,
+          "end_s": 1.846154,
+          "font_family": "Inter",
+          "size_px": 64,
+          "color": "#FFFFFF",
+          "position": "custom",
+          "alignment": "left",
+          "x_frac": 0.12,
+          "y_frac": 0.18,
+          "effect": "fade-in",
+          "sequence_source_id": "title",
+          "animation_phases": {
+            "entrance": "fade",
+            "exit": "fade",
+            "loop": "none",
+            "speed": 1.0
+          }
+        },
+        {
+          "id": "title::sequence-3",
+          "role": "generative_intro",
+          "text": "me",
+          "start_s": 1.846154,
+          "end_s": 2.769231,
+          "font_family": "Inter",
+          "size_px": 64,
+          "color": "#FFFFFF",
+          "position": "custom",
+          "alignment": "left",
+          "x_frac": 0.12,
+          "y_frac": 0.18,
+          "effect": "fade-in",
+          "sequence_source_id": "title",
+          "animation_phases": {
+            "entrance": "fade",
+            "exit": "fade",
+            "loop": "none",
+            "speed": 1.0
+          }
+        },
+        {
+          "id": "title::sequence-4",
+          "role": "generative_intro",
+          "text": "to",
+          "start_s": 2.769231,
+          "end_s": 3.692308,
+          "font_family": "Inter",
+          "size_px": 64,
+          "color": "#FFFFFF",
+          "position": "custom",
+          "alignment": "left",
+          "x_frac": 0.12,
+          "y_frac": 0.18,
+          "effect": "fade-in",
+          "sequence_source_id": "title",
+          "animation_phases": {
+            "entrance": "fade",
+            "exit": "fade",
+            "loop": "none",
+            "speed": 1.0
+          }
+        },
+        {
+          "id": "title::sequence-5",
+          "role": "generative_intro",
+          "text": "my",
+          "start_s": 3.692308,
+          "end_s": 4.615385,
+          "font_family": "Inter",
+          "size_px": 64,
+          "color": "#FFFFFF",
+          "position": "custom",
+          "alignment": "left",
+          "x_frac": 0.12,
+          "y_frac": 0.18,
+          "effect": "fade-in",
+          "sequence_source_id": "title",
+          "animation_phases": {
+            "entrance": "fade",
+            "exit": "fade",
+            "loop": "none",
+            "speed": 1.0
+          }
+        },
+        {
+          "id": "title::sequence-6",
+          "role": "generative_intro",
+          "text": "favorite",
+          "start_s": 4.615385,
+          "end_s": 5.538462,
+          "font_family": "Inter",
+          "size_px": 64,
+          "color": "#FFFFFF",
+          "position": "custom",
+          "alignment": "left",
+          "x_frac": 0.12,
+          "y_frac": 0.18,
+          "effect": "fade-in",
+          "sequence_source_id": "title",
+          "animation_phases": {
+            "entrance": "fade",
+            "exit": "fade",
+            "loop": "none",
+            "speed": 1.0
+          }
+        },
+        {
+          "id": "title::sequence-7",
+          "role": "generative_intro",
+          "text": "restaurant",
+          "start_s": 5.538462,
+          "end_s": 6.461538,
+          "font_family": "Inter",
+          "size_px": 64,
+          "color": "#FFFFFF",
+          "position": "custom",
+          "alignment": "left",
+          "x_frac": 0.12,
+          "y_frac": 0.18,
+          "effect": "fade-in",
+          "sequence_source_id": "title",
+          "animation_phases": {
+            "entrance": "fade",
+            "exit": "fade",
+            "loop": "none",
+            "speed": 1.0
+          }
+        },
+        {
+          "id": "title::sequence-8",
+          "role": "generative_intro",
+          "text": "and",
+          "start_s": 6.461538,
+          "end_s": 7.384615,
+          "font_family": "Inter",
+          "size_px": 64,
+          "color": "#FFFFFF",
+          "position": "custom",
+          "alignment": "left",
+          "x_frac": 0.12,
+          "y_frac": 0.18,
+          "effect": "fade-in",
+          "sequence_source_id": "title",
+          "animation_phases": {
+            "entrance": "fade",
+            "exit": "fade",
+            "loop": "none",
+            "speed": 1.0
+          }
+        },
+        {
+          "id": "title::sequence-9",
+          "role": "generative_intro",
+          "text": "ice",
+          "start_s": 7.384615,
+          "end_s": 8.307692,
+          "font_family": "Inter",
+          "size_px": 64,
+          "color": "#FFFFFF",
+          "position": "custom",
+          "alignment": "left",
+          "x_frac": 0.12,
+          "y_frac": 0.18,
+          "effect": "fade-in",
+          "sequence_source_id": "title",
+          "animation_phases": {
+            "entrance": "fade",
+            "exit": "fade",
+            "loop": "none",
+            "speed": 1.0
+          }
+        },
+        {
+          "id": "title::sequence-10",
+          "role": "generative_intro",
+          "text": "cream",
+          "start_s": 8.307692,
+          "end_s": 9.230769,
+          "font_family": "Inter",
+          "size_px": 64,
+          "color": "#FFFFFF",
+          "position": "custom",
+          "alignment": "left",
+          "x_frac": 0.12,
+          "y_frac": 0.18,
+          "effect": "fade-in",
+          "sequence_source_id": "title",
+          "animation_phases": {
+            "entrance": "fade",
+            "exit": "fade",
+            "loop": "none",
+            "speed": 1.0
+          }
+        },
+        {
+          "id": "title::sequence-11",
+          "role": "generative_intro",
+          "text": "place",
+          "start_s": 9.230769,
+          "end_s": 10.153846,
+          "font_family": "Inter",
+          "size_px": 64,
+          "color": "#FFFFFF",
+          "position": "custom",
+          "alignment": "left",
+          "x_frac": 0.12,
+          "y_frac": 0.18,
+          "effect": "fade-in",
+          "sequence_source_id": "title",
+          "animation_phases": {
+            "entrance": "fade",
+            "exit": "fade",
+            "loop": "none",
+            "speed": 1.0
+          }
+        },
+        {
+          "id": "title::sequence-12",
+          "role": "generative_intro",
+          "text": "in",
+          "start_s": 10.153846,
+          "end_s": 11.076923,
+          "font_family": "Inter",
+          "size_px": 64,
+          "color": "#FFFFFF",
+          "position": "custom",
+          "alignment": "left",
+          "x_frac": 0.12,
+          "y_frac": 0.18,
+          "effect": "fade-in",
+          "sequence_source_id": "title",
+          "animation_phases": {
+            "entrance": "fade",
+            "exit": "fade",
+            "loop": "none",
+            "speed": 1.0
+          }
+        },
+        {
+          "id": "title::sequence-13",
+          "role": "generative_intro",
+          "text": "Lisbon.",
+          "start_s": 11.076923,
+          "end_s": 12.0,
+          "font_family": "Inter",
+          "size_px": 64,
+          "color": "#FFFFFF",
+          "position": "custom",
+          "alignment": "left",
+          "x_frac": 0.12,
+          "y_frac": 0.18,
+          "effect": "fade-in",
+          "sequence_source_id": "title",
+          "animation_phases": {
+            "entrance": "fade",
+            "exit": "fade",
+            "loop": "none",
+            "speed": 1.0
+          }
+        }
+      ],
+      "caption_cues": [],
+      "ai_timeline": {
+        "slots": [
+          {
+            "slot_id": "shot-1",
+            "clip_index": 0,
+            "in_s": 2,
+            "duration_s": 12,
+            "source_duration_s": 20,
+            "removed": false
+          }
+        ]
+      }
+    },
+    "save_validation": "passed"
+  }
+}

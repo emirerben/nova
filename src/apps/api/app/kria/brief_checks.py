@@ -16,6 +16,7 @@ closing shot on a phone Talking edit.
 from __future__ import annotations
 
 import dataclasses
+import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -170,6 +171,11 @@ class PlanFacts:
     has_clip_structure: bool = False
     # True when an editor payload carries restyled/edited on-screen text elements.
     editor_text_edited: bool = False
+    # Compiled text spans, when the editor payload includes timing and identity.
+    # Each row is (element id, role, start_s, end_s); an empty tuple means timing
+    # was not available and must remain unchecked.
+    text_spans: tuple[tuple[str, str, float, float], ...] = ()
+    text_timing_incomplete: bool = False
     # The strategy's edit format, and how many video clips it renders (None when
     # the footage list was not available to count).
     edit_format: str | None = None
@@ -562,6 +568,15 @@ def _editor_payload_duration(payload: Mapping[str, Any]) -> float | None:
     """
     slots = payload.get("timeline_slots") if isinstance(payload, Mapping) else None
     if not isinstance(slots, list) or not slots:
+        for key in ("edit_duration_s", "total_duration_s", "duration_s"):
+            duration = payload.get(key)
+            if (
+                isinstance(duration, (int, float))
+                and not isinstance(duration, bool)
+                and math.isfinite(float(duration))
+                and duration > 0
+            ):
+                return float(duration)
         return None
     total = 0.0
     for slot in slots:
@@ -598,6 +613,8 @@ def plan_facts_from_editor_payload(
     strings: list[str] = []
     per_clip: dict[str, str] = {}
     title: str | None = None
+    text_spans: list[tuple[str, str, float, float]] = []
+    text_timing_incomplete = False
 
     def take_text(value: object) -> str | None:
         return value.strip() if isinstance(value, str) and value.strip() else None
@@ -621,6 +638,26 @@ def plan_facts_from_editor_payload(
             if text is None:
                 continue
             strings.append(text)
+            row_id = row.get("id")
+            start, end = row.get("start_s"), row.get("end_s")
+            if (
+                isinstance(row_id, str)
+                and isinstance(start, (int, float))
+                and isinstance(end, (int, float))
+                and not isinstance(start, bool)
+                and not isinstance(end, bool)
+                and math.isfinite(float(start))
+                and math.isfinite(float(end))
+                and end > start >= 0
+            ):
+                text_spans.append(
+                    (row_id, str(row.get("role") or "text"), float(start), float(end))
+                )
+            elif isinstance(row_id, str) and str(row.get("role") or "text") in {
+                "title",
+                "generative_intro",
+            }:
+                text_timing_incomplete = True
             clip = row.get("clip_id")
             if isinstance(clip, str) and clip:
                 per_clip[clip] = text
@@ -652,6 +689,8 @@ def plan_facts_from_editor_payload(
         per_clip_text=per_clip,
         clip_ids=tuple(per_clip),
         title=title,
+        text_spans=tuple(text_spans),
+        text_timing_incomplete=text_timing_incomplete,
     )
 
 
@@ -1287,9 +1326,31 @@ def _req_text(req: BriefRequirement) -> str:
 
 
 def _wants_whole_take(req: BriefRequirement) -> bool:
-    if req.kind != "timing" or _has_duration_target(req):
+    # Source-preservation is a global (or explicitly clip-scoped) timing ask.
+    # Title-scoped timing requirements describe a text element's hold window;
+    # treating their words (for example, "whole video") as source language
+    # incorrectly routes them through the whole-take checker.
+    if req.kind != "timing" or req.scope == "title" or _has_duration_target(req):
         return False
     return bool(req.facts.get("keep_whole_take") or _WHOLE_TAKE_RE.search(_req_text(req)))
+
+
+_WHOLE_TEXT_RE = re.compile(
+    r"\b(texts?|titles?|labels?|captions?)\b.{0,40}\b(whole|full|entire)\s+"
+    r"(video|edit|take)\b|\b(whole|full|entire)\s+(video|edit|take)\b.{0,40}"
+    r"\b(texts?|titles?|labels?|captions?)\b"
+)
+
+
+def _wants_whole_text_span(req: BriefRequirement) -> bool:
+    """Whether a title timing ask requests persistence for the full output."""
+    if req.kind != "timing" or req.scope != "title" or _has_duration_target(req):
+        return False
+    return bool(
+        req.facts.get("persistent")
+        or req.facts.get("keep_visible")
+        or _WHOLE_TEXT_RE.search(_req_text(req))
+    )
 
 
 def _fact_triggers(req: BriefRequirement) -> list[str]:
@@ -1801,13 +1862,6 @@ def _check_speech_excerpts(req: BriefRequirement, facts: PlanFacts) -> Requireme
     return _receipt(req, "partial", "; ".join(problems) + ".")
 
 
-_TEXT_STYLE_RE = re.compile(
-    r"\b(text|label|caption|title|font|bold|italic|colou?r|size|shadow|outline|stroke|"
-    r"uppercase|lowercase|yellow|red|blue|green|white|black|pink|orange|purple|renk|yaz[i\u0131])",
-    re.IGNORECASE,
-)
-
-
 def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Pauses, retakes and filler the creator asked to cut, against the draft.
 
@@ -1903,10 +1957,9 @@ def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
 
 
 def _check_style(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
-    # Compiled editor ops only exist when they changed a text element, so a text-style
-    # ask with edited elements in the payload is proven; anything else goes unjudged.
-    if facts.editor and facts.editor_text_edited and _TEXT_STYLE_RE.search(_req_text(req)):
-        return _receipt(req, "met", None)
+    # A changed text lane proves a mutation, not that the requested fields,
+    # targets, or animation relationships were satisfied. Until the requirement
+    # carries independently checkable style intent, retain an unchecked receipt.
     return _receipt(req, "partial", _NO_CHECKER)
 
 
@@ -1914,6 +1967,31 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
     if _wants_whole_take(req):
         return _check_whole_take(req, facts)
     target = req.facts.get("duration_s")
+    if _wants_whole_text_span(req):
+        if not facts.editor or not facts.text_spans or facts.duration_s is None:
+            return _receipt(req, "partial", _CANT_CHECK_TIMING)
+        target_ids = req.facts.get("target_ids")
+        if isinstance(target_ids, list) and target_ids:
+            wanted = {str(value) for value in target_ids}
+            spans = [
+                span
+                for span in facts.text_spans
+                if span[0] in wanted and span[1] in {"title", "generative_intro"}
+            ]
+            if len(spans) != len(wanted):
+                return _receipt(req, "partial", _CANT_CHECK_TIMING)
+        else:
+            if facts.text_timing_incomplete:
+                return _receipt(req, "partial", _CANT_CHECK_TIMING)
+            spans = [span for span in facts.text_spans if span[1] in {"title", "generative_intro"}]
+        if not spans:
+            return _receipt(req, "partial", _CANT_CHECK_TIMING)
+        tolerance = 0.05
+        if all(
+            start <= tolerance and end >= facts.duration_s - tolerance for _, _, start, end in spans
+        ):
+            return _receipt(req, "met", None)
+        return _receipt(req, "partial", "Some requested text ends before the video does.")
     if not isinstance(target, (int, float)) or target <= 0:
         return _receipt(req, "partial", _CANT_CHECK_TIMING)
     if facts.edit_format == "subtitled":
@@ -2068,7 +2146,7 @@ def _has_checker(req: BriefRequirement) -> bool:
         # "Fast but readable" has no number to check: that is "can't verify"
         # (neutral in the reply), not a failed requirement. "Keep my whole take"
         # is checkable against the edit format and clip count.
-        return _has_duration_target(req) or _wants_whole_take(req)
+        return _has_duration_target(req) or _wants_whole_take(req) or _wants_whole_text_span(req)
     if req.kind in _BEAT_KINDS:
         return _wants_beats(req) or _wants_closing(req) or _wants_speech(req)
     return req.kind == "order"

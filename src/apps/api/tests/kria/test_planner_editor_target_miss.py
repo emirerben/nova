@@ -236,6 +236,7 @@ def _wire_real(  # noqa: ANN202
     job_status=None,  # noqa: ANN001
     variant_extra=None,  # noqa: ANN001
     binding=False,  # noqa: ANN001
+    extracted_updates=None,  # noqa: ANN001
 ):
     """Real `_load_editor_target` / `_plan_editor_revision`; only I/O edges are stubbed.
 
@@ -335,7 +336,11 @@ def _wire_real(  # noqa: ANN202
 
         def run(self, *_args, **_kwargs):  # noqa: ANN002, ANN003
             EXTRACTOR_RUNS.append(1)
-            return SimpleNamespace(brief_updates=[_upd("select", "global")])
+            return SimpleNamespace(
+                brief_updates=extracted_updates
+                if extracted_updates is not None
+                else [_upd("select", "global")]
+            )
 
     monkeypatch.setattr(planner, "BriefExtractorAgent", FakeBriefExtractor)
     monkeypatch.setattr(planner, "default_client", lambda: object())
@@ -381,7 +386,7 @@ async def test_same_ask_once_ready_runs_copilot_and_stages_editor_ops(
         )
     )
     db, item, creator_id, runs, copilot = _wire_real(
-        monkeypatch, render_status="ready", copilot=copilot
+        monkeypatch, render_status="ready", copilot=copilot, extracted_updates=[]
     )
     result = await _ask(db, item, creator_id, "Add animation to the title")
     copilot.assert_awaited()
@@ -612,7 +617,7 @@ async def test_every_conversation_builder_respects_the_input_cap() -> None:
     assert len(creator_agent._conversation(events)) <= MAIN_CREATOR_CONVERSATION_MAX
 
 
-async def test_validation_error_on_first_path_falls_back_to_copilot(
+async def test_extraction_validation_error_does_not_stage_partial_copilot_edit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from pydantic import ValidationError
@@ -633,7 +638,9 @@ async def test_validation_error_on_first_path_falls_back_to_copilot(
         creator_id=creator_id,
         user_message="make the title bigger",
     )
-    assert result.plan is fallback
+    assert result.plan.mode == "respond" and not result.plan.intents
+    assert result.brief_coverage["reason"] == "request_extraction_failed"
+    planner._plan_editor_revision.assert_not_awaited()
 
 
 # KRI-282: a clip-picker answer ("Dodgeball: clip 21" + structured clip_selection) used to
@@ -681,7 +688,7 @@ async def test_same_short_message_without_selection_still_takes_the_copilot(
         )
     )
     db, item, creator_id, _runs, copilot = _wire_real(
-        monkeypatch, render_status="ready", copilot=copilot
+        monkeypatch, render_status="ready", copilot=copilot, extracted_updates=[]
     )
     await _ask(db, item, creator_id, "Dodgeball: clip 21")
     copilot.assert_awaited()

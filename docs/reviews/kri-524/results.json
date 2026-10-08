@@ -1,0 +1,134 @@
+{
+  "base": "14deedb76e3e16785941834495961c6224902cd4",
+  "live": {
+    "provider_calls": 112,
+    "budget_ledgers": 8,
+    "run_caps_usd": [
+      2,
+      2,
+      1,
+      1.5,
+      1.5,
+      1.25,
+      1,
+      0.5
+    ],
+    "spent_usd": 2.160176,
+    "total_cap_usd": 5,
+    "per_run_cap_usd": 2,
+    "unsettled_reservations": 0,
+    "system_extension_provider_calls": 84,
+    "system_creation_cases": 18,
+    "system_editor_cases": 28,
+    "system_chain_cases": 18,
+    "final_chain_distinct_cases": 9,
+    "models": [
+      "gemini-3.1-pro-preview",
+      "gemini-3.6-flash"
+    ],
+    "limits": [
+      "All 252 library entries remain unexecuted",
+      "No full HTTP, database persistence, phone export or audible continuity proof",
+      "Original graded-title conversation not found",
+      "Creation phone/cloud coverage is not full editing/render coverage for every format",
+      "Manifest availability is the pinned evaluation profile, not a live production rollout claim"
+    ]
+  },
+  "offline_replay": {
+    "command": ".venv/bin/python -m tests.evals.prompt_coverage --replay",
+    "suites": [
+      "tests/evals/request_following",
+      "tests/evals/test_edit_copilot_evals.py",
+      "tests/evals/test_main_creator_evals.py",
+      "tests/evals/test_clip_intent_planner_evals.py",
+      "tests/incidents"
+    ],
+    "passed": 770,
+    "xfailed": 2,
+    "exit_code": 0,
+    "library_cases_executed": 0
+  },
+  "kria_gate": {
+    "command": "make verify-kria",
+    "passed": 1878,
+    "skipped": 6,
+    "exit_code": 0,
+    "database": "isolated local test database"
+  },
+  "focused_and_render_contracts": {
+    "passed": 271,
+    "exit_code": 0,
+    "scope": [
+      "prompt corpus",
+      "creative brief",
+      "local PNG anchoring",
+      "Skia overlay fixtures",
+      "device export contract",
+      "editor compiler/save validation"
+    ]
+  },
+  "preship": {
+    "exit_code": 0,
+    "python_files": 37,
+    "web_typecheck": "not applicable: no web changes",
+    "release_metadata": "unchanged by feature"
+  },
+  "verification_limits": [
+    "All 252 library inputs unexecuted; replay is not live-model reliability",
+    "Original graded-title conversation not found",
+    "Synthetic pixels do not prove original full-video export",
+    "Audio-level contract is not audible continuity"
+  ],
+  "review": {
+    "independent_review": "Shared routing, selector/CAS and capability flow reviewed; reload ownership checks restored and regression-tested; no remaining concrete blockers",
+    "unresolved_blockers": []
+  },
+  "capability_gaps": {
+    "related_linear": [
+      "KRI-519",
+      "KRI-514",
+      "KRI-523",
+      "KRI-522",
+      "KRI-350",
+      "KRI-449",
+      "KRI-527"
+    ],
+    "new_tickets": 0,
+    "deduplication": "Existing records linked; KRI-350 remains canceled, no status changes or duplicates"
+  },
+  "release": {
+    "merged": false,
+    "deployed": false,
+    "approval": "required"
+  },
+  "affected_suites": {
+    "passed": 1376,
+    "exit_code": 0,
+    "scope": [
+      "all offline agent evaluations",
+      "editor parser and text sequences",
+      "brief extraction",
+      "capability context",
+      "capture-time composition",
+      "Turkish editor behavior"
+    ],
+    "skipped": 15
+  },
+  "sequence_render": {
+    "passed": 2,
+    "tier": "offline_rendered_pixels",
+    "scope": "compiled children -> production overlay adapter -> Skia frames; alpha at entrance, hold, exit and non-overlap boundaries",
+    "full_video_export": false
+  },
+  "chain_replay": {
+    "passed": 19,
+    "captured_cases": 18,
+    "includes_independent_underselection_negative_control": true
+  },
+  "integration": {
+    "upstream": "KRI-520, KRI-519 and Main Creator higher reasoning",
+    "prompt_version": "2026-10-08-v74",
+    "live_capture_prompt_version": "2026-10-08-v73",
+    "validation": "Current main merged cleanly; fresh offline replay and full Kria gate pass. Live captures predate these final upstream integrations. No new provider calls."
+  }
+}

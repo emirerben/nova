@@ -33,6 +33,7 @@ from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 from app.services.editor_limits import (
     EDITOR_MAX_TIMELINE_SLOTS,
+    MAX_EDITOR_OPS,
     MOTION_FPS,
     MOTION_MAX_ACTIVE_FRAMES,
     MOTION_MAX_INSTANCES,
@@ -40,13 +41,21 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-08-v70"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-08-v74"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
 # A single creator request may legitimately rename and restyle many distinct
 # text bars. Keep it bounded, but large enough for a full player roster.
 _MAX_OPS = 48
+
+
+def _operation_limit(snapshot: dict) -> int:
+    # Legacy browser proposals have their own client contract. Server-v2 drafts
+    # must advertise and parse the same bound as the registry and compiler.
+    return MAX_EDITOR_OPS if snapshot.get("editor_ops_version") == 2 else _MAX_OPS
+
+
 _MAX_UTTERANCE_CHARS = 12_000
 _GUIDED_TIMELINE_MAX_SLOTS = EDITOR_MAX_TIMELINE_SLOTS
 # Renderer-side guard only — the producer (snapshot.ts COPILOT_BEAT_MARKS_MAX)
@@ -1203,6 +1212,9 @@ def _format_snapshot(snapshot: dict) -> str:
         f"allowed_op_families: {', '.join(str(x) for x in allowed) if allowed else empty_families}",
         f"has_narrated_captions: {has_captions}",
     ]
+    timeline_fields = snapshot.get("timeline_patch_capabilities")
+    if isinstance(timeline_fields, dict):
+        lines.append("timeline_patch_capabilities: " + json.dumps(timeline_fields, sort_keys=True))
     appearance = _text_appearance_inventory(snapshot)
     if snapshot.get("text_appearance_version") == 1 or appearance["targets"]:
         lines.append("TEXT APPEARANCE: version=1; targets=")
@@ -1308,7 +1320,10 @@ def _format_snapshot(snapshot: dict) -> str:
         else:
             lines.append("current: (none — no carousel configured)")
 
-    lines.append("\nTEXT BARS (indices are authoritative for this turn):")
+    from app.services.kria_editor_ops_text import bars_from_snapshot, classify  # noqa: PLC0415
+
+    text_groups = classify(bars_from_snapshot(snapshot))
+    lines.append("\nTEXT BARS (indices and selector groups are authoritative for this turn):")
     if text_bars:
         for i, bar in enumerate(text_bars):
             if not isinstance(bar, dict):
@@ -1370,9 +1385,11 @@ def _format_snapshot(snapshot: dict) -> str:
                     semantic += " guessed=true"
                 if bar.get("edited") is True:
                     semantic += " edited=true"
-            identity = ""
+            group = text_groups.get(bar.get("id"), "text")
+            group = {"label": "labels", "text": "free"}.get(group, group)
+            identity = f" selector_group={group!r}"
             if component_context_enabled:
-                identity = (
+                identity += (
                     f" id={_field(bar.get('id'), max_chars=100)!r}"
                     f" role={_field(bar.get('role'), max_chars=50)!r}"
                 )
@@ -3193,7 +3210,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             effect_catalog=_effect_catalog(),
             caption_font_catalog=_caption_font_catalog(),
             custom_effect_catalog=_custom_effect_catalog(),
-            max_ops=_MAX_OPS,
+            max_ops=_operation_limit(input.variant_snapshot),
         )
         prompt = _with_v2_fragments(prompt, input.variant_snapshot)
         # KRI-520: the reply-language instruction goes last, after every fragment.
@@ -3269,6 +3286,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 raw_ops = []
 
         ops: list[dict] = []
+        max_ops = _operation_limit(input.variant_snapshot)
         ordinary_op_count = 0
         bulk_caption_op_count = 0
         bulk_parse_failed = False
@@ -3300,13 +3318,13 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             if isinstance(raw_op, dict)
             and str(raw_op.get("op") or raw_op.get("type") or "").strip() == "replace_caption_text"
         )
-        if ordinary_raw_count > _MAX_OPS:
+        if ordinary_raw_count > max_ops:
             state.reject(
                 op="bundle",
                 reason="invalid_value",
                 detail=(
                     f"request contains {ordinary_raw_count} ordinary operations; "
-                    f"the maximum is {_MAX_OPS}. Use one typed bulk selector operation "
+                    f"the maximum is {max_ops}. Use one typed bulk selector operation "
                     "for all matching media instead."
                 ),
             )
@@ -3350,7 +3368,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                     continue
             elif raw_name in _BULK_OPS:
                 pass
-            elif ordinary_op_count >= _MAX_OPS:
+            elif ordinary_op_count >= max_ops:
                 # This branch is defensive; the preflight above makes the
                 # overflow bundle fail closed instead of silently truncating.
                 continue
@@ -3567,6 +3585,31 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 "edit_copilot: operation values rejected -- retrying with the rejected ops quoted"
             )
 
+        unmet_requests = _sanitize_unmet_requests(data.get("unmet_requests"))
+        if unmet_requests:
+            reasons = list(
+                dict.fromkeys(item["reason"] for item in unmet_requests if item["reason"])
+            )
+            if reasons:
+                # Structured unmet outcomes are authoritative even when the model
+                # labels a partial bundle as an edit and writes completion copy.
+                # Keep supported operations, but never present the entire request
+                # as completed. Execution/approval still belongs to the caller.
+                limitation = " ".join(reasons)[:1200]
+                if ops:
+                    reply = (
+                        say(
+                            en="I prepared the supported changes. ",
+                            tr="Desteklenen değişiklikleri hazırladım. ",
+                        )
+                        + limitation
+                    )
+                elif outcome in {"no_effect", "unsupported"}:
+                    outcome = "unsupported"
+                    reply = limitation
+                else:
+                    reply = f"{reply} {limitation}".strip()
+
         try:
             return EditCopilotOutput(
                 intent=intent,  # type: ignore[arg-type]
@@ -3579,7 +3622,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 rejection_reasons=state.rejection_reasons,
                 clarification_context=clarification_context,
                 pending_actions=pending_actions,
-                unmet_requests=_sanitize_unmet_requests(data.get("unmet_requests")),
+                unmet_requests=unmet_requests,
                 reply_notes=" ".join(dict.fromkeys(state.reply_notes)),
             )
         except Exception as exc:  # noqa: BLE001
@@ -5611,11 +5654,13 @@ def _resolve_placement(patch: dict) -> dict:
     }:
         # Explicit fractions are only honoured under the custom preset; a
         # bare x/y patch means "put it exactly here", so make that explicit.
+        preset = resolved.get("position")
         resolved["position"] = "custom"
-        resolved.setdefault("x_frac", 0.5)
-        resolved.setdefault(
-            "y_frac", {"top": 0.12, "middle": 0.5, "bottom": 0.85}.get(patch.get("position"), 0.5)
-        )
+        # A partial patch must preserve the other axis, including earlier
+        # operations in this bundle. Only an explicit preset supplies defaults.
+        if preset is not None:
+            resolved.setdefault("x_frac", 0.5)
+            resolved.setdefault("y_frac", {"top": 0.12, "middle": 0.5, "bottom": 0.85}[preset])
     return resolved
 
 

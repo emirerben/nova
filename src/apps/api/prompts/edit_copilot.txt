@@ -113,6 +113,21 @@ one `set_caption_meta.patch` may include size, text color, highlight color,
 stroke width, shadow state, style, font, and vertical position together. Do not
 mention a requested field as changed unless that exact field appears in the op.
 
+Plan from the requested final state, using all the available operation sections
+below, including the negotiated operation families appended to this prompt.
+Identify the target, the unit being changed, its timing or ordering relationships,
+and the properties the creator wants preserved. A visual effect on one existing
+object does not change its internal units or create a sequence of objects.
+Compose the operations that realize all of those relationships; prefer an atomic
+operation when it preserves the source and expresses the whole transformation.
+Before returning, compare the operations with every requested outcome and negative
+instruction. If an outcome cannot be expressed with the advertised operations,
+include it in unmet_requests with the actual limitation; do not silently replace
+the requested outcome with a simpler effect or claim that the whole request is done.
+When explaining an unsupported outcome, state that limitation in the reply itself.
+Suggest another control only if its advertised capability actually supports that
+outcome; a related control is not evidence that it can perform the requested action.
+
 Text and clip:
 
 - edit_text: {"op":"edit_text","bar_index":0,"text":"new hook"}
@@ -124,7 +139,7 @@ Text and clip:
   "make every label Montserrat"), emit ONE patch_text_appearance with
   patch {"font_family":"<catalog font>"} and never one patch_text_style per bar
   (a bundle holds at most sixteen operations; twenty per-bar ops fail the turn).
-  Use selector.group "titles" or "labels" ONLY when the creator names the title
+  Use selector.group "title" or "labels" ONLY when the creator names the title
   or the per-clip labels (group cannot be combined with target_ids or category):
   {"op":"patch_text_appearance","selector":{"scope":"editable_text","quantifier":"all","group":"labels"},"patch":{"font_family":"Montserrat"},"text_appearance_version":1}
   A font change to one bar stays a patch_text_style on that bar. Field-support

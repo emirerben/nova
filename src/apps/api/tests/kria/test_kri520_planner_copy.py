@@ -730,14 +730,32 @@ def test_english_fonts_plural_keeps_its_old_non_match() -> None:
     assert planner._is_text_edit_ask("fontları büyüt")
 
 
-# -- routing: a copilot refusal to a Turkish text ask stands; a non-text ask re-plans --------
+# -- routing: typed Turkish requirements select an available editing lane ----------------
 
 
-def _wire(monkeypatch: pytest.MonkeyPatch, copilot_plan: KriaTurnPlan | None):
-    from tests.kria.test_planner_editor_target_miss import _wire as wire
+def _wire(monkeypatch: pytest.MonkeyPatch, copilot_plan: KriaTurnPlan | None, *, timing=False):
+    from tests.kria.test_creative_brief import _upd, _wire_planner
 
-    db, item, creator_id, runs = wire(monkeypatch, miss=None)
-    monkeypatch.setattr(planner, "_plan_editor_revision", AsyncMock(return_value=copilot_plan))
+    output = SimpleNamespace(
+        action=AskUser(
+            kind="ask_user",
+            question="Klip ne kadar kısa olsun?",
+            reason_code="pacing_choice",
+            options=[],
+        ),
+        brief_updates=[
+            _upd("timing", "global", description="ikinci klibi kısalt")
+            if timing
+            else _upd("style", "title", description="başlık stilini değiştir")
+        ],
+    )
+    db, item, creator_id, _copilot, runs = _wire_planner(
+        monkeypatch,
+        output=output,
+        editor_plan=copilot_plan,
+        snapshot={"allowed_op_families": ["text"], "text_bars": []},
+    )
+    monkeypatch.setattr(planner.settings, "kria_copilot_first_enabled", True)
     return db, item, creator_id, runs
 
 
@@ -764,23 +782,23 @@ async def test_copilot_clarification_to_a_turkish_text_ask_stands(
         result = await _ask(db, item, creator_id, message)
     assert result.plan.response == "Hangi başlığı büyüteyim?"
     assert result.plan.turn_value == "question"
-    assert runs == []  # no Main Creator re-plan, no render
+    assert runs == []  # typed extraction, then clarification; no Main Creator or render
+    assert result.brief_route == "editor_ops"
+    assert len(result.brief_updates) == 1
     assert not [e for e in logs if e["event"] == "kria_copilot_skipped_replan"]
 
 
 @pytest.mark.asyncio
-async def test_copilot_clarification_to_a_turkish_non_text_ask_replans(
+async def test_turkish_timing_ask_without_timeline_capability_replans(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db, item, creator_id, _runs = _wire(monkeypatch, _CLARIFY)
-    with capture_logs() as logs:
+    db, item, creator_id, runs = _wire(monkeypatch, _CLARIFY, timing=True)
+    with reply_language_for("tr"):
         result = await _ask(db, item, creator_id, "ikinci klibi kısalt")
-    assert result.plan.response != "Hangi başlığı büyüteyim?"
-    # The copilot's refusal did not stand: the turn went on to the planner's own route.
-    assert any(
-        e["event"] == "kria_copilot_skipped_replan" and e["reason"] == "fast_path_not_taken"
-        for e in logs
-    )
+    assert result.plan.response == "Klip ne kadar kısa olsun?"
+    assert result.brief_route == "replan"
+    assert len(runs) == 1
+    planner._plan_editor_revision.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -793,3 +811,14 @@ async def test_copilot_clarification_to_a_turkish_non_text_ask_replans(
 )
 def test_turkish_words_that_only_look_like_text_asks(message: str) -> None:
     assert not planner._is_text_edit_ask(message)
+
+
+def test_editor_failure_recovery_is_localized_without_calling_it_extraction_failure():
+    with reply_language_for("tr"):
+        result = planner._request_recovery(_manifest(), None, reason="editor_planning_failed")
+    assert result.plan.response == (
+        "Bu sefer bu düzenlemeleri hazırlayamadım. "
+        "Tüm isteğin kaydedildi ve taslağın değişmedi. "
+        "Tekrar dene ya da önce en önemli değişikliği söyle."
+    )
+    assert result.brief_coverage["reason"] == "editor_planning_failed"
