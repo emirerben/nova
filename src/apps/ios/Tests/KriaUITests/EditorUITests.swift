@@ -259,7 +259,6 @@ final class EditorUITests: XCTestCase {
         XCTAssertTrue(text.waitForExistence(timeout: 3))
         text.tap()
         app.buttons["Edit text"].tap()
-        app.buttons["Edit text"].tap()
         let input = app.descendants(matching: .any)["native-editor-text-content"]
         XCTAssertTrue(input.waitForExistence(timeout: 3))
         input.tap()

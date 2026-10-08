@@ -176,6 +176,7 @@
       "KriaUITests/NativeEditorInspectorUITests/testSourceVideoScrubbingKeepsLatestPosition",
       "KriaUITests/NativeEditorInspectorUITests/testTappingClipAlignsItsBeginningUnderPlayhead",
       "KriaUITests/NativeEditorInspectorUITests/testTextFirstTapShowsTrimsAndSecondTapOpensInspector",
+      "KriaUITests/NativeEditorInspectorUITests/testSecondTapOpensEditTextWithKeyboardAndGrowingBox",
       "KriaUITests/NativeEditorInspectorUITests/testTimelineCanZoomBeyondPreviousLimit",
       "KriaUITests/NativeEditorInspectorUITests/testTimelineResizeShrinksPreviewAndRestoresIt",
       "KriaUITests/NativeEditorInspectorUITests/testTimelineResizeGrowsPreviewBeyondDefault",

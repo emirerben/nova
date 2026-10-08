@@ -81,6 +81,7 @@
   "KriaUITests/NativeEditorInspectorUITests/testTappingCaptionRowEntersEditModeAndPersistsTypedText": 19.8,
   "KriaUITests/NativeEditorInspectorUITests/testTappingClipAlignsItsBeginningUnderPlayhead": 12.6,
   "KriaUITests/NativeEditorInspectorUITests/testTextFirstTapShowsTrimsAndSecondTapOpensInspector": 18.6,
+  "KriaUITests/NativeEditorInspectorUITests/testSecondTapOpensEditTextWithKeyboardAndGrowingBox": 20.0,
   "KriaUITests/NativeEditorInspectorUITests/testTextReturnAndDeleteKeepCanvasLinesAligned": 27.9,
   "KriaUITests/NativeEditorInspectorUITests/testTimelineCanZoomBeyondPreviousLimit": 17.9,
   "KriaUITests/NativeEditorInspectorUITests/testTimelineResizeGrowsPreviewBeyondDefault": 11.6,

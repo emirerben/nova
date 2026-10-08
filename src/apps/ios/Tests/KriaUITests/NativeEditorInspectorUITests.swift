@@ -690,7 +690,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
     func testPreviewResizeIsAvailableAcrossEditorPanels() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text", "-ui-testing-editor-analyzing-gallery"]
-        for tool in ["visuals", "captions", "text", "text-style", "text-animation", "text-edit"] {
+        for tool in ["visuals", "captions", "text", "text-style", "text-animation"] {
             app.launch()
             let button = app.buttons["native-editor-tool-\(tool.hasPrefix("text") ? "text" : tool)"]
             XCTAssertTrue(button.waitForExistence(timeout: 20))
@@ -702,7 +702,6 @@ final class NativeEditorInspectorUITests: XCTestCase {
                 input.typeText("Resize test")
                 app.buttons["native-editor-text-done"].tap()
                 if tool == "text-animation" { app.buttons["Animation"].tap() }
-                if tool == "text-edit" { app.buttons["Edit text"].tap() }
             }
             let handle = app.descendants(matching: .any)["native-editor-timeline-resize"].firstMatch
             let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
@@ -713,25 +712,15 @@ final class NativeEditorInspectorUITests: XCTestCase {
             XCTAssertTrue(handle.waitForExistence(timeout: 5), tool)
             XCTAssertTrue(panel.waitForExistence(timeout: 5), tool)
             XCTAssertTrue(handle.isHittable, tool)
-            // KRI-185: Edit text focuses its field, and a text panel being typed
-            // into starts the preview at its 120pt typing height, only 40pt above
-            // its 80pt floor (NativeEditorLayoutMetrics.typingPreviewHeight and
-            // .minPreviewHeight). There the drag must reach the floor; elsewhere
-            // it shrinks the preview by more than 40pt.
-            let typing = tool == "text-edit"
-            if typing { XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), tool) }
+            // KRI-508: with the keyboard on the text box the compact bar owns the split (no handle);
+            // testSecondTapOpensEditTextWithKeyboardAndGrowingBox covers that state.
             let originalHeight = preview.frame.height
-            if typing { XCTAssertEqual(originalHeight, 120, accuracy: 1, tool) }
             let originalHeaderY = header.frame.minY
             let originalPanelHeight = panel.frame.height
             let originalBottom = panel.frame.maxY
             let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -100)))
-            if typing {
-                XCTAssertEqual(preview.frame.height, 80, accuracy: 1, tool)
-            } else {
-                XCTAssertLessThan(preview.frame.height, originalHeight - 40, tool)
-            }
+            XCTAssertLessThan(preview.frame.height, originalHeight - 40, tool)
             XCTAssertEqual(header.frame.minY, originalHeaderY, accuracy: 2, tool)
             // KRI-170: the panel is independent of the preview — it never
             // shrinks, and its bottom edge stays put.
@@ -1366,11 +1355,78 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-text-panel"].exists)
         text.tap()
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-text-panel"].waitForExistence(timeout: 3))
-        app.buttons["Edit text"].tap()
+        // KRI-508: the second tap opens Edit text with the keyboard up; Start/End wait behind Timing.
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-text-content"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.textFields["native-editor-text-time-start"].exists)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["native-editor-text-time-start"].exists)
+        app.buttons["native-editor-text-timing"].tap()
+        XCTAssertTrue(app.textFields["native-editor-text-time-start"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.textFields["native-editor-text-time-end"].exists)
         XCTAssertTrue(app.buttons["native-editor-text-inspector-done"].exists)
+    }
+
+    /// KRI-508: tapping a selected text opens Edit text with the keyboard. The box above the keyboard
+    /// is one line, grows with long words and with Return, and never reaches under the keyboard. The
+    /// header steps away while it is open and comes back with Done.
+    func testSecondTapOpensEditTextWithKeyboardAndGrowingBox() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor"]
+        app.launch()
+
+        let back = app.buttons["native-editor-back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 8))
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        let browseHeight = preview.frame.height
+        let text = app.descendants(matching: .any)["native-editor-timeline-text-00000000-0000-4000-8000-000000000100"]
+        XCTAssertTrue(text.waitForExistence(timeout: 3))
+        text.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-text-context"].waitForExistence(timeout: 3))
+        text.tap()
+
+        let field = app.textViews["native-editor-text-content"]
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5), "the keyboard is up as the panel opens")
+        let editTab = app.buttons.matching(identifier: "native-editor-text-tabs")
+            .matching(NSPredicate(format: "label == %@", "Edit text")).firstMatch
+        XCTAssertTrue(editTab.isSelected, "an existing text opens on Edit text, not Style")
+        XCTAssertTrue(back.waitForNonExistence(timeout: 3), "the header steps away so the video gets the screen")
+        XCTAssertGreaterThan(preview.frame.height, browseHeight, "the video grows into the freed room")
+
+        func waitFor(_ message: String, _ condition: () -> Bool) {
+            let deadline = Date().addingTimeInterval(5)
+            while !condition(), Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
+            XCTAssertTrue(condition(), message)
+        }
+        func assertClearOfKeyboard(_ message: String) {
+            XCTAssertGreaterThanOrEqual(keyboard.frame.minY - field.frame.maxY, 12, message)
+        }
+        func shot(_ name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        shot("text-edit-one-line")
+        let oneLine = field.frame.height
+        let previewOneLine = preview.frame.height
+        XCTAssertLessThan(oneLine, 60, "the box starts as one line")
+        assertClearOfKeyboard("one line")
+
+        field.typeText("\nSecond line")
+        waitFor("Return grows the box") { field.frame.height > oneLine + 10 }
+        let twoLines = field.frame.height
+        assertClearOfKeyboard("Return grows the box")
+
+        field.typeText(String(repeating: " and a much longer line", count: 8))
+        waitFor("long words grow the box") { field.frame.height > twoLines + 10 }
+        shot("text-edit-grown")
+        assertClearOfKeyboard("long words grow the box")
+        waitFor("the preview gives the room to the box") { preview.frame.height < previewOneLine - 10 }
+
+        app.buttons["native-editor-text-inspector-done"].tap()
+        XCTAssertTrue(back.waitForExistence(timeout: 3), "the header returns with Done")
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-text-panel"].waitForNonExistence(timeout: 3))
     }
 
     func testCaptionSelectionOpensCaptionInspector() {

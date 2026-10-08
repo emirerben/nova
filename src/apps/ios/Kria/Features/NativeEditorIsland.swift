@@ -83,10 +83,16 @@ struct NativeEditorLayoutMetrics: Equatable {
     /// the space above it. The header and top chrome stay; the timeline handle, the
     /// transport and the tool rail are hidden. `nil` everywhere else.
     var captionEditBarHeight: CGFloat? = nil
+    /// KRI-508: while the Text panel's text box has the keyboard, the panel shrinks to this
+    /// height (chrome + a box that grows line by line) and the preview takes the space above,
+    /// the same split the caption edit bar uses. `nil` everywhere else.
+    var textEditBarHeight: CGFloat? = nil
     /// The project header's measured height (falls back to `headerHeight`).
     var measuredHeaderHeight: CGFloat? = nil
 
-    var editsCaptionLine: Bool { captionEditBarHeight != nil }
+    /// The bar a line editor (caption or text) pins above the keyboard.
+    private var lineEditBarHeight: CGFloat? { captionEditBarHeight ?? textEditBarHeight }
+    var editsCaptionLine: Bool { lineEditBarHeight != nil }
 
     /// Preview height that fills everything between the top chrome and the caption edit bar.
     private func captionEditPreviewHeight(bar: CGFloat) -> CGFloat {
@@ -102,7 +108,7 @@ struct NativeEditorLayoutMetrics: Equatable {
 
     /// The size the preview has always started at (unchanged by KRI-170).
     var defaultPreviewHeight: CGFloat {
-        if let bar = captionEditBarHeight { return captionEditPreviewHeight(bar: bar) }
+        if let bar = lineEditBarHeight { return captionEditPreviewHeight(bar: bar) }
         let portrait = isAccessibilitySize ? 150 : min(284, max(150, referenceHeight * 0.34))
         // Banners and the posting-song bar share this fixed-height column;
         // their measured height comes out of the preview so the timeline and
