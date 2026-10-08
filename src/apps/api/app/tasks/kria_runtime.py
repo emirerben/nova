@@ -1834,13 +1834,17 @@ def _fail_turn(
         return None
 
 
-# 150 s soft limit: a clip-intent turn measured ~70 s of model + vision work, and may
+# 200 s soft limit: a clip-intent turn measured ~70 s of model + vision work, and may
 # also wait (bounded by this limit, see `turn_deadline`) for clip analysis in flight.
+# KRI-542: the Main Creator's own deadline is 130 s (thinking "high" on a 16k
+# budget), and a truncated call is retried once at "low" (~35-45 s), so a degraded
+# turn needs ~175 s before the resolver runs. Both limits stay far under the
+# broker's 1900 s visibility_timeout (tests/tasks/test_task_time_limits.py).
 @celery_app.task(
     bind=True,
     name="tasks.run_kria_turn",
-    soft_time_limit=150,
-    time_limit=180,
+    soft_time_limit=200,
+    time_limit=230,
     max_retries=0,
 )
 def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001

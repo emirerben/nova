@@ -76,8 +76,11 @@ are safe" is an `assistant_error` event: `run_kria_turn` raised before any tool
 receipt, so the turn ends `failed` with `error.code = runtime_turn_failed` and
 the traceback sits in the `light` process group's worker log (it consumes
 `agent-control`). A Main Creator attempt ending `terminal_output_truncated` ran
-out of `max_output_tokens` (8,192), which Gemini 3 thinking shares with the
-answer. A `kria_turn_lease_renewal_failed` warning is not a failure: the
+out of `max_output_tokens` (16,384), which Gemini 3 thinking shares with the
+answer; at thinking `medium`/`high` the runtime first retries once at `low`
+(`agent_thinking_degraded` warning, `thinking_degraded=True` on the run), so a
+terminal truncation means even `low` did not fit (KRI-542). A
+`kria_turn_lease_renewal_failed` warning is not a failure: the
 heartbeat retries on its next 5-second tick and the turn keeps planning.
 
 The same reply with `error.code = runtime_turn_claims_exhausted` means three

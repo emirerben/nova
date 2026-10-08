@@ -97,6 +97,21 @@ class _OutputTruncatedError(SchemaError):
     """Provider ended the response before a complete schema could be produced."""
 
 
+# KRI-542: Gemini 3 counts thinking against `max_output_tokens`. A call that ends
+# at MAX_TOKENS with a thinking level above "low" is retried once at "low": same
+# model, same prompt, most of the budget back for the answer. Prod 2026-10-08,
+# thread 74dfc456: the Main Creator at "high" thought past its 8,192 tokens, kept
+# 315 for the plan, and the turn dead-ended ("I couldn't turn that into a plan").
+_DEGRADABLE_THINKING_LEVELS = frozenset({"medium", "high"})
+
+
+def _degraded_thinking_level(model: str, thinking_level: str | None) -> str | None:
+    """The level a truncated Gemini 3 call is retried at, or None to stay terminal."""
+    if not model.startswith("gemini-3") or not isinstance(thinking_level, str):
+        return None
+    return "low" if thinking_level.strip().lower() in _DEGRADABLE_THINKING_LEVELS else None
+
+
 class TerminalError(AgentError):
     """Exhausted retries and fallbacks. Caller decides graceful degradation."""
 
@@ -266,6 +281,8 @@ class _RunStats:
     attempts: int = 0
     refusal_retries: int = 0
     schema_retries: int = 0
+    # KRI-542: a MAX_TOKENS call was retried at thinking level "low".
+    thinking_degraded: bool = False
     tokens_in: int = 0
     tokens_out: int = 0
     tokens_thoughts: int = 0
@@ -628,6 +645,8 @@ class Agent(ABC, Generic[InputT, OutputT]):
         prompt = self.render_prompt(input)
         media = self.media_uri(input)
         mime = self.media_mime(input) if media else None
+        # KRI-542: lowered to "low" for the rest of the loop after a MAX_TOKENS call.
+        thinking_level = self.spec.thinking_level
 
         last_transient: BaseException | None = None
 
@@ -695,7 +714,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     response_json=self.response_json,
                     max_output_tokens=provider_max_output_tokens,
                     thinking_budget=self.spec.thinking_budget,
-                    thinking_level=self.spec.thinking_level,
+                    thinking_level=thinking_level,
                     timeout_s=self.spec.timeout_s,
                 )
             except ProviderOutcomeUnknownError:
@@ -783,6 +802,35 @@ class Agent(ABC, Generic[InputT, OutputT]):
             # Refusal check (safety + required fields)
             try:
                 self._check_refusal(inv, stats=stats, ctx=ctx)
+            except _OutputTruncatedError as exc:
+                # KRI-542: thinking ate the shared output budget. One retry at
+                # "low" (same model, same prompt) usually leaves room for the
+                # answer; a truncation at "low" is terminal as before, because
+                # only a bigger budget can fix it. Same gate as the other
+                # second-call retries: callers with a cheaper backup opt out.
+                degraded = _degraded_thinking_level(model, thinking_level)
+                if (
+                    degraded is None
+                    or not self.spec.enable_clarification_retries
+                    or attempt >= self.spec.max_attempts - 1
+                ):
+                    raise
+                stats.thinking_degraded = True
+                log.warning(
+                    "agent_thinking_degraded",
+                    agent=self.spec.name,
+                    model=model,
+                    attempt=attempt + 1,
+                    of=self.spec.max_attempts,
+                    from_level=thinking_level,
+                    to_level=degraded,
+                    tokens_thoughts=inv.tokens_thoughts,
+                    tokens_out=inv.tokens_out,
+                    error=self._safe_error(exc),
+                    job_id=ctx.job_id,
+                )
+                thinking_level = degraded
+                continue
             except RefusalError:
                 # Skip clarification retry for agents that have a faster
                 # backup path (e.g. ClipMetadataAgent → Whisper fallback).
@@ -1026,6 +1074,8 @@ class Agent(ABC, Generic[InputT, OutputT]):
             payload["error"] = error
         if stats.json_repairs_applied:
             payload["json_repairs_applied"] = stats.json_repairs_applied
+        if stats.thinking_degraded:
+            payload["thinking_degraded"] = True
         # On refusal / schema failures the agent's `output_dict` is None;
         # surface the captured raw-text preview so plain-text logs are
         # diagnosable without round-tripping through Langfuse.
