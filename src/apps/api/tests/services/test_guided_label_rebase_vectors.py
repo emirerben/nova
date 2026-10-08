@@ -275,6 +275,21 @@ def _cases() -> list[dict[str, Any]]:
         ),
     )
 
+    # KRI-523: whole-video corner text is anchored to the timeline, never to a clip, even
+    # when a server projection stamped a segment_id onto it.
+    pinned = [
+        {
+            "id": f"guided-pinned-{index}",
+            "text": text,
+            "start_s": 0.0,
+            "end_s": 10.0,
+            "segment_id": "s3",
+        }
+        for index, text in enumerate(("Free to do in Lisbon", "Part 1"))
+    ]
+    add("pinned_text_spans_whole_timeline_extend", base, extend, flush, extra=pinned)
+    add("pinned_text_spans_whole_timeline_delete", base, delete, flush, extra=pinned)
+
     return cases
 
 

@@ -217,6 +217,17 @@ FIELD_MATRIX: dict[str, FieldRule] = {
     ),
     **_rules(
         "supported",
+        "render_contract:text",
+        "pinned_texts[]",
+        "pinned_texts[].text",
+        "pinned_texts[].corner",
+        note=(
+            "KRI-523: the pinned text itself is verified as exact burned text; its corner is "
+            "placed by the compiler, not separately re-measured by the verifier"
+        ),
+    ),
+    **_rules(
+        "supported",
         "render_contract:order",
         "ordering_choice",
         note="only `chronological` pins order; `group_first` is resolved upstream, not projected",
@@ -900,6 +911,10 @@ def build_render_contract(
             )
         if typed.closing_title:
             texts.append(TextRequirement(role="closing", text=typed.closing_title))
+        # KRI-523: whole-video corner text is exact text the burned layers must carry. The
+        # phone/cloud verifiers match a pinned layer (`guided-pinned-*`) as role "any".
+        for pin in typed.pinned_texts or ():
+            texts.append(TextRequirement(role="any", text=pin.text))
         for index, text in enumerate(typed.shot_labels or ()):
             texts.append(TextRequirement(role="clip", text=text, shot_index=index))
     durations: list[float] = []

@@ -1345,7 +1345,101 @@ def _allocate_beat_durations(
     return rounded
 
 
+# KRI-523: whole-video corner text ("pinned_texts"). One TextElement per line, held from 0 to
+# the end of the timeline. ``y_frac`` is the block's vertical CENTRE; the safe band for
+# platform chrome is 0.10-0.90, so the first top line sits at 0.12 and the last bottom line
+# at 0.86. Left/right pins are left/right aligned at the margin; centre pins are centred.
+_PIN_SIZE_PX = 52
+_PIN_MARGIN_X = 0.08
+_PIN_TOP_Y = 0.12
+_PIN_BOTTOM_Y = 0.86
+_PIN_LINE_STEP = math.ceil(_PIN_SIZE_PX * 1.4) / 1920
+# Per-clip labels and beat thoughts normally sit at 0.78-0.80; with a bottom pin they move
+# up out of its way (only for snapshots that carry pins, so every other snapshot is unchanged).
+_LABEL_Y_CLEAR_OF_BOTTOM_PIN = 0.70
+
+
+def _has_bottom_pin(snapshot: EditProposalSnapshot) -> bool:
+    # getattr: callers (narration captions) also receive duck-typed snapshots without the field.
+    return any(
+        pin.corner.startswith("bottom") for pin in getattr(snapshot, "pinned_texts", None) or ()
+    )
+
+
+def _pinned_text_elements(snapshot: EditProposalSnapshot, total_s: float) -> list[dict]:
+    pins = snapshot.pinned_texts or []
+    if not pins or total_s <= 0:
+        return []
+    # Each corner is its own column: lines stack in list order, downward from the top
+    # margin and upward from the bottom margin (the last bottom line is the lowest one).
+    by_corner: dict[str, list[int]] = {}
+    for index, pin in enumerate(pins):
+        by_corner.setdefault(pin.corner, []).append(index)
+    y_by_index: dict[int, float] = {}
+    for corner, indices in by_corner.items():
+        if corner.startswith("top"):
+            for rank, index in enumerate(indices):
+                y_by_index[index] = round(_PIN_TOP_Y + rank * _PIN_LINE_STEP, 4)
+        else:
+            for rank, index in enumerate(reversed(indices)):
+                y_by_index[index] = round(_PIN_BOTTOM_Y - rank * _PIN_LINE_STEP, 4)
+    # A pin must stay on ONE line (the stack step assumes it), so it gets the full width
+    # between the margins; two corners sharing a vertical zone split it instead.
+    sides_by_zone: dict[str, set[str]] = {}
+    for pin in pins:
+        zone, side = pin.corner.split("_", 1)
+        sides_by_zone.setdefault(zone, set()).add(side)
+    elements: list[dict] = []
+    for index, pin in enumerate(pins):
+        zone, side = pin.corner.split("_", 1)
+        x_frac = {"left": _PIN_MARGIN_X, "right": 1 - _PIN_MARGIN_X}.get(side, 0.5)
+        shared = len(sides_by_zone[zone]) > 1
+        elements.append(
+            TextElement(
+                id=f"guided-pinned-{index}",
+                text=pin.text,
+                start_s=0.0,
+                end_s=round(total_s, 3),
+                role="generative_intro",
+                position="custom",
+                x_frac=x_frac,
+                y_frac=y_by_index[index],
+                font_family=snapshot.font_family or "Fraunces",
+                size_px=_PIN_SIZE_PX,
+                color=snapshot.text_color or "#FFF8F0",
+                highlight_color="#D9FF70",
+                stroke_width=0,
+                shadow_enabled=True,
+                shadow_style="standard",
+                effect="static",
+                alignment=side if side in ("left", "right") else "center",
+                max_width_frac=0.42 if shared else 1 - 2 * _PIN_MARGIN_X,
+            ).model_dump(mode="json", exclude_none=True)
+        )
+    return elements
+
+
 def _text_elements(
+    snapshot: EditProposalSnapshot,
+    beat_windows: list[dict],
+    policy: dict,
+    *,
+    compiler_version: Literal[1, 2, 3, 4, 5, 6, 7, 8],
+) -> list[dict]:
+    elements = _base_text_elements(
+        snapshot, beat_windows, policy, compiler_version=compiler_version
+    )
+    if not snapshot.pinned_texts or compiler_version < 3:
+        return elements
+    total_s = (
+        canonical_narration_duration_s(snapshot.narration.duration_s)
+        if snapshot.narration
+        else float(snapshot.duration_s)
+    )
+    return [*elements, *_pinned_text_elements(snapshot, total_s)]
+
+
+def _base_text_elements(
     snapshot: EditProposalSnapshot,
     beat_windows: list[dict],
     policy: dict,
@@ -1374,7 +1468,8 @@ def _text_elements(
     )
     # A labeled edit shows only confirmed creator copy: no generated title
     # unless the creator supplied one.
-    show_title = bool(snapshot.opening_title) or not snapshot.shot_labels
+    show_title = bool(snapshot.opening_title) or not (snapshot.shot_labels or snapshot.pinned_texts)
+    pin_clear_y = _LABEL_Y_CLEAR_OF_BOTTOM_PIN if _has_bottom_pin(snapshot) else None
     closing_start = (
         round(max(0.0, total_s - closing_title_hold_s(total_s)), 3)
         if snapshot.closing_title
@@ -1486,7 +1581,9 @@ def _text_elements(
                     role="generative_intro",
                     position="custom",
                     x_frac=label_x,
-                    y_frac=label_y,
+                    # A bottom pin owns the bottom zone: raise labels out of its way (only
+                    # when the snapshot carries one; every other snapshot is unchanged).
+                    y_frac=label_y if pin_clear_y is None else min(label_y, pin_clear_y),
                     font_family=snapshot.font_family or "Fraunces",
                     size_px=58,
                     color=snapshot.text_color or "#FFF8F0",
@@ -1533,7 +1630,7 @@ def _text_elements(
                     role="generative_intro",
                     position="custom" if compiler_version >= 3 else "bottom",
                     x_frac=0.5 if compiler_version >= 3 else None,
-                    y_frac=0.78 if compiler_version >= 3 else None,
+                    y_frac=(pin_clear_y or 0.78) if compiler_version >= 3 else None,
                     font_family=snapshot.font_family
                     or ("Fraunces" if compiler_version >= 3 else "Inter-Bold"),
                     size_px=58 if compiler_version >= 3 else 50,
@@ -1559,28 +1656,34 @@ def _text_elements(
     # ``fast_cuts`` and retain the old text projection below.
     if snapshot.direction == "fast_montage" and snapshot.fast_cuts:
         return [
-            TextElement(
-                id="guided-title",
-                text=snapshot.title,
-                start_s=0.0,
-                end_s=title_end,
-                role="generative_intro",
-                position="custom" if compiler_version >= 3 else "top",
-                x_frac=0.5 if compiler_version >= 3 else None,
-                y_frac=0.16 if compiler_version >= 3 else None,
-                font_family=snapshot.font_family
-                or ("Fraunces" if compiler_version >= 3 else "Inter-Bold"),
-                size_px=(92 if compiler_version >= 3 else 78),
-                color=snapshot.text_color or ("#FFF8F0" if compiler_version >= 3 else "#FFFFFF"),
-                highlight_color="#D9FF70" if compiler_version >= 3 else "#6FE7F7",
-                stroke_width=0 if compiler_version >= 3 else 5,
-                shadow_enabled=True,
-                shadow_style="standard" if compiler_version >= 3 else None,
-                effect="static",
-                alignment="center",
-                max_width_frac=0.8 if compiler_version >= 3 else 0.86,
-            ).model_dump(mode="json", exclude_none=True)
-        ] + [
+            *(
+                []
+                if snapshot.pinned_texts and not snapshot.opening_title
+                else [
+                    TextElement(
+                        id="guided-title",
+                        text=snapshot.title,
+                        start_s=0.0,
+                        end_s=title_end,
+                        role="generative_intro",
+                        position="custom" if compiler_version >= 3 else "top",
+                        x_frac=0.5 if compiler_version >= 3 else None,
+                        y_frac=0.16 if compiler_version >= 3 else None,
+                        font_family=snapshot.font_family
+                        or ("Fraunces" if compiler_version >= 3 else "Inter-Bold"),
+                        size_px=(92 if compiler_version >= 3 else 78),
+                        color=snapshot.text_color
+                        or ("#FFF8F0" if compiler_version >= 3 else "#FFFFFF"),
+                        highlight_color="#D9FF70" if compiler_version >= 3 else "#6FE7F7",
+                        stroke_width=0 if compiler_version >= 3 else 5,
+                        shadow_enabled=True,
+                        shadow_style="standard" if compiler_version >= 3 else None,
+                        effect="static",
+                        alignment="center",
+                        max_width_frac=0.8 if compiler_version >= 3 else 0.86,
+                    ).model_dump(mode="json", exclude_none=True)
+                ]
+            ),
             *closing_elements(fast=True, effect="static"),
             *_narration_caption_elements(snapshot),
         ]
@@ -1674,7 +1777,7 @@ def _text_elements(
                 role="generative_intro",
                 position="custom",
                 x_frac=0.5,
-                y_frac=0.8,
+                y_frac=pin_clear_y or 0.8,
                 font_family="DM Sans",
                 size_px=64 if snapshot.direction == "text_explainer" else 60,
                 color="#FFF8F0",
@@ -1738,7 +1841,7 @@ def _narration_caption_elements(snapshot: EditProposalSnapshot) -> list[dict]:
                 role="generative_sequence",
                 position="custom",
                 x_frac=0.5,
-                y_frac=0.82,
+                y_frac=_LABEL_Y_CLEAR_OF_BOTTOM_PIN if _has_bottom_pin(snapshot) else 0.82,
                 font_family=snapshot.font_family or "Inter-Bold",
                 size_px=58,
                 color="#FFFFFF",

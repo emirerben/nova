@@ -129,6 +129,14 @@ def _refusal_question(exc: ValueError, strategy: CreativeStrategy) -> RefusedStr
                 "yet. Should I make it without the title?"
             )
             return RefusedStrategy(question=question, code="title_unavailable")
+        if message.startswith("pinned_texts"):
+            return RefusedStrategy(
+                question=(
+                    "This kind of edit can't keep your text in a corner for the whole video "
+                    "yet. Should I make it without that text?"
+                ),
+                code="pinned_text_unavailable",
+            )
         if message.startswith(("shot_labels", "closing_title")):
             if "exact photo/video cut timing" in message:
                 return RefusedStrategy(
@@ -212,6 +220,7 @@ def _drops_requested_action(
         "opening_title",
         "shot_labels",
         "closing_title",
+        "pinned_texts",
         "execution_contract",
         "mixed_media_timing",
         "licensed_sfx",

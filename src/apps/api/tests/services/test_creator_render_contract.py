@@ -246,6 +246,9 @@ _SUPPORTED_FRAGMENTS = {
     "opening_title_duration_s": {"opening_title": "Title", "opening_title_duration_s": 3},
     "shot_labels[]": {"shot_labels": ["One"]},
     "closing_title": {"closing_title": "End"},
+    "pinned_texts[]": {"pinned_texts": [{"text": "Part 1", "corner": "bottom_left"}]},
+    "pinned_texts[].text": {"pinned_texts": [{"text": "Part 1", "corner": "bottom_left"}]},
+    "pinned_texts[].corner": {"pinned_texts": [{"text": "Part 1", "corner": "top_left"}]},
     "ordering_choice": {"ordering_choice": "chronological"},
 }
 # fragments for fields that are NOT supported -> the contract must ignore them.

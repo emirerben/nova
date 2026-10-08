@@ -13,7 +13,9 @@ import functools
 import json
 import re
 import time
+import unicodedata
 import uuid
+from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from typing import Any
@@ -72,7 +74,7 @@ from app.models import (
 from app.routes._copilot import CopilotTurnBody, is_overlay_display_ask, run_copilot_turn
 from app.routes.generative_jobs import variant_render_baseline
 from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
-from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
+from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S, PinnedText
 from app.schemas.user_song import SONG_ALIGNMENT_VERSION
 from app.services.choice_questions import (
     CONFLICT_ORDER_VS_GROUP,
@@ -1397,6 +1399,46 @@ async def _plan_from_creator_output(
     return replace(planned, creative_copy_resolution=resolution)
 
 
+_PIN_QUOTES = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"'})
+_MIN_PIN_CHARS = 2
+
+
+def _pin_key(text: str) -> str:
+    """NFC, straight quotes, collapsed spaces, casefolded: smart punctuation typed on a
+    phone must still ground the straight-quoted copy the model returns."""
+    return " ".join(unicodedata.normalize("NFC", text).translate(_PIN_QUOTES).casefold().split())
+
+
+def ground_pinned_texts(
+    pins: Sequence[PinnedText], *, evidence: str, user_sources: Sequence[str]
+) -> tuple[list[PinnedText], int]:
+    """KRI-523: keep only whole-video corner text the creator actually wrote.
+
+    A pin is burned verbatim on every frame, so (like the opening/closing title) it must
+    be the creator's own words: the exact text appears, as whole words, in one of their
+    messages, or in the verbatim evidence excerpt the model quoted from one. Returns the
+    kept pins and the number dropped.
+    """
+
+    sources = [_pin_key(source) for source in user_sources if source]
+    quoted = _pin_key(evidence)
+    quote_grounded = bool(quoted) and any(quoted in source for source in sources)
+
+    def appears(key: str, haystack: str) -> bool:
+        return re.search(rf"(?<!\w){re.escape(key)}(?!\w)", haystack) is not None
+
+    kept = []
+    for pin in pins:
+        key = _pin_key(pin.text)
+        if len(key) < _MIN_PIN_CHARS:
+            continue
+        if any(appears(key, source) for source in sources) or (
+            quote_grounded and appears(key, quoted)
+        ):
+            kept.append(pin)
+    return kept, len(pins) - len(kept)
+
+
 async def _plan_creator_action(
     db: AsyncSession,
     *,
@@ -1450,6 +1492,23 @@ async def _plan_creator_action(
                 )
     policy_notices: tuple[str, ...] = ()
     server_song_takes: list[dict[str, Any]] | None = None
+    if isinstance(action, ProposeStrategy) and action.strategy.pinned_texts:
+        grounded_pins, dropped_pins = ground_pinned_texts(
+            action.strategy.pinned_texts,
+            evidence=getattr(action.render_intent_evidence, "pinned_texts", None) or "",
+            user_sources=user_sources,
+        )
+        if dropped_pins:
+            log.info("kria_pinned_texts_ungrounded", thread_id=str(thread_id), count=dropped_pins)
+            action = action.model_copy(
+                update={
+                    "strategy": action.strategy.model_copy(
+                        update={"pinned_texts": grounded_pins or None}
+                    ),
+                    "summary": f"{action.summary.strip()} I left out on-screen text that "
+                    "wasn't in your words.".strip(),
+                }
+            )
     if isinstance(action, ProposeStrategy):
         # KRI-142: the same server compile v1 runs, so a phone render never
         # silently drops what it can't draw while the reply claims it.
@@ -1819,14 +1878,20 @@ def _request_recovery(manifest, prior, *, updates=(), reason="context_limit") ->
         "clip_planner_context_limit": (
             "Your complete brief exceeds the clip planner's 12,000-character limit."
         ),
+        # KRI-523: the planner itself failed (not the reading of the request), so say so.
+        "creator_planning_failed": "I couldn't turn that into a plan this time.",
     }.get(reason, "Your complete request exceeds the context this planning step can safely read.")
+    follow_up = (
+        "Try again, or tell me the most important change first."
+        if reason == "creator_planning_failed"
+        else "Which clip or part of the edit should I work on first?"
+    )
     return PlannedKriaTurn(
         plan=KriaTurnPlan(
             mode="respond",
             turn_value="question",
             response=(
-                f"{detail} Your complete request is saved and your draft is unchanged. "
-                "Which clip or part of the edit should I work on first?"
+                f"{detail} Your complete request is saved and your draft is unchanged. {follow_up}"
             ),
         ),
         manifest_hash=manifest.manifest_hash,
@@ -2550,7 +2615,13 @@ async def _plan_live_turn(
             exc_info=True,
         )
         if binding_on and brief_on:
-            return _request_recovery(manifest, prior_brief, reason="request_extraction_failed")
+            # A malformed brief update is a reading failure; anything else is the planner.
+            reading = isinstance(exc, BriefUpdateBatchError)
+            return _request_recovery(
+                manifest,
+                prior_brief,
+                reason="request_extraction_failed" if reading else "creator_planning_failed",
+            )
         if not extract_first or answers_clip_question:
             raise
         # KRI-188: the Main Creator now runs before the copilot only to extract

@@ -2363,6 +2363,7 @@ def _run_draft_attempt(
                 opening_title_duration_s=brief.opening_title_duration_s,
                 shot_labels=brief.shot_labels,
                 closing_title=brief.closing_title,
+                pinned_texts=brief.pinned_texts,
                 font_family=brief.font_family,
                 text_color=brief.text_color,
                 image_layout=brief.image_layout,
