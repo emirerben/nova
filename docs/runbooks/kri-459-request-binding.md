@@ -52,3 +52,12 @@ Voiceover adds word-timed alignment when enabled; Talking uses its speech/text
 operations; Slides uses its slide-specific text/reorder operations. Each operation
 is checked against the actual format, renderer and flags, rather than claiming
 all four formats support every operation.
+
+## Receipts on editor turns (KRI-529)
+
+A strategy draft (new cut) lists every live requirement, so unjudged ones show as
+`partial` / `unchecked` ("still needs an output check"). An editor-operations turn
+receipts only the requirements stated in that turn; it no longer re-lists earlier
+ones, which put a yellow chip on every unrelated requirement after each chat edit.
+iOS draws `verification == "unchecked"` as a neutral "Not checked yet" chip, never
+the yellow "Partly done" one (this also covers events stored before the change).

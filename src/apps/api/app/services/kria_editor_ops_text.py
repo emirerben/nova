@@ -742,10 +742,34 @@ def _merge_phases(row: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
         raise KriaEditorOpError("Those animation settings aren't valid") from exc
 
 
+_NAMED_Y = {"top": 0.12, "middle": 0.5, "bottom": 0.85}
+
+
+def fill_custom_axes(row: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    """A custom-position patch that moves ONE axis keeps this ROW's value on the other.
+
+    "Left-align these together" sends one shared ``x_frac`` to several texts; each must
+    keep its own height, not take a value invented for the whole patch (KRI-529).
+    """
+    if patch.get("position") != "custom" or ("x_frac" in patch) == ("y_frac" in patch):
+        return patch
+    filled = dict(patch)
+    if "x_frac" not in filled:
+        x = row.get("x_frac")
+        filled["x_frac"] = float(x) if isinstance(x, (int, float)) else 0.5
+    else:
+        y = row.get("y_frac")
+        filled["y_frac"] = (
+            float(y) if isinstance(y, (int, float)) else _NAMED_Y.get(row.get("position"), 0.5)
+        )
+    return filled
+
+
 def apply_patch(row: dict[str, Any], patch: dict[str, Any]) -> None:
     """Apply a parser-validated patch (re-validated where the compiler can't trust it)."""
     from app.services.kria_editor_ops import _TEXT_STYLE_FIELDS  # noqa: PLC0415
 
+    patch = fill_custom_axes(row, patch)
     for key, value in patch.items():
         if key == "size_scale":
             base = row.get("size_px")
