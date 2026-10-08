@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.174.0] - 2026-10-08
+
+### Changed
+- fix(kria): Turkish beat sounds resolve and Turkish beat asks get receipts (KRI-540) (#1492) <!-- release-pr: 1492 -->
+
 ## [0.78.173.0] - 2026-10-08
 
 ### Fixed
