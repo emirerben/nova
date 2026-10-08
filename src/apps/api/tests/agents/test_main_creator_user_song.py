@@ -26,13 +26,13 @@ from app.agents.main_creator import (
 from app.config import settings
 from tests.agents.test_main_creator_agent import _input, _manifest
 
-# (clip_intents_enabled, brief_enabled) -> sha256 of the KRI-523 v49 render without a song
-# (v48 plus the pinned_texts rule).
+# (clip_intents_enabled, brief_enabled) -> sha256 of the KRI-525 v51 render without a song
+# (v50 plus the ranged-pin and pin-limit rules).
 PRE_CHANGE_PROMPT_SHA = {
-    (True, False): "62ac873d56e88328dc93fdf5923a3a4540e96c61a6002eadec424cb077e638f2",
-    (True, True): "9669dca6690cafdf1062f7f4a277f5ffea1c229b1f9d715af9dd137d79b9397f",
-    (False, False): "1b27f2b3059f2cbcd56805d100e8dc68b383d6430ba2ba5eeab7ff69c91ba218",
-    (False, True): "219d0083dd84b971f67e7e45d4bef30bb694aeccf569e0842098725caee7b752",
+    (True, False): "07f44b572bc7bb2cfd8162bf5002c48252a11749358e6c883806cdca2255c27d",
+    (True, True): "3d7379ce7dc76ff2db3142bcf53846c06b8e78071bee93749ddb4d001892cbc7",
+    (False, False): "e7ca0a5ae3abcd2675f6066aa1109b979f235b134d441fb56e88c26a150c0868",
+    (False, True): "c2c2d0063ff148aacf51ed6a8be7abd161bb6471fff7a58752be2da50f1f1d82",
 }
 
 

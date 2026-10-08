@@ -103,6 +103,7 @@ from app.schemas.edit_proposal import (
     MAX_PROPOSAL_DURATION_S,
     MixedMediaTimingProfile,
     MontageCadenceConstraint,
+    PinnedText,
     recognize_cadence_reuse_policy,
     recognize_explicit_cadence_reuse_policy,
     recognize_image_layout,
@@ -1156,6 +1157,37 @@ def _excerpt_states_seconds(excerpt: str, seconds: float) -> bool:
     )
 
 
+def _excerpt_states_number(excerpt: str, seconds: float) -> bool:
+    """Whether a verbatim creator excerpt names ``seconds`` as a time ("5s", "from 5 to 10")."""
+
+    if _excerpt_states_seconds(excerpt, seconds):
+        return True
+    text = " ".join(excerpt.casefold().split())
+    if float(seconds).is_integer() and re.search(
+        rf"(?<![\w.:]){int(seconds)}(?![\w.:]|[.,]\d)", text
+    ):
+        return True
+    return any(
+        abs(number - float(seconds)) < 1e-6 and re.search(rf"\b{word}\b", text)
+        for word, number in _SECONDS_WORDS.items()
+    )
+
+
+def _pin_range_is_grounded(pin: PinnedText, quote: str) -> bool:
+    """KRI-525: a pin's seconds must be numbers the creator wrote.
+
+    A clip scope has no language-independent surface form ("the first clip", "ilk klipte"),
+    so it is not matched against words here; the plan-time check rejects an index beyond the
+    clip count, and a wrong-but-valid clip is visible in the draft the creator reviews.
+    """
+
+    return all(
+        _excerpt_states_number(quote, value)
+        for value in (pin.start_s, pin.end_s)
+        if value is not None
+    )
+
+
 def _apply_explicit_render_intent(
     strategy: CreativeStrategy,
     creator_request: str,
@@ -1201,6 +1233,8 @@ def _apply_explicit_render_intent(
                     continue
             if field == "pinned_texts" and value is not None:
                 if not all(" ".join(pin.text.split()) in quote for pin in value):
+                    continue
+                if not all(_pin_range_is_grounded(pin, quote) for pin in value):
                     continue
             if field == "opening_title_duration_s" and value is not None:
                 if not _excerpt_states_seconds(quote, value):

@@ -54,6 +54,7 @@ from app.kria.brief_route import (
     wants_filming_time_text,
     wants_hour_only_text,
 )
+from app.pipeline.pinned_text import resolve_pin_windows
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.edit_proposal import (
     CREATOR_SELECTED_ORIENTATION_REASON,
@@ -1327,6 +1328,17 @@ def plan_unified_montage(
             )
         )
     total_s = round(sum(cut.output_duration_s for cut in cuts), 3)
+    if pins:
+        # KRI-525: a ranged pin that falls outside the edit (past the end, or on a clip that
+        # does not exist) has no window. Leave it off the snapshot so the brief receipt
+        # reports the text as missing instead of a plan that claims a line it never draws.
+        cut_windows: list[tuple[float, float]] = []
+        cursor_s = 0.0
+        for cut in cuts:
+            cut_windows.append((cursor_s, cursor_s + cut.output_duration_s))
+            cursor_s += cut.output_duration_s
+        drawable = {window.index for window in resolve_pin_windows(pins, total_s, cut_windows)}
+        pins = [pin for index, pin in enumerate(pins) if index in drawable]
 
     snapshot_kwargs: dict[str, Any] = {}
     if closing:
@@ -1504,7 +1516,8 @@ def _pinned_texts(strategy: Mapping[str, Any]) -> list[PinnedText]:
         if not isinstance(raw, Mapping):
             continue
         try:
-            pins.append(PinnedText(text=_nfc(raw.get("text")), corner=raw.get("corner")))
+            # model_validate (not a field-by-field rebuild) so KRI-525's range fields survive.
+            pins.append(PinnedText.model_validate({**raw, "text": _nfc(raw.get("text"))}))
         except ValidationError:
             continue
     return pins[:MAX_CREATOR_PINNED_TEXTS]

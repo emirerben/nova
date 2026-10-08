@@ -1,0 +1,110 @@
+{
+  "agent": "nova.creator.main",
+  "prompt_version": "2026-10-08-v51",
+  "input": {
+    "user_message": "Put “Part 1” on the top left from 5s to 10s, and “Day one in Lisbon” at the bottom right during the first clip.",
+    "creator_context": "City-break creator who posts short travel montages.",
+    "item_context": "Untitled video; montage; no recorded voiceover.",
+    "media_context": [
+      {
+        "media_id": "clip-1",
+        "kind": "video",
+        "duration_s": 5.0
+      },
+      {
+        "media_id": "clip-2",
+        "kind": "video",
+        "duration_s": 5.0
+      },
+      {
+        "media_id": "clip-3",
+        "kind": "video",
+        "duration_s": 5.0
+      }
+    ],
+    "conversation": [],
+    "capability_manifest": {
+      "schema_version": 1,
+      "item_id": "item-kri525",
+      "edit_format": "montage",
+      "render_program": "guided",
+      "has_voiceover": false,
+      "media": [
+        {
+          "media_id": "clip-1",
+          "kind": "video",
+          "duration_s": 5.0
+        },
+        {
+          "media_id": "clip-2",
+          "kind": "video",
+          "duration_s": 5.0
+        },
+        {
+          "media_id": "clip-3",
+          "kind": "video",
+          "duration_s": 5.0
+        }
+      ],
+      "catalog": [
+        {
+          "catalog_id": "music-track-1",
+          "kind": "music",
+          "label": "Warm acoustic bed"
+        }
+      ],
+      "capabilities": {
+        "dispatch_render": {
+          "available": true
+        },
+        "draft_guided_proposal": {
+          "available": true
+        },
+        "media_overlays": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "sound_effects": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "wide_looks": {
+          "available": false,
+          "reason_code": "disabled_by_setting"
+        },
+        "edit_format:montage": {
+          "available": true
+        }
+      },
+      "limits": {
+        "max_media_refs": 50,
+        "max_catalog_refs": 50,
+        "max_commands": 4,
+        "max_output_duration_s": 120.0
+      },
+      "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "manifest_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "brief_enabled": true
+  },
+  "raw_text": "{\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"fast_montage\",\n      \"edit_format\": \"montage\",\n      \"audio_strategy\": \"licensed_music\",\n      \"media_scope\": \"all\",\n      \"pacing\": \"balanced\",\n      \"target_duration_s\": 15,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"pinned_texts\": [\n        {\n          \"text\": \"Part 1\",\n          \"corner\": \"top_left\",\n          \"start_s\": 5.0,\n          \"end_s\": 10.0\n        },\n        {\n          \"text\": \"Day one in Lisbon\",\n          \"corner\": \"bottom_right\",\n          \"clip\": 1\n        }\n      ],\n      \"rationale\": \"A short montage of your clips; your two text lines show where and when you asked.\",\n      \"optional_treatments\": []\n    },\n    \"summary\": \"I'll cut your clips, show “Part 1” at the top left from 5s to 10s and “Day one in Lisbon” at the bottom right during the first clip.\",\n    \"render_intent_evidence\": {\n      \"pinned_texts\": \"Put “Part 1” on the top left from 5s to 10s, and “Day one in Lisbon” at the bottom right during the first clip.\"\n    }\n  },\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"Part 1\",\n      \"description\": \"pinned top left, 5s to 10s\"\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text\",\n      \"scope\": \"global\",\n      \"literal\": \"Day one in Lisbon\",\n      \"description\": \"pinned bottom right, during the first clip\"\n    }\n  ]\n}",
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "kri525_ranged_pinned_text",
+    "ticket": "KRI-525",
+    "note": "Hand-authored contract fixture (no paid run): a time named by the creator becomes start_s/end_s or clip on that pin; replay is structural only.",
+    "pinned_texts": [
+      {
+        "text": "Part 1",
+        "corner": "top_left",
+        "start_s": 5.0,
+        "end_s": 10.0
+      },
+      {
+        "text": "Day one in Lisbon",
+        "corner": "bottom_right",
+        "clip": 1
+      }
+    ]
+  }
+}

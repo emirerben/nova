@@ -290,8 +290,8 @@ def _refusal_question(exc: ValueError, strategy: CreativeStrategy) -> RefusedStr
         if message.startswith("pinned_texts"):
             return RefusedStrategy(
                 question=(
-                    "This kind of edit can't keep your text in a corner for the whole video "
-                    "yet. Should I make it without that text?"
+                    "This kind of edit can't keep your text in a corner yet. "
+                    "Should I make it without that text?"
                 ),
                 code="pinned_text_unavailable",
             )
@@ -476,6 +476,34 @@ def _repair_detail(before: CreativeStrategy, after: CreativeStrategy) -> str:
     return " ".join(lines)
 
 
+def _pin_range_refusal(strategy: CreativeStrategy) -> RefusedStrategy | None:
+    """KRI-525: ask instead of guessing when a clip-scoped pin names a clip that isn't there.
+
+    A montage cuts each selected clip once, in order, so the n-th clip exists only if at
+    least n clips are selected. An empty selection means "all of them": nothing to check.
+    """
+
+    clips = len(strategy.selected_media_ids)
+    if not clips:
+        return None
+    for pin in strategy.pinned_texts or ():
+        if pin.clip is not None and pin.clip > clips:
+            return RefusedStrategy(
+                question=say(
+                    en=(
+                        f'You picked {clips} clip{"" if clips == 1 else "s"}, so "{pin.text}" '
+                        f"can't go on clip {pin.clip}. Which clip should it be on?"
+                    ),
+                    tr=(
+                        f'{clips} klip seçtin, o yüzden "{pin.text}" {pin.clip}. klibe '
+                        "konamaz. Hangi klibe koyayım?"
+                    ),
+                ),
+                code="pinned_text_clip_missing",
+            )
+    return None
+
+
 def check_strategy_for_runtime_v2(
     manifest: ResolvedCreatorManifest,
     strategy: CreativeStrategy,
@@ -510,6 +538,9 @@ def check_strategy_for_runtime_v2(
         if isinstance(downgraded, RefusedStrategy):
             return downgraded
         strategy, notices = downgraded
+    pin_refusal = _pin_range_refusal(strategy)
+    if pin_refusal is not None:
+        return pin_refusal
     try:
         edit_plan = compile_strategy_to_plan(manifest, strategy)
     except ValueError as exc:

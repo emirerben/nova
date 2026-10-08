@@ -290,6 +290,38 @@ def _cases() -> list[dict[str, Any]]:
     add("pinned_text_spans_whole_timeline_extend", base, extend, flush, extra=pinned)
     add("pinned_text_spans_whole_timeline_delete", base, delete, flush, extra=pinned)
 
+    # KRI-525: a pin scoped to one clip fills that clip, so it travels with it (like a
+    # label); a seconds range that fits no clip is re-windowed through source time.
+    def clip_pin(number: int) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": "guided-pinned-0",
+                "text": "Part 1",
+                "start_s": 2.0 * (number - 1),
+                "end_s": 2.0 * number,
+                "segment_id": f"s{number}",
+            }
+        ]
+
+    add("pinned_first_clip_follows_extend", base, extend, flush, extra=clip_pin(1))
+    add("pinned_clip_2_follows_reorder", base, reorder, flush, extra=clip_pin(2))
+    add("pinned_clip_2_dropped_with_delete", base, delete, flush, extra=clip_pin(2))
+    add(
+        "pinned_seconds_range_mid_video_extend",
+        base,
+        extend,
+        flush,
+        extra=[
+            {
+                "id": "guided-pinned-0",
+                "text": "Part 1",
+                "start_s": 3.0,
+                "end_s": 7.0,
+                "segment_id": "s2",
+            }
+        ],
+    )
+
     return cases
 
 

@@ -171,15 +171,39 @@ PinnedCorner = Literal[
 
 
 class PinnedText(BaseModel):
+    """One corner line. No range = the whole video (KRI-523).
+
+    KRI-525: a pin may instead be scoped by seconds (``start_s`` and/or ``end_s``; a missing
+    side means the video's start/end) or by ``clip`` (1-based, in edit order) - never both.
+    The range fields are omitted from dumps when unset, so a whole-video pin serialises
+    byte-identically to the pre-range shape (snapshot hashes, records, tool boundary).
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(min_length=1, max_length=PINNED_TEXT_MAX_CHARS)
     corner: PinnedCorner
+    start_s: float | None = Field(default=None, ge=0, exclude_if=lambda value: value is None)
+    end_s: float | None = Field(default=None, gt=0, exclude_if=lambda value: value is None)
+    clip: int | None = Field(default=None, ge=1, exclude_if=lambda value: value is None)
 
     @field_validator("text", mode="before")
     @classmethod
     def _clean_text(cls, value: object) -> str:
         return clean_creator_copy(value, field_name="pinned_texts", max_chars=PINNED_TEXT_MAX_CHARS)
+
+    @model_validator(mode="after")
+    def _check_range(self) -> PinnedText:
+        seconds = self.start_s is not None or self.end_s is not None
+        if seconds and self.clip is not None:
+            raise ValueError("a pinned text is scoped by seconds or by clip, not both")
+        if self.start_s is not None and self.end_s is not None and self.start_s >= self.end_s:
+            raise ValueError("pinned_texts start_s must be before end_s")
+        return self
+
+    @property
+    def is_whole_video(self) -> bool:
+        return self.start_s is None and self.end_s is None and self.clip is None
 
 
 def clean_creator_pinned_texts(value: object) -> list[PinnedText] | None:

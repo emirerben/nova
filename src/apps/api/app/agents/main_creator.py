@@ -69,7 +69,9 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # KRI-520: a Turkish chat gets a reply-language line at the end of the prompt; English is
 # byte-identical (v50).
 # KRI-519: reaction beats on an iPhone Voiceover edit, worded for the voiceover (v51).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-08-v51"
+# KRI-525/526: pins may carry `start_s`/`end_s` or `clip`; the 4-line / 120-character limits are
+# taught so an over-long ask becomes a question, not a schema failure (v52).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-08-v52"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input

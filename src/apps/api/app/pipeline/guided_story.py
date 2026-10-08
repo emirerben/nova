@@ -39,6 +39,14 @@ from app.pipeline.duration_contract import (
     STRICT_MIXED_MEDIA_DURATION_TOLERANCE_S,
     STRICT_MIXED_MEDIA_MAX_CFR_OVERRUN_S,
 )
+from app.pipeline.pinned_text import (
+    LABEL_Y_CLEAR_OF_BOTTOM_PIN,
+    PinWindow,
+    bottom_pin_overlaps,
+    clip_windows_from_moments,
+    pinned_text_elements,
+    resolve_pin_windows,
+)
 from app.pipeline.probe import probe_video
 from app.schemas.edit_proposal import (
     FAST_MONTAGE_TITLE_HOLD_S,
@@ -1345,78 +1353,21 @@ def _allocate_beat_durations(
     return rounded
 
 
-# KRI-523: whole-video corner text ("pinned_texts"). One TextElement per line, held from 0 to
-# the end of the timeline. ``y_frac`` is the block's vertical CENTRE; the safe band for
-# platform chrome is 0.10-0.90, so the first top line sits at 0.12 and the last bottom line
-# at 0.86. Left/right pins are left/right aligned at the margin; centre pins are centred.
-_PIN_SIZE_PX = 52
-_PIN_MARGIN_X = 0.08
-_PIN_TOP_Y = 0.12
-_PIN_BOTTOM_Y = 0.86
-_PIN_LINE_STEP = math.ceil(_PIN_SIZE_PX * 1.4) / 1920
-# Per-clip labels and beat thoughts normally sit at 0.78-0.80; with a bottom pin they move
-# up out of its way (only for snapshots that carry pins, so every other snapshot is unchanged).
-_LABEL_Y_CLEAR_OF_BOTTOM_PIN = 0.70
-
-
-def _has_bottom_pin(snapshot: EditProposalSnapshot) -> bool:
+def _pin_windows_for(
+    snapshot: EditProposalSnapshot,
+    total_s: float,
+    clip_windows: list[tuple[float, float]] | None = None,
+) -> list[PinWindow]:
     # getattr: callers (narration captions) also receive duck-typed snapshots without the field.
-    return any(
-        pin.corner.startswith("bottom") for pin in getattr(snapshot, "pinned_texts", None) or ()
+    return resolve_pin_windows(getattr(snapshot, "pinned_texts", None), total_s, clip_windows)
+
+
+def _snapshot_total_s(snapshot: EditProposalSnapshot) -> float:
+    return (
+        canonical_narration_duration_s(snapshot.narration.duration_s)
+        if snapshot.narration
+        else float(snapshot.duration_s)
     )
-
-
-def _pinned_text_elements(snapshot: EditProposalSnapshot, total_s: float) -> list[dict]:
-    pins = snapshot.pinned_texts or []
-    if not pins or total_s <= 0:
-        return []
-    # Each corner is its own column: lines stack in list order, downward from the top
-    # margin and upward from the bottom margin (the last bottom line is the lowest one).
-    by_corner: dict[str, list[int]] = {}
-    for index, pin in enumerate(pins):
-        by_corner.setdefault(pin.corner, []).append(index)
-    y_by_index: dict[int, float] = {}
-    for corner, indices in by_corner.items():
-        if corner.startswith("top"):
-            for rank, index in enumerate(indices):
-                y_by_index[index] = round(_PIN_TOP_Y + rank * _PIN_LINE_STEP, 4)
-        else:
-            for rank, index in enumerate(reversed(indices)):
-                y_by_index[index] = round(_PIN_BOTTOM_Y - rank * _PIN_LINE_STEP, 4)
-    # A pin must stay on ONE line (the stack step assumes it), so it gets the full width
-    # between the margins; two corners sharing a vertical zone split it instead.
-    sides_by_zone: dict[str, set[str]] = {}
-    for pin in pins:
-        zone, side = pin.corner.split("_", 1)
-        sides_by_zone.setdefault(zone, set()).add(side)
-    elements: list[dict] = []
-    for index, pin in enumerate(pins):
-        zone, side = pin.corner.split("_", 1)
-        x_frac = {"left": _PIN_MARGIN_X, "right": 1 - _PIN_MARGIN_X}.get(side, 0.5)
-        shared = len(sides_by_zone[zone]) > 1
-        elements.append(
-            TextElement(
-                id=f"guided-pinned-{index}",
-                text=pin.text,
-                start_s=0.0,
-                end_s=round(total_s, 3),
-                role="generative_intro",
-                position="custom",
-                x_frac=x_frac,
-                y_frac=y_by_index[index],
-                font_family=snapshot.font_family or "Fraunces",
-                size_px=_PIN_SIZE_PX,
-                color=snapshot.text_color or "#FFF8F0",
-                highlight_color="#D9FF70",
-                stroke_width=0,
-                shadow_enabled=True,
-                shadow_style="standard",
-                effect="static",
-                alignment=side if side in ("left", "right") else "center",
-                max_width_frac=0.42 if shared else 1 - 2 * _PIN_MARGIN_X,
-            ).model_dump(mode="json", exclude_none=True)
-        )
-    return elements
 
 
 def _text_elements(
@@ -1425,18 +1376,22 @@ def _text_elements(
     policy: dict,
     *,
     compiler_version: Literal[1, 2, 3, 4, 5, 6, 7, 8],
+    clip_windows: list[tuple[float, float]] | None = None,
 ) -> list[dict]:
+    pin_windows = (
+        _pin_windows_for(snapshot, _snapshot_total_s(snapshot), clip_windows)
+        if snapshot.pinned_texts and compiler_version >= 3
+        else []
+    )
     elements = _base_text_elements(
-        snapshot, beat_windows, policy, compiler_version=compiler_version
+        snapshot, beat_windows, policy, compiler_version=compiler_version, pin_windows=pin_windows
     )
-    if not snapshot.pinned_texts or compiler_version < 3:
-        return elements
-    total_s = (
-        canonical_narration_duration_s(snapshot.narration.duration_s)
-        if snapshot.narration
-        else float(snapshot.duration_s)
-    )
-    return [*elements, *_pinned_text_elements(snapshot, total_s)]
+    return [
+        *elements,
+        *pinned_text_elements(
+            pin_windows, font_family=snapshot.font_family, text_color=snapshot.text_color
+        ),
+    ]
 
 
 def _base_text_elements(
@@ -1445,12 +1400,10 @@ def _base_text_elements(
     policy: dict,
     *,
     compiler_version: Literal[1, 2, 3, 4, 5, 6, 7, 8],
+    pin_windows: list[PinWindow] | None = None,
 ) -> list[dict]:
-    total_s = (
-        canonical_narration_duration_s(snapshot.narration.duration_s)
-        if snapshot.narration
-        else float(snapshot.duration_s)
-    )
+    total_s = _snapshot_total_s(snapshot)
+    pin_windows = pin_windows or []
     title_end = min(
         total_s,
         float(snapshot.opening_title_duration_s)
@@ -1469,7 +1422,14 @@ def _base_text_elements(
     # A labeled edit shows only confirmed creator copy: no generated title
     # unless the creator supplied one.
     show_title = bool(snapshot.opening_title) or not (snapshot.shot_labels or snapshot.pinned_texts)
-    pin_clear_y = _LABEL_Y_CLEAR_OF_BOTTOM_PIN if _has_bottom_pin(snapshot) else None
+
+    def lane_y(default_y: float, start_s: float, end_s: float) -> float:
+        """A lane keeps its usual y unless a bottom pin is on screen during its window."""
+
+        if bottom_pin_overlaps(pin_windows, start_s, end_s):
+            return min(default_y, LABEL_Y_CLEAR_OF_BOTTOM_PIN)
+        return default_y
+
     closing_start = (
         round(max(0.0, total_s - closing_title_hold_s(total_s)), 3)
         if snapshot.closing_title
@@ -1583,7 +1543,7 @@ def _base_text_elements(
                     x_frac=label_x,
                     # A bottom pin owns the bottom zone: raise labels out of its way (only
                     # when the snapshot carries one; every other snapshot is unchanged).
-                    y_frac=label_y if pin_clear_y is None else min(label_y, pin_clear_y),
+                    y_frac=lane_y(label_y, float(window["start_s"]), float(window["end_s"])),
                     font_family=snapshot.font_family or "Fraunces",
                     size_px=58,
                     color=snapshot.text_color or "#FFF8F0",
@@ -1600,7 +1560,7 @@ def _base_text_elements(
             *title_elements,
             *label_elements,
             *closing_elements(fast=True, effect="static"),
-            *_narration_caption_elements(snapshot),
+            *_narration_caption_elements(snapshot, pin_windows),
         ]
     # Explicit Main Creator copy is immutable. Specialist montage bindings are
     # advisory and must not replace a confirmed title with generated words.
@@ -1630,7 +1590,9 @@ def _base_text_elements(
                     role="generative_intro",
                     position="custom" if compiler_version >= 3 else "bottom",
                     x_frac=0.5 if compiler_version >= 3 else None,
-                    y_frac=(pin_clear_y or 0.78) if compiler_version >= 3 else None,
+                    y_frac=lane_y(0.78, binding_start_s, binding_end_s)
+                    if compiler_version >= 3
+                    else None,
                     font_family=snapshot.font_family
                     or ("Fraunces" if compiler_version >= 3 else "Inter-Bold"),
                     size_px=58 if compiler_version >= 3 else 50,
@@ -1648,7 +1610,7 @@ def _base_text_elements(
         return [
             *elements,
             *closing_elements(fast=True, effect="static"),
-            *_narration_caption_elements(snapshot),
+            *_narration_caption_elements(snapshot, pin_windows),
         ]
     # New fast-montage proposals carry their own dense cut list. Keep only the
     # short hook/title; generated chapter thoughts would turn a music-led cut
@@ -1685,7 +1647,7 @@ def _base_text_elements(
                 ]
             ),
             *closing_elements(fast=True, effect="static"),
-            *_narration_caption_elements(snapshot),
+            *_narration_caption_elements(snapshot, pin_windows),
         ]
     if compiler_version < 3:
         elements = [
@@ -1730,7 +1692,7 @@ def _base_text_elements(
                     max_width_frac=0.84,
                 ).model_dump(mode="json", exclude_none=True)
             )
-        return [*elements, *_narration_caption_elements(snapshot)]
+        return [*elements, *_narration_caption_elements(snapshot, pin_windows)]
 
     # A labeled edit shows only confirmed creator copy (see show_title).
     elements = (
@@ -1777,7 +1739,7 @@ def _base_text_elements(
                 role="generative_intro",
                 position="custom",
                 x_frac=0.5,
-                y_frac=pin_clear_y or 0.8,
+                y_frac=lane_y(0.8, max(0.0, round(start_s, 3)), end_s),
                 font_family="DM Sans",
                 size_px=64 if snapshot.direction == "text_explainer" else 60,
                 color="#FFF8F0",
@@ -1794,7 +1756,7 @@ def _base_text_elements(
     return [
         *elements,
         *closing_elements(fast=snapshot.direction == "fast_montage", effect=policy["text_effect"]),
-        *_narration_caption_elements(snapshot),
+        *_narration_caption_elements(snapshot, pin_windows),
     ]
 
 
@@ -1805,12 +1767,18 @@ def _narration_caption_meta(snapshot: EditProposalSnapshot) -> dict[str, Any] | 
     return {"style": narration.caption_style, "y_frac": 0.7}
 
 
-def _narration_caption_elements(snapshot: EditProposalSnapshot) -> list[dict]:
+def _narration_caption_elements(
+    snapshot: EditProposalSnapshot, pin_windows: list[PinWindow] | None = None
+) -> list[dict]:
     """Project pinned speech words into the existing text renderer's caption lane."""
 
     narration = snapshot.narration
     if narration is None or not narration.words:
         return []
+    if pin_windows is None:
+        pin_windows = _pin_windows_for(
+            snapshot, canonical_narration_duration_s(narration.duration_s)
+        )
     # Whisper legitimately emits point timestamps. Retain those tokens in a
     # neighboring caption instead of dropping words or inventing speech time.
     groups: list[list] = []
@@ -1841,7 +1809,11 @@ def _narration_caption_elements(snapshot: EditProposalSnapshot) -> list[dict]:
                 role="generative_sequence",
                 position="custom",
                 x_frac=0.5,
-                y_frac=_LABEL_Y_CLEAR_OF_BOTTOM_PIN if _has_bottom_pin(snapshot) else 0.82,
+                y_frac=(
+                    LABEL_Y_CLEAR_OF_BOTTOM_PIN
+                    if bottom_pin_overlaps(pin_windows, start_s, end_s)
+                    else 0.82
+                ),
                 font_family=snapshot.font_family or "Inter-Bold",
                 size_px=58,
                 color="#FFFFFF",
@@ -2065,14 +2037,21 @@ def _compile_scheduled_execution_plan(
             }
         )
     policy = _DIRECTION_POLICY[snapshot.direction]
-    text_elements = _text_elements(snapshot, beat_windows, policy, compiler_version=8)
+    clip_windows = clip_windows_from_moments(moments, _snapshot_total_s(snapshot))
+    text_elements = _text_elements(
+        snapshot, beat_windows, policy, compiler_version=8, clip_windows=clip_windows
+    )
     if snapshot.direction == "fast_montage" and snapshot.montage_text_bindings:
         # v1-7 chose either title or labels. Both are named requirements for a
         # scheduled edit; preserve the title, exact labels, and narration lane.
         title_snapshot = snapshot.model_copy(update={"montage_text_bindings": []})
-        text_elements = _text_elements(title_snapshot, beat_windows, policy, compiler_version=8)
+        text_elements = _text_elements(
+            title_snapshot, beat_windows, policy, compiler_version=8, clip_windows=clip_windows
+        )
         binding_snapshot = snapshot.model_copy(update={"opening_title": None, "narration": None})
-        bindings = _text_elements(binding_snapshot, beat_windows, policy, compiler_version=8)
+        bindings = _text_elements(
+            binding_snapshot, beat_windows, policy, compiler_version=8, clip_windows=clip_windows
+        )
         text_elements.extend(
             element for element in bindings if element["id"].startswith("montage-text-")
         )
@@ -2312,7 +2291,11 @@ def _compile_execution_plan_version(
                     else None
                 ),
                 text_elements=_text_elements(
-                    snapshot, beat_windows, policy, compiler_version=compiler_version
+                    snapshot,
+                    beat_windows,
+                    policy,
+                    compiler_version=compiler_version,
+                    clip_windows=clip_windows_from_moments(moments, _snapshot_total_s(snapshot)),
                 ),
                 transition_policy={"type": "none", "duration_s": 0.0},
                 typography=(
@@ -2487,6 +2470,7 @@ def _compile_execution_plan_version(
                 beat_windows,
                 policy,
                 compiler_version=compiler_version,
+                clip_windows=clip_windows_from_moments(moments, _snapshot_total_s(snapshot)),
             ),
             transition_policy={
                 "type": transition_type,
