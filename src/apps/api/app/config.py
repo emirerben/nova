@@ -583,6 +583,12 @@ class Settings(BaseSettings):
     # runtime_version=1 project remain available when this is false; the new
     # durable turn/approval endpoints deliberately fail closed as 404.
     kria_runtime_v2_enabled: bool = False
+    # KRI-520: Kria replies in the chat's language (Turkish or English). The chat's
+    # language comes from the creator's own messages, then the device language; server
+    # copy and the Main Creator/copilot prompts follow it. Default TRUE; kill switch =
+    # false + restart (api + worker): every reply is English and prompts are
+    # byte-identical to before.
+    kria_reply_language_enabled: bool = True
     # Chat copilot continues on the editor's CURRENT UNSAVED state: the client may
     # send `editor_state` with a turn (EditorStateIn) and the planner + draft compiler
     # build on it instead of the saved variant / stale head. Off (default) = the

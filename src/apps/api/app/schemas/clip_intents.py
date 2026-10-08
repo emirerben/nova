@@ -242,12 +242,14 @@ class GroundedLabel(BaseModel):
 
 def _match_key(text: str) -> str:
     """Accent/case/punctuation-insensitive key (same rule as creator shot labels)."""
-    decomposed = unicodedata.normalize("NFKD", text)
+    # KRI-520: Turkish dotless ı is the lower case of the I in "KIRMIZI" (casefold gives
+    # i), so it folds to i like the rest of the accents.
+    decomposed = unicodedata.normalize("NFKD", text).replace("ı", "i")
     return "".join(c for c in decomposed.casefold() if c.isalnum() and not unicodedata.combining(c))
 
 
 def _word_list(text: str) -> list[str]:
-    decomposed = unicodedata.normalize("NFKD", text).casefold()
+    decomposed = unicodedata.normalize("NFKD", text).replace("ı", "i").casefold()
     plain = "".join(c for c in decomposed if not unicodedata.combining(c))
     return [t for t in re.split(r"[^\w]+", plain, flags=re.UNICODE) if t]
 

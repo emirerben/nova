@@ -22,6 +22,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.kria.reply_language import say
 from app.schemas.clip_intents import ClipIntent
 
 CLIP_QUESTION_VERSION = 1
@@ -138,15 +139,30 @@ def clip_question_text(categories: list[dict[str, Any]]) -> str:
     """Self-sufficient human copy for the question (the app also shows thumbnails)."""
     labels = [c["label"] for c in categories]
     if len(labels) == 1:
-        return (
-            f'I couldn\'t tell which of your clips show "{labels[0]}". '
-            "Tap the clips that do, or tell me there aren't any."
+        return say(
+            en=(
+                f'I couldn\'t tell which of your clips show "{labels[0]}". '
+                "Tap the clips that do, or tell me there aren't any."
+            ),
+            tr=(
+                f'Kliplerinden hangilerinde "{labels[0]}" olduğunu anlayamadım. '
+                "Olanlara dokun ya da hiç olmadığını söyle."
+            ),
         )
     shown = ", ".join(f'"{label}"' for label in labels[:4])
-    more = f" and {len(labels) - 4} more" if len(labels) > 4 else ""
-    return (
-        f"I couldn't tell which of your clips match {shown}{more}. "
-        "Tap the clips for each one, or mark the ones that have none."
+    more = say(
+        en=f" and {len(labels) - 4} more" if len(labels) > 4 else "",
+        tr=f" ve {len(labels) - 4} tane daha" if len(labels) > 4 else "",
+    )
+    return say(
+        en=(
+            f"I couldn't tell which of your clips match {shown}{more}. "
+            "Tap the clips for each one, or mark the ones that have none."
+        ),
+        tr=(
+            f"Şunlar için hangi klipleri kastettiğini anlayamadım: {shown}{more}. "
+            "Her biri için klipleri seç ya da hiç klibi olmayanları işaretle."
+        ),
     )
 
 

@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import re
 
+from app.kria.brief_route import loose_text
+
+# Matched against ``_normalized`` text (Turkish letters folded to ASCII, punctuation
+# dropped). "you'd like" can never match that form; it is kept as it was so English
+# behavior is unchanged.
 _ACKNOWLEDGEMENT_PREFIXES = (
     "i understand",
     "i see that",
@@ -13,6 +18,10 @@ _ACKNOWLEDGEMENT_PREFIXES = (
     "you want",
     "you would like",
     "you'd like",
+    # KRI-520: Turkish openers that only restate the ask. "Anladım," / "İstediğin
+    # gibi ..." are left out: like English "Got it,", they usually lead into real work.
+    "gorunuse gore",
+    "dedin ki",
 )
 
 _STATUS_QUESTIONS = {
@@ -25,6 +34,22 @@ _STATUS_QUESTIONS = {
     "what is happening",
     "whats happening",
     "where are we",
+    # KRI-520: Turkish, ASCII-folded.
+    "durum",
+    "durum ne",
+    "durum nedir",
+    "son durum",
+    "son durum ne",
+    "ne durumda",
+    "ne durumdayiz",
+    "ne asamada",
+    "ne asamadayiz",
+    "bitti mi",
+    "hazir mi",
+    "oldu mu",
+    "nasil gidiyor",
+    "ne oluyor",
+    "neredeyiz",
 }
 
 _HELP_QUESTIONS = {
@@ -33,11 +58,26 @@ _HELP_QUESTIONS = {
     "what can i ask you",
     "what can you do",
     "what do you do",
+    # KRI-520: Turkish, ASCII-folded.
+    "yardim",
+    "yardim et",
+    "yardim eder misin",
+    "bana yardim et",
+    "ne yapabilirsin",
+    "neler yapabilirsin",
+    "sana ne sorabilirim",
+    "sana neler sorabilirim",
+    "ne ise yariyorsun",
 }
 
 
 def _normalized(value: str) -> str:
-    return " ".join(re.findall(r"[a-z0-9]+", value.casefold()))
+    """Words only, case- and Turkish-letter-folded ("Nasıl gidiyor?" -> "nasil gidiyor").
+
+    Letters of every script are kept, so a reply written in Japanese or Arabic is
+    never mistaken for an empty one.
+    """
+    return " ".join(re.findall(r"[^\W_]+", loose_text(value)))
 
 
 def is_paraphrase_only(*, user_message: str, assistant_message: str) -> bool:

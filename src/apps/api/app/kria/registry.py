@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.kria.contracts import KriaToolDefinition
+from app.kria.reply_language import say
 from app.services.editor_limits import MAX_EDITOR_OPS
 
 
@@ -132,13 +133,21 @@ def _inspect_project(_args: BaseModel, snapshot: Mapping[str, Any]) -> BaseModel
     media = [str(value) for value in snapshot.get("media_labels", [])]
     edit_format = str(snapshot.get("edit_format") or "montage")
     if not media:
-        decision = "This project needs footage before I can make an editorial decision."
+        decision = say(
+            en="This project needs footage before I can make an editorial decision.",
+            tr="Düzenleme kararı verebilmem için bu projeye önce çekim eklenmesi gerekiyor.",
+        )
         next_action = "attach_media"
     else:
         strongest = str(snapshot.get("strongest_moment") or media[0])
         decision = str(
             snapshot.get("editorial_decision")
-            or f"Open with {strongest}; it gives the story an immediate visual point of view."
+            or say(
+                en=(
+                    f"Open with {strongest}; it gives the story an immediate visual point of view."
+                ),
+                tr=f"{strongest} ile aç; hikâye ilk andan net bir görsel bakış açısı kazanır.",
+            )
         )
         next_action = "prepare_draft"
     return InspectProjectResult(

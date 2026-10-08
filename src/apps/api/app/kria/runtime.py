@@ -41,6 +41,13 @@ from app.kria.contracts import (
     RequirementReceipt,
 )
 from app.kria.language import is_help_question, is_status_question
+from app.kria.reply_language import (
+    remember_reply_language,
+    reply_language_for,
+    resolve_reply_language,
+    say,
+    thread_reply_language,
+)
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -357,6 +364,12 @@ async def _owned_thread(
     return thread
 
 
+def _thread_say(thread: CreationThread, *, en: str, tr: str) -> str:
+    """Server copy in the chat's own language, for paths that run outside a turn (KRI-520)."""
+    with reply_language_for(thread_reply_language(thread)):
+        return say(en=en, tr=tr)
+
+
 async def _append_event(
     db: AsyncSession,
     thread: CreationThread,
@@ -403,9 +416,13 @@ async def submit_turn(
     thread_id: uuid.UUID,
     creator_id: uuid.UUID,
     body: SubmitTurnBody,
+    locale: str | None = None,
     _expected_revision_override: int | None = None,
 ) -> tuple[TurnAccepted, bool]:
     """Commit a user event and pending turn together, before broker I/O.
+
+    ``locale`` is the request's raw ``Accept-Language``: the chat's reply language
+    falls back to it when the creator's words don't say (KRI-520).
 
     ``_expected_revision_override`` is internal: set only on the single re-entry
     after an overdue approval was lazily expired (that expiry bumps the thread
@@ -542,30 +559,62 @@ async def submit_turn(
                 thread_id=thread_id,
                 creator_id=creator_id,
                 body=body,
+                locale=locale,
                 _expected_revision_override=(
                     revision_after_expiry
                     if revision_after_expiry is not None
                     else body.expected_thread_revision
                 ),
             )
+    # KRI-520: the chat's reply language after this message, stored on the locked
+    # thread row (committed with the event below; rolled back with a refusal).
+    reply_language = resolve_reply_language(
+        body.message, previous=thread_reply_language(thread), locale=locale
+    )
+    remember_reply_language(thread, reply_language)
     inert_response: tuple[Literal["progress", "question"], str] | None = None
-    if is_status_question(body.message):
-        status = getattr(active, "status", None)
-        if status in {"pending", "planning"}:
-            message = "I’m working on the edit plan. Your project is saved."
-        elif status == "awaiting_approval":
-            message = "Your draft is ready. Review the pinned approval before I start the render."
-        elif status in {"executing", "observing"}:
-            message = "Your approved render is in progress. Your draft is saved."
-        else:
-            message = "There’s no edit running right now. Your latest project state is saved."
-        inert_response = ("progress", message)
-    elif is_help_question(body.message):
-        inert_response = (
-            "question",
-            "I can inspect your footage, prepare reversible draft edits, explain what changed, "
-            "and render only after you approve the exact draft.",
-        )
+    with reply_language_for(reply_language):
+        if is_status_question(body.message):
+            status = getattr(active, "status", None)
+            if status in {"pending", "planning"}:
+                message = say(
+                    en="I’m working on the edit plan. Your project is saved.",
+                    tr="Düzenleme planı üzerinde çalışıyorum. Projen kaydedildi.",
+                )
+            elif status == "awaiting_approval":
+                message = say(
+                    en="Your draft is ready. Review the pinned approval before I start the render.",
+                    tr=(
+                        "Taslağın hazır. Videoyu oluşturmaya başlamadan önce sabitlenen "
+                        "onayı incele."
+                    ),
+                )
+            elif status in {"executing", "observing"}:
+                message = say(
+                    en="Your approved render is in progress. Your draft is saved.",
+                    tr="Onayladığın video hazırlanıyor. Taslağın kaydedildi.",
+                )
+            else:
+                message = say(
+                    en="There’s no edit running right now. Your latest project state is saved.",
+                    tr="Şu anda devam eden bir düzenleme yok. Projenin son hâli kaydedildi.",
+                )
+            inert_response = ("progress", message)
+        elif is_help_question(body.message):
+            inert_response = (
+                "question",
+                say(
+                    en=(
+                        "I can inspect your footage, prepare reversible draft edits, explain "
+                        "what changed, and render only after you approve the exact draft."
+                    ),
+                    tr=(
+                        "Çekimlerini inceleyebilir, geri alınabilir taslak düzenlemeler "
+                        "hazırlayabilir, neyin değiştiğini açıklayabilirim. Videoyu yalnızca "
+                        "taslağı onayladıktan sonra oluştururum."
+                    ),
+                ),
+            )
 
     if inert_response is not None:
         turn_value, message = inert_response
@@ -1519,8 +1568,13 @@ async def _cancel_pending_approval(
     code: str,
     message: str,
     approval_status: str = "cancelled",
+    event_message: str | None = None,
 ) -> None:
-    """Close a pending approval (see `_close_pending_approval`), then raise its 409."""
+    """Close a pending approval (see `_close_pending_approval`), then raise its 409.
+
+    ``message`` is the 409's message (a stable API string); ``event_message`` is the
+    chat text the creator reads, in their language (defaults to ``message``).
+    """
     revision = await _close_pending_approval(
         db,
         thread=thread,
@@ -1530,7 +1584,7 @@ async def _cancel_pending_approval(
         execution=execution,
         plan_item=plan_item,
         code=code,
-        message=message,
+        message=event_message if event_message is not None else message,
         approval_status=approval_status,
     )
     raise RuntimeFailure(
@@ -1544,6 +1598,11 @@ async def _cancel_pending_approval(
 
 
 _APPROVAL_EXPIRED_COPY = "This approval expired. Ask Kria to prepare it again."
+_APPROVAL_STALE_COPY = (
+    "That approval was prepared for an earlier version of the video, so I "
+    "cancelled it. Nothing was rendered; tell me what you want and I'll "
+    "prepare it again."
+)
 
 
 async def _expire_blocking_approval(
@@ -1652,9 +1711,16 @@ async def _expire_blocking_approval(
         execution=execution,
         plan_item=plan_item,
         code="approval_expired",
-        message=(
-            "That approval expired before it was decided, so nothing was rendered. "
-            "Tell me what you want and I'll prepare it again."
+        message=_thread_say(
+            thread,
+            en=(
+                "That approval expired before it was decided, so nothing was rendered. "
+                "Tell me what you want and I'll prepare it again."
+            ),
+            tr=(
+                "Bu onay karara bağlanmadan süresi doldu, o yüzden hiçbir video "
+                "oluşturulmadı. Ne istediğini söyle, yeniden hazırlayayım."
+            ),
         ),
         approval_status="expired",
     )
@@ -1913,10 +1979,15 @@ async def decide_approval(
             execution=execution,
             plan_item=plan_item,
             code="approval_target_stale",
-            message=(
-                "That approval was prepared for an earlier version of the video, so I "
-                "cancelled it. Nothing was rendered; tell me what you want and I'll "
-                "prepare it again."
+            message=_APPROVAL_STALE_COPY,
+            event_message=_thread_say(
+                thread,
+                en=_APPROVAL_STALE_COPY,
+                tr=(
+                    "Bu onay videonun eski bir sürümü için hazırlanmıştı, o yüzden iptal "
+                    "ettim. Hiçbir video oluşturulmadı; ne istediğini söyle, yeniden "
+                    "hazırlayayım."
+                ),
             ),
         )
     if decision == "approve" and not await conversation_revision_matches(
@@ -1964,6 +2035,11 @@ async def decide_approval(
             code="approval_expired",
             message=_APPROVAL_EXPIRED_COPY,
             approval_status="expired",
+            event_message=_thread_say(
+                thread,
+                en=_APPROVAL_EXPIRED_COPY,
+                tr="Bu onayın süresi doldu. Kria'dan yeniden hazırlamasını iste.",
+            ),
         )
     if decision == "approve" and approval.draft_revision != body.expected_draft_revision:
         raise RuntimeFailure(
@@ -2003,15 +2079,21 @@ async def decide_approval(
                 .order_by(CreationThreadEvent.sequence)
             )
         ).all()
+        copy_events = [
+            tag_event(role, payload, event_type, content)
+            for role, payload, event_type, content in copy_rows
+        ]
+        copy_strategy = copy_document.strategy if copy_document is not None else None
         copy_problem = creative_copy_problem(
-            [
-                tag_event(role, payload, event_type, content)
-                for role, payload, event_type, content in copy_rows
-            ],
-            snapshot_media(copy_item),
-            strategy=copy_document.strategy if copy_document is not None else None,
+            copy_events, snapshot_media(copy_item), strategy=copy_strategy
         )
         if copy_problem:
+            # KRI-520: the 409 keeps the English API string; the chat event gets the
+            # gate's question in the chat's language.
+            with reply_language_for(thread_reply_language(thread)):
+                copy_event_message = creative_copy_problem(
+                    copy_events, snapshot_media(copy_item), strategy=copy_strategy
+                )
             log.info("kria_creative_copy_blocked", phase="approval", thread_id=str(thread.id))
             await _cancel_pending_approval(
                 db,
@@ -2023,6 +2105,7 @@ async def decide_approval(
                 plan_item=plan_item,
                 code=CREATIVE_COPY_PENDING,
                 message=copy_problem,
+                event_message=copy_event_message,
             )
 
     # KRI-306: validate the creator's output-shape choice against what this

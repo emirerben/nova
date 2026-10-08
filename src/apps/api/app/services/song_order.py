@@ -26,6 +26,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.kria.reply_language import say
 from app.pipeline.take_assignment import (
     Assignment,
     TakeSpec,
@@ -285,13 +286,25 @@ def song_order_question_text(question: SongOrderQuestion) -> str:
     """Self-sufficient copy (the app also renders the video widgets)."""
     unsure = sum(1 for i in question.items if i.status == "ambiguous")
     if unsure == 1:
-        return (
-            "I'm not sure where one of your clips sits in the song. "
-            "They're in the order I think; drag any that are out of place."
+        return say(
+            en=(
+                "I'm not sure where one of your clips sits in the song. "
+                "They're in the order I think; drag any that are out of place."
+            ),
+            tr=(
+                "Kliplerinden birinin şarkıda nereye geldiğinden emin değilim. "
+                "Klipleri doğru olduğunu düşündüğüm sırayla dizdim; yeri yanlış olanları sürükle."
+            ),
         )
-    return (
-        f"I'm not sure where {unsure} of your clips sit in the song. "
-        "They're in the order I think; drag any that are out of place."
+    return say(
+        en=(
+            f"I'm not sure where {unsure} of your clips sit in the song. "
+            "They're in the order I think; drag any that are out of place."
+        ),
+        tr=(
+            f"Kliplerinden {unsure} tanesinin şarkıda nereye geldiğinden emin değilim. "
+            "Klipleri doğru olduğunu düşündüğüm sırayla dizdim; yeri yanlış olanları sürükle."
+        ),
     )
 
 

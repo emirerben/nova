@@ -36,6 +36,7 @@ from app.kria.media_sources import (
     ClipCapture,
     MediaUploadContract,
 )
+from app.kria.reply_language import say
 from app.schemas.clip_understanding import (
     FACTS_KEY,
     ClipFact,
@@ -366,11 +367,20 @@ def format_capture_hour(moment: datetime, zone: str, time_format: str = "hh_mm")
 def timezone_note(zone: str, basis: str) -> str:
     """The plain-language basis a reply must state alongside filming hours."""
     if basis == "utc":
-        return (
-            "Times are shown in UTC (your clips were filmed in more than one time zone, or "
-            "one I can't tell)."
+        return say(
+            en=(
+                "Times are shown in UTC (your clips were filmed in more than one time zone, or "
+                "one I can't tell)."
+            ),
+            tr=(
+                "Saatler UTC olarak gösteriliyor (klipler birden fazla saat diliminde çekilmiş "
+                "ya da hangisi olduğunu anlayamadım)."
+            ),
         )
-    return f"Times are shown in {zone.replace('_', ' ')} time."
+    return say(
+        en=f"Times are shown in {zone.replace('_', ' ')} time.",
+        tr=f"Saatler şu saat diliminde gösteriliyor: {zone.replace('_', ' ')}.",
+    )
 
 
 def ordered_capture_media(
