@@ -19,9 +19,6 @@ enum NativeEditorUITestFixtures {
         case guidedText = "guided-text"
         case talkingCaptions = "talking-captions"
         case retimedClips = "retimed-clips"
-        /// KRI-524: read only the server-produced JSON written by
-        /// `scripts/ios/kri-524-creation-e2e.py`; no word bars live in Swift.
-        case capturedCreation = "captured-creation"
     }
 
     /// Three catalog sounds in two categories; nil preview URLs keep UI tests off the network.
@@ -42,7 +39,9 @@ enum NativeEditorUITestFixtures {
 
     static func fixture(arguments: [String]) -> Fixture {
         if arguments.contains("-ui-testing-editor-captured-creation") {
-            return Fixture(shape: .capturedCreation, draft: capturedCreation)
+            // External captures are not built-in deterministic fixture shapes:
+            // they share source-preview behavior but require a supplied draft.
+            return Fixture(shape: .sourceText, draft: capturedCreation)
         }
         let shape = Shape.allCases.first { arguments.contains("-ui-testing-editor-\($0.rawValue)") } ?? .twoText
         return Fixture(shape: shape, draft: draft(for: shape))
@@ -63,7 +62,6 @@ enum NativeEditorUITestFixtures {
         case .guidedText: guidedText
         case .talkingCaptions: talkingCaptions
         case .retimedClips: retimedClips
-        case .capturedCreation: capturedCreation
         }
     }
 
