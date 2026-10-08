@@ -101,6 +101,23 @@ class EndpointFact:
 
 
 @dataclass(frozen=True)
+class NarratedStepFact:
+    """One clip of a phone Voiceover edit as the worker placed it (KRI-533).
+
+    ``labels`` are the creator's own words for the shot ("the balloons"), ``placed`` the
+    first/last seats a resolved order intent gave it, and ``text`` what the voiceover says
+    while the clip is on screen.
+    """
+
+    media_id: str = ""
+    labels: tuple[str, ...] = ()
+    placed: tuple[tuple[str, str], ...] = ()  # (spot, name)
+    start_s: float = 0.0
+    end_s: float = 0.0
+    text: str = ""
+
+
+@dataclass(frozen=True)
 class PlanFacts:
     """What a drafted plan verifiably contains. Missing facts stay None/empty."""
 
@@ -205,6 +222,12 @@ class PlanFacts:
     speech_sections: tuple[SpeechSectionFact, ...] | None = None
     # Quotes the planner chose that were not found in the clip's speech.
     speech_dropped_quotes: tuple[str, ...] = ()
+    # KRI-533: a phone Voiceover edit as the worker laid it out, clips in screen order.
+    # None = this plan is not a rendered Voiceover edit (nothing about it is claimed).
+    narrated_steps: tuple[NarratedStepFact, ...] | None = None
+    # The language the rendered captions are in, and the language that was spoken.
+    caption_language: str | None = None
+    spoken_language: str | None = None
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -556,6 +579,55 @@ def plan_facts_from_speech_montage(record: Mapping[str, Any] | None) -> PlanFact
         speech_dropped_quotes=dropped,
         ordering_basis=str(basis) if basis else None,
         rendered_output=True,
+    )
+
+
+# Where the phone Voiceover worker keeps the evidence behind these receipts.
+NARRATED_ALIGNMENT_FIELD = "narrated_alignment"
+
+# Orderings whose clip times were set by the creator's words (a scripted guide or the
+# alignment agent), so "while I talk about X" can be read off the step windows.
+NARRATED_ALIGNED_BASES = frozenset({"spoken_word_alignment", "guide_script_alignment"})
+
+
+def plan_facts_from_narrated_alignment(record: Mapping[str, Any] | None) -> PlanFacts:
+    """Read verifiable facts off a phone Voiceover render record (KRI-533).
+
+    ``record`` is ``assembly_plan["narrated_alignment"]``: the steps the worker pinned
+    (each clip's creator labels, window and spoken words) and the caption language it
+    actually burned, never what a model claimed.
+    """
+    record = record or {}
+    steps: list[NarratedStepFact] = []
+    for row in record.get("steps") or []:
+        if not isinstance(row, Mapping):
+            continue
+        placed = tuple(
+            (str(p["spot"]), str(p["name"]))
+            for p in row.get("placed") or []
+            if isinstance(p, Mapping) and p.get("spot") and p.get("name")
+        )
+        start, end = row.get("start_s"), row.get("end_s")
+        steps.append(
+            NarratedStepFact(
+                media_id=str(row.get("media_id") or ""),
+                labels=tuple(str(x) for x in row.get("labels") or [] if str(x).strip()),
+                placed=placed,
+                start_s=float(start) if isinstance(start, (int, float)) else 0.0,
+                end_s=float(end) if isinstance(end, (int, float)) else 0.0,
+                text=" ".join(str(row.get("text") or "").split()),
+            )
+        )
+    basis = record.get("ordering_basis")
+    language = record.get("caption_language")
+    spoken = record.get("spoken_language")
+    return PlanFacts(
+        clip_ids=tuple(step.media_id for step in steps),
+        ordering_basis=str(basis) if basis else None,
+        rendered_output=True,
+        narrated_steps=tuple(steps),
+        caption_language=str(language) if language else None,
+        spoken_language=str(spoken) if spoken else None,
     )
 
 
@@ -1094,6 +1166,8 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """A required order is met, partly met (an honest fallback), or FAILED. Neutral
     (unchecked) is only for an optional preference, and for a draft that has not been
     laid out yet (its order is judged when it renders)."""
+    if facts.narrated_steps is not None:
+        return _check_narrated_order(req, facts)
     key = str(req.facts.get("key") or req.facts.get("by") or "").casefold()
     required = facts.strict_order and _order_is_required(req)
     unmet = "not_possible" if required else "partial"
@@ -1911,6 +1985,10 @@ def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
     language stays "can't check", and so does ``"auto"`` (the item's own style,
     unknown here) for an on/off or word-by-word ask.
     """
+    if facts.caption_language and not facts.editor:
+        asked = _requested_caption_language(req)
+        if asked is not None:
+            return _check_caption_language(req, facts, asked)
     fmt = facts.edit_format
     text = _req_text(req)
     if (
@@ -1993,6 +2071,8 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
             return _receipt(req, "met", None)
         return _receipt(req, "partial", "Some requested text ends before the video does.")
     if not isinstance(target, (int, float)) or target <= 0:
+        if facts.narrated_steps is not None:
+            return _check_narrated_timing(req, facts)
         return _receipt(req, "partial", _CANT_CHECK_TIMING)
     if facts.edit_format == "subtitled":
         # KRI-142: the Talking renderers keep the whole take (minus any speech
@@ -2026,6 +2106,287 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
             ),
         ),
     )
+
+
+# ------------------------------------------- phone Voiceover render receipts (KRI-533)
+#
+# A phone Voiceover edit is laid out by the worker (`_run_phone_narrated_job`), which
+# records every clip's window, the creator's labels for it and the words spoken over it
+# (`assembly_plan["narrated_alignment"]`). These checkers read only that record, like the
+# unified montage's do: an order anchor ("end on the sunset valley"), a timing ask that
+# names a labelled clip group ("show the balloons while talking about the balloons") and
+# the language of the captions. Anything the record cannot settle stays unchecked.
+
+_LEADING_ARTICLE_RE = re.compile(r"^(?:the|a|an|my|our|that|this|these|those|some|bu)\s+")
+_EXCERPT_CHARS = 110
+
+_LANGUAGE_NAMES: dict[str, tuple[str, str]] = {
+    "en": ("English", "İngilizce"),
+    "tr": ("Turkish", "Türkçe"),
+    "de": ("German", "Almanca"),
+    "es": ("Spanish", "İspanyolca"),
+    "fr": ("French", "Fransızca"),
+    "it": ("Italian", "İtalyanca"),
+    "ar": ("Arabic", "Arapça"),
+    "nl": ("Dutch", "Felemenkçe"),
+    "pt": ("Portuguese", "Portekizce"),
+}
+# Every spelling a creator types (diacritics stripped, see `loose_text`) -> language code.
+_LANGUAGE_WORDS: dict[str, str] = {
+    "english": "en",
+    "ingilizce": "en",
+    "turkish": "tr",
+    "turkce": "tr",
+    "german": "de",
+    "almanca": "de",
+    "spanish": "es",
+    "ispanyolca": "es",
+    "french": "fr",
+    "fransizca": "fr",
+    "italian": "it",
+    "italyanca": "it",
+    "arabic": "ar",
+    "arapca": "ar",
+    "dutch": "nl",
+    "hollandaca": "nl",
+    "felemenkce": "nl",
+    "portuguese": "pt",
+    "portekizce": "pt",
+}
+_LANG_ALT = "|".join(sorted(_LANGUAGE_WORDS, key=len, reverse=True))
+_CAPTION_WORD = r"(?:sub\s*titles?|captions?|altyazi\w*)"
+# Most specific first: "translate the captions to English" names the target outright.
+_CAPTION_LANGUAGE_PATTERNS = (
+    re.compile(rf"\btranslat\w*\s+(?:\w+\s+){{0,3}}?(?:in|into|to)\s+({_LANG_ALT})\b"),
+    re.compile(rf"\b({_LANG_ALT})\s+{_CAPTION_WORD}"),
+    re.compile(rf"\b{_CAPTION_WORD}\s+(?:in|into|to|as)\s+({_LANG_ALT})\b"),
+    re.compile(rf"\baltyazi\w*\s+({_LANG_ALT})\b"),
+    re.compile(rf"\b({_LANG_ALT})\s+(?:olarak|cevir\w*)"),
+)
+_SPELLING_RE = re.compile(r"\b(?:spell\w*|exact\w*|yazim\w*|dogru yaz\w*)\b")
+
+
+def _loose_req(req: BriefRequirement) -> str:
+    """The requirement's words, diacritic-free and punctuation-free, for name matching."""
+    return " ".join(re.sub(r"[^\w\s]", " ", loose_text(_req_text(req))).split())
+
+
+def _label_core(value: str) -> str:
+    """A creator's name for a group ("The Balloons!") without case, accents or article."""
+    text = " ".join(re.sub(r"[^\w\s]", " ", loose_text(value or "")).split())
+    return _LEADING_ARTICLE_RE.sub("", text).strip()
+
+
+def _same_group(label: str, words: str) -> bool:
+    a, b = _label_core(label), _label_core(words)
+    return bool(a and b) and (a == b or _contains_text(a, b) or _contains_text(b, a))
+
+
+def _sentence_case(value: str) -> str:
+    value = value.strip()
+    return value[:1].upper() + value[1:]
+
+
+def _step_names(step: NarratedStepFact) -> tuple[str, ...]:
+    return (*step.labels, *(name for _spot, name in step.placed))
+
+
+def _narrated_anchors(
+    req: BriefRequirement, steps: Sequence[NarratedStepFact]
+) -> list[tuple[str, str]]:
+    """The (spot, words) first/last seats an order requirement asks for.
+
+    Stated outright (``first_clip`` / ``last_clip``) or implied: a resolved ``first`` /
+    ``last`` order intent whose name the requirement's own words contain.
+    """
+    anchors: list[tuple[str, str]] = []
+    for key, spot, _verb in _ORDER_ANCHOR_FACTS:
+        words = req.facts.get(key)
+        if isinstance(words, str) and words.strip():
+            anchors.append((spot, words.strip()))
+    seated = {spot for spot, _words in anchors}
+    wording = _loose_req(req)
+    for step in steps:
+        for spot, name in step.placed:
+            core = _label_core(name)
+            if spot in ("first", "last") and spot not in seated and core:
+                if _contains_text(wording, core):
+                    anchors.append((spot, name))
+                    seated.add(spot)
+    return anchors
+
+
+def _check_narrated_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """A stated first / last clip is met when that clip really opens / closes the edit."""
+    steps = facts.narrated_steps or ()
+    anchors = _narrated_anchors(req, steps)
+    if not anchors or not steps:
+        # No seat to judge: the voiceover sets this edit's order, so any other ordering
+        # rule stays unverified, exactly as before the render recorded anything.
+        return _receipt(req, "partial", _CANT_CHECK_ORDER_RULE)
+    # Same strictness as the montage branch: only a bound / contract-stamped job turns a
+    # missed seat into a failure; an unbound one keeps the softer "partly".
+    unmet = "not_possible" if facts.strict_order and _order_is_required(req) else "partial"
+    problems: list[str] = []
+    unknown = False
+    for spot, words in anchors:
+        members = [
+            index
+            for index, step in enumerate(steps)
+            if any(_same_group(name, words) for name in _step_names(step))
+        ]
+        if not members:
+            unknown = True
+            continue
+        want = len(steps) - 1 if spot == "last" else 0
+        if want in members:
+            continue
+        where = members[-1] if spot == "last" else members[0]
+        name = _sentence_case(words)
+        problems.append(
+            say(
+                en=f"{name} is clip {where + 1} of {len(steps)}, not the {spot} one.",
+                tr=f"{name} {len(steps)} klipten {where + 1}. sırada, {_SPOT_TR[spot]} değil.",
+            )
+        )
+    if problems:
+        return _receipt(req, unmet, " ".join(problems))
+    if unknown:
+        return _receipt(req, "partial", _CANT_CONFIRM_ORDER)
+    return _receipt(req, "met", None)
+
+
+def _excerpt(text: str) -> str:
+    """The first and last words of a narration, joined with an ellipsis when long."""
+    text = " ".join(text.replace('"', "'").split())
+    if len(text) <= _EXCERPT_CHARS:
+        return text
+    head = text[: int(_EXCERPT_CHARS * 0.55)].rsplit(" ", 1)[0]
+    tail = text[-int(_EXCERPT_CHARS * 0.4) :].split(" ", 1)[-1]
+    return f"{head} … {tail}"
+
+
+def _wants_clip_timing(req: BriefRequirement) -> bool:
+    """A timing ask with no number, no title and no "keep my take": it can only be about
+    when something plays, which a rendered Voiceover record may be able to answer."""
+    return (
+        req.kind == "timing"
+        and req.scope != "title"
+        and not _has_duration_target(req)
+        and not _wants_whole_take(req)
+    )
+
+
+def _check_narrated_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """ "Show the balloons while talking about the balloons": report what the voiceover
+    says over the clips the creator named. Only clips placed by the spoken words count."""
+    steps = facts.narrated_steps or ()
+    if facts.ordering_basis not in NARRATED_ALIGNED_BASES or not steps:
+        return _receipt(req, "partial", _CANT_CHECK_TIMING)
+    wording = _loose_req(req)
+    named: list[str] = []
+    for step in steps:
+        for name in _step_names(step):
+            core = _label_core(name)
+            if (
+                core
+                and _contains_text(wording, core)
+                and not any(_same_group(name, n) for n in named)
+            ):
+                named.append(name)
+    if not named:
+        return _receipt(req, "partial", _CANT_CHECK_TIMING)
+    members = [
+        index
+        for index, step in enumerate(steps)
+        if any(_same_group(name, wanted) for name in _step_names(step) for wanted in named)
+    ]
+    first, last = members[0], members[-1]
+    if last - first + 1 != len(members):
+        # The named clips are split apart: one window would claim the clips between them.
+        return _receipt(req, "partial", _CANT_CHECK_TIMING)
+    excerpt = _excerpt(" ".join(step.text for step in steps[first : last + 1] if step.text))
+    if not excerpt:
+        return _receipt(req, "partial", _CANT_CHECK_TIMING)
+    start, end = steps[first].start_s, steps[last].end_s
+    label = _sentence_case(" and ".join(named))
+    return _receipt(
+        req,
+        "met",
+        say(
+            en=f'{label} clips play from {start:.1f} s to {end:.1f} s, under: "{excerpt}"',
+            tr=f"{label} klipleri {start:.1f} sn ile {end:.1f} sn arasında oynuyor, "
+            f'şu sözlerle: "{excerpt}"',
+        ),
+    )
+
+
+def _requested_caption_language(req: BriefRequirement) -> str | None:
+    """The language a captions ask wants ("English subtitles", "captions in Turkish"), as
+    a code, else None. "English subtitles translated from the Turkish voiceover" is English."""
+    wording = loose_text(_req_text(req))
+    for pattern in _CAPTION_LANGUAGE_PATTERNS:
+        found = pattern.search(wording)
+        if found:
+            return _LANGUAGE_WORDS[found.group(1)]
+    return None
+
+
+def _language_name(code: str) -> str:
+    english, turkish = _LANGUAGE_NAMES.get(code, (code.upper(), code.upper()))
+    return say(en=english, tr=turkish)
+
+
+def _check_caption_language(
+    req: BriefRequirement, facts: PlanFacts, asked: str
+) -> RequirementReceipt:
+    """The captions' language against the one the creator asked for. Spelling of names
+    stays unchecked, and the reason says so when the ask was about spelling."""
+    rendered = str(facts.caption_language or "").casefold().split("-")[0]
+    note = ""
+    if _SPELLING_RE.search(loose_text(_req_text(req))):
+        note = " " + say(
+            en="I haven't checked how the names are spelled.",
+            tr="İsimlerin yazımını kontrol etmedim.",
+        )
+    if rendered != asked:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=(
+                    f"The captions are in {_language_name(rendered)}, not {_language_name(asked)}."
+                ),
+                tr=(
+                    f"Altyazılar {_language_name(asked)} değil, {_language_name(rendered)} "
+                    "olarak çıktı."
+                ),
+            )
+            + note,
+        )
+    spoken = str(facts.spoken_language or "").casefold().split("-")[0]
+    if spoken and spoken != rendered:
+        reason = say(
+            en=(
+                f"The captions are in {_language_name(rendered)}, translated from the "
+                f"{_language_name(spoken)} voiceover."
+            ),
+            tr=(
+                f"Altyazılar {_language_name(rendered)}, {_language_name(spoken)} "
+                "seslendirmeden çevrildi."
+            ),
+        )
+    else:
+        reason = say(
+            en=f"The captions are in {_language_name(rendered)}.",
+            tr=f"Altyazılar {_language_name(rendered)}.",
+        )
+    return _receipt(req, "met", reason + note)
+
+
+def asks_caption_language(req: BriefRequirement) -> bool:
+    """True for a captions ask that names a language (judged on the rendered captions)."""
+    return _wants_captions(req) and _requested_caption_language(req) is not None
 
 
 _TITLE_SOURCES_THE_CREATOR_OWNS = frozenset({"creator", "brief"})
@@ -2146,7 +2507,12 @@ def _has_checker(req: BriefRequirement) -> bool:
         # "Fast but readable" has no number to check: that is "can't verify"
         # (neutral in the reply), not a failed requirement. "Keep my whole take"
         # is checkable against the edit format and clip count.
-        return _has_duration_target(req) or _wants_whole_take(req) or _wants_whole_text_span(req)
+        return (
+            _has_duration_target(req)
+            or _wants_whole_take(req)
+            or _wants_whole_text_span(req)
+            or _wants_clip_timing(req)
+        )
     if req.kind in _BEAT_KINDS:
         return _wants_beats(req) or _wants_closing(req) or _wants_speech(req)
     return req.kind == "order"
@@ -2221,6 +2587,46 @@ def defers_to_unified_montage(
     )
 
 
+def defers_to_narrated_render(
+    *,
+    creator_id: object,
+    edit_format: object,
+    audio_strategy: object,
+    clip_paths: Iterable[object] = (),
+) -> bool:
+    """True when this draft will render through the phone Voiceover compiler (KRI-533).
+
+    Mirrors the worker's dispatch: a narrated-family format with the voiceover lane
+    (`audio_strategy == "voiceover"`, i.e. a recorded voiceover; self-narration goes to
+    the subtitled / Talking writers), phone clips, an enrolled account and a phone
+    deployment that renders narrated edits now. That writer records
+    `assembly_plan["narrated_alignment"]` and judges first/last order, clip timing and
+    caption language from it, so the text-free draft must not.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
+    from app.services.phone_rollout import phone_render_supported_formats  # noqa: PLC0415
+
+    fmt = str(edit_format or "")
+    return bool(
+        str(audio_strategy or "") == "voiceover"
+        and fmt in NARRATED_EDIT_FORMATS
+        and any(is_analysis_proxy_path(str(path)) for path in clip_paths or ())
+        and settings.phone_rendering_for(creator_id)
+        and fmt in phone_render_supported_formats()
+    )
+
+
+def _settled_by_narrated_render(req: BriefRequirement, strategy: Mapping[str, Any]) -> bool:
+    """The asks a rendered Voiceover record can judge and a draft cannot (see above)."""
+    if req.kind == "order":
+        # A strategy that already names its ordering basis can judge a basis ask itself.
+        return not strategy.get("ordering_basis")
+    if req.kind == "timing":
+        return _wants_clip_timing(req)
+    return req.kind == "style" and asks_caption_language(req)
+
+
 def requirements_to_check_at_draft(
     requirements: Iterable[BriefRequirement],
     *,
@@ -2234,16 +2640,31 @@ def requirements_to_check_at_draft(
     When the unified planner will settle a requirement at render time (`text`, `order`,
     `timing`) it is left out, so the draft reply is the plain summary instead of a
     premature failure notice; the render's own receipts (met / partial / not possible,
-    plus guessed names) follow. Otherwise this is the unchanged, full list.
+    plus guessed names) follow. A phone Voiceover draft likewise leaves its first/last
+    order, clip-timing and caption-language asks to the render's record (KRI-533).
+    Otherwise this is the unchanged, full list.
     """
     strategy = strategy or {}
+    clip_paths = list(clip_paths or ())
+    edit_format = strategy.get("edit_format") or item_edit_format
     defers = defers_to_unified_montage(
         creator_id=creator_id,
-        edit_format=strategy.get("edit_format") or item_edit_format,
+        edit_format=edit_format,
         audio_strategy=strategy.get("audio_strategy"),
         clip_paths=clip_paths,
     )
-    return [req for req in requirements if not (defers and req.kind in UNIFIED_SETTLED_KINDS)]
+    narrated = not defers and defers_to_narrated_render(
+        creator_id=creator_id,
+        edit_format=edit_format,
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=clip_paths,
+    )
+    return [
+        req
+        for req in requirements
+        if not (defers and req.kind in UNIFIED_SETTLED_KINDS)
+        and not (narrated and _settled_by_narrated_render(req, strategy))
+    ]
 
 
 def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool:
@@ -2479,6 +2900,11 @@ __all__ = [
     "BeatFact",
     "NO_TITLE_REASON",
     "RenderBlockRecovery",
+    "NARRATED_ALIGNED_BASES",
+    "NARRATED_ALIGNMENT_FIELD",
+    "NarratedStepFact",
+    "asks_caption_language",
+    "defers_to_narrated_render",
     "defers_to_unified_montage",
     "requirements_to_check_at_draft",
     "PlanFacts",
@@ -2490,6 +2916,7 @@ __all__ = [
     "needs_creator_choice",
     "SpeechSectionFact",
     "plan_facts_from_editor_payload",
+    "plan_facts_from_narrated_alignment",
     "plan_facts_from_speech_montage",
     "plan_facts_from_strategy",
     "plan_facts_from_unified_montage",
