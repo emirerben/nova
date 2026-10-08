@@ -1,11 +1,13 @@
-"""KRI-537: the render-ready reply judges pop-in and mix asks from the variant's evidence.
+"""KRI-537/541: the render-ready reply judges the brief from the variant's evidence.
 
 Prod thread 55a99da8 / job 890eca28: after a correct Voiceover render the reply still said
 "Couldn't verify" for a "show my photo when I say X" ask and a "keep crowd noise quiet" ask,
 because the review rebuilt facts from text lanes only. The phone narrated worker persists
 `phone_beat_receipt` and `voiceover_bed_level` on the variant; `plan_facts_from_phone_variant`
-reads them. No database: `_approved_generation_review` only reads the thread id, the binding
-and the variant.
+reads them. KRI-541: the same reply then said "Couldn't verify" for "clean captions" and
+"cut long pauses" although the render captioned and cut; the variant's `caption_cues`,
+`voiceover_caption_style` and `silence_cut_outcome` now judge those. No database:
+`_approved_generation_review` only reads the thread id, the binding and the variant.
 """
 
 from __future__ import annotations
@@ -80,6 +82,12 @@ def _variant(**overrides) -> dict:
         },
         "text_elements": [],
         "text_overlays": [],
+        # KRI-541: what the prod render recorded for the captions and cleanup asks.
+        "render_destination": "device",
+        "caption_cues": [
+            {"text": f"line {i}", "start_s": float(i), "end_s": i + 0.9} for i in range(15)
+        ],
+        "silence_cut_outcome": "applied",
     }
     variant.update(overrides)
     return variant
@@ -146,8 +154,9 @@ def test_variant_without_beat_receipt_or_bed_level_keeps_today_behaviour():
 
     text, receipts = _review(variant)
 
-    for req_id in ("r3", "r4", "r5"):
+    for req_id in ("r1", "r2", "r3", "r4", "r5"):
         assert receipts[req_id]["verification"] == "unchecked"
+    assert "Couldn't verify: clean captions" in text
     assert "Couldn't verify: show medal photo" in text
     assert "Couldn't verify: show watch photo" in text
     assert "Couldn't verify: keep crowd noise" in text
@@ -164,3 +173,49 @@ def test_a_narrated_variant_without_a_bed_level_still_knows_the_bed_is_under_the
     assert "plays under your voice" in receipts["r3"]["reason"]
     assert receipts["r4"]["verification"] == "unchecked"
     assert "Couldn't verify: show medal photo" in text
+
+
+def test_prod_render_reply_has_no_couldnt_verify_line():
+    """KRI-541: prod job 890eca28 captioned the voiceover in sentences and cut 15 pauses."""
+    text, receipts = _review(_variant())
+
+    assert "Couldn't verify" not in text
+    assert "I couldn't verify every requested change" not in text
+    assert _line(text, "Done: clean captions")
+    assert receipts["r1"]["verification"] == "checked"
+    assert receipts["r1"]["status"] == "met"
+    # The pauses were cut, the restarted kilometer-thirty sentence was not (the cut only
+    # removes silences and filler sounds): an honest "Partly", never "Done".
+    cleanup = _line(text, "Partly: cut long pauses and the restart of the kilometer thirty")
+    assert "Speech cleanup cut the long pauses" in cleanup
+    assert "trim that in the editor" in cleanup
+    assert receipts["r2"]["verification"] == "checked"
+    assert receipts["r2"]["status"] == "partial"
+    for req_id in ("r1", "r2"):
+        assert receipts[req_id]["brief_version"] == 1
+        assert receipts[req_id]["generation_id"] == GENERATION
+
+
+def test_a_render_without_cleanup_says_the_pauses_stay():
+    variant = _variant()
+    del variant["silence_cut_outcome"]
+
+    text, receipts = _review(variant)
+
+    assert receipts["r2"]["verification"] == "checked"
+    assert receipts["r2"]["status"] == "partial"
+    assert "didn't run on this video" in receipts["r2"]["reason"]
+    assert "Couldn't verify: cut long pauses" not in text
+
+
+def test_a_word_by_word_talking_render_judges_captions_too():
+    variant = _variant(resolved_archetype="subtitled", voiceover_caption_style="word")
+    del variant["voiceover_bed_level"]
+    del variant["phone_beat_receipt"]
+
+    text, receipts = _review(variant)
+
+    assert receipts["r1"]["status"] == "met"
+    assert receipts["r2"]["verification"] == "checked"
+    assert "Couldn't verify: clean captions" not in text
+    assert "Couldn't verify: cut long pauses" not in text
