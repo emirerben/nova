@@ -3607,6 +3607,28 @@
                 "description": "Opening concept shown for creative approval; never treated as trusted or burned verbatim by the renderer",
                 "title": "Intro Hook"
               },
+              "label_position": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "top_left",
+                      "top",
+                      "top_right",
+                      "middle",
+                      "bottom_left",
+                      "bottom",
+                      "bottom_right"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Where per-clip labels sit, ONLY when the creator named it ('to the bottom left'): top_left | top | top_right | middle | bottom_left | bottom | bottom_right. Omit otherwise.",
+                "title": "Label Position"
+              },
               "licensed_sfx": {
                 "anyOf": [
                   {
@@ -3804,6 +3826,25 @@
                 "default": null,
                 "description": "Confirmed intro color (#RRGGBB or a supported color alias).",
                 "title": "Text Color"
+              },
+              "title_animation": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "typewriter",
+                      "fade",
+                      "pop",
+                      "slide"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "How the opening title enters, ONLY when the creator named it ('animated with typewriter'): typewriter | fade | pop | slide. Omit otherwise.",
+                "title": "Title Animation"
               },
               "video_reuse_policy": {
                 "anyOf": [
