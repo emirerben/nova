@@ -1,0 +1,238 @@
+{
+  "provenance": {
+    "kind": "redacted_recorded_response_with_authored_snapshot",
+    "layer": "recorded_model_replay",
+    "rendered_execution": false
+  },
+  "input": {
+    "utterance": "Animate the title word by word, one showing after the other",
+    "variant_snapshot": {
+      "editor_ops_version": 2,
+      "base_generation": "redacted-generation",
+      "allowed_op_families": [
+        "text"
+      ],
+      "text_bars": [
+        {
+          "id": "guided-title",
+          "role": "generative_intro",
+          "text": "come with me to my favorite restaurant and ice cream place in lisbon",
+          "start_s": 0.0,
+          "end_s": 2.2,
+          "font_family": "Inter",
+          "size_px": 76,
+          "color": "#FFFFFF",
+          "position": "custom",
+          "alignment": "center",
+          "x_frac": 0.5,
+          "y_frac": 0.16,
+          "animation_phases": null
+        },
+        {
+          "id": "clip-label-1",
+          "role": "generative_intro",
+          "text": "Name",
+          "start_s": 0.0,
+          "end_s": 2.2,
+          "font_family": "Inter",
+          "size_px": 58,
+          "color": "#FFFFFF",
+          "position": "custom",
+          "alignment": "center",
+          "x_frac": 0.5,
+          "y_frac": 0.78
+        },
+        {
+          "id": "clip-label-2",
+          "role": "generative_intro",
+          "text": "Name",
+          "start_s": 2.2,
+          "end_s": 4.4,
+          "font_family": "Inter",
+          "size_px": 58,
+          "color": "#FFFFFF",
+          "position": "custom",
+          "alignment": "center",
+          "x_frac": 0.5,
+          "y_frac": 0.78
+        }
+      ],
+      "slots": [
+        {
+          "slot_id": "redacted-shot-1",
+          "clip_index": 0,
+          "in_s": 0.0,
+          "duration_s": 2.2,
+          "source_duration_s": 8.0,
+          "output_start_s": 0.0,
+          "output_end_s": 2.2,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": 0.0,
+          "look_preset": "none",
+          "media_kind": "video"
+        }
+      ],
+      "mix": {
+        "music_level": 0.4
+      }
+    }
+  },
+  "expected": {
+    "segments": [
+      "come",
+      "with",
+      "me",
+      "to",
+      "my",
+      "favorite",
+      "restaurant",
+      "and",
+      "ice",
+      "cream",
+      "place",
+      "in",
+      "lisbon"
+    ],
+    "duration_s": 2.2,
+    "phases": {
+      "entrance": "fade",
+      "exit": "fade",
+      "loop": "none"
+    }
+  },
+  "responses": {
+    "pro": {
+      "intent": "edit",
+      "ops": [
+        {
+          "op": "replace_text_sequence",
+          "selector": {
+            "ids": [
+              "guided-title"
+            ]
+          },
+          "segments": [
+            "come",
+            "with",
+            "me",
+            "to",
+            "my",
+            "favorite",
+            "restaurant",
+            "and",
+            "ice",
+            "cream",
+            "place",
+            "in",
+            "lisbon"
+          ],
+          "patch": {
+            "animation_phases": {
+              "entrance": "fade",
+              "exit": "fade",
+              "loop": "none"
+            }
+          }
+        }
+      ],
+      "confidence": 0.95,
+      "reply": "I split the title into sequential word fades.",
+      "needs_clarification": false
+    },
+    "flash_no_fades": {
+      "intent": "edit",
+      "ops": [
+        {
+          "op": "replace_text_sequence",
+          "selector": {
+            "ids": [
+              "guided-title"
+            ]
+          },
+          "segments": [
+            "come",
+            "with",
+            "me",
+            "to",
+            "my",
+            "favorite",
+            "restaurant",
+            "and",
+            "ice",
+            "cream",
+            "place",
+            "in",
+            "lisbon"
+          ]
+        }
+      ],
+      "confidence": 0.95,
+      "reply": "I split the title into words.",
+      "needs_clarification": false
+    },
+    "flash_wholebar_typewriter": {
+      "intent": "edit",
+      "ops": [
+        {
+          "op": "patch_text",
+          "selector": {
+            "group": "title"
+          },
+          "patch": {
+            "animation_phases": {
+              "entrance": "typewriter",
+              "exit": "none",
+              "loop": "none"
+            }
+          }
+        }
+      ],
+      "confidence": 0.95,
+      "reply": "I set the title animation.",
+      "needs_clarification": false
+    }
+  },
+  "synthetic_faster": {
+    "provenance": {
+      "kind": "authored_synthetic_live_capture",
+      "rendered": false
+    },
+    "input": {
+      "utterance": "Make the word sequence twice as fast. Keep the fades and leave the rest of the video alone.",
+      "original_request": "Show A quiet walk beside the river, one word at a time with fade in and fade out. Keep the Riverside label and all video footage unchanged.",
+      "variant_snapshot": {
+        "editor_ops_version": 2,
+        "base_generation": "synthetic-generation",
+        "allowed_op_families": ["text"],
+        "total_duration_s": 12,
+        "text_bars": [
+          {"id": "title-word-0", "role": "title", "text": "A", "start_s": 0, "end_s": 1, "font_family": "Inter", "size_px": 70, "color": "#FFFFFF", "x_frac": 0.5, "y_frac": 0.3, "source_params": {"sequence_source_id": "title"}, "animation_phases": {"entrance": "fade", "exit": "fade", "loop": "none", "speed": 1.0}},
+          {"id": "title-word-1", "role": "title", "text": "quiet", "start_s": 1, "end_s": 2, "font_family": "Inter", "size_px": 70, "color": "#FFFFFF", "x_frac": 0.5, "y_frac": 0.3, "source_params": {"sequence_source_id": "title"}, "animation_phases": {"entrance": "fade", "exit": "fade", "loop": "none", "speed": 1.0}},
+          {"id": "title-word-2", "role": "title", "text": "walk", "start_s": 2, "end_s": 3, "font_family": "Inter", "size_px": 70, "color": "#FFFFFF", "x_frac": 0.5, "y_frac": 0.3, "source_params": {"sequence_source_id": "title"}, "animation_phases": {"entrance": "fade", "exit": "fade", "loop": "none", "speed": 1.0}},
+          {"id": "title-word-3", "role": "title", "text": "beside", "start_s": 3, "end_s": 4, "font_family": "Inter", "size_px": 70, "color": "#FFFFFF", "x_frac": 0.5, "y_frac": 0.3, "source_params": {"sequence_source_id": "title"}, "animation_phases": {"entrance": "fade", "exit": "fade", "loop": "none", "speed": 1.0}},
+          {"id": "title-word-4", "role": "title", "text": "the", "start_s": 4, "end_s": 5, "font_family": "Inter", "size_px": 70, "color": "#FFFFFF", "x_frac": 0.5, "y_frac": 0.3, "source_params": {"sequence_source_id": "title"}, "animation_phases": {"entrance": "fade", "exit": "fade", "loop": "none", "speed": 1.0}},
+          {"id": "title-word-5", "role": "title", "text": "river", "start_s": 5, "end_s": 6, "font_family": "Inter", "size_px": 70, "color": "#FFFFFF", "x_frac": 0.5, "y_frac": 0.3, "source_params": {"sequence_source_id": "title"}, "animation_phases": {"entrance": "fade", "exit": "fade", "loop": "none", "speed": 1.0}},
+          {"id": "label", "role": "location_label", "text": "Riverside", "start_s": 0, "end_s": 12, "x_frac": 0.5, "y_frac": 0.8}
+        ],
+        "slots": [{"slot_id": "synthetic-shot", "clip_index": 0, "in_s": 3, "duration_s": 12, "source_duration_s": 20, "output_start_s": 0, "output_end_s": 12, "removed": false, "media_kind": "video"}],
+        "mix": {"music_level": 0.4}
+      }
+    },
+    "expected": {"segments": ["A", "quiet", "walk", "beside", "the", "river"], "duration_s": 3.0, "phases": {"entrance": "fade", "exit": "fade", "loop": "none"}},
+    "response": {
+      "intent": "edit",
+      "ops": [
+        {"op": "set_text_timing", "bar_index": 0, "start_s": 0.0, "end_s": 0.5},
+        {"op": "set_text_timing", "bar_index": 1, "start_s": 0.5, "end_s": 1.0},
+        {"op": "set_text_timing", "bar_index": 2, "start_s": 1.0, "end_s": 1.5},
+        {"op": "set_text_timing", "bar_index": 3, "start_s": 1.5, "end_s": 2.0},
+        {"op": "set_text_timing", "bar_index": 4, "start_s": 2.0, "end_s": 2.5},
+        {"op": "set_text_timing", "bar_index": 5, "start_s": 2.5, "end_s": 3.0}
+      ],
+      "confidence": 1.0,
+      "reply": "I sped up the title sequence while keeping its fades and the rest of the video unchanged.",
+      "needs_clarification": false
+    }
+  }
+}

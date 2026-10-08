@@ -275,11 +275,29 @@ def test_sequence_supports_single_chunk_and_unicode_whitespace_punctuation() -> 
     source = "İstanbul —  café   closed"
     variant = _variant(source, end=4.0)
     snapshot = _snapshot(source)
-    parsed = _parse([_op(["İstanbul — café closed"])], snapshot=snapshot)
+    parsed = _parse(
+        [_op(["İstanbul — café closed"], patch={"color": "#00FF00"})], snapshot=snapshot
+    )
     assert parsed.ops and len(parsed.ops) == 1
     compiled = compile_editor_ops(_job(variant), variant, parsed.ops)
     assert len(compiled.payload.text_elements) == 1
     assert compiled.payload.text_elements[0]["text"] == "İstanbul — café closed"
+
+
+def test_single_segment_style_update_preserves_identity_and_does_not_claim_split() -> None:
+    variant = _variant("Hello")
+    parsed = _parse([_op(["Hello"], patch={"color": "#00FF00"})], snapshot=_snapshot("Hello"))
+    compiled = compile_editor_ops(_job(variant), variant, parsed.ops)
+    assert compiled.payload.text_elements[0]["id"] == "title"
+    assert "sequence_source_id" not in (
+        compiled.payload.text_elements[0].get("source_params") or {}
+    )
+    assert "split" not in " ".join(compiled.changes).lower()
+
+
+def test_single_unchanged_segment_is_not_a_split() -> None:
+    parsed = _parse([_op(["Hello"])], snapshot=_snapshot("Hello"))
+    assert parsed.ops == []
 
 
 @pytest.mark.parametrize(
