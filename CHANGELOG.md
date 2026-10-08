@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.176.0] - 2026-10-08
+
+### Changed
+- fix(agents): retry a MAX_TOKENS Gemini 3 call once at thinking "low" instead of dead-ending the turn (KRI-542) (#1493) <!-- release-pr: 1493 -->
+
 ## [0.78.175.0] - 2026-10-08
 
 ### Changed
