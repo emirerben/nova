@@ -28,6 +28,7 @@ from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_route import (
     END_KEYS,
     START_KEYS,
+    chapter_list,
     first_text,
     fold_text,
     loose_text,
@@ -3233,7 +3234,9 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         )
     else:
         found = any(_contains_text(t, wanted) for t in facts.texts)
-    if found:
+    # KRI-545: "chapter titles: Sabah, Üniversite, ..." is on screen as those names, each its
+    # own text on its clips, never as one line.
+    if found or chapter_list(req.literal, facts.texts) is not None:
         return _receipt(req, "met", None)
     return _receipt(
         req,

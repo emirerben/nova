@@ -49,6 +49,7 @@ from pydantic import ValidationError
 from app.kria.brief_route import (
     END_KEYS,
     START_KEYS,
+    chapter_list,
     first_text,
     fold_text,
     wants_filming_time_text,
@@ -1103,7 +1104,7 @@ def plan_unified_montage(
         )
 
     # ── title and typography ─────────────────────────────────────────────────
-    title, title_source = _title(strategy, view)
+    title, title_source = _title(strategy, view, [label.text for label in labels.values()])
     closing = _nfc(strategy.get("closing_title")) or None
     pins = _pinned_texts(strategy)
     requested_font = strategy.get("font_family")
@@ -1740,12 +1741,24 @@ def _intent_outcomes(
     return out
 
 
-def _title(strategy: Mapping[str, Any], view: BriefView) -> tuple[str | None, str]:
+def _title(
+    strategy: Mapping[str, Any], view: BriefView, label_texts: Sequence[str] = ()
+) -> tuple[str | None, str]:
+    """The opening title and where it came from.
+
+    ``label_texts`` are the per-clip labels the montage prints. A brief literal that only
+    lists them ("Bölüm başlıkları: Sabah, Üniversite, Öğle arası, Spor, Akşam") asked for
+    chapter titles, which the labels already are: it is never also an opening title (KRI-545).
+    """
     if "opening_title" in (strategy.get("omitted_copy_targets") or []):
         return None, "none"
     confirmed = _nfc(strategy.get("opening_title"))
     if confirmed:
         return confirmed[:280], "creator"
+
+    def titles(literal: str | None) -> bool:
+        return bool(literal) and chapter_list(literal, label_texts) is None
+
     pins = _pinned_texts(strategy)
     if pins:
         # KRI-523: the creator's "title" words were pinned to a corner for the whole video
@@ -1754,14 +1767,14 @@ def _title(strategy: Mapping[str, Any], view: BriefView) -> tuple[str | None, st
         # only confirmed copy. A genuinely different title literal still stands.
         pinned = {fold_text(pin.text) for pin in pins}
         literal = _nfc(view.title_literal)
-        if literal and fold_text(literal) not in pinned:
+        if titles(literal) and fold_text(literal) not in pinned:
             return literal[:280], "creator"
         return None, "none"
-    if view.title_literal:
+    if titles(view.title_literal):
         return _nfc(view.title_literal)[:280], "creator"
     start = _first(view.facts, _START_KEYS)
     end = _first(view.facts, _END_KEYS)
-    if view.global_literal:
+    if titles(view.global_literal):
         route = f"{start} → {end}" if start and end else ""
         headline = _nfc(view.global_literal)
         if route and route.casefold() not in headline.casefold():
@@ -1780,9 +1793,19 @@ def title_source_exists(strategy: Mapping[str, Any], brief: Any) -> bool:
     """Would ``plan_unified_montage`` burn an opening title for this strategy + brief?
 
     The clarification gate asks "what are the title's words?" only when this is False, so
-    the question and the render read the same ``_title`` and cannot disagree.
+    the question and the render read the same ``_title`` and cannot disagree. Before the
+    plan exists, the labels it will print are the creator's own per-clip words: the brief's
+    clip literals, confirmed shot labels and the resolved clip intents (read as enabled, the
+    phone path's production setting).
     """
-    return _title(strategy, brief_view(brief))[0] is not None
+    view = brief_view(brief)
+    labels = [
+        *view.clip_literals.values(),
+        *(_nfc(text) for text in strategy.get("shot_labels") or []),
+        *(text for text, _creator in _intent_labels(strategy, True).values()),
+        *_described_shot_labels(strategy, True).values(),
+    ]
+    return _title(strategy, view, labels)[0] is not None
 
 
 __all__ = [

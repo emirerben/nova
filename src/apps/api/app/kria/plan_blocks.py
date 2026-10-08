@@ -254,8 +254,15 @@ def _music_block(plan: dict[str, Any]) -> dict[str, Any]:
 def decided_block(plan: dict[str, Any], section: str) -> dict[str, Any]:
     """One section `decided` from a pinned guided plan. Only fields the plan carries."""
     if section == "title":
+        # A per-clip text is never the title: a chapter-titled montage with no opening title
+        # must not report its first chapter name ("Sabah") as one (KRI-545). Same prefixes as
+        # guided_story's `_GUIDED_CLIP_TEXT_PREFIXES`.
         texts = [
-            t for t in (plan.get("text_elements") or []) if isinstance(t, dict) and t.get("text")
+            t
+            for t in (plan.get("text_elements") or [])
+            if isinstance(t, dict)
+            and t.get("text")
+            and not str(t.get("id") or "").startswith(("clip-label-", "montage-text-"))
         ]
         return block("title", "decided", str(texts[0]["text"])) if texts else _skipped("title")
     if section == "clips":
