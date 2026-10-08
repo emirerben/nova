@@ -2782,6 +2782,18 @@ def check_narrated_clip_alignment(
         failures.append("placements must cover every input clip exactly once")
     if input.order_locked and placed != input_order:
         failures.append("clip order is locked but the placements reorder it")
+    if input.pinned:
+        head, tail = input.pinned_first, input.pinned_last
+        if placed[: len(head)] != head:
+            failures.append("pinned opening clips are not first, in order")
+        if tail and placed[len(placed) - len(tail) :] != tail:
+            failures.append("pinned closing clips are not last, in order")
+        position_of = {clip_id: i for i, clip_id in enumerate(placed)}
+        for before, after in zip(input.ordered_groups, input.ordered_groups[1:]):
+            if all(c in position_of for c in [*before, *after]) and max(
+                position_of[c] for c in before
+            ) > min(position_of[c] for c in after):
+                failures.append(f"clips {before} must all come before {after}")
     index_by_word = {str(word.get("word_id")): i for i, word in enumerate(input.words)}
     start_by_word = {
         str(word.get("word_id")): float(word.get("start_s") or 0.0) for word in input.words

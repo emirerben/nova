@@ -7872,6 +7872,130 @@ def _record_phone_beat_events(variant_id: str, receipt: dict) -> None:
     )
 
 
+_NARRATED_STEP_TEXT_CHARS = 700
+
+
+def _narrated_alignment_record(
+    *,
+    generation: str | None,
+    brief_version: int | None,
+    ordering_basis: str,
+    steps: list[Any],
+    proxy_path_by_media_id: Mapping[str, str],
+    strategy: Mapping[str, Any],
+    words: list[Any],
+    caption_language: str | None,
+    spoken_language: str | None,
+    caption_language_request: str | None,
+) -> dict[str, Any]:
+    """The receipt record of a phone Voiceover edit (KRI-533): what the worker pinned.
+
+    One row per step in screen order: the phone source id and clip basename, the
+    creator's labels for the shot (resolved clip intents, matched on either the basename
+    or the phone source id), the first/last seats a resolved order intent gave it, the
+    window, and the transcript words spoken over it. ``plan_facts_from_narrated_alignment``
+    reads this back; nothing here is model-claimed.
+    """
+    labels_by_key: dict[str, list[str]] = {}
+    placed_by_key: dict[str, list[dict[str, str]]] = {}
+    for intent in strategy.get("resolved_clip_intents") or []:
+        if not isinstance(intent, Mapping) or intent.get("status") not in (None, "resolved"):
+            continue
+        name = " ".join(str(intent.get("attribute") or "").split())
+        if not name:
+            continue
+        spot = intent.get("position") if intent.get("op") == "order" else None
+        for assignment in intent.get("assignments") or []:
+            key = assignment.get("media_id") if isinstance(assignment, Mapping) else None
+            if not key:
+                continue
+            labels = labels_by_key.setdefault(str(key), [])
+            if name not in labels:
+                labels.append(name)
+            if spot in ("first", "last"):
+                seat = {"spot": str(spot), "name": name}
+                if seat not in placed_by_key.setdefault(str(key), []):
+                    placed_by_key[str(key)].append(seat)
+    rows: list[dict[str, Any]] = []
+    for step in steps:
+        media_id = str(step.media_id)
+        clip = os.path.basename(str(proxy_path_by_media_id.get(media_id) or ""))
+        keys = [key for key in (clip, media_id) if key]
+        labels: list[str] = []
+        placed: list[dict[str, str]] = []
+        for key in keys:
+            labels.extend(x for x in labels_by_key.get(key, []) if x not in labels)
+            placed.extend(x for x in placed_by_key.get(key, []) if x not in placed)
+        spoken = " ".join(
+            str(getattr(word, "text", "")).strip()
+            for word in words
+            if step.start_s <= (float(word.start_s) + float(word.end_s)) / 2 < step.end_s
+        )
+        rows.append(
+            {
+                "step_id": str(step.step_id),
+                "media_id": media_id,
+                "clip": clip,
+                "labels": labels,
+                "placed": placed,
+                "start_s": round(float(step.start_s), 3),
+                "end_s": round(float(step.end_s), 3),
+                "text": spoken[:_NARRATED_STEP_TEXT_CHARS],
+            }
+        )
+    return {
+        "generation_id": generation,
+        "brief_version": brief_version,
+        "ordering_basis": ordering_basis,
+        "caption_language": caption_language,
+        "spoken_language": spoken_language,
+        "caption_language_request": caption_language_request,
+        "steps": rows,
+    }
+
+
+def _narrated_alignment_receipts(
+    record: dict[str, Any], brief: Any, *, bound: bool
+) -> list[dict[str, Any]]:
+    """Stamp ``record`` with the receipts its facts can judge, and return the order
+    anchors that failed (a first/last clip not where the creator asked).
+
+    Only judged receipts are kept: an ask the record cannot settle (a skipped clip, a
+    look-and-feel ask) stays with the editor-payload review exactly as before. Timing and
+    caption receipts are reported, never blocking.
+    """
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        build_receipts,
+        plan_facts_from_narrated_alignment,
+    )
+
+    live = brief.live() if brief is not None else []
+    if not live:
+        return []
+    kinds = {req.id: req.kind for req in live}
+    receipts = build_receipts(
+        live, plan_facts_from_narrated_alignment(record), include_unchecked=bound
+    )
+    rows = [
+        {
+            **receipt.model_dump(mode="json"),
+            "brief_version": brief.version,
+            "generation_id": record.get("generation_id"),
+        }
+        for receipt in receipts
+        if receipt.verification != "unchecked"
+    ]
+    record["requirement_receipts"] = rows
+    return [
+        row
+        for row in rows
+        if bound
+        and kinds.get(row["requirement_id"]) == "order"
+        and row.get("verification") == "checked"
+        and row["status"] == "not_possible"
+    ]
+
+
 def _run_phone_narrated_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> None:
@@ -7902,6 +8026,7 @@ def _run_phone_narrated_job(
     feeding it the cleaned words/duration alone re-derives correctly
     proportioned clip windows.
     """
+    from app.kria.brief_checks import NARRATED_ALIGNMENT_FIELD  # noqa: PLC0415
     from app.kria.device_render import make_device_request  # noqa: PLC0415
     from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
     from app.pipeline.caption_language import (  # noqa: PLC0415
@@ -8112,6 +8237,7 @@ def _run_phone_narrated_job(
 
             script_steps = _narrated_script_steps(filming_guide)
             steps: list[NarratedPhoneStep] = []
+            aligned = None  # KRI-533: set by the alignment agent in the branch below
             if len(script_steps) >= 2:
                 clip_assignments = _narrated_clip_assignments(
                     filming_guide, narrative_order, clip_id_to_local
@@ -8154,8 +8280,10 @@ def _run_phone_narrated_job(
                 # failure returns None and the legacy split below runs unchanged.
                 aligned = None
                 if settings.narrated_clip_alignment_enabled:
-                    creator_labels, brief_orders_clips = _narrated_creator_clip_labels(
-                        all_candidates, clip_id_to_gcs, _media_id_for_clip
+                    creator_labels, pinned_first, pinned_last, ordered_groups = (
+                        _narrated_creator_clip_labels(
+                            all_candidates, clip_id_to_gcs, _media_id_for_clip
+                        )
                     )
                     aligned = _narrated_clip_alignment_steps(
                         transcript=transcript,
@@ -8163,7 +8291,10 @@ def _run_phone_narrated_job(
                         clip_metas=list(ingest.get("clip_metas") or []),
                         labels_by_clip=creator_labels,
                         creator_request=str(all_candidates.get("creator_request") or ""),
-                        order_locked=bool(guide_narrative_order) or brief_orders_clips,
+                        order_locked=bool(guide_narrative_order),
+                        pinned_first=pinned_first,
+                        pinned_last=pinned_last,
+                        ordered_groups=ordered_groups,
                         timeline_end_s=timeline_end,
                         job_id=job_id,
                     )
@@ -8253,6 +8384,7 @@ def _run_phone_narrated_job(
 
             cues: list[dict] | None = None
             detected_lang = language
+            spoken_lang = language
             if transcript.words:
                 # KRI-177: this transcribes the creator's OWN recorded voiceover
                 # (not the clip audio) — still auto-detect its spoken language
@@ -8283,6 +8415,7 @@ def _run_phone_narrated_job(
                         language=detected_lang,
                         job_language=language,
                     )
+                spoken_lang = detected_lang  # KRI-533: before an explicit request translates it
                 # Translating the cleaned derivative is safe: the cut was proven
                 # against the spoken words, which still drive every timing above.
                 caption_transcript, detected_lang = _narrated_caption_transcript(
@@ -8302,6 +8435,65 @@ def _run_phone_narrated_job(
                     trusted_aliases=None,
                 )
                 cues = resplit_cues_into_sentences(cues)
+
+            # KRI-533: what the worker pinned, and the receipts it can judge from it
+            # (a first/last clip, a clip-group timing, the caption language). Like the
+            # unified montage, an order anchor that missed asks the creator before
+            # anything renders; timing and caption receipts are reported, never blocking.
+            narrated_basis = (
+                "spoken_word_alignment"
+                if aligned is not None
+                else "guide_script_alignment"
+                if len(script_steps) >= 2
+                else "guide"
+                if guide_narrative_order
+                else "attachment"
+            )
+            narrated_brief = None
+            if snapshot.get("creator_brief_binding"):
+                from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+
+                narrated_brief = BriefBinding.model_validate(
+                    snapshot["creator_brief_binding"]
+                ).resolve()
+            narrated_record = _narrated_alignment_record(
+                generation=generation,
+                brief_version=narrated_brief.version if narrated_brief else None,
+                ordering_basis=narrated_basis,
+                steps=steps,
+                proxy_path_by_media_id={b.media_id: b.proxy_path for b in bindings},
+                strategy=strategy,
+                words=list(transcript.words),
+                caption_language=detected_lang if cues else None,
+                spoken_language=spoken_lang if cues else None,
+                caption_language_request=caption_language_req,
+            )
+            narrated_failures = _narrated_alignment_receipts(
+                narrated_record, narrated_brief, bound=bool(snapshot.get("creator_brief_binding"))
+            )
+            if narrated_failures:
+                from app.kria.brief_checks import render_block_recovery  # noqa: PLC0415
+
+                record_pipeline_event(
+                    "narrated",
+                    "requirement_recovery",
+                    {
+                        "stage": "compile",
+                        "decision": "ask_before_simplifying",
+                        "generation_id": generation,
+                        "requirement_receipts": narrated_failures,
+                    },
+                )
+                recovery_message = render_block_recovery(narrated_failures).message
+                if not _save_request_recovery(
+                    job_id,
+                    snapshot,
+                    ownership_epoch=ownership_epoch,
+                    message=recovery_message,
+                    receipts=narrated_record["requirement_receipts"],
+                ):
+                    return None
+                raise UnsupportedPhonePlan(recovery_message)
 
             # Cloud's `_mix_user_voiceover` knob is `voiceover_bed_level`
             # (direct bed gain, ~0.25 default); this compiler's `mix`
@@ -8467,6 +8659,8 @@ def _run_phone_narrated_job(
         else:
             variants.append(new_entry)
         current["variants"] = variants
+        # KRI-533: the receipts' evidence, under the same owner/generation fence.
+        current[NARRATED_ALIGNMENT_FIELD] = narrated_record
         if visual_rows:
             # Private receipts the editor recompiles the overlay lane from; each
             # row keeps gcs_path so pool deletion still sees the photo as referenced.
@@ -22936,13 +23130,16 @@ def _narrated_creator_clip_labels(
     all_candidates: Mapping[str, Any],
     clip_id_to_gcs: Mapping[str, str],
     media_id_for_clip: Callable[[str], str | None],
-) -> tuple[dict[str, str], bool]:
-    """Creator brief labels per clip id, and whether the brief ordered the shots.
+) -> tuple[dict[str, str], list[str], list[str], list[list[str]]]:
+    """Creator brief labels per clip id, plus the order the creator described.
 
     A resolved clip intent names a shot ("grating the pecorino") and the media
     it matched; ``media_id`` is the basename of the clip's proxy path (or the
-    phone source binding id). Any ``op == "order"`` intent means the creator
-    fixed the clip order.
+    phone source binding id). Returns ``(labels, pinned_first, pinned_last,
+    ordered_groups)`` from the resolved ``op == "order"`` intents without ``order_by``:
+    ``first`` / ``last`` intents are pins; intents with no position are a described
+    SEQUENCE, one group of clip ids each in listed order. None of it locks the whole
+    order, so the narration may still place every other clip (KRI-532).
     """
     strategy = all_candidates.get("creator_strategy")
     strategy = strategy if isinstance(strategy, Mapping) else {}
@@ -22951,10 +23148,6 @@ def _narrated_creator_clip_labels(
         for intent in (strategy.get("resolved_clip_intents") or [])
         if isinstance(intent, Mapping)
     ]
-    ordered = any(
-        isinstance(intent, Mapping) and intent.get("op") == "order"
-        for intent in [*resolved, *(strategy.get("clip_intents") or [])]
-    )
     labels_by_media: dict[str, list[str]] = {}
     for intent in resolved:
         attribute = " ".join(str(intent.get("attribute") or "").split())
@@ -22965,6 +23158,7 @@ def _narrated_creator_clip_labels(
             if media_id and attribute not in labels_by_media.setdefault(str(media_id), []):
                 labels_by_media[str(media_id)].append(attribute)
     labels: dict[str, str] = {}
+    clip_by_media: dict[str, str] = {}
     for clip_id, gcs_path in clip_id_to_gcs.items():
         keys = [os.path.basename(str(gcs_path))]
         try:
@@ -22980,7 +23174,38 @@ def _narrated_creator_clip_labels(
                     found.append(label)
         if found:
             labels[clip_id] = "; ".join(found)[:240]
-    return labels, ordered
+        for key in keys:
+            clip_by_media.setdefault(key, clip_id)
+
+    # Same seating as `clip_order_sequence.apply_sequence`: walk the order intents in
+    # listed order; a clip named by two intents belongs to the first one.
+    pinned: dict[str, list[str]] = {"first": [], "last": []}
+    groups: list[list[str]] = []
+    claimed: set[str] = set()
+    for intent in resolved:
+        position = intent.get("position")
+        if (
+            intent.get("op") != "order"
+            or position not in (None, "first", "last")
+            or intent.get("order_by")
+            or intent.get("placeholder")
+            or intent.get("status") not in (None, "resolved")
+        ):
+            continue
+        members: list[str] = []
+        for assignment in intent.get("assignments") or []:
+            media_id = assignment.get("media_id") if isinstance(assignment, Mapping) else None
+            clip_id = clip_by_media.get(str(media_id)) if media_id else None
+            if clip_id and clip_id not in claimed and clip_id not in members:
+                members.append(clip_id)
+        claimed.update(members)
+        if not members:
+            continue
+        if position is None:
+            groups.append(members)
+        else:
+            pinned[position].extend(members)
+    return labels, pinned["first"], pinned["last"], groups
 
 
 def _narrated_clip_alignment_steps(
@@ -22993,21 +23218,44 @@ def _narrated_clip_alignment_steps(
     order_locked: bool,
     timeline_end_s: float,
     job_id: str,
+    pinned_first: list[str] | None = None,
+    pinned_last: list[str] | None = None,
+    ordered_groups: list[list[str]] | None = None,
 ) -> tuple[list[str], list[Any]] | None:
     """Ask the alignment agent where each clip should start, failing open.
 
     Returns ``(clip_ids_in_screen_order, step_timings)`` or ``None`` when the
     caller must use the legacy equal-bucket split (any precondition miss, agent
     failure, invalid placement or timeline too short). Every outcome is recorded
-    on the job's pipeline trace; this function never raises.
+    on the job's pipeline trace; this function never raises. ``order_locked`` fixes
+    the whole order (filming guide); ``pinned_first`` / ``pinned_last`` fix only
+    how the video opens / closes (a creator's "end on X"); ``ordered_groups`` is the
+    creator's described sequence. Clips not in ``clip_ids`` are dropped from both.
     """
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    in_play = set(clip_ids)
+    pinned_first = [c for c in (pinned_first or []) if c in in_play]
+    pinned_last = [c for c in (pinned_last or []) if c in in_play and c not in pinned_first]
+    groups = [[c for c in group if c in in_play] for group in (ordered_groups or [])]
+    groups = [g for g in groups if g and not set(g) & {*pinned_first, *pinned_last}]
+    pins = {
+        "pinned_first": pinned_first,
+        "pinned_last": pinned_last,
+        "ordered_groups": groups,
+    }
 
     def _fallback(reason: str, **extra: Any) -> None:
         record_pipeline_event(
             "narrated",
             "narrated_clip_alignment",
-            {"status": "fallback", "reason": reason, "order_locked": order_locked, **extra},
+            {
+                "status": "fallback",
+                "reason": reason,
+                "order_locked": order_locked,
+                **pins,
+                **extra,
+            },
         )
         log.warning("narrated_clip_alignment_fallback", job_id=job_id, reason=reason, **extra)
         return None
@@ -23048,6 +23296,9 @@ def _narrated_clip_alignment_steps(
                 ],
                 creator_request=creator_request or "",
                 order_locked=order_locked,
+                pinned_first=pinned_first,
+                pinned_last=pinned_last,
+                ordered_groups=groups,
                 language=str(getattr(transcript, "language", "") or ""),
             ),
             ctx=RunContext(job_id=job_id),
@@ -23069,6 +23320,8 @@ def _narrated_clip_alignment_steps(
             {
                 "status": "aligned",
                 "order_locked": order_locked,
+                **pins,
+                "resorted": output.resorted,
                 "prompt_version": NarratedClipAlignmentAgent.spec.prompt_version,
                 "clips": [
                     {

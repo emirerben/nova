@@ -593,6 +593,43 @@ limit, since the bed only ducks). A variant with neither field behaves as before
 `unchecked`, "Couldn't verify". Guards: `tests/kria/test_brief_marathon_receipts.py`,
 `tests/tasks/test_marathon_render_ready_review.py`.
 
+### Narrated render receipts (KRI-533)
+
+A phone Voiceover draft used to list every order / timing / caption-language ask as
+"Couldn't verify" and the render never re-checked them. Like the unified montage, the
+worker now records what it pinned and judges the brief from it.
+`_run_phone_narrated_job` writes `assembly_plan["narrated_alignment"]` (same
+owner/generation fence as the variant) via `_narrated_alignment_record`:
+`generation_id`, `brief_version`, `ordering_basis` (`spoken_word_alignment` = the
+alignment agent, `guide_script_alignment` = scripted guide, `guide`, `attachment`),
+`caption_language` / `spoken_language` / `caption_language_request`, and one row per
+step in screen order: `media_id` (phone source id), `clip` (proxy basename), `labels`
+(creator names from resolved clip intents), `placed` (`first`/`last` seats of resolved
+order intents), `start_s`, `end_s`, `text` (transcript words spoken in the window).
+`brief_checks.plan_facts_from_narrated_alignment` reads it; receipts are stored on
+`requirement_receipts` (judged ones only, stamped `brief_version`/`generation_id`).
+
+Judged: an `order` ask with `first_clip`/`last_clip` (or a first/last order intent
+named in the ask) is **met** when that labelled clip really opens/closes the edit,
+**not_possible** otherwise (reason names where it ended up); a `timing` ask with no
+number naming a labelled clip group is **met** with the narration excerpt as the
+reason, only when the words placed the clips (`NARRATED_ALIGNED_BASES`) and the group
+is contiguous; a captions ask naming a language is **met**/**partial** against the
+language actually burned (the spelling of names is stated as unchecked). Not judged
+(stay "Couldn't verify"): `select` ("skip the quad bike", KRI-511), any other order rule,
+look-and-feel captions asks.
+
+Only an order anchor that missed blocks: with a brief binding it saves a
+`request_recovery` (receipts attached), records a `narrated`/`requirement_recovery`
+pipeline event and raises before any recipe is pinned. Timing and caption receipts are
+reported, never blocking. Draft time: `defers_to_narrated_render` (narrated format +
+`audio_strategy == "voiceover"` + phone clips + phone narrated rendering on) makes
+`requirements_to_check_at_draft` skip those asks so the draft reply is the plain
+summary. The render-ready reply (`_approved_generation_review`,
+`_unified_montage_review`) reads the record exactly like `unified_montage`. Guards:
+`tests/kria/test_brief_checks_narrated_alignment.py`,
+`tests/tasks/test_narrated_alignment_receipts.py`.
+
 ### Narrated clip alignment (KRI-456)
 
 Phone narrated edits without a filming guide (`_run_phone_narrated_job`'s
@@ -602,8 +639,14 @@ With `NARRATED_CLIP_ALIGNMENT_ENABLED=true` (default) the worker first asks
 `NarratedClipAlignmentAgent` (`nova.compose.narrated_clip_alignment`) which
 voiceover word each clip should start on, from the timed words, each clip's
 visual description, the creator's shot labels (resolved clip intents) and the
-creator request. `order_locked` (a filming-guide order or any `order` clip
-intent) pins the clip order; otherwise the agent may reorder. The agent never
+creator request. `order_locked` (a filming-guide order only) fixes the whole clip
+order. Creator-stated `first`/`last` `order` intents are PINS (`pinned_first` /
+`pinned_last`): only those clips are fixed at the head/tail and every other clip is
+placed where the narration describes it (KRI-532). Unpositioned `order` intents are
+the creator's described sequence (`ordered_groups`: every clip of a group before every
+clip of the next; other clips free). In PINNED mode `parse` re-sorts the placements by
+start word (trace `resorted`) before checking pins/groups. With none of these, the agent
+may reorder freely. The agent never
 owns timestamps: `app.pipeline.narrated_alignment.resolve_aligned_steps` turns
 the chosen words into contiguous windows (first step starts at 0.0, minimum step
 1.5 s by pulling boundaries earlier). For legacy unbound jobs, a precondition miss (<2 clips, no/too
@@ -616,7 +659,7 @@ before using a simpler sequence when alignment is unavailable. The scripted film
 `fly secrets set NARRATED_CLIP_ALIGNMENT_ENABLED=false --app nova-video` + worker
 restart (restores the bucket split for unbound jobs; bound requests ask for recovery). Eval:
 `tests/evals/test_narrated_clip_alignment_evals.py` (goldens recorded from the
-cacio e pepe job).
+cacio e pepe job, plus a pinned-last Cappadocia case from prod 38caaebd).
 
 Clip ORDER for native (phone) edits is set at dispatch, not by the model's
 `selected_media_ids` order: `content_plan_build._creator_intent_clip_order`

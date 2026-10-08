@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.171.0] - 2026-10-08
+
+### Changed
+- feat(kria): phone Voiceover renders judge order, clip timing and caption language from what they pinned (KRI-533) (#1491) <!-- release-pr: 1491 -->
+
+## [0.78.170.0] - 2026-10-08
+
+### Changed
+- fix(narrated): pin only the creator's first/last clips when aligning a phone voiceover (KRI-532) (#1490) <!-- release-pr: 1490 -->
+
 ## [0.78.169.0] - 2026-10-08
 
 ### Changed

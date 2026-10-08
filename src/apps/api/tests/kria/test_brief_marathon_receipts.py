@@ -1015,3 +1015,24 @@ def test_a_timing_ask_with_a_pop_in_word_but_no_spoken_cue_stays_a_timing_ask() 
     assert not _wants_beats(req)
     receipt = check_requirement(req, _draft_facts())
     assert not is_judged(req, receipt)
+
+
+# --------------------------------------- KRI-533 narrated deferral leaves pop-in asks alone
+
+
+def test_a_pop_in_timing_ask_is_not_clip_timing_and_is_judged_at_draft(monkeypatch) -> None:
+    from app.kria import brief_checks
+
+    assert not brief_checks._wants_clip_timing(R4)
+    assert brief_checks._wants_clip_timing(
+        _req("ct1", "timing", "show the balloons while talking about the balloons")
+    )
+    monkeypatch.setattr(brief_checks, "defers_to_narrated_render", lambda **_kw: True)
+    kept = brief_checks.requirements_to_check_at_draft(
+        [R4, _req("ct1", "timing", "show the balloons while talking about the balloons")],
+        creator_id="c",
+        strategy={"edit_format": "narrated_planned", "audio_strategy": "voiceover"},
+        item_edit_format="narrated_planned",
+        clip_paths=["analysis-proxy-a.mp4"],
+    )
+    assert [r.id for r in kept] == ["r4"]
