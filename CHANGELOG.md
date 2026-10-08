@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.153.0] - 2026-10-08
+
+### Changed
+- feat(voice): one talk-to-camera voice behind a chronological montage, composed and verified from the plan (KRI-479) (#1470) <!-- release-pr: 1470 -->
+
 ## [0.78.152.0] - 2026-10-08
 
 ### Changed
