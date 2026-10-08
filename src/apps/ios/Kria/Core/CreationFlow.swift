@@ -250,6 +250,9 @@ struct CreationAttachedMedia: Identifiable {
     let kind: String
     let previewURL: URL?
     var uploadPurpose: String = UploadPurpose.cloudRenderSource.rawValue
+    /// The name the creator knows, for every label (KRI-518): the server keeps the upload's
+    /// `<UUID>-<original>` name, so `filename` read "F7B6D371-1487-…-T2_01_footage.mp4" in the chat.
+    var displayName: String { BackgroundUploadCoordinator.displayFilename(filename) }
     /// Server-probed media duration, when it is usable for creation timing.
     var durationS: Double? = nil
     /// The server's media role (`"song"` for a creator-uploaded song, KRI-374). Nil for footage and voiceover,
