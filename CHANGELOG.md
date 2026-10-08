@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.177.0] - 2026-10-08
+
+### Changed
+- fix(kria): judge phone Voiceover pop-in and mix asks instead of "Couldn't verify" (KRI-537) (#1494) <!-- release-pr: 1494 -->
+
 ## [0.78.176.0] - 2026-10-08
 
 ### Changed
