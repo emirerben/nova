@@ -429,7 +429,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         # runaway call truncates (retryable) instead of ending outcome-unknown.
         timeout_s=60.0,
         # Reserve output capacity for the full source manifest.
-        thinking_level="low",
+        thinking_level="high",
         sensitive_io=True,
         # This agent's output schema (bounded editorial choices across many
         # optional fields, typed evidence, clip intents) is wide enough that
