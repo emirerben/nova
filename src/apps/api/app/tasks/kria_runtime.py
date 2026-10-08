@@ -31,6 +31,7 @@ from app.kria.brief import (
     persist_brief_version_sync,
     render_brief_request,
 )
+from app.kria.brief_binding import BriefBindingRequestTooLongError
 from app.kria.brief_checks import (
     NARRATED_ALIGNMENT_FIELD,
     build_receipts,
@@ -128,6 +129,30 @@ class _Completion:
     successor_turn_id: str | None = None
     requeue_turn_id: str | None = None
     response_only: bool = False
+
+
+class ApprovedCreatorRequestTooLongError(ValueError):
+    """The approval fence cannot retain every creator instruction safely."""
+
+
+def _full_creator_request_sync(db, *, thread_id: uuid.UUID, through_sequence: int) -> str | None:  # noqa: ANN001
+    """Pin every creator instruction visible to the approved source turn."""
+    messages = [
+        str(content).strip()
+        for (content,) in db.execute(
+            select(CreationThreadEvent.content)
+            .where(
+                CreationThreadEvent.thread_id == thread_id,
+                CreationThreadEvent.role == "user",
+                CreationThreadEvent.sequence <= through_sequence,
+                CreationThreadEvent.content.is_not(None),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        ).all()
+        if str(content).strip()
+    ]
+    request = "\n".join(messages)
+    return request if len(request) <= 12_000 else None
 
 
 @dataclass(frozen=True)
@@ -1011,6 +1036,17 @@ def _complete_draft_turn(
                 if choice_gate:
                     brief = answered_brief(brief, document.strategy)
             source_event = db.get(CreationThreadEvent, turn.source_event_id)
+            full_request = (
+                _full_creator_request_sync(
+                    db,
+                    thread_id=thread.id,
+                    through_sequence=int(source_event.sequence),
+                )
+                if source_event is not None
+                else None
+            )
+            if source_event is not None and full_request is None:
+                raise ApprovedCreatorRequestTooLongError
             coverage = dict(planned.brief_coverage or {})
             coverage["enforced_ids"] = [
                 r["requirement_id"]
@@ -1030,6 +1066,7 @@ def _complete_draft_turn(
                         latest_message=str(source_event.content or "")
                         if source_event
                         else document.intent,
+                        full_creator_request=full_request,
                         media_snapshot=planned.media_snapshot
                         if planned.media_snapshot is not None
                         else snapshot_media(item),
@@ -1945,6 +1982,33 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                                 tr=(
                                     f"Bu düzenlemede bunu yapamıyorum: "
                                     f"{str(exc).strip().rstrip('.')}. Hiçbir şey değişmedi."
+                                ),
+                            ),
+                        ),
+                    )
+                    completion = _complete_response_turn(
+                        identifier,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        claimed_thread_revision=claimed_thread_revision,
+                        plan=planned.plan,
+                    )
+                except (ApprovedCreatorRequestTooLongError, BriefBindingRequestTooLongError):
+                    planned = replace(
+                        planned,
+                        plan=KriaTurnPlan(
+                            mode="respond",
+                            turn_value="recovery",
+                            response=say(
+                                en=(
+                                    "Your full edit request is too long to preserve safely. "
+                                    "Nothing was changed; please start a new request with "
+                                    "the key directions."
+                                ),
+                                tr=(
+                                    "Tam düzenleme isteğin güvenle korumak için çok uzun. "
+                                    "Hiçbir şey değişmedi; önemli yönergelerle yeni bir "
+                                    "istek başlat."
                                 ),
                             ),
                         ),

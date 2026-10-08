@@ -4103,8 +4103,12 @@ async def update_item_edit_proposal(
     _require_guided_edit()
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
     _require_guided_edit_applicable(item)
-    from app.pipeline.guided_story import GuidedStoryError
+    from app.pipeline.guided_story import (  # noqa: PLC0415
+        GuidedStoryError,
+        compile_proposal_execution_plan,
+    )
     from app.schemas.edit_proposal import canonical_media_digest  # noqa: PLC0415
+    from app.services.creation_text_composition import CreationTextCompositionError  # noqa: PLC0415
     from app.services.edit_proposals import (  # noqa: PLC0415
         ProposalConflictError,
         mark_edit_proposal_stale,
@@ -4136,6 +4140,10 @@ async def update_item_edit_proposal(
                 **body.snapshot.model_dump(mode="json"),
                 "media": [ref.model_dump(mode="json") for ref in current.draft.media],
                 "frame_schedule": None,
+                # The composition program is server-authored and intentionally
+                # absent from older/public full-snapshot clients. Never let a
+                # save erase it or replace its pinned base digest.
+                "text_composition": current.draft.text_composition,
             }
         )
         if (
@@ -4147,6 +4155,8 @@ async def update_item_edit_proposal(
                 "proposal_replan_required",
                 "Ask Kria to change the direction, pacing, or target length.",
             )
+        if server_snapshot.text_composition is not None:
+            compile_proposal_execution_plan(server_snapshot)
         save_proposal_draft(
             item,
             expected_version=body.expected_proposal_version,
@@ -4168,6 +4178,11 @@ async def update_item_edit_proposal(
         )
     except ProposalConflictError as exc:
         raise _proposal_service_conflict(exc) from exc
+    except CreationTextCompositionError as exc:
+        raise _proposal_http_conflict(
+            "proposal_replan_required",
+            "Ask Kria to replan the changed text layout or timing.",
+        ) from exc
     except (ValueError, GuidedStoryError) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

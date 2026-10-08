@@ -38,6 +38,47 @@ reviews are cached for `EDIT_DIRECTOR_CACHE_TTL_DAYS` (90 by default), and each
 creator can start at most `EDIT_DIRECTOR_DAILY_PAID_LIMIT` (three by default)
 uncached paid reviews per UTC day.
 
+## Initial creation text composition (KRI-524)
+
+Phone unified montages and guided proposals now compose requested text behavior
+using the editor's existing text operations. The base planner assembles source
+windows, audio and default text first. A text-only model pass then sees the
+complete request and actual text bars, including literal wording, geometry,
+style and timing. It can combine operations for arbitrary words or phrases,
+placement, independent entrance/exit effects, and per-clip labels. Main Creator's
+brief prompt also preserves temporal relationships instead of reducing them to
+an animation enum.
+
+The model uses `EDIT_COPILOT_MODEL` and the shared text capability documentation,
+with a 90-second background-creation timeout. Complete component context retains
+long titles and currency characters. Clarification, unsupported requirements or
+invalid programs fail explicitly; there is no fallback that silently discards
+the requested composition. An already-satisfied response leaves the base
+snapshot unchanged. This adds a metered model call to these creation paths.
+
+Composition runs inside an authorized phone generation before the first immutable
+plan is persisted, or before a guided proposal is offered for approval. The stored
+internal versioned program binds to a digest of actual base text and source/output
+windows. Compilation only replays deterministic existing operations and validates
+the result; it never calls a model. Existing snapshots omit the field and retain
+their hashes. The stored operation program stays out of public proposal responses
+and schemas. Manual proposal saves retain the server-owned program; changing its
+bound text/timing requires replanning instead of silently discarding animation. A later catalog music choice cannot beat-snap the boundaries of a
+composed montage: preserving pinned text timing takes precedence. This does not
+change an explicitly planned cadence or add renderer capabilities.
+
+Approval binds chronological creator instructions through the source turn,
+alongside the resolved brief. This prevents a clarification answer such as “1”
+from replacing original instructions the brief failed to extract. Later messages
+cannot change that generation. Requests over the safe bound are rejected rather
+than truncated. Literal-text receipts do not certify animation, placement or
+sequence behavior from matching words alone.
+
+Regressions cover creation, serialization, canonical compilation, phone export
+recipe projection, a faster follow-up, and authored live-response replay in
+`tests/evals/request_following/test_creation_composition.py`. Evidence and limits
+are recorded in [the creation report](../reviews/kri-524-creation-composition.md).
+
 ## Complete text appearance edits (KRI-13)
 
 With `TEXT_APPEARANCE_ENABLED=true` (default false), the API advertises

@@ -2119,7 +2119,7 @@ def _compile_scheduled_execution_plan(
     return compiled.model_dump(mode="json", exclude_none=False)
 
 
-def _compile_execution_plan_version(
+def _compile_base_execution_plan_version(
     guided_snapshot: object,
     *,
     track: dict[str, Any] | None,
@@ -2180,7 +2180,11 @@ def _compile_execution_plan_version(
             track=track,
             video_media_ids={ref.media_id for ref in snapshot.media if ref.kind == "video"},
             mixed_media_timing=snapshot.mixed_media_timing,
-            preserve_exact_cadence=snapshot.montage_cadence is not None,
+            # Text composition is pinned against these source/output windows.
+            # A later catalog-track choice must not move its approved boundaries.
+            preserve_exact_cadence=(
+                snapshot.montage_cadence is not None or snapshot.text_composition is not None
+            ),
         )
         for cut, (start_s, end_s, beat_time_s) in zip(
             snapshot.fast_cuts, output_windows, strict=True
@@ -2515,6 +2519,19 @@ def _compile_execution_plan_version(
             "guided_story_snapshot_invalid", "The approved edit could not be compiled safely."
         ) from exc
     return compiled.model_dump(mode="json", exclude_none=False)
+
+
+def _compile_execution_plan_version(guided_snapshot, *, track, compiler_version):
+    """Compile the base and replay its pinned text program without model I/O."""
+    plan = _compile_base_execution_plan_version(
+        guided_snapshot, track=track, compiler_version=compiler_version
+    )
+    _, _, snapshot = validate_guided_snapshot(guided_snapshot)
+    if snapshot.text_composition is not None:
+        from app.services.creation_text_composition import replay_text_composition
+
+        plan = replay_text_composition(plan, snapshot.text_composition)
+    return plan
 
 
 def compile_execution_plan(

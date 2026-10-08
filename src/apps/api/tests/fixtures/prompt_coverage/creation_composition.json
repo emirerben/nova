@@ -1,0 +1,391 @@
+{
+  "schema_version": 1,
+  "provenance": {
+    "kind": "authored_synthetic_live_capture",
+    "captured_at": "2026-10-08",
+    "prompt_version": "v2-creation-text-composition",
+    "notes": "Synthetic inputs only; assertions encode requested behavior separately from model output. Replaying these responses does not measure live model reliability."
+  },
+  "cases": [
+    {
+      "id": "phrases",
+      "request": "The title is \"Join us for our favorite bakery and tea shop near the harbor\". Show it in three successive chunks: \"Join us\", then \"for our favorite bakery\", then \"and tea shop near the harbor\". Type each chunk in. Keep location labels. Do not alter the clips.",
+      "snapshot": {
+        "direction": "fast_montage",
+        "goal": "",
+        "pace": "fast",
+        "duration_s": 20.0,
+        "title": "Join us for our favorite bakery and tea shop near the harbor",
+        "opening_title": "Join us for our favorite bakery and tea shop near the harbor",
+        "font_family": "Inter",
+        "text_color": "#FFFFFF",
+        "media_scope": "all",
+        "selected_media_ids": [
+          "c0",
+          "c1"
+        ],
+        "media": [
+          {
+            "lane": "clip",
+            "media_id": "c0",
+            "gcs_path": "users/test/c0.mp4",
+            "generation": "1",
+            "kind": "video",
+            "source_filename": "",
+            "duration_s": 12.0,
+            "aspect": 0.5625,
+            "content_hash": null,
+            "user_context": "",
+            "analysis": {}
+          },
+          {
+            "lane": "clip",
+            "media_id": "c1",
+            "gcs_path": "users/test/c1.mp4",
+            "generation": "1",
+            "kind": "video",
+            "source_filename": "",
+            "duration_s": 12.0,
+            "aspect": 0.5625,
+            "content_hash": null,
+            "user_context": "",
+            "analysis": {}
+          }
+        ],
+        "story_beats": [
+          {
+            "beat_id": "fast-beat-1",
+            "topic": "Fast montage",
+            "thought": "",
+            "thought_source": "ai_draft",
+            "media_ids": [
+              "c0",
+              "c1"
+            ],
+            "layout": "fullscreen",
+            "duration_s": 20.0
+          }
+        ],
+        "fast_cuts": [
+          {
+            "cut_id": "unified-cut-1",
+            "media_id": "c0",
+            "source_start_s": 0.0,
+            "source_end_s": 10.0,
+            "output_duration_s": 10.0,
+            "role": "hook",
+            "transition": "none",
+            "beat_align": false
+          },
+          {
+            "cut_id": "unified-cut-2",
+            "media_id": "c1",
+            "source_start_s": 0.0,
+            "source_end_s": 10.0,
+            "output_duration_s": 10.0,
+            "role": "payoff",
+            "transition": "none",
+            "beat_align": false
+          }
+        ],
+        "mixed_media_timing": null,
+        "montage_text_bindings": [],
+        "clip_labels": [
+          {
+            "media_id": "c0",
+            "text": "Name",
+            "provenance": "creator",
+            "fact_kind": null,
+            "inferred": false,
+            "min_display_s": 1.2
+          },
+          {
+            "media_id": "c1",
+            "text": "Name",
+            "provenance": "creator",
+            "fact_kind": null,
+            "inferred": false,
+            "min_display_s": 1.2
+          }
+        ],
+        "montage_audio": null,
+        "video_reuse_policy": "once",
+        "output_orientation": "portrait",
+        "output_orientation_reason": "Auto-selected portrait from approved story media: 0.0s landscape, 20.0s portrait; 2 non-square source selections."
+      },
+      "model_response": "{\n  \"intent\": \"edit\",\n  \"confidence\": 1.0,\n  \"reply\": \"I've extended the title's duration, split it into the three requested chunks, and added a typewriter animation to each.\",\n  \"ops\": [\n    {\n      \"op\": \"set_texts_timing\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"start_s\": 0,\n      \"end_s\": 6.0\n    },\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"segments\": [\n        \"Join us\",\n        \"for our favorite bakery\",\n        \"and tea shop near the harbor\"\n      ],\n      \"patch\": {\n        \"animation_phases\": {\n          \"entrance\": \"typewriter\"\n        }\n      }\n    }\n  ],\n  \"needs_clarification\": false,\n  \"unmet_requests\": []\n}",
+      "model": "gemini-3.1-pro-preview",
+      "expected": {
+        "chunks": [
+          "Join us",
+          "for our favorite bakery",
+          "and tea shop near the harbor"
+        ],
+        "entrance": "typewriter",
+        "exit": "none",
+        "labels": [
+          "Name",
+          "Name"
+        ]
+      }
+    },
+    {
+      "id": "words",
+      "request": "Open with the hook \"Join us for our favorite bakery and tea shop near the harbor\". Show each word separately: fade it in, fade it out, then show the next word. Keep the whole sequence on the opening clip. Add placeholder location labels to every clip at bottom left. Inter and white. Keep clips chronological.",
+      "snapshot": {
+        "direction": "fast_montage",
+        "goal": "",
+        "pace": "fast",
+        "duration_s": 20.0,
+        "title": "Join us for our favorite bakery and tea shop near the harbor",
+        "opening_title": "Join us for our favorite bakery and tea shop near the harbor",
+        "font_family": "Inter",
+        "text_color": "#FFFFFF",
+        "media_scope": "all",
+        "selected_media_ids": [
+          "c0",
+          "c1"
+        ],
+        "media": [
+          {
+            "lane": "clip",
+            "media_id": "c0",
+            "gcs_path": "users/test/c0.mp4",
+            "generation": "1",
+            "kind": "video",
+            "source_filename": "",
+            "duration_s": 12.0,
+            "aspect": 0.5625,
+            "content_hash": null,
+            "user_context": "",
+            "analysis": {}
+          },
+          {
+            "lane": "clip",
+            "media_id": "c1",
+            "gcs_path": "users/test/c1.mp4",
+            "generation": "1",
+            "kind": "video",
+            "source_filename": "",
+            "duration_s": 12.0,
+            "aspect": 0.5625,
+            "content_hash": null,
+            "user_context": "",
+            "analysis": {}
+          }
+        ],
+        "story_beats": [
+          {
+            "beat_id": "fast-beat-1",
+            "topic": "Fast montage",
+            "thought": "",
+            "thought_source": "ai_draft",
+            "media_ids": [
+              "c0",
+              "c1"
+            ],
+            "layout": "fullscreen",
+            "duration_s": 20.0
+          }
+        ],
+        "fast_cuts": [
+          {
+            "cut_id": "unified-cut-1",
+            "media_id": "c0",
+            "source_start_s": 0.0,
+            "source_end_s": 10.0,
+            "output_duration_s": 10.0,
+            "role": "hook",
+            "transition": "none",
+            "beat_align": false
+          },
+          {
+            "cut_id": "unified-cut-2",
+            "media_id": "c1",
+            "source_start_s": 0.0,
+            "source_end_s": 10.0,
+            "output_duration_s": 10.0,
+            "role": "payoff",
+            "transition": "none",
+            "beat_align": false
+          }
+        ],
+        "mixed_media_timing": null,
+        "montage_text_bindings": [],
+        "clip_labels": [
+          {
+            "media_id": "c0",
+            "text": "Join us for our favorite bakery and tea shop near the harbor",
+            "provenance": "creator",
+            "fact_kind": null,
+            "inferred": false,
+            "min_display_s": 1.2
+          },
+          {
+            "media_id": "c1",
+            "text": "Name",
+            "provenance": "creator",
+            "fact_kind": null,
+            "inferred": false,
+            "min_display_s": 1.2
+          }
+        ],
+        "montage_audio": null,
+        "video_reuse_policy": "once",
+        "output_orientation": "portrait",
+        "output_orientation_reason": "Auto-selected portrait from approved story media: 0.0s landscape, 20.0s portrait; 2 non-square source selections."
+      },
+      "model_response": "{\n  \"intent\": \"edit\",\n  \"confidence\": 1.0,\n  \"reply\": \"Extended the title to the full first clip and split it into words fading in and out. Also changed the labels to placeholders in the bottom left using Inter in white.\",\n  \"ops\": [\n    {\n      \"op\": \"set_texts_timing\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"start_s\": 0.0,\n      \"end_s\": 10.0\n    },\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"segments\": [\n        \"Join\",\n        \"us\",\n        \"for\",\n        \"our\",\n        \"favorite\",\n        \"bakery\",\n        \"and\",\n        \"tea\",\n        \"shop\",\n        \"near\",\n        \"the\",\n        \"harbor\"\n      ],\n      \"patch\": {\n        \"animation_phases\": {\n          \"entrance\": \"fade\",\n          \"exit\": \"fade\",\n          \"loop\": \"none\"\n        }\n      }\n    },\n    {\n      \"op\": \"rewrite_text\",\n      \"selector\": {\n        \"group\": \"labels\"\n      },\n      \"text\": \"Location\"\n    },\n    {\n      \"op\": \"patch_text\",\n      \"selector\": {\n        \"group\": \"labels\"\n      },\n      \"patch\": {\n        \"position\": \"custom\",\n        \"alignment\": \"left\",\n        \"x_frac\": 0.08,\n        \"y_frac\": 0.86,\n        \"font_family\": \"Inter\",\n        \"color\": \"#FFFFFF\"\n      }\n    }\n  ],\n  \"needs_clarification\": false,\n  \"unmet_requests\": []\n}",
+      "model": "gemini-3.1-pro-preview",
+      "expected": {
+        "chunks": [
+          "Join",
+          "us",
+          "for",
+          "our",
+          "favorite",
+          "bakery",
+          "and",
+          "tea",
+          "shop",
+          "near",
+          "the",
+          "harbor"
+        ],
+        "entrance": "fade",
+        "exit": "fade",
+        "label_region": "bottom_left",
+        "opening_clip_only": true
+      }
+    },
+    {
+      "id": "typewriter_words",
+      "request": "Open with the hook \"Join us for our favorite bakery and tea shop near the harbor\". Animate the title word by word, one showing after the other, with a typewriter entrance. Keep the whole sequence on the opening clip. Add placeholder location labels to every clip at bottom left. Inter and white. Keep clips chronological.",
+      "snapshot": {
+        "direction": "fast_montage",
+        "goal": "",
+        "pace": "fast",
+        "duration_s": 20.0,
+        "title": "Join us for our favorite bakery and tea shop near the harbor",
+        "opening_title": "Join us for our favorite bakery and tea shop near the harbor",
+        "font_family": "Inter",
+        "text_color": "#FFFFFF",
+        "media_scope": "all",
+        "selected_media_ids": [
+          "c0",
+          "c1"
+        ],
+        "media": [
+          {
+            "lane": "clip",
+            "media_id": "c0",
+            "gcs_path": "users/test/c0.mp4",
+            "generation": "1",
+            "kind": "video",
+            "source_filename": "",
+            "duration_s": 12.0,
+            "aspect": 0.5625,
+            "content_hash": null,
+            "user_context": "",
+            "analysis": {}
+          },
+          {
+            "lane": "clip",
+            "media_id": "c1",
+            "gcs_path": "users/test/c1.mp4",
+            "generation": "1",
+            "kind": "video",
+            "source_filename": "",
+            "duration_s": 12.0,
+            "aspect": 0.5625,
+            "content_hash": null,
+            "user_context": "",
+            "analysis": {}
+          }
+        ],
+        "story_beats": [
+          {
+            "beat_id": "fast-beat-1",
+            "topic": "Fast montage",
+            "thought": "",
+            "thought_source": "ai_draft",
+            "media_ids": [
+              "c0",
+              "c1"
+            ],
+            "layout": "fullscreen",
+            "duration_s": 20.0
+          }
+        ],
+        "fast_cuts": [
+          {
+            "cut_id": "unified-cut-1",
+            "media_id": "c0",
+            "source_start_s": 0.0,
+            "source_end_s": 10.0,
+            "output_duration_s": 10.0,
+            "role": "hook",
+            "transition": "none",
+            "beat_align": false
+          },
+          {
+            "cut_id": "unified-cut-2",
+            "media_id": "c1",
+            "source_start_s": 0.0,
+            "source_end_s": 10.0,
+            "output_duration_s": 10.0,
+            "role": "payoff",
+            "transition": "none",
+            "beat_align": false
+          }
+        ],
+        "mixed_media_timing": null,
+        "montage_text_bindings": [],
+        "clip_labels": [
+          {
+            "media_id": "c0",
+            "text": "Join us for our favorite bakery and tea shop near the harbor",
+            "provenance": "creator",
+            "fact_kind": null,
+            "inferred": false,
+            "min_display_s": 1.2
+          },
+          {
+            "media_id": "c1",
+            "text": "Name",
+            "provenance": "creator",
+            "fact_kind": null,
+            "inferred": false,
+            "min_display_s": 1.2
+          }
+        ],
+        "montage_audio": null,
+        "video_reuse_policy": "once",
+        "output_orientation": "portrait",
+        "output_orientation_reason": "Auto-selected portrait from approved story media: 0.0s landscape, 20.0s portrait; 2 non-square source selections."
+      },
+      "model_response": "{\n  \"intent\": \"edit\",\n  \"confidence\": 1.0,\n  \"reply\": \"Extended the title across the full opening clip, splitting it to animate word by word with a typewriter effect. Also changed the clip labels to placeholder locations at the bottom left in white Inter.\",\n  \"ops\": [\n    {\n      \"op\": \"set_texts_timing\",\n      \"selector\": {\n        \"group\": \"title\"\n      },\n      \"start_s\": 0.0,\n      \"end_s\": 10.0\n    },\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"segments\": [\n        \"Join \",\n        \"us \",\n        \"for \",\n        \"our \",\n        \"favorite \",\n        \"bakery \",\n        \"and \",\n        \"tea \",\n        \"shop \",\n        \"near \",\n        \"the \",\n        \"harbor\"\n      ],\n      \"patch\": {\n        \"animation_phases\": {\n          \"entrance\": \"typewriter\",\n          \"exit\": \"none\",\n          \"loop\": \"none\"\n        }\n      }\n    },\n    {\n      \"op\": \"rewrite_text\",\n      \"selector\": {\n        \"group\": \"labels\"\n      },\n      \"text\": \"Location\"\n    },\n    {\n      \"op\": \"patch_text\",\n      \"selector\": {\n        \"group\": \"labels\"\n      },\n      \"patch\": {\n        \"position\": \"custom\",\n        \"alignment\": \"left\",\n        \"x_frac\": 0.08,\n        \"y_frac\": 0.86,\n        \"font_family\": \"Inter\",\n        \"color\": \"#FFFFFF\"\n      }\n    }\n  ],\n  \"needs_clarification\": false,\n  \"unmet_requests\": []\n}",
+      "model": "gemini-3.1-pro-preview",
+      "expected": {
+        "chunks": [
+          "Join",
+          "us",
+          "for",
+          "our",
+          "favorite",
+          "bakery",
+          "and",
+          "tea",
+          "shop",
+          "near",
+          "the",
+          "harbor"
+        ],
+        "entrance": "typewriter",
+        "exit": "none",
+        "label_region": "bottom_left",
+        "opening_clip_only": true
+      }
+    }
+  ]
+}

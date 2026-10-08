@@ -2974,6 +2974,21 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     else:
         found = any(_contains_text(t, wanted) for t in facts.texts)
     if found:
+        # Copy presence cannot certify independently requested visual/temporal behavior.
+        # Keep these explicit constraints unverified until their actual lane evidence is checked.
+        if set(req.facts or {}) & {
+            "animation",
+            "position",
+            "segmentation",
+            "sequence",
+            "timing",
+            "overlap",
+            "font_family",
+            "text_color",
+            "animation_phases",
+            "duration_s",
+        }:
+            return _receipt(req, "partial", _NO_CHECKER)
         return _receipt(req, "met", None)
     return _receipt(
         req,

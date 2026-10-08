@@ -2618,3 +2618,87 @@ def test_narrated_proposal_uses_fidelity_worker_queue():
         brief=SimpleNamespace(narration=object(), mixed_media_timing=None, montage_cadence=None)
     )
     assert plan_items._proposal_analysis_queue(proposal) == "creator-fidelity-v1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("client_change", ["omit_program", "replace_program", "change_title"])
+async def test_update_preserves_server_text_program_or_requires_replan(monkeypatch, client_change):
+    import json
+
+    from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
+    from app.pipeline.guided_story import compile_proposal_execution_plan
+    from app.schemas.edit_proposal import EditProposalSnapshotResponse
+    from app.schemas.text_composition import TextCompositionProgram
+    from app.services.creation_text_composition import _digest, _lanes
+
+    snapshot = _snapshot()
+    snapshot.title = snapshot.opening_title = "One step at a time"
+    base = compile_proposal_execution_plan(snapshot)
+    texts, slots = _lanes(base)
+    output = EditCopilotAgent(None).parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "confidence": 1.0,
+                "reply": "Prepared sequence",
+                "ops": [
+                    {
+                        "op": "replace_text_sequence",
+                        "selector": {"ids": ["guided-title"]},
+                        "segments": ["One", "step", "at", "a", "time"],
+                        "patch": {
+                            "animation_phases": {"entrance": "fade", "exit": "fade", "loop": "none"}
+                        },
+                    }
+                ],
+            }
+        ),
+        EditCopilotInput(
+            utterance="Show the title word by word",
+            variant_snapshot={
+                "text_bars": texts,
+                "slots": slots,
+                "editor_ops_version": 2,
+                "component_context_version": 1,
+                "allowed_op_families": ["text", "text_timeline"],
+            },
+        ),
+    )
+    assert output.ops
+    snapshot.text_composition = TextCompositionProgram(
+        base_digest=_digest(texts, slots), operations=output.ops
+    )
+    expected = compile_proposal_execution_plan(snapshot)
+    item = _draft_item()
+    current = parse_edit_proposal(item.edit_proposal)
+    current.draft = snapshot
+    item.edit_proposal = current.model_dump(mode="json")
+    original = item.edit_proposal
+    db = _patch_route_dependencies(monkeypatch, item, media_current=True)
+    public = EditProposalSnapshotResponse.model_validate(snapshot.model_dump(mode="json"))
+    client_snapshot = EditProposalSnapshot.model_validate(public.model_dump(mode="json"))
+    assert client_snapshot.text_composition is None
+    if client_change == "replace_program":
+        client_snapshot.text_composition = snapshot.text_composition.model_copy(
+            update={"operations": []}
+        )
+    elif client_change == "change_title":
+        client_snapshot.title = "A different title"
+    body = plan_items.UpdateEditProposalBody(expected_proposal_version=2, snapshot=client_snapshot)
+    if client_change == "change_title":
+        with pytest.raises(HTTPException) as exc:
+            await plan_items.update_item_edit_proposal(
+                str(item.id), body, SimpleNamespace(id=uuid.uuid4()), db
+            )
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == "proposal_replan_required"
+        assert item.edit_proposal == original
+        db.commit.assert_not_awaited()
+    else:
+        await plan_items.update_item_edit_proposal(
+            str(item.id), body, SimpleNamespace(id=uuid.uuid4()), db
+        )
+        persisted = parse_edit_proposal(item.edit_proposal)
+        assert persisted.draft.text_composition == snapshot.text_composition
+        assert compile_proposal_execution_plan(persisted.draft) == expected
+        db.commit.assert_awaited_once()

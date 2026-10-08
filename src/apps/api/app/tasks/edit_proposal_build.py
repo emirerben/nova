@@ -341,7 +341,10 @@ def _creator_request_for_guided_attempt(
         active_plan = session.active_plan if isinstance(session.active_plan, dict) else {}
         if active_plan.get("guided_generation_attempt_id") != attempt_id:
             continue
-        return str(active_plan.get("creator_request") or "")[:1000]
+        request = str(active_plan.get("creator_request") or "")
+        if len(request) > 12000:
+            raise ValueError("The complete creator request exceeds the planning limit")
+        return request
     return ""
 
 
@@ -2525,6 +2528,16 @@ def _run_draft_attempt(
                     ][:6]
                 }
             )
+        # Same composition lane for guided proposals, before they are offered for
+        # approval. Fail visibly on incomplete text behavior; never use the base
+        # proposal as a silent fallback after the composition step failed.
+        from app.services.creation_text_composition import compose_creation_text  # noqa: PLC0415
+
+        snapshot = compose_creation_text(
+            snapshot,
+            creator_request=brief.creator_request,
+            ctx=RunContext(plan_item_id=item_id, request_id=f"creation-text:{attempt_id}"),
+        )
         with sync_session() as db:
             locked = _locked_item(db, iid, ownership_epoch)
             item = locked[0] if locked else None

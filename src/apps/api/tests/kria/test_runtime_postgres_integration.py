@@ -3322,3 +3322,113 @@ async def _response_for(db, thread_id):  # noqa: ANN001, ANN202
     from app.routes.creation_threads import _response
 
     return await _response(db, await db.get(CreationThread, thread_id))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("history_size", [0, 11990, 12001])
+async def test_creation_approval_pins_raw_history_after_choice_and_recovers_overflow(
+    monkeypatch: pytest.MonkeyPatch, history_size: int
+) -> None:
+    from app.kria.brief_binding import BriefBinding
+    from app.tasks.kria_runtime import _full_creator_request_sync
+
+    user_id, thread_id, session_id = _seed_runtime_project()
+    original = (
+        "x" * history_size
+        if history_size
+        else (
+            "Title it 20K Kosu. Split the title into words "
+            "and animate each word after the previous one."
+        )
+    )
+    # Prior source instructions are present in the real event log but omitted
+    # from the deliberately shortened extracted brief returned by the provider.
+    with sync_session() as db:
+        db.add(
+            CreationThreadEvent(
+                thread_id=thread_id,
+                sequence=2,
+                revision=3,
+                role="user",
+                event_type="message",
+                content=original,
+            )
+        )
+        db.get(CreationThread, thread_id).revision = 3
+        db.commit()
+
+    async def planned(*_args, **_kwargs):
+        return PlannedKriaTurn(
+            plan=_brief_strategy_plan(),
+            manifest_hash="a" * 64,
+            context_hash="b" * 64,
+            brief_updates=_brief_updates()[:1],
+            brief_route="replan",
+            brief_clip_ids=("clip-1",),
+        )
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", planned)
+    try:
+        accepted = await _submit(user_id, thread_id, "1", 3)
+        result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        with sync_session() as db:
+            item_id = db.get(CreatorAgentSession, session_id).plan_item_id
+            heads = list(
+                db.execute(
+                    select(CreatorEditDraft).where(
+                        CreatorEditDraft.item_id == item_id, CreatorEditDraft.is_head.is_(True)
+                    )
+                ).scalars()
+            )
+            if history_size:
+                assert result["status"] == "completed"
+                assert heads == []
+                turn = db.get(CreatorAgentTurn, uuid.UUID(accepted.turn_id))
+                assert turn.plan_json["turn_value"] == "recovery"
+                assert "too long" in turn.plan_json["response"]
+                assert (
+                    db.execute(
+                        select(func.count())
+                        .select_from(CreativeBriefVersion)
+                        .where(CreativeBriefVersion.thread_id == thread_id)
+                    ).scalar_one()
+                    == 0
+                )
+                return
+            assert result["status"] == "awaiting_approval"
+            assert len(heads) == 1
+            binding = BriefBinding.model_validate(heads[0].snapshot_json["brief_binding"])
+            assert original in binding.creator_request
+            assert "Latest message: 1" in binding.creator_request
+            assert "Creative brief v1" in binding.creator_request
+            turn = db.get(CreatorAgentTurn, uuid.UUID(accepted.turn_id))
+            source = db.get(CreationThreadEvent, turn.source_event_id)
+            next_sequence = (
+                db.execute(
+                    select(func.max(CreationThreadEvent.sequence)).where(
+                        CreationThreadEvent.thread_id == thread_id
+                    )
+                ).scalar_one()
+                + 1
+            )
+            db.add(
+                CreationThreadEvent(
+                    thread_id=thread_id,
+                    sequence=next_sequence,
+                    revision=99,
+                    role="user",
+                    event_type="message",
+                    content="Later unrelated correction",
+                )
+            )
+            db.flush()
+            bounded = _full_creator_request_sync(
+                db, thread_id=thread_id, through_sequence=source.sequence
+            )
+            assert bounded == original + "\n1"
+            assert "Later unrelated" not in binding.creator_request
+    finally:
+        await async_engine.dispose()
