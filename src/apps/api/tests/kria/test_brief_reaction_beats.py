@@ -20,14 +20,19 @@ from app.agents._schemas.creator_agent import (
 )
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_checks import (
+    _SOUND_RE,
     MAX_REPLY_CHARS,
     PlanFacts,
+    _wants_beats,
     build_receipts,
     check_requirement,
     plan_facts_from_strategy,
     reply_from_receipts,
 )
-from app.services.creator_capabilities import repair_creator_reaction_beats
+from app.services.creator_capabilities import (
+    CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS,
+    repair_creator_reaction_beats,
+)
 
 _IMAGES = {
     "asset-badge.png": "BEST FOOD IN EUROPE badge",
@@ -227,6 +232,103 @@ def test_turkish_popin_request_is_recognised() -> None:
     req = _req("style", description="Pizza dediğimde kırmızı X çıkartmasını göster")
     facts = plan_facts_from_strategy(_strategy(_FOOD_BEATS), manifest=_manifest())
     assert check_requirement(req, facts).status == "met"
+
+
+# ------------------------------------------- KRI-540: Turkish passive / word forms
+
+_KADIKOY_VIDEO = "asset-153fa107-90a1-42ac-8dcb-9ec23f4693e7"
+
+
+def _kadikoy_manifest(*, video_cards: bool = True):
+    manifest = _manifest()
+    data = manifest.model_dump(mode="json")
+    data["media"].append({"media_id": _KADIKOY_VIDEO, "kind": "video", "label": "kahve demleme"})
+    if video_cards:
+        data["capabilities"][CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS] = {"available": True}
+    return ResolvedCreatorManifest.model_validate(data)
+
+
+_KADIKOY_BEATS = [
+    {
+        "beat_id": "kahve",
+        "trigger": "kahve",
+        "occurrence": "every",
+        "visual_role": "sticker",
+        "sound": "küçük bir fincan sesi",
+    },
+    {
+        "beat_id": "ilk-durak",
+        "trigger": "İlk durak",
+        "visual_id": _KADIKOY_VIDEO,
+        "occurrence": "first",
+        "visual_role": "photo",
+    },
+]
+_KADIKOY_SOUND = _req("audio", description="her 'kahve' kelimesinde küçük bir fincan sesi", id="r1")
+_KADIKOY_VIDEO_REQ = _req(
+    "select",
+    scope=f"clip:{_KADIKOY_VIDEO}",
+    id="r2",
+    description="'İlk durak' dendiğinde köşede küçük gösterilecek kahve demleme videosu",
+)
+
+
+def test_kadikoy_turkish_sound_and_video_beats_are_judged_not_unchecked() -> None:
+    manifest = _kadikoy_manifest()
+    facts = plan_facts_from_strategy(_strategy(_KADIKOY_BEATS), manifest=manifest)
+    assert facts.reaction_beat_count == 2  # the video visual survives approval's repair
+    for req in (_KADIKOY_SOUND, _KADIKOY_VIDEO_REQ):
+        receipt = check_requirement(req, facts)
+        assert receipt.status == "met", (req.id, receipt.reason)
+        assert receipt.verification != "unchecked"
+
+
+def test_kadikoy_video_beat_without_video_cards_is_not_claimed_as_met() -> None:
+    # Video cards off: approval drops the İlk durak beat, so the receipt must say so.
+    manifest = _kadikoy_manifest(video_cards=False)
+    facts = plan_facts_from_strategy(_strategy(_KADIKOY_BEATS), manifest=manifest)
+    assert facts.dropped_beat_triggers == ("İlk durak",)
+    receipt = check_requirement(_KADIKOY_VIDEO_REQ, facts)
+    assert receipt.status != "met"
+    assert receipt.verification != "unchecked"
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "'İlk durak' dendiğinde köşede video",
+        "her 'kahve' kelimesinde küçük bir fincan sesi",
+        "her 'kahve'de fincan sesi",
+        "her \u201ckahve\u201dda fincan sesi",
+        "her kahve'de fincan sesi",
+        "'kahve' geçtiğinde fincan sesi",
+        "kahve derken bir ses",
+        "'kahve' denince fincan sesi",
+        "KAHVE KELİMESİNİ duyunca zil çal",
+        "kahve sözcüğünde bir ses",
+        "Ilk durak dendiginde video goster",
+    ],
+)
+def test_turkish_passive_and_word_forms_are_beat_cues(description: str) -> None:
+    assert _wants_beats(_req("style", description=description)) is True
+
+
+@pytest.mark.parametrize(
+    "description",
+    ["use her photo as the title card", "pop her photo up at the start"],
+)
+def test_english_her_is_not_a_turkish_every_cue(description: str) -> None:
+    assert _wants_beats(_req("style", description=description)) is False
+
+
+@pytest.mark.parametrize("text", ["fincan sesi", "zil sesini çal", "kuş sesleri", "ses"])
+def test_sound_cue_is_suffix_tolerant(text: str) -> None:
+    assert _SOUND_RE.search(text)
+
+
+def test_sound_cue_does_not_match_silent() -> None:
+    assert not _SOUND_RE.search("sessiz")
+    assert not _SOUND_RE.search("sessiz bir video olsun")
 
 
 def test_plain_style_requirement_still_has_no_checker() -> None:
