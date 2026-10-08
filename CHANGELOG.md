@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.154.0] - 2026-10-08
+
+### Changed
+- feat(ios): edit text and titles right on the video (KRI-508) (#1468) <!-- release-pr: 1468 -->
+
 ## [0.78.153.0] - 2026-10-08
 
 ### Changed
