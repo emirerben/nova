@@ -32,6 +32,7 @@ from app.kria.brief import (
     render_brief_request,
 )
 from app.kria.brief_checks import (
+    NARRATED_ALIGNMENT_FIELD,
     build_receipts,
     is_judged,
     needs_creator_choice,
@@ -3577,6 +3578,9 @@ def _unified_montage_review(
 
     record = (job.assembly_plan or {}).get("unified_montage")
     if not isinstance(record, dict):
+        # KRI-533: a phone Voiceover edit keeps its receipts on its own record.
+        record = (job.assembly_plan or {}).get(NARRATED_ALIGNMENT_FIELD)
+    if not isinstance(record, dict):
         return default_text, []
     # KRI-282: what each requested group / sport name / chapter text did in the plan.
     # It is read from the finished plan, not the brief ledger, so it is listed even
@@ -3752,9 +3756,14 @@ def _approved_generation_review(
     if brief is None or not brief.live():
         return default_text, []
     generation = str(variant.get("render_generation_id") or "") or None
-    record = (job.assembly_plan or {}).get("unified_montage") or {}
     receipts = []
-    if record.get("generation_id") == generation and record.get("brief_version") == brief.version:
+    for record_key in ("unified_montage", NARRATED_ALIGNMENT_FIELD):
+        record = (job.assembly_plan or {}).get(record_key) or {}
+        if (
+            record.get("generation_id") != generation
+            or record.get("brief_version") != brief.version
+        ):
+            continue
         for row in record.get("requirement_receipts") or []:
             try:
                 receipt = RequirementReceipt.model_validate(row)
