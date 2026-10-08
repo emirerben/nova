@@ -1,6 +1,6 @@
 {
   "agent": "nova.creator.main",
-  "prompt_version": "2026-10-08-v51",
+  "prompt_version": "2026-10-08-v52",
   "input": {
     "user_message": "Put “Part 1” on the top left from 5s to 10s, and “Day one in Lisbon” at the bottom right during the first clip.",
     "creator_context": "City-break creator who posts short travel montages.",
