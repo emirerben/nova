@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.kria.brief import BriefRequirement
 from app.kria.brief_checks import PlanFacts, check_requirement
 
@@ -44,3 +46,20 @@ def test_plain_literal_title_remains_met_when_copy_matches() -> None:
         PlanFacts(title="Split the title text into words", title_source="creator"),
     )
     assert receipt.status == "met"
+
+
+@pytest.mark.parametrize("constraint", [None, "animation", "position", "sequence"])
+def test_chapter_list_copy_does_not_verify_requested_visual_behavior(constraint):
+    receipt = check_requirement(
+        BriefRequirement(
+            id="chapters",
+            kind="text",
+            scope="global",
+            literal="Morning, Afternoon, Evening",
+            facts={constraint: "requested"} if constraint else {},
+        ),
+        PlanFacts(texts=("Morning", "Afternoon", "Evening")),
+    )
+    assert receipt.status == ("partial" if constraint else "met")
+    if constraint:
+        assert receipt.reason == "I can't verify this one automatically yet."

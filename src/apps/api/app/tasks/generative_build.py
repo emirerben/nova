@@ -5849,6 +5849,11 @@ def _run_phone_unified_montage_job(
     Returns None when a fence says this delivery must not publish (cancelled,
     superseded owner/generation/sources). Never enters a media renderer.
     """
+    from app.kria.duplicate_uploads import (  # noqa: PLC0415
+        aliases_from_candidates,
+        collapse_strategy,
+        montage_record_fields,
+    )
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
     from app.pipeline.unified_montage import (  # noqa: PLC0415
         UnifiedClip,
@@ -5895,6 +5900,11 @@ def _run_phone_unified_montage_job(
     by_assignment_path = {str(row.get("gcs_path")): row for row in assignments}
     facts_on = settings.clip_facts_for(user_id)
     strategy = all_candidates.get("creator_strategy") or {}
+    # KRI-544: dispatch left a byte-identical copy out of `clip_paths`; an intent the
+    # resolver put on that copy (a chapter caption, an order rule) reads the kept one.
+    duplicate_aliases = aliases_from_candidates(all_candidates)
+    if duplicate_aliases and isinstance(strategy, dict):
+        strategy = collapse_strategy(strategy, duplicate_aliases)
     visuals = _load_unified_montage_visuals(
         job_id, selected=selected_visual_ids(strategy if isinstance(strategy, dict) else None)
     )
@@ -6001,6 +6011,9 @@ def _run_phone_unified_montage_job(
         ctx=RunContext(job_id=job_id, request_id=f"creation-text:{generation}"),
     )
     record = plan.record()
+    # KRI-544: which copies left the edit, readable by a requirement checker. Absent
+    # (byte-identical record) when nothing was collapsed.
+    record.update(montage_record_fields(duplicate_aliases))
     if brief is not None and brief.live():
         from app.kria.brief_checks import (  # noqa: PLC0415
             build_receipts,

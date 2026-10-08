@@ -27,6 +27,7 @@ from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_route import (
     END_KEYS,
     START_KEYS,
+    chapter_list,
     first_text,
     fold_text,
     loose_text,
@@ -3073,7 +3074,8 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         )
     else:
         found = any(_contains_text(t, wanted) for t in facts.texts)
-    if found:
+    # Chapter lists are satisfied by their separate labels, not a joined title.
+    if found or chapter_list(req.literal, facts.texts) is not None:
         # Copy presence cannot certify independently requested visual/temporal behavior.
         # Keep these explicit constraints unverified until their actual lane evidence is checked.
         if set(req.facts or {}) & {
