@@ -137,7 +137,7 @@ requirement. The Creator model must always emit `target_duration_s` and the serv
 compare a length the live brief carries. Main Creator prompt `2026-10-06-v44` emitted it for
 "8 second ... all my clips" and "20 second ... 6 best clips" but dropped "60 second montage of all
 my clips" (`brief_updates` empty), so a lost number meant a silent gate. Prompt `2026-10-07-v45`
-(and `brief_extractor` `2026-10-07-v2`, which shares the brief section) tells the model to emit a
+(and `brief_extractor` `2026-10-08-v3`, which shares the brief section) tells the model to emit a
 `timing` requirement with `duration_s` in the same turn for ANY stated length, alongside
 `target_duration_s`, and never to invent one when none was stated. Verified by a live re-record
 (2026-10-07, 6 Main Creator calls, real spend about $0.24): "60 second montage of all my clips"
@@ -150,6 +150,24 @@ clips") and, on 12-clip montages, picks `archetype: day_vlog`, which EXEMPTS the
 (`tests/fixtures/agent_evals/main_creator/kri470_gate_*`, with `_v44` before-pictures) replay
 structurally and ignore the prompt text; `tests/kria/test_creator_gate_live_cassettes.py` pins the
 model-output -> gate chain, including the archetype exemption.
+
+**Stated how-to details (KRI-522).** "Start with the blue video", "animated with typewriter",
+"bottom left" and "placeholder location" used to live only in the brief's prose, so a later
+turn (whose planner rebuilds `resolved_clip_intents` from the brief paraphrase) lost them and the
+order receipt still read "met". They are now structured brief `facts` (Main Creator `2026-10-08-v48`,
+`brief_extractor` `2026-10-08-v3`): order `first_clip` / `last_clip`, text `animation`
+(`typewriter|fade|pop|slide`), `position` (`top_left`..`bottom_right`) and `placeholder`
+(`app/schemas/text_style_intent.py`). `brief.apply_updates` keeps them across a same-kind,
+same-scope `change` (the hook's wording arriving later). Brief-on turns also hand the clip-intent
+planner the creator's own messages (`planner._load_raw_creator_request`), the only text a quote can
+be checked against. The contract turns a stated first/last clip with no seated order intent into an
+`unresolved` question (`clip_order_sequence.stated_anchors`); the order receipt is `partial` when
+the plan record has no met first/last outcome. `unified_montage.plan_unified_montage` reads
+animation / position / placeholder from the brief (else the strategy's `title_animation` /
+`label_position`) into the snapshot, and `guided_story._text_elements` draws them
+(`animation_phases` on the title, `LABEL_ANCHORS` for labels). Unset = byte-identical output.
+Guards: `tests/services/test_request_following_kri522.py`, overlay fixture
+`kri522_title_typewriter_and_corner_label.json`.
 
 | Kind | Evidence required | Detector | Options (all executable today) | Persisted field | Exempt (never asks) |
 | --- | --- | --- | --- | --- | --- |

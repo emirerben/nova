@@ -38,6 +38,7 @@ from app.services.choice_questions import (
 from app.services.clip_order_sequence import (
     apply_sequence,
     sequence_rows,
+    stated_anchors,
     unresolved_questions,
 )
 
@@ -308,6 +309,17 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "font_family",
         "text_color",
         note="applied as typed overrides at render time; typography is not verified",
+    ),
+    **_rules(
+        "upstream_resolved",
+        "unified_montage",
+        "title_animation",
+        "label_position",
+        note=(
+            "KRI-522: the montage planner reads them (strategy, else the brief's text facts) "
+            "into the snapshot; guided_story draws the entrance and the label corner. The "
+            "brief receipts judge them against the plan record"
+        ),
     ),
     **_rules(
         "upstream_resolved",
@@ -1134,7 +1146,23 @@ def build_render_contract(
         # pins that same seating, so an edit that does what the creator said still verifies.
         # Without a sequence rule nothing changes: `order_ids` stays the pure basis order.
         rows = sequence
-        if any(status != "resolved" for _position, _name, _members, status in rows):
+        # KRI-522: the brief remembers "starting with the blue video" even when this
+        # turn's planner dropped it. A stated first/last clip with no seated group is
+        # asked about, never silently left in plain filming order.
+        seated = {position for position, _name, _members, _status in rows}
+        unplaced = {
+            position: words
+            for position, words in stated_anchors(brief).items()
+            if position not in seated
+        }
+        if unplaced:
+            order_ids = ()
+            order_basis = None
+            unresolved.extend(
+                f"I couldn't tell which clip \"{words}\" means, so I can't confirm the order."
+                for words in unplaced.values()
+            )
+        elif any(status != "resolved" for _position, _name, _members, status in rows):
             order_ids = ()
             order_basis = None
             unresolved.extend(

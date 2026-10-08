@@ -1,6 +1,6 @@
 {
   "agent": "nova.creator.main",
-  "prompt_version": "2026-10-07-v46",
+  "prompt_version": "2026-10-08-v48",
   "input": {
     "user_message": "Now make the edit.",
     "creator_request": "Now make the edit.",

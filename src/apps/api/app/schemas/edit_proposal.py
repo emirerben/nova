@@ -30,6 +30,7 @@ from pydantic import (
 from app.agents._schemas.sfx_intent import LicensedSfxIntent
 from app.schemas.clip_intents import MAX_CLIP_INTENTS, ResolvedClipIntent
 from app.schemas.edit_frame_schedule import EditFrameSchedule
+from app.schemas.text_style_intent import LabelPosition, TitleAnimation
 from app.schemas.user_song import UserSongPlan
 
 # Keep existing integer JSON stable for approval hashes while accepting fractions.
@@ -877,6 +878,16 @@ class EditProposalSnapshot(BaseModel):
     text_color: str | None = Field(
         default=None,
         max_length=16,
+        exclude_if=lambda value: value is None,
+    )
+    # KRI-522: how the creator asked the opening title to enter and where they asked
+    # per-clip labels to sit. None is omitted so every earlier snapshot keeps its hash.
+    title_animation: TitleAnimation | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    label_position: LabelPosition | None = Field(
+        default=None,
         exclude_if=lambda value: value is None,
     )
     image_layout: BeatLayout | None = Field(
