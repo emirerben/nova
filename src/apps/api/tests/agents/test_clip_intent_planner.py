@@ -1270,3 +1270,293 @@ def test_real_chapter_captions_survive_the_style_and_title_guard(
     out = _agent().parse(raw, ClipIntentPlannerInput(creator_request=request_text))
     assert [i.op for i in out.intents] == ["caption"]
     assert out.silent_drops == {}
+
+
+# KRI-511: prod thread 2ef61a47 (phone Narrated, stress-test kit N2). The planner had
+# no way to say "leave this clip out": Flash invented `op: "exclude"` (a loud
+# rejection, so the creator was asked to restate it) or wrote `include`, which
+# FORCES the clip into the edit. "Show the balloons while I talk about the
+# balloons" came back with `order_by: "voiceover_match"` and was rejected too.
+_CAPPADOCIA_REQUEST = (
+    "The voiceover is in Turkish, but I want the subtitles in English so my foreign "
+    "followers understand. Spell the place names exactly: Göreme, Paşabağ, Avanos, "
+    "Kızılçukur. Show the balloons while I talk about the balloons, and end on the "
+    "sunset valley. Skip the quad bike clip."
+)
+
+
+def _cappadocia_input(request: str = _CAPPADOCIA_REQUEST) -> ClipIntentPlannerInput:
+    return ClipIntentPlannerInput(
+        creator_request=request, latest_user_message=request, clip_facts=True
+    )
+
+
+_BALLOONS = _games_intent(
+    "balloons",
+    "order",
+    "balloons",
+    "Show the balloons while I talk about the balloons",
+    position=None,
+)
+_SUNSET_LAST = _games_intent(
+    "sunset", "order", "sunset valley", "end on the sunset valley", position="last"
+)
+
+
+def test_kri511_prod_shape_keeps_both_orders_and_drops_the_skip_silently() -> None:
+    # The live capture that reproduced the prod reply (drop_classes op + order_by).
+    raw = json.dumps(
+        {
+            "intents": [
+                {**_BALLOONS, "order_by": "voiceover_match"},
+                {**_SUNSET_LAST, "order_by": None},
+                _games_intent(
+                    "exclude_quad_bike", "exclude", "quad bike clip", "Skip the quad bike clip"
+                ),
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _cappadocia_input())
+    assert [(i.op, i.attribute, i.position, i.order_by) for i in out.intents] == [
+        ("order", "balloons", None, None),
+        ("order", "sunset valley", "last", None),
+    ]
+    assert out.salvage_question is None
+    assert out.salvage_reasons == []
+    assert out.silent_drops == {"exclusion_dropped": 1}
+
+
+@pytest.mark.parametrize(
+    ("request_text", "quote"),
+    [
+        (_CAPPADOCIA_REQUEST, "Skip the quad bike clip"),
+        ("Make a montage and leave the quad bike clip out.", "leave the quad bike clip out"),
+        ("Fun edit. Don't use the blurry ones.", "Don't use the blurry ones"),
+        ("Fun edit, but without the drone shot.", "but without the drone shot"),
+        ("Remove the selfie clip please.", "Remove the selfie clip"),
+        ("Quad klibini kullanma.", "Quad klibini kullanma"),
+    ],
+)
+def test_kri511_include_minted_from_a_skip_is_dropped_never_inverted(
+    request_text: str, quote: str
+) -> None:
+    raw = json.dumps(
+        {
+            "intents": [_games_intent("skip", "include", "quad bike clip", quote)],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _cappadocia_input(request_text))
+    assert out.intents == []
+    assert out.salvage_question is None
+    assert out.silent_drops == {"exclusion_dropped": 1}
+
+
+@pytest.mark.parametrize("op", ["exclude", "Skip", "remove", "omit", "drop"])
+def test_kri511_invented_exclusion_op_is_silent_even_with_a_garbled_quote(op: str) -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                _BALLOONS,
+                _games_intent("x", op, "the quad bike", "skip quad bikes entirely"),
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _cappadocia_input())
+    assert [i.intent_id for i in out.intents] == ["balloons"]
+    assert out.salvage_question is None
+    assert out.silent_drops == {"exclusion_dropped": 1}
+
+
+@pytest.mark.parametrize(
+    ("request_text", "attribute", "quote"),
+    [
+        ("Skip the laundry, but the gym has to be in.", "gym", "the gym has to be in"),
+        ("Make sure you use the drone shot.", "drone shot", "Make sure you use the drone shot"),
+        ("Don't forget the drone shot.", "drone shot", "Don't forget the drone shot"),
+        (
+            "Use the voice behind a montage of the remaining clips (excluding the talk to camera "
+            "video).",
+            "the remaining clips (excluding the talk to camera video)",
+            "the remaining clips (excluding the talk to camera video)",
+        ),
+        ("Use every uploaded file.", "every uploaded file", "Use every uploaded file"),
+    ],
+)
+def test_kri511_real_include_asks_are_kept(request_text: str, attribute: str, quote: str) -> None:
+    raw = json.dumps(
+        {"intents": [_games_intent("keep", "include", attribute, quote)], "question": None}
+    )
+    out = _agent().parse(raw, ClipIntentPlannerInput(creator_request=request_text))
+    assert [i.op for i in out.intents] == ["include"]
+    assert out.silent_drops == {}
+
+
+@pytest.mark.parametrize(
+    ("order_by", "position", "quote", "expected"),
+    [
+        ("voiceover_match", None, "Show the balloons while I talk about the balloons", None),
+        ("voiceover", None, "Show the balloons while I talk about the balloons", None),
+        ("null", None, "Show the balloons while I talk about the balloons", None),
+        ("None", "last", "end on the sunset valley", None),
+        # A valid value the quote never asked for orders EVERY clip by filming time.
+        ("route", None, "Show the balloons while I talk about the balloons", None),
+    ],
+)
+def test_kri511_invented_or_unasked_order_by_becomes_null(
+    order_by: str, position: str | None, quote: str, expected: str | None
+) -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent("o", "order", "balloons", quote, position=position, order_by=order_by)
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _cappadocia_input())
+    assert len(out.intents) == 1
+    assert out.intents[0].order_by is expected
+    assert out.intents[0].position == position
+    assert out.salvage_question is None
+
+
+@pytest.mark.parametrize(
+    ("order_by", "expected"),
+    [("filming_order", "capture_time"), ("chronological", "capture_time"), ("my_route", "route")],
+)
+def test_kri511_filming_order_synonym_maps_onto_the_enum(order_by: str, expected: str) -> None:
+    request = "Put all clips in the order I filmed them."
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent(
+                    "o", "order", "all clips", "in the order I filmed them", order_by=order_by
+                )
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, ClipIntentPlannerInput(creator_request=request, clip_facts=True))
+    assert [i.order_by for i in out.intents] == [expected]
+
+
+def test_kri511_string_null_order_by_on_a_non_order_intent_is_repaired() -> None:
+    # Live run: every intent carried `"order_by": "null"`, so all three were rejected.
+    raw = json.dumps(
+        {
+            "intents": [
+                {**_BALLOONS, "order_by": "null"},
+                {**_SUNSET_LAST, "order_by": "null"},
+                _games_intent(
+                    "nl", "label", "place name", "Spell the place names exactly", order_by="null"
+                ),
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _cappadocia_input())
+    assert [(i.attribute, i.order_by) for i in out.intents] == [
+        ("balloons", None),
+        ("sunset valley", None),
+    ]
+    assert out.salvage_question is None
+
+
+@pytest.mark.parametrize(
+    ("op", "attribute", "quote", "extra", "reason"),
+    [
+        ("include", "subtitles", "I want the subtitles in English", {}, "speech_caption_dropped"),
+        (
+            "include",
+            "English subtitles",
+            "I want the subtitles in English",
+            {},
+            "speech_caption_dropped",
+        ),
+        (
+            "label",
+            "subtitles_language",
+            "I want the subtitles in English",
+            {},
+            "speech_caption_dropped",
+        ),
+        (
+            "label",
+            "place name",
+            "Spell the place names exactly: Göreme, Paşabağ, Avanos, Kızılçukur",
+            {},
+            "spelling_dropped",
+        ),
+        (
+            "include",
+            "exact place name spelling: Göreme",
+            "Spell the place names exactly: Göreme",
+            {},
+            "spelling_dropped",
+        ),
+        (
+            "caption",
+            "the place name Göreme in subtitles",
+            "Spell the place names exactly: Göreme",
+            {"caption_attribute": "Göreme"},
+            "spelling_dropped",
+        ),
+        (
+            "caption",
+            "the balloon clips",
+            "Spell the place names exactly: Göreme",
+            {"creator_text": "Göreme"},
+            "spelling_dropped",
+        ),
+    ],
+)
+def test_kri511_spoken_caption_instructions_are_not_clip_operations(
+    op: str, attribute: str, quote: str, extra: dict, reason: str
+) -> None:
+    raw = json.dumps(
+        {
+            "intents": [_BALLOONS, _games_intent("s", op, attribute, quote, **extra)],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, _cappadocia_input())
+    assert [i.intent_id for i in out.intents] == ["balloons"]
+    assert out.salvage_question is None
+    assert out.silent_drops == {reason: 1}
+
+
+@pytest.mark.parametrize(
+    ("request_text", "attribute", "quote"),
+    [
+        (
+            "Add subtitles and label the city in each clip.",
+            "city in each clip",
+            "label the city in each clip",
+        ),
+        (
+            "Label each place: Alfama, LX Factory, Pink Street.",
+            "place",
+            "Label each place: Alfama, LX Factory, Pink Street",
+        ),
+    ],
+)
+def test_kri511_real_labels_beside_captions_are_kept(
+    request_text: str, attribute: str, quote: str
+) -> None:
+    raw = json.dumps({"intents": [_games_intent("l", "label", attribute, quote)], "question": None})
+    out = _agent().parse(raw, ClipIntentPlannerInput(creator_request=request_text))
+    assert [i.op for i in out.intents] == ["label"]
+    assert out.silent_drops == {}
+
+
+def test_kri511_prompt_teaches_exclusions_narration_order_and_caption_text() -> None:
+    prompt = " ".join(_agent().render_prompt(_cappadocia_input()).split())
+    assert "No other op exists." in prompt
+    assert "Never write it as `include`" in prompt
+    assert "Skip the quad bike clip" in prompt
+    assert "show the balloons while I talk about the balloons" in prompt
+    assert "A list of names to spell is never a request to label clips" in prompt
+    assert 'never the string "null"' in prompt
