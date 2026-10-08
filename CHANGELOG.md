@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.161.0] - 2026-10-08
+
+### Changed
+- feat(kria): whole-video corner text and honest planner-failure copy (KRI-523) (#1480) <!-- release-pr: 1480 -->
+
 ## [0.78.160.0] - 2026-10-08
 
 ### Changed
