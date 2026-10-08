@@ -37,6 +37,7 @@ from app.kria.brief_checks import (
     is_judged,
     needs_creator_choice,
     plan_facts_from_editor_payload,
+    plan_facts_from_phone_variant,
     plan_facts_from_strategy,
     reply_from_receipts,
     requirements_to_check_at_draft,
@@ -1834,13 +1835,17 @@ def _fail_turn(
         return None
 
 
-# 150 s soft limit: a clip-intent turn measured ~70 s of model + vision work, and may
+# 200 s soft limit: a clip-intent turn measured ~70 s of model + vision work, and may
 # also wait (bounded by this limit, see `turn_deadline`) for clip analysis in flight.
+# KRI-542: the Main Creator's own deadline is 130 s (thinking "high" on a 16k
+# budget), and a truncated call is retried once at "low" (~35-45 s), so a degraded
+# turn needs ~175 s before the resolver runs. Both limits stay far under the
+# broker's 1900 s visibility_timeout (tests/tasks/test_task_time_limits.py).
 @celery_app.task(
     bind=True,
     name="tasks.run_kria_turn",
-    soft_time_limit=150,
-    time_limit=180,
+    soft_time_limit=200,
+    time_limit=230,
     max_retries=0,
 )
 def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
@@ -3779,7 +3784,9 @@ def _approved_generation_review(
             if receipt.brief_version == brief.version and receipt.generation_id == generation:
                 receipts.append(receipt)
     known = {receipt.requirement_id for receipt in receipts}
-    facts = plan_facts_from_editor_payload(variant)
+    # KRI-537: the variant's phone_beat_receipt and voiceover_bed_level are the render's
+    # evidence for pop-in and mix asks; the text-lane facts alone cannot see them.
+    facts = plan_facts_from_phone_variant(variant)
     receipts.extend(
         build_receipts(
             [req for req in brief.live() if req.id not in known], facts, include_unchecked=True

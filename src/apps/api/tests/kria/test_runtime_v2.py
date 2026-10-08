@@ -1267,7 +1267,8 @@ async def test_live_planner_knows_the_turn_soft_deadline(monkeypatch: pytest.Mon
         lease_epoch=1,
     )
 
-    assert run_kria_turn.soft_time_limit == 150
+    # KRI-542: 130 s Main Creator deadline + one "low" retry + the resolver.
+    assert run_kria_turn.soft_time_limit == 200
     assert run_kria_turn.time_limit > run_kria_turn.soft_time_limit
     assert seen[0] == pytest.approx(started + run_kria_turn.soft_time_limit, abs=1.0)
     assert planner_turn_deadline.get() is None, "the deadline never leaks out of the turn"

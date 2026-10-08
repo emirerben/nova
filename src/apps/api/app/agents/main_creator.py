@@ -450,13 +450,13 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         # `max_attempts - 1` is otherwise unreachable dead configuration.
         max_attempts=3,
         backoff_s=(2.0,),
-        # Generation time grows with thinking + answer tokens: ~4.7 s + 5.7 ms
-        # per token in prod, up to 2 s slower (the latency model in
-        # tests/agents/test_thinking_budget.py). At that worst case a
-        # heavy-thinking reaction-beat plan takes ~38 s, and the full
-        # `max_output_tokens` budget runs out (~54 s) before this deadline, so a
-        # runaway call truncates (retryable) instead of ending outcome-unknown.
-        timeout_s=60.0,
+        # Generation time grows with thinking + answer tokens: ~5.2 s + 7.3 ms
+        # per token on an 18.8k-token manifest at thinking "high" (KRI-542 fit,
+        # 2026-10-08; the latency model in tests/agents/test_thinking_budget.py).
+        # The full `max_output_tokens` budget runs out (~124 s) before this
+        # deadline, so a runaway call truncates (retried once at "low") instead
+        # of ending outcome-unknown. A typical "high" call there takes 57-106 s.
+        timeout_s=130.0,
         # Reserve output capacity for the full source manifest.
         thinking_level="high",
         sensitive_io=True,
@@ -472,8 +472,13 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
     # Gemini 3 counts thinking against this budget. A reaction-beat plan alone
     # runs ~2.4k answer tokens (KRI-172 football prompt), so 4,096 truncated any
     # such turn that thought for more than ~1.7k tokens (prod thread 9b6594a6
-    # thought 3,047 and failed at MAX_TOKENS on 2026-09-24).
-    max_output_tokens = 8_192
+    # thought 3,047 and failed at MAX_TOKENS on 2026-09-24). At thinking "high"
+    # (PR 1485) an 18.8k-token manifest thinks 5.9k-13k tokens (KRI-542, prod
+    # thread 74dfc456: 8,192 left 315 for the plan and the turn dead-ended; five
+    # 16k-budget replays thought 5,878 / 7,603 / 8,540 / 12,956 / ~7.7k). 16,384
+    # fits the heaviest observed call with ~2.5k to spare; past it the runtime
+    # retries once at "low".
+    max_output_tokens = 16_384
 
     def required_fields(self) -> list[str]:
         return ["action"]

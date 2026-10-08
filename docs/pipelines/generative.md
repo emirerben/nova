@@ -576,6 +576,23 @@ since carry the spelled-out look whether or not the Save carried the text lane.
 Editor round trip, every reader and reburn:
 `tests/routes/test_narrated_storyboard_editor.py`.
 
+### Phone Voiceover pop-in and mix receipts (KRI-537)
+
+The phone narrated worker persists two pieces of render evidence on the variant:
+`phone_beat_receipt` (`placed` rows with `trigger`, `at_s`, `end_s`; `unplaced` rows
+with a `reason`) and `voiceover_bed_level` (footage gain under the voice, 0.25 in
+prod). The render-ready review (`_approved_generation_review`) builds its facts with
+`plan_facts_from_phone_variant`, which is `plan_facts_from_editor_payload` plus those
+two fields, so a finished render is judged on what it did rather than on text lanes
+alone. A `timing`-kind "when the voiceover says X, show my photo" ask is a pop-in ask:
+the beat checker judges it at draft from the strategy beats and at render from the
+variant receipt (met with the placement times; a trigger in `unplaced` is partial,
+"never heard"). "Keep crowd noise quiet under the voiceover" goes to the bed-under-voice
+checker (met with the bed percentage once the level is known; a mute ask is a format
+limit, since the bed only ducks). A variant with neither field behaves as before:
+`unchecked`, "Couldn't verify". Guards: `tests/kria/test_brief_marathon_receipts.py`,
+`tests/tasks/test_marathon_render_ready_review.py`.
+
 ### Narrated render receipts (KRI-533)
 
 A phone Voiceover draft used to list every order / timing / caption-language ask as
