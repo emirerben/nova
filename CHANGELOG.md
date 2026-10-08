@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.150.0] - 2026-10-08
+
+### Changed
+- fix(clip-intents): "skip the X clip" never becomes include; voiceover-matched order is kept (KRI-511) (#1471) <!-- release-pr: 1471 -->
+
 ## [0.78.149.0] - 2026-10-07
 
 ### Changed
