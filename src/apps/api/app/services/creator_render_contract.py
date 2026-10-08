@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.kria.brief import CreativeBrief
+from app.kria.brief_route import chapter_list
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
@@ -1674,6 +1675,16 @@ def verify_phone_recipe(
     rendered = text_layers()
     for requirement in contract.exact_texts:
         matches = [row for row in rendered if row[0] == _normal(requirement.text)]
+        if (
+            not matches
+            and requirement.role == "any"
+            and requirement.duration_s is None
+            and chapter_list(requirement.text, [row[0] for row in rendered]) is not None
+        ):
+            # KRI-545: a brief literal that lists chapter names ("Sabah, Üniversite, Akşam")
+            # is drawn as those names, each its own label layer on its clips, never as one
+            # line. Every name must still be a whole visible layer.
+            continue
         if not matches:
             raise _phone_decline(
                 "exact_texts",
