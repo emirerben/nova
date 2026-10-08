@@ -378,6 +378,31 @@ P2/P4 receipts; `ordering_basis` is `capture_time`, `attachment`, or
 semantic/snapshot planners that never read facts). A receipt must read this
 field, never assume a resolved `order_by` intent was honored.
 
+**Chapter captions under a filming-time order (KRI-516).** "Order by when I filmed
+them; chapters: Sabah, Üniversite, Öğle arası, Spor, Akşam" makes each chapter one
+stretch of the day. When the planner extracted an `order_by` intent,
+`plan_and_resolve_clip_intents` passes `filming_order=True` to
+`resolve_clip_intents_for_turn`. The resolver then reads the clips in
+`order_by_capture_time` order, each record carrying `filmed_order` (its 1-based
+place, never the time itself), and prompt `clip_request_resolver` 2026-10-08.1
+treats creator-written caption intents as consecutive runs in the creator's listed
+order. Shards are contiguous stretches of filming time.
+
+A deterministic backstop follows: `keep_chapters_in_filming_order` keeps the
+largest-confidence set of chapter memberships that reads forward in filming order
+(one chapter per clip) and drops the rest, logging
+`clip_intent_chapter_order_repaired`. An unlabelled clip continues the chapter
+before it, so a backwards title never prints. It is a no-op when the chapters
+already read forward, when a chapter's text isn't found as a phrase in the request,
+or when fewer than two clips carry a capture time. Calls without an `order_by`
+intent are unchanged (no `filming_order` kwarg).
+
+Incident: stress kit M3, prod thread 0b1f9556. The 18:55 fridge and 19:30 cooking
+clips were labelled "Öğle arası" after "Spor". Old prompt: 0/6 live runs forward.
+New prompt: cooking + bridge in Akşam 20/20, the whole sequence forward 17/20, and
+20/20 with the guard. Guards: `tests/services/test_chapter_filming_order.py` and the
+`kri516_*` resolver goldens.
+
 **Not covered yet.** The semantic planner (`EDIT_PROPOSAL_SEMANTIC_ENABLED`),
 the snapshot replan/direction-replacement planners and the editor-op tool
 (KRI-191) do not read facts; fast_montage ignores `order_by`. Both record
