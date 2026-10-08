@@ -91,11 +91,15 @@ _KRI178_FIXTURE = (
     Path(__file__).resolve().parents[1]
     / "fixtures/agent_evals/main_creator/kri178_talking_reaction_beats.json"
 )
-# `nova.creator.main` latency over its 16 prod runs on 2026-09-23/24, fitted as
-# first-token time + time per generated (thinking + answer) token. The
-# first-token term includes the worst residual (+2.0 s).
-_FIRST_TOKEN_S = 6.7
-_S_PER_TOKEN = 0.00573
+# `nova.creator.main` latency fitted as first-token time + time per generated
+# (thinking + answer) token. The 2026-09-23/24 fit over 16 prod runs (small
+# manifests, thinking "low") was 6.7 s + 5.73 ms/token. KRI-542 (2026-10-08):
+# four single-call replays of an 18.8k-token manifest at thinking "high" with a
+# 16k budget measured (7,083 tok, 56.7 s), (8,724, 66.6 s), (9,586, 75.9 s),
+# (13,853, 105.9 s): 5.2 s + 7.27 ms/token. The steeper per-token slope is the
+# one the budget/timeout invariant below has to survive.
+_FIRST_TOKEN_S = 5.2
+_S_PER_TOKEN = 0.00727
 
 
 class _SharedBudgetGemini(ModelClient):
@@ -190,8 +194,11 @@ def test_runaway_main_creator_call_ends_as_one_truncation_not_an_unknown_outcome
     from app.agents.main_creator import MainCreatorAgent
 
     fixture = json.loads(_KRI178_FIXTURE.read_text())
+    # Thinks the whole budget away at every level: nothing is left for the answer.
     client = _SharedBudgetGemini(
-        answer=fixture["raw_text"], thinking_tokens=7_000, answer_tokens=2_380
+        answer=fixture["raw_text"],
+        thinking_tokens=MainCreatorAgent.max_output_tokens,
+        answer_tokens=2_380,
     )
 
     with pytest.raises(TerminalError, match="output truncated") as failure:
@@ -231,9 +238,11 @@ def test_main_creator_truncated_at_high_thinking_is_retried_once_at_low(
         runtime_mod.log, "warning", lambda event, **kw: warnings.append((event, dict(kw)))
     )
     fixture = json.loads(_KRI178_FIXTURE.read_text())
+    # The prod shape: thinking leaves ~300 tokens of the budget for the plan.
+    high_thinking = MainCreatorAgent.max_output_tokens - 300
     client = _SharedBudgetGemini(
         answer=fixture["raw_text"],
-        thinking_tokens=7_900,
+        thinking_tokens=high_thinking,
         answer_tokens=2_380,
         thinking_tokens_by_level={"low": 1_500},
     )
@@ -244,7 +253,7 @@ def test_main_creator_truncated_at_high_thinking_is_retried_once_at_low(
     assert [c["thinking_level"] for c in client.calls] == ["high", "low"]
     [run] = runs
     assert (run["outcome"], run["attempts"], run["thinking_degraded"]) == ("ok", 2, True)
-    assert run["tokens_thoughts"] == 7_900 + 1_500
+    assert run["tokens_thoughts"] == high_thinking + 1_500
     [(event, degraded)] = warnings
     assert event == "agent_thinking_degraded"
     assert (degraded["from_level"], degraded["to_level"], degraded["attempt"]) == ("high", "low", 1)
@@ -262,7 +271,9 @@ def test_main_creator_truncated_at_low_thinking_is_terminal_after_one_call() -> 
 
     fixture = json.loads(_KRI178_FIXTURE.read_text())
     client = _SharedBudgetGemini(
-        answer=fixture["raw_text"], thinking_tokens=7_000, answer_tokens=2_380
+        answer=fixture["raw_text"],
+        thinking_tokens=MainCreatorAgent.max_output_tokens,
+        answer_tokens=2_380,
     )
 
     with pytest.raises(TerminalError, match="output truncated"):
