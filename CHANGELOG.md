@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.173.0] - 2026-10-08
+
+### Fixed
+- fix(kria): scope editor-turn receipts, keep text heights on align, no reload flash (KRI-529) (#1489) <!-- release-pr: 1489 -->
+
 ## [0.78.172.0] - 2026-10-08
 
 ### Changed
