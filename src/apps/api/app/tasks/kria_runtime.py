@@ -37,6 +37,7 @@ from app.kria.brief_checks import (
     is_judged,
     needs_creator_choice,
     plan_facts_from_editor_payload,
+    plan_facts_from_phone_variant,
     plan_facts_from_strategy,
     reply_from_receipts,
     requirements_to_check_at_draft,
@@ -3783,7 +3784,9 @@ def _approved_generation_review(
             if receipt.brief_version == brief.version and receipt.generation_id == generation:
                 receipts.append(receipt)
     known = {receipt.requirement_id for receipt in receipts}
-    facts = plan_facts_from_editor_payload(variant)
+    # KRI-537: the variant's phone_beat_receipt and voiceover_bed_level are the render's
+    # evidence for pop-in and mix asks; the text-lane facts alone cannot see them.
+    facts = plan_facts_from_phone_variant(variant)
     receipts.extend(
         build_receipts(
             [req for req in brief.live() if req.id not in known], facts, include_unchecked=True
