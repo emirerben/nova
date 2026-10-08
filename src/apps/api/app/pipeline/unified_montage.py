@@ -57,11 +57,13 @@ from app.kria.brief_route import (
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.edit_proposal import (
     CREATOR_SELECTED_ORIENTATION_REASON,
+    MAX_CREATOR_PINNED_TEXTS,
     MAX_PROPOSAL_DURATION_S,
     ClipLabel,
     EditProposalSnapshot,
     FastMontageCut,
     MediaRef,
+    PinnedText,
     StoryBeat,
     canonical_media_digest,
 )
@@ -444,6 +446,11 @@ class UnifiedMontagePlan:
         )
         song = {"user_song": dict(self.song_receipt)} if self.song_receipt else {}
         speech = {"closing_speech": dict(self.closing_speech)} if self.closing_speech else {}
+        pins = (
+            {"pinned_texts": [pin.model_dump(mode="json") for pin in self.snapshot.pinned_texts]}
+            if self.snapshot.pinned_texts
+            else {}
+        )
         return {
             "version": 1,
             "brief_version": self.brief_version,
@@ -471,6 +478,7 @@ class UnifiedMontagePlan:
             "endpoint_places": dict(self.endpoint_places),
             **visuals,
             **closing_title,
+            **pins,
             **scope,
             **outcomes,
             **choice,
@@ -1097,12 +1105,19 @@ def plan_unified_montage(
     # ── title and typography ─────────────────────────────────────────────────
     title, title_source = _title(strategy, view)
     closing = _nfc(strategy.get("closing_title")) or None
+    pins = _pinned_texts(strategy)
     requested_font = strategy.get("font_family")
     requested_font = requested_font if isinstance(requested_font, str) and requested_font else None
     labelled_before = set(labels)
     family, title, closing, labels = _fit_typography(
-        font_covers, requested_font, title, closing, labels
+        font_covers,
+        requested_font,
+        title,
+        closing,
+        labels,
+        extra_texts=[pin.text for pin in pins],
     )
+    pins = _fit_pins(pins, family or requested_font or _DEFAULT_FONT, font_covers)
     for media_id in ordered_ids(ordered):
         if media_id in labelled_before - set(labels):
             dropped.append(media_id)
@@ -1316,6 +1331,8 @@ def plan_unified_montage(
     snapshot_kwargs: dict[str, Any] = {}
     if closing:
         snapshot_kwargs["closing_title"] = closing
+    if pins:
+        snapshot_kwargs["pinned_texts"] = pins
     image_layout = strategy.get("image_layout")
     if image_layout in ("fullscreen", "supporting_card") and any(
         clip.kind == "image" for clip in ordered
@@ -1445,6 +1462,8 @@ def _fit_typography(
     title: str | None,
     closing: str | None,
     labels: dict[str, ClipLabel],
+    *,
+    extra_texts: Sequence[str] = (),
 ) -> tuple[str | None, str | None, str | None, dict[str, ClipLabel]]:
     """Pick the first bundled font that can draw every string, keeping Unicode.
 
@@ -1453,7 +1472,11 @@ def _fit_typography(
     """
     if covers is None:
         return requested, title, closing, labels
-    texts = [text for text in (title, closing, *(label.text for label in labels.values())) if text]
+    texts = [
+        text
+        for text in (title, closing, *(label.text for label in labels.values()), *extra_texts)
+        if text
+    ]
     candidates = list(dict.fromkeys(f for f in (requested, _DEFAULT_FONT, *_FALLBACK_FONTS) if f))
     chosen = next(
         (family for family in candidates if all(covers(family, text) for text in texts)), None
@@ -1472,6 +1495,33 @@ def _fit_typography(
         labels = fixed
     keep = requested is not None or chosen != _DEFAULT_FONT
     return (chosen if keep else None), title, closing, labels
+
+
+def _pinned_texts(strategy: Mapping[str, Any]) -> list[PinnedText]:
+    """KRI-523: the creator's whole-video corner text, as confirmed on the strategy."""
+    pins: list[PinnedText] = []
+    for raw in strategy.get("pinned_texts") or []:
+        if not isinstance(raw, Mapping):
+            continue
+        try:
+            pins.append(PinnedText(text=_nfc(raw.get("text")), corner=raw.get("corner")))
+        except ValidationError:
+            continue
+    return pins[:MAX_CREATOR_PINNED_TEXTS]
+
+
+def _fit_pins(
+    pins: list[PinnedText], family: str, covers: Callable[[str, str], bool] | None
+) -> list[PinnedText]:
+    """Drop only the glyphs the chosen font cannot draw; a pin never vanishes silently."""
+    if covers is None:
+        return pins
+    fitted: list[PinnedText] = []
+    for pin in pins:
+        text = pin.text if covers(family, pin.text) else _strip_uncovered(pin.text, family, covers)
+        if text:
+            fitted.append(pin.model_copy(update={"text": text}))
+    return fitted
 
 
 def _described_shot_labels(strategy: Mapping[str, Any], enabled: bool) -> dict[str, str]:
@@ -1703,6 +1753,17 @@ def _title(strategy: Mapping[str, Any], view: BriefView) -> tuple[str | None, st
     confirmed = _nfc(strategy.get("opening_title"))
     if confirmed:
         return confirmed[:280], "creator"
+    pins = _pinned_texts(strategy)
+    if pins:
+        # KRI-523: the creator's "title" words were pinned to a corner for the whole video
+        # (the brief records them as a title/global literal too). Burning them again as a
+        # centred opening title would show every pinned line twice, and a labelled edit shows
+        # only confirmed copy. A genuinely different title literal still stands.
+        pinned = {fold_text(pin.text) for pin in pins}
+        literal = _nfc(view.title_literal)
+        if literal and fold_text(literal) not in pinned:
+            return literal[:280], "creator"
+        return None, "none"
     if view.title_literal:
         return _nfc(view.title_literal)[:280], "creator"
     start = _first(view.facts, _START_KEYS)

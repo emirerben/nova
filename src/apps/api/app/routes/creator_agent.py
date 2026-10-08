@@ -576,6 +576,7 @@ _PINNED_STRATEGY_FIELDS_ON_REFRESH: tuple[str, ...] = (
     "opening_title",
     "closing_title",
     "shot_labels",
+    "pinned_texts",
     "clip_intents",
     "audio_strategy",
     "video_reuse_policy",
@@ -1184,6 +1185,7 @@ def _apply_explicit_render_intent(
             "opening_title_duration_s",
             "shot_labels",
             "closing_title",
+            "pinned_texts",
         ):
             quote = _grounded_excerpt(render_intent_evidence, field, creator_sources)
             if quote is None:
@@ -1196,6 +1198,9 @@ def _apply_explicit_render_intent(
                     continue
             if field == "shot_labels" and value is not None:
                 if not all(" ".join(label.split()) in quote for label in value):
+                    continue
+            if field == "pinned_texts" and value is not None:
+                if not all(" ".join(pin.text.split()) in quote for pin in value):
                     continue
             if field == "opening_title_duration_s" and value is not None:
                 if not _excerpt_states_seconds(quote, value):
@@ -1210,6 +1215,7 @@ def _apply_explicit_render_intent(
         "opening_title_duration_s": None,
         "shot_labels": None,
         "closing_title": None,
+        "pinned_texts": None,
         "image_layout": None,
         "licensed_sfx": None,
         "execution_contract": strategy.execution_contract,
@@ -3681,6 +3687,7 @@ async def _run_planning_turn(
                             "opening_title_duration_s": strategy.opening_title_duration_s,
                             "shot_labels": strategy.shot_labels,
                             "closing_title": strategy.closing_title,
+                            "pinned_texts": strategy.pinned_texts,
                             "font_family": strategy.font_family,
                             "text_color": strategy.text_color,
                             # Grounded evidence re-verifies this below; without
@@ -4212,6 +4219,7 @@ def _seed_guided_specialist_brief(
         "opening_title_duration_s": plan.strategy.opening_title_duration_s,
         "shot_labels": plan.strategy.shot_labels,
         "closing_title": plan.strategy.closing_title,
+        "pinned_texts": plan.strategy.pinned_texts,
         "font_family": plan.strategy.font_family,
         "text_color": plan.strategy.text_color,
         "image_layout": plan.strategy.image_layout,

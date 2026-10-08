@@ -2700,6 +2700,51 @@ def test_overlay_display_schema_defaults_and_omits_when_unset() -> None:
         )
 
 
+# -- KRI-523: whole-video corner text (`pinned_texts`) ---------------------------------
+
+_PINS = [{"text": "Part 1", "corner": "bottom_left"}]
+
+
+def _pinned_strategy(**overrides) -> CreativeStrategy:  # noqa: ANN003
+    fields = {
+        "direction": "guided_story",
+        "edit_format": "montage",
+        "audio_strategy": "licensed_music",
+        "render_program": "guided",
+        "pinned_texts": _PINS,
+        **overrides,
+    }
+    return CreativeStrategy(**fields)
+
+
+def test_pinned_texts_compile_on_a_guided_montage(monkeypatch) -> None:
+    _enable_guided(monkeypatch)
+    manifest = _phone_manifest(monkeypatch, "montage", [{"media_id": "phone-a", "kind": "video"}])
+    plan = capabilities.compile_strategy_to_plan(manifest, _pinned_strategy())
+    assert [pin.text for pin in plan.strategy.pinned_texts] == ["Part 1"]
+
+
+def test_pinned_texts_are_refused_where_the_guided_compiler_cannot_draw_them(
+    monkeypatch,
+) -> None:
+    """Fail at planning time instead of approving a draft whose receipt reads "met" while the
+    words never reach the screen."""
+    monkeypatch.setattr(capabilities.settings, "guided_edit_capability_enabled", False)
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-cloud",
+        edit_format="montage",
+        media=[{"media_id": "phone-a", "kind": "video"}],
+    )
+    with pytest.raises(CreatorStrategyError, match="pinned_texts") as exc_info:
+        capabilities.compile_strategy_to_plan(
+            manifest,
+            _pinned_strategy(
+                direction="fast_montage", render_program="native", selected_media_ids=["phone-a"]
+            ),
+        )
+    assert exc_info.value.code == "unsupported_treatment"
+
+
 # --- KRI-519: reaction beats on a phone Voiceover edit ------------------------
 
 
