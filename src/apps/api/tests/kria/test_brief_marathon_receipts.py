@@ -172,10 +172,12 @@ def test_the_marathon_brief_is_fully_judged_at_draft_time() -> None:
 
     assert set(receipts) == {"r1", "r2", "r3", "r4", "r5"}
     assert receipts["r1"].status == "met"
-    # The cleanup line is unchanged: still the honest "choose Clean up speech" partly.
+    # The cleanup line is still the honest "choose Clean up speech" partly. KRI-541: "the
+    # restart of the kilometer thirty sentence" is a retake, which cleanup never cuts.
     assert receipts["r2"].status == "partial"
     assert receipts["r2"].reason == (
-        "Choose Clean up speech when you approve and the long pauses are cut"
+        "Choose Clean up speech when you approve and the long pauses are cut; "
+        "a retake or a specific line isn't cut automatically yet, so trim that in the editor"
     )
     assert receipts["r3"].status == "met"
     assert receipts["r3"].reason == "Your footage sound plays under your voice"
@@ -402,8 +404,12 @@ def test_a_timing_ask_with_no_number_and_no_cue_stays_unverifiable() -> None:
 
 def test_the_pause_cut_ask_still_goes_to_the_cleanup_checker() -> None:
     receipt = check_requirement(R2, _draft_facts(speech_cleanup_enabled=True))
-    assert receipt.status == "met"
-    assert receipt.reason is None
+    # KRI-541: R2 also names "the restart of the kilometer thirty sentence", a retake the
+    # cleanup never cuts: still the cleanup checker, an honest format-limit "Partly".
+    assert receipt.status == "partial"
+    assert receipt.reason.startswith("Speech cleanup cuts the long pauses")
+    assert "trim that in the editor" in receipt.reason
+    assert is_format_limit(receipt.reason)
     offered = check_requirement(R2, _draft_facts())
     assert offered.status == "partial"
     assert is_format_limit(offered.reason)
