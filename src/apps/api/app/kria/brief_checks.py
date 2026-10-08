@@ -9,8 +9,9 @@ and never labels an unchecked ask "Partly".
 
 Checks implemented: per-clip text coverage, ordering vs the requested key,
 duration within +/-10%, literal on-screen text, "keep my whole take" on a
-single-clip subtitled edit, and word-triggered pop-ins (reaction beats) plus the
-closing shot on a phone Talking edit.
+single-clip subtitled edit, word-triggered pop-ins (reaction beats) plus the
+closing shot on a phone Talking edit, and (KRI-546) a finished phone montage's
+held closing line and repeated video files.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
-from app.kria.brief import BriefRequirement, CreativeBrief
+from app.kria.brief import BriefRequirement, CreativeBrief, normalize_style_intent
 from app.kria.brief_route import (
     END_KEYS,
     START_KEYS,
@@ -122,6 +123,38 @@ class NarratedStepFact:
 
 
 @dataclass(frozen=True)
+class TextStyleRow:
+    """One non-caption on-screen text row's style as saved (KRI-543).
+
+    ``kind`` is the editor's own title/label/text classification. A style field is None
+    when the saved row does not say (an unset font or color falls back to a renderer
+    default we do not read), so a check on it stays "can't verify" instead of guessing.
+    """
+
+    id: str
+    kind: str = "text"
+    entrance: str | None = None
+    alignment: str | None = None
+    text_case: str | None = None
+    font_family: str | None = None
+    color: str | None = None
+
+
+@dataclass(frozen=True)
+class ClosingSpeechFact:
+    """The spoken line a finished phone montage holds whole on its closing clip (KRI-546).
+
+    Read off the plan record (`unified_montage.closing_speech`, recorded only when the
+    creator's own "last" ask seated the clip, it speaks and the camera audio is kept) and
+    confirmed against the finished timeline: the clip is last and its cut covers the line.
+    """
+
+    media_id: str
+    start_s: float
+    end_s: float
+
+
+@dataclass(frozen=True)
 class PlanFacts:
     """What a drafted plan verifiably contains. Missing facts stay None/empty."""
 
@@ -202,6 +235,9 @@ class PlanFacts:
     # was not available and must remain unchecked.
     text_spans: tuple[tuple[str, str, float, float], ...] = ()
     text_timing_incomplete: bool = False
+    # Per-row style of the saved non-caption text rows (KRI-543). None means the text lane
+    # was not available (a draft or render), which keeps a style ask unchecked.
+    text_styles: tuple[TextStyleRow, ...] | None = None
     # The strategy's edit format, and how many video clips it renders (None when
     # the footage list was not available to count).
     edit_format: str | None = None
@@ -249,6 +285,24 @@ class PlanFacts:
     # The language the rendered captions are in, and the language that was spoken.
     caption_language: str | None = None
     spoken_language: str | None = None
+    # KRI-546: a finished phone unified montage, judged from its plan record and the render
+    # together (`plan_facts_from_rendered_montage`). Only there do the closing-line and
+    # duplicate-video checks below judge anything; every other plan keeps today's answers.
+    rendered_montage: bool = False
+    # The closing clip's whole spoken line, held by the plan and confirmed on the finished
+    # timeline. None = no line was held (or the render does not show it held).
+    closing_speech: ClosingSpeechFact | None = None
+    # False when the render records that the clips' own sound was dropped; None = unknown.
+    source_audio_kept: bool | None = None
+    # Every clip the creator added to this edit (footage and Visuals), whether or not the
+    # edit used it, so "that clip isn't in the edit" is told apart from an unknown clip id.
+    source_clip_ids: tuple[str, ...] = ()
+    # The finished edit's clips (1-based, in screen order) that play the same original file
+    # (same upload fingerprint), one group per file shown more than once; and how many extra
+    # copies the creator's own uploads held. None = some clip had no fingerprint, so
+    # nothing about duplicates is claimed.
+    duplicate_clip_positions: tuple[tuple[int, ...], ...] | None = None
+    source_duplicate_copies: int | None = None
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -691,6 +745,97 @@ def _editor_payload_duration(payload: Mapping[str, Any]) -> float | None:
     return total or None
 
 
+_LEGACY_EFFECT_ENTRANCE = {
+    "static": "none",
+    "none": "none",
+    "fade-in": "fade",
+    "pop-in": "pop",
+    "slide-in": "slide",
+    "typewriter": "typewriter",
+}
+_HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_ENTRANCES = frozenset({"none", "fade", "pop", "slide", "typewriter"})
+_TEXT_CASES = frozenset({"none", "upper", "lower", "title"})
+_ALIGNMENTS = frozenset({"left", "center", "right"})
+
+
+def _row_entrance(row: Mapping[str, Any]) -> str | None:
+    """The entrance a saved row plays: explicit phases win, else the legacy effect's."""
+    phases = row.get("animation_phases")
+    if isinstance(phases, Mapping):
+        entrance = phases.get("entrance")
+        return entrance if entrance in _ENTRANCES else None
+    effect = row.get("effect")
+    return _LEGACY_EFFECT_ENTRANCE.get(effect) if effect is not None else "none"
+
+
+def _row_choice(
+    row: Mapping[str, Any], key: str, allowed: frozenset[str], default: str
+) -> str | None:
+    value = row.get(key)
+    if value is None:
+        return default
+    return value if value in allowed else None
+
+
+def _text_style_rows(rows: Iterable[Any]) -> tuple[TextStyleRow, ...]:
+    """Style of the editor's live, non-caption text rows, typed by the editor's own classifier."""
+    from app.services.kria_editor_ops import is_caption_text_bar  # noqa: PLC0415
+    from app.services.kria_editor_ops_text import classify  # noqa: PLC0415
+
+    live = [
+        row
+        for row in rows
+        if isinstance(row, Mapping)
+        and isinstance(row.get("id"), str)
+        and isinstance(row.get("text"), str)
+        and row["text"].strip()
+        and not row.get("removed")
+        and row.get("role") != "lyric_line"
+        and not is_caption_text_bar(dict(row))
+    ]
+    bars = []
+    for index, row in enumerate(live):
+        params = row.get("source_params")
+        source = row.get("sequence_source_id")
+        if not isinstance(source, str) and isinstance(params, Mapping):
+            source = params.get("sequence_source_id")
+        clip = row.get("clip_id")
+        start = row.get("start_s")
+        bars.append(
+            {
+                "index": index,
+                "id": row["id"],
+                "text": str(row.get("text") or ""),
+                "role": row.get("role"),
+                "sequence_source_id": source if isinstance(source, str) else None,
+                "clip_id": clip if isinstance(clip, str) and clip else None,
+                "removed": False,
+                "start_s": float(start)
+                if isinstance(start, (int, float)) and not isinstance(start, bool)
+                else None,
+                "caption": False,
+            }
+        )
+    kinds = classify(bars)
+    out = []
+    for row in live:
+        color = row.get("color")
+        font = row.get("font_family")
+        out.append(
+            TextStyleRow(
+                id=row["id"],
+                kind=kinds.get(row["id"], "text"),
+                entrance=_row_entrance(row),
+                alignment=_row_choice(row, "alignment", _ALIGNMENTS, "center"),
+                text_case=_row_choice(row, "text_case", _TEXT_CASES, "none"),
+                font_family=font if isinstance(font, str) and font else None,
+                color=color.upper() if isinstance(color, str) and _HEX_COLOR.match(color) else None,
+            )
+        )
+    return tuple(out)
+
+
 def plan_facts_from_editor_payload(
     payload: Mapping[str, Any] | None,
     text_diff: Iterable[Mapping[str, Any]] | None = None,
@@ -788,6 +933,11 @@ def plan_facts_from_editor_payload(
         title=title,
         text_spans=tuple(text_spans),
         text_timing_incomplete=text_timing_incomplete,
+        text_styles=(
+            _text_style_rows(payload["text_elements"])
+            if isinstance(payload, Mapping) and isinstance(payload.get("text_elements"), list)
+            else None
+        ),
     )
 
 
@@ -913,6 +1063,133 @@ def _rendered_speech_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
         facts["speech_cleanup_enabled"] = False
         facts["speech_cleanup_outcome"] = "not_run"
     return facts
+
+
+# KRI-546: the order facts a unified montage's plan record holds, laid over a finished
+# variant's facts so an order ask is judged at render-ready exactly as the plan was.
+_MONTAGE_ORDER_FIELDS = (
+    "ordering_basis",
+    "ordering_fallback_clip_ids",
+    "ordering_choice",
+    "sequence_statuses",
+    "sequence_unmet",
+    "sequence_absent",
+    "sequence_spots_met",
+    "route_start",
+    "route_end",
+    "first_endpoint",
+    "last_endpoint",
+)
+# How far a finished cut may start after / end before the held line and still hold it: the
+# timeline is rounded to milliseconds and one frame at 30 fps is ~0.033 s.
+_HELD_LINE_TOLERANCE_S = 0.05
+
+
+def _rendered_clip_cuts(
+    variant: Mapping[str, Any],
+) -> list[tuple[str, float | None, float | None]]:
+    """The finished edit's main-picture cuts in screen order: (media id, source start, end)."""
+    rows = variant.get("story_timeline")
+    cuts: list[tuple[float, int, str, float | None, float | None]] = []
+    for index, row in enumerate(rows if isinstance(rows, list) else []):
+        if not isinstance(row, Mapping) or row.get("lane", "clip") != "clip":
+            continue
+        media_id = row.get("media_id")
+        if not isinstance(media_id, str) or not media_id:
+            continue
+        at = _finite_number(row.get("output_start_s"))
+        cuts.append(
+            (
+                at if at is not None else math.inf,
+                index,
+                media_id,
+                _finite_number(row.get("source_start_s")),
+                _finite_number(row.get("source_end_s")),
+            )
+        )
+    cuts.sort(key=lambda cut: (cut[0], cut[1]))
+    return [(media_id, start, end) for _at, _index, media_id, start, end in cuts]
+
+
+def _same_file_positions(
+    ids: Sequence[str], fingerprints: Mapping[str, str]
+) -> tuple[tuple[int, ...], ...] | None:
+    """1-based positions in ``ids`` that play the same original file, one group per file
+    shown more than once (two cuts of one clip count too); None when a clip is unhashed."""
+    if not ids or any(not fingerprints.get(media_id) for media_id in ids):
+        return None
+    by_file: dict[str, list[int]] = {}
+    for position, media_id in enumerate(ids, start=1):
+        by_file.setdefault(fingerprints[media_id], []).append(position)
+    return tuple(tuple(group) for group in by_file.values() if len(group) > 1)
+
+
+def _held_closing_line(
+    record: Mapping[str, Any],
+    clip_ids: Sequence[str],
+    last_cut: tuple[str, float | None, float | None] | None,
+) -> ClosingSpeechFact | None:
+    """The record's held closing line when the finished edit really ends on it, else None."""
+    speech = record.get("closing_speech")
+    if not isinstance(speech, Mapping) or not clip_ids:
+        return None
+    media_id = str(speech.get("media_id") or "")
+    start = _finite_number(speech.get("source_start_s"))
+    end = _finite_number(speech.get("source_end_s"))
+    if not media_id or start is None or end is None or end <= start or clip_ids[-1] != media_id:
+        return None
+    if last_cut is not None:
+        # A finished timeline must show the closing cut covering the whole line.
+        cut_start, cut_end = last_cut[1], last_cut[2]
+        if (
+            cut_start is None
+            or cut_end is None
+            or cut_start > start + _HELD_LINE_TOLERANCE_S
+            or cut_end < end - _HELD_LINE_TOLERANCE_S
+        ):
+            return None
+    return ClosingSpeechFact(media_id=media_id, start_s=start, end_s=end)
+
+
+def plan_facts_from_rendered_montage(
+    variant: Mapping[str, Any] | None,
+    record: Mapping[str, Any] | None,
+    *,
+    fingerprints: Mapping[str, str] | None = None,
+) -> PlanFacts:
+    """Facts off a finished phone unified montage (KRI-546).
+
+    The variant's own facts (`plan_facts_from_phone_variant`: on-screen text, length) plus
+    what only the plan record and the finished timeline together show: how the clips were
+    ordered, whether the closing clip's spoken line plays whole in its own sound, and which
+    clips came from the same original file. ``fingerprints`` maps each media id the creator
+    added to the sha256 of its original upload; without it nothing about duplicates is
+    claimed. Pass only the record of the generation this variant rendered.
+    """
+    facts = plan_facts_from_phone_variant(variant)
+    if not isinstance(variant, Mapping) or not isinstance(record, Mapping):
+        return facts
+    plan = plan_facts_from_unified_montage(record)
+    cuts = _rendered_clip_cuts(variant)
+    clip_ids = tuple(media_id for media_id, _start, _end in cuts) or plan.clip_ids
+    prints = {
+        str(media_id): str(sha)
+        for media_id, sha in (fingerprints or {}).items()
+        if isinstance(media_id, str) and media_id and isinstance(sha, str) and sha
+    }
+    kept = variant.get("source_audio_preserved")
+    return dataclasses.replace(
+        facts,
+        **{name: getattr(plan, name) for name in _MONTAGE_ORDER_FIELDS},
+        clip_ids=clip_ids,
+        rendered_output=True,
+        rendered_montage=True,
+        closing_speech=_held_closing_line(record, clip_ids, cuts[-1] if cuts else None),
+        source_audio_kept=kept if isinstance(kept, bool) else None,
+        source_clip_ids=tuple(prints),
+        duplicate_clip_positions=_same_file_positions(clip_ids, prints) if prints else None,
+        source_duplicate_copies=len(prints) - len(set(prints.values())) if prints else None,
+    )
 
 
 def _receipt(
@@ -1913,6 +2190,7 @@ _CANT_CHECK_TIMING = "I can't verify this timing automatically."
 _CANT_CHECK_CLEANUP = "I can't check the speech cleanup on this draft yet."
 _CANT_CHECK_CAPTIONS = "I can't check the captions on this draft yet."
 _NO_CHECKER = "I can't verify this one automatically yet."
+_CANT_CHECK_STYLE = "I can't check this text style automatically."
 _CANT_CHECK_MIX = "I can't check the sound mix on this draft yet."
 # Start of the reason on a "mute the footage sound" ask the voiceover mix cannot fully meet
 # (the footage sound is a quiet bed under the voice, never off): a limit of the format.
@@ -1967,6 +2245,7 @@ _REASON_TR: dict[str, str] = {
     _CANT_CHECK_CLEANUP: "Bu taslakta konuşma temizliğini henüz kontrol edemiyorum.",
     _CANT_CHECK_CAPTIONS: "Bu taslaktaki altyazıları henüz kontrol edemiyorum.",
     _NO_CHECKER: "Bunu henüz otomatik olarak doğrulayamıyorum.",
+    _CANT_CHECK_STYLE: "Bu yazı stilini otomatik olarak kontrol edemiyorum.",
     _CANT_CHECK_MIX: "Bu taslakta ses karışımını henüz kontrol edemiyorum.",
     _BED_STILL_PLAYS: "Çekim sesi hâlâ çalıyor",
     _CLEANUP_PLANNED: "Konuşma temizliği uzun duraklamaları keser",
@@ -2019,6 +2298,7 @@ _NEUTRAL_EN = frozenset(
         _CANT_CHECK_CLEANUP,
         _CANT_CHECK_CAPTIONS,
         _CANT_CHECK_MIX,
+        _CANT_CHECK_STYLE,
         _NO_CHECKER,
     }
 )
@@ -2618,11 +2898,54 @@ def _check_voice_bed(req: BriefRequirement, facts: PlanFacts) -> RequirementRece
     )
 
 
+_STYLE_FIELD_NAMES = {
+    "entrance": ("entrance animation", "giriş animasyonu"),
+    "alignment": ("alignment", "hizalama"),
+    "text_case": ("letter case", "harf biçimi"),
+    "font_family": ("font", "yazı tipi"),
+    "color": ("color", "renk"),
+}
+
+
+def _style_intent(req: BriefRequirement) -> dict[str, Any] | None:
+    """The well-formed structured style intent of a style requirement, else None (KRI-543)."""
+    if req.kind != "style":
+        return None
+    return normalize_style_intent(req.facts.get("style_intent"))
+
+
 def _check_style(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
-    # A changed text lane proves a mutation, not that the requested fields,
-    # targets, or animation relationships were satisfied. Until the requirement
-    # carries independently checkable style intent, retain an unchecked receipt.
-    return _receipt(req, "partial", _NO_CHECKER)
+    # A changed text lane proves a mutation, not that the requested fields, targets, or
+    # animation relationships were satisfied (KRI-524). Only a closed-vocabulary
+    # `style_intent` is compared, and only against rows whose saved value is known.
+    intent = _style_intent(req)
+    if intent is None or facts.text_styles is None:
+        return _receipt(req, "partial", _NO_CHECKER)
+    target = intent.get("target")
+    rows = [
+        row
+        for row in facts.text_styles
+        if target in (None, "all_text") or row.kind == {"title": "title", "labels": "label"}[target]
+    ]
+    wanted = {item["field"]: item["value"] for item in intent["set"]}
+    if not rows or any(getattr(row, field) is None for row in rows for field in wanted):
+        return _receipt(req, "partial", _CANT_CHECK_STYLE)
+    off = [row for row in rows if any(getattr(row, f) != v for f, v in wanted.items())]
+    if not off:
+        return _receipt(req, "met", None)
+    if target is None:
+        # "…to all of them" may mean a subset: a mismatch is not evidence of a miss.
+        return _receipt(req, "partial", _CANT_CHECK_STYLE)
+    names_en = ", ".join(_STYLE_FIELD_NAMES[f][0] for f in wanted)
+    names_tr = ", ".join(_STYLE_FIELD_NAMES[f][1] for f in wanted)
+    return _receipt(
+        req,
+        "partial",
+        say(
+            en=f"{len(off)} of {len(rows)} texts don't have the requested {names_en} yet",
+            tr=f"{len(rows)} metinden {len(off)} tanesinde istenen {names_tr} henüz yok",
+        ),
+    )
 
 
 def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -3099,9 +3422,220 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     )
 
 
+# KRI-546: two asks a finished phone montage can settle from its own evidence. Patterns run
+# on `_loose_req` output (folded, no diacritics, punctuation as spaces: "don't" -> "don t").
+_MEDIA_NOUN = (
+    r"(?:videos?|clips?|shots?|footage|files?|uploads?|video\w*|klip\w*|cekim\w*|dosya\w*)"
+)
+# "If the same video is there twice, use one" / "aynı videodan iki tane varsa birini kullan":
+# a copy is named AND only one should stay, so "use the same clip at the start and the end"
+# never reads as a duplicate ask.
+_SAME_FILE_RE = re.compile(
+    r"\bduplicat\w*|\bde ?dup\w*|\bkopya\w*|\byinelen\w*|\btekrar ?(?:eden|lanan)\b"
+    rf"|\bsame {_MEDIA_NOUN}|\b(?:two|2) of the same\b"
+    rf"|\b{_MEDIA_NOUN} (?:that )?(?:is|are) the same\b|\bayni {_MEDIA_NOUN}"
+)
+_KEEP_ONE_RE = re.compile(
+    r"\b(?:remove|drop|skip|delete|cut|avoid|exclude|leave out|get rid of|no|without|don t"
+    r"|do not|never|once|single)\b|\b(?:only|just|keep|use|leave) (?:one|a single)\b"
+    r"|\bone (?:of (?:them|each|the)|copy)\b"
+    r"|\bbiri(?:ni|sini)?\b|\btek\b|\bsadece\b|\byalnizca\b|\bcikar(?:t|in|tin|sin|tsin)?\b"
+    r"|\bsil(?:in|sin)?\b|\bkullanma(?:yin|sin)?\b|\bolmasin\b|\bbir (?:kere|kez)\b"
+)
+# "End on Elif's sentence to the camera, in her own voice" / "en sonda Elif'in kameraya
+# söylediği cümleyi kendi sesiyle kullan": the closing clip's own spoken line.
+_ENDING_RE = re.compile(
+    r"\b(?:finish|end|close|wrap up|wrap) (?:on|with)\b|\bending (?:on|with)\b"
+    r"|\bat the (?:very )?end\b|\bin the end\b|\blast\b|\bclosing\b"
+    r"|\ben son\w*|\bsonda\b|\bsonunda\b|\bsona\b|\bkapanis\w*|\bbitir\w*|\bbitsin\b"
+)
+_OWN_SPEECH_RE = re.compile(
+    r"\bown (?:voice|sound|audio|words)\b|\b(?:her|his|their|my|your) voice\b"
+    r"|\b(?:sentence|says|said|saying|speaks|speaking|talks|talking)\b|\bto (?:the )?camera\b"
+    r"|\bkendi ses\w*|\bcumle\w*|\bsoyledi\w*|\bsoyler\w*|\bkonus\w*|\bdedi\w*|\bkameraya\b"
+)
+# A closing photo, sticker or song, a muted ending or a voiceover is a different ask.
+_NOT_OWN_SPEECH_RE = re.compile(
+    r"\bmute\w*|\bsilent\b|\bno sound\b|\bwithout (?:sound|audio)\b|\bsessiz\w*|\bkapat\w*"
+    r"|\bvoice ?over\b|\bnarrat\w*|\bseslendirme\w*|\bdis ses\w*"
+    r"|\bmusic\b|\bsong\b|\bmuzik\w*|\bsarki\w*"
+    r"|\b(?:photo|picture|image|pic|sticker|stamp|badge|logo|emoji)s?\b"
+    r"|\bfotograf\w*|\bresim\w*|\bgorsel\w*|\bcikartma\w*"
+)
+
+
+def _wants_one_of_duplicates(req: BriefRequirement) -> bool:
+    """ "If the same video is there twice, use one": keep a single copy of a repeated file."""
+    if req.kind not in ("select", "style"):
+        return False
+    text = _loose_req(req)
+    return bool(_SAME_FILE_RE.search(text) and _KEEP_ONE_RE.search(text))
+
+
+def _wants_closing_speech(req: BriefRequirement) -> bool:
+    """ "End on X's sentence in her own voice": the last clip plays its own spoken line."""
+    if req.kind not in (*_BEAT_KINDS, "order"):
+        return False
+    text = _loose_req(req)
+    if _NOT_OWN_SPEECH_RE.search(text) or not _OWN_SPEECH_RE.search(text):
+        return False
+    return bool(
+        _ENDING_RE.search(text)
+        or req.facts.get("last_clip")
+        or str(req.facts.get("position") or "").casefold() == "last"
+    )
+
+
+def judged_at_render(req: BriefRequirement) -> bool:
+    """True for an ask only a finished phone montage's evidence settles (KRI-546).
+
+    A unified montage's plan record cannot see these: a closing line is held while the
+    plan is laid out, and a duplicate file is told by the upload fingerprints. The
+    render-ready review judges them again even when the record carries a receipt.
+    """
+    return _wants_one_of_duplicates(req) or _wants_closing_speech(req)
+
+
+_CLIP_ID_PART_RE = re.compile(r"[^0-9A-Za-z]+")
+
+
+def _scope_clip_id(req: BriefRequirement, ids: Iterable[str]) -> str | None:
+    """The clip a ``clip:<id>`` scope names among ``ids``, else None.
+
+    The brief may name a clip by a short form of its id ("F0CECCF8" for
+    "analysis-proxy-ios-F0CECCF8-5871-....mp4"): a whole id part of 6+ letters and digits
+    that exactly one clip carries counts; anything ambiguous names no clip.
+    """
+    if not req.scope.startswith("clip:"):
+        return None
+    token = req.scope.split(":", 1)[1].strip()
+    known = list(dict.fromkeys(ids))
+    if token in known:
+        return token
+    if len(token) < 6 or not token.isalnum():
+        return None
+    folded = token.casefold()
+    hits = [
+        media_id
+        for media_id in known
+        if folded in {part.casefold() for part in _CLIP_ID_PART_RE.split(media_id)}
+    ]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _clip_numbers(positions: Sequence[int]) -> str:
+    """[2, 3] -> "clips 2 and 3" / "2. ve 3. klipler"."""
+    shown = [str(p) for p in positions]
+    head, tail = shown[:-1], shown[-1]
+    return say(
+        en=f"clips {', '.join(head)} and {tail}" if head else f"clip {tail}",
+        tr=(f"{', '.join(f'{p}.' for p in head)} ve {tail}. klipler" if head else f"{tail}. klip"),
+    )
+
+
+def _check_duplicates(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """Judge "keep one of a repeated video" on the finished edit's clips (KRI-546).
+
+    Met only when no two clips of the edit come from the same original file (same upload
+    fingerprint). Without a fingerprint for every clip nothing is claimed.
+    """
+    groups = facts.duplicate_clip_positions
+    if not facts.rendered_montage or groups is None:
+        return _receipt(req, "partial", _NO_CHECKER)
+    if not groups:
+        return _receipt(
+            req,
+            "met",
+            say(
+                en="No two clips in the edit come from the same video file",
+                tr="Düzenlemedeki hiçbir klip aynı video dosyasından gelmiyor",
+            ),
+        )
+    where = "; ".join(_clip_numbers(group) for group in groups)
+    extra = sum(len(group) - 1 for group in groups)
+    return _receipt(
+        req,
+        # Some uploaded copies were left out but not all: partly done. None were: not done.
+        "partial" if (facts.source_duplicate_copies or 0) > extra else "not_possible",
+        say(
+            en=f"The same video is in the edit more than once: {where}",
+            tr=f"Aynı video düzenlemede birden fazla kez var: {where}",
+        ),
+    )
+
+
+def _check_closing_speech(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """Judge "end on X's spoken line in her own voice" on a finished montage (KRI-546).
+
+    Met only when the clip the creator named (or, unnamed, the clip their own "last" ask
+    seated) ends the edit and the plan held its whole spoken line with the camera audio
+    kept, as the finished timeline shows.
+    """
+    ids = facts.clip_ids
+    if not facts.rendered_montage or not ids:
+        return _receipt(req, "partial", _NO_CHECKER)
+    if req.scope.startswith("clip:"):
+        target = _scope_clip_id(req, (*ids, *facts.source_clip_ids))
+        if target is None:
+            return _receipt(req, "partial", _NO_CHECKER)
+        if target not in ids:
+            return _receipt(
+                req,
+                "not_possible",
+                say(en="That clip isn't in the edit", tr="O klip düzenlemede yok"),
+            )
+        if ids[-1] != target:
+            return _receipt(
+                req,
+                "partial",
+                say(
+                    en="That clip is in the edit, but not at the end",
+                    tr="O klip düzenlemede var ama sonda değil",
+                ),
+            )
+    elif facts.closing_speech is None and "last" not in (facts.sequence_spots_met or ()):
+        # Unnamed, and no "last" ask of the creator's landed: nothing says which clip.
+        return _receipt(req, "partial", _NO_CHECKER)
+    if facts.source_audio_kept is False:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="The video ends on that clip, but the clips' own sound is off",
+                tr="Video o klipte bitiyor ama kliplerin kendi sesi kapalı",
+            ),
+        )
+    if facts.closing_speech is None or facts.closing_speech.media_id != ids[-1]:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=(
+                    "The video ends on that clip, but I couldn't confirm its whole spoken "
+                    "line plays in its own sound"
+                ),
+                tr=(
+                    "Video o klipte bitiyor ama cümlenin tamamının klibin kendi sesiyle "
+                    "duyulduğunu doğrulayamadım"
+                ),
+            ),
+        )
+    return _receipt(
+        req,
+        "met",
+        say(
+            en="The video ends on that clip's whole spoken line, in its own sound",
+            tr="Video, o klipteki cümlenin tamamıyla ve klibin kendi sesiyle bitiyor",
+        ),
+    )
+
+
 def _has_checker(req: BriefRequirement) -> bool:
     """True when ``check_requirement`` can actually verify this requirement."""
     if _wants_cleanup(req) or _wants_captions(req):
+        return True
+    if judged_at_render(req):
+        # Neutral (`_NO_CHECKER`) anywhere but a finished phone montage (KRI-546).
         return True
     if req.kind == "text":
         return bool(
@@ -3118,6 +3652,8 @@ def _has_checker(req: BriefRequirement) -> bool:
             or _wants_beats(req)
             or _wants_clip_timing(req)
         )
+    if _style_intent(req) is not None:
+        return True
     if req.kind in _BEAT_KINDS:
         return (
             _wants_beats(req)
@@ -3139,6 +3675,18 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         # edit: the cleanup ask owns the sentence; the length it names is judged
         # inside it. Elsewhere the sentence takes its kind's usual path.
         return _check_speech_cleanup(req, facts)
+    if facts.rendered_montage:
+        # KRI-546: a finished phone montage shows which files repeat and whether the
+        # closing clip's own line plays whole; every other plan keeps its usual path.
+        if _wants_one_of_duplicates(req):
+            return _check_duplicates(req, facts)
+        if _wants_closing_speech(req):
+            if req.kind == "order":
+                # "End on Elif saying it": the seat is an order verdict first.
+                seated = _check_order(req, facts)
+                if seated.status != "met":
+                    return seated
+            return _check_closing_speech(req, facts)
     if req.kind == "text":
         if req.scope == "per_clip" or req.scope.startswith("clip:"):
             return _check_per_clip_text(req, facts)
@@ -3550,6 +4098,7 @@ def reply_from_receipts(
 __all__ = [
     "UNIFIED_SETTLED_KINDS",
     "BeatFact",
+    "ClosingSpeechFact",
     "NO_TITLE_REASON",
     "RenderBlockRecovery",
     "NARRATED_ALIGNED_BASES",
@@ -3565,11 +4114,13 @@ __all__ = [
     "is_format_limit",
     "is_judged",
     "is_no_title_reason",
+    "judged_at_render",
     "needs_creator_choice",
     "SpeechSectionFact",
     "plan_facts_from_editor_payload",
     "plan_facts_from_narrated_alignment",
     "plan_facts_from_phone_variant",
+    "plan_facts_from_rendered_montage",
     "plan_facts_from_speech_montage",
     "plan_facts_from_strategy",
     "plan_facts_from_unified_montage",

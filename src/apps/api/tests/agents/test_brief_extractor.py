@@ -213,3 +213,96 @@ def test_malformed_batch_uses_narrow_agent_schema_retry_policy() -> None:
     assert output.brief_updates == []
     assert len(client.invocations) == 2
     assert "Fix this schema error" in client.invocations[1]["prompt"]
+
+
+# ---------------------------------------------------------------- KRI-543 style_intent
+# Raw model outputs are authored for prompt v5 (not live captures).
+
+
+def _style_raw(facts: dict, description: str) -> str:
+    return json.dumps(
+        {
+            "brief_updates": [
+                {
+                    "operation": "add",
+                    "kind": "style",
+                    "scope": "global",
+                    "literal": None,
+                    "description": description,
+                    "facts": facts,
+                }
+            ]
+        }
+    )
+
+
+_FADE_ALL = {
+    "style_intent": {"set": [{"field": "entrance", "value": "fade"}], "target": "all_text"}
+}
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["Add fade in animation to all texts", "Tüm yazılara fade in animasyonu ekle"],
+)
+def test_style_ask_resolves_to_a_checkable_intent_and_turns_green(message: str) -> None:
+    from app.kria.brief_checks import (
+        check_requirement,
+        is_judged,
+        plan_facts_from_editor_payload,
+    )
+
+    agent = BriefExtractorAgent(None)  # type: ignore[arg-type]
+    output = agent.parse(
+        _style_raw(_FADE_ALL, message),
+        BriefExtractionInput(creator_request="", user_message=message, conversation=[]),
+    )
+    req = output.brief_updates[0]
+    assert req.facts["style_intent"]["target"] == "all_text"
+    from app.kria.brief import BriefRequirement
+
+    live = BriefRequirement(
+        id="r1", kind="style", scope="global", description=req.description, facts=req.facts
+    )
+    rows = [
+        {
+            "id": f"t{i}",
+            "text": "hi",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "animation_phases": {"entrance": "fade"},
+        }
+        for i in range(3)
+    ]
+    receipt = check_requirement(live, plan_facts_from_editor_payload({"text_elements": rows}))
+    assert receipt.status == "met" and is_judged(live, receipt)
+
+
+def test_vague_style_ask_carries_no_intent_and_stays_unchecked() -> None:
+    output = BriefExtractorAgent(None).parse(  # type: ignore[arg-type]
+        _style_raw({}, "make it feel warmer"),
+        BriefExtractionInput(
+            creator_request="", user_message="make it feel warmer", conversation=[]
+        ),
+    )
+    assert "style_intent" not in output.brief_updates[0].facts
+
+
+def test_malformed_style_intent_degrades_instead_of_failing_the_batch() -> None:
+    bad = {"style_intent": {"set": [{"field": "glow", "value": "max"}], "target": "t1"}}
+    output = BriefExtractorAgent(None).parse(  # type: ignore[arg-type]
+        _style_raw(bad, "add glow"),
+        BriefExtractionInput(creator_request="", user_message="add glow", conversation=[]),
+    )
+    assert output.brief_updates[0].facts == {}
+
+
+def test_extractor_prompt_teaches_style_intent_without_touching_the_main_planner_section() -> None:
+    from app.agents.brief_extractor import BRIEF_EXTRACTOR_PROMPT_VERSION
+    from app.agents.main_creator import _BRIEF_PROMPT_SECTION
+
+    prompt = BriefExtractorAgent(None).render_prompt(  # type: ignore[arg-type]
+        BriefExtractionInput(creator_request="", user_message="x", conversation=[])
+    )
+    assert "style_intent" in prompt and "style_intent" not in _BRIEF_PROMPT_SECTION
+    assert BRIEF_EXTRACTOR_PROMPT_VERSION.endswith("-v5")
