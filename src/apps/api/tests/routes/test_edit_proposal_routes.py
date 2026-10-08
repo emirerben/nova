@@ -2622,7 +2622,10 @@ def test_narrated_proposal_uses_fidelity_worker_queue():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("client_change", ["omit_program", "replace_program", "change_title"])
-async def test_update_preserves_server_text_program_or_requires_replan(monkeypatch, client_change):
+@pytest.mark.parametrize("scheduled", [False, True])
+async def test_update_preserves_server_text_program_or_requires_replan(
+    monkeypatch, client_change, scheduled
+):
     import json
 
     from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
@@ -2633,6 +2636,10 @@ async def test_update_preserves_server_text_program_or_requires_replan(monkeypat
 
     snapshot = _snapshot()
     snapshot.title = snapshot.opening_title = "One step at a time"
+    if scheduled:
+        from app.services.proposal_planning import refresh_snapshot_schedule
+
+        snapshot = refresh_snapshot_schedule(snapshot)
     base = compile_proposal_execution_plan(snapshot)
     texts, slots = _lanes(base)
     output = EditCopilotAgent(None).parse(

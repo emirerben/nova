@@ -4103,10 +4103,7 @@ async def update_item_edit_proposal(
     _require_guided_edit()
     item = await _load_owned_item(item_id, user.id, db, for_update=True)
     _require_guided_edit_applicable(item)
-    from app.pipeline.guided_story import (  # noqa: PLC0415
-        GuidedStoryError,
-        compile_proposal_execution_plan,
-    )
+    from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
     from app.schemas.edit_proposal import canonical_media_digest  # noqa: PLC0415
     from app.services.creation_text_composition import CreationTextCompositionError  # noqa: PLC0415
     from app.services.edit_proposals import (  # noqa: PLC0415
@@ -4155,8 +4152,6 @@ async def update_item_edit_proposal(
                 "proposal_replan_required",
                 "Ask Kria to change the direction, pacing, or target length.",
             )
-        if server_snapshot.text_composition is not None:
-            compile_proposal_execution_plan(server_snapshot)
         save_proposal_draft(
             item,
             expected_version=body.expected_proposal_version,

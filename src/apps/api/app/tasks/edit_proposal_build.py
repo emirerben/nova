@@ -2532,7 +2532,9 @@ def _run_draft_attempt(
         # approval. Fail visibly on incomplete text behavior; never use the base
         # proposal as a silent fallback after the composition step failed.
         from app.services.creation_text_composition import compose_creation_text  # noqa: PLC0415
+        from app.services.edit_proposals import _validated_scheduled_draft  # noqa: PLC0415
 
+        snapshot = _validated_scheduled_draft(snapshot, current)
         snapshot = compose_creation_text(
             snapshot,
             creator_request=brief.creator_request,
