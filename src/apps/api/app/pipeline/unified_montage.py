@@ -54,10 +54,10 @@ from app.kria.brief_route import (
     wants_filming_time_text,
     wants_hour_only_text,
 )
+from app.pipeline.pinned_text import drawable_pins, pins_from_strategy
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.edit_proposal import (
     CREATOR_SELECTED_ORIENTATION_REASON,
-    MAX_CREATOR_PINNED_TEXTS,
     MAX_PROPOSAL_DURATION_S,
     ClipLabel,
     EditProposalSnapshot,
@@ -1327,6 +1327,7 @@ def plan_unified_montage(
             )
         )
     total_s = round(sum(cut.output_duration_s for cut in cuts), 3)
+    pins = drawable_pins(pins, total_s, [cut.output_duration_s for cut in cuts])
 
     snapshot_kwargs: dict[str, Any] = {}
     if closing:
@@ -1498,16 +1499,8 @@ def _fit_typography(
 
 
 def _pinned_texts(strategy: Mapping[str, Any]) -> list[PinnedText]:
-    """KRI-523: the creator's whole-video corner text, as confirmed on the strategy."""
-    pins: list[PinnedText] = []
-    for raw in strategy.get("pinned_texts") or []:
-        if not isinstance(raw, Mapping):
-            continue
-        try:
-            pins.append(PinnedText(text=_nfc(raw.get("text")), corner=raw.get("corner")))
-        except ValidationError:
-            continue
-    return pins[:MAX_CREATOR_PINNED_TEXTS]
+    """KRI-523: the creator's corner text, as confirmed on the strategy."""
+    return pins_from_strategy(strategy)
 
 
 def _fit_pins(

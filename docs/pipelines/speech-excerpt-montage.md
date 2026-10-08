@@ -47,6 +47,10 @@ byte-identically, and nothing is transcribed or stored. Apply:
 - Optional `music` track (compiler supports it; the worker passes none today): split clips that
   sound only during montage runs, the song position resuming after each speech section.
 - Capabilities: `basicComposition`, `local1080Export`, plus `audioMix` when an audio track exists.
+- **Pinned corner text (KRI-527):** the montage draws no text of its own, so the creator's
+  `pinned_texts` are the only text layers (`title-N`, via `with_pinned_text_layers`); a pin adds
+  `positionedText` (and `authoredText` for a variable font) to the capabilities. A clip scope is the
+  n-th video clip on `speech-montage`. See [`pinned-text`](pinned-text.md).
 - **Speaker orientation:** any. A landscape or square speaker clip (e.g. a 16:9 announcement) is
   accepted and shown with the engine's plain centre cover-fit, exactly like every other phone
   montage clip; the receipt gets an adjustment ("sides are cropped ... centred"). No `source_crop`
@@ -70,6 +74,8 @@ ground does the job ask.
 
 `kria/brief_checks.py`: `plan_facts_from_speech_montage` + `_check_speech_excerpts` (excerpts
 grounded, speech over other footage where asked, back to the speaker, fast cuts between).
+The record carries `pinned_texts` (only the lines actually drawn) and `plan_facts_from_speech_montage`
+exposes them as `texts`, so a brief text requirement is met by a drawn pin.
 `tests/evals/request_following/checkers.py`: `speech_excerpts` (plan-level `FinalPlan.speech`).
 
 ## Cloud fallback

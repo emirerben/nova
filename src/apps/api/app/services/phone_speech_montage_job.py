@@ -296,6 +296,7 @@ def run_phone_speech_montage_job(
         broll,
         target_lufs=settings.output_target_lufs,
     )
+    recipe, pin_rows, pins_drawn, pin_notes = _with_creator_pins(recipe, strategy)
     validate_phone_pilot_recipe(recipe)
     if contract:
         verify_phone_recipe(
@@ -309,10 +310,12 @@ def run_phone_speech_montage_job(
     record = {
         **receipt.record(),
         "planned": resolution.planned_record(),
-        "adjustments": [*resolution.adjustments, *receipt.adjustments],
+        "adjustments": [*resolution.adjustments, *receipt.adjustments, *pin_notes],
     }
     if ordering_basis:
         record["ordering_basis"] = ordering_basis
+    if pins_drawn:
+        record["pinned_texts"] = pins_drawn
     if brief is not None and brief.live():
         from app.kria.brief_checks import (  # noqa: PLC0415
             build_receipts,
@@ -373,7 +376,7 @@ def run_phone_speech_montage_job(
                 "duration_s": round(receipt.duration_s, 3),
                 "intro_mode": "linear",
                 "intro_layout": "linear",
-                "text_elements": [],
+                "text_elements": pin_rows,
                 "orientation": "portrait",
                 "ok": False,
             }
@@ -386,6 +389,44 @@ def run_phone_speech_montage_job(
         job.failure_reason = None
         db.commit()
     return True
+
+
+def _creator_pins(strategy: Any) -> list[Any]:
+    from app.pipeline.pinned_text import pins_from_strategy  # noqa: PLC0415
+
+    return pins_from_strategy(strategy if isinstance(strategy, dict) else None)
+
+
+def _with_creator_pins(recipe: Any, strategy: Any) -> tuple[Any, list[dict], list[dict], list[str]]:
+    """KRI-527: draw the creator's pinned corner text on a spoken-excerpt / voice recipe.
+
+    Returns ``(recipe, rows, drawn, notes)``: ``rows`` are the ``guided-pinned-<i>`` TextElements
+    the variant row carries (the editor preview compiles text from the row, not the recipe),
+    ``drawn`` are the pins that actually got a window, for the record and the brief receipt (a
+    pin with no usable window is never claimed), and ``notes`` disclose any that were left out.
+    """
+
+    from app.pipeline.phone_narrated_plan import with_pinned_text_layers  # noqa: PLC0415
+
+    strategy = strategy if isinstance(strategy, dict) else {}
+    pins = _creator_pins(strategy)
+    recipe, rows = with_pinned_text_layers(
+        recipe,
+        pins,
+        font_family=strategy.get("font_family") or None,
+        text_color=strategy.get("text_color") or None,
+    )
+    drawn = [pins[int(row["id"].rsplit("-", 1)[1])].model_dump(mode="json") for row in rows]
+    left_out = len(pins) - len(drawn)
+    notes = (
+        [
+            "Left out corner text whose time or clip is outside this edit "
+            f"({left_out} line{'s' if left_out != 1 else ''})."
+        ]
+        if left_out
+        else []
+    )
+    return recipe, rows, drawn, notes
 
 
 def _voice_decline(
@@ -581,6 +622,7 @@ def run_phone_voice_behind_footage_job(
             min_shot_s=composition.min_shot_s,
             allow_silent_tail=composition.voice_span_s is not None,
             target_lufs=settings.output_target_lufs,
+            pinned_texts=_creator_pins(all_candidates.get("creator_strategy")),
         )
         # Counts only: the voice is the creator's private words.
         record_pipeline_event(
@@ -593,6 +635,10 @@ def run_phone_voice_behind_footage_job(
                 "hard_cut": window.hard_cut,
             },
         )
+    recipe, pin_rows, pins_drawn, pin_notes = _with_creator_pins(
+        recipe, all_candidates.get("creator_strategy")
+    )
+
     validate_phone_pilot_recipe(recipe)
     verified = composition
     if composition.voice_span_s is not None:
@@ -629,7 +675,13 @@ def run_phone_voice_behind_footage_job(
         ],
         "cut_count": len(receipt.shots),
         "ordering_basis": ordering_basis,
-        "adjustments": [*adjustments, *receipt.adjustments, *([tie_note] if tie_note else [])],
+        "adjustments": [
+            *adjustments,
+            *receipt.adjustments,
+            *([tie_note] if tie_note else []),
+            *pin_notes,
+        ],
+        **({"pinned_texts": pins_drawn} if pins_drawn else {}),
     }
     _user_id, _assignments, brief = gb._load_unified_montage_inputs(job_id)
     if brief is not None and brief.live():
@@ -690,7 +742,7 @@ def run_phone_voice_behind_footage_job(
                 "duration_s": round(receipt.duration_s, 3),
                 "intro_mode": "linear",
                 "intro_layout": "linear",
-                "text_elements": [],
+                "text_elements": pin_rows,
                 "orientation": "portrait",
                 "ok": False,
             }

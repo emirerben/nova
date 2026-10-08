@@ -69,7 +69,9 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # KRI-520: a Turkish chat gets a reply-language line at the end of the prompt; English is
 # byte-identical (v50).
 # KRI-519: reaction beats on an iPhone Voiceover edit, worded for the voiceover (v51).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-08-v51"
+# KRI-525/526: pins may carry `start_s`/`end_s` or `clip`; the 4-line / 120-character limits are
+# taught so an over-long ask becomes a question, not a schema failure (v52).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-08-v52"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -700,6 +702,16 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     "; opening_title_duration_s is a short hold (max "
                     f"{MAX_OPENING_TITLE_DURATION_S:g}s): text that must stay on screen the "
                     "whole video belongs in pinned_texts, not in a longer title hold"
+                )
+            if any(
+                "pinned_texts" in map(str, error["loc"])
+                for error in exc.errors(include_input=False, include_context=False)
+            ):
+                # KRI-525/526: name the pin rules the retry broke (a range is seconds OR a
+                # clip, start before end, and the line limits) instead of a bare error type.
+                self._schema_feedback += (
+                    "; pinned_texts: at most 4 lines of at most 120 characters, each with "
+                    "either start_s/end_s (start before end) or clip, never both"
                 )
             raise SchemaError(f"main_creator: invalid output: {exc}") from exc
         except Exception as exc:  # noqa: BLE001

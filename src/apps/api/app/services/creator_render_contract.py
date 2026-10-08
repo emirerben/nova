@@ -227,6 +227,17 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         ),
     ),
     **_rules(
+        "upstream_resolved",
+        "render_contract:text",
+        "pinned_texts[].start_s",
+        "pinned_texts[].end_s",
+        "pinned_texts[].clip",
+        note=(
+            "KRI-525: the compiler resolves a pin's seconds / clip scope to a window; the "
+            "contract still verifies the pin's exact text, not when it is on screen"
+        ),
+    ),
+    **_rules(
         "supported",
         "render_contract:order",
         "ordering_choice",

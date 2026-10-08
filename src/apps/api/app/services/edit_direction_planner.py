@@ -1451,6 +1451,7 @@ def plan_direction_snapshot(
         opening_title_duration_s=source.opening_title_duration_s,
         shot_labels=source.shot_labels,
         closing_title=source.closing_title,
+        pinned_texts=source.pinned_texts,
         clip_intents=source.clip_intents,
         media=media,
     )

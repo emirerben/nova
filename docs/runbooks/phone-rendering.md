@@ -109,6 +109,11 @@ Enrollment (`phone_rendering_for`) is checked first regardless of format.
 
 ### Montage family on the phone (KRI-114 P1-2/P1-3)
 
+> **Corner text (KRI-523/525/527):** every phone montage writer draws the creator's
+> `pinned_texts` (unified, lip-sync, spoken-excerpt, voice-behind-footage and this recorded-voiceover
+> writer). Needs `positionedText` (+ `authoredText` for the default Fraunces) verified. Details and the
+> known intro-text overlap limit: [`pinned-text`](../pipelines/pinned-text.md).
+
 `montage`/`day_vlog`/`single_hero` items **without a voiceover** compile
 straight from the analysis proxies: `app.tasks.generative_build
 ._run_phone_voiceover_montage_job` runs the SAME ingest → text agents → style selector

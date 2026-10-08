@@ -1,0 +1,66 @@
+{
+  "overlays": [
+    {
+      "text": "Part 1",
+      "effect": "static",
+      "text_size_px": 52,
+      "position_x_frac": 0.08,
+      "position_y_frac": 0.12,
+      "text_color": "#FFF8F0",
+      "text_anchor": "left",
+      "start_s": 0.5,
+      "end_s": 2.5,
+      "font_family": "Fraunces",
+      "position": "center",
+      "max_width_frac": 0.84,
+      "vertical_anchor": "center"
+    },
+    {
+      "text": "Part 2",
+      "effect": "static",
+      "text_size_px": 52,
+      "position_x_frac": 0.08,
+      "position_y_frac": 0.12,
+      "text_color": "#FFF8F0",
+      "text_anchor": "left",
+      "start_s": 2.5,
+      "end_s": 4.5,
+      "font_family": "Fraunces",
+      "position": "center",
+      "max_width_frac": 0.84,
+      "vertical_anchor": "center"
+    },
+    {
+      "text": "Day one in Lisbon",
+      "effect": "static",
+      "text_size_px": 52,
+      "position_x_frac": 0.92,
+      "position_y_frac": 0.86,
+      "text_color": "#FFF8F0",
+      "text_anchor": "right",
+      "start_s": 0.0,
+      "end_s": 2.0,
+      "font_family": "Fraunces",
+      "position": "center",
+      "max_width_frac": 0.84,
+      "vertical_anchor": "center"
+    },
+    {
+      "text": "Lisbon",
+      "effect": "static",
+      "text_size_px": 104,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.1822,
+      "text_color": "#FFF8F0",
+      "text_anchor": "center",
+      "start_s": 0.0,
+      "end_s": 2.2,
+      "font_family": "Fraunces",
+      "position": "center",
+      "max_width_frac": 0.8,
+      "vertical_anchor": "center",
+      "letter_spacing": -0.025,
+      "line_spacing": 1.0
+    }
+  ]
+}

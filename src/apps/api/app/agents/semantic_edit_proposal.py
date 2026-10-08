@@ -84,6 +84,7 @@ def _canonicalize_text_bindings(
 ) -> None:  # noqa: A002
     """Keep server-owned and unrequested copy out of the generic text lane."""
     server_owned = {text for text in (input.opening_title, input.closing_title) if text}
+    server_owned.update(pin.text for pin in input.pinned_texts or ())
     server_owned_keys = {creator_copy_match_key(text) for text in server_owned}
     if input.direction != "fast_montage":
         server_owned.update(input.shot_labels or [])
@@ -208,7 +209,13 @@ def _creator_captions(input: EditProposalAgentInput) -> dict[str, list[str]]:  #
         key = creator_copy_match_key(text)
         if text not in phrases.setdefault(key, []):
             phrases[key].append(text)
-    for title in (input.opening_title, input.closing_title):
+    # KRI-526: a quoted pin is the creator's own words but belongs to its corner, so it is not
+    # also an allowed beat caption. Titles are handled the same way.
+    for title in (
+        input.opening_title,
+        input.closing_title,
+        *(pin.text for pin in input.pinned_texts or ()),
+    ):
         if title:
             key = creator_copy_match_key(title)
             phrases[key] = [text for text in phrases.get(key, []) if text != title]
@@ -266,6 +273,19 @@ def _blank_grounded_label_thoughts(
         ):
             chapter.thought = ""
             repairs.append(f"blanked_grounded_label_thought:{index}")
+
+
+def _blank_pinned_text_thoughts(
+    plan: SemanticEditPlan, input: EditProposalAgentInput, repairs: list[str]
+) -> None:
+    """KRI-526: corner text is drawn separately, so a beat must never repeat it as copy."""
+    pin_keys = {creator_copy_match_key(pin.text) for pin in input.pinned_texts or ()}
+    if not pin_keys:
+        return
+    for index, chapter in enumerate(plan.chapters):
+        if chapter.thought and creator_copy_match_key(chapter.thought) in pin_keys:
+            chapter.thought = ""
+            repairs.append(f"blanked_pinned_text_thought:{index}")
 
 
 def _restore_dropped_creator_captions(
@@ -626,7 +646,7 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.semantic_edit_proposal",
         prompt_id="semantic_edit_proposal",
-        prompt_version="2.0.12",
+        prompt_version="2.0.13",
         model="gemini-2.5-flash",
         thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
@@ -663,6 +683,14 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
             opening_title=input.opening_title or "",
             closing_title=input.closing_title or "",
             shot_labels_json=json.dumps(input.shot_labels or [], ensure_ascii=False),
+            pinned_texts_line=(
+                "\nPINNED CORNER TEXT (server-owned exact copy, drawn separately in a "
+                "corner; never repeat it as a thought or text_binding, even if the request "
+                "quotes it): "
+                + json.dumps([pin.text for pin in input.pinned_texts], ensure_ascii=False)
+                if input.pinned_texts
+                else ""
+            ),
             constraints_json=json.dumps(
                 _semantic_constraint_block(input, aliases), ensure_ascii=False
             ),
@@ -917,6 +945,7 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
         if not input.shot_labels or input.direction == "fast_montage":
             _blank_grounded_label_thoughts(plan, input, repairs)
         _canonicalize_text_bindings(plan, input, repairs)
+        _blank_pinned_text_thoughts(plan, input, repairs)
         if not input.shot_labels and (captions := _creator_captions(input)):
             for index, chapter in enumerate(plan.chapters):
                 key = creator_copy_match_key(chapter.thought)

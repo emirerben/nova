@@ -268,8 +268,14 @@ def test_only_text_the_creator_wrote_is_pinned() -> None:
 def test_pin_limits_and_corners_are_enforced() -> None:
     with pytest.raises(ValueError):
         CreativeStrategy(pinned_texts=[{"text": "x", "corner": "middle"}])
+    # KRI-526: the strategy parses up to 12 lines so an over-limit ask becomes a question
+    # (see test_pinned_text_limits); a snapshot is strict at 4.
+    assert (
+        len(CreativeStrategy(pinned_texts=[{"text": "x", "corner": "top_left"}] * 5).pinned_texts)
+        == 5
+    )
     with pytest.raises(ValueError):
-        CreativeStrategy(pinned_texts=[{"text": "x", "corner": "top_left"}] * 5)
+        CreativeStrategy(pinned_texts=[{"text": "x", "corner": "top_left"}] * 13)
     with pytest.raises(ValueError):
         CreativeStrategy(pinned_texts=[{"text": "   ", "corner": "top_left"}])
 

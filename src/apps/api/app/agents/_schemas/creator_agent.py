@@ -40,10 +40,10 @@ from app.agents._schemas.sfx_intent import (
 from app.schemas.clip_intents import MAX_CLIP_INTENTS, ClipIntent, ResolvedClipIntent
 from app.schemas.edit_proposal import (
     CREATOR_TITLE_MAX_CHARS,
-    MAX_CREATOR_PINNED_TEXTS,
     MAX_CREATOR_SHOT_LABELS,
     MAX_OPENING_TITLE_DURATION_S,
     MIN_OPENING_TITLE_DURATION_S,
+    PINNED_TEXT_PARSE_MAX_LINES,
     BeatLayout,
     MixedMediaTimingProfile,
     MontageAudioPlan,
@@ -495,7 +495,7 @@ class CreativeStrategy(_CreatorModel):
     # byte-identical when unused. One entry is one on-screen line held for the whole
     # video; list order is the top-to-bottom stack order within a corner.
     pinned_texts: SkipJsonSchema[list[PinnedText] | None] = Field(
-        default=None, max_length=MAX_CREATOR_PINNED_TEXTS
+        default=None, max_length=PINNED_TEXT_PARSE_MAX_LINES
     )
 
     @field_validator("pinned_texts", mode="before")

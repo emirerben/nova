@@ -54,6 +54,7 @@ from app.agents._schemas.edit_format import (
     render_program_for_intent,
 )
 from app.config import settings
+from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS
 from app.services.creator_errors import CreatorCapabilityError, CreatorStrategyError
 from app.services.phone_destination import phone_drawable_visual_kinds
 from app.services.phone_rollout import (
@@ -1149,22 +1150,36 @@ def compile_strategy_to_plan(
         and phone_capability.available
         and phone_subtitled_closing_title_supported()
     )
+    # KRI-526: the strategy parses up to 12 lines / 400 characters so an over-limit ask lands
+    # here and becomes a question about the pins (strategy_policy), not a schema failure.
+    if len(strategy.pinned_texts or ()) > MAX_CREATOR_PINNED_TEXTS:
+        raise CreatorStrategyError(
+            "pinned_texts_too_many: more corner lines than fit",
+            code="unsupported_treatment",
+            edit_format=strategy.edit_format,
+        )
+    if any(not pin.fits_a_corner for pin in strategy.pinned_texts or ()):
+        raise CreatorStrategyError(
+            "pinned_texts_too_long: a corner line is longer than one line",
+            code="unsupported_treatment",
+            edit_format=strategy.edit_format,
+        )
+    # A recorded voiceover makes the item's program "native", which no cloud renderer draws
+    # pins for; the phone montage-family voiceover writer does (KRI-527), so a phone cohort
+    # keeps its pins there.
+    phone_voiceover_montage = bool(
+        phone_capability is not None
+        and phone_capability.available
+        and manifest.has_voiceover
+        and strategy.edit_format in GUIDED_EDIT_FORMATS
+    )
     if strategy.pinned_texts and (
         strategy.edit_format == "subtitled"
-        or strategy.render_program != "guided"
-        # The phone montage writers spined by a recorded voiceover, and the voice-behind-
-        # footage writer, build their own text lanes and never draw pinned text (the cloud
-        # guided route does, through the same text compiler).
-        or (
-            phone_capability is not None
-            and phone_capability.available
-            and (
-                (strategy.edit_format == "montage" and manifest.has_voiceover)
-                or strategy.voice_mode
-            )
-        )
+        or (strategy.render_program != "guided" and not phone_voiceover_montage)
     ):
-        # KRI-523: whole-video corner text is drawn by the guided text compiler only.
+        # KRI-523: corner text is drawn by the guided text compiler (cloud) and by every phone
+        # montage writer (unified, lip-sync, spoken-excerpt, voice-behind-footage and the
+        # recorded-voiceover montage - KRI-527). A subtitled talking edit has no free text lane.
         raise CreatorStrategyError(
             f"pinned_texts is not supported by the {strategy.edit_format} renderer",
             code="unsupported_treatment",

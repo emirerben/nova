@@ -71,6 +71,12 @@ def test_main_creator_eval(
             user_sources=[fixture.input["user_message"]],
         )
         assert dropped == 0
+        # KRI-525: any seconds the pin carries must be numbers the creator wrote.
+        from app.routes.creator_agent import _pin_range_is_grounded
+
+        assert all(
+            _pin_range_is_grounded(PinnedText(**pin), evidence.pinned_texts or "") for pin in pinned
+        )
 
     if fixture.meta.get("manual_visual_removal"):
         assert result.output is not None

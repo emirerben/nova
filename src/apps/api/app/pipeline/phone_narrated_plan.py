@@ -181,9 +181,12 @@ from app.pipeline.phone_recipe_shared import (
 from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from app.agents._schemas.text_element import TextElement
     from app.pipeline.phone_captions import PhoneCaptionLook
     from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes
+    from app.schemas.edit_proposal import PinnedText
 
 # Only text layers (captions and the opening title) ask for these in a
 # narrated recipe. `authoredText` is added by the `EditRecipeV2` validator for
@@ -359,7 +362,11 @@ def narrated_title_text_elements(
 
 
 def _compile_title_layers(
-    elements: list[TextElement], *, canvas: Canvas, timeline_duration_s: float
+    elements: list[TextElement],
+    *,
+    canvas: Canvas,
+    timeline_duration_s: float,
+    first_index: int = 0,
 ) -> list[Any]:
     from app.pipeline.generative_overlays import build_overlays_from_text_elements
     from app.pipeline.portable_text_layout import compile_text_overlay
@@ -371,14 +378,107 @@ def _compile_title_layers(
         return [
             compile_text_overlay(
                 overlay,
-                layer_id=f"{TITLE_LAYER_PREFIX}{index}",
+                layer_id=f"{TITLE_LAYER_PREFIX}{first_index + index}",
                 canvas=canvas,
-                dissolve_seed=101 + index * 37,
+                dissolve_seed=101 + (first_index + index) * 37,
             )[0]
             for index, overlay in enumerate(overlays)
         ]
     except Exception as exc:  # noqa: BLE001 - untrusted title text
         raise UnsupportedPhonePlan(f"unable to compile the title: {exc}") from exc
+
+
+def with_pinned_text_layers(
+    recipe: EditRecipeV2,
+    pins: Sequence[PinnedText] | None,
+    *,
+    font_family: str | None = None,
+    text_color: str | None = None,
+) -> tuple[EditRecipeV2, list[dict]]:
+    """``recipe`` plus the creator's pinned corner text (KRI-523/525/527), and its rows.
+
+    The layers use the ``title-`` id prefix so every title/caption Save keeps treating them as
+    authored text; their indices continue after any layer the recipe already has. A clip scope
+    resolves against the recipe's video clips in timeline order. The returned rows
+    (``guided-pinned-<i>`` TextElements) are what the variant row carries, because the editor
+    preview compiles text from the variant, never from the pinned recipe. A pin with no usable
+    window is dropped, so the caller must read what was drawn from the rows.
+    """
+
+    from app.agents._schemas.text_element import TextElement
+    from app.pipeline.generative_overlays import build_overlays_from_text_elements
+    from app.pipeline.pinned_text import pinned_text_elements, resolve_pin_windows
+    from app.pipeline.portable_text_layout import compile_text_overlay
+
+    if not pins:
+        return recipe, []
+    clips = [clip for track in recipe.tracks for clip in track.clips]
+    duration = timeline_end_s(clips)
+    clip_windows = sorted(
+        (
+            clip.timeline_start,
+            clip.timeline_start + clip.source_duration / clip.rate + (clip.hold_duration or 0),
+        )
+        for track in recipe.tracks
+        if track.kind == "video"
+        for clip in track.clips
+    )
+    rows = pinned_text_elements(
+        resolve_pin_windows(pins, duration, clip_windows),
+        font_family=font_family,
+        text_color=text_color,
+    )
+    if not rows:
+        return recipe, []
+    existing = list(recipe.text_layers)
+    first = sum(1 for layer in existing if _is_title_layer(layer))
+    try:
+        overlays = build_overlays_from_text_elements(
+            [TextElement.model_validate(row) for row in rows],
+            video_duration_s=duration,
+            independent_box_alignment=True,
+        )
+        compiled = [
+            compile_text_overlay(
+                overlay,
+                layer_id=f"{TITLE_LAYER_PREFIX}{first + index}",
+                canvas=recipe.canvas,
+                dissolve_seed=101 + (first + index) * 37,
+            )
+            for index, overlay in enumerate(overlays)
+        ]
+    except Exception as exc:  # noqa: BLE001 - untrusted pin text
+        raise UnsupportedPhonePlan(f"unable to compile the pinned text: {exc}") from exc
+    # Append only: every existing layer keeps the font it was compiled with (an intro that uses
+    # a cluster / staggered reveal needs fonts a rebuild from `layer.runs` would not find).
+    manifest = list(recipe.asset_manifest.assets)
+    assets = list(recipe.assets)
+    known = {asset.id for asset in manifest}
+    layers = []
+    for layer, font in compiled:
+        layers.append(layer)
+        if font is not None and font.id not in known:
+            known.add(font.id)
+            manifest.append(font)
+            assets.append(
+                MediaAsset(
+                    id=font.id,
+                    relative_path=font.id,
+                    fingerprint=AssetFingerprint(
+                        hex=font.fingerprint.sha256, byte_count=font.fingerprint.byte_count
+                    ),
+                )
+            )
+    all_layers = [*existing, *layers]
+    snap_text_overshoot(all_layers, duration)
+    fields = {name: getattr(recipe, name) for name in type(recipe).model_fields}
+    fields.update(
+        assets=assets,
+        asset_manifest=RenderAssetManifest(assets=tuple(manifest)),
+        text_layers=all_layers,
+        required_capabilities=set(recipe.required_capabilities) | {"positionedText"},
+    )
+    return EditRecipeV2(**fields), rows
 
 
 def narrated_authored_text_elements(rows: list[dict] | None) -> list[dict]:

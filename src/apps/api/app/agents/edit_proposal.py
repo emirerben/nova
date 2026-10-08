@@ -29,6 +29,7 @@ from app.schemas.edit_proposal import (
     CREATOR_TITLE_MAX_CHARS,
     GUIDED_STORY_MIN_MOMENT_S,
     GUIDED_TITLE_HOLD_S,
+    MAX_CREATOR_PINNED_TEXTS,
     MAX_CREATOR_SHOT_LABELS,
     MAX_EDIT_PROPOSAL_MEDIA,
     MAX_OPENING_TITLE_DURATION_S,
@@ -40,6 +41,7 @@ from app.schemas.edit_proposal import (
     MontageAudioPlan,
     MontageCadenceConstraint,
     MontageTextBinding,
+    PinnedText,
     ProposalDuration,
     StoryBeat,
     StoryShape,
@@ -916,6 +918,12 @@ class EditProposalAgentInput(BaseModel):
     )
     shot_labels: list[str] | None = Field(default=None, max_length=MAX_CREATOR_SHOT_LABELS)
     closing_title: str | None = Field(default=None, max_length=CREATOR_TITLE_MAX_CHARS)
+    # KRI-526: the creator's corner text. Server-owned like the titles: it is drawn in its
+    # corner separately, so the planner must never repeat it as a thought or text binding.
+    # Omitted from dumps when unset so a pin-free input is unchanged.
+    pinned_texts: list[PinnedText] | None = Field(
+        default=None, max_length=MAX_CREATOR_PINNED_TEXTS, exclude_if=lambda value: not value
+    )
     # KRI-118 lane L3: chat-picked story shape, threaded from ProposalBrief.
     story_shape: StoryShape | None = None
     hero_media_id: str | None = Field(default=None, max_length=100)

@@ -166,6 +166,7 @@ def snapshot_agent_input(
         opening_title_duration_s=snapshot.opening_title_duration_s,
         shot_labels=snapshot.shot_labels,
         closing_title=snapshot.closing_title,
+        pinned_texts=snapshot.pinned_texts,
         narration_duration_s=snapshot.narration.duration_s if snapshot.narration else None,
         narration_words=[word.model_dump() for word in snapshot.narration.words]
         if snapshot.narration

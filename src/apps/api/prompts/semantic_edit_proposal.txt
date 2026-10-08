@@ -5,7 +5,7 @@ CREATOR REQUEST: $creator_request
 DIRECTION: $direction
 OPENING TITLE (server-owned exact copy): $opening_title
 CLOSING TITLE (server-owned exact copy): $closing_title
-SHOT LABELS (server-owned exact copy when present): $shot_labels_json
+SHOT LABELS (server-owned exact copy when present): $shot_labels_json$pinned_texts_line
 SERVER CONSTRAINTS (binding; every media reference is a short alias): $constraints_json
 
 AVAILABLE MEDIA: $media_json

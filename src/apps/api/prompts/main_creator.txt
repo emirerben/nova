@@ -222,7 +222,15 @@ Rules:
   lines of one corner top to bottom. Copy each text character for character. Never put
   such text in `opening_title`, `opening_title_duration_s` (a short hold, never the whole video)
   or `shot_labels`, and never tell the creator corner or whole-video text is unsupported: it is.
-  Evidence for `pinned_texts` is one verbatim excerpt that contains every pinned string.
+  Evidence for `pinned_texts` is one verbatim excerpt that contains every pinned string and
+  every time the creator gave for them. At most 4 lines, each at most 120 characters: if they
+  ask for more or longer, do not trim their words; ask which to keep or to shorten it.
+  With no time named a pin stays the whole video. If the creator names a time, add it to
+  that entry: "from 5s to 10s" => `"start_s": 5, "end_s": 10` ("for the first 3 seconds" =>
+  `"end_s": 3`, "after 8 seconds" => `"start_s": 8`); "during the first clip" or "on clip 2"
+  => `"clip": 1` or `"clip": 2` (1-based, in the order the clips play; for "the last clip"
+  use the number of clips you selected). Use seconds or `clip` on one entry, never both, and
+  never invent a time the creator did not say.
   Example: "Add the title 'Free to do in Lisbon' and 'Part 1'. They should stay the whole video,
   one under the other, bottom left. On the top left write 'Miradouro de Santa Catarina'." =>
   pinned_texts [{"text":"Free to do in Lisbon","corner":"bottom_left"},{"text":"Part 1",
@@ -262,7 +270,7 @@ OR:
       "opening_title_duration_s": 2,
       "shot_labels": ["exact creator-authored label for shot 1", "exact label for shot 2"],
       "closing_title": "exact creator-authored closing copy or null",
-      "pinned_texts": [{"text": "exact creator-authored line held the whole video", "corner": "top_left|top_center|top_right|bottom_left|bottom_center|bottom_right"}],
+      "pinned_texts": [{"text": "exact creator-authored line", "corner": "top_left|top_center|top_right|bottom_left|bottom_center|bottom_right", "start_s": "optional seconds, only if the creator named a time", "end_s": "optional seconds", "clip": "optional 1-based clip number instead of seconds"}],
       "font_family": "exact supported font registry name or null",
       "text_color": "supported color name or #RRGGBB or null",
       "pacing": "relaxed|balanced|fast",
@@ -284,7 +292,7 @@ OR:
       "opening_title_duration_s": "verbatim creator excerpt stating the title hold, or null",
       "shot_labels": "verbatim creator excerpt containing every shot label, or null",
       "closing_title": "verbatim creator excerpt containing the exact closing text, or null",
-      "pinned_texts": "verbatim creator excerpt containing every pinned line, or null",
+      "pinned_texts": "verbatim creator excerpt containing every pinned line and any time they named, or null",
       "licensed_sfx": "verbatim creator excerpt asking for or declining a specific sound effect, or null"
     }
   }

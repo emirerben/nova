@@ -44,12 +44,22 @@ _SEGMENT_FIT_TOLERANCE_S = 0.15
 # exactly one clip long must not travel with that clip on a reorder.
 _ANCHORED_IDS = frozenset({"guided-title", "guided-closing-title"})
 # KRI-523: whole-video corner text (`guided-pinned-<i>`) is anchored to the timeline,
-# never to a clip.
+# never to a clip. KRI-525: a RANGED pin is not: one that fills its clip follows that clip
+# (like a label), and a seconds range is re-windowed by the generic time rules.
 _ANCHORED_PREFIX = "guided-pinned-"
 
 
-def _is_anchored(bar_id: str) -> bool:
-    return bar_id in _ANCHORED_IDS or bar_id.startswith(_ANCHORED_PREFIX)
+def _is_anchored(bar: dict[str, Any], old_total: float) -> bool:
+    bar_id = str(bar.get("id") or "")
+    if bar_id in _ANCHORED_IDS:
+        return True
+    if not bar_id.startswith(_ANCHORED_PREFIX):
+        return False
+    return (
+        float(bar.get("start_s") or 0.0) <= _EDGE_S
+        and old_total > 0
+        and float(bar.get("end_s") or 0.0) >= old_total - _EDGE_S
+    )
 
 
 _CODE_TEXT = {
@@ -365,7 +375,7 @@ def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
         if is_label:
             old_segment = _identify_old_segment(bar, media_id, old_segments)
             clip_bound = True
-        elif bar.get("segment_id") and not _is_anchored(str(bar.get("id") or "")):
+        elif bar.get("segment_id") and not _is_anchored(bar, old_total):
             candidate = _identify_old_segment(bar, None, old_segments)
             if (
                 candidate is not None

@@ -90,6 +90,7 @@ from app.models import (
     PlanItemAsset,
     SoundEffect,
 )
+from app.pipeline.pinned_text import pin_range_grounded
 from app.routes.generative_jobs import (
     _find_variant,
     _phone_subtitled_sfx_paths,
@@ -103,6 +104,7 @@ from app.schemas.edit_proposal import (
     MAX_PROPOSAL_DURATION_S,
     MixedMediaTimingProfile,
     MontageCadenceConstraint,
+    PinnedText,
     recognize_cadence_reuse_policy,
     recognize_explicit_cadence_reuse_policy,
     recognize_image_layout,
@@ -1156,6 +1158,12 @@ def _excerpt_states_seconds(excerpt: str, seconds: float) -> bool:
     )
 
 
+def _pin_range_is_grounded(pin: PinnedText, quote: str, *, strip: tuple[str, ...] = ()) -> bool:
+    """KRI-525: a pin's seconds must be numbers the creator wrote (see `pin_range_grounded`)."""
+
+    return pin_range_grounded(pin, quote, strip=strip)
+
+
 def _apply_explicit_render_intent(
     strategy: CreativeStrategy,
     creator_request: str,
@@ -1201,6 +1209,9 @@ def _apply_explicit_render_intent(
                     continue
             if field == "pinned_texts" and value is not None:
                 if not all(" ".join(pin.text.split()) in quote for pin in value):
+                    continue
+                pin_texts = tuple(pin.text for pin in value)
+                if not all(_pin_range_is_grounded(pin, quote, strip=pin_texts) for pin in value):
                     continue
             if field == "opening_title_duration_s" and value is not None:
                 if not _excerpt_states_seconds(quote, value):

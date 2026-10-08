@@ -21,11 +21,15 @@ import Foundation
 enum GuidedLabelRebase {
     static let minBarS: Double = 0.2
     static let edgeS: Double = 0.05
+    /// A bar that carries a segment_id is only clip-bound if it still fills that segment.
+    static let segmentFitToleranceS: Double = 0.15
     static let labelPrefix = "clip-label-"
     static let labelMediaPrefix = "clip-label-media-"
     static let openingTitleID = "guided-title"
     static let closingTitleID = "guided-closing-title"
     /// KRI-523: whole-video corner text (`guided-pinned-<i>`) rides the timeline like a title.
+    /// KRI-525: a RANGED pin that fills its clip follows that clip like a label; any other
+    /// ranged pin goes through the same time rules as a title (`rebaseTitle`).
     static let pinnedPrefix = "guided-pinned-"
 
     /// One active slot's output window on the editor's base clock (the same walk the
@@ -94,6 +98,16 @@ enum GuidedLabelRebase {
             // IDs exempt titles from clip-label matching even when a previous
             // server projection stamped a segment_id onto the bar.
             if isAnchoredTitle(element) {
+                if let clipPin = clipBoundPin(element, old: old, oldTotal: oldTotal) {
+                    // Server parity: a clip-bound bar whose clip is gone is dropped.
+                    guard let target = follow(clipPin, media: nil, in: new) else { continue }
+                    var updated = element
+                    updated.startS = round6(target.start)
+                    updated.endS = round6(target.end)
+                    updated.raw["segment_id"] = .string(target.id)
+                    result.append(updated)
+                    continue
+                }
                 if let title = rebaseTitle(element, old: old, new: new, oldTotal: oldTotal, newTotal: newTotal) {
                     result.append(title)
                 }
@@ -121,6 +135,22 @@ enum GuidedLabelRebase {
             result.append(updated)
         }
         return result
+    }
+
+    /// The old slot a ranged pin is bound to, or nil when the pin is anchored (spans the whole
+    /// video), not a pin, or no longer fills the segment it names (`rebase_guided_text`).
+    private static func clipBoundPin(
+        _ element: EditorTextElement, old: [SlotWindow], oldTotal: Double
+    ) -> SlotWindow? {
+        guard element.id.hasPrefix(pinnedPrefix) else { return nil }
+        let spansWholeVideo = element.startS <= edgeS && oldTotal > 0 && element.endS >= oldTotal - edgeS
+        guard !spansWholeVideo,
+              let segmentID = element.raw["segment_id"]?.stringValue, !segmentID.isEmpty,
+              let window = old.first(where: { $0.id == segmentID }),
+              abs(element.startS - window.start) <= segmentFitToleranceS,
+              abs(element.endS - window.end) <= segmentFitToleranceS
+        else { return nil }
+        return window
     }
 
     /// Match `rebase_guided_text`: actual edge positions determine anchoring;

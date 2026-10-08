@@ -5192,6 +5192,24 @@ def _run_phone_voiceover_montage_job(
                 narration=narration,
                 target_lufs=settings.output_target_lufs,
             )
+            # KRI-527: the creator's corner text. The compiler owns the voice, music and
+            # intro lanes; pins are added on top, and the variant row carries the same
+            # rows because the editor preview compiles text from the row, not the recipe.
+            from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
+                with_pinned_text_layers,
+            )
+            from app.pipeline.pinned_text import pins_from_strategy  # noqa: PLC0415
+
+            recipe, pin_rows = with_pinned_text_layers(
+                recipe,
+                pins_from_strategy(raw_creator_strategy),
+                font_family=creator_font_family,
+                text_color=creator_text_color,
+            )
+            if pin_rows:
+                decision = decision.model_copy(
+                    update={"text_elements": [*(decision.text_elements or []), *pin_rows]}
+                )
 
     validate_phone_pilot_recipe(recipe)
     request = make_device_request(

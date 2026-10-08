@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.semantic_edit_proposal",
-  "prompt_version": "2.0.12",
+  "prompt_version": "2.0.13",
   "input": {
     "goal": "Tell the history of a landmark through construction footage and archival stills.",
     "idea": "Historical story",
