@@ -1,27 +1,38 @@
 {
-  "base": "f23aeb35aee42bd9138f82d42c71a8ac7416420d",
+  "base": "9efee3db781b554f1bbdc08c5e8652ec4fed049e",
   "live": {
-    "provider_calls": 28,
-    "budget_ledgers": 3,
+    "provider_calls": 112,
+    "budget_ledgers": 8,
     "run_caps_usd": [
       2,
       2,
-      1
+      1,
+      1.5,
+      1.5,
+      1.25,
+      1,
+      0.5
     ],
-    "spent_usd": 0.483363,
+    "spent_usd": 2.160176,
     "total_cap_usd": 5,
     "per_run_cap_usd": 2,
     "unsettled_reservations": 0,
-    "final_canonical_cases": 9,
-    "changed_cases_compiler_and_save_validation_passed": 7,
-    "no_op_cases": 1,
-    "unsupported_cases": 1,
-    "component_extraction_to_save_probes": 1,
+    "system_extension_provider_calls": 84,
+    "system_creation_cases": 18,
+    "system_editor_cases": 28,
+    "system_chain_cases": 18,
+    "final_chain_distinct_cases": 9,
     "models": [
       "gemini-3.1-pro-preview",
       "gemini-3.6-flash"
     ],
-    "limits": "Synthetic component probes; earlier failures preserved; not a full HTTP/phone export or statistical reliability study. Unsupported final raw redirect corrected by structured-reason parser regression."
+    "limits": [
+      "All 252 library entries remain unexecuted",
+      "No full HTTP, database persistence, phone export or audible continuity proof",
+      "Original graded-title conversation not found",
+      "Creation phone/cloud coverage is not full editing/render coverage for every format",
+      "Manifest availability is the pinned evaluation profile, not a live production rollout claim"
+    ]
   },
   "offline_replay": {
     "command": ".venv/bin/python -m tests.evals.prompt_coverage --replay",
@@ -32,14 +43,14 @@
       "tests/evals/test_clip_intent_planner_evals.py",
       "tests/incidents"
     ],
-    "passed": 698,
+    "passed": 769,
     "xfailed": 2,
     "exit_code": 0,
     "library_cases_executed": 0
   },
   "kria_gate": {
     "command": "make verify-kria",
-    "passed": 1492,
+    "passed": 1525,
     "skipped": 6,
     "exit_code": 0,
     "database": "isolated local test database"
@@ -58,18 +69,18 @@
   },
   "preship": {
     "exit_code": 0,
-    "python_files": 10,
+    "python_files": 35,
     "web_typecheck": "not applicable: no web changes",
     "release_metadata": "unchanged by feature"
   },
   "verification_limits": [
-    "All252 library inputs unexecuted; replay is not live-model reliability",
+    "All 252 library inputs unexecuted; replay is not live-model reliability",
     "Original graded-title conversation not found",
     "Synthetic pixels do not prove original full-video export",
     "Audio-level contract is not audible continuity"
   ],
   "review": {
-    "independent_review": "completed; explicit title role with kria-prefixed ID finding fixed and regression added",
+    "independent_review": "reviewed shared routing, selector/CAS and capability flow; parent verified findings and fixed error-stage misreporting",
     "unresolved_blockers": []
   },
   "capability_gaps": {
@@ -77,10 +88,13 @@
       "KRI-519",
       "KRI-514",
       "KRI-523",
-      "KRI-522"
+      "KRI-522",
+      "KRI-350",
+      "KRI-449",
+      "KRI-527"
     ],
     "new_tickets": 0,
-    "deduplication": "existing tickets linked to KRI-524; KRI-514 merged upstream during task"
+    "deduplication": "Existing records linked; KRI-350 remains canceled, no status changes or duplicates"
   },
   "release": {
     "merged": false,
@@ -88,22 +102,27 @@
     "approval": "required"
   },
   "affected_suites": {
-    "passed": 505,
+    "passed": 1288,
     "exit_code": 0,
     "scope": [
-      "brief extractor contextual retry",
-      "editor parser/compiler",
-      "preservation/positioning",
-      "corpus schema",
-      "Skia renderer",
-      "device audio export contract",
-      "KRI-522 integration"
-    ]
+      "all offline agent evaluations",
+      "text selectors and compiler/save",
+      "brief extraction",
+      "capability context",
+      "caption save projection",
+      "Skia overlay and device audio contracts"
+    ],
+    "skipped": 15
   },
   "sequence_render": {
     "passed": 2,
     "tier": "offline_rendered_pixels",
     "scope": "compiled children -> production overlay adapter -> Skia frames; alpha at entrance, hold, exit and non-overlap boundaries",
     "full_video_export": false
+  },
+  "chain_replay": {
+    "passed": 19,
+    "captured_cases": 18,
+    "includes_independent_underselection_negative_control": true
   }
 }

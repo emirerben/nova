@@ -1,0 +1,2853 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "case": "caption_fix_typo",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/caption_fix_typo.json",
+      "input": {
+        "utterance": "fix the first caption typo to hello there",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "allowed_op_families": [
+            "caption"
+          ],
+          "has_narrated_captions": true,
+          "text_bars": [],
+          "slots": [],
+          "total_duration_s": 4,
+          "captions": {
+            "total_cues": 2,
+            "truncated": false,
+            "cues": [
+              {
+                "index": 0,
+                "id": "cue-1",
+                "text": "helo there",
+                "start_s": 0,
+                "end_s": 1.2
+              },
+              {
+                "index": 1,
+                "id": "cue-2",
+                "text": "world",
+                "start_s": 1.2,
+                "end_s": 2.2
+              }
+            ],
+            "meta": {
+              "enabled": true,
+              "style": "sentence",
+              "font": null,
+              "y_frac": 0.82
+            }
+          }
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "caption fix typo"
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"edit_caption\",\n      \"cue_index\": 0,\n      \"text\": \"hello there\"\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"I've updated the first caption to \\\"hello there\\\".\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 12924,
+          "tokens_out": 127,
+          "tokens_thoughts": 203
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "caption_emphasize_named_entity",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/caption_emphasize_named_entity.json",
+      "input": {
+        "utterance": "emphasize Turkey in the captions",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "allowed_op_families": [
+            "caption"
+          ],
+          "has_narrated_captions": true,
+          "text_bars": [],
+          "slots": [],
+          "total_duration_s": 4,
+          "captions": {
+            "total_cues": 2,
+            "truncated": false,
+            "cues": [
+              {
+                "index": 0,
+                "id": "cue-1",
+                "text": "we flew to Turkey",
+                "start_s": 0,
+                "end_s": 1.2,
+                "smart_role": "hook",
+                "smart_emphasis": false
+              },
+              {
+                "index": 1,
+                "id": "cue-2",
+                "text": "for the summer",
+                "start_s": 1.2,
+                "end_s": 2.2,
+                "smart_role": "context_shift",
+                "smart_emphasis": false
+              }
+            ],
+            "meta": {
+              "enabled": true,
+              "style": "sentence",
+              "font": null,
+              "y_frac": 0.82
+            }
+          }
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "caption emphasize named entity"
+      },
+      "calls": [
+        {
+          "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"set_caption_emphasis\",\"cue_index\":0,\"emphasis\":true}],\"confidence\":1.0,\"reply\":\"I emphasized the caption mentioning Turkey.\",\"suggestions\":[],\"needs_clarification\":false,\"clarification_context\":null,\"pending_actions\":[],\"unmet_requests\":[]}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 12931,
+          "tokens_out": 70,
+          "tokens_thoughts": 234
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "caption_word_style_meta",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/caption_word_style_meta.json",
+      "input": {
+        "utterance": "switch captions to word by word and move them lower",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "allowed_op_families": [
+            "caption"
+          ],
+          "has_narrated_captions": true,
+          "text_bars": [],
+          "slots": [],
+          "total_duration_s": 4,
+          "captions": {
+            "total_cues": 1,
+            "truncated": false,
+            "cues": [
+              {
+                "index": 0,
+                "id": "cue-1",
+                "text": "hello there",
+                "start_s": 0,
+                "end_s": 1.2
+              }
+            ],
+            "meta": {
+              "enabled": true,
+              "style": "sentence",
+              "font": null,
+              "y_frac": 0.72
+            }
+          }
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "caption word style meta"
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"set_caption_meta\",\n      \"patch\": {\n        \"style\": \"word\",\n        \"y_frac\": 0.85\n      }\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Switched captions to word-by-word style and moved them lower on screen.\",\n  \"suggestions\": [\n    \"change caption font\",\n    \"move captions higher\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 12893,
+          "tokens_out": 160,
+          "tokens_thoughts": 280
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "captions_toggle_off",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/captions_toggle_off.json",
+      "input": {
+        "utterance": "hide the captions",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "allowed_op_families": [
+            "caption"
+          ],
+          "has_narrated_captions": true,
+          "text_bars": [],
+          "slots": [],
+          "total_duration_s": 4,
+          "captions": {
+            "total_cues": 1,
+            "truncated": false,
+            "cues": [
+              {
+                "index": 0,
+                "id": "cue-1",
+                "text": "hello there",
+                "start_s": 0,
+                "end_s": 1.2
+              }
+            ],
+            "meta": {
+              "enabled": true,
+              "style": "sentence",
+              "font": null,
+              "y_frac": 0.82
+            }
+          }
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "captions toggle off"
+      },
+      "calls": [
+        {
+          "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"set_caption_meta\",\"patch\":{\"enabled\":false}}],\"confidence\":1.0,\"reply\":\"I've hidden the captions.\",\"suggestions\":[\"show the captions\",\"change caption style\"],\"needs_clarification\":false,\"clarification_context\":null,\"pending_actions\":[],\"unmet_requests\":[]}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 12886,
+          "tokens_out": 73,
+          "tokens_thoughts": 147
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "compound_multi_family",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/compound_multi_family.json",
+      "input": {
+        "utterance": "add the pop sound at the start and rename it coffee launch",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "allowed_op_families": [
+            "sfx",
+            "title"
+          ],
+          "has_narrated_captions": false,
+          "text_bars": [],
+          "slots": [],
+          "total_duration_s": 5,
+          "sfx": {
+            "placements": [],
+            "catalog": [
+              {
+                "id": "pop",
+                "name": "Pop",
+                "duration_s": 0.2
+              }
+            ]
+          },
+          "title": "Old title"
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "compound multi family"
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"add_sfx\",\n      \"effect_id\": \"pop\",\n      \"at_s\": 0.0\n    },\n    {\n      \"op\": \"set_title\",\n      \"title\": \"coffee launch\"\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Added the pop sound effect at the start and renamed the video to \\\"coffee launch\\\".\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 12856,
+          "tokens_out": 160,
+          "tokens_thoughts": 279
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "kria_v2_audio_music_quieter",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_audio_music_quieter.json",
+      "input": {
+        "utterance": "make the music quieter",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "editor_ops_version": 2,
+          "allowed_op_families": [
+            "music"
+          ],
+          "has_narrated_captions": false,
+          "text_bars": [],
+          "slots": [
+            {
+              "output_start_s": 0,
+              "output_end_s": 8,
+              "duration_s": 8
+            }
+          ],
+          "total_duration_s": 8,
+          "music": {
+            "swappable": false,
+            "removable": true,
+            "current_track_id": "track-1",
+            "current_track_title": "Beat",
+            "candidates": []
+          },
+          "mix": {
+            "music_level": 0.6
+          }
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "music_quieter"
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"set_mix\",\n      \"music_level\": 0.35\n    }\n  ],\n  \"confidence\": 0.95,\n  \"reply\": \"Lowered the music volume.\",\n  \"suggestions\": [\n    \"Make it even quieter\",\n    \"Bring music back up\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 21208,
+          "tokens_out": 133,
+          "tokens_thoughts": 143
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "kria_v2_audio_original_mute_device",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_audio_original_mute_device.json",
+      "input": {
+        "utterance": "mute the original audio",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "editor_ops_version": 2,
+          "allowed_op_families": [
+            "music"
+          ],
+          "has_narrated_captions": false,
+          "text_bars": [],
+          "slots": [
+            {
+              "output_start_s": 0,
+              "output_end_s": 8,
+              "duration_s": 8
+            }
+          ],
+          "total_duration_s": 8,
+          "music": {
+            "swappable": false,
+            "removable": true,
+            "current_track_id": "track-1",
+            "current_track_title": "Beat",
+            "candidates": []
+          },
+          "mix": {
+            "music_level": 0.6,
+            "original_level": 1.0
+          },
+          "render_destination": "device"
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "original_mute_device"
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"set_mix\",\n      \"original_level\": 0.0\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Muted the original audio.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 21225,
+          "tokens_out": 112,
+          "tokens_thoughts": 225
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "kria_v2_audio_original_mute_server_honest",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_audio_original_mute_server_honest.json",
+      "input": {
+        "utterance": "mute the original audio",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "editor_ops_version": 2,
+          "allowed_op_families": [
+            "music"
+          ],
+          "has_narrated_captions": false,
+          "text_bars": [],
+          "slots": [
+            {
+              "output_start_s": 0,
+              "output_end_s": 8,
+              "duration_s": 8
+            }
+          ],
+          "total_duration_s": 8,
+          "music": {
+            "swappable": false,
+            "removable": true,
+            "current_track_id": "track-1",
+            "current_track_title": "Beat",
+            "candidates": []
+          },
+          "mix": {
+            "music_level": 0.6
+          }
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "original_mute_server_honest"
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"reject\",\n  \"ops\": [],\n  \"confidence\": 1.0,\n  \"reply\": \"This edit doesn't have a control for the original footage sound level.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [\n    {\n      \"request\": \"mute the original audio\",\n      \"reason\": \"This edit does not have a control for the original footage sound level.\"\n    }\n  ]\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 21208,
+          "tokens_out": 131,
+          "tokens_thoughts": 338
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "unsupported"
+    },
+    {
+      "case": "kria_v2_audio_remove_music_tr",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_audio_remove_music_tr.json",
+      "input": {
+        "utterance": "müziği tamamen kaldır",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "editor_ops_version": 2,
+          "allowed_op_families": [
+            "music"
+          ],
+          "has_narrated_captions": false,
+          "text_bars": [],
+          "slots": [
+            {
+              "output_start_s": 0,
+              "output_end_s": 8,
+              "duration_s": 8
+            }
+          ],
+          "total_duration_s": 8,
+          "music": {
+            "swappable": false,
+            "removable": true,
+            "current_track_id": "track-1",
+            "current_track_title": "Beat",
+            "candidates": []
+          },
+          "mix": {
+            "music_level": 0.6
+          }
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "remove_music_tr"
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"remove_music\"\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Müziği kaldırdım.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 21210,
+          "tokens_out": 103,
+          "tokens_thoughts": 284
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "kria_v2_capture_order_and_hour",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_capture_order_and_hour.json",
+      "input": {
+        "utterance": "Order the videos based on the time they were filmed. Add the hour as well to each video",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "editor_ops_version": 2,
+          "allowed_op_families": [
+            "clip",
+            "text",
+            "transition"
+          ],
+          "label_facts": true,
+          "slots": [
+            {
+              "key": "s1",
+              "slot_id": "s1",
+              "clip_index": 0,
+              "media_id": "m0",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 0.0,
+              "output_end_s": 3.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-09-20T14:32:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Kadıköy, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ]
+            },
+            {
+              "key": "s2",
+              "slot_id": "s2",
+              "clip_index": 1,
+              "media_id": "m1",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 3.0,
+              "output_end_s": 6.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-09-20T09:05:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Kadıköy, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ]
+            },
+            {
+              "key": "s3",
+              "slot_id": "s3",
+              "clip_index": 2,
+              "media_id": "m2",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 6.0,
+              "output_end_s": 9.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video",
+              "facts": [
+                {
+                  "kind": "place",
+                  "value": "Kadıköy, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ]
+            },
+            {
+              "key": "s4",
+              "slot_id": "s4",
+              "clip_index": 3,
+              "media_id": "m3",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 9.0,
+              "output_end_s": 12.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-09-20T11:47:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Kadıköy, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ]
+            }
+          ],
+          "text_bars": [
+            {
+              "id": "guided-title",
+              "text": "Antalya Trip",
+              "start_s": 0.0,
+              "end_s": 12.0,
+              "role": "generative_intro",
+              "font_family": "Playfair Display",
+              "size_px": 64,
+              "color": "#FFFFFF",
+              "position": "middle",
+              "alignment": "center",
+              "effect": "static"
+            },
+            {
+              "id": "clip-label-media-m0",
+              "text": "Antalya Sahili",
+              "start_s": 0.0,
+              "end_s": 3.0,
+              "role": "generative_intro",
+              "font_family": "DM Sans",
+              "size_px": 58,
+              "color": "#FFF8F0",
+              "position": "custom",
+              "x_frac": 0.5,
+              "y_frac": 0.78,
+              "alignment": "center",
+              "effect": "static",
+              "clip_id": "m0",
+              "inferred": true
+            },
+            {
+              "id": "clip-label-media-m1",
+              "text": "Meltem",
+              "start_s": 3.0,
+              "end_s": 6.0,
+              "role": "generative_intro",
+              "font_family": "DM Sans",
+              "size_px": 58,
+              "color": "#FFF8F0",
+              "position": "custom",
+              "x_frac": 0.5,
+              "y_frac": 0.78,
+              "alignment": "center",
+              "effect": "static",
+              "clip_id": "m1",
+              "inferred": true
+            },
+            {
+              "id": "clip-label-media-m2",
+              "text": "D400 Yolu",
+              "start_s": 6.0,
+              "end_s": 9.0,
+              "role": "generative_intro",
+              "font_family": "DM Sans",
+              "size_px": 58,
+              "color": "#FFF8F0",
+              "position": "custom",
+              "x_frac": 0.5,
+              "y_frac": 0.78,
+              "alignment": "center",
+              "effect": "static",
+              "clip_id": "m2",
+              "inferred": true
+            },
+            {
+              "id": "clip-label-media-m3",
+              "text": "Konyaaltı",
+              "start_s": 9.0,
+              "end_s": 12.0,
+              "role": "generative_intro",
+              "font_family": "DM Sans",
+              "size_px": 58,
+              "color": "#FFF8F0",
+              "position": "custom",
+              "x_frac": 0.5,
+              "y_frac": 0.78,
+              "alignment": "center",
+              "effect": "static",
+              "clip_id": "m3",
+              "inferred": true
+            }
+          ],
+          "total_duration_s": 12,
+          "max_duration_s": 120,
+          "remaining_duration_s": 108
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "EN combined order + hour",
+        "lane": "kria-219-capture-time",
+        "exact_edit_ops": [
+          {
+            "op": "reorder_clips_by",
+            "criterion": "capture_time",
+            "direction": "asc",
+            "permutation": [
+              1,
+              3,
+              2,
+              0
+            ],
+            "media_ids": [
+              "m0",
+              "m1",
+              "m2",
+              "m3"
+            ]
+          },
+          {
+            "op": "label_each_clip",
+            "source": "facts",
+            "labels": [
+              {
+                "media_id": "m0",
+                "text": "Antalya Sahili · 17:32",
+                "bar_id": "clip-label-media-m0"
+              },
+              {
+                "media_id": "m1",
+                "text": "Meltem · 12:05",
+                "bar_id": "clip-label-media-m1"
+              },
+              {
+                "media_id": "m3",
+                "text": "Konyaaltı · 14:47",
+                "bar_id": "clip-label-media-m3"
+              }
+            ],
+            "label_from": "capture_time",
+            "mode": "append",
+            "timezone": "Europe/Istanbul"
+          }
+        ]
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"reorder_clips_by\",\n      \"criterion\": \"capture_time\",\n      \"direction\": \"asc\"\n    },\n    {\n      \"op\": \"label_each_clip\",\n      \"source\": \"facts\",\n      \"label_from\": \"capture_time\",\n      \"mode\": \"append\"\n    }\n  ],\n  \"confidence\": 0.95,\n  \"reply\": \"I've reordered the videos chronologically based on their capture time and added the filming hour to each clip label.\",\n  \"suggestions\": [\n    \"Just show the hour\",\n    \"Replace labels with hours\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 21917,
+          "tokens_out": 206,
+          "tokens_thoughts": 0
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "kria_v2_timeline_all_clips_2s",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_all_clips_2s.json",
+      "input": {
+        "utterance": "all clips 2 seconds",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "allowed_op_families": [
+            "clip",
+            "text",
+            "transition"
+          ],
+          "editor_ops_version": 2,
+          "slots": [
+            {
+              "key": "s1",
+              "slot_id": "s1",
+              "clip_index": 0,
+              "media_id": "m0",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 0.0,
+              "output_end_s": 3.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s2",
+              "slot_id": "s2",
+              "clip_index": 1,
+              "media_id": "m1",
+              "in_s": 0.0,
+              "duration_s": 4,
+              "source_duration_s": 10.0,
+              "output_start_s": 3.0,
+              "output_end_s": 7.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s3",
+              "slot_id": "s3",
+              "clip_index": 2,
+              "media_id": "m2",
+              "in_s": 0.0,
+              "duration_s": 5,
+              "source_duration_s": 10.0,
+              "output_start_s": 7.0,
+              "output_end_s": 12.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s4",
+              "slot_id": "s4",
+              "clip_index": 3,
+              "media_id": "m3",
+              "in_s": 0.0,
+              "duration_s": 6,
+              "source_duration_s": 10.0,
+              "output_start_s": 12.0,
+              "output_end_s": 18.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            }
+          ],
+          "text_bars": [],
+          "total_duration_s": 18,
+          "max_duration_s": 120,
+          "remaining_duration_s": 102
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "bulk duration is ONE patch_slots op",
+        "lane": "kria-219-timeline"
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"patch_slots\",\n      \"selector\": {\n        \"all\": true\n      },\n      \"patch\": {\n        \"duration_s\": 2.0\n      }\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Set all clips to 2 seconds long.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 21382,
+          "tokens_out": 139,
+          "tokens_thoughts": 0
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "kria_v2_timeline_crossfade_every_clip",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_crossfade_every_clip.json",
+      "input": {
+        "utterance": "crossfade between every clip",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "allowed_op_families": [
+            "clip",
+            "text",
+            "transition"
+          ],
+          "editor_ops_version": 2,
+          "slots": [
+            {
+              "key": "s1",
+              "slot_id": "s1",
+              "clip_index": 0,
+              "media_id": "m0",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 0.0,
+              "output_end_s": 3.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s2",
+              "slot_id": "s2",
+              "clip_index": 1,
+              "media_id": "m1",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 3.0,
+              "output_end_s": 6.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s3",
+              "slot_id": "s3",
+              "clip_index": 2,
+              "media_id": "m2",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 6.0,
+              "output_end_s": 9.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s4",
+              "slot_id": "s4",
+              "clip_index": 3,
+              "media_id": "m3",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 9.0,
+              "output_end_s": 12.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            }
+          ],
+          "text_bars": [],
+          "total_duration_s": 12,
+          "max_duration_s": 120,
+          "remaining_duration_s": 108
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "bulk transition",
+        "lane": "kria-219-timeline"
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"patch_slots\",\n      \"selector\": {\n        \"all\": true\n      },\n      \"patch\": {\n        \"transition_after\": \"crossfade\",\n        \"transition_duration_s\": 0.3\n      }\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Added crossfade transitions between all clips.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 21380,
+          "tokens_out": 151,
+          "tokens_thoughts": 406
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "kria_v2_timeline_cut_first_2_seconds",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_cut_first_2_seconds.json",
+      "input": {
+        "utterance": "cut the first 2 seconds",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "allowed_op_families": [
+            "clip",
+            "text",
+            "transition"
+          ],
+          "editor_ops_version": 2,
+          "slots": [
+            {
+              "key": "s1",
+              "slot_id": "s1",
+              "clip_index": 0,
+              "media_id": "m0",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 0.0,
+              "output_end_s": 3.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s2",
+              "slot_id": "s2",
+              "clip_index": 1,
+              "media_id": "m1",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 3.0,
+              "output_end_s": 6.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s3",
+              "slot_id": "s3",
+              "clip_index": 2,
+              "media_id": "m2",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 6.0,
+              "output_end_s": 9.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s4",
+              "slot_id": "s4",
+              "clip_index": 3,
+              "media_id": "m3",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 9.0,
+              "output_end_s": 12.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            }
+          ],
+          "text_bars": [],
+          "total_duration_s": 12,
+          "max_duration_s": 120,
+          "remaining_duration_s": 108
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "output trim",
+        "lane": "kria-219-timeline"
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"trim_output_start\",\n      \"start_s\": 2.0\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Trimmed the first 2 seconds from the video.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 21381,
+          "tokens_out": 119,
+          "tokens_thoughts": 234
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "kria_v2_timeline_make_it_20s",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_make_it_20s.json",
+      "input": {
+        "utterance": "make it 20 seconds",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "allowed_op_families": [
+            "clip",
+            "text",
+            "transition"
+          ],
+          "editor_ops_version": 2,
+          "slots": [
+            {
+              "key": "s1",
+              "slot_id": "s1",
+              "clip_index": 0,
+              "media_id": "m0",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 0.0,
+              "output_end_s": 3.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s2",
+              "slot_id": "s2",
+              "clip_index": 1,
+              "media_id": "m1",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 3.0,
+              "output_end_s": 6.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s3",
+              "slot_id": "s3",
+              "clip_index": 2,
+              "media_id": "m2",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 6.0,
+              "output_end_s": 9.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s4",
+              "slot_id": "s4",
+              "clip_index": 3,
+              "media_id": "m3",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 9.0,
+              "output_end_s": 12.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            }
+          ],
+          "text_bars": [],
+          "total_duration_s": 12,
+          "max_duration_s": 120,
+          "remaining_duration_s": 108
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "EN whole-edit retarget is one op",
+        "lane": "kria-219-timeline"
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"set_total_duration\",\n      \"target_s\": 20,\n      \"strategy\": \"proportional\"\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Adjusted total video duration to 20 seconds.\",\n  \"suggestions\": [\n    \"Make it 15 seconds\",\n    \"Undo duration change\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 21381,
+          "tokens_out": 148,
+          "tokens_thoughts": 154
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "kria_v2_timeline_move_bridge_first",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_move_bridge_first.json",
+      "input": {
+        "utterance": "move the bridge shot first",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "allowed_op_families": [
+            "clip",
+            "text",
+            "transition"
+          ],
+          "editor_ops_version": 2,
+          "slots": [
+            {
+              "key": "s1",
+              "slot_id": "s1",
+              "clip_index": 0,
+              "media_id": "m0",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 0.0,
+              "output_end_s": 3.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s2",
+              "slot_id": "s2",
+              "clip_index": 1,
+              "media_id": "m1",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 3.0,
+              "output_end_s": 6.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s3",
+              "slot_id": "s3",
+              "clip_index": 2,
+              "media_id": "m2",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 6.0,
+              "output_end_s": 9.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s4",
+              "slot_id": "s4",
+              "clip_index": 3,
+              "media_id": "m3",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 9.0,
+              "output_end_s": 12.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video",
+              "moment": "Golden Gate bridge at dusk"
+            }
+          ],
+          "text_bars": [],
+          "total_duration_s": 12,
+          "max_duration_s": 120,
+          "remaining_duration_s": 108
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "moment-anchored reorder keeps using the existing op",
+        "lane": "kria-219-timeline"
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"reorder_clip\",\n      \"from_index\": 3,\n      \"to_index\": 0\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Moved the Golden Gate bridge clip to the beginning of the video.\",\n  \"suggestions\": [\n    \"Undo move\",\n    \"Make it shorter\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 21386,
+          "tokens_out": 144,
+          "tokens_thoughts": 198
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "kria_v2_timeline_remove_clip_4",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_remove_clip_4.json",
+      "input": {
+        "utterance": "remove clip 4",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "allowed_op_families": [
+            "clip",
+            "text",
+            "transition"
+          ],
+          "editor_ops_version": 2,
+          "slots": [
+            {
+              "key": "s1",
+              "slot_id": "s1",
+              "clip_index": 0,
+              "media_id": "m0",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 0.0,
+              "output_end_s": 3.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s2",
+              "slot_id": "s2",
+              "clip_index": 1,
+              "media_id": "m1",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 3.0,
+              "output_end_s": 6.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s3",
+              "slot_id": "s3",
+              "clip_index": 2,
+              "media_id": "m2",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 6.0,
+              "output_end_s": 9.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s4",
+              "slot_id": "s4",
+              "clip_index": 3,
+              "media_id": "m3",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 9.0,
+              "output_end_s": 12.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            }
+          ],
+          "text_bars": [],
+          "total_duration_s": 12,
+          "max_duration_s": 120,
+          "remaining_duration_s": 108
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "explicit remove",
+        "lane": "kria-219-timeline"
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"remove_clip\",\n      \"slot_index\": 3\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Removed clip 4 from the timeline.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 21379,
+          "tokens_out": 112,
+          "tokens_thoughts": 178
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "kria_v2_timeline_speed_up_clip",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_speed_up_clip.json",
+      "input": {
+        "utterance": "speed up clip 2",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "allowed_op_families": [
+            "clip",
+            "text",
+            "transition"
+          ],
+          "editor_ops_version": 2,
+          "slots": [
+            {
+              "key": "s1",
+              "slot_id": "s1",
+              "clip_index": 0,
+              "media_id": "m0",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 0.0,
+              "output_end_s": 3.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s2",
+              "slot_id": "s2",
+              "clip_index": 1,
+              "media_id": "m1",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 3.0,
+              "output_end_s": 6.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s3",
+              "slot_id": "s3",
+              "clip_index": 2,
+              "media_id": "m2",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 6.0,
+              "output_end_s": 9.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s4",
+              "slot_id": "s4",
+              "clip_index": 3,
+              "media_id": "m3",
+              "in_s": 0.0,
+              "duration_s": 3,
+              "source_duration_s": 10.0,
+              "output_start_s": 9.0,
+              "output_end_s": 12.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            }
+          ],
+          "text_bars": [],
+          "total_duration_s": 12,
+          "max_duration_s": 120,
+          "remaining_duration_s": 108
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "speed on one clip",
+        "lane": "kria-219-timeline"
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"patch_slots\",\n      \"selector\": {\n        \"slot_indexes\": [\n          1\n        ]\n      },\n      \"patch\": {\n        \"playback_rate\": 2\n      }\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Sped up clip 2 to 2x speed.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 21380,
+          "tokens_out": 148,
+          "tokens_thoughts": 244
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "kria_v2_timeline_shorter_no_number",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_shorter_no_number.json",
+      "input": {
+        "utterance": "all my videos are too long",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "allowed_op_families": [
+            "clip",
+            "text",
+            "transition"
+          ],
+          "editor_ops_version": 2,
+          "slots": [
+            {
+              "key": "s1",
+              "slot_id": "s1",
+              "clip_index": 0,
+              "media_id": "m0",
+              "in_s": 0.0,
+              "duration_s": 8,
+              "source_duration_s": 12.0,
+              "output_start_s": 0.0,
+              "output_end_s": 8.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s2",
+              "slot_id": "s2",
+              "clip_index": 1,
+              "media_id": "m1",
+              "in_s": 0.0,
+              "duration_s": 8,
+              "source_duration_s": 12.0,
+              "output_start_s": 8.0,
+              "output_end_s": 16.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s3",
+              "slot_id": "s3",
+              "clip_index": 2,
+              "media_id": "m2",
+              "in_s": 0.0,
+              "duration_s": 8,
+              "source_duration_s": 12.0,
+              "output_start_s": 16.0,
+              "output_end_s": 24.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            },
+            {
+              "key": "s4",
+              "slot_id": "s4",
+              "clip_index": 3,
+              "media_id": "m3",
+              "in_s": 0.0,
+              "duration_s": 8,
+              "source_duration_s": 12.0,
+              "output_start_s": 24.0,
+              "output_end_s": 32.0,
+              "removed": false,
+              "transition_after": "cut",
+              "look_preset": "none",
+              "media_kind": "video"
+            }
+          ],
+          "text_bars": [],
+          "total_duration_s": 32,
+          "max_duration_s": 120,
+          "remaining_duration_s": 88
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "vague 'too long' with no number never guesses: one question with the current length and concrete example lengths",
+        "lane": "copilot-vague-shorter",
+        "exact_component_ops": [],
+        "expected_intent": "clarify",
+        "needs_clarification": true,
+        "reply_contains": [
+          "32 seconds",
+          "20 seconds",
+          "number of seconds"
+        ],
+        "capability_contract": {
+          "intent": "clarify",
+          "needs_clarification": true,
+          "reply_contains": [
+            "32 seconds",
+            "20 seconds"
+          ],
+          "reply_excludes": [
+            "can't change the length"
+          ]
+        }
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"clarify\",\n  \"ops\": [],\n  \"confidence\": 0.9,\n  \"reply\": \"The video is 32 seconds right now. How short would you like it to be: 25 seconds, 20 seconds, or 15 seconds? Or tell me a specific number of seconds.\",\n  \"suggestions\": [\n    \"25 seconds\",\n    \"20 seconds\",\n    \"15 seconds\"\n  ],\n  \"needs_clarification\": true,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 21385,
+          "tokens_out": 145,
+          "tokens_thoughts": 727
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "clarification"
+    },
+    {
+      "case": "kria_v2_timeline_without_clip_families",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_without_clip_families.json",
+      "input": {
+        "utterance": "make it longer",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "allowed_op_families": [],
+          "editor_ops_version": 2,
+          "slots": [],
+          "text_bars": [],
+          "total_duration_s": 8,
+          "max_duration_s": 120
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "vague longer request refuses with no alternatives when clip, text, and title are unavailable",
+        "lane": "copilot-vague-longer",
+        "exact_component_ops": [],
+        "expected_intent": "reject",
+        "needs_clarification": false,
+        "capability_contract": {
+          "intent": "reject",
+          "needs_clarification": false,
+          "reply_contains": [
+            "length"
+          ],
+          "suggestions_empty": true
+        }
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"reject\",\n  \"ops\": [],\n  \"confidence\": 1.0,\n  \"reply\": \"I can't change the length of this video because clip editing is not available for this draft.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [\n    {\n      \"request\": \"make it longer\",\n      \"reason\": \"Clip editing operations are not available for this draft.\"\n    }\n  ]\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 21098,
+          "tokens_out": 131,
+          "tokens_thoughts": 339
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "unsupported"
+    },
+    {
+      "case": "slide_caption_and_remove",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_caption_and_remove.json",
+      "input": {
+        "utterance": "remove slide 2 and write the caption 'Two days in Istanbul'",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "surface": "slide_post",
+          "allowed_op_families": [
+            "text",
+            "clip",
+            "timeline",
+            "slides"
+          ],
+          "base_generation": "slide-post-v2",
+          "has_narrated_captions": false,
+          "max_duration_s": 4.0,
+          "remaining_duration_s": 0.0,
+          "slots": [
+            {
+              "key": "slide-1",
+              "slot_id": "slide-1",
+              "parent_segment_id": null,
+              "clip_index": 0,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 0.0,
+              "output_end_s": 1.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-1",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-07-03T09:10:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Beşiktaş, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ],
+              "is_cover": true
+            },
+            {
+              "key": "slide-2",
+              "slot_id": "slide-2",
+              "parent_segment_id": null,
+              "clip_index": 1,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 1.0,
+              "output_end_s": 2.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-2",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-07-01T16:00:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Kadıköy, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ],
+              "is_cover": false
+            },
+            {
+              "key": "slide-3",
+              "slot_id": "slide-3",
+              "parent_segment_id": null,
+              "clip_index": 2,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 2.0,
+              "output_end_s": 3.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-3",
+              "is_cover": false
+            },
+            {
+              "key": "slide-4",
+              "slot_id": "slide-4",
+              "parent_segment_id": null,
+              "clip_index": 3,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 3.0,
+              "output_end_s": 4.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-4",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-07-02T12:30:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Kadıköy, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ],
+              "is_cover": false
+            }
+          ],
+          "text_bars": [],
+          "total_duration_s": 4.0,
+          "post": {
+            "caption": "",
+            "cover_index": 0,
+            "platform_profile": "tiktok_photo"
+          },
+          "label_facts": true,
+          "editor_ops_version": 2
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "slide removal plus caption in one bundle",
+        "lane": "kria-301-slide-post",
+        "exact_edit_ops": [
+          {
+            "op": "remove_clip",
+            "slot_index": 1
+          },
+          {
+            "op": "set_post_caption",
+            "caption": "Two days in Istanbul"
+          }
+        ]
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"remove_clip\",\n      \"slot_index\": 1\n    },\n    {\n      \"op\": \"set_post_caption\",\n      \"caption\": \"Two days in Istanbul\"\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Removed slide 2 and updated the post caption to 'Two days in Istanbul'.\",\n  \"suggestions\": [\n    \"Set a cover slide\",\n    \"Add location labels\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 22512,
+          "tokens_out": 168,
+          "tokens_thoughts": 297
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "slide_chrono_and_location",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_chrono_and_location.json",
+      "input": {
+        "utterance": "put them in chronological order and add each photo's location",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "surface": "slide_post",
+          "allowed_op_families": [
+            "text",
+            "clip",
+            "timeline",
+            "slides"
+          ],
+          "base_generation": "slide-post-v2",
+          "has_narrated_captions": false,
+          "max_duration_s": 5.0,
+          "remaining_duration_s": 0.0,
+          "slots": [
+            {
+              "key": "slide-1",
+              "slot_id": "slide-1",
+              "parent_segment_id": null,
+              "clip_index": 0,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 0.0,
+              "output_end_s": 1.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-1",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-07-03T09:10:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Beşiktaş, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ],
+              "is_cover": true
+            },
+            {
+              "key": "slide-2",
+              "slot_id": "slide-2",
+              "parent_segment_id": null,
+              "clip_index": 1,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 1.0,
+              "output_end_s": 2.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-2",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-07-01T16:00:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Kadıköy, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ],
+              "is_cover": false
+            },
+            {
+              "key": "slide-3",
+              "slot_id": "slide-3",
+              "parent_segment_id": null,
+              "clip_index": 2,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 2.0,
+              "output_end_s": 3.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-3",
+              "is_cover": false
+            },
+            {
+              "key": "slide-4",
+              "slot_id": "slide-4",
+              "parent_segment_id": null,
+              "clip_index": 3,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 3.0,
+              "output_end_s": 4.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-4",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-07-02T12:30:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Kadıköy, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ],
+              "is_cover": false
+            },
+            {
+              "key": "slide-5",
+              "slot_id": "slide-5",
+              "parent_segment_id": null,
+              "clip_index": 4,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 4.0,
+              "output_end_s": 5.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-5",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-07-01T08:00:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Üsküdar, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ],
+              "is_cover": false
+            }
+          ],
+          "text_bars": [],
+          "total_duration_s": 5.0,
+          "post": {
+            "caption": "",
+            "cover_index": 0,
+            "platform_profile": "tiktok_photo"
+          },
+          "label_facts": true,
+          "editor_ops_version": 2
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "chronological order plus place label on every slide (one op each)",
+        "lane": "kria-301-slide-post",
+        "exact_edit_ops": [
+          {
+            "op": "reorder_clips_by",
+            "criterion": "capture_time",
+            "direction": "asc",
+            "permutation": [
+              4,
+              1,
+              2,
+              3,
+              0
+            ],
+            "media_ids": [
+              "slide-1",
+              "slide-2",
+              "slide-3",
+              "slide-4",
+              "slide-5"
+            ]
+          },
+          {
+            "op": "label_each_clip",
+            "source": "facts",
+            "labels": [
+              {
+                "media_id": "slide-1",
+                "text": "Beşiktaş",
+                "start_s": 0.0,
+                "end_s": 1.0
+              },
+              {
+                "media_id": "slide-2",
+                "text": "Kadıköy",
+                "start_s": 1.0,
+                "end_s": 2.0
+              },
+              {
+                "media_id": "slide-5",
+                "text": "Üsküdar",
+                "start_s": 4.0,
+                "end_s": 5.0
+              }
+            ]
+          }
+        ]
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"reorder_clips_by\",\n      \"criterion\": \"capture_time\",\n      \"direction\": \"asc\"\n    },\n    {\n      \"op\": \"label_each_clip\",\n      \"source\": \"facts\",\n      \"label_from\": \"place\"\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"I've ordered your photos chronologically and added location labels to each slide.\",\n  \"suggestions\": [\n    \"Make slide 1 the cover\",\n    \"Change font style\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 22621,
+          "tokens_out": 188,
+          "tokens_thoughts": 605
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "slide_music_unsupported",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_music_unsupported.json",
+      "input": {
+        "utterance": "add a sad song under the slides",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "surface": "slide_post",
+          "allowed_op_families": [
+            "text",
+            "clip",
+            "timeline",
+            "slides"
+          ],
+          "base_generation": "slide-post-v2",
+          "has_narrated_captions": false,
+          "max_duration_s": 3.0,
+          "remaining_duration_s": 0.0,
+          "slots": [
+            {
+              "key": "slide-1",
+              "slot_id": "slide-1",
+              "parent_segment_id": null,
+              "clip_index": 0,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 0.0,
+              "output_end_s": 1.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-1",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-07-03T09:10:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Beşiktaş, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ],
+              "is_cover": true
+            },
+            {
+              "key": "slide-2",
+              "slot_id": "slide-2",
+              "parent_segment_id": null,
+              "clip_index": 1,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 1.0,
+              "output_end_s": 2.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-2",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-07-01T16:00:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Kadıköy, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ],
+              "is_cover": false
+            },
+            {
+              "key": "slide-3",
+              "slot_id": "slide-3",
+              "parent_segment_id": null,
+              "clip_index": 2,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 2.0,
+              "output_end_s": 3.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-3",
+              "is_cover": false
+            }
+          ],
+          "text_bars": [],
+          "total_duration_s": 3.0,
+          "post": {
+            "caption": "",
+            "cover_index": 0,
+            "platform_profile": "tiktok_photo"
+          },
+          "label_facts": true,
+          "editor_ops_version": 2
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "music/audio is refused honestly on a slide post",
+        "lane": "kria-301-slide-post",
+        "capability_contract": {
+          "intent": "reject",
+          "needs_clarification": false,
+          "reply_contains": [
+            "slide"
+          ]
+        }
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"reject\",\n  \"ops\": [],\n  \"confidence\": 1.0,\n  \"reply\": \"Music is not available for slide posts.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": [\n    {\n      \"request\": \"add a sad song under the slides\",\n      \"reason\": \"Music is not supported on slide posts.\"\n    }\n  ]\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 22395,
+          "tokens_out": 121,
+          "tokens_thoughts": 254
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "unsupported"
+    },
+    {
+      "case": "slide_same_style_all_text",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_same_style_all_text.json",
+      "input": {
+        "utterance": "make all the text white with a thin outline",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "surface": "slide_post",
+          "allowed_op_families": [
+            "text",
+            "clip",
+            "timeline",
+            "slides"
+          ],
+          "base_generation": "slide-post-v2",
+          "has_narrated_captions": false,
+          "max_duration_s": 3.0,
+          "remaining_duration_s": 0.0,
+          "slots": [
+            {
+              "key": "slide-1",
+              "slot_id": "slide-1",
+              "parent_segment_id": null,
+              "clip_index": 0,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 0.0,
+              "output_end_s": 1.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-1",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-07-03T09:10:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Beşiktaş, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ],
+              "is_cover": true
+            },
+            {
+              "key": "slide-2",
+              "slot_id": "slide-2",
+              "parent_segment_id": null,
+              "clip_index": 1,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 1.0,
+              "output_end_s": 2.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-2",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-07-01T16:00:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Kadıköy, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ],
+              "is_cover": false
+            },
+            {
+              "key": "slide-3",
+              "slot_id": "slide-3",
+              "parent_segment_id": null,
+              "clip_index": 2,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 2.0,
+              "output_end_s": 3.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-3",
+              "is_cover": false
+            }
+          ],
+          "text_bars": [
+            {
+              "id": "clip-label-media-slide-1",
+              "text": "Beşiktaş",
+              "start_s": 0.0,
+              "end_s": 1.0,
+              "role": "generative_intro",
+              "font_family": "DM Sans",
+              "color": "#FFFFFF",
+              "size_px": 86,
+              "alignment": "center",
+              "position": "bottom",
+              "stroke_width": 0,
+              "shadow_enabled": true,
+              "effect": "static",
+              "clip_id": "slide-1",
+              "inferred": false
+            },
+            {
+              "id": "kria-slide-1:x0",
+              "text": "Summer",
+              "start_s": 0.0,
+              "end_s": 1.0,
+              "role": "generative_intro",
+              "font_family": "Playfair Display",
+              "color": "#FFFFFF",
+              "size_px": 86,
+              "alignment": "center",
+              "position": "bottom",
+              "stroke_width": 0,
+              "shadow_enabled": true,
+              "effect": "static"
+            },
+            {
+              "id": "clip-label-media-slide-2",
+              "text": "Kadıköy",
+              "start_s": 1.0,
+              "end_s": 2.0,
+              "role": "generative_intro",
+              "font_family": "DM Sans",
+              "color": "#FFFFFF",
+              "size_px": 86,
+              "alignment": "center",
+              "position": "bottom",
+              "stroke_width": 0,
+              "shadow_enabled": true,
+              "effect": "static",
+              "clip_id": "slide-2",
+              "inferred": false
+            },
+            {
+              "id": "kria-slide-2:x1",
+              "text": "Summer",
+              "start_s": 1.0,
+              "end_s": 2.0,
+              "role": "generative_intro",
+              "font_family": "Playfair Display",
+              "color": "#FFFFFF",
+              "size_px": 86,
+              "alignment": "center",
+              "position": "bottom",
+              "stroke_width": 0,
+              "shadow_enabled": true,
+              "effect": "static"
+            },
+            {
+              "id": "clip-label-media-slide-3",
+              "text": "Üsküdar",
+              "start_s": 2.0,
+              "end_s": 3.0,
+              "role": "generative_intro",
+              "font_family": "DM Sans",
+              "color": "#FFFFFF",
+              "size_px": 86,
+              "alignment": "center",
+              "position": "bottom",
+              "stroke_width": 0,
+              "shadow_enabled": true,
+              "effect": "static",
+              "clip_id": "slide-3",
+              "inferred": false
+            },
+            {
+              "id": "kria-slide-3:x2",
+              "text": "Summer",
+              "start_s": 2.0,
+              "end_s": 3.0,
+              "role": "generative_intro",
+              "font_family": "Playfair Display",
+              "color": "#FFFFFF",
+              "size_px": 86,
+              "alignment": "center",
+              "position": "bottom",
+              "stroke_width": 0,
+              "shadow_enabled": true,
+              "effect": "static"
+            }
+          ],
+          "total_duration_s": 3.0,
+          "post": {
+            "caption": "",
+            "cover_index": 0,
+            "platform_profile": "tiktok_photo"
+          },
+          "label_facts": true,
+          "editor_ops_version": 2
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "one selector op restyles every slide text (never one op per slide)",
+        "lane": "kria-301-slide-post",
+        "exact_edit_ops": [
+          {
+            "op": "patch_text",
+            "selector": {
+              "group": "all"
+            },
+            "patch": {
+              "color": "#FFFFFF",
+              "stroke_width": 2.0
+            },
+            "target_ids": [
+              "clip-label-media-slide-1",
+              "kria-slide-1:x0",
+              "clip-label-media-slide-2",
+              "kria-slide-2:x1",
+              "clip-label-media-slide-3",
+              "kria-slide-3:x2"
+            ],
+            "expected_count": 6
+          }
+        ]
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"patch_text\",\n      \"selector\": {\n        \"group\": \"all\"\n      },\n      \"patch\": {\n        \"color\": \"#FFFFFF\",\n        \"stroke_width\": 2\n      }\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Changed all text to white with a thin outline.\",\n  \"suggestions\": [\n    \"Make text bigger\",\n    \"Change font\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 22746,
+          "tokens_out": 164,
+          "tokens_thoughts": 429
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "slide_set_cover",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_set_cover.json",
+      "input": {
+        "utterance": "make slide 3 the cover",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "surface": "slide_post",
+          "allowed_op_families": [
+            "text",
+            "clip",
+            "timeline",
+            "slides"
+          ],
+          "base_generation": "slide-post-v2",
+          "has_narrated_captions": false,
+          "max_duration_s": 4.0,
+          "remaining_duration_s": 0.0,
+          "slots": [
+            {
+              "key": "slide-1",
+              "slot_id": "slide-1",
+              "parent_segment_id": null,
+              "clip_index": 0,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 0.0,
+              "output_end_s": 1.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-1",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-07-03T09:10:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Beşiktaş, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ],
+              "is_cover": true
+            },
+            {
+              "key": "slide-2",
+              "slot_id": "slide-2",
+              "parent_segment_id": null,
+              "clip_index": 1,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 1.0,
+              "output_end_s": 2.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-2",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-07-01T16:00:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Kadıköy, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ],
+              "is_cover": false
+            },
+            {
+              "key": "slide-3",
+              "slot_id": "slide-3",
+              "parent_segment_id": null,
+              "clip_index": 2,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 2.0,
+              "output_end_s": 3.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-3",
+              "is_cover": false
+            },
+            {
+              "key": "slide-4",
+              "slot_id": "slide-4",
+              "parent_segment_id": null,
+              "clip_index": 3,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 3.0,
+              "output_end_s": 4.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-4",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-07-02T12:30:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Kadıköy, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ],
+              "is_cover": false
+            }
+          ],
+          "text_bars": [],
+          "total_duration_s": 4.0,
+          "post": {
+            "caption": "",
+            "cover_index": 0,
+            "platform_profile": "tiktok_photo"
+          },
+          "label_facts": true,
+          "editor_ops_version": 2
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "cover by 1-based slide number becomes a 0-based slide_index",
+        "lane": "kria-301-slide-post",
+        "exact_edit_ops": [
+          {
+            "op": "set_slide_cover",
+            "slide_index": 2,
+            "slide_id": "slide-3"
+          }
+        ]
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"set_slide_cover\",\n      \"slide_index\": 2\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Set slide 3 as the cover.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 22504,
+          "tokens_out": 114,
+          "tokens_thoughts": 215
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "slide_text_on_every_slide",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_text_on_every_slide.json",
+      "input": {
+        "utterance": "put 'Summer 2026' on every slide",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "surface": "slide_post",
+          "allowed_op_families": [
+            "text",
+            "clip",
+            "timeline",
+            "slides"
+          ],
+          "base_generation": "slide-post-v2",
+          "has_narrated_captions": false,
+          "max_duration_s": 4.0,
+          "remaining_duration_s": 0.0,
+          "slots": [
+            {
+              "key": "slide-1",
+              "slot_id": "slide-1",
+              "parent_segment_id": null,
+              "clip_index": 0,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 0.0,
+              "output_end_s": 1.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-1",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-07-03T09:10:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Beşiktaş, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ],
+              "is_cover": true
+            },
+            {
+              "key": "slide-2",
+              "slot_id": "slide-2",
+              "parent_segment_id": null,
+              "clip_index": 1,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 1.0,
+              "output_end_s": 2.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-2",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-07-01T16:00:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Kadıköy, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ],
+              "is_cover": false
+            },
+            {
+              "key": "slide-3",
+              "slot_id": "slide-3",
+              "parent_segment_id": null,
+              "clip_index": 2,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 2.0,
+              "output_end_s": 3.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-3",
+              "is_cover": false
+            },
+            {
+              "key": "slide-4",
+              "slot_id": "slide-4",
+              "parent_segment_id": null,
+              "clip_index": 3,
+              "in_s": 0.0,
+              "duration_s": 1.0,
+              "duration_beats": null,
+              "source_duration_s": null,
+              "output_start_s": 3.0,
+              "output_end_s": 4.0,
+              "removed": false,
+              "transition_after": "cut",
+              "transition_duration_s": null,
+              "look_preset": "none",
+              "media_kind": "image",
+              "media_id": "slide-4",
+              "facts": [
+                {
+                  "kind": "capture_time",
+                  "value": "2026-07-02T12:30:00Z",
+                  "provenance": "exif"
+                },
+                {
+                  "kind": "place",
+                  "value": "Kadıköy, İstanbul, Türkiye",
+                  "provenance": "geocode"
+                }
+              ],
+              "is_cover": false
+            }
+          ],
+          "text_bars": [],
+          "total_duration_s": 4.0,
+          "post": {
+            "caption": "",
+            "cover_index": 0,
+            "platform_profile": "tiktok_photo"
+          },
+          "label_facts": true,
+          "editor_ops_version": 2
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "one spanning add_text over the whole post",
+        "lane": "kria-301-slide-post",
+        "exact_edit_ops": [
+          {
+            "op": "add_text",
+            "text": "Summer 2026",
+            "start_s": 0.0,
+            "end_s": 4.0
+          }
+        ]
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"add_text\",\n      \"text\": \"Summer 2026\",\n      \"start_s\": 0.0,\n      \"end_s\": 4.0\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Added 'Summer 2026' across all slides.\",\n  \"suggestions\": [],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 22510,
+          "tokens_out": 144,
+          "tokens_thoughts": 158
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "story_compound_trim_remove_music",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/story_compound_trim_remove_music.json",
+      "input": {
+        "utterance": "trim the video from the first second and remove the music",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "allowed_op_families": [
+            "timeline",
+            "music"
+          ],
+          "slots": [
+            {
+              "output_start_s": 0,
+              "output_end_s": 8,
+              "duration_s": 8
+            }
+          ],
+          "total_duration_s": 8,
+          "music": {
+            "current_track_id": "track-old",
+            "current_track_title": "Old Song",
+            "removable": true,
+            "swappable": true
+          }
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "timeline trim and music removal compose without beat/speech timing"
+      },
+      "calls": [
+        {
+          "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"trim_output_start\",\"start_s\":1.0},{\"op\":\"remove_music\"}],\"confidence\":1.0,\"reply\":\"I've trimmed the first second off the start of the video and removed the background music track.\",\"suggestions\":[],\"needs_clarification\":false,\"clarification_context\":null,\"pending_actions\":[],\"unmet_requests\":[]}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 12898,
+          "tokens_out": 87,
+          "tokens_thoughts": 403
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "story_mute_music_not_remove",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/story_mute_music_not_remove.json",
+      "input": {
+        "utterance": "mute the music",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "allowed_op_families": [
+            "music",
+            "mix"
+          ],
+          "music": {
+            "current_track_id": "track-old",
+            "current_track_title": "Old Song",
+            "removable": true,
+            "swappable": true
+          },
+          "mix": {
+            "music_level": 0.5
+          }
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "mute remains set_mix and is distinct from remove_music"
+      },
+      "calls": [
+        {
+          "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"set_mix\", \"music_level\": 0.0}], \"confidence\": 1.0, \"reply\": \"I've muted the background music.\", \"suggestions\": [\"Unmute music\", \"Remove music\"], \"needs_clarification\": false, \"clarification_context\": null, \"pending_actions\": [], \"unmet_requests\": []}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 12826,
+          "tokens_out": 89,
+          "tokens_thoughts": 379
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "proposed"
+    },
+    {
+      "case": "story_trim_noop_unchanged",
+      "source_fixture": "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/story_trim_noop_unchanged.json",
+      "input": {
+        "utterance": "trim the video starting from second 1",
+        "prior_turns": [],
+        "variant_snapshot": {
+          "allowed_op_families": [
+            "timeline"
+          ],
+          "slots": [
+            {
+              "output_start_s": 1,
+              "output_end_s": 6,
+              "duration_s": 5
+            }
+          ],
+          "total_duration_s": 5,
+          "revision": 3
+        }
+      },
+      "prompt_version": "2026-10-08-v71",
+      "meta": {
+        "source": "hand_authored_golden",
+        "case": "truthful no-op keeps the draft unchanged"
+      },
+      "calls": [
+        {
+          "raw_text": "{\n  \"intent\": \"edit\",\n  \"ops\": [\n    {\n      \"op\": \"trim_output_start\",\n      \"start_s\": 1.0\n    }\n  ],\n  \"confidence\": 1.0,\n  \"reply\": \"Trimmed the first second from the start of the video.\",\n  \"suggestions\": [\n    \"Undo trim\"\n  ],\n  \"needs_clarification\": false,\n  \"clarification_context\": null,\n  \"pending_actions\": [],\n  \"unmet_requests\": []\n}",
+          "model_used": "gemini-3.6-flash",
+          "tokens_in": 12845,
+          "tokens_out": 129,
+          "tokens_thoughts": 207
+        }
+      ],
+      "evidence": "live_model_capture",
+      "expected_outcome": "no_effect"
+    }
+  ]
+}

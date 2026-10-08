@@ -79,3 +79,35 @@ def test_unsupported_reply_surfaces_the_itemized_limitation():
     )
     assert output.reply == "Speech translation and voice replacement are not supported in chat."
     assert output.ops == []
+
+
+@pytest.mark.parametrize("has_supported_change", [False, True])
+def test_unmet_requests_are_disclosed_even_when_model_calls_them_an_edit(has_supported_change):
+    request = EditCopilotInput(
+        utterance="Make the title yellow and replace my speech with a Japanese voice.",
+        variant_snapshot={
+            "editor_ops_version": 2,
+            "allowed_op_families": ["text"],
+            "total_duration_s": 5,
+            "text_bars": [{"id": "title", "text": "Hello", "start_s": 0, "end_s": 5}],
+        },
+    )
+    output = EditCopilotAgent(ModelClient()).parse(
+        json.dumps(
+            {
+                "intent": "edit",
+                "confidence": 1,
+                "reply": "Done, all changes are ready.",
+                "ops": [{"op": "patch_text_style", "bar_index": 0, "patch": {"color": "#FFFF00"}}]
+                if has_supported_change
+                else [],
+                "unmet_requests": [
+                    {"request": "Replace my speech", "reason": "Voice replacement is unavailable."}
+                ],
+            }
+        ),
+        request,
+    )
+    assert "Voice replacement is unavailable." in output.reply
+    assert "all changes" not in output.reply
+    assert output.outcome == ("proposed" if has_supported_change else "unsupported")

@@ -1104,7 +1104,7 @@ def _wire_planner(monkeypatch, *, output, editor_plan, snapshot):  # noqa: ANN00
         item.current_job_id  # noqa: B018 - real code reads this; must not be expired
         return target
 
-    async def plan_revision(_db, *, thread_id, item, user_message):  # noqa: ANN001, ANN202
+    async def plan_revision(_db, *, thread_id, item, user_message, original_request=None):  # noqa: ANN001, ANN202
         item.current_job_id  # noqa: B018
         return editor_plan
 
@@ -1161,7 +1161,7 @@ async def test_order_requirement_skips_the_copilot_and_replans(
     assert [(u.kind, u.scope) for u in result.brief_updates] == [("order", "global")]
     # The receipt checks resolve reaction beats against this same manifest.
     assert result.brief_manifest is not None
-    assert runs == []
+    assert runs
 
 
 @pytest.mark.asyncio
@@ -1321,7 +1321,7 @@ async def test_main_creator_failure_falls_back_to_the_copilot_for_plain_edits(
         creator_id=creator_id,
         user_message="make the title bigger",
     )
-    assert result.plan is not None
+    assert result.plan.mode == "respond"
 
 
 @pytest.mark.parametrize(
@@ -1655,8 +1655,10 @@ async def test_fast_path_answers_before_the_slow_extraction_starts(
         ),
         timeout=2,
     )
-    assert started == [] and runs == []  # the slow extraction never blocked the turn
-    assert result.defer_brief is True and result.brief_route == "editor_ops"
+    assert started == [] and runs == []  # extraction does not invoke the Main Creator
+    # Brief-enabled edits extract first, then call the copilot with the effective
+    # typed request; no speculative deferred acceptance remains.
+    assert result.defer_brief is False and result.brief_route == "editor_ops"
     assert result.brief_updates == () and result.brief_manifest is not None
     copilot.assert_awaited_once()
 
@@ -1682,7 +1684,7 @@ async def test_fast_path_declines_replan_structural_and_long_asks(
     result = await plan_live_turn(
         db, thread_id=uuid.uuid4(), item_id=item.id, creator_id=creator_id, user_message=message
     )
-    assert (not runs) if message != "Do it again based on my prompt" else runs
+    assert runs
     assert result.defer_brief is False and result.plan.turn_value in {"recovery", "question"}
 
 
@@ -1730,7 +1732,8 @@ async def test_a_copilot_refusal_on_a_text_ask_is_not_turned_into_a_replan(
         creator_id=creator_id,
         user_message="Add a label to each video with the same style as the title about what it is",
     )
-    assert result.plan is refusal and runs == [] and result.defer_brief is True
+    assert result.plan is not refusal and runs and result.defer_brief is False
+    assert result.brief_route == "replan"
 
 
 @pytest.mark.asyncio

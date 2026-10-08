@@ -68,6 +68,9 @@ jobs:
         working-directory: src/apps/api
         run: pip install -e ".[dev]"
 
+      - name: Install renderer libraries
+        run: sudo bash scripts/ci/apt-install.sh libegl1 libgl1
+
       - name: Run structural evals
         working-directory: src/apps/api
         # Default mode: replay + structural-only. No API keys needed.

@@ -370,6 +370,12 @@ class CurrentPlanShape:
     # clips carry a capture-time fact, so "order by when I filmed them" is an
     # editor op, not a planner re-run.
     can_order_by_capture_time: bool = False
+    # Independent editor lanes exposed by the current snapshot.  These stay
+    # optional for legacy callers that only know about text/timeline.
+    can_edit_audio: bool = False
+    can_edit_captions: bool = False
+    can_edit_global_timing: bool = False
+    can_edit_text: bool | None = None
 
 
 _PER_CLIP_LANE_ROLES = {"shot_label", "clip_label", "per_clip", "label"}
@@ -431,7 +437,8 @@ def plan_shape_from_editor_snapshot(snapshot: Mapping[str, Any] | None) -> Curre
         isinstance(bar, Mapping) and str(bar.get("id") or "").startswith("clip-label-")
         for bar in bars
     )
-    can_edit_timeline = "clip" in (snapshot.get("allowed_op_families") or [])
+    allowed_families = set(snapshot.get("allowed_op_families") or [])
+    can_edit_timeline = "clip" in allowed_families
     return CurrentPlanShape(
         has_render=True,
         has_per_clip_text_lane=legacy_lane or label_bars or _has_seen(snapshot),
@@ -442,6 +449,16 @@ def plan_shape_from_editor_snapshot(snapshot: Mapping[str, Any] | None) -> Curre
         or _has_seen(snapshot),
         can_edit_timeline=can_edit_timeline,
         can_order_by_capture_time=can_edit_timeline and _timed_slot_count(snapshot) >= 2,
+        can_edit_audio=bool({"music", "sfx"} & allowed_families),
+        can_edit_captions="caption" in allowed_families,
+        can_edit_text=(
+            None if "allowed_op_families" not in snapshot else "text" in allowed_families
+        ),
+        # v2's clip timeline compiler owns duration boundaries; there is no
+        # separate public ``trim_output`` family in the snapshot contract.
+        can_edit_global_timing=(
+            "clip" in allowed_families and snapshot.get("editor_ops_version") == 2
+        ),
     )
 
 
@@ -580,33 +597,24 @@ def route_requirements(
         return "replan"
     if not reqs:
         return "editor_ops"
-    kinds = {req.kind for req in reqs}
-    if _capture_time_ask_editable(reqs, current_plan):
-        return "editor_ops"
-    if kinds & {"order", "select"}:
-        if not (
-            current_plan.can_edit_timeline
-            and kinds <= {"order", "select"}
-            and _structural_reqs_editable(reqs, message)
-        ):
-            return "replan"
-        return "editor_ops"
-    title_local_timing = all(req.kind != "timing" or req.scope == "title" for req in reqs)
-    mixed_editor_kinds = kinds <= {"text", "style"} or (
-        kinds <= {"text", "style", "timing"} and title_local_timing
-    )
-    if len(kinds) > 1 and not mixed_editor_kinds:
-        # Text and style are both in-place label/title tweaks the editor ops express
-        # (KRI-219: "move the timestamps top left, make them smaller, just the hour");
-        # any other mix (audio, timing, ...) still needs the planner.
-        return "replan"
-    if "timing" in kinds and not title_local_timing:
-        return "replan"
+    for req in reqs:
+        if req.kind in {"text", "style"} and current_plan.can_edit_text is False:
+            # Captions are editable text on a separate lane. Title-specific
+            # requests still require the actual title/text capability.
+            if req.scope == "title" or not current_plan.can_edit_captions:
+                return "replan"
+        if req.kind in {"order", "select"}:
+            if is_capture_order_requirement(req) and current_plan.can_order_by_capture_time:
+                continue
+            if not current_plan.can_edit_timeline or not _structural_reqs_editable([req], message):
+                return "replan"
     per_clip_text = any(
         req.kind == "text" and (req.scope == "per_clip" or req.scope.startswith("clip:"))
         for req in reqs
     )
-    if per_clip_text and not current_plan.has_per_clip_text_lane:
+    if per_clip_text and not (
+        current_plan.has_per_clip_text_lane or current_plan.can_edit_captions
+    ):
         return "replan"
     fills_every_clip = any(req.kind == "text" and req.scope == "per_clip" for req in reqs)
     can_fill = (
@@ -614,8 +622,17 @@ def route_requirements(
         if current_plan.can_fill_per_clip_text is None
         else current_plan.can_fill_per_clip_text
     )
-    if fills_every_clip and not can_fill:
+    if fills_every_clip and not (can_fill or current_plan.can_edit_captions):
         return "replan"
+    for req in reqs:
+        if req.kind == "audio" and not current_plan.can_edit_audio:
+            return "replan"
+        if (
+            req.kind == "timing"
+            and req.scope != "title"
+            and not current_plan.can_edit_global_timing
+        ):
+            return "replan"
     return "editor_ops"
 
 

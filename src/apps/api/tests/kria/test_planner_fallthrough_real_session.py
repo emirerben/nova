@@ -1,4 +1,4 @@
-"""Regression: copilot-first declining must fall through to extraction on a REAL session.
+"""Regression: routing model calls must not use expired rows on a REAL session.
 
 `_plan_editor_revision` rolls the session back before its model call, which expires
 every loaded ORM row. The first copilot-first release then read `persona`/`item`
@@ -84,7 +84,7 @@ def _response(outcome: str, ops: list[dict] | None = None):
         ),
     ],
 )
-async def test_declined_fast_path_falls_through_without_missing_greenlet(
+async def test_extract_first_routes_without_missing_greenlet(
     monkeypatch: pytest.MonkeyPatch, case: str, message: str, response
 ) -> None:
     user_id, thread_id, item_id = _seed()
@@ -128,8 +128,13 @@ async def test_declined_fast_path_falls_through_without_missing_greenlet(
             )
     finally:
         await engine.dispose()
-    assert extractor_calls, f"{case}: the extraction must run after the fast path declined"
-    assert not creator_calls, f"{case}: non-explicit followup must not invoke MainCreator"
+    assert len(extractor_calls) == 1
+    if case == "structural":
+        assert not creator_calls and result.brief_route == "editor_ops"
+    else:
+        assert len(creator_calls) == 1 and result.brief_route == "replan"
+        assert creator_calls[0].agent_input.brief_enabled is False  # no duplicate extraction
+        assert result.brief_updates  # extracted requirements survive replan
     assert result.defer_brief is False
     assert result.brief_route in {"replan", "editor_ops"}
 

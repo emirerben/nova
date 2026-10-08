@@ -273,44 +273,56 @@ def bars_from_variant(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]]
 def classify(bars: list[dict[str, Any]]) -> dict[str, str]:
     """Bar id -> "title" | "label" | "text".
 
-    label = linked to a clip (or a ``clip-label-*`` bar). title = the guided
-    title bar, else the earliest-starting non-label intro-role bar that starts
-    within the first half second and was not added by chat.
+    Labels are linked to clips. Explicit title bars and opening intro bars form
+    a group, including stacked titles. For older untyped/sequence-only edits,
+    fall back to the earliest opening bar. Sequence children inherit the group
+    from their source, so later word-by-word fragments remain selectable.
     """
     live = [bar for bar in bars if not bar["removed"]]
 
     def is_label(bar: dict[str, Any]) -> bool:
         return bool(bar["clip_id"]) or str(bar["id"]).startswith(_CLIP_LABEL_BAR_PREFIX)
 
-    title_id: str | None = None
-    if any(bar["id"] == "guided-title" for bar in live):
-        title_id = "guided-title"
-    else:
+    title_ids = {
+        bar["id"]
+        for bar in live
+        if not is_label(bar)
+        and not bar.get("caption")
+        and (
+            bar["id"] == "guided-title"
+            or bar["role"] == "title"
+            or (
+                bar["role"] == "generative_intro"
+                and not str(bar["id"]).startswith(("kria-", "guided-pinned-"))
+                and bar["start_s"] is not None
+                and bar["start_s"] <= 0.5
+            )
+        )
+    }
+    if not title_ids:
         candidates = [
             bar
             for bar in live
             if not is_label(bar)
+            and not bar.get("caption")
             and bar["role"] in (None, "title", "generative_intro", "generative_sequence")
             and (
-                bar["role"] == "title"
-                or not str(bar["id"]).startswith(("kria-", "guided-pinned-"))
+                bar["role"] == "title" or not str(bar["id"]).startswith(("kria-", "guided-pinned-"))
             )
             and bar["start_s"] is not None
             and bar["start_s"] <= 0.5
         ]
         if candidates:
-            title_id = min(candidates, key=lambda bar: bar["start_s"])["id"]
-    title_bar = next((bar for bar in live if bar["id"] == title_id), None)
-    title_lineage = (
-        (title_bar.get("sequence_source_id") or title_id) if title_bar is not None else None
-    )
+            title_ids.add(min(candidates, key=lambda bar: bar["start_s"])["id"])
+    title_lineages = {
+        bar.get("sequence_source_id") or bar["id"] for bar in live if bar["id"] in title_ids
+    }
     return {
         bar["id"]: (
             "label"
             if is_label(bar)
             else "title"
-            if bar["id"] == title_id
-            or (title_lineage is not None and bar.get("sequence_source_id") == title_lineage)
+            if bar["id"] in title_ids or bar.get("sequence_source_id") in title_lineages
             else "text"
         )
         for bar in bars

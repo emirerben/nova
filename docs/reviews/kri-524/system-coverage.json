@@ -1,0 +1,258 @@
+{
+  "schema_version": 1,
+  "library": {
+    "case_count": 252,
+    "errors": [],
+    "valid": true,
+    "by_format": {
+      "montage": 28,
+      "talking_head": 28,
+      "day_vlog": 28,
+      "single_hero": 28,
+      "subtitled": 28,
+      "narrated": 28,
+      "narrated_planned": 28,
+      "narrated_ready": 28,
+      "slides": 28
+    },
+    "by_family": {
+      "text": 18,
+      "positioning": 18,
+      "timing": 18,
+      "preservation": 18,
+      "selection": 18,
+      "order": 18,
+      "captions": 18,
+      "audio": 18,
+      "pacing": 18,
+      "style": 18,
+      "compound": 18,
+      "correction": 18,
+      "ambiguity": 18,
+      "capability": 18
+    },
+    "by_evidence_status": {
+      "unexecuted": 252
+    },
+    "by_kind": {
+      "clarification": 18,
+      "negative": 18,
+      "unsupported": 18,
+      "user_example": 198
+    },
+    "by_destination": {
+      "cloud_editor": 252,
+      "native_editor": 252,
+      "worker_render": 0
+    },
+    "by_failure_category": {
+      "ambiguity": 18,
+      "audio_caption": 36,
+      "compound_correction": 36,
+      "pacing_style": 36,
+      "selection_order": 36,
+      "source_loss": 18,
+      "unsupported_false_claim": 18,
+      "wrong_geometry": 18,
+      "wrong_text": 18,
+      "wrong_timing": 18
+    },
+    "unexecuted_outcome_total": 252,
+    "evidence_note": "Coverage intentions only. No library prompt has live execution evidence."
+  },
+  "creation_live": {
+    "cases": 18,
+    "matrix": [
+      {
+        "format": "montage",
+        "destination": "cloud",
+        "outcome": "strategy"
+      },
+      {
+        "format": "montage",
+        "destination": "phone",
+        "outcome": "strategy"
+      },
+      {
+        "format": "talking_head",
+        "destination": "cloud",
+        "outcome": "strategy"
+      },
+      {
+        "format": "talking_head",
+        "destination": "phone",
+        "outcome": "unavailable"
+      },
+      {
+        "format": "day_vlog",
+        "destination": "cloud",
+        "outcome": "strategy"
+      },
+      {
+        "format": "day_vlog",
+        "destination": "phone",
+        "outcome": "strategy"
+      },
+      {
+        "format": "single_hero",
+        "destination": "cloud",
+        "outcome": "strategy"
+      },
+      {
+        "format": "single_hero",
+        "destination": "phone",
+        "outcome": "clarification"
+      },
+      {
+        "format": "subtitled",
+        "destination": "cloud",
+        "outcome": "strategy"
+      },
+      {
+        "format": "subtitled",
+        "destination": "phone",
+        "outcome": "strategy"
+      },
+      {
+        "format": "narrated",
+        "destination": "cloud",
+        "outcome": "strategy"
+      },
+      {
+        "format": "narrated",
+        "destination": "phone",
+        "outcome": "strategy"
+      },
+      {
+        "format": "narrated_planned",
+        "destination": "cloud",
+        "outcome": "strategy"
+      },
+      {
+        "format": "narrated_planned",
+        "destination": "phone",
+        "outcome": "strategy"
+      },
+      {
+        "format": "narrated_ready",
+        "destination": "cloud",
+        "outcome": "strategy"
+      },
+      {
+        "format": "narrated_ready",
+        "destination": "phone",
+        "outcome": "strategy"
+      },
+      {
+        "format": "slides",
+        "destination": "cloud",
+        "outcome": "unavailable"
+      },
+      {
+        "format": "slides",
+        "destination": "phone",
+        "outcome": "unavailable"
+      }
+    ],
+    "outcomes": {
+      "strategy": 14,
+      "unavailable": 3,
+      "clarification": 1
+    },
+    "evidence": "actual model outputs parsed through strategy policy and command compiler; no renders"
+  },
+  "editor_live": {
+    "cases": 28,
+    "expected_outcomes": 27,
+    "historical_capability_failure": 1,
+    "families": [
+      "captions",
+      "audio",
+      "timing",
+      "selection",
+      "order",
+      "slide text/style/cover",
+      "compound",
+      "ambiguity",
+      "unsupported",
+      "no-op"
+    ],
+    "evidence": "real editor model response, parser/compiler; save validation where snapshot sufficient. Original device mute and catalog SFX remain compiler-only."
+  },
+  "chain_live": {
+    "captured_cases": 18,
+    "final_distinct_cases": 9,
+    "supported_changed_save_passes": 7,
+    "partial_supported_with_honest_limitation": 1,
+    "already_satisfied": 1,
+    "historical_router_only": 2,
+    "incomplete_fixture_save_rejection": 1,
+    "evidence": "real extractor then real editor through planner; compiler/save. Database and object existence mocked. Historical replan MainCreator stub is not live outcome evidence."
+  },
+  "live_costs": [
+    {
+      "test_run_id": "kri524-composition-20261008-a",
+      "status": "settled",
+      "calls": 5,
+      "settled_usd": 0.08734
+    },
+    {
+      "test_run_id": "kri524-composition-20261008-b",
+      "status": "settled",
+      "calls": 4,
+      "settled_usd": 0.069069
+    },
+    {
+      "test_run_id": "kri524-composition-20261008-c",
+      "status": "settled",
+      "calls": 19,
+      "settled_usd": 0.326954
+    },
+    {
+      "test_run_id": "kri524-system-20261008-a",
+      "status": "settled",
+      "calls": 28,
+      "settled_usd": 0.445236
+    },
+    {
+      "test_run_id": "kri524-system-20261008-b",
+      "status": "settled",
+      "calls": 22,
+      "settled_usd": 0.683485
+    },
+    {
+      "test_run_id": "kri524-system-20261008-c",
+      "status": "settled",
+      "calls": 14,
+      "settled_usd": 0.218302
+    },
+    {
+      "test_run_id": "kri524-system-20261008-d",
+      "status": "settled",
+      "calls": 18,
+      "settled_usd": 0.294961
+    },
+    {
+      "test_run_id": "kri524-system-20261008-e",
+      "status": "settled",
+      "calls": 2,
+      "settled_usd": 0.034829
+    }
+  ],
+  "failure_categories": {
+    "title_scope_vs_source_scope": "fixed with independent timing/source projections",
+    "partial_request_routing": "fixed per-requirement capability composition and extract-first flow",
+    "lost_state_between_edits": "fixed canonical caption projection and sequence lineage",
+    "partial_target_selection": "fixed shared plural title group and prompt inventory",
+    "capability_overclaim": "field map matches compiler; live unsupported playback rate",
+    "false_completion": "partial/unavailable replies disclose structured unmet request; unverified receipts stay unverified",
+    "fixture_construction": "missing base_video rejected; complete synthetic fixture rerun passes"
+  },
+  "limits": [
+    "All 252 library entries remain unexecuted",
+    "No full HTTP, database persistence, phone export or audible continuity proof",
+    "Original graded-title conversation not found",
+    "Creation phone/cloud coverage is not full editing/render coverage for every format",
+    "Manifest availability is the pinned evaluation profile, not a live production rollout claim"
+  ]
+}

@@ -39,7 +39,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-08-v71"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-08-v73"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1207,6 +1207,9 @@ def _format_snapshot(snapshot: dict) -> str:
         f"allowed_op_families: {', '.join(str(x) for x in allowed) if allowed else empty_families}",
         f"has_narrated_captions: {has_captions}",
     ]
+    timeline_fields = snapshot.get("timeline_patch_capabilities")
+    if isinstance(timeline_fields, dict):
+        lines.append("timeline_patch_capabilities: " + json.dumps(timeline_fields, sort_keys=True))
     appearance = _text_appearance_inventory(snapshot)
     if snapshot.get("text_appearance_version") == 1 or appearance["targets"]:
         lines.append("TEXT APPEARANCE: version=1; targets=")
@@ -1312,7 +1315,10 @@ def _format_snapshot(snapshot: dict) -> str:
         else:
             lines.append("current: (none — no carousel configured)")
 
-    lines.append("\nTEXT BARS (indices are authoritative for this turn):")
+    from app.services.kria_editor_ops_text import bars_from_snapshot, classify  # noqa: PLC0415
+
+    text_groups = classify(bars_from_snapshot(snapshot))
+    lines.append("\nTEXT BARS (indices and selector groups are authoritative for this turn):")
     if text_bars:
         for i, bar in enumerate(text_bars):
             if not isinstance(bar, dict):
@@ -1374,9 +1380,11 @@ def _format_snapshot(snapshot: dict) -> str:
                     semantic += " guessed=true"
                 if bar.get("edited") is True:
                     semantic += " edited=true"
-            identity = ""
+            group = text_groups.get(bar.get("id"), "text")
+            group = {"label": "labels", "text": "free"}.get(group, group)
+            identity = f" selector_group={group!r}"
             if component_context_enabled:
-                identity = (
+                identity += (
                     f" id={_field(bar.get('id'), max_chars=100)!r}"
                     f" role={_field(bar.get('role'), max_chars=50)!r}"
                 )
@@ -3456,14 +3464,23 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             )
 
         unmet_requests = _sanitize_unmet_requests(data.get("unmet_requests"))
-        if outcome == "unsupported" and intent == "reject" and unmet_requests:
+        if unmet_requests:
             reasons = list(
                 dict.fromkeys(item["reason"] for item in unmet_requests if item["reason"])
             )
             if reasons:
-                # The structured limitation must not disappear behind generic
-                # redirect copy that does not explain the unsupported request.
-                reply = " ".join(reasons)[:1200]
+                # Structured unmet outcomes are authoritative even when the model
+                # labels a partial bundle as an edit and writes completion copy.
+                # Keep supported operations, but never present the entire request
+                # as completed. Execution/approval still belongs to the caller.
+                limitation = " ".join(reasons)[:1200]
+                if ops:
+                    reply = "I prepared the supported changes. " + limitation
+                elif outcome in {"no_effect", "unsupported"}:
+                    outcome = "unsupported"
+                    reply = limitation
+                else:
+                    reply = f"{reply} {limitation}".strip()
 
         try:
             return EditCopilotOutput(

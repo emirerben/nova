@@ -165,6 +165,17 @@ def _coerce_patch_slots(name: str, payload: dict, snapshot: dict, state: Any) ->
             state.invalid_value()
             return None
         clean[key] = cleaned
+    capabilities = snapshot.get("timeline_patch_capabilities")
+    if isinstance(capabilities, dict):
+        unavailable = [key for key in clean if capabilities.get(key) is False]
+        if unavailable:
+            state.invalid_value()
+            state.reject(
+                op=name,
+                reason="capability_unavailable",
+                detail="unsupported timeline field: " + ", ".join(unavailable),
+            )
+            return None
     return {"selector": selector, "patch": clean}
 
 
