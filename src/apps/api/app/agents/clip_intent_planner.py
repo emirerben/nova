@@ -92,6 +92,8 @@ _STOPWORDS = frozenset(
     "videos video content footage".split()
 )
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?\n])\s+")
+# An elision mark inside a quote ("...", "[...]"; NFKC turns "…" into "...").
+_ELLIPSIS = re.compile(r"\s*[\[(]?\.{3,}[\])]?\s*")
 # Flash sometimes writes prose into the first/last `position` enum ("at the
 # start", "in this chapter order"). Word-bounded so "lasting" never reads as last.
 # KRI-520: the same prose in Turkish ("en başta", "sonunda"); "sonra" (after) is not "sona".
@@ -283,15 +285,23 @@ def _sentence_naming(attribute: str, sources: tuple[str, ...]) -> str | None:
 
 
 def _unstitched_quote(quote: str, creator_text: str | None, sources: tuple[str, ...]) -> str | None:
-    """The creator span inside a quote the model stitched from TWO exact creator spans.
+    """The creator span inside a quote the model stitched from exact creator spans.
 
     Flash sometimes prefixes each chapter row with the request's governing sentence
-    ("show each chapter line ... word for word. Chapter 2 · ... · It's a castell.").
+    ("show each chapter line ... word for word. Chapter 2 · ... · It's a castell."),
+    or elides a list it quotes ("Bölüm başlıkları koy: ..., Üniversite", KRI-531).
     Every word is still the creator's; only the join is not contiguous. Returns the
-    half that holds ``creator_text`` (or the longer half when there is none), only
-    when both halves are exact creator spans, so nothing invented ever passes.
+    piece that holds ``creator_text`` (or the longest piece when there is none), only
+    when every piece is an exact creator span, so nothing invented ever passes.
     ``quote`` and ``creator_text`` are ``_norm``-ed.
     """
+    if _ELLIPSIS.search(quote):
+        pieces = [p.strip(" ,;") for p in _ELLIPSIS.split(quote)]
+        pieces = [p for p in pieces if p]
+        if pieces and all(any(p in s for s in sources) for p in pieces):
+            held = [p for p in pieces if creator_text is None or creator_text in p]
+            if held:
+                return max(held, key=len)
     best: str | None = None
     for i, char in enumerate(quote):
         if char != " ":
@@ -405,6 +415,56 @@ _SPEECH_CAPTION_WORDS = frozenset(
 )
 _SPELLING_ASK = re.compile(_LEADING_GLUE + r"(?:spell|spelled|spelt|spelling)\b", re.IGNORECASE)
 _SPELLING_WORDS = frozenset({"spell", "spelled", "spelt", "spelling"})
+# KRI-531: Flash mints an op for asks the prompt says yield no intent ("25 saniye
+# olsun" -> `timing`, "dikey olsun" -> `set_style`, "if there are two copies use
+# one" -> `select` / `select_unique`). Length, look and which clips to use belong
+# to the edit planner (`selected_media_ids` against the brief's `select`
+# requirement), which reads the creator's words in the Creative Brief.
+_NON_CLIP_OP_WORDS = frozenset(
+    "timing time duration length style look format orientation vertical aspect ratio crop "
+    "resolution select selection unique dedupe deduplicate duplicate duplicates music song "
+    "pace pacing speed transition transitions filter color".split()
+)
+# A clip's own sound ("with her own voice") is an audio choice the edit planner
+# owns; placed first or last it is still a placement of that clip.
+_AUDIO_OP_WORDS = frozenset({"audio", "voice", "sound"})
+_OP_WORDS = re.compile(r"[a-z]+")
+
+
+def _invented_op_words(op: object) -> set[str]:
+    """Words of an op outside the schema; empty for a real op or one naming a real op."""
+    if not isinstance(op, str) or op in _KNOWN_OPS:
+        return set()
+    words = set(_OP_WORDS.findall(op.casefold()))
+    return set() if words & _KNOWN_OPS else words
+
+
+def _repair_misplaced_placement(data: dict[str, Any]) -> None:
+    """An ``include`` or invented audio op placed first/last is an ``order``, in place.
+
+    "En sonda Elif'in kameraya söylediği cümleyi kendi sesiyle kullan" came back as
+    ``op: "audio"`` or ``op: "include"`` with ``position: "last"`` (KRI-531): the
+    first was rejected and the creator asked to restate it; the second silently lost
+    its placement, so the edit no longer ended on her clip. Keeping her voice is the
+    edit planner's audio choice; ending on her clip is the order the creator asked
+    for. Only when the creator's quote also names that placement, so a stray model
+    position never moves a clip. ``_repair_position`` then normalises the placement
+    (two placements still ask). An exclusion is left for ``_silent_non_clip_drop``.
+    """
+    op = data.get("op")
+    quote = data.get("source_quote")
+    quote_text = _norm(quote) if isinstance(quote, str) else ""
+    if op == "include":
+        if _is_exclusion_ask(quote_text):
+            return
+    elif not _invented_op_words(op) & _AUDIO_OP_WORDS:
+        return
+    position = data.get("position")
+    text = position if isinstance(position, str) else ""
+    first = bool(_POSITION_FIRST.search(text) and _POSITION_FIRST.search(quote_text))
+    last = bool(_POSITION_LAST.search(text) and _POSITION_LAST.search(quote_text))
+    if first or last:
+        data["op"] = "order"
 
 
 def _is_exclusion_ask(quote: str) -> bool:
@@ -416,10 +476,11 @@ def _silent_non_clip_drop(data: dict[str, Any]) -> str | None:
     """Why an intent is not a clip operation at all, or None to keep it (KRI-511).
 
     Closed vocabulary: ``exclusion_dropped`` (an invented exclude op, or an
-    ``include`` whose quote asks to leave clips out), ``spelling_dropped`` (how
-    names are spelled), ``speech_caption_dropped`` (a non-caption op whose target
-    is the spoken captions). The creator's words stay in the Creative Brief, which
-    the Main Creator and the caption steps read.
+    ``include`` whose quote asks to leave clips out), ``non_clip_op_dropped`` (an
+    invented timing, style, de-duplication or audio op, KRI-531),
+    ``spelling_dropped`` (how names are spelled), ``speech_caption_dropped`` (a
+    non-caption op whose target is the spoken captions). The creator's words stay
+    in the Creative Brief, which the Main Creator and the caption steps read.
     """
     op = data.get("op")
     quote = data.get("source_quote")
@@ -428,6 +489,8 @@ def _silent_non_clip_drop(data: dict[str, Any]) -> str | None:
         return "exclusion_dropped"
     if op == "include" and _is_exclusion_ask(quote_text):
         return "exclusion_dropped"
+    if _invented_op_words(op) & (_NON_CLIP_OP_WORDS | _AUDIO_OP_WORDS):
+        return "non_clip_op_dropped"
     attribute = data.get("attribute")
     attribute_words = set(_words(attribute)) if isinstance(attribute, str) else set()
     if _SPELLING_ASK.search(_norm(quote_text)) or attribute_words & _SPELLING_WORDS:
@@ -807,9 +870,11 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         if not isinstance(data.get("intent_id"), str) or not data["intent_id"].strip():
             data["intent_id"] = f"intent-{index + 1}"
         _repair_placeholder(data, sources)
-        # KRI-456/KRI-511: a style ask, title line, exclusion, or spoken-caption
-        # instruction is not a clip operation. Drop it before shape/provenance checks
-        # so a garbled quote can never turn it into a question.
+        _repair_misplaced_placement(data)
+        # KRI-456/KRI-511/KRI-531: a style ask, title line, exclusion, spoken-caption
+        # instruction or invented timing/style/audio op is not a clip operation. Drop
+        # it before shape/provenance checks so a garbled quote can never turn it into
+        # a question.
         silent_reason = _silent_caption_drop(data) or _silent_non_clip_drop(data)
         if silent_reason is not None:
             if silent is not None:
@@ -822,8 +887,22 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             data["caption_attribute"] = None  # exact copy wins over an authored topic
         if data.get("op") != "order":
             data["position"] = None
+        if data.get("op") != "label":
+            # Narration-label fields mean nothing on any other op: "Elif's sentence
+            # with her own voice, at the end" came back as a transcript order (KRI-531).
+            data.pop("label_source", None)
+            data.pop("transcript_kind", None)
         _repair_position(data)
         _repair_order_by(data)
+        attribute = data.get("attribute")
+        if (
+            data.get("op") == "order"
+            and data.get("order_by") in _ORDER_BY_VALUES
+            and not (isinstance(attribute, str) and attribute.strip())
+        ):
+            # A filming/route order arranges every clip, so its attribute is only the
+            # creator's words for the order: the quote, which the fence below checks.
+            data["attribute"] = data.get("source_quote")
         creator_text = data.get("creator_text")
         text_max = CREATOR_CAPTION_MAX_CHARS if data.get("op") == "caption" else _CREATOR_TEXT_MAX
         if isinstance(creator_text, str) and len(creator_text) > text_max:

@@ -1560,3 +1560,349 @@ def test_kri511_prompt_teaches_exclusions_narration_order_and_caption_text() -> 
     assert "show the balloons while I talk about the balloons" in prompt
     assert "A list of names to spell is never a request to label clips" in prompt
     assert 'never the string "null"' in prompt
+
+
+# ── KRI-531: model slips on a Turkish chapter request are repaired, never asked ──
+# Prod thread 9beeeec6 (stress kit M3, 2026-10-08): "I understood 3 of your clip
+# instructions. I couldn't safely verify "caption: Üniversite"; "caption: Öğle
+# arası"; "caption: Spor" (and 5 more)". Every intent below is a live Gemini 2.5
+# Flash capture from replaying that exact message (50 runs); the creator had
+# nothing to restate.
+_BERLIN_REQUEST = (
+    "Berlin'de öğrenci olarak bir günüm. Videoları çektiğim saat sırasına göre diz, "
+    "sabahtan geceye. Bölüm başlıkları koy: Sabah, Üniversite, Öğle arası, Spor, Akşam. "
+    "Aynı videodan iki tane varsa birini kullan. En sonda Elif'in kameraya söylediği "
+    "cümleyi kendi sesiyle kullan. Videonun tamamı dikey olsun. 25 saniye olsun."
+)
+_BERLIN_CHAPTERS = ["Sabah", "Üniversite", "Öğle arası", "Spor", "Akşam"]
+_BERLIN_ELIF_QUOTE = "En sonda Elif'in kameraya söylediği cümleyi kendi sesiyle kullan."
+
+
+def _berlin_input() -> ClipIntentPlannerInput:
+    return ClipIntentPlannerInput(
+        creator_request=_BERLIN_REQUEST,
+        latest_user_message=_BERLIN_REQUEST,
+        clip_facts=True,
+        reply_language="tr",
+    )
+
+
+def _berlin_caption(title: str, quote: str) -> dict:
+    return _games_intent(
+        f"caption_{len(title)}_{title[:3]}",
+        "caption",
+        f"{title} chapter",
+        quote,
+        creator_text=title,
+    )
+
+
+def _berlin_ellipsis_captions(joiner: str = " ... ") -> list[dict]:
+    lead = "Bölüm başlıkları koy:"
+    return [_berlin_caption("Sabah", f"{lead} Sabah")] + [
+        _berlin_caption(title, f"{lead}{joiner}{title}") for title in _BERLIN_CHAPTERS[1:]
+    ]
+
+
+def test_kri531_prod_shape_keeps_every_chapter_and_asks_nothing() -> None:
+    # raw capture: the prod drop classes (op + source quote) plus a null-attribute
+    # filming order and an `audio` op carrying transcript fields, all in one run.
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent(
+                    "order_capture_time_morning_night",
+                    "order",
+                    None,  # type: ignore[arg-type]
+                    "Videoları çektiğim saat sırasına göre diz, sabahtan geceye.",
+                    order_by="capture_time",
+                ),
+                *_berlin_ellipsis_captions(),
+                _games_intent(
+                    "audio_elif_final_narration",
+                    "audio",
+                    "Elif'in kameraya söylediği cümle",
+                    _BERLIN_ELIF_QUOTE,
+                    label_source="transcript",
+                    transcript_kind="participant",
+                    position="last",
+                ),
+                _games_intent(
+                    "set_vertical",
+                    "set_style",
+                    "Videonun tamamı",
+                    "Videonun tamamı dikey olsun.",
+                    creator_text="dikey",
+                ),
+                _games_intent(
+                    "timing_duration_25s", "timing", "Videonun tamamı", "25 saniye olsun."
+                ),
+                _games_intent(
+                    "select_unique_clips",
+                    "select_unique",
+                    "Aynı videodan iki tane varsa",
+                    "Aynı videodan iki tane varsa birini kullan.",
+                ),
+            ],
+            "question": None,
+        },
+        ensure_ascii=False,
+    )
+    out = _agent().parse(raw, _berlin_input())
+    assert out.salvage_question is None
+    assert out.salvage_reasons == []
+    assert [i.creator_text for i in out.intents if i.op == "caption"] == _BERLIN_CHAPTERS
+    order, *_, last = out.intents
+    assert (order.op, order.order_by, order.attribute) == (
+        "order",
+        "capture_time",
+        "Videoları çektiğim saat sırasına göre diz, sabahtan geceye.",
+    )
+    assert (last.op, last.position, last.label_source, last.transcript_kind) == (
+        "order",
+        "last",
+        "clip",
+        None,
+    )
+    assert out.silent_drops == {"non_clip_op_dropped": 3}
+
+
+@pytest.mark.parametrize("joiner", [" ... ", " ..., ", " …, ", "... ", " [...] "])
+def test_kri531_ellipsis_quote_keeps_the_creators_exact_words(joiner: str) -> None:
+    raw = json.dumps(
+        {"intents": _berlin_ellipsis_captions(joiner), "question": None}, ensure_ascii=False
+    )
+    out = _agent().parse(raw, _berlin_input())
+    assert out.salvage_question is None
+    assert [i.creator_text for i in out.intents] == _BERLIN_CHAPTERS
+    assert [i.source_quote for i in out.intents][1:] == _BERLIN_CHAPTERS[1:]
+
+
+def test_kri531_ellipsis_quote_with_invented_words_is_still_rejected() -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                _berlin_caption("Sabah", "Bölüm başlıkları koy: Sabah"),
+                _berlin_caption("Gece", "Bölüm başlıkları koy: ... Gece"),
+                _games_intent(
+                    "c_uni",
+                    "caption",
+                    "Üniversite chapter",
+                    "Bölüm başlıkları ekle: ... Üniversite",
+                    creator_text="Üniversite",
+                ),
+            ],
+            "question": None,
+        },
+        ensure_ascii=False,
+    )
+    out = _agent().parse(raw, _berlin_input())
+    assert [i.creator_text for i in out.intents] == ["Sabah"]
+    assert out.salvage_reasons == ["source_quote_not_creator_text"]
+
+
+def test_kri531_transcript_fields_on_an_order_are_cleared_not_rejected() -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent(
+                    "order_last_elif",
+                    "order",
+                    "Elif'in kameraya söylediği cümle",
+                    _BERLIN_ELIF_QUOTE,
+                    label_source="transcript",
+                    transcript_kind="participant",
+                    position="last",
+                )
+            ],
+            "question": None,
+        },
+        ensure_ascii=False,
+    )
+    out = _agent().parse(raw, _berlin_input())
+    assert out.salvage_question is None
+    assert [(i.op, i.position, i.label_source, i.transcript_kind) for i in out.intents] == [
+        ("order", "last", "clip", None)
+    ]
+
+
+def test_kri531_transcript_label_still_needs_its_kind() -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent(
+                    "label_score", "label", "score", "Label the score", label_source="transcript"
+                )
+            ],
+            "question": None,
+        }
+    )
+    with pytest.raises(SchemaError) as err:
+        _agent().parse(raw, ClipIntentPlannerInput(creator_request="Label the score."))
+    assert err.value.error_class == "intent_invalid:model"
+
+
+@pytest.mark.parametrize(
+    ("op", "position", "expected"),
+    [
+        ("audio", "last", ("order", "last")),
+        ("voice", "at the very end", ("order", "last")),
+        ("use_sound", "end", ("order", "last")),
+        ("audio", None, None),
+        # The quote names no opening placement: a stray model position moves nothing.
+        ("audio", "first", None),
+    ],
+)
+def test_kri531_audio_op_with_a_placement_is_an_order(
+    op: str, position: str | None, expected: tuple[str, str] | None
+) -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent(
+                    "elif",
+                    op,
+                    "Elif'in kameraya söylediği cümle",
+                    _BERLIN_ELIF_QUOTE,
+                    position=position,
+                )
+            ],
+            "question": None,
+        },
+        ensure_ascii=False,
+    )
+    out = _agent().parse(raw, _berlin_input())
+    assert out.salvage_question is None
+    assert [(i.op, i.position) for i in out.intents] == ([expected] if expected else [])
+    assert out.silent_drops == ({} if expected else {"non_clip_op_dropped": 1})
+
+
+def test_kri531_audio_op_with_two_placements_still_asks() -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                _berlin_caption("Sabah", "Bölüm başlıkları koy: Sabah"),
+                _games_intent(
+                    "elif",
+                    "keep_audio",
+                    "Elif'in kameraya söylediği cümle",
+                    _BERLIN_ELIF_QUOTE,
+                    position="both first and last",
+                ),
+            ],
+            "question": None,
+        },
+        ensure_ascii=False,
+    )
+    out = _agent().parse(raw, _berlin_input())
+    assert out.salvage_reasons == ["intent_invalid:position"]
+
+
+@pytest.mark.parametrize(
+    "op",
+    ["timing", "set_timing", "duration", "style", "set_style", "format", "select", "select_unique"],
+)
+def test_kri531_invented_non_clip_ops_are_dropped_silently(op: str) -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                _berlin_caption("Sabah", "Bölüm başlıkları koy: Sabah"),
+                _games_intent("x", op, "Videonun tamamı", "25 saniye olsun."),
+            ],
+            "question": None,
+        },
+        ensure_ascii=False,
+    )
+    out = _agent().parse(raw, _berlin_input())
+    assert [i.creator_text for i in out.intents] == ["Sabah"]
+    assert out.salvage_question is None
+    assert out.silent_drops == {"non_clip_op_dropped": 1}
+
+
+@pytest.mark.parametrize("op", ["highlight", "chapter", "order_by_time"])
+def test_kri531_unknown_ops_that_may_be_clip_operations_still_ask(op: str) -> None:
+    raw = json.dumps(
+        {
+            "intents": [
+                _berlin_caption("Sabah", "Bölüm başlıkları koy: Sabah"),
+                _games_intent("x", op, "Spor", "Bölüm başlıkları koy: Sabah, Üniversite"),
+            ],
+            "question": None,
+        },
+        ensure_ascii=False,
+    )
+    out = _agent().parse(raw, _berlin_input())
+    assert out.salvage_reasons == ["intent_invalid:op"]
+
+
+def test_kri531_null_attribute_only_repaired_on_a_filming_order() -> None:
+    quote = "Videoları çektiğim saat sırasına göre diz, sabahtan geceye."
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent("o", "order", None, quote, order_by="capture_time"),  # type: ignore[arg-type]
+                _games_intent("i", "include", None, quote),  # type: ignore[arg-type]
+            ],
+            "question": None,
+        },
+        ensure_ascii=False,
+    )
+    out = _agent().parse(raw, _berlin_input())
+    assert [(i.op, i.attribute) for i in out.intents] == [("order", quote)]
+    assert out.salvage_reasons == ["intent_invalid:attribute"]
+
+
+@pytest.mark.parametrize(
+    ("position", "expected"),
+    [
+        ("last", ("order", "last")),
+        ("sonda", ("order", "last")),
+        # No opening placement in the quote: keep the include, drop the stray position.
+        ("first", ("include", None)),
+        (None, ("include", None)),
+    ],
+)
+def test_kri531_include_placed_last_is_an_order(
+    position: str | None, expected: tuple[str, str | None]
+) -> None:
+    # Live capture (7/40 fresh runs): the ending came back as an include, whose
+    # position is cleared, so the edit no longer ended on Elif's clip.
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent(
+                    "include_elif",
+                    "include",
+                    "Elif'in kameraya söylediği cümle",
+                    _BERLIN_ELIF_QUOTE,
+                    position=position,
+                )
+            ],
+            "question": None,
+        },
+        ensure_ascii=False,
+    )
+    out = _agent().parse(raw, _berlin_input())
+    assert out.salvage_question is None
+    assert [(i.op, i.position) for i in out.intents] == [expected]
+
+
+def test_kri531_include_with_a_placement_word_but_an_exclusion_is_still_dropped() -> None:
+    request = "Fun edit. Don't use the blurry ones at the end."
+    raw = json.dumps(
+        {
+            "intents": [
+                _games_intent(
+                    "x",
+                    "include",
+                    "blurry ones",
+                    "Don't use the blurry ones at the end",
+                    position="last",
+                )
+            ],
+            "question": None,
+        }
+    )
+    out = _agent().parse(raw, ClipIntentPlannerInput(creator_request=request))
+    assert out.intents == []
+    assert out.silent_drops == {"exclusion_dropped": 1}
