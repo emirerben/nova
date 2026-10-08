@@ -610,7 +610,11 @@ def test_beat_miss_sentence_reason_buckets() -> None:
 
     visual_missing = 'Couldn\'t find the photo or sticker for "x" in your Visuals'
     assert beat_miss_sentence("x", "visual_not_in_pool") == visual_missing
-    assert beat_miss_sentence("x", "visual_is_video") == visual_missing
+    # KRI-521: the creator's video exists; this edit just can't pop it in.
+    assert (
+        beat_miss_sentence("x", "visual_is_video")
+        == 'Videos can\'t pop up on your words in this edit yet, so "x" had no video'
+    )
 
     assert (
         beat_miss_sentence("x", "sound_not_found")
