@@ -90,6 +90,7 @@ from app.models import (
     PlanItemAsset,
     SoundEffect,
 )
+from app.pipeline.pinned_text import pin_range_grounded
 from app.routes.generative_jobs import (
     _find_variant,
     _phone_subtitled_sfx_paths,
@@ -1157,35 +1158,10 @@ def _excerpt_states_seconds(excerpt: str, seconds: float) -> bool:
     )
 
 
-def _excerpt_states_number(excerpt: str, seconds: float) -> bool:
-    """Whether a verbatim creator excerpt names ``seconds`` as a time ("5s", "from 5 to 10")."""
+def _pin_range_is_grounded(pin: PinnedText, quote: str, *, strip: tuple[str, ...] = ()) -> bool:
+    """KRI-525: a pin's seconds must be numbers the creator wrote (see `pin_range_grounded`)."""
 
-    if _excerpt_states_seconds(excerpt, seconds):
-        return True
-    text = " ".join(excerpt.casefold().split())
-    if float(seconds).is_integer() and re.search(
-        rf"(?<![\w.:]){int(seconds)}(?![\w.:]|[.,]\d)", text
-    ):
-        return True
-    return any(
-        abs(number - float(seconds)) < 1e-6 and re.search(rf"\b{word}\b", text)
-        for word, number in _SECONDS_WORDS.items()
-    )
-
-
-def _pin_range_is_grounded(pin: PinnedText, quote: str) -> bool:
-    """KRI-525: a pin's seconds must be numbers the creator wrote.
-
-    A clip scope has no language-independent surface form ("the first clip", "ilk klipte"),
-    so it is not matched against words here; the plan-time check rejects an index beyond the
-    clip count, and a wrong-but-valid clip is visible in the draft the creator reviews.
-    """
-
-    return all(
-        _excerpt_states_number(quote, value)
-        for value in (pin.start_s, pin.end_s)
-        if value is not None
-    )
+    return pin_range_grounded(pin, quote, strip=strip)
 
 
 def _apply_explicit_render_intent(
@@ -1234,7 +1210,8 @@ def _apply_explicit_render_intent(
             if field == "pinned_texts" and value is not None:
                 if not all(" ".join(pin.text.split()) in quote for pin in value):
                     continue
-                if not all(_pin_range_is_grounded(pin, quote) for pin in value):
+                pin_texts = tuple(pin.text for pin in value)
+                if not all(_pin_range_is_grounded(pin, quote, strip=pin_texts) for pin in value):
                     continue
             if field == "opening_title_duration_s" and value is not None:
                 if not _excerpt_states_seconds(quote, value):

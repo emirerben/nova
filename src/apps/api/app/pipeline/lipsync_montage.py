@@ -50,6 +50,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.config import settings
+from app.pipeline.pinned_text import drawable_pins
 from app.pipeline.take_assignment import (
     Assignment,
     CandidateSpec,
@@ -885,6 +886,7 @@ def plan_lipsync_montage(
         font_covers, requested_font, title, closing, {}, extra_texts=[pin.text for pin in pins]
     )
     pins = _fit_pins(pins, family or requested_font or "Fraunces", font_covers)
+    pins = drawable_pins(pins, total_s, [cut.output_duration_s for cut in cuts])
     if not title:
         title_source = "none"
     snapshot_kwargs: dict[str, Any] = {}

@@ -151,7 +151,12 @@ def test_a_pin_with_no_window_is_neither_drawn_nor_claimed(speech_world) -> None
     }
     assert _run(speech_world, _speech_plan()) is True
     assert speech_world.job.assembly_plan["variants"][0]["text_elements"] == []
-    assert "pinned_texts" not in speech_world.job.assembly_plan["speech_montage"]
+    record = speech_world.job.assembly_plan["speech_montage"]
+    assert "pinned_texts" not in record
+    # ... and the record says so instead of dropping the creator's text silently.
+    assert any(
+        "Left out corner text" in note and "2 lines" in note for note in record["adjustments"]
+    )
 
 
 def test_a_pin_free_spoken_excerpt_montage_is_unchanged(speech_world) -> None:

@@ -73,6 +73,7 @@ from app.models import (
     Persona,
     PlanItem,
 )
+from app.pipeline.pinned_text import pin_range_grounded
 from app.routes._copilot import CopilotTurnBody, is_overlay_display_ask, run_copilot_turn
 from app.routes.generative_jobs import variant_render_baseline
 from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
@@ -1542,6 +1543,11 @@ def ground_pinned_texts(
             quote_grounded and appears(key, quoted)
         ):
             kept.append(pin)
+    # KRI-525: a ranged pin also needs its seconds in the creator's own words (a clip scope has
+    # no language-independent form; `_pin_range_refusal` rejects a clip that does not exist).
+    pin_texts = tuple(pin.text for pin in pins)
+    haystack = " ".join(source for source in user_sources if source)
+    kept = [pin for pin in kept if pin_range_grounded(pin, haystack, strip=pin_texts)]
     return kept, len(pins) - len(kept)
 
 

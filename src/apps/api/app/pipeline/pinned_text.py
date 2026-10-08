@@ -14,6 +14,7 @@ left/right aligned at the margin; centre pins are centred.
 from __future__ import annotations
 
 import math
+import re
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -129,6 +130,64 @@ def resolve_pin_windows(
             continue
         resolved.append(PinWindow(index, pin, round(start_s, 3), round(end_s, 3)))
     return resolved
+
+
+def drawable_pins(
+    pins: Sequence[PinnedText], total_s: float, cut_durations: Sequence[float]
+) -> list[PinnedText]:
+    """The pins that have a window on an edit of these cuts (planners that know their cuts).
+
+    A ranged pin that falls outside the edit (past the end, or on a clip that does not exist)
+    has no window. Leaving it off the snapshot means the brief receipt reports the text as
+    missing instead of a plan that claims a line it never draws.
+    """
+
+    windows: list[tuple[float, float]] = []
+    cursor = 0.0
+    for duration in cut_durations:
+        windows.append((cursor, cursor + float(duration)))
+        cursor += float(duration)
+    drawn = {w.index for w in resolve_pin_windows(pins, total_s, windows)}
+    return [pin for index, pin in enumerate(pins) if index in drawn]
+
+
+_NUMBER_WORDS = {
+    "one": 1.0,
+    "two": 2.0,
+    "three": 3.0,
+    "four": 4.0,
+    "five": 5.0,
+    "six": 6.0,
+    "seven": 7.0,
+    "eight": 8.0,
+    "nine": 9.0,
+    "ten": 10.0,
+}
+_NUMBER_TOKEN = re.compile(r"(?<![\w.:])(\d+(?:[.,]\d+)?)(?!\d)")
+
+
+def pin_range_grounded(pin: PinnedText, evidence: str, *, strip: Iterable[str] = ()) -> bool:
+    """Whether the creator's own words contain the seconds this pin carries (KRI-525).
+
+    Each of ``start_s`` / ``end_s`` must appear in ``evidence`` as a number (digits, any unit or
+    a trailing period such as the Turkish "5.", or a word up to ten). The pin texts in ``strip``
+    are removed first so "Part 5" cannot ground ``start_s=5``. A whole-video or clip-scoped pin
+    has no seconds to check (a clip scope has no language-independent surface form; the plan-time
+    checks reject an index that does not exist).
+    """
+
+    wanted = [value for value in (pin.start_s, pin.end_s) if value is not None]
+    if not wanted:
+        return True
+    text = " ".join(str(evidence).casefold().split())
+    for chunk in strip:
+        if chunk:
+            text = text.replace(" ".join(chunk.casefold().split()), " ")
+    found = {float(match.group(1).replace(",", ".")) for match in _NUMBER_TOKEN.finditer(text)}
+    for word, number in _NUMBER_WORDS.items():
+        if re.search(rf"\b{word}\b", text):
+            found.add(number)
+    return all(any(abs(value - number) < 1e-6 for number in found) for value in wanted)
 
 
 def bottom_pin_overlaps(windows: Sequence[PinWindow], start_s: float, end_s: float) -> bool:

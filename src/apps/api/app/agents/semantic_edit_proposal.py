@@ -685,7 +685,8 @@ class SemanticEditProposalAgent(Agent[EditProposalAgentInput, SemanticEditPlan])
             shot_labels_json=json.dumps(input.shot_labels or [], ensure_ascii=False),
             pinned_texts_line=(
                 "\nPINNED CORNER TEXT (server-owned exact copy, drawn separately in a "
-                "corner; never a thought or text_binding): "
+                "corner; never repeat it as a thought or text_binding, even if the request "
+                "quotes it): "
                 + json.dumps([pin.text for pin in input.pinned_texts], ensure_ascii=False)
                 if input.pinned_texts
                 else ""

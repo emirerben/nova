@@ -40,6 +40,23 @@ Every writer also persists the pin rows as the variant's `text_elements` (the ed
 compiles text from the row, not the recipe). **Known limit:** the voiceover montage's intro text
 is style-set / agent positioned and is not moved away from a pin.
 
+## Known limits and rollout
+
+- **"clip N" means the N-th cut / story moment in edit order.** In the unified and lip-sync
+  montages that is exactly the N-th selected clip (one cut per clip). On a story path where one
+  clip is split or reused it is the N-th slice; `_pin_range_refusal` can only check the
+  selected-clip count, and `drawable_pins` drops an index past the real cuts.
+- Seconds must be written as numbers or words up to ten ("from 5s to 10s", "5. saniyeden");
+  "after a minute" is not grounded and the pin is left out with the usual disclosure.
+- The opening title only steps below a top pin on the guided compile and the voice-behind-footage
+  title; the recorded-voiceover montage's intro text is style-set / agent positioned and is not
+  moved. The title's line count is estimated (0.55 em per glyph), so a very wide uppercase title
+  can still reach a top pin.
+- No kill switch: ranged pins are model-emitted once prompt v51 deploys, and the phone writers now
+  require `positionedText` (+ `authoredText` for the default Fraunces) to be verified, as every
+  other phone text lane already does. During a rolling deploy an old worker rejects a snapshot
+  carrying `start_s` / `end_s` / `clip` (`extra="forbid"`) and fails closed, like #1480's pins.
+
 ## Editor
 
 `kria_editor_timeline.rebase_guided_text` and `GuidedLabelRebase.swift` keep a pin that spans the

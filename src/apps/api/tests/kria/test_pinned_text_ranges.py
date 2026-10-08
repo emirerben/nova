@@ -305,3 +305,51 @@ def test_a_clip_that_was_not_selected_becomes_a_question() -> None:
     assert _pin_range_refusal(ok) is None
     # "All clips" (empty selection) is not checkable here.
     assert _pin_range_refusal(strategy.model_copy(update={"selected_media_ids": []})) is None
+
+
+def test_seconds_grounding_survives_punctuation_other_languages_and_the_pins_own_digits() -> None:
+    """Review findings: a sentence-final period (or Turkish "5.") must not make a pin vanish,
+    and "Part 5" must not ground an invented start_s=5."""
+    pin = PinnedText(text="Hi", corner="top_left", start_s=5, end_s=10)
+    for ok in (
+        "write 'Hi' top left from 5 to 10.",
+        "until second 10, from 5",
+        "5. saniyeden 10. saniyeye kadar Hi yaz",
+        "Hi from 5s-10s",
+    ):
+        assert _pin_range_is_grounded(pin, ok), ok
+
+    part = PinnedText(text="Part 5", corner="top_left", start_s=5)
+    assert _pin_range_is_grounded(part, "Put Part 5 top left from second 5", strip=("Part 5",))
+    assert not _pin_range_is_grounded(part, "Put Part 5 top left", strip=("Part 5",))
+    # 15 does not ground 5 (a number token, not a substring).
+    assert not _pin_range_is_grounded(part, "from second 15", strip=("Part 5",))
+
+
+def test_the_v2_planner_also_checks_a_pins_seconds() -> None:
+    from app.kria import planner
+
+    pins = [
+        PinnedText(text="Part 1", corner="top_left", start_s=5, end_s=10),
+        PinnedText(text="Day one", corner="top_left", clip=1),
+        PinnedText(text="Whole", corner="top_left"),
+    ]
+    said = ["Part 1 top left from 5s to 10s, Day one on the first clip, and Whole all video"]
+    kept, dropped = planner.ground_pinned_texts(pins, evidence="", user_sources=said)
+    assert [p.text for p in kept] == ["Part 1", "Day one", "Whole"] and dropped == 0
+
+    invented = ["Part 1 top left, Day one on the first clip, and Whole all video"]
+    kept, dropped = planner.ground_pinned_texts(pins, evidence="", user_sources=invented)
+    assert [p.text for p in kept] == ["Day one", "Whole"] and dropped == 1
+
+
+def test_drawable_pins_drops_what_has_no_window_for_every_planner() -> None:
+    from app.pipeline.pinned_text import drawable_pins
+
+    pins = [
+        PinnedText(text="ok", corner="top_left", start_s=1, end_s=2),
+        PinnedText(text="late", corner="top_left", start_s=50),
+        PinnedText(text="ghost", corner="top_left", clip=7),
+        PinnedText(text="all", corner="top_left"),
+    ]
+    assert [p.text for p in drawable_pins(pins, 6.0, [2.0, 2.0, 2.0])] == ["ok", "all"]

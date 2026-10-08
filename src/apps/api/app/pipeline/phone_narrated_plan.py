@@ -406,7 +406,9 @@ def with_pinned_text_layers(
     """
 
     from app.agents._schemas.text_element import TextElement
+    from app.pipeline.generative_overlays import build_overlays_from_text_elements
     from app.pipeline.pinned_text import pinned_text_elements, resolve_pin_windows
+    from app.pipeline.portable_text_layout import compile_text_overlay
 
     if not pins:
         return recipe, []
@@ -429,13 +431,54 @@ def with_pinned_text_layers(
     if not rows:
         return recipe, []
     existing = list(recipe.text_layers)
-    layers = _compile_title_layers(
-        [TextElement.model_validate(row) for row in rows],
-        canvas=recipe.canvas,
-        timeline_duration_s=duration,
-        first_index=sum(1 for layer in existing if _is_title_layer(layer)),
+    first = sum(1 for layer in existing if _is_title_layer(layer))
+    try:
+        overlays = build_overlays_from_text_elements(
+            [TextElement.model_validate(row) for row in rows],
+            video_duration_s=duration,
+            independent_box_alignment=True,
+        )
+        compiled = [
+            compile_text_overlay(
+                overlay,
+                layer_id=f"{TITLE_LAYER_PREFIX}{first + index}",
+                canvas=recipe.canvas,
+                dissolve_seed=101 + (first + index) * 37,
+            )
+            for index, overlay in enumerate(overlays)
+        ]
+    except Exception as exc:  # noqa: BLE001 - untrusted pin text
+        raise UnsupportedPhonePlan(f"unable to compile the pinned text: {exc}") from exc
+    # Append only: every existing layer keeps the font it was compiled with (an intro that uses
+    # a cluster / staggered reveal needs fonts a rebuild from `layer.runs` would not find).
+    manifest = list(recipe.asset_manifest.assets)
+    assets = list(recipe.assets)
+    known = {asset.id for asset in manifest}
+    layers = []
+    for layer, font in compiled:
+        layers.append(layer)
+        if font is not None and font.id not in known:
+            known.add(font.id)
+            manifest.append(font)
+            assets.append(
+                MediaAsset(
+                    id=font.id,
+                    relative_path=font.id,
+                    fingerprint=AssetFingerprint(
+                        hex=font.fingerprint.sha256, byte_count=font.fingerprint.byte_count
+                    ),
+                )
+            )
+    all_layers = [*existing, *layers]
+    snap_text_overshoot(all_layers, duration)
+    fields = {name: getattr(recipe, name) for name in type(recipe).model_fields}
+    fields.update(
+        assets=assets,
+        asset_manifest=RenderAssetManifest(assets=tuple(manifest)),
+        text_layers=all_layers,
+        required_capabilities=set(recipe.required_capabilities) | {"positionedText"},
     )
-    return _with_text_layers(recipe, [*existing, *layers]), rows
+    return EditRecipeV2(**fields), rows
 
 
 def narrated_authored_text_elements(rows: list[dict] | None) -> list[dict]:
