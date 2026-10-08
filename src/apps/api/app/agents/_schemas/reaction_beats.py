@@ -50,7 +50,8 @@ class ReactionBeat(BaseModel):
     # ("no" after "Mason Greenwood" or "Vlahović").
     after: str | None = Field(default=None, max_length=80)
     occurrence: Literal["first", "every"] = "first"
-    # An owned IMAGE media_id from the manifest (photo or sticker). Resolved
+    # An owned IMAGE media_id from the manifest (photo or sticker), or a
+    # Visuals VIDEO where the phone draws video cards (KRI-521). Resolved
     # (label/media_id match, unknown -> dropped) by
     # `app.services.creator_capabilities.compile_strategy_to_plan`.
     visual_id: str | None = Field(default=None, max_length=200)

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.163.0] - 2026-10-08
+
+### Changed
+- fix(kria): "when I say X, show my video" pops a Visuals video on phone Talking (KRI-521) (#1482) <!-- release-pr: 1482 -->
+
 ## [0.78.162.0] - 2026-10-08
 
 ### Changed

@@ -1461,6 +1461,121 @@ def test_subtitled_reaction_beats_happy_path(monkeypatch):
     assert len(beats_card_events) == 1
 
 
+def _video_beat_receipt() -> dict:
+    return _basic_beat_receipt(
+        placed=[
+            {
+                "beat_id": "ilk-durak",
+                "trigger": "İlk durak",
+                "at_s": 3.0,
+                "end_s": 6.0,
+                "visual_label": "brew.mp4",
+            },
+            {
+                "beat_id": "goal",
+                "trigger": "goal",
+                "at_s": 0.0,
+                "end_s": 2.0,
+                "visual_label": "photo.jpg",
+            },
+        ]
+    )
+
+
+def test_subtitled_video_beat_binds_and_compiles_as_muted_video(monkeypatch):
+    """KRI-521: "when I say 'İlk durak', show the brewing video small in the
+    corner" -- beat grounding is asked for videos under the KRI-183 gate, and
+    the beat's `kind="video"` card binds with a `video` pin and plays muted."""
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    _enable_beats(monkeypatch, extra_features=("visualVideos",))
+    monkeypatch.setattr(gb.settings, "phone_subtitled_video_overlays_enabled", True)
+    bind_calls: list = []
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind(bind_calls))
+    receipt = _video_beat_receipt()
+    beat_grounding_mock = _beat_grounding_mock(
+        [_video_card("beat-ilk-durak-1", "brew1", start_s=3.0, end_s=6.0)], [], receipt
+    )
+    monkeypatch.setattr(
+        phone_reaction_grounding_mod, "ground_phone_reaction_beats", beat_grounding_mock
+    )
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", _grounding_mock([])
+    )
+    job.all_candidates["creator_strategy"] = {
+        "reaction_beats": [_beat_dict("ilk-durak", "İlk durak", visual_id="asset-brew1")]
+    }
+
+    import app.pipeline.phone_subtitled_plan as subtitled_plan_mod
+
+    compiled: list = []
+    real_compile = subtitled_plan_mod.compile_phone_subtitled_plan
+
+    def _spy_compile(*args, **kwargs):
+        recipe = real_compile(*args, **kwargs)
+        compiled.append(recipe)
+        return recipe
+
+    monkeypatch.setattr(subtitled_plan_mod, "compile_phone_subtitled_plan", _spy_compile)
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    assert beat_grounding_mock.call_args.kwargs["video_supported"] is True
+    assert bind_calls == [{"brew1": ("video", "users/u1/plan/item1/pool/brew1.mp4", "1")}]
+    variant = job.assembly_plan["variants"][0]
+    assert variant["phone_lane_receipt"] == {"applied": ["overlays"], "dropped": []}
+    assert variant["phone_beat_receipt"] == receipt
+    recipe = compiled[-1]
+    assert "visualVideos" in recipe.required_capabilities
+    overlay_track = next(t for t in recipe.tracks if t.id == "subtitled-overlays")
+    video_clip = next(
+        c for c in overlay_track.clips if c.id == "subtitled-overlay-beat-ilk-durak-1"
+    )
+    assert video_clip.volume == 0
+    assert video_clip.timeline_start == 3.0
+
+
+def test_subtitled_video_beat_drops_alone_when_video_cards_are_off(monkeypatch):
+    """KRI-521 fail-closed: a video beat card that reaches the bind step with
+    the video-PiP flag off drops ALONE -- the photo beat still renders and the
+    beat receipt says the video couldn't pop in (`visual_is_video`)."""
+    job, _snapshot, _session, _binding_ = _setup_subtitled(monkeypatch)
+    _enable_beats(monkeypatch, extra_features=("visualVideos",))
+    bind_calls: list = []
+    monkeypatch.setattr(phone_visuals_mod, "bind_phone_visual_assets", _make_fake_bind(bind_calls))
+    beat_grounding_mock = _beat_grounding_mock(
+        [
+            _video_card("beat-ilk-durak-1", "brew1", start_s=3.0, end_s=6.0),
+            _photo_card("beat-goal-1", "photo1", start_s=0.0, end_s=2.0),
+        ],
+        [],
+        _video_beat_receipt(),
+    )
+    monkeypatch.setattr(
+        phone_reaction_grounding_mod, "ground_phone_reaction_beats", beat_grounding_mock
+    )
+    monkeypatch.setattr(
+        phone_overlay_grounding_mod, "ground_phone_subtitled_overlays", _grounding_mock([])
+    )
+    job.all_candidates["creator_strategy"] = {
+        "reaction_beats": [
+            _beat_dict("ilk-durak", "İlk durak", visual_id="asset-brew1"),
+            _beat_dict("goal", "goal", visual_id="asset-photo1"),
+        ]
+    }
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    assert beat_grounding_mock.call_args.kwargs["video_supported"] is False
+    assert bind_calls == [{"photo1": ("image", "users/u1/plan/item1/pool/photo1.jpg", "1")}]
+    beat_receipt = job.assembly_plan["variants"][0]["phone_beat_receipt"]
+    assert [p["beat_id"] for p in beat_receipt["placed"]] == ["goal"]
+    assert beat_receipt["unplaced"] == [
+        {"beat_id": "ilk-durak", "trigger": "İlk durak", "reason": "visual_is_video"}
+    ]
+
+
 def test_subtitled_beats_requested_but_unplaced_falls_through_to_pip_grounding(monkeypatch):
     """KRI-181: a strategy asks for reaction beats, but grounding hears NONE
     of them (no card placed, no closing shot placed) -- `beats_active` stays

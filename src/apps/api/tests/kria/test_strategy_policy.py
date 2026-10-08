@@ -381,3 +381,107 @@ def test_simplify_question_never_claims_a_draft_on_the_first_request(prod_profil
     later = check_strategy_for_runtime_v2(with_edit, guided, ask_before_simplifying=True)
     assert isinstance(later, RefusedStrategy)
     assert "Your current draft is unchanged. Should I make a simpler version?" in later.question
+
+
+# --- KRI-521: "when I say X, show my video in the corner" on phone Talking ---
+
+KADIKOY_TAKE = "analysis-proxy-ios-987424EF-621F-49BB-8A25-49B780205D08.mp4"
+BREWING_VIDEO = "asset-d6f9c9fb-9196-4762-a73a-2a8843e0f23c"
+
+
+def _kadikoy_manifest():
+    """Prod thread 3598097e: one landscape take plus one ready Visuals video."""
+    return capabilities.resolve_creator_manifest(
+        item_id="item-kadikoy",
+        edit_format="subtitled",
+        media=[
+            {"media_id": KADIKOY_TAKE, "kind": "video", "duration_s": 33.621667},
+            {"media_id": BREWING_VIDEO, "kind": "video", "duration_s": 5.033333},
+        ],
+        catalog=[
+            {
+                "catalog_id": "657a4e2f14d14d8296008757856c3fbe",
+                "kind": "sound_effect",
+                "label": "Soft pop",
+            }
+        ],
+        phone_source_media_ids=[KADIKOY_TAKE],
+        phone_rendering_allowed=True,
+    )
+
+
+def _kadikoy_strategy(reaction_beats: list[dict] | None = None) -> CreativeStrategy:
+    """The beats Main Creator v46 wrote for the T3 prompt (re-run 2026-10-08)."""
+    return CreativeStrategy(
+        edit_format="subtitled",
+        audio_strategy="original_audio",
+        render_program="native",
+        selected_media_ids=[KADIKOY_TAKE],
+        caption_style="editorial",
+        optional_treatments=["overlays"],
+        reaction_beats=reaction_beats
+        or [
+            {
+                "beat_id": "kahve",
+                "trigger": "kahve",
+                "occurrence": "every",
+                "sound": "657a4e2f14d14d8296008757856c3fbe",
+            },
+            {
+                "beat_id": "ilk-durak",
+                "trigger": "İlk durak",
+                "visual_id": BREWING_VIDEO,
+                "visual_role": "photo",
+            },
+        ],
+    )
+
+
+def test_video_beat_on_phone_talking_is_kept_not_a_simplify_question(prod_profile) -> None:
+    manifest = _kadikoy_manifest()
+    assert manifest.capabilities[capabilities.CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS].available
+
+    checked = check_strategy_for_runtime_v2(
+        manifest, _kadikoy_strategy(), ask_before_simplifying=True
+    )
+
+    assert isinstance(checked, CheckedStrategy)
+    beats = {beat.beat_id: beat for beat in checked.strategy.reaction_beats or []}
+    assert set(beats) == {"kahve", "ilk-durak"}
+    assert beats["ilk-durak"].visual_id == BREWING_VIDEO
+    assert not any("photo/sticker" in notice for notice in checked.notices)
+
+
+def test_video_beat_without_video_cards_names_the_video_not_a_photo(
+    prod_profile, monkeypatch
+) -> None:
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_video_overlays_enabled", False)
+    manifest = _kadikoy_manifest()
+    assert capabilities.CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS not in manifest.capabilities
+
+    refused = check_strategy_for_runtime_v2(
+        manifest, _kadikoy_strategy(), ask_before_simplifying=True
+    )
+
+    assert isinstance(refused, RefusedStrategy)
+    assert refused.question.startswith(
+        "Videos can't pop up on your words in this edit yet, so the video for "
+        '"İlk durak" is left out.'
+    )
+    assert "photo/sticker" not in refused.question
+
+
+def test_speaker_take_is_never_a_beat_video(prod_profile) -> None:
+    """Only a Visuals video can pop in; the take itself never resolves."""
+    strategy = _kadikoy_strategy(
+        [{"beat_id": "self", "trigger": "İlk durak", "visual_id": KADIKOY_TAKE}]
+    )
+
+    checked = check_strategy_for_runtime_v2(_kadikoy_manifest(), strategy)
+
+    assert isinstance(checked, CheckedStrategy)
+    assert checked.strategy.reaction_beats is None
+    assert any(
+        'Couldn\'t find the photo or sticker for "İlk durak" in your Visuals' in notice
+        for notice in checked.notices
+    )
