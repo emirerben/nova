@@ -127,6 +127,10 @@ class PlanFacts:
     # absent, not misplaced. A group made only of clips an earlier group already seated, or of
     # Visuals-pool items, is neither (the planner outcome's ``code`` says which).
     sequence_absent: tuple[str, ...] = ()
+    # KRI-522: the spots ("first" / "last" / "then") whose stated sequence group landed,
+    # read off the same outcomes. None = this plan cannot say (not a unified montage), so a
+    # stated first/last clip stays unjudged there instead of failing a plan that seated it.
+    sequence_spots_met: tuple[str, ...] | None = None
     texts: tuple[str, ...] = ()
     # Where the title came from: "creator" (their words), "brief" (written from the
     # brief's facts), "default" (nothing to title with), None = unknown.
@@ -454,6 +458,11 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
             str(row.get("status"))
             for row in record.get("intent_outcomes") or []
             if isinstance(row, Mapping) and row.get("op") == "order"
+        ),
+        sequence_spots_met=tuple(
+            str(row.get("position") or "then")
+            for row in record.get("intent_outcomes") or []
+            if isinstance(row, Mapping) and row.get("op") == "order" and row.get("status") == "met"
         ),
         sequence_unmet=_sequence_problems(record, ("misplaced", None, "contained")),
         sequence_absent=_sequence_problems(record, ("absent", "unresolved")),
@@ -932,6 +941,23 @@ def _order_is_required(req: BriefRequirement) -> bool:
     return req.facts.get("required") is not False and strength not in _PREFERENCE_STRENGTHS
 
 
+_ORDER_ANCHOR_FACTS = (("first_clip", "first", "start with"), ("last_clip", "last", "end with"))
+
+
+def _unplaced_order_anchor(req: BriefRequirement, facts: PlanFacts) -> str | None:
+    """Why a stated first/last clip is unconfirmed, in the creator's own words, else None."""
+    if facts.sequence_spots_met is None or not facts.rendered_output:
+        return None
+    said: list[str] = []
+    for key, spot, verb in _ORDER_ANCHOR_FACTS:
+        words = req.facts.get(key)
+        if isinstance(words, str) and words.strip() and spot not in facts.sequence_spots_met:
+            said.append(f"{verb} {words.strip()}")
+    if not said:
+        return None
+    return f"You asked me to {' and '.join(said)}, but I can't confirm that clip is placed there."
+
+
 def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """A required order is met, partly met (an honest fallback), or FAILED. Neutral
     (unchecked) is only for an optional preference, and for a draft that has not been
@@ -995,6 +1021,13 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
         if facts.sequence_absent:
             said.append(f"I found no clips for: {', '.join(facts.sequence_absent)}")
         return _receipt(req, unmet, f"Your clips are in filming order, but {'; '.join(said)}.")
+    missing_anchor = _unplaced_order_anchor(req, facts)
+    if missing_anchor is not None:
+        # KRI-522: "chronological, starting with the blue video" lives in the brief as
+        # `first_clip`. A plan that recorded no placed first/last group cannot claim it.
+        # Partial, not a block: the edit is still the creator's filming order, and saying
+        # so beats failing a render that is otherwise right.
+        return _receipt(req, "partial", missing_anchor)
     if facts.ordering_fallback_clip_ids:
         n = len(facts.ordering_fallback_clip_ids)
         return _receipt(

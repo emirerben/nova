@@ -65,6 +65,29 @@ def unresolved_questions(resolved_intents: object) -> list[str]:
     return out
 
 
+ANCHOR_FACTS = (("first_clip", "first"), ("last_clip", "last"))
+
+
+def stated_anchors(brief: object) -> dict[str, str]:
+    """The clips a brief order requirement says go first / last, by the creator's words.
+
+    KRI-522: "chronological, starting with the blue video" is stored as ``first_clip`` on
+    the order requirement, so it outlives the turn whose planner resolved it. Returns
+    ``{"first": "the video that is blue"}``; empty when the brief states none.
+    """
+    live = getattr(brief, "live", None)
+    out: dict[str, str] = {}
+    for req in live() if callable(live) else ():
+        if getattr(req, "kind", None) != "order":
+            continue
+        facts = getattr(req, "facts", None) or {}
+        for key, position in ANCHOR_FACTS:
+            words = facts.get(key)
+            if isinstance(words, str) and _nfc(words):
+                out.setdefault(position, _nfc(words))
+    return out
+
+
 def sequence_rows(resolved_intents: object) -> list[SequenceRow]:
     """The creator's stated sequence: (position, name, member ids, status), listed order.
 

@@ -53,6 +53,12 @@ from app.schemas.edit_proposal import (
     clean_creator_copy,
     clean_creator_shot_labels,
 )
+from app.schemas.text_style_intent import (
+    LabelPosition,
+    TitleAnimation,
+    normalize_label_position,
+    normalize_title_animation,
+)
 
 CREATOR_AGENT_SCHEMA_VERSION = 1
 CREATOR_REQUEST_MAX_CHARS = 12_000
@@ -385,6 +391,23 @@ class CreativeStrategy(_CreatorModel):
         max_length=16,
         description="Confirmed intro color (#RRGGBB or a supported color alias).",
     )
+    title_animation: TitleAnimation | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "How the opening title enters, ONLY when the creator named it ('animated with "
+            "typewriter'): typewriter | fade | pop | slide. Omit otherwise."
+        ),
+    )
+    label_position: LabelPosition | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "Where per-clip labels sit, ONLY when the creator named it ('to the bottom "
+            "left'): top_left | top | top_right | middle | bottom_left | bottom | "
+            "bottom_right. Omit otherwise."
+        ),
+    )
     # KRI-127 (flag CLIP_INTENTS_ENABLED). Both default to None so stored
     # strategies and every exclude_none hash stay byte-identical when unused.
     # SkipJsonSchema keeps both OUT of every derived JSON schema: the Kria
@@ -646,6 +669,16 @@ class CreativeStrategy(_CreatorModel):
         if canonical is None:
             raise ValueError("font_family must be a known font registry key")
         return canonical
+
+    @field_validator("title_animation", mode="before")
+    @classmethod
+    def _normalize_title_animation(cls, value: object) -> str | None:
+        return normalize_title_animation(value)
+
+    @field_validator("label_position", mode="before")
+    @classmethod
+    def _normalize_label_position(cls, value: object) -> str | None:
+        return normalize_label_position(value)
 
     @field_validator("text_color", mode="before")
     @classmethod

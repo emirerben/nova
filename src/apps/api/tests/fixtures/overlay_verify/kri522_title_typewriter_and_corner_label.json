@@ -1,0 +1,50 @@
+{
+  "overlays": [
+    {
+      "text": "come with me to my favorite restaurant and ice cream place in lisbon",
+      "effect": "typewriter",
+      "animation_phases": {"entrance": "typewriter", "exit": "none", "loop": "none", "speed": 0.3},
+      "font_family": "Inter",
+      "text_size_px": 76,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.16,
+      "text_anchor": "center",
+      "alignment": "center",
+      "max_width_frac": 0.84,
+      "text_color": "#FFFFFF",
+      "shadow_enabled": true,
+      "start_s": 0.0,
+      "end_s": 2.2
+    },
+    {
+      "text": "Name",
+      "effect": "static",
+      "font_family": "Inter",
+      "text_size_px": 58,
+      "position_x_frac": 0.08,
+      "position_y_frac": 0.78,
+      "text_anchor": "left",
+      "alignment": "left",
+      "max_width_frac": 0.82,
+      "text_color": "#FFFFFF",
+      "shadow_enabled": true,
+      "start_s": 0.0,
+      "end_s": 3.0
+    },
+    {
+      "text": "Name",
+      "effect": "static",
+      "font_family": "Inter",
+      "text_size_px": 58,
+      "position_x_frac": 0.92,
+      "position_y_frac": 0.78,
+      "text_anchor": "right",
+      "alignment": "right",
+      "max_width_frac": 0.82,
+      "text_color": "#FFFFFF",
+      "shadow_enabled": true,
+      "start_s": 0.0,
+      "end_s": 3.0
+    }
+  ]
+}
