@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.178.0] - 2026-10-08
+
+### Changed
+- fix(kria): judge captions and speech cleanup on a finished phone render (KRI-541) (#1495) <!-- release-pr: 1495 -->
+
 ## [0.78.177.0] - 2026-10-08
 
 ### Changed
