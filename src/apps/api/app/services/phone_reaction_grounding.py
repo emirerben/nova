@@ -27,6 +27,11 @@ short plain-text reasons. Every stage fails open: this function itself never
 raises for anything other than a genuine caller-level error (a broken DB
 session) -- a single bad beat is reported unplaced with reason `"error"`
 instead of aborting the whole job.
+
+KRI-550: an `occurrence: "every"` beat that placed something but was heard
+more often than the caps below allow ALSO gets one `unplaced` entry per
+dropped hit (reason `"occurrence_cap"`, with its `at_s`), so a receipt can
+say "N of M" instead of claiming every hit landed.
 """
 
 from __future__ import annotations
@@ -59,11 +64,21 @@ from app.services.sfx_catalog import SfxEntry, resolve_described_effect
 
 log = structlog.get_logger()
 
-# `ReactionBeat.occurrence == "every"` cap -- mirrors
-# `app.agents._schemas.reaction_beats.MAX_REACTION_BEATS`'s spirit of a small,
-# creator-legible bound rather than an accidental unbounded loop over a noisy
-# transcript match.
-MAX_REACTION_OCCURRENCES = 8
+# `ReactionBeat.occurrence == "every"` caps (KRI-550; was 8, which silently
+# dropped the 9th "kahve" of a 33 s take). One beat places at most
+# MAX_REACTION_OCCURRENCES hits -- the same 24 as
+# `app.agents._schemas.reaction_beats.MAX_REACTION_BEATS`, so one "every" beat
+# can place as many pop-ins as a creator could author one by one. All beats
+# together place at most MAX_REACTION_PLACEMENTS: each placement can add one
+# clip to the recipe's overlay track AND one to its sfx track, and a
+# `TimelineTrack` holds at most 100 clips (`app.kria.recipes`) -- one clip
+# over and the compiler drops the WHOLE lane. 48 leaves room on the overlay
+# track for the KRI-176 Visuals cards (density ceiling 10 plus a hook burst)
+# and the closing photo + badge. Hits past either cap are reported as
+# `OCCURRENCE_CAP_REASON`, never silently dropped.
+MAX_REACTION_OCCURRENCES = 24
+MAX_REACTION_PLACEMENTS = 48
+OCCURRENCE_CAP_REASON = "occurrence_cap"
 
 _PHOTO_HOLD_S_DEFAULT = 3.0
 _STICKER_HOLD_S_DEFAULT = 2.5
@@ -287,6 +302,8 @@ def _find_all(stream_tokens: list[str], target: list[str]) -> list[int]:
 class _MatchResult:
     windows: list[tuple[float, float]] = field(default_factory=list)
     reason: str | None = None
+    # KRI-550: qualifying "every" hits past MAX_REACTION_OCCURRENCES, in time order.
+    capped: list[tuple[float, float]] = field(default_factory=list)
 
 
 def _match_trigger(
@@ -327,7 +344,10 @@ def _match_trigger(
     if not windows:
         return _MatchResult(reason="after_not_heard")
     if occurrence == "every":
-        return _MatchResult(windows=windows[:MAX_REACTION_OCCURRENCES])
+        return _MatchResult(
+            windows=windows[:MAX_REACTION_OCCURRENCES],
+            capped=windows[MAX_REACTION_OCCURRENCES:],
+        )
     return _MatchResult(windows=windows[:1])
 
 
@@ -542,6 +562,8 @@ def ground_phone_reaction_beats(
     beat_order: list[str] = []
     card_candidates: list[_CardCandidate] = []
     card_id_seen: set[str] = set()
+    placements_left = MAX_REACTION_PLACEMENTS
+    capped_hits: list[dict[str, Any]] = []
 
     def _record_beat_failure(beat_id: str, trigger: str, reason: str) -> None:
         key = (beat_id, 0)
@@ -594,6 +616,20 @@ def ground_phone_reaction_beats(
             if match.reason:
                 _record_beat_failure(beat_id, trigger, match.reason)
                 continue
+            # KRI-550: the shared budget always keeps one hit for every beat still
+            # to come, so a later beat's single pop-in is never crowded out.
+            keep = max(1, min(len(match.windows), placements_left - (len(beats) - beat_index - 1)))
+            placements_left -= keep
+            for hit_start_s, _hit_end_s in [*match.windows[keep:], *match.capped]:
+                capped_hits.append(
+                    {
+                        "beat_id": beat_id,
+                        "trigger": trigger,
+                        "reason": OCCURRENCE_CAP_REASON,
+                        "at_s": round(hit_start_s, 3),
+                    }
+                )
+            windows = match.windows[:keep]
 
             hold = _coerce_float(hold_s, 0.0) if hold_s is not None else None
             if is_video and asset is not None:
@@ -604,7 +640,7 @@ def ground_phone_reaction_beats(
                 hold = _PHOTO_HOLD_S_DEFAULT if slot == "photo" else _STICKER_HOLD_S_DEFAULT
 
             any_success = False
-            for occurrence_index, (match_start_s, match_end_s) in enumerate(match.windows, start=1):
+            for occurrence_index, (match_start_s, match_end_s) in enumerate(windows, start=1):
                 occ = _Occurrence(
                     beat_id=beat_id,
                     n=occurrence_index,
@@ -953,6 +989,10 @@ def ground_phone_reaction_beats(
     # unplaced entry for a beat with literally zero placed occurrences.
     placed_beat_ids = {p["beat_id"] for p in placed}
     unplaced = [u for u in unplaced if u["beat_id"] not in placed_beat_ids]
+    # KRI-550: hits past the caps, one entry each so "placed + unplaced" counts every
+    # time the trigger was heard. Only for a beat that placed something -- a beat that
+    # placed nothing already carries the reason that explains it.
+    unplaced += [hit for hit in capped_hits if hit["beat_id"] in placed_beat_ids]
 
     sound_effects = [occ.sound for occ in occurrences.values() if occ.sound is not None]
 
