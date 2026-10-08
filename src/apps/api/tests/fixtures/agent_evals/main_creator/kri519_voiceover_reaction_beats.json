@@ -1,6 +1,6 @@
 {
   "agent": "nova.creator.main",
-  "prompt_version": "2026-10-08-v48",
+  "prompt_version": "2026-10-08-v49",
   "input": {
     "conversation": [
       {

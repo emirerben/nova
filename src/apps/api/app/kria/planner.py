@@ -284,6 +284,32 @@ def _full_creator_request(rows: list[CreationThreadEvent], *, current_message: s
     return request if len(request) <= 12_000 else None
 
 
+async def _load_raw_creator_request(
+    db: AsyncSession, *, thread_id: uuid.UUID, user_message: str
+) -> str | None:
+    """Every creator message in the thread, in order, or None when over the safe bound.
+
+    No row limit or per-message truncation: the clip-intent planner verifies a quote
+    against exactly these words, so a paraphrase (the brief) must never stand in for them.
+    """
+    rows = list(
+        (
+            await db.execute(
+                select(CreationThreadEvent)
+                .where(
+                    CreationThreadEvent.thread_id == thread_id,
+                    CreationThreadEvent.role == "user",
+                    CreationThreadEvent.content.is_not(None),
+                )
+                .order_by(CreationThreadEvent.sequence)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return _full_creator_request(rows, current_message=user_message)
+
+
 # KRI-433: ask for a short follow-up, never the request again. Every user message
 # joins the combined request (`_full_creator_request`, 12,000 chars), so a pasted
 # resend duplicates every instruction. Answered checks are cached per clip (pool
@@ -1072,6 +1098,10 @@ class _CreatorInputs:
     brief_batches: tuple = ()
     creative_copy_state: dict | None = None
     creative_copy_digest: str = ""
+    # KRI-522: the creator's own messages, in order. Brief-on turns plan clip
+    # intents from this (the brief is a paraphrase and loses "start with the blue
+    # video" / "placeholder"). None when over the safe bound: the brief is used.
+    raw_creator_request: str | None = None
 
 
 async def _load_creator_inputs(
@@ -1094,22 +1124,9 @@ async def _load_creator_inputs(
         # This deliberately has no row limit or per-message truncation. The
         # inventory agent must see every creator instruction; a request over
         # the bound is rejected below rather than silently dropping context.
-        creator_rows = list(
-            (
-                await db.execute(
-                    select(CreationThreadEvent)
-                    .where(
-                        CreationThreadEvent.thread_id == thread_id,
-                        CreationThreadEvent.role == "user",
-                        CreationThreadEvent.content.is_not(None),
-                    )
-                    .order_by(CreationThreadEvent.sequence)
-                )
-            )
-            .scalars()
-            .all()
+        creator_request = await _load_raw_creator_request(
+            db, thread_id=thread_id, user_message=user_message
         )
-        creator_request = _full_creator_request(creator_rows, current_message=user_message)
         if creator_request is None:
             return PlannedKriaTurn(
                 plan=KriaTurnPlan(
@@ -1126,8 +1143,13 @@ async def _load_creator_inputs(
         # Capture DB-backed clip identity before releasing the transaction for
         # the external planner/resolver calls below.
         intent_clips = await load_intent_clips_for_item(db, item, persona)
+    raw_creator_request: str | None = None
     if settings.clip_intents_enabled and brief_on:
         intent_clips = await load_intent_clips_for_item(db, item, persona)
+        # Over the bound is not an error here: the brief still carries the ask.
+        raw_creator_request = await _load_raw_creator_request(
+            db, thread_id=thread_id, user_message=user_message
+        )
     rows = list(
         (
             await db.execute(
@@ -1194,6 +1216,7 @@ async def _load_creator_inputs(
         brief_batches=batches,
         creative_copy_state=decision_states,
         creative_copy_digest=creative_copy_digest,
+        raw_creator_request=raw_creator_request,
     )
 
 
@@ -1511,7 +1534,9 @@ async def _plan_creator_action(
         await _kick_clip_understanding(item_id, intent_clips)
         try:
             planned = await plan_and_resolve_clip_intents(
-                creator_request=creator_request or user_message,
+                # KRI-522: the creator's own words (verified quote source), never
+                # only the brief paraphrase; the brief rides along as recall aid.
+                creator_request=inputs.raw_creator_request or creator_request or user_message,
                 latest_user_message=user_message,
                 generated_brief=brief_request,
                 candidate_intents=action.strategy.clip_intents,
