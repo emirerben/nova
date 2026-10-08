@@ -1,6 +1,10 @@
+import math
+from pathlib import Path
+
 import pytest
 
 from app.kria.recipes_v2 import EditRecipeV2
+from app.pipeline import phone_captions
 from app.pipeline.captions import SUBTITLED_CAPTION_MARGIN_V, y_frac_to_margin_v
 from app.pipeline.narrated_assembler import is_valid_caption_font
 from app.pipeline.phone_captions import (
@@ -8,8 +12,10 @@ from app.pipeline.phone_captions import (
     MAX_CAPTION_LAYERS,
     PhoneCaptionLook,
     caption_font_assets,
+    caption_ink_box,
     caption_look_from_variant,
     compile_caption_layers,
+    watermark_keepout_rect,
 )
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.text_overlay import _FONT_REGISTRY
@@ -479,3 +485,363 @@ def test_explicit_highlight_toggle_uses_the_editor_default_highlight_color():
     assert caption_look_from_variant(toggled).highlight_color == "#C5F82A"
     explicit = {**toggled, "caption_highlight_color": "#ff0000"}
     assert caption_look_from_variant(explicit).highlight_color == "#FF0000"
+
+
+# --- KRI-548: captions make room for the device watermark ------------------------
+#
+# Every phone export draws the Kria mark bottom-left, ABOVE text
+# (KriaMediaEngine/Branding.swift). Prod 2026-10-08: a Turkish Talking edit's
+# wide first lines ran under it ("İlk durak..." lost the İ, "Üçüncü..." the Ü).
+
+_REPO_ROOT = Path(__file__).resolve().parents[5]
+_API_MARK = Path(__file__).resolve().parents[2] / "assets/branding/kria-watermark-mist-standard.png"
+_ENGINE_RESOURCES = (
+    _REPO_ROOT / "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/Resources"
+)
+# `KriaBranding.tileTransform` on 1080x1920: the padded tile's own origin.
+_TILE_LEFT_PX = 30
+_TILE_BOTTOM_INSET_PX = 415
+
+_KADIKOY_ILK = "İlk durak Moda'da, deniz kenarında küçücük bir yer."
+_KADIKOY_UCUNCU = "Üçüncü ve en sevdiğim yer Yeldeğirmeni'nde."
+# Turkish and English sentences that wrap to 1-3 lines at the default look,
+# with lines wide enough to reach the mark's column.
+_WIDE_CAPTIONS = [
+    _KADIKOY_ILK,
+    _KADIKOY_UCUNCU,
+    "Bakın, ben günde 4 kahve içiyorum, o yüzden bu konuda biraz uzmanım.",
+    "Selam, bugün sizi Kadıköy'de en sevdiğim 3 kahveciye götürüyorum.",
+    "Biraz kalabalık ama kahve fiyatları çok uygun.",
+    "İkinci durak Bahariye'de.",
+    "So today I'm taking you to my three favourite coffee spots in Kadikoy.",
+    "Honestly this is the best filter coffee I have had all year long.",
+    "What's up everyone, welcome back to the channel!",
+]
+# The default y (SUBTITLED_CAPTION_MARGIN_V), the iOS editor's preview default,
+# the cloud face ladder (`render_geometry.choose_caption_y_frac` candidates)
+# and an even sweep of the editor's whole 0.30-0.90 band.
+_CAPTION_Y_FRACS = sorted(
+    {0.8, 0.82, 0.705, 0.62, 0.78, 0.55, 0.86}
+    | {round(0.30 + 0.03 * step, 2) for step in range(21)}
+)
+
+
+def _cues(texts: list[str], *, words: bool = False) -> list[dict]:
+    cues = []
+    for index, text in enumerate(texts):
+        start = index * 2.0
+        cue: dict = {"text": text, "start_s": start, "end_s": start + 1.9}
+        if words:
+            cue["words"] = [
+                _word(token, start + 0.1 * k, start + 0.1 * (k + 1))
+                for k, token in enumerate(text.split())
+            ]
+        cues.append(cue)
+    return cues
+
+
+def _look(y_frac: float = 0.8, anchor: str | None = None, **changes) -> PhoneCaptionLook:
+    x_frac = {None: 0.5, "left": 80 / 1080, "right": 1000 / 1080}[anchor]
+    return PhoneCaptionLook(
+        position_y_frac=y_frac, text_anchor=anchor, position_x_frac=x_frac, **changes
+    )
+
+
+def _ink_pixels_under_the_mark(
+    layers,
+    *,
+    canvas_width: int = 1080,
+    canvas_height: int = 1920,
+    font_family: str = CAPTION_FONT_FAMILY,
+) -> int:
+    """Rasterize every run (fill + outline stroke with round joins, the way the
+    phone's PortableTextVectorPainter draws it) and count the inked pixels
+    inside the mark's opaque rect plus its clearance gap. Independent of the
+    bounds math the compiler uses to decide."""
+    import skia
+
+    from app.pipeline import text_overlay_skia as cloud
+
+    left, top, right, bottom = watermark_keepout_rect(canvas_width, canvas_height)
+    surface = skia.Surface(math.ceil(right - left), math.ceil(bottom - top))
+    canvas = surface.getCanvas()
+    canvas.clear(skia.ColorTRANSPARENT)
+    canvas.translate(-left, -top)
+    typeface = cloud._resolve_typeface_for_overlay({"font_family": font_family}).typeface
+    for layer in layers:
+        for run in layer.runs:
+            font = skia.Font(typeface, run.font_size)
+            font.setSubpixel(True)
+            fill = skia.Paint(AntiAlias=True, Color=skia.ColorWHITE)
+            canvas.drawString(run.text, run.x, run.baseline_y, font, fill)
+            if run.stroke_width:
+                stroke = skia.Paint(
+                    AntiAlias=True,
+                    Color=skia.ColorWHITE,
+                    Style=skia.Paint.kStroke_Style,
+                    StrokeWidth=run.stroke_width,
+                )
+                stroke.setStrokeJoin(skia.Paint.kRound_Join)
+                canvas.drawString(run.text, run.x, run.baseline_y, font, stroke)
+    return int((surface.makeImageSnapshot().toarray()[..., 3] > 0).sum())
+
+
+def _compile_without_making_room(monkeypatch, *args, **kwargs):
+    """Today's (pre-KRI-548) layout: the same compile with the pass switched off."""
+    with monkeypatch.context() as patch:
+        patch.setattr(phone_captions, "_make_room_for_watermark", lambda layers, *_a, **_k: layers)
+        return compile_caption_layers(*args, **kwargs)
+
+
+def _line_texts(layer) -> list[str]:
+    lines: dict[float, list[str]] = {}
+    for run in layer.runs:
+        lines.setdefault(run.baseline_y, []).append(run.text)
+    return [" ".join(lines[baseline]) for baseline in sorted(lines)]
+
+
+@pytest.mark.parametrize(
+    "mark",
+    [
+        _API_MARK,
+        _ENGINE_RESOURCES / "kria-watermark-mist-standard.png",
+        _ENGINE_RESOURCES / "kria-watermark-graphite-standard.png",
+    ],
+    ids=["api-mist", "engine-mist", "engine-graphite"],
+)
+def test_watermark_keepout_matches_the_bundled_mark(mark):
+    """The keep-out is the mark's measured opaque extent (alpha >= 8; the
+    fainter fringe is its shadow) where the engine places the tile, plus the
+    clearance gap."""
+    if not mark.exists():
+        pytest.skip(f"{mark.name} not present in this checkout")
+    import numpy as np
+    from PIL import Image
+
+    alpha = np.array(Image.open(mark).convert("RGBA"))[..., 3]
+    rows, cols = np.nonzero(alpha >= 8)
+    tile_top = 1920 - _TILE_BOTTOM_INSET_PX - alpha.shape[0]
+    gap = phone_captions._WATERMARK_GAP_PX
+    assert watermark_keepout_rect(1080, 1920) == (
+        _TILE_LEFT_PX + cols.min() - gap,
+        tile_top + rows.min() - gap,
+        _TILE_LEFT_PX + cols.max() + 1 + gap,
+        tile_top + rows.max() + 1 + gap,
+    )
+
+
+def test_watermark_keepout_scales_with_the_canvas_like_the_engine():
+    # One scale for mark and insets: min(w/1080, h/1920) -- `tileTransform`.
+    assert watermark_keepout_rect(1080, 1920) == (48.0, 1404.0, 205.0, 1487.0)
+    s = 1080 / 1920
+    for width, height in ((1080, 1080), (1920, 1080)):
+        bottom = height - 445 * s
+        assert watermark_keepout_rect(width, height) == pytest.approx(
+            (48 * s, bottom - 71 * s, 205 * s, bottom + 12 * s)
+        )
+
+
+@pytest.mark.parametrize("style", ["sentence", "word"])
+@pytest.mark.parametrize("text", [_KADIKOY_ILK, _KADIKOY_UCUNCU])
+def test_prod_kadikoy_captions_no_longer_run_under_the_mark(monkeypatch, text, style):
+    cues = _cues([text], words=style == "word")
+    before = _compile_without_making_room(
+        monkeypatch, cues, canvas_width=1080, canvas_height=1920, style=style
+    )
+    after = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920, style=style)
+
+    assert _ink_pixels_under_the_mark(before) > 0  # the prod bug, reproduced
+    assert _ink_pixels_under_the_mark(after) == 0
+    old, new = before[0], after[0]
+    # Same words, timing, size and anchor -- only the line breaks moved.
+    assert " ".join(_line_texts(new)) == " ".join(_line_texts(old)) == text
+    assert (new.start, new.end, new.effect) == (old.start, old.end, old.effect)
+    assert (new.anchor_x, new.anchor_y) == (old.anchor_x, old.anchor_y)
+    assert {run.font_size for run in new.runs} == {78.0}
+    if style == "word":
+        assert new.karaoke.starts == old.karaoke.starts
+    # Every line level with the mark is short enough to start right of it.
+    from app.pipeline import text_overlay_skia as cloud
+
+    typeface = cloud._resolve_typeface_for_overlay({"font_family": CAPTION_FONT_FAMILY}).typeface
+    _left, top, right, bottom = watermark_keepout_rect(1080, 1920)
+    level_with_mark = 0
+    for run in new.runs:
+        ink = caption_ink_box(run, typeface)
+        if ink[1] < bottom and ink[3] > top:
+            assert ink[0] >= right
+            level_with_mark += 1
+    assert level_with_mark
+
+
+def test_prod_kadikoy_line_breaks():
+    layers = compile_caption_layers(
+        _cues([_KADIKOY_ILK, _KADIKOY_UCUNCU]), canvas_width=1080, canvas_height=1920
+    )
+    assert [_line_texts(layer) for layer in layers] == [
+        ["İlk durak", "Moda'da, deniz kenarında", "küçücük bir yer."],
+        ["Üçüncü ve en", "sevdiğim yer", "Yeldeğirmeni'nde."],
+    ]
+
+
+@pytest.mark.parametrize("style", ["sentence", "word"])
+@pytest.mark.parametrize("anchor", [None, "right", "left"])
+def test_wide_captions_never_ink_the_mark_wherever_the_caption_sits(anchor, style):
+    """Geometry guard: 1-3 line Turkish/English captions, every y the editor,
+    the default and the cloud face ladder can choose, every alignment."""
+    cues = _cues(_WIDE_CAPTIONS, words=style == "word")
+    for y_frac in _CAPTION_Y_FRACS:
+        layers = compile_caption_layers(
+            cues,
+            canvas_width=1080,
+            canvas_height=1920,
+            style=style,
+            look=_look(y_frac, anchor),
+        )
+        for layer, cue in zip(layers, cues, strict=True):
+            assert _ink_pixels_under_the_mark([layer]) == 0, (y_frac, layer.id)
+            assert " ".join(_line_texts(layer)) == cue["text"]
+            assert (layer.start, layer.end) == (cue["start_s"], cue["end_s"])
+
+
+@pytest.mark.parametrize("size", [36, 120, 160])
+def test_custom_caption_sizes_never_ink_the_mark(size):
+    cues = _cues(_WIDE_CAPTIONS)
+    for anchor in (None, "left"):
+        for y_frac in (0.62, 0.705, 0.74, 0.8, 0.86):
+            layers = compile_caption_layers(
+                cues,
+                canvas_width=1080,
+                canvas_height=1920,
+                look=_look(y_frac, anchor, text_size_px=size),
+            )
+            assert _ink_pixels_under_the_mark(layers) == 0, (anchor, y_frac)
+
+
+@pytest.mark.parametrize("canvas", [(1080, 1080), (1920, 1080)])
+def test_square_and_landscape_canvases_never_ink_the_mark(canvas):
+    """Narrated and authored-timeline recipes can carry a non-9:16 canvas; the
+    engine scales the mark into the same corner, and so does the keep-out."""
+    width, height = canvas
+    for style in ("sentence", "word"):
+        cues = _cues(_WIDE_CAPTIONS, words=style == "word")
+        for y_frac in (0.62, 0.7, 0.75, 0.8, 0.86):
+            layers = compile_caption_layers(
+                cues, canvas_width=width, canvas_height=height, style=style, look=_look(y_frac)
+            )
+            assert (
+                _ink_pixels_under_the_mark(layers, canvas_width=width, canvas_height=height) == 0
+            ), (style, y_frac)
+
+
+def test_cues_clear_of_the_mark_compile_exactly_as_before(monkeypatch):
+    """No-change case: short cues at the default y, and every cue placed where
+    it cannot reach the mark, are byte-identical to the pre-KRI-548 compile."""
+    short = _cues(["Filtre kahve efsane.", "Hadi kahve sizden.", "Wow.", "Hello there"])
+    far = _cues(_WIDE_CAPTIONS)
+    for cues, look in (
+        (short, None),
+        (far, _look(0.4)),
+        (far, _look(0.9)),
+        (short, _look(0.8, "left")),
+    ):
+        for style in ("sentence", "word"):
+            kwargs = {"canvas_width": 1080, "canvas_height": 1920, "style": style, "look": look}
+            before = _compile_without_making_room(monkeypatch, cues, **kwargs)
+            assert _ink_pixels_under_the_mark(before) == 0
+            assert compile_caption_layers(cues, **kwargs) == before
+
+
+def test_only_the_cues_on_the_mark_change(monkeypatch):
+    cues = _cues(_WIDE_CAPTIONS)
+    before = _compile_without_making_room(monkeypatch, cues, canvas_width=1080, canvas_height=1920)
+    after = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920)
+
+    touched = [_ink_pixels_under_the_mark([layer]) > 0 for layer in before]
+    assert any(touched) and not all(touched)
+    for was_touching, old, new in zip(touched, before, after, strict=True):
+        assert (new != old) is was_touching, old.id
+
+
+def test_left_aligned_captions_share_one_edge_right_of_the_mark():
+    layers = compile_caption_layers(
+        _cues(_WIDE_CAPTIONS), canvas_width=1080, canvas_height=1920, look=_look(0.8, "left")
+    )
+    edges = {round(run.x, 3) for layer in layers for run in layer.runs}
+    assert len(edges) == 1
+    assert edges.pop() > watermark_keepout_rect(1080, 1920)[2]
+    assert _ink_pixels_under_the_mark(layers) == 0
+
+
+def test_a_caption_clear_of_the_platform_zone_never_grows_into_it(monkeypatch):
+    """brand/social/README.md: below y=1530 is the platforms' caption/username
+    block. Growing a line to clear the mark must not push a caption that sat
+    above it down into it."""
+    from app.pipeline import text_overlay_skia as cloud
+
+    typeface = cloud._resolve_typeface_for_overlay({"font_family": CAPTION_FONT_FAMILY}).typeface
+
+    def ink_bottom(layer) -> float:
+        return max(caption_ink_box(run, typeface)[3] for run in layer.runs)
+
+    checked = 0
+    cues = _cues(_WIDE_CAPTIONS)
+    for step in range(25):
+        look = _look(0.6 + 0.01 * step)
+        kwargs = {"canvas_width": 1080, "canvas_height": 1920, "look": look}
+        before = _compile_without_making_room(monkeypatch, cues, **kwargs)
+        after = compile_caption_layers(cues, **kwargs)
+        for old, new in zip(before, after, strict=True):
+            if new != old and ink_bottom(old) <= 1530:
+                assert ink_bottom(new) <= 1530, (look.position_y_frac, old.id)
+                checked += 1
+    assert checked > 0
+
+
+# The whole prod caption set from the 2026-10-08 Kadıköy Talking render.
+_KADIKOY_PROD_CUES = [
+    "Selam, bugün sizi Kadıköy'de en sevdiğim 3 kahveciye götürüyorum.",
+    "Bakın, ben günde 4 kahve içiyorum, o yüzden bu konuda biraz uzmanım.",
+    _KADIKOY_ILK,
+    "Buranın kahve çekirdeklerini kendileri kavuruyor.",
+    "Filtre kahve efsane.",
+    "İkinci durak Bahariye'de.",
+    "Biraz kalabalık ama kahve fiyatları çok uygun.",
+    "Sabah kahve almak için birebir.",
+    _KADIKOY_UCUNCU,
+    "İçerisi kitaplarla dolu, kahve kokusu sokağa taşıyor.",
+    "Ben her hafta sonu buradayım.",
+    "Kahve içip kitap okuyorum.",
+    "Siz Kadıköy'de en iyi kahve nerede diyorsunuz?",
+    "Yorumlara yazın.",
+    "Hadi kahve sizden.",
+]
+
+
+def test_the_default_look_never_moves_a_caption_only_rebreaks_it(monkeypatch):
+    cues = _cues(_KADIKOY_PROD_CUES)
+    before = _compile_without_making_room(monkeypatch, cues, canvas_width=1080, canvas_height=1920)
+    after = compile_caption_layers(cues, canvas_width=1080, canvas_height=1920)
+
+    assert _ink_pixels_under_the_mark(before) > 0
+    assert _ink_pixels_under_the_mark(after) == 0
+    for old, new in zip(before, after, strict=True):
+        assert (new.anchor_x, new.anchor_y) == (old.anchor_x, old.anchor_y)
+        assert len(_line_texts(new)) <= len(_line_texts(old)) + 1
+
+
+@pytest.mark.parametrize("font", ["Montserrat Bold", "Syne", "Inter", "Fraunces"])
+def test_wide_caption_fonts_never_ink_the_mark(font):
+    """Wider faces leave less room beside the mark; the band of y where the
+    last line sits level with it is where the lift fallback earns its keep."""
+    for style in ("sentence", "word"):
+        cues = _cues(_WIDE_CAPTIONS, words=style == "word")
+        for y_frac in (0.62, 0.66, 0.7, 0.71, 0.72, 0.74, 0.76, 0.8, 0.86):
+            layers = compile_caption_layers(
+                cues,
+                canvas_width=1080,
+                canvas_height=1920,
+                style=style,
+                look=_look(y_frac, font_family=font),
+            )
+            assert _ink_pixels_under_the_mark(layers, font_family=font) == 0, (style, y_frac)
