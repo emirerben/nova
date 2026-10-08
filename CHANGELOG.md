@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.166.0] - 2026-10-08
+
+### Changed
+- fix(kria): time Visuals photos to a phone voiceover with reaction beats (KRI-519) (#1484) <!-- release-pr: 1484 -->
+
+## [0.78.165.0] - 2026-10-08
+
+### Changed
+- Set Plan an Edit thinking to High (#1485) <!-- release-pr: 1485 -->
+
 ## [0.78.164.0] - 2026-10-08
 
 ### Changed
