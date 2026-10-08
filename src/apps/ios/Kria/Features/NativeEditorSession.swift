@@ -452,10 +452,25 @@ struct NativeEditorTemporaryVideo {
     /// the same values the server writes into the recipe on Save. Nil after Remove.
     private var effectiveSongBed: NativeEditorSongBed? {
         guard let bed = deviceSongBed, !userSongRemoved else { return nil }
-        guard let edit = effectiveUserSongState else { return bed }
-        return NativeEditorSongBed(assetID: bed.assetID, sourceStart: edit.windowStartS ?? bed.sourceStart,
+        let shift = lipsyncSongStartShift
+        guard let edit = effectiveUserSongState else {
+            guard shift != 0 else { return bed }
+            return NativeEditorSongBed(assetID: bed.assetID, sourceStart: max(0, bed.sourceStart + shift),
+                                       sourceDuration: bed.sourceDuration, volume: bed.volume,
+                                       fadeIn: bed.fadeIn, fadeOut: bed.fadeOut)
+        }
+        return NativeEditorSongBed(assetID: bed.assetID, sourceStart: max(0, (edit.windowStartS ?? bed.sourceStart) + shift),
                                    sourceDuration: bed.sourceDuration, volume: edit.volume ?? bed.volume,
                                    fadeIn: bed.fadeIn, fadeOut: bed.fadeOut)
+    }
+
+    /// Lip-sync only: how far the first cut's head moved since the last Save (see `NativeLipsyncSongAnchor`).
+    private var lipsyncSongStartShift: Double {
+        guard baseUserSong?.mode == .lipsync else { return 0 }
+        func head(_ document: EditorDocument) -> EditorTimelineSlot? { document.clips.first { !$0.removed } }
+        let saved = head(cleanDocument), current = head(document)
+        return NativeLipsyncSongAnchor.startShift(savedClipIndex: saved?.clipIndex, savedInS: saved?.inS,
+                                                  currentClipIndex: current?.clipIndex, currentInS: current?.inS)
     }
     /// The Sounds-tab controls for the song, nil for a server that sends no `user_song`.
     var yourSongControls: NativeEditorYourSongControls? {

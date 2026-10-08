@@ -814,3 +814,68 @@ def test_muting_one_lipsync_clip_silences_only_that_clip_and_keeps_every_take_in
     assert _video_clips(_recipe(job))[0].volume == 0
     _slots_save(job, unmute_indexes={0})
     assert all(clip.volume == 1 for clip in _video_clips(_recipe(job)))
+
+
+def _trim_first_head(job, head_s):
+    """Pull the opening cut's head `head_s` earlier in its take (output stays put), then Save."""
+    variant = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, variant)
+    sources = [s["media_id"] for s in revision["sources"]]
+    slots = []
+    for index, segment in enumerate(revision["segments"]):
+        in_s = segment["source_start_s"]
+        duration = segment["duration_s"]
+        if index == 0:
+            in_s = round(in_s - head_s, 6)
+            duration = round(duration + head_s, 6)
+        slots.append(
+            gj.TimelineSlotEdit(
+                slot_id=segment["segment_id"],
+                clip_index=sources.index(segment["media_id"]),
+                in_s=in_s,
+                duration_s=duration,
+            )
+        )
+    payload = gj.EditorCommitRequest(
+        base_generation=gj.variant_render_baseline(variant),
+        guided_revision_number=revision["revision_number"],
+        timeline_slots=slots,
+    )
+    return gj.prepare_editor_commit(job, "guided_story", payload)
+
+
+def _pinned_head_s(result):
+    """How far into its take the plan opens the first cut (take A is placed at song 10)."""
+    return result.user_song.window_start_s - result.user_song.takes["A"].delta_s
+
+
+def test_trimming_the_opening_cuts_head_moves_the_song_with_it():
+    """Job 5a7f6c88: head pulled 0.3 s earlier, song stayed, so the singer drifted 0.3 s."""
+    job, result = lipsync_job()
+    window = _song_clip(_recipe(job)).source_start
+    head = _pinned_head_s(result)
+    assert head >= 0.3  # the plan opens the take late enough to pull its head earlier
+    _trim_first_head(job, 0.3)
+    recipe = _recipe(job)
+    assert _song_clip(recipe).source_start == pytest.approx(window - 0.3, abs=0.01)
+    first = next(t for t in recipe.tracks if t.kind == "video").clips[0]
+    assert first.source_start == pytest.approx(head - 0.3, abs=0.01)
+    pinned = result.user_song.takes["A"]
+    assert (
+        lipsync_sync_error_s(
+            output_start_s=first.timeline_start,
+            source_start_s=first.source_start,
+            delta_s=pinned.delta_s,
+            window_start_s=_song_clip(recipe).source_start,
+        )
+        <= 0.002
+    )
+    saved = job.assembly_plan["variants"][0][PHONE_EDITOR_SAVED_PLAN_FIELD]["user_song"]
+    assert saved["window_start_s"] == pytest.approx(window - 0.3, abs=0.01)
+
+
+def test_a_sub_frame_head_difference_keeps_the_pinned_song_start():
+    job, result = lipsync_job()
+    window = _song_clip(_recipe(job)).source_start
+    _trim_first_head(job, 0.02)
+    assert _song_clip(_recipe(job)).source_start == pytest.approx(window)

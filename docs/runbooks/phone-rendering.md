@@ -2456,6 +2456,19 @@ unsupported_phone_edit` with a plain-language reason (squeezing or stretching a
 whole lip-sync montage is refused for the same reason). Background clips edit
 normally.
 
+Song start follows the opening cut's head (job 5a7f6c88, 640 ms offset). Two causes added up.
+(1) Trimming cut 1's head (source start 0.3 -> 0.0) left the song at `window_start_s` 78.23 while the
+take now sat 0.3 s earlier; the Save re-derived cut 1 back to 0.3 and hid it. Now
+`lipsync_montage.window_start_for_first_cut_head` moves `window_start_s` to
+`delta + source_start - output_start` when the take the plan opened with has its head moved by more than
+one editor frame (`compile_guided_runtime_plan`), and the device does the same live
+(`NativeLipsyncSongAnchor`, cut 1 vs the last saved document). (2) A plain `AVURLAsset` seeks a VBR MP3
+through its Xing table, so `insertTimeRange(start: 78.23)` played from 77.29 s (-0.94 s, measured with
+`scripts/dev/song-seek-check/run.sh song.mp3`). Recipe audio now opens through
+`PreviewComposition.preciseAudioAsset` (`AVURLAssetPreferPreciseDurationAndTimingKey`). 0.30 - 0.94 = -0.64 s.
+A Save written before the fix keeps its old recipe; opening and re-saving the edit heals both (the device
+fix applies on the next preview/export without a Save).
+
 Original audio (debugging a take): Sounds > "Original audio" is one 0-100% level for the
 footage's own sound, and the clip context strip's "Audio" button toggles one clip's sound.
 Defaults never change: a song video stays silent until the creator sets a level above 0.

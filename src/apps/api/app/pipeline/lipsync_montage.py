@@ -173,6 +173,44 @@ def resync_moment_rows(
     return rows
 
 
+# The editor quantizes every cut source to its 1/30 s frame clock, so an untouched first cut can
+# come back up to half a frame (plus rounding) away from the song-derived value. A head move of
+# one frame or less is that noise and keeps the pinned window; anything bigger is a real trim.
+HEAD_TRIM_TOLERANCE_S = 1 / 30 + 1e-6
+
+
+def window_start_for_first_cut_head(
+    user_song: Mapping[str, Any], moments: Sequence[Mapping[str, Any]]
+) -> float | None:
+    """The song window start that keeps a lip-sync take on the song after its head was trimmed.
+
+    ``source_start - output_start == window_start - delta`` holds for every take cut, and the song
+    clip plays from ``window_start`` at output 0. When the creator trims the head of the first cut
+    (it starts earlier or later in its take than the plan placed it), the song has to start with the
+    take or the singer drifts off the audio by exactly that trim (founder export 5a7f6c88: 0.3 s
+    trim, song 0.3 s off). Returns ``delta + source_start - output_start`` of the cut that opens the
+    video, or ``None`` (keep the pinned window) when nothing moved by more than a frame, the opener
+    is not a pinned take, or it is not the take the plan opened with.
+    """
+    if user_song.get("mode") != "lipsync" or not moments:
+        return None
+    takes = user_song.get("takes") or {}
+    ordered = sorted(moments, key=lambda row: float(row.get("output_start_s") or 0.0))
+    first = ordered[0]
+    take = takes.get(str(first.get("media_id")))
+    if not isinstance(take, Mapping) or take.get("delta_s") is None:
+        return None
+    if abs(float(first.get("output_start_s") or 0.0)) > SYNC_TOLERANCE_S:
+        return None
+    current = float(user_song["window_start_s"])
+    derived = (
+        float(take["delta_s"]) + float(first["source_start_s"]) - float(first["output_start_s"])
+    )
+    if abs(derived - current) <= HEAD_TRIM_TOLERANCE_S or derived < 0:
+        return None
+    return round(derived, 3)
+
+
 def resync_lipsync_moments(
     plan: Any, *, source_durations: Mapping[str, float] | None = None
 ) -> Any:
@@ -1018,10 +1056,12 @@ __all__ = [
     "LipsyncPlanError",
     "LipsyncSyncError",
     "MIN_SEGMENT_MS",
+    "HEAD_TRIM_TOLERANCE_S",
     "SYNC_TOLERANCE_S",
     "lipsync_sync_error_s",
     "plan_lipsync_montage",
     "refuse_lipsync_rate_change",
     "resync_lipsync_moments",
     "resync_moment_rows",
+    "window_start_for_first_cut_head",
 ]

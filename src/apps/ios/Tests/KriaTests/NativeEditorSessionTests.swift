@@ -576,6 +576,41 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertFalse(session.canUndo)
     }
 
+    /// Job 5a7f6c88: trimming the head of the opening cut moved the footage but not the song, so a lip-sync
+    /// singer drifted off the audio by exactly the trim. The song start follows the first cut's head.
+    func testTrimmingTheOpeningCutsHeadMovesALipsyncSongWithIt() async throws {
+        let (session, _, sourceURL) = try await userSongSession(mode: "lipsync", caps: ["volume": true, "window": false, "remove": true])
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        func songStart() throws -> Double {
+            try XCTUnwrap(session.displayedSourcePreviewRecipe?.tracks.first { $0.id == "song" }?.clips.first).sourceStart
+        }
+        XCTAssertEqual(try songStart(), 1, accuracy: 0.001, "untouched: the pinned window")
+        let clipID = try XCTUnwrap(session.document.clips.first?.id)
+        session.setClipTiming(clipID: clipID, inS: 0.01)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(try songStart(), 1, accuracy: 0.001, "under a frame is rounding noise")
+        session.setClipTiming(clipID: clipID, inS: 0.5)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        XCTAssertEqual(try songStart(), 1.5, accuracy: 0.001, "the singer starts 0.5s later in the take, so does the song")
+    }
+
+    func testTrimmingAHeadNeverMovesABackgroundSong() async throws {
+        let (session, _, sourceURL) = try await userSongSession(mode: "background", caps: ["volume": true, "window": true, "remove": true])
+        let clipID = try XCTUnwrap(session.document.clips.first?.id)
+        session.setClipTiming(clipID: clipID, inS: 0.5)
+        await session.prepareFixtureSourcePreview(url: sourceURL)
+        let start = try XCTUnwrap(session.displayedSourcePreviewRecipe?.tracks.first { $0.id == "song" }?.clips.first).sourceStart
+        XCTAssertEqual(start, 1, accuracy: 0.001)
+    }
+
+    func testLipsyncAnchorShiftOnlyFollowsTheSameSourceBeyondAFrame() {
+        typealias Anchor = NativeLipsyncSongAnchor
+        XCTAssertEqual(Anchor.startShift(savedClipIndex: 0, savedInS: 0.3, currentClipIndex: 0, currentInS: 0), -0.3, accuracy: 1e-9)
+        XCTAssertEqual(Anchor.startShift(savedClipIndex: 0, savedInS: 0.3, currentClipIndex: 0, currentInS: 0.32), 0)
+        XCTAssertEqual(Anchor.startShift(savedClipIndex: 0, savedInS: 0.3, currentClipIndex: 1, currentInS: 0), 0, "another take opens the video")
+        XCTAssertEqual(Anchor.startShift(savedClipIndex: nil, savedInS: nil, currentClipIndex: 0, currentInS: 0), 0)
+    }
+
     /// A background or lip-sync creator-song edit on a device recipe whose song file is 4s long and whose
     /// bed plays 1s...3s of it; `caps` are the nested `user_song.{volume,window,remove}` editable flags.
     private func userSongSession(mode: String, caps: [String: Bool], songDuration: Double = 200, videoDuration: Double = 2,

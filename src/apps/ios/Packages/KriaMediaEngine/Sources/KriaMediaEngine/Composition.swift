@@ -109,7 +109,7 @@ public struct PreviewComposition: @unchecked Sendable {
             for clip in recipeTrack.clips.sorted(by: { $0.timelineStart < $1.timelineStart }) {
                 try Task.checkCancellation()
                 guard let url = assetURLs[clip.sourceAssetID] else { throw MediaEngineError.missingAsset(clip.sourceAssetID) }
-                let asset = AVURLAsset(url: url)
+                let asset = recipeTrack.kind == .audio ? Self.preciseAudioAsset(url: url) : AVURLAsset(url: url)
                 if recipeTrack.kind == .audio {
                     guard clip.look == nil else { throw NativePreviewFeatureError("Composition-87") }
                     guard !(try await asset.loadTracks(withMediaType: .audio)).isEmpty else { throw MediaEngineError.missingAsset(clip.sourceAssetID) }
@@ -347,7 +347,7 @@ public struct PreviewComposition: @unchecked Sendable {
         try Task.checkCancellation()
         if let musicID = recipe.audio.musicAssetID {
             guard let url = assetURLs[musicID] else { throw MediaEngineError.missingAsset(musicID) }
-            let asset = AVURLAsset(url: url)
+            let asset = Self.preciseAudioAsset(url: url)
             guard let source = try await asset.loadTracks(withMediaType: .audio).first,
                   let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw MediaEngineError.missingAsset(musicID) }
             let duration = min(total, try await asset.load(.duration).seconds)
@@ -431,6 +431,16 @@ public struct PreviewComposition: @unchecked Sendable {
         var result = PreviewComposition(description: CompositionDescription(duration: brandedTotal, canvas: recipe.canvas, hasVideo: true, hasAudio: !audioParameters.isEmpty), playerItem: item)
         result.loudnessTargetLUFS = recipe.audio.targetLUFS
         return result
+    }
+
+    /// An audio source opened for sample-accurate seeking. A plain `AVURLAsset` estimates a VBR MP3's
+    /// time-to-byte map from its Xing table, so `insertTimeRange(start:)` into a long song lands up to
+    /// about a second off (a creator song inserted at 78.23 s played from 77.29 s, measured on macOS
+    /// AVFoundation with the founder's lip-sync song). `AVURLAssetPreferPreciseDurationAndTimingKey` makes
+    /// AVFoundation build the exact packet table first, so the insert starts where the recipe says.
+    /// Every recipe audio source goes through this; a lip-sync song is the master clock.
+    static func preciseAudioAsset(url: URL) -> AVURLAsset {
+        AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
     }
 
     /// The compiler emits above-text overlays in z order. Their placement style
