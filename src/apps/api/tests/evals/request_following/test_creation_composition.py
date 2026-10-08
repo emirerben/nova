@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
 import json
 from pathlib import Path
 
@@ -258,6 +259,75 @@ def test_created_words_remain_editable_for_faster_followup(monkeypatch):
     ]
 
 
+def test_captured_faster_followup_preserves_words_styles_labels_and_source_windows(monkeypatch):
+    """Replay a synthetic live v75 followup; replay is not fresh live-model evidence."""
+    from app.agents.edit_copilot import EditCopilotAgent
+    from app.services.creation_text_composition import _lanes
+    from app.services.kria_editor_ops import apply_text_lane_ops
+
+    case = next(case for case in _CAPTURE["cases"] if case["id"] == "words")
+    followup = case["followup"]
+    assert followup["evidence_tier"] == "authored_synthetic_live_capture"
+    assert followup["model"] == "gemini-3.1-pro-preview"
+    assert followup["prompt_version"] == "v75"
+    snapshot = compose(monkeypatch, base_plan(), json.loads(case["model_response"]))
+    before = compile_proposal_execution_plan(snapshot)
+    texts, slots = _lanes(before)
+    before_words = [row for row in texts if "::sequence-" in row["id"]]
+    before_labels = [row for row in texts if row["id"].startswith("clip-label-")]
+    source_windows = [
+        (slot["media_id"], slot["source_start_s"], slot["source_end_s"]) for slot in slots
+    ]
+
+    output = EditCopilotAgent(None).parse(
+        followup["model_response"],
+        EditCopilotInput(
+            utterance=followup["request"],
+            variant_snapshot={
+                "editor_ops_version": 2,
+                "allowed_op_families": ["text"],
+                "text_bars": texts,
+                "slots": slots,
+                "total_duration_s": 20,
+            },
+        ),
+    )
+    state = apply_text_lane_ops(texts, copy.deepcopy(slots), output.ops)
+    after_words = [row for row in state.text if "::sequence-" in row["id"]]
+    after_labels = [row for row in state.text if row["id"].startswith("clip-label-")]
+    expected = followup["expected"]
+    tolerance = expected["timing_tolerance_s"]
+
+    assert [row["text"] for row in after_words] == TITLE.split()
+    assert [row["id"] for row in after_words] == [row["id"] for row in before_words]
+    assert all(
+        after["font_family"] == before["font_family"]
+        and after["color"] == before["color"]
+        and after["animation_phases"] == before["animation_phases"]
+        for before, after in zip(before_words, after_words, strict=True)
+    )
+    assert after_labels == before_labels
+    assert [
+        (slot["media_id"], slot["source_start_s"], slot["source_end_s"]) for slot in state.slots
+    ] == source_windows
+    assert before_words[0]["start_s"] == 0 and before_words[-1]["end_s"] == 10
+    assert after_words[0]["start_s"] == expected["start_s"]
+    assert after_words[-1]["end_s"] == expected["end_s"]
+    assert all(
+        left["end_s"] <= right["start_s"] for left, right in zip(after_words, after_words[1:])
+    )
+    timing_errors = []
+    for index, row in enumerate(after_words):
+        timing_errors.extend(
+            (
+                abs(row["start_s"] - index * 5 / len(after_words)),
+                abs(row["end_s"] - (index + 1) * 5 / len(after_words)),
+            )
+        )
+    assert max(timing_errors) <= expected["max_capture_rounding_error_s"]
+    assert max(timing_errors) <= tolerance
+
+
 def test_phone_export_recipe_contains_each_created_word(monkeypatch):
     from app.kria.media_sources import OriginalMediaDescriptor
     from app.pipeline.guided_story import GuidedStoryExecutionPlan
@@ -353,6 +423,27 @@ def test_catalog_music_does_not_retime_persisted_text_composition(monkeypatch):
 _CAPTURE = json.loads(
     (Path(__file__).parents[2] / "fixtures/prompt_coverage/creation_composition.json").read_text()
 )
+
+
+def test_committed_ios_creation_fixture_matches_offline_capture_replay(monkeypatch):
+    """The DEBUG fixture remains a projection of the saved server draft, not Swift-owned copy."""
+    monkeypatch.delenv("KRI_524_RETIME_RESPONSE", raising=False)
+    monkeypatch.delenv("KRI_524_RETIME_RESPONSE_PATH", raising=False)
+    script_path = Path(__file__).resolve().parents[6] / "scripts/ios/kri-524-creation-e2e.py"
+    spec = importlib.util.spec_from_file_location("kri_524_creation_e2e", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    case = module.captured_case()
+    composed = module.compose_from_capture(case)
+    before = compile_proposal_execution_plan(composed)
+    after, provenance = module.retime(before, case["followup"])
+    fixture_path = script_path.parents[2] / "src/apps/ios/Tests/Fixtures/KRI524CreationDraft.json"
+    expected = json.loads(fixture_path.read_text())
+
+    assert provenance == "replay_of_authored_synthetic_live_capture"
+    assert module.editor_fixture(after) == expected
 
 
 @pytest.mark.parametrize("case", _CAPTURE["cases"], ids=lambda case: case["id"])

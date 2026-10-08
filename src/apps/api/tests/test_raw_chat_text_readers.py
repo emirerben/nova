@@ -108,6 +108,12 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
     "services/edit_direction_planner.py": ("plan_time", "direction snapshot planning", None),
     "services/edit_proposals.py": ("plan_time", "scheduled draft validation", None),
     "services/proposal_planning.py": ("plan_time", "proposal snapshot planning", None),
+    "services/creation_text_composition.py": (
+        "plan_time",
+        "uses the bound request as text-composer model context before the initial snapshot is "
+        "persisted for creator approval",
+        None,
+    ),
     "services/slide_post_chat_edit.py": ("plan_time", "slide chat edit (own plan)", None),
     "tasks/edit_proposal_build.py": ("plan_time", "guided proposal drafting", None),
     # --- carry -----------------------------------------------------------------------------------

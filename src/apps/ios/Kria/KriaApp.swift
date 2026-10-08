@@ -296,7 +296,7 @@ private struct NativeEditorUITestHost: View {
                     NativeEditorView(
                         project: PreviewFixtures.editorProject,
                         initialDraft: fixture.draft,
-                        initialPlaybackURL: fixture.shape == .sourceText ? nil : Bundle.main.url(forResource: "montage", withExtension: "mp4"),
+                        initialPlaybackURL: fixture.shape == .sourceText || fixture.shape == .capturedCreation ? nil : Bundle.main.url(forResource: "montage", withExtension: "mp4"),
                         onBack: {
                             showsEditor = false
                             showsProjects = true

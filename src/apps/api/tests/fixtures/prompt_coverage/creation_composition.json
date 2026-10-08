@@ -256,6 +256,19 @@
         "exit": "fade",
         "label_region": "bottom_left",
         "opening_clip_only": true
+      },
+      "followup": {
+        "evidence_tier": "authored_synthetic_live_capture",
+        "model": "gemini-3.1-pro-preview",
+        "prompt_version": "v75",
+        "request": "Make those words twice as fast; keep everything else.",
+        "model_response": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"set_text_timing\",\"bar_index\":0,\"start_s\":0.0,\"end_s\":0.42},{\"op\":\"set_text_timing\",\"bar_index\":1,\"start_s\":0.42,\"end_s\":0.83},{\"op\":\"set_text_timing\",\"bar_index\":2,\"start_s\":0.83,\"end_s\":1.25},{\"op\":\"set_text_timing\",\"bar_index\":3,\"start_s\":1.25,\"end_s\":1.67},{\"op\":\"set_text_timing\",\"bar_index\":4,\"start_s\":1.67,\"end_s\":2.08},{\"op\":\"set_text_timing\",\"bar_index\":5,\"start_s\":2.08,\"end_s\":2.5},{\"op\":\"set_text_timing\",\"bar_index\":6,\"start_s\":2.5,\"end_s\":2.92},{\"op\":\"set_text_timing\",\"bar_index\":7,\"start_s\":2.92,\"end_s\":3.33},{\"op\":\"set_text_timing\",\"bar_index\":8,\"start_s\":3.33,\"end_s\":3.75},{\"op\":\"set_text_timing\",\"bar_index\":9,\"start_s\":3.75,\"end_s\":4.17},{\"op\":\"set_text_timing\",\"bar_index\":10,\"start_s\":4.17,\"end_s\":4.58},{\"op\":\"set_text_timing\",\"bar_index\":11,\"start_s\":4.58,\"end_s\":5.0}],\"confidence\":1.0,\"reply\":\"I've sped up the opening hook sequence to be twice as fast, playing out over the first 5 seconds. Everything else remains untouched.\",\"suggestions\":[\"Shorten the first clip\",\"Change the font\"],\"needs_clarification\":false,\"clarification_context\":null,\"pending_actions\":[],\"unmet_requests\":[]}",
+        "expected": {
+          "start_s": 0.0,
+          "end_s": 5.0,
+          "timing_tolerance_s": 0.03333333333333333,
+          "max_capture_rounding_error_s": 0.003334
+        }
       }
     },
     {

@@ -144,6 +144,7 @@
       "KriaUITests/EditorUITests/testNativeEditorTrimHandleShortensExtendsAndUndoesAsOneGesture",
       "KriaUITests/EditorUITests/testRetimedClipBlocksAbutWithoutGap",
       "KriaUITests/EditorUITests/testNativeEditorNamedFixturesLaunchWithoutAnAccount",
+      "KriaUITests/EditorUITests/testCapturedCreationWordsPlayReopenAndExport",
       "KriaUITests/NativeEditorInspectorUITests/testEditorChromeFitsViewportAndCurrentToolsRemainReachable",
       "KriaUITests/NativeEditorInspectorUITests/testToolIslandFloatsOverTimelineAndLastLaneStaysReachable",
       "KriaUITests/NativeEditorInspectorUITests/testSoundsTabShowsCreatorsOwnSongWithoutCatalogControls",

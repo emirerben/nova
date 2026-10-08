@@ -680,9 +680,21 @@ async def test_context_overflow_is_unsupported_without_calling_or_mutating_draft
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assets = [_asset()]
-    binding = _binding("x" * 12_001)
-    draft = _draft(assets)
+    # Restore a valid legacy pin: new approvals now reject oversized context at
+    # creation, but an already stored draft must still fail closed on editing.
+    raw = _binding("legacy request").model_dump(mode="json")
+    raw["creator_request"] = "x" * 12_001
+    raw["digest"] = BriefBinding._digest(
+        raw["thread_id"], raw["state"], None, raw["creator_request"], raw["media_snapshot"]
+    )
+    binding = BriefBinding.model_validate(raw)
+    draft = _draft(assets).model_copy(update={"brief_binding": binding})
+    before = draft.model_dump(mode="json")
     monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    monkeypatch.setattr(
+        "app.agents._model_client.default_client",
+        lambda: pytest.fail("Overflow must not call a model"),
+    )
     result = await run_slide_post_chat_edit(
         draft=draft,
         assets_by_id=_by_id(assets),
@@ -690,10 +702,10 @@ async def test_context_overflow_is_unsupported_without_calling_or_mutating_draft
         turns=[],
         user_id=USER_ID,
         server_version=7,
-        brief_binding=binding,
     )
     assert result.outcome == "unsupported" and result.draft is None
     assert "unchanged" in result.reply
+    assert draft.model_dump(mode="json") == before
 
 
 @pytest.mark.asyncio
