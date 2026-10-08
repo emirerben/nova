@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.160.0] - 2026-10-08
+
+### Changed
+- fix(kria): keep start clip, typewriter hook and placeholder corner labels across turns (KRI-522) (#1479) <!-- release-pr: 1479 -->
+
 ## [0.78.159.0] - 2026-10-08
 
 ### Changed

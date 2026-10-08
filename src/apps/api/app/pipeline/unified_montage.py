@@ -54,6 +54,7 @@ from app.kria.brief_route import (
     wants_filming_time_text,
     wants_hour_only_text,
 )
+from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.edit_proposal import (
     CREATOR_SELECTED_ORIENTATION_REASON,
     MAX_PROPOSAL_DURATION_S,
@@ -63,6 +64,10 @@ from app.schemas.edit_proposal import (
     MediaRef,
     StoryBeat,
     canonical_media_digest,
+)
+from app.schemas.text_style_intent import (
+    normalize_label_position,
+    normalize_title_animation,
 )
 from app.schemas.user_song import UserSongPlan
 from app.services.clip_facts import (
@@ -176,6 +181,11 @@ class BriefView:
     global_literal: str | None = None
     facts: Mapping[str, Any] = field(default_factory=dict)
     target_duration_s: float | None = None
+    # KRI-522: how the creator asked the title to enter / where labels sit / that the
+    # labels are placeholders to fill in later. Typed here so they survive turns.
+    title_animation: str | None = None
+    label_position: str | None = None
+    placeholder_labels: bool = False
 
 
 def brief_view(brief: Any) -> BriefView:
@@ -192,6 +202,9 @@ def brief_view(brief: Any) -> BriefView:
     global_literal: str | None = None
     facts: dict[str, Any] = {}
     target: float | None = None
+    title_animation: str | None = None
+    label_position: str | None = None
+    placeholder_labels = False
     for req in brief.live():
         for key, value in (req.facts or {}).items():
             if value not in (None, "") and key not in facts:
@@ -203,8 +216,19 @@ def brief_view(brief: Any) -> BriefView:
                 wants_time = True
             if req.scope == "per_clip" and wants_hour_only_text(req.description, req.literal):
                 wants_time = hour_only = True
+            if req.scope == "title":
+                # The animation is a title ask even before the creator words the hook.
+                title_animation = title_animation or normalize_title_animation(
+                    (req.facts or {}).get("animation")
+                )
             if req.scope == "per_clip":
                 wants_text = True
+                label_position = label_position or normalize_label_position(
+                    (req.facts or {}).get("position")
+                )
+                placeholder_labels = placeholder_labels or _fact_is_true(
+                    (req.facts or {}).get("placeholder")
+                )
             elif req.scope.startswith("clip:") and req.literal:
                 wants_text = True
                 clip_literals[req.scope.split(":", 1)[1]] = _nfc(req.literal)
@@ -235,7 +259,17 @@ def brief_view(brief: Any) -> BriefView:
         global_literal=global_literal,
         facts=facts,
         target_duration_s=target,
+        title_animation=title_animation,
+        label_position=label_position,
+        placeholder_labels=placeholder_labels,
     )
+
+
+def _fact_is_true(value: object) -> bool:
+    """A brief fact the extractor wrote as ``true`` (or the string "true"/"yes")."""
+    if isinstance(value, bool):
+        return value
+    return isinstance(value, str) and value.strip().casefold() in {"true", "yes", "1"}
 
 
 _first = first_text
@@ -995,6 +1029,16 @@ def plan_unified_montage(
             chosen = (described[clip.ref_id], "creator", None, False)
         elif not described and index < len(positional):
             chosen = (positional[index], "creator", None, False)
+        elif (
+            view.placeholder_labels
+            and view.wants_per_clip_text
+            and not view.per_clip_text_is_time
+            and not described
+        ):
+            # KRI-522: "placeholder location on each video" is the creator's own ask and
+            # stays in force across turns (the brief). Every clip prints the fixed
+            # placeholder, never a place read from footage in its stead.
+            chosen = (PLACEHOLDER_LABEL_TEXT, "creator", None, False)
         elif clip.ref_id in intent_labels:
             text, creator_text = intent_labels[clip.ref_id]
             chosen = (text, "creator" if creator_text else "fact", None, not creator_text)
@@ -1284,6 +1328,16 @@ def plan_unified_montage(
         snapshot_kwargs["opening_title_duration_s"] = hold
     if song_plan is not None:
         snapshot_kwargs["user_song"] = song_plan
+    # KRI-522: the brief is cumulative, so the creator's ask survives a later turn whose
+    # strategy omits it; the strategy's own typed value is the fallback.
+    title_animation = view.title_animation or normalize_title_animation(
+        strategy.get("title_animation")
+    )
+    if title_animation is not None and title:
+        snapshot_kwargs["title_animation"] = title_animation
+    label_position = view.label_position or normalize_label_position(strategy.get("label_position"))
+    if label_position is not None and labels:
+        snapshot_kwargs["label_position"] = label_position
     if output_orientation in ("portrait", "landscape"):
         snapshot_kwargs["output_orientation"] = output_orientation
         snapshot_kwargs["output_orientation_reason"] = CREATOR_SELECTED_ORIENTATION_REASON

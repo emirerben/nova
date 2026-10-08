@@ -19,6 +19,7 @@ from typing import Any, Literal
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.agents._schemas.text_animation_phases import TextAnimationPhases
 from app.agents._schemas.text_element import CAPTION_CUE_SOURCE, TextElement
 from app.config import settings
 from app.pipeline.canvas import LANDSCAPE, PORTRAIT, Canvas
@@ -53,6 +54,7 @@ from app.schemas.edit_proposal import (
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
 )
+from app.schemas.text_style_intent import LABEL_ANCHORS, TITLE_ANIMATION_SPEED
 from app.schemas.user_song import MIN_PLAYABLE_SONG_S, UserSongPlan
 
 log = structlog.get_logger()
@@ -1432,6 +1434,21 @@ def _text_elements(
         label_by_source = {label.media_id: label.text for label in snapshot.clip_labels}
         label_elements: list[dict] = []
         title_elements: list[dict] = []
+        # KRI-522: the creator's named title entrance and label corner. Unset keeps the
+        # centred static look byte-for-byte.
+        title_phases = (
+            TextAnimationPhases(
+                entrance=snapshot.title_animation,
+                speed=TITLE_ANIMATION_SPEED[snapshot.title_animation],
+            )
+            if snapshot.title_animation is not None
+            else None
+        )
+        label_x, label_y, label_alignment = (
+            LABEL_ANCHORS[snapshot.label_position]
+            if snapshot.label_position is not None
+            else (0.5, 0.78, "center")
+        )
         if snapshot.opening_title:
             title_elements.append(
                 TextElement(
@@ -1453,6 +1470,7 @@ def _text_elements(
                     effect="static",
                     alignment="center",
                     max_width_frac=0.84,
+                    **({"animation_phases": title_phases} if title_phases is not None else {}),
                 ).model_dump(mode="json", exclude_none=True)
             )
         for cut, window in zip(snapshot.fast_cuts, beat_windows, strict=True):
@@ -1467,8 +1485,8 @@ def _text_elements(
                     end_s=round(float(window["end_s"]), 3),
                     role="generative_intro",
                     position="custom",
-                    x_frac=0.5,
-                    y_frac=0.78,
+                    x_frac=label_x,
+                    y_frac=label_y,
                     font_family=snapshot.font_family or "Fraunces",
                     size_px=58,
                     color=snapshot.text_color or "#FFF8F0",
@@ -1477,7 +1495,7 @@ def _text_elements(
                     shadow_enabled=True,
                     shadow_style="standard",
                     effect="static",
-                    alignment="center",
+                    alignment=label_alignment,
                     max_width_frac=0.82,
                 ).model_dump(mode="json", exclude_none=True)
             )
