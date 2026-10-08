@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.159.0] - 2026-10-08
+
+### Changed
+- fix(ios): show the creator's own file name on attached media (KRI-518) (#1478) <!-- release-pr: 1478 -->
+
 ## [0.78.158.0] - 2026-10-08
 
 ### Changed
