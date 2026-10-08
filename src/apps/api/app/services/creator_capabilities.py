@@ -1113,6 +1113,27 @@ def compile_strategy_to_plan(
         and phone_capability.available
         and phone_subtitled_closing_title_supported()
     )
+    if strategy.pinned_texts and (
+        strategy.edit_format == "subtitled"
+        or strategy.render_program != "guided"
+        # The phone montage writers spined by a recorded voiceover, and the voice-behind-
+        # footage writer, build their own text lanes and never draw pinned text (the cloud
+        # guided route does, through the same text compiler).
+        or (
+            phone_capability is not None
+            and phone_capability.available
+            and (
+                (strategy.edit_format == "montage" and manifest.has_voiceover)
+                or strategy.voice_mode
+            )
+        )
+    ):
+        # KRI-523: whole-video corner text is drawn by the guided text compiler only.
+        raise CreatorStrategyError(
+            f"pinned_texts is not supported by the {strategy.edit_format} renderer",
+            code="unsupported_treatment",
+            edit_format=strategy.edit_format,
+        )
     if strategy.shot_labels or (strategy.closing_title and not phone_talking_closing):
         # Exact per-shot labels and closing copy are burned by the guided
         # story-beat renderer only. Fail visibly anywhere they cannot render

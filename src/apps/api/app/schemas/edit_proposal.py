@@ -153,6 +153,50 @@ def clean_creator_shot_labels(value: object) -> list[str] | None:
     return labels or None
 
 
+# KRI-523: creator text that stays on screen for the WHOLE video at a named corner
+# ("Part 1, bottom left, the whole video"). Distinct from the opening title (a hold of
+# at most MAX_OPENING_TITLE_DURATION_S, centred) and from per-shot labels: those fields
+# have no position, so a corner request had nowhere to go. One entry is one rendered
+# line; list order is the top-to-bottom stack order inside a corner.
+MAX_CREATOR_PINNED_TEXTS = 4
+PINNED_TEXT_MAX_CHARS = 120
+PinnedCorner = Literal[
+    "top_left",
+    "top_center",
+    "top_right",
+    "bottom_left",
+    "bottom_center",
+    "bottom_right",
+]
+
+
+class PinnedText(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=PINNED_TEXT_MAX_CHARS)
+    corner: PinnedCorner
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def _clean_text(cls, value: object) -> str:
+        return clean_creator_copy(value, field_name="pinned_texts", max_chars=PINNED_TEXT_MAX_CHARS)
+
+
+def clean_creator_pinned_texts(value: object) -> list[PinnedText] | None:
+    """Validate whole-video corner text; an empty list means none."""
+
+    if value is None:
+        return None
+    if not isinstance(value, list | tuple):
+        raise ValueError("pinned_texts must be a list")
+    if len(value) > MAX_CREATOR_PINNED_TEXTS:
+        raise ValueError(f"pinned_texts must contain at most {MAX_CREATOR_PINNED_TEXTS} entries")
+    pins = [
+        item if isinstance(item, PinnedText) else PinnedText.model_validate(item) for item in value
+    ]
+    return pins or None
+
+
 def creator_copy_match_key(text: str) -> str:
     """Accent-, case-, spacing-, and punctuation-insensitive comparison key.
 
@@ -870,6 +914,11 @@ class EditProposalSnapshot(BaseModel):
         max_length=CREATOR_TITLE_MAX_CHARS,
         exclude_if=lambda value: value is None,
     )
+    pinned_texts: list[PinnedText] | None = Field(
+        default=None,
+        max_length=MAX_CREATOR_PINNED_TEXTS,
+        exclude_if=lambda value: value is None,
+    )
     font_family: str | None = Field(
         default=None,
         max_length=160,
@@ -1411,6 +1460,11 @@ class ProposalBrief(BaseModel):
     closing_title: str | None = Field(
         default=None,
         max_length=CREATOR_TITLE_MAX_CHARS,
+        exclude_if=lambda value: value is None,
+    )
+    pinned_texts: list[PinnedText] | None = Field(
+        default=None,
+        max_length=MAX_CREATOR_PINNED_TEXTS,
         exclude_if=lambda value: value is None,
     )
     font_family: str | None = Field(default=None, max_length=160)

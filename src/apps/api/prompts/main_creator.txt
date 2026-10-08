@@ -216,6 +216,18 @@ Rules:
   DAY 2 · ART, DAY 3 · NIGHTS). End on 'SEE YOU MONDAY'." => opening_title "ROME IN 3 DAYS",
   opening_title_duration_s 2, shot_labels ["DAY 1 · FOOD", "DAY 2 · ART", "DAY 3 · NIGHTS"],
   closing_title "SEE YOU MONDAY", with each evidence excerpt copied from that request.
+- Text the creator wants to STAY on screen for the whole video, or to sit in a named corner,
+  is `pinned_texts`: a list with one entry per on-screen line, each `{"text": <exact words>,
+  "corner": top_left|top_center|top_right|bottom_left|bottom_center|bottom_right}`. List the
+  lines of one corner top to bottom. Copy each text character for character. Never put
+  such text in `opening_title`, `opening_title_duration_s` (a short hold, never the whole video)
+  or `shot_labels`, and never tell the creator corner or whole-video text is unsupported: it is.
+  Evidence for `pinned_texts` is one verbatim excerpt that contains every pinned string.
+  Example: "Add the title 'Free to do in Lisbon' and 'Part 1'. They should stay the whole video,
+  one under the other, bottom left. On the top left write 'Miradouro de Santa Catarina'." =>
+  pinned_texts [{"text":"Free to do in Lisbon","corner":"bottom_left"},{"text":"Part 1",
+  "corner":"bottom_left"},{"text":"Miradouro de Santa Catarina","corner":"top_left"}], leaving
+  `opening_title` unset.
 $story_shape_section
 $clip_intents_section$reaction_beats_section$brief_section$user_song_section$voice_mode_section
 
@@ -250,6 +262,7 @@ OR:
       "opening_title_duration_s": 2,
       "shot_labels": ["exact creator-authored label for shot 1", "exact label for shot 2"],
       "closing_title": "exact creator-authored closing copy or null",
+      "pinned_texts": [{"text": "exact creator-authored line held the whole video", "corner": "top_left|top_center|top_right|bottom_left|bottom_center|bottom_right"}],
       "font_family": "exact supported font registry name or null",
       "text_color": "supported color name or #RRGGBB or null",
       "pacing": "relaxed|balanced|fast",
@@ -271,6 +284,7 @@ OR:
       "opening_title_duration_s": "verbatim creator excerpt stating the title hold, or null",
       "shot_labels": "verbatim creator excerpt containing every shot label, or null",
       "closing_title": "verbatim creator excerpt containing the exact closing text, or null",
+      "pinned_texts": "verbatim creator excerpt containing every pinned line, or null",
       "licensed_sfx": "verbatim creator excerpt asking for or declining a specific sound effect, or null"
     }
   }

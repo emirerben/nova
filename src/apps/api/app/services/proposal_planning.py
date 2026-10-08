@@ -198,6 +198,7 @@ def _timing_contract(snapshot: EditProposalSnapshot) -> dict:
         "opening_title_duration_s",
         "closing_title",
         "shot_labels",
+        "pinned_texts",
         "font_family",
         "text_color",
         "licensed_sfx",
