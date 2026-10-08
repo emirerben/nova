@@ -143,6 +143,7 @@ Creation prompts can also describe changes to a proposed plan. Editing prompts a
 
 ### Recorded voiceover stories
 
+- **Creation · capability:** Show my Visuals-pool medal photo exactly when the voiceover says medal on the current v2 phone path. Requires ready media and the phone reaction-beats capability enabled.
 - **Creation · text:** Build a story from my recorded narration with the title “My first race”.
 - **Editing · text:** Replace the opening line with “The race I almost skipped”.
 - **Creation · positioning:** Keep chapter text away from the subtitles at the bottom.
@@ -314,8 +315,6 @@ These intentionally include missing context, conflicting constraints, and operat
   Expected: Ask which narration is authoritative.
 - **Clarification:** Fit all five minutes of narration into a thirty-second video without speeding or cutting anything.
   Expected: Surface incompatible duration constraints.
-- **Unsupported:** Show my Visuals-pool medal photo exactly when the voiceover says medal on the current v2 phone path.
-  Expected: Known KRI-519 lane limitation must be explicit; no claimed timed visual.
 - **Unsupported:** Clone my voice to fill a sentence I forgot to record.
   Expected: Explain voice-generation gap; ask for recording.
 
@@ -327,8 +326,8 @@ These intentionally include missing context, conflicting constraints, and operat
   Expected: Explain conflicting process-order requirements.
 - **Unsupported:** Create missing close-up footage of the knife technique.
   Expected: Disclose absent generated-video capability.
-- **Unsupported:** Time a photo from Visuals to a phrase on a v2 phone narration path that does not support it.
-  Expected: Explicit KRI-519 limitation and supported alternative.
+- **Unsupported when disabled:** When I say “finish line”, show the race photo from Visuals.
+  Prerequisite: the phone reaction-beats kill switch is off. Expected: explain the actual unavailable capability and offer a supported alternative; do not claim a timed visual.
 
 ### Revising an approved voiceover story
 

@@ -11,7 +11,7 @@
 
 ## Executed evidence
 
-Current results: **769 passed / 2 expected failures** in offline prompt-coverage replay; **1,375 passed / 15 skipped** in the affected/evals suites; **1,876 passed / 6 skipped** in `make verify-kria`. Counts overlap and must not be added together. Scoped lint and preship checks passed. Details are recorded in `results.json`. Commands run from `src/apps/api` unless otherwise specified:
+Current results: **770 passed / 2 expected failures** in offline prompt-coverage replay; **1,376 passed / 15 skipped** in the affected/evals suites; **1,878 passed / 6 skipped** in `make verify-kria`. Counts overlap and must not be added together. Scoped lint and preship checks passed. Details are recorded in `results.json`. Commands run from `src/apps/api` unless otherwise specified:
 
 ```sh
 .venv/bin/python -m tests.evals.prompt_coverage --report
@@ -48,7 +48,7 @@ KRI-524 is linked to the existing reports below. No duplicate issues were create
 | --- | --- | --- | --- |
 | [KRI-523](https://linear.app/kria/issue/KRI-523) | Two stacked lower-left titles throughout output, upper-left location; follow-up requests hit refusal/brief failure | Full original chat not recovered; this change fixes the demonstrated title/source receipt collision. Use existing editable text operations where destination permits | Recover exact original conversation; verify text, geometry, full-span timing after later edits and export |
 | [KRI-514](https://linear.app/kria/issue/KRI-514) | Phone Talking closing “MY PICK” badge | Text-lane gap fixed upstream in PR #1476 during this run; current main includes it; verify destination rollout before use | Closing badge supported end to end on phone, truthful capability response, later edit/export preserved |
-| [KRI-519](https://linear.app/kria/issue/KRI-519) | Narrated phone edit shows a Visual when a named phrase is spoken | Runtime-v2 phrase-triggered Visual lane not supported; use a supported destination or manual timing | Advertised capabilities match executable path; phrase timing, approval and render proven |
+| [KRI-519](https://linear.app/kria/issue/KRI-519) | Narrated phone edit shows a Visual when a named phrase is spoken | Implemented upstream in PR #1484 and integrated here; availability depends on the phone reaction-beats gates. The disabled-gate profile remains a negative control | Advertised capabilities match executable path; phrase timing, approval and render proven |
 | [KRI-522](https://linear.app/kria/issue/KRI-522) | Blue source first, chronological order, opening typewriter hook and lower-left placeholders | PR #1479 merged; its fixes are integrated into this branch | Independent source order, text and placement checks, phone capability truthfulness |
 | [KRI-350](https://linear.app/kria/issue/KRI-350) | Speed ramps | Canceled legacy gap; do not revive or claim fixed | Reopen only with a new approved requirement |
 | [KRI-449](https://linear.app/kria/issue/KRI-449) | Audio-level renderer behavior | Remains a separate renderer gap | Prove audible continuity end to end |
@@ -62,4 +62,6 @@ PR [#1481](https://github.com/emirerben/nova/pull/1481) remains open and unmerge
 
 Merge/deploy require the current explicit **Land now / Wait / Revise / Cancel** decision. After approval, use Nova's existing guarded deployment workflow and verify the deployed revision. Until then, this is implementation and review evidence only.
 
-KRI-520 integration: merged main `7de2936de`, retained complete-request routing alongside Turkish replies, and localized partial-success and editor-failure messages. Fresh offline replay and Turkish integration checks pass. Live captures were collected on v73; the integrated v74 received offline validation, with no additional provider spending.
+Current editor prompt v74 retains complete-request routing alongside Turkish replies, including localized partial-success and editor-failure messages. Live captures were collected on v73 before the final upstream integrations; the integrated revision received fresh offline validation without additional provider spending.
+
+Current main integration: `14deedb76` includes KRI-519 phone Voiceover photo reaction beats and higher Main Creator reasoning. The library now distinguishes enabled support from a disabled-gate negative case. Earlier live captures remain historical; current composition is verified offline.

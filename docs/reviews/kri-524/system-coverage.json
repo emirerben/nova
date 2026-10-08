@@ -37,11 +37,11 @@
     "by_kind": {
       "clarification": 18,
       "negative": 18,
-      "unsupported": 18,
-      "user_example": 198
+      "unsupported": 17,
+      "user_example": 199
     },
     "by_destination": {
-      "cloud_editor": 252,
+      "cloud_editor": 250,
       "native_editor": 252,
       "worker_render": 0
     },

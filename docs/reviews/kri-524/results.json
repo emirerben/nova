@@ -1,5 +1,5 @@
 {
-  "base": "7de2936de2dbf61e66b8b3f1cf45bea3f992dfc8",
+  "base": "14deedb76e3e16785941834495961c6224902cd4",
   "live": {
     "provider_calls": 112,
     "budget_ledgers": 8,
@@ -43,14 +43,14 @@
       "tests/evals/test_clip_intent_planner_evals.py",
       "tests/incidents"
     ],
-    "passed": 769,
+    "passed": 770,
     "xfailed": 2,
     "exit_code": 0,
     "library_cases_executed": 0
   },
   "kria_gate": {
     "command": "make verify-kria",
-    "passed": 1876,
+    "passed": 1878,
     "skipped": 6,
     "exit_code": 0,
     "database": "isolated local test database"
@@ -102,7 +102,7 @@
     "approval": "required"
   },
   "affected_suites": {
-    "passed": 1375,
+    "passed": 1376,
     "exit_code": 0,
     "scope": [
       "all offline agent evaluations",
@@ -126,9 +126,9 @@
     "includes_independent_underselection_negative_control": true
   },
   "integration": {
-    "upstream": "KRI-520",
+    "upstream": "KRI-520, KRI-519 and Main Creator higher reasoning",
     "prompt_version": "2026-10-08-v74",
     "live_capture_prompt_version": "2026-10-08-v73",
-    "validation": "Fresh offline replay, full Kria gate, and Turkish partial-success/error recovery regressions. No new provider calls."
+    "validation": "Current main merged cleanly; fresh offline replay and full Kria gate pass. Live captures predate these final upstream integrations. No new provider calls."
   }
 }

@@ -5179,28 +5179,29 @@
       "format": "narrated",
       "stage": "creation",
       "family": "capability",
-      "kind": "unsupported",
+      "kind": "user_example",
       "destination_applicability": [
-        "native_editor",
-        "cloud_editor"
+        "native_editor"
       ],
       "prerequisites": [
         "Owned media and current server/client capability snapshot.",
         "Ready source media; an existing proposed plan for plan-revision requests.",
         "Attached recorded narration with verified transcript and duration.",
-        "Only treat as executable when the selected destination advertises every requested operation."
+        "Only treat as executable when the selected destination advertises every requested operation.",
+        "Ready owned medal photo in Visuals; recorded narration contains the trigger word.",
+        "Current phone manifest advertises reaction_beats and phone_voiceover_reaction_beats_enabled is enabled."
       ],
       "fixture_paths": [],
       "related_evidence": [],
       "execution_scenario": "library_only",
       "provenance": {
         "kind": "adapted",
-        "source": "Adapted from KRI-519, unavailable phrase-triggered Visuals in phone narration."
+        "source": "Adapted from KRI-519; phone Voiceover reaction beats landed in PR #1484."
       },
-      "expected_behavior": "Known KRI-519 lane limitation must be explicit; no claimed timed visual.",
+      "expected_behavior": "Propose a photo reaction beat grounded to the spoken trigger, preserve the narration, and verify actual timing before claiming completion.",
       "independent_assertions": [
-        "Known KRI-519 lane limitation must be explicit; no claimed timed visual.",
-        "No unrequested mutation and no completion claim without an execution receipt."
+        "Propose a photo reaction beat grounded to the spoken trigger, preserve the narration, and verify actual timing before claiming completion.",
+        "Do not use the guided_voiceover_v1 contract for a runtime-v2 phone reaction beat."
       ],
       "evidence_status": "unexecuted",
       "execution": null
@@ -6103,32 +6104,32 @@
     },
     {
       "case_id": "kri524-narrated_planned-editing-capability",
-      "prompt": "Time a photo from Visuals to a phrase on a v2 phone narration path that does not support it.",
+      "prompt": "When I say “finish line”, show the race photo from Visuals.",
       "format": "narrated_planned",
       "stage": "editing",
       "family": "capability",
       "kind": "unsupported",
       "destination_applicability": [
-        "native_editor",
-        "cloud_editor"
+        "native_editor"
       ],
       "prerequisites": [
         "Owned media and current server/client capability snapshot.",
         "Existing draft and prior conversation for editing/correction cases.",
         "Attached recorded narration with verified transcript and duration.",
-        "Only treat as executable when the selected destination advertises every requested operation."
+        "Only treat as executable when the selected destination advertises every requested operation.",
+        "Negative capability profile: phone_voiceover_reaction_beats_enabled is disabled and the manifest does not advertise reaction_beats."
       ],
       "fixture_paths": [],
       "related_evidence": [],
       "execution_scenario": "library_only",
       "provenance": {
         "kind": "adapted",
-        "source": "Adapted from KRI-519, unavailable phrase-triggered Visuals in phone narration."
+        "source": "Adapted from KRI-519 as a kill-switch-off negative control; the enabled capability landed in PR #1484."
       },
-      "expected_behavior": "Explicit KRI-519 limitation and supported alternative.",
+      "expected_behavior": "Explain the actual disabled capability and offer a supported alternative; do not claim a timed visual was added.",
       "independent_assertions": [
-        "Explicit KRI-519 limitation and supported alternative.",
-        "No unrequested mutation and no completion claim without an execution receipt."
+        "Explain the actual disabled capability and offer a supported alternative; do not claim a timed visual was added.",
+        "Keep the existing narration and edit unchanged unless the user approves an available alternative."
       ],
       "evidence_status": "unexecuted",
       "execution": null

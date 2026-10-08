@@ -30,6 +30,6 @@ From `src/apps/api`:
 
 ## Boundaries and follow-ups
 
-Supported behavior fixes belong in this change only when demonstrated by a failing regression. New renderer/model capabilities remain separate. KRI-519 already owns phrase-triggered Visuals for phone narration; KRI-514 and KRI-523 cover the reported text-lane gaps. Reuse those tickets rather than creating duplicates. Invented footage, unrecorded speech, voice cloning, gaze correction, watermark removal, and hidden viewpoints are deliberate unsupported controls, not newly discovered bugs or promises.
+Supported behavior fixes belong in this change only when demonstrated by a failing regression. New renderer/model capabilities remain separate. KRI-519 delivered phrase-triggered photo Visuals for phone narration in upstream PR #1484; its enabled example and disabled-capability negative control are distinguished here; KRI-514 and KRI-523 cover the reported text-lane gaps. Reuse those tickets rather than creating duplicates. Invented footage, unrecorded speech, voice cloning, gaze correction, watermark removal, and hidden viewpoints are deliberate unsupported controls, not newly discovered bugs or promises.
 
 Live spending limit: $5 cumulative, at most $2 per run, no unmetered judge. Runtime-only validation fixes do not require paid model calls. See verification.md for final executed commands, failures, limits, and release status.
