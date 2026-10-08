@@ -18,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 import math
 import re
+import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -248,6 +249,9 @@ class PlanFacts:
     # The language the rendered captions are in, and the language that was spoken.
     caption_language: str | None = None
     spoken_language: str | None = None
+    # KRI-549: the caption lines a finished phone render shows (its `caption_cues` text, in
+    # order); () = it shows none. None = unknown (a draft, an editor edit, a cloud render).
+    caption_texts: tuple[str, ...] | None = None
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -875,6 +879,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     elif variant.get("resolved_archetype") == "narrated":
         changes["audio_strategy"] = "voiceover"
     changes.update(_rendered_speech_facts(variant))
+    changes.update(_rendered_caption_facts(variant))
     return dataclasses.replace(base, **changes) if changes else base
 
 
@@ -911,6 +916,34 @@ def _rendered_speech_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
     elif outcome is None and device:
         facts["speech_cleanup_enabled"] = False
         facts["speech_cleanup_outcome"] = "not_run"
+    return facts
+
+
+def _rendered_caption_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    """The caption lines and their language off a rendered Voiceover/Talking variant (KRI-549).
+
+    Both phone writers persist ``caption_cues`` (one ``text`` per line) and
+    ``caption_language``. A device render with no cues shows no captions; a cloud render
+    fills them later, so their absence stays unknown. Captions the creator turned off
+    (``captions_enabled: false``) are not on screen, so nothing is read from them.
+    """
+    if _RENDERED_EDIT_FORMATS.get(str(variant.get("resolved_archetype") or "")) is None:
+        return {}
+    if variant.get("captions_enabled") is False:
+        return {}
+    cues = variant.get("caption_cues")
+    texts = tuple(
+        " ".join(str(cue.get("text") or "").split())
+        for cue in (cues if isinstance(cues, list) else ())
+        if isinstance(cue, Mapping)
+    )
+    texts = tuple(text for text in texts if text)
+    if not texts:
+        return {"caption_texts": ()} if variant.get("render_destination") == "device" else {}
+    facts: dict[str, Any] = {"caption_texts": texts}
+    language = variant.get("caption_language")
+    if isinstance(language, str) and language.strip():
+        facts["caption_language"] = language.strip()
     return facts
 
 
@@ -2976,6 +3009,408 @@ def asks_caption_language(req: BriefRequirement) -> bool:
     return _wants_captions(req) and _requested_caption_language(req) is not None
 
 
+# ------------------------------------------------------------- caption words (KRI-549)
+# "altyazılar Türkçe olsun; Moda, Bahariye, Yeldeğirmeni ve Kadıköy doğru yazılsın" on a
+# finished phone render: the language is judged against the variant's `caption_language`
+# and each name the creator asked to be spelled right against the caption lines it shows.
+# A name is read only from a capitalized list right next to a spelling cue (the creator's
+# own spelling). Anything less certain stays unchecked: a false "Done" is worse than
+# "can't check".
+
+# Wordings the stricter `_CAPTION_LANGUAGE_PATTERNS` miss ("captions should be in English",
+# "altyazılar da Türkçe", "altyazıları Türkçeye çevir"); run on `loose_text`.
+_LOOSE_CAPTION_LANGUAGE_PATTERNS = (
+    re.compile(rf"\b{_CAPTION_WORD}\s+(?:\w+\s+){{0,3}}?(?:in|into)\s+({_LANG_ALT})\b"),
+    re.compile(rf"\baltyazi\w*\s+(?:\w+\s+){{0,2}}?({_LANG_ALT})\w*"),
+)
+# A spelling cue in the creator's own words (case kept, so the names stay readable). After
+# "spell"/"spelling (of)" the names follow ("spell A and B right"); after any other cue
+# they come first ("A ve B doğru yazılsın", "A and B spelled right"). A colon list
+# ("spelling the names exactly: A, B") always follows.
+_SPELL_CUE_RE = re.compile(
+    r"\b(?P<after>spell(?:ing)?(?:\s+of)?)\b"
+    r"|\b(?:spelled|spelt|spells)\b"
+    r"|\b(?:do[gğ]ru|d[uü]zg[uü]n|hatas[ıi]z)\s+(?:bir\s+)?yaz\w*"
+    r"|\byaz[ıi]m\w*|\bimla\w*",
+    re.IGNORECASE,
+)
+_SPELL_CLAUSE_SPLIT_RE = re.compile(r"[;\n!?]+|\.(?=\s|$)")
+# Words (inner apostrophes and hyphens kept: "Kadıköy'ü", "Yel-Değirmeni") and list commas.
+_NAME_TOKEN_RE = re.compile(r"[^\W_](?:[\w'’\-]*[^\W_])?|[,&]")
+_NAME_JOINERS = frozenset({"and", "ve", "ile", "&", "plus"})
+_NAME_PARTICLES = frozenset(
+    {"de", "da", "del", "della", "di", "du", "la", "le", "van", "von", "der", "den", "al", "el"}
+)
+# Capitalized words that open a sentence or name the captions, never a name to spell.
+_NOT_NAMES = frozenset(
+    "make please ensure also and the all keep write check use i my names"
+    " lutfen ayrica ve tum butun ben benim yaz isimler isimleri".split()
+)
+_MAX_NAME_GAP = 3  # words allowed between a name list and its cue ("A and B are spelled")
+_MAX_SPELLED_NAMES = 12
+# Caption look, size or place (`_CAPTION_DETAIL_RE` without the language words and without a
+# bare "right", which "spell it right" uses): such an ask stays with `_check_captions`.
+_CAPTION_LOOK_RE = re.compile(
+    r"\b(colou?rs?|yellow|white|red|blue|green|black|pink|orange|purple|lime|font|bold|italic"
+    r"|sizes?|bigger|big|small|smaller|larger|huge|tiny|top|bottom|middle|cent(er|re)"
+    r"|higher|lower|outline|shadow|stroke|uppercase|lowercase|caps)\b"
+    r"|\b(on|to|at) the (left|right)\b|\b(left|right)[- ](side|aligned|corner)\b"
+    r"|\brenk|\bsari\b|\bbeyaz\b|\bbüyük|\bküçük|\büst|\balt(ta|a)\b|\bsol(da|a)\b"
+    r"|\bsağ(da|a)\b|\byazi tipi|\bkalin"
+)
+# Caption words: letters/digits joined by apostrophes ("Kadıköy'de"); hyphens and spaces split.
+_CAPTION_TOKEN_RE = re.compile(r"[^\W_]+(?:['’][^\W_]+)*")
+_APOSTROPHE_RE = re.compile(r"['’]")
+# A Turkish case/possessive ending glued onto a name without its apostrophe ("Kadıköyde",
+# "Modanın"), on `loose_text` letters. Only checked on a capitalized word of a long enough
+# name, so "modası" (fashion) or "Adana" never reads as a misspelled Moda or Ada.
+_GLUED_SUFFIX_RE = re.compile(r"[nys]?(?:[dt][ae](?:n|ki)?|[ae]|[iu]n?|l[ae]r\w{0,4}|l[iu]|l[ae])")
+_MIN_GLUED_NAME = 4
+
+
+def _asked_caption_language(req: BriefRequirement) -> str | None:
+    """`_requested_caption_language`, plus a few looser wordings of the same ask."""
+    found = _requested_caption_language(req)
+    if found is not None:
+        return found
+    wording = loose_text(_req_text(req))
+    for pattern in _LOOSE_CAPTION_LANGUAGE_PATTERNS:
+        match = pattern.search(wording)
+        if match:
+            return _LANGUAGE_WORDS[match.group(1)]
+    return None
+
+
+def _capitalized(token: str) -> bool:
+    return token[:1].isupper()
+
+
+def _name_lists(text: str) -> tuple[list[str], list[tuple[int, int, list[str]]]]:
+    """``text``'s tokens and its capitalized name lists as (first token, last token, names).
+
+    A name is a run of capitalized words (a lowercase particle may join two: "Rio de
+    Janeiro"); names joined by commas, "and", "ve", "ile" or "&" form one list.
+    """
+    tokens = _NAME_TOKEN_RE.findall(text)
+    chunks: list[tuple[int, int, str]] = []
+    i = 0
+    while i < len(tokens):
+        if not _capitalized(tokens[i]):
+            i += 1
+            continue
+        words, j = [tokens[i]], i + 1
+        # A word with an apostrophe ends its name ("Kadıköy'ü Moda" is two names).
+        while j < len(tokens) and not _APOSTROPHE_RE.search(words[-1]):
+            if _capitalized(tokens[j]):
+                words.append(tokens[j])
+                j += 1
+            elif (
+                tokens[j].casefold() in _NAME_PARTICLES
+                and j + 1 < len(tokens)
+                and _capitalized(tokens[j + 1])
+            ):
+                words.extend(tokens[j : j + 2])
+                j += 2
+            else:
+                break
+        chunks.append((i, j - 1, " ".join(words)))
+        i = j
+    lists: list[tuple[int, int, list[str]]] = []
+    for start, end, name in chunks:
+        between = [token.casefold() for token in tokens[lists[-1][1] + 1 : start]] if lists else []
+        joined = bool(lists) and (
+            between == [","]
+            or (
+                len(between) in (1, 2)
+                and between[-1] in _NAME_JOINERS
+                and between[:-1] in ([], [","])
+            )
+        )
+        if joined:
+            lists[-1] = (lists[-1][0], end, [*lists[-1][2], name])
+        else:
+            lists.append((start, end, [name]))
+    return tokens, lists
+
+
+def _word_count(tokens: Sequence[str]) -> int:
+    return sum(1 for token in tokens if token not in {",", "&"})
+
+
+def _list_before(text: str, max_gap: int = _MAX_NAME_GAP) -> list[str]:
+    tokens, lists = _name_lists(text)
+    if lists and _word_count(tokens[lists[-1][1] + 1 :]) <= max_gap:
+        return lists[-1][2]
+    return []
+
+
+def _list_after(text: str, max_gap: int = _MAX_NAME_GAP) -> list[str]:
+    tokens, lists = _name_lists(text)
+    if lists and _word_count(tokens[: lists[0][0]]) <= max_gap:
+        return lists[0][2]
+    return []
+
+
+def _clean_name(name: str) -> str | None:
+    """The name without a case ending ("Kadıköy'ü" -> "Kadıköy"), or None for a non-name."""
+    words = _APOSTROPHE_RE.split(name, maxsplit=1)[0].split()
+    while words and loose_text(words[0]) in _NOT_NAMES:
+        words = words[1:]
+    if not words:
+        return None
+    core = loose_text(" ".join(words))
+    if core in _LANGUAGE_WORDS or _CAPTION_RE.search(core):
+        return None
+    return " ".join(words)
+
+
+def _names_near_cue(clause: str, cue: re.Match[str]) -> list[str]:
+    before, after = clause[: cue.start()], clause[cue.end() :]
+    found: list[str] = []
+    if ":" in after:
+        found = _list_after(after.split(":", 1)[1], max_gap=1)
+    if not found:
+        order = (
+            ((_list_after, after), (_list_before, before))
+            if cue.group("after")
+            else ((_list_before, before), (_list_after, after))
+        )
+        for pick, text in order:
+            found = pick(text)
+            if found:
+                break
+    return [name for name in map(_clean_name, found) if name]
+
+
+def _spelled_names(req: BriefRequirement) -> tuple[str, ...] | None:
+    """The names a requirement asks to be spelled right, as the creator wrote them.
+
+    None when the wording has no spelling cue; () when it has one but no capitalized
+    name list sits next to it (then nothing about spelling can be claimed).
+    """
+    text = unicodedata.normalize("NFC", " ".join(x for x in (req.description, req.literal) if x))
+    cued = False
+    names: list[str] = []
+    for clause in _SPELL_CLAUSE_SPLIT_RE.split(text):
+        for cue in _SPELL_CUE_RE.finditer(clause):
+            cued = True
+            names.extend(_names_near_cue(clause, cue))
+    if not cued:
+        return None
+    return tuple(dict.fromkeys(names))[:_MAX_SPELLED_NAMES]
+
+
+def _asks_spelling(req: BriefRequirement) -> bool:
+    return _spelled_names(req) is not None or bool(_SPELLING_RE.search(_loose_req(req)))
+
+
+def _caption_words_ask(req: BriefRequirement) -> bool:
+    """A captions ask about their language and/or how names are spelled, and nothing about
+    their look or place (`_check_captions` keeps those)."""
+    if _wants_no_captions(req):
+        return False
+    if _asked_caption_language(req) is None and not _asks_spelling(req):
+        return False
+    look = _req_text(req)
+    for name in _spelled_names(req) or ():
+        look = look.replace(_fold(name), " ")
+    return not _CAPTION_LOOK_RE.search(look)
+
+
+def _judges_caption_words(req: BriefRequirement, facts: PlanFacts) -> bool:
+    """True when a finished render's caption lines can settle this captions ask."""
+    return facts.caption_texts is not None and _wants_captions(req) and _caption_words_ask(req)
+
+
+def _spelling_key(value: str, *, turkish: bool) -> str:
+    """Case-free, whitespace-collapsed text that keeps every letter ("İ" -> "i"; in Turkish
+    "I" -> "ı"), so "KADIKÖY" equals "Kadıköy" but "Kadikoy" does not."""
+    text = unicodedata.normalize("NFC", value).replace("İ", "i")
+    if turkish:
+        text = text.replace("I", "ı")
+    return " ".join(text.casefold().split())
+
+
+def _squash(value: str) -> str:
+    """Letters only, diacritic-free: "Yel-Değirmeni" == "yeldegirmeni"."""
+    return re.sub(r"[\W_]+", "", loose_text(value))
+
+
+def _caption_spelling(name: str, captions: str, *, turkish: bool) -> tuple[bool, str | None]:
+    """(``name`` appears as written, the first other spelling of it in ``captions``).
+
+    A Turkish ending after an apostrophe is allowed ("Kadıköy'de"). Another spelling is the
+    same letters with other accents, spacing or hyphens ("Kadikoy", "yel değirmeni"), or
+    the name with an ending glued on without its apostrophe ("Kadıköyde").
+    """
+    want = _squash(name)
+    if not want:
+        return False, None
+    want_key = _spelling_key(name, turkish=turkish)
+    name_words = len(re.split(r"[\s\-]+", name.strip()))
+    tokens = list(_CAPTION_TOKEN_RE.finditer(captions))
+    exact = False
+    other: str | None = None
+    for i in range(len(tokens)):
+        for size in range(1, name_words + 2):
+            window = tokens[i : i + size]
+            if len(window) < size:
+                break
+            if size > 1:
+                # A name never runs past a case ending or punctuation ("Moda'da, deniz").
+                gap = captions[window[-2].end() : window[-1].start()]
+                if _APOSTROPHE_RE.search(window[-2].group()) or not re.fullmatch(r"[\s\-]+", gap):
+                    break
+            last = window[-1].group()
+            base = _APOSTROPHE_RE.split(last, maxsplit=1)[0]
+            shown = captions[window[0].start() : window[-1].start() + len(base)]
+            squashed = _squash(shown)
+            if squashed == want:
+                if _spelling_key(shown, turkish=turkish) == want_key:
+                    exact = True
+                elif other is None:
+                    other = shown
+            elif (
+                other is None
+                and size == name_words
+                and base == last
+                and len(want) >= _MIN_GLUED_NAME
+                and _capitalized(shown)
+                and squashed.startswith(want)
+                and _GLUED_SUFFIX_RE.fullmatch(squashed[len(want) :])
+            ):
+                other = shown
+    return exact, other
+
+
+def _and_names(names: Sequence[str]) -> str:
+    items = list(dict.fromkeys(names))
+    if len(items) <= 1 or len(items) > _MAX_NAMED_IN_REASON:
+        return _names(items)
+    head = ", ".join(items[:-1])
+    return say(en=f"{head} and {items[-1]}", tr=f"{head} ve {items[-1]}")
+
+
+def _check_caption_words(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """A captions ask about their language and the spelling of names, on a finished render.
+
+    The language is judged against the render's ``caption_language``, each name against
+    the caption lines. Met only when every part holds; a wrong language or a different
+    spelling is an honest miss naming it, a name the captions never show is "Partly"
+    with that reason, and a part with nothing to judge it by leaves the ask unchecked.
+    """
+    lines = facts.caption_texts or ()
+    if not lines:
+        return _receipt(
+            req, "partial", say(en="This video has no captions.", tr="Bu videoda altyazı yok.")
+        )
+    done: list[str] = []
+    misses: list[str] = []
+    unsure: list[str] = []
+    rendered = str(facts.caption_language or "").casefold().split("-")[0]
+    asked = _asked_caption_language(req)
+    if asked is not None:
+        if not rendered:
+            unsure.append(
+                say(
+                    en="I couldn't check which language the captions are in.",
+                    tr="Altyazıların dilini kontrol edemedim.",
+                )
+            )
+        elif rendered != asked:
+            misses.append(
+                say(
+                    en=(
+                        f"The captions are in {_language_name(rendered)}, "
+                        f"not {_language_name(asked)}."
+                    ),
+                    tr=(
+                        f"Altyazılar {_language_name(asked)} değil, {_language_name(rendered)} "
+                        "olarak çıktı."
+                    ),
+                )
+            )
+        else:
+            done.append(
+                say(
+                    en=f"The captions are in {_language_name(rendered)}.",
+                    tr=f"Altyazılar {_language_name(rendered)}.",
+                )
+            )
+    if _wants_word_captions(req) and facts.caption_style not in {"karaoke", "kinetic"}:
+        misses.append(
+            say(
+                en="Captions are on as full sentences, not word by word.",
+                tr="Altyazılar kelime kelime değil, tam cümleler olarak açık.",
+            )
+        )
+    names = _spelled_names(req)
+    if _asks_spelling(req):
+        if not names:
+            unsure.append(
+                say(
+                    en="I couldn't tell which words to check the spelling of.",
+                    tr="Yazımını kontrol edeceğim kelimeleri ayırt edemedim.",
+                )
+            )
+        else:
+            captions = " ".join(lines)
+            turkish = rendered == "tr" or (not rendered and bool(re.search("[ıİşŞğĞ]", captions)))
+            spelled: list[str] = []
+            wrong: list[tuple[str, str]] = []
+            absent: list[str] = []
+            for name in names:
+                exact, other = _caption_spelling(name, captions, turkish=turkish)
+                if other is not None:
+                    wrong.append((name, other))
+                elif exact:
+                    spelled.append(name)
+                else:
+                    absent.append(name)
+            if wrong:
+                misses.append(
+                    say(
+                        en="The captions write "
+                        + ", ".join(f'"{other}" for {name}' for name, other in wrong)
+                        + ". You can fix that in the editor.",
+                        tr="Altyazılarda "
+                        + ", ".join(f'{name} yerine "{other}"' for name, other in wrong)
+                        + " yazıyor. Bunu editörde düzeltebilirsin.",
+                    )
+                )
+            if absent:
+                one = len(absent) == 1
+                misses.append(
+                    say(
+                        en=(
+                            f"{_and_names(absent)} {'doesn' if one else 'don'}'t appear in "
+                            f"the captions, so I couldn't check {'its' if one else 'their'} "
+                            "spelling."
+                        ),
+                        tr=(
+                            f"Altyazılarda {_and_names(absent)} geçmiyor, o yüzden "
+                            f"{'yazımını' if one else 'yazımlarını'} kontrol edemedim."
+                        ),
+                    )
+                )
+            if spelled:
+                one = len(spelled) == 1
+                done.append(
+                    say(
+                        en=(
+                            f"{_and_names(spelled)} {'is' if one else 'are'} spelled as you "
+                            f"wrote {'it' if one else 'them'}."
+                        ),
+                        tr=f"{_and_names(spelled)} yazdığın gibi yazılmış.",
+                    )
+                )
+    if misses:
+        return _receipt(req, "partial", " ".join([*misses, *unsure, *done]))
+    if unsure:
+        return _receipt(req, "partial", " ".join([*unsure, *done]), verification="unchecked")
+    return _receipt(req, "met", " ".join(done) or None)
+
+
 _TITLE_SOURCES_THE_CREATOR_OWNS = frozenset({"creator", "brief"})
 
 
@@ -3153,6 +3588,8 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _check_reaction_beats(req, facts)
     elif req.kind in _BEAT_KINDS and (_wants_bed_under_voice(req) or _wants_bed_muted(req)):
         return _check_voice_bed(req, facts)
+    if _judges_caption_words(req, facts):  # KRI-549: language / names on a finished render
+        return _check_caption_words(req, facts)
     if _wants_captions(req):
         return _check_captions(req, facts)
     return _receipt(req, "partial", _NO_CHECKER)
@@ -3239,6 +3676,40 @@ def _settled_by_narrated_render(req: BriefRequirement, strategy: Mapping[str, An
     return req.kind == "style" and asks_caption_language(req)
 
 
+# KRI-549: formats the phone Talking writer (`_run_phone_subtitled_job`) renders when the
+# creator's own speech is the spine (a self-narrated Voiceover item lands there too).
+_PHONE_CAPTION_FORMATS = frozenset({"subtitled", "talking_head", *NARRATED_EDIT_FORMATS})
+
+
+def defers_caption_words_to_phone_render(
+    *,
+    creator_id: object,
+    edit_format: object,
+    audio_strategy: object,
+    clip_paths: Iterable[object] = (),
+) -> bool:
+    """True when this draft renders through the phone Talking writer (KRI-549).
+
+    That writer persists every caption line and the captions' language on the variant, so
+    the render-ready review judges a caption-language or name-spelling ask a text-free draft
+    cannot. Mirrors the dispatch gate: phone clips, an enrolled account, phone `subtitled`
+    rendering on, and no voiceover lane (a recorded voiceover goes to the Voiceover writer).
+    A draft the gate then refuses never renders, so leaving the ask to the render costs
+    nothing there.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
+    from app.services.phone_rollout import phone_render_supported_formats  # noqa: PLC0415
+
+    return bool(
+        str(edit_format or "") in _PHONE_CAPTION_FORMATS
+        and str(audio_strategy or "") != "voiceover"
+        and any(is_analysis_proxy_path(str(path)) for path in clip_paths or ())
+        and settings.phone_rendering_for(creator_id)
+        and "subtitled" in phone_render_supported_formats()
+    )
+
+
 def requirements_to_check_at_draft(
     requirements: Iterable[BriefRequirement],
     *,
@@ -3253,7 +3724,8 @@ def requirements_to_check_at_draft(
     `timing`) it is left out, so the draft reply is the plain summary instead of a
     premature failure notice; the render's own receipts (met / partial / not possible,
     plus guessed names) follow. A phone Voiceover draft likewise leaves its first/last
-    order, clip-timing and caption-language asks to the render's record (KRI-533).
+    order, clip-timing and caption-language asks to the render's record (KRI-533), and a
+    phone Talking draft its caption-language / name-spelling asks (KRI-549).
     Otherwise this is the unchanged, full list.
     """
     strategy = strategy or {}
@@ -3271,11 +3743,18 @@ def requirements_to_check_at_draft(
         audio_strategy=strategy.get("audio_strategy"),
         clip_paths=clip_paths,
     )
+    phone_captions = defers_caption_words_to_phone_render(
+        creator_id=creator_id,
+        edit_format=edit_format,
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=clip_paths,
+    )
     return [
         req
         for req in requirements
         if not (defers and req.kind in UNIFIED_SETTLED_KINDS)
         and not (narrated and _settled_by_narrated_render(req, strategy))
+        and not (phone_captions and _wants_captions(req) and _caption_words_ask(req))
     ]
 
 
@@ -3516,6 +3995,7 @@ __all__ = [
     "NARRATED_ALIGNMENT_FIELD",
     "NarratedStepFact",
     "asks_caption_language",
+    "defers_caption_words_to_phone_render",
     "defers_to_narrated_render",
     "defers_to_unified_montage",
     "requirements_to_check_at_draft",
