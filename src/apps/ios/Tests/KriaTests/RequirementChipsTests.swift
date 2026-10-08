@@ -22,6 +22,23 @@ final class RequirementChipsTests: XCTestCase {
         XCTAssertEqual(plain?.inferredLabels.first?.guessSentence, "I guessed Old Lighthouse")
     }
 
+    /// KRI-529: "still needs an output check" is not a half-finished result, so it must not
+    /// decode as one that draws the yellow "partly done" chip.
+    func testUncheckedReceiptsAreMarkedAndLegacyReceiptsAreNot() {
+        func item(_ extra: [String: JSONValue]) -> RequirementReceiptItem? {
+            RequirementReceiptItem(json: receipt(["requirement_id": .string("r1")].merging(extra) { $1 }))
+        }
+        XCTAssertEqual(item(["status": .string("partial"), "verification": .string("unchecked")])?.isUnchecked, true)
+        XCTAssertEqual(item(["status": .string("partial"), "verification": .string("checked")])?.isUnchecked, false)
+        XCTAssertEqual(item(["status": .string("partial")])?.isUnchecked, false, "Legacy receipts have no verification")
+        XCTAssertEqual(item(["status": .string("partial"), "verification": .string("from-the-future")])?.isUnchecked, false)
+        XCTAssertEqual(
+            item(["status": .string("not_possible"), "verification": .string("unchecked")])?.isUnchecked, false,
+            "An impossible requirement stays a failure"
+        )
+        XCTAssertEqual(item(["status": .string("partial"), "verification": .string("unchecked")])?.outcome, .partial)
+    }
+
     func testMalformedReceiptsAreSkippedNotFatal() {
         XCTAssertNil(RequirementReceiptItem(json: .string("nope")))
         XCTAssertNil(RequirementReceiptItem(json: receipt(["status": .string("met")])))

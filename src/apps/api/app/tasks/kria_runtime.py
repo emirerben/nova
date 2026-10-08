@@ -869,7 +869,14 @@ def _complete_draft_turn(
                         summary=arguments.summary,
                         notices=planned.policy_notices,
                     )
-        if settings.brief_binding_for(thread.creator_id) and brief is not None:
+        # KRI-529: list the untouched requirements only when a NEW cut is drafted (the
+        # approval moment). An editor turn reports on what it was asked, instead of a
+        # fresh "still needs an output check" chip for every earlier requirement.
+        if (
+            settings.brief_binding_for(thread.creator_id)
+            and brief is not None
+            and apply_intent.tool_name == "draft.apply_strategy"
+        ):
             from app.kria.contracts import RequirementReceipt  # noqa: PLC0415
 
             checked_ids = {receipt["requirement_id"] for receipt in requirement_receipts}

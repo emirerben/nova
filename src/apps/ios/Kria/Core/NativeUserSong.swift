@@ -68,6 +68,29 @@ struct NativeUserSong: Equatable, Sendable {
     }
 }
 
+/// Keeps a lip-sync song on the singer when the creator trims the head of the first cut.
+///
+/// A lip-sync take sits at `song_time = delta + source_time`. The recipe's song clip starts at
+/// `window_start`, which the server derived from the FIRST cut (`source_start - output_start == window - delta`).
+/// Pulling that cut's head earlier or later moves its source start but not the recipe's song start, so the
+/// singer drifted off the song by exactly the trim (founder export, 0.3 s trim). The song start therefore
+/// follows the first cut: `start' = start + (first.source_start - saved first.source_start)`, both cuts
+/// sitting at output 0. The server applies the same rule on Save (`guided_story.compile_guided_runtime_plan`).
+enum NativeLipsyncSongAnchor {
+    /// Both sides quantize cut sources to the editor frame clock (1/30 s); a smaller move is rounding noise
+    /// and leaves the song where the server pinned it.
+    static let frameTolerance = 1.0 / 30.0 + 1e-6
+
+    /// Seconds to add to the recipe song start. Zero unless the same source still opens the video and its
+    /// head moved by more than one editor frame.
+    static func startShift(savedClipIndex: Int?, savedInS: Double?, currentClipIndex: Int?, currentInS: Double?) -> Double {
+        guard let savedClipIndex, let savedInS, let currentClipIndex, let currentInS,
+              savedClipIndex == currentClipIndex, savedInS.isFinite, currentInS.isFinite else { return 0 }
+        let shift = currentInS - savedInS
+        return abs(shift) > frameTolerance ? shift : 0
+    }
+}
+
 /// How the pinned device recipe plays the song under the timeline: the `song`
 /// audio track's clip. It is the playback truth for the live preview, and the
 /// only source of the row when the server predates `user_song`.

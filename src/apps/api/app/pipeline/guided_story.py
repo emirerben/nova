@@ -3207,6 +3207,28 @@ def compile_guided_runtime_plan(
             # re-windows the song from the SAME start (the per-take deltas are untouched;
             # the song stays the master clock). Always recomputed from the start and the NEW
             # length, never from the previous window end.
+            opener = (
+                min(moments, key=lambda row: float(row.get("output_start_s") or 0.0))
+                if moments
+                else None
+            )
+            if (
+                song_row.get("mode") == "lipsync"
+                and opener is not None
+                and canonical.story_timeline
+                and str(opener.get("media_id")) == str(canonical.story_timeline[0].media_id)
+            ):
+                # Trimming the head of the opening cut must carry the song with it, or the
+                # singer drifts off the audio by the trim (job 5a7f6c88: 0.3 s). Only the take
+                # the plan opened with can do this; a reorder keeps the pinned window and is
+                # refused by the take resync as before.
+                from app.pipeline.lipsync_montage import (  # noqa: PLC0415
+                    window_start_for_first_cut_head,
+                )
+
+                head_start = window_start_for_first_cut_head(song_row, moments)
+                if head_start is not None:
+                    song_row["window_start_s"] = head_start
             song_duration_s = float(song_row["duration_s"])
             window_end = round(
                 float(song_row["window_start_s"]) + float(runtime_payload["resolved_duration_s"]),

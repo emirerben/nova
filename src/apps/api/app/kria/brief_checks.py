@@ -1426,6 +1426,17 @@ _SPOKEN_CUE_RE = re.compile(
     r"|\bat (the |each |every )?(exact |spoken |specific )?words?\b|\bword[- ]triggered\b"
     r"|dedi[ğg]i[mn]de|deyince|denince|dendi[ğg]inde|s[öo]yledi[ğg]i[mn]de|bahsetti[ğg]i[mn]de"
     r"|ge[çc]ti[ğg]i[mn]de|ge[çc]ince"
+    # KRI-540: the passive / spoken-word forms the Kadıköy brief used ("'İlk durak'
+    # dendiğinde", "her 'kahve' kelimesinde"). Written against `_fold` output
+    # (ı -> i), tolerant of ASCII-typed ğ/ç/ş/ö/ü. Turkish "every X" ("her 'X'de",
+    # "her X'te") REQUIRES a quote or apostrophe suffix so English "her" never matches.
+    r"|\b(?:dend[ıi][ğg]inde|denince|denild[ıi][ğg]inde|derken|ded[ıi][ğg]inde"
+    r"|s[öo]ylend[ıi][ğg]inde|s[öo]yleyince|ge[çc]t[ıi][ğg]inde|ge[çc]ince|ge[çc]erken"
+    r"|duyuld[uü][ğg]unda|duyunca)\b"
+    r"|\bkelimesi(?:nde|ni)\b|\bs[öo]zc[üu][ğg][üu]nde\b|\bs[öo]z[üu]nde\b"
+    r"|\bher\s+[\"'\u201c\u201d\u2018\u2019\u00ab\u00bb][^\"'\u201c\u201d\u2018\u2019\u00ab\u00bb]{1,60}"
+    r"[\"'\u201c\u201d\u2018\u2019\u00ab\u00bb](?:d[ea]|t[ea])\b"
+    r"|\bher\s+[^\s\"'\u201c\u201d\u2018\u2019\u00ab\u00bb]{1,40}['\u2019](?:d[ea]|t[ea])\b"
 )
 _BEAT_CUE_RE = re.compile(
     rf"{_SPOKEN_CUE_RE.pattern}|\bpop(s|ping)?[- ]?(up|in|ups|ins)\b|\b(sticker|stamp)s?\b"
@@ -1461,7 +1472,7 @@ _CLOSING_RE = re.compile(
     r"|\bbitir|\bkapan[iı]ş"
 )
 _SOUND_RE = re.compile(
-    r"\b(sound|sounds|sfx|buzzer|ding|beep|whoosh|swoosh|boing|horn|applause)\b|\bses\b|\befekt"
+    r"\b(sound|sounds|sfx|buzzer|ding|beep|whoosh|swoosh|boing|horn|applause)\b|\bses(?:i|ini|iyle|ler|leri|lerini)?\b|\befekt"
 )
 _VISUAL_RE = re.compile(
     r"\b(sticker|stamp|badge|photo|picture|image|pic|flag|logo|emoji)s?\b"
@@ -1654,6 +1665,8 @@ _TIMING_POP_IN_RE = re.compile(
     r"|\b(?:show|shows|put|puts|pop|pops|display|displays|flash|flashes|overlay|overlays"
     r"|add|adds|play|plays|bring|brings|insert|inserts|place|places)\b"
     r"|\bg[öo]rsel|\bvideo|\bkli[pb]|\bg[öo]ster|\b[çc][ıi]k(?:s[ıi]n|ar|)\b|\bekle|\bkoy"
+    # KRI-540 Turkish sound beats: "zil çal" (ring a bell), "ses çalsın" (play a sound).
+    r"|\bzil\b|\b[çc]al(?:s[ıi]n)?\b|\bduyulsun\b"
 )
 # Cut and edit verbs: a sentence that has one is an edit instruction, not a pop-in.
 _TIMING_CUT_RE = re.compile(

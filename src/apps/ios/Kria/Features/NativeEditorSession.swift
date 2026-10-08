@@ -452,10 +452,25 @@ struct NativeEditorTemporaryVideo {
     /// the same values the server writes into the recipe on Save. Nil after Remove.
     private var effectiveSongBed: NativeEditorSongBed? {
         guard let bed = deviceSongBed, !userSongRemoved else { return nil }
-        guard let edit = effectiveUserSongState else { return bed }
-        return NativeEditorSongBed(assetID: bed.assetID, sourceStart: edit.windowStartS ?? bed.sourceStart,
+        let shift = lipsyncSongStartShift
+        guard let edit = effectiveUserSongState else {
+            guard shift != 0 else { return bed }
+            return NativeEditorSongBed(assetID: bed.assetID, sourceStart: max(0, bed.sourceStart + shift),
+                                       sourceDuration: bed.sourceDuration, volume: bed.volume,
+                                       fadeIn: bed.fadeIn, fadeOut: bed.fadeOut)
+        }
+        return NativeEditorSongBed(assetID: bed.assetID, sourceStart: max(0, (edit.windowStartS ?? bed.sourceStart) + shift),
                                    sourceDuration: bed.sourceDuration, volume: edit.volume ?? bed.volume,
                                    fadeIn: bed.fadeIn, fadeOut: bed.fadeOut)
+    }
+
+    /// Lip-sync only: how far the first cut's head moved since the last Save (see `NativeLipsyncSongAnchor`).
+    private var lipsyncSongStartShift: Double {
+        guard baseUserSong?.mode == .lipsync else { return 0 }
+        func head(_ document: EditorDocument) -> EditorTimelineSlot? { document.clips.first { !$0.removed } }
+        let saved = head(cleanDocument), current = head(document)
+        return NativeLipsyncSongAnchor.startShift(savedClipIndex: saved?.clipIndex, savedInS: saved?.inS,
+                                                  currentClipIndex: current?.clipIndex, currentInS: current?.inS)
     }
     /// The Sounds-tab controls for the song, nil for a server that sends no `user_song`.
     var yourSongControls: NativeEditorYourSongControls? {
@@ -740,6 +755,15 @@ struct NativeEditorTemporaryVideo {
     private var submittedEditorStates: [String: SubmittedEditorState] = [:]
     private var submittedEditorStateOrder: [String] = []
     private static let submittedEditorStateLimit = 8
+
+    /// `exportEditorState` after staging any chat draft the editor has not shown yet (KRI-529).
+    /// The server treats this state as authoritative and ignores its own head draft, so a state
+    /// exported before the previous chat edit was staged silently drops that edit. The sync is
+    /// best-effort (it retries internally and never throws), so it can never block a send.
+    func exportEditorStateSyncingDraft(maxBytes: Int? = nil) async -> EditorStateRequest? {
+        await synchronizePromptRevision()
+        return exportEditorState(maxBytes: maxBytes)
+    }
 
     /// The editor's current UNSAVED state for a chat turn, or nil when it cannot be
     /// sent (not loaded, no baseline generation, or over `maxBytes`) and the caller
@@ -1619,6 +1643,26 @@ struct NativeEditorTemporaryVideo {
         if let target = project.activeJobID, let jobID, target != jobID { return true }
         guard let loadedServerRevision else { return false }
         return loadedServerRevision != project.serverRevision
+    }
+
+    /// KRI-529: reopen an already-loaded editor after chat turns WITHOUT a full reload.
+    ///
+    /// Every chat turn bumps the thread revision, so `needsReload` is true on each reopen and
+    /// the full `load` ran: loading state, the OLD rendered video, then the chat edit a few
+    /// seconds later, and any unsaved local edit reset. When the rendered variant is still the
+    /// generation this editor was built from, nothing was rendered in the meantime: stage the
+    /// newest chat draft in place instead. A different job, a different variant or a newer
+    /// render returns false, and the caller keeps the full reload (which swaps the video).
+    func reconcileOnOpen(project: ProjectSummary, api: any KriaAPIClient) async -> Bool {
+        guard loadState == .loaded, !isSaving, project.runtimeVersion == 2, conversationRuntimeVersion == 2,
+              let jobID, let variantKey,
+              project.activeJobID.map({ $0 == jobID }) ?? true,
+              project.outputVariantID.map({ $0 == variantKey }) ?? true,
+              let current = try? await api.editorVariant(jobID: jobID, variantID: variantKey),
+              variantUnchanged(current) else { return false }
+        loadedServerRevision = project.serverRevision
+        await synchronizePromptRevision()
+        return true
     }
 
     func load(project: ProjectSummary, api: any KriaAPIClient) async {

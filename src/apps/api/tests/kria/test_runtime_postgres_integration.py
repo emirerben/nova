@@ -2438,6 +2438,226 @@ async def test_editor_ops_turn_receipts_cover_only_this_turns_requirements(
         await async_engine.dispose()
 
 
+def _pinned_rows() -> list[dict]:
+    """The two bottom-left pinned texts of the Lisbon thread (KRI-529), stacked."""
+    return [
+        {
+            "id": f"guided-pinned-{index}",
+            "text": text,
+            "start_s": 0.0,
+            "end_s": 9.0,
+            "role": "generative_intro",
+            "font_family": "Playfair Display",
+            "size_px": 52,
+            "color": "#FFFFFF",
+            "effect": "static",
+            "position": "custom",
+            "alignment": "left",
+            "x_frac": 0.0856,
+            "y_frac": y,
+        }
+        for index, (text, y) in enumerate((("Must visit spots in Lisbon", 0.84), ("Part 1", 0.91)))
+    ]
+
+
+@pytest.mark.asyncio
+async def test_kri529_lisbon_editor_turns_scope_receipts_and_keep_each_texts_height(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-529, replayed through the real worker with the brief binding ON (the founder's
+    cohort): an untouched earlier requirement gets no "still needs an output check" chip,
+    a style ask is receipted alone, and "left-align them together" moves only x."""
+    from app.kria.brief import BriefRequirement
+
+    user_id, thread_id, session_id = _seed_runtime_project()
+    job_id = uuid.uuid4()
+    pinned = [row["id"] for row in _pinned_rows()]
+    with sync_session() as db:
+        session = db.get(CreatorAgentSession, session_id, with_for_update=True)
+        item = db.get(PlanItem, session.plan_item_id, with_for_update=True)
+        db.add(
+            Job(
+                id=job_id,
+                user_id=user_id,
+                status="variants_ready",
+                mode="generative",
+                raw_storage_path="",
+                selected_platforms=["tiktok"],
+                content_plan_item_id=item.id,
+                content_plan_ownership_epoch=0,
+                all_candidates={"clip_paths": ["users/test/lisbon.mp4"]},
+                assembly_plan={
+                    "variants": [
+                        {
+                            "variant_id": "original_text",
+                            "resolved_archetype": "montage",
+                            "render_status": "ready",
+                            "render_generation_id": "generation-1",
+                            "render_finished_at": "2026-10-08T08:00:00Z",
+                            "video_path": "generative-jobs/test/output.mp4",
+                            "base_video_path": "generative-jobs/test/base.mp4",
+                            "text_elements": _pinned_rows(),
+                        }
+                    ]
+                },
+            )
+        )
+        db.flush()
+        item.current_job_id = job_id
+        session.target_job_id = job_id
+        session.target_variant_id = "original_text"
+        session.target_generation_id = "generation-1"
+        session.manifest_hash = "a" * 64
+        earlier = BriefRequirement(
+            id="r1",
+            kind="text",
+            scope="global",
+            description="The location name stays the whole video",
+            source_turn_id=None,
+        )
+        db.add(
+            CreativeBriefVersion(
+                thread_id=thread_id,
+                version=1,
+                requirements=[earlier.model_dump(mode="json")],
+                source_turn_id=None,
+            )
+        )
+        db.commit()
+
+    plans = iter(
+        [
+            (
+                [
+                    {
+                        "op": "patch_text",
+                        "selector": {"ids": pinned},
+                        "target_ids": pinned,
+                        "expected_count": len(pinned),
+                        "patch": {"animation_phases": {"entrance": "fade"}},
+                    }
+                ],
+                BriefUpdate(
+                    kind="style", scope="global", description="Add fade-in animation to all of them"
+                ),
+            ),
+            (
+                [
+                    {
+                        "op": "patch_text",
+                        "selector": {"ids": pinned},
+                        "target_ids": pinned,
+                        "expected_count": len(pinned),
+                        # The model's x-only patch: it used to default y to the middle.
+                        "patch": {"position": "custom", "alignment": "left", "x_frac": 0.08},
+                    }
+                ],
+                BriefUpdate(
+                    kind="style",
+                    scope="global",
+                    description="Left-align the two bottom-left texts together",
+                ),
+            ),
+        ]
+    )
+
+    async def _planned(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        ops, update = next(plans)
+        return PlannedKriaTurn(
+            plan=adapt_editor_action(reply="Updated your edit.", request_render=False, ops=ops),
+            manifest_hash="a" * 64,
+            context_hash="b" * 64,
+            brief_updates=(update,),
+            brief_route="editor_ops",
+            brief_clip_ids=("clip-1",),
+        )
+
+    async def _turn(message: str, editor_state=None):  # noqa: ANN001, ANN202
+        async with AsyncSessionLocal() as db:
+            revision = (
+                await db.execute(
+                    select(CreationThread.revision).where(CreationThread.id == thread_id)
+                )
+            ).scalar_one()
+            accepted, _ = await submit_turn(
+                db,
+                thread_id=thread_id,
+                creator_id=user_id,
+                body=SubmitTurnBody(
+                    message=message,
+                    client_event_id=f"kri529-{uuid.uuid4().hex}",
+                    expected_thread_revision=revision,
+                    editor_state=editor_state,
+                ),
+            )
+        result = await asyncio.to_thread(run_kria_turn.run, accepted.turn_id)
+        assert result["status"] == "completed"
+        with sync_session() as db:
+            event = (
+                db.execute(
+                    select(CreationThreadEvent)
+                    .where(
+                        CreationThreadEvent.thread_id == thread_id,
+                        CreationThreadEvent.event_type == "draft_applied",
+                    )
+                    .order_by(CreationThreadEvent.sequence.desc())
+                )
+                .scalars()
+                .first()
+            )
+            return event.payload, event.content
+
+    monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
+    monkeypatch.setattr(settings, "kria_creative_brief_enabled", True)
+    monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
+    monkeypatch.setattr(settings, "kria_editor_state_turns_enabled", True)
+    monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planned)
+    try:
+        payload, content = await _turn("Add fade-in animation to all of them")
+        receipts = {r["requirement_id"]: r for r in payload["requirement_receipts"]}
+        # r1 is an earlier requirement: no "still needs an output check" chip for it.
+        assert set(receipts) == {"r2"}
+        # KRI-524: a changed text lane does not prove a style ask, so it stays honestly
+        # unchecked (it is not claimed "met"), but it is still just THIS turn's receipt.
+        assert receipts["r2"]["verification"] == "unchecked"
+        assert "output check" not in content
+
+        # The creator's unsaved manual edit (a recolour) rides along as client state.
+        manual = _pinned_rows()
+        for row in manual:
+            row["animation_phases"] = {"entrance": "fade", "exit": "none", "loop": "none"}
+        manual[1]["color"] = "#FFD60A"
+        payload, content = await _turn(
+            "Left-align the two bottom-left texts together",
+            editor_state={
+                "base_generation": "generation-1",
+                "client_state_id": "cs-lisbon-1",
+                "lanes": {"text_elements": manual},
+            },
+        )
+        receipts = {r["requirement_id"]: r for r in payload["requirement_receipts"]}
+        assert set(receipts) == {"r3"}
+        assert receipts["r3"]["verification"] == "unchecked"
+        assert "output check" not in content
+        with sync_session() as db:
+            head = db.execute(
+                select(CreatorEditDraft).where(
+                    CreatorEditDraft.variant_key == "original_text",
+                    CreatorEditDraft.is_head.is_(True),
+                    CreatorEditDraft.item_id
+                    == db.get(CreatorAgentSession, session_id).plan_item_id,
+                )
+            ).scalar_one()
+            rows = {r["id"]: r for r in head.snapshot_json["editor_payload"]["text_elements"]}
+        assert {rows[i]["x_frac"] for i in pinned} == {0.08}
+        assert {rows[i]["alignment"] for i in pinned} == {"left"}
+        assert [rows[i]["y_frac"] for i in pinned] == [0.84, 0.91]  # not dragged to 0.5
+        assert rows[pinned[1]]["color"] == "#FFD60A"  # the manual edit survived the turn
+        assert rows[pinned[0]]["animation_phases"]["entrance"] == "fade"
+    finally:
+        await async_engine.dispose()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "message",
