@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.181.0] - 2026-10-08
+
+### Fixed
+- fix(kria): calmer reply for applied edits, serve single text asks when extraction fails, no stale video on first open (KRI-534, KRI-535, KRI-536) (#1498) <!-- release-pr: 1498 -->
+
 ## [0.78.180.0] - 2026-10-08
 
 ### Changed
