@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.172.0] - 2026-10-08
+
+### Changed
+- fix(lipsync): the song starts where the plan says (precise MP3 seek + song start follows a trimmed first cut) (#1486) <!-- release-pr: 1486 -->
+
 ## [0.78.171.0] - 2026-10-08
 
 ### Changed
