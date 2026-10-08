@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.183.0] - 2026-10-08
+
+### Added
+- feat(kria): verify style asks from structured intent (KRI-543) (#1500) <!-- release-pr: 1500 -->
+
 ## [0.78.182.0] - 2026-10-08
 
 ### Changed

@@ -62,6 +62,25 @@ ones, which put a yellow chip on every unrelated requirement after each chat edi
 iOS draws `verification == "unchecked"` as a neutral "Not checked yet" chip, never
 the yellow "Partly done" one (this also covers events stored before the change).
 
+## Checking style asks (KRI-543)
+
+A `style` requirement about existing text can carry `facts.style_intent`, written by the
+brief extractor (prompt v5) only for what the creator named:
+`{"set": [{"field", "value"}], "target"?: "all_text" | "title" | "labels"}`.
+
+- Fields and values are a closed vocabulary that mirrors `TextElement`: `entrance`
+  (none/fade/pop/slide/typewriter), `alignment`, `text_case`, `font_family`, and a literal
+  `#RRGGBB` `color`. `brief.normalize_style_intent` validates it; a malformed intent is
+  dropped (the requirement stays unchecked), never a schema error. It is not a sticky fact.
+- `_check_style` compares it with the saved non-caption text rows (`PlanFacts.text_styles`,
+  typed title/label/text by the editor's own `classify`). All eligible rows hold every value
+  -> `met`. An explicit `target` with a mismatch -> a judged `partial`. Anything unknown
+  (unset font/color, no matching rows, a draft turn) or a mismatch with no `target` ("…to all
+  of them") stays unchecked, so "some text field changed" still never counts as met (KRI-524).
+- Measure the green rate after deploy: style receipts with `verification == "checked"` versus
+  `unchecked` in `scripts/admin.py --prod GET creation-threads/<id>/events`. Invest in target
+  resolution only if the anaphoric asks dominate.
+
 ## Editor-turn reply and extraction failures (KRI-534, KRI-536)
 
 - An editor-operations turn whose only open items are requirements no checker can
