@@ -829,6 +829,8 @@ struct NativeEditorView: View {
         if let libraryJobID {
             await session.load(libraryJobID: libraryJobID, api: model.api)
         } else {
+            // KRI-529: a thread revision bump alone (a chat turn) must not reload the editor.
+            if await session.reconcileOnOpen(project: project, api: model.api) { return }
             await session.load(project: project, api: model.api)
         }
         await session.refreshDeviceRender()

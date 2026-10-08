@@ -461,9 +461,9 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"  # "gemini-2.5-flash" | "gemini-2.5-pro"
     # Editor agents intentionally bypass the fleet-wide `gemini_model` setting:
-    # the chat executor optimizes for latency while the proactive director
-    # optimizes for editorial judgment. Keep these independently reversible.
-    edit_copilot_model: str = "gemini-3.6-flash"
+    # both need to compose edits while preserving accumulated constraints.
+    # Keep the interactive executor and proactive director independently reversible.
+    edit_copilot_model: str = "gemini-3.1-pro-preview"
     edit_director_model: str = "gemini-3.1-pro-preview"
     # Eval-only comparison model. It is never contacted by the production
     # Director endpoint, whose explicit review is capped at one paid request.

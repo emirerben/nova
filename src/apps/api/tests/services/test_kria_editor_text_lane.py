@@ -405,6 +405,65 @@ def test_patch_text_rejects_unknown_fields_and_bad_values() -> None:
         assert out.ops == [], patch
 
 
+def _stacked_bottom_left():
+    """Two labels stacked bottom-left at their own heights (KRI-529 Lisbon shape)."""
+    job, variant = _job_and_variant()
+    labels = [r for r in variant["text_elements"] if r["id"].startswith("clip-label-")][:2]
+    for row, y in zip(labels, (0.84, 0.91), strict=True):
+        row.update(position="custom", alignment="left", x_frac=0.0856, y_frac=y)
+    snapshot = build_editor_snapshot(job, variant, clip_context=_context(job, variant))
+    return job, variant, snapshot, labels
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"alignment": "left", "x_frac": 0.08},  # no position word: used to default y to 0.5
+        {"position": "custom", "alignment": "left", "x_frac": 0.08},
+    ],
+)
+def test_aligning_texts_on_x_keeps_each_texts_own_height(patch: dict) -> None:
+    """KRI-529: "left-align the two bottom-left texts together" sent both to mid-screen."""
+    job, variant, snapshot, labels = _stacked_bottom_left()
+    ids = [row["id"] for row in labels]
+    output = _ops(
+        snapshot,
+        [{"op": "patch_text", "selector": {"ids": ids}, "patch": patch}],
+        "left-align the two bottom-left texts together",
+    )
+    assert output.outcome == "proposed", output.rejection_reasons
+    assert "y_frac" not in output.ops[0]["patch"]
+    saved = {row["id"]: row for row in _saved_text(compile_editor_ops(job, variant, output.ops))}
+    assert [saved[i]["y_frac"] for i in ids] == [0.84, 0.91]
+    assert {saved[i]["x_frac"] for i in ids} == {0.08}
+    assert {saved[i]["alignment"] for i in ids} == {"left"}
+
+
+def test_x_only_patch_on_a_named_position_row_keeps_that_height() -> None:
+    job, variant = _job_and_variant()
+    label = next(r for r in variant["text_elements"] if r["id"].startswith("clip-label-"))
+    label.pop("x_frac", None)
+    label.pop("y_frac", None)
+    label["position"] = "bottom"
+    snapshot = build_editor_snapshot(job, variant, clip_context=_context(job, variant))
+    output = _ops(
+        snapshot,
+        [{"op": "patch_text", "selector": {"ids": [label["id"]]}, "patch": {"x_frac": 0.1}}],
+    )
+    saved = {row["id"]: row for row in _saved_text(compile_editor_ops(job, variant, output.ops))}
+    assert (saved[label["id"]]["x_frac"], saved[label["id"]]["y_frac"]) == (0.1, 0.85)
+
+
+def test_named_position_with_a_fraction_still_defaults_the_other_axis() -> None:
+    """The explicit named spot wins: {"position":"bottom","x_frac":0.2} is (0.2, 0.85)."""
+    from app.agents.edit_copilot import _resolve_placement
+
+    named = _resolve_placement({"position": "bottom", "x_frac": 0.2})
+    assert (named["position"], named["x_frac"], named["y_frac"]) == ("custom", 0.2, 0.85)
+    bare = _resolve_placement({"x_frac": 0.2})  # no named spot: one axis moves, not both
+    assert (bare["position"], bare["x_frac"], "y_frac" in bare) == ("custom", 0.2, False)
+
+
 def test_patch_text_moves_title_to_top() -> None:
     job, variant, snapshot, _ = _east_run()
     output = _ops(

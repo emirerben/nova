@@ -270,6 +270,9 @@ def _coerce_replace_text_sequence(
     ):
         state.invalid_value()
         return None
+    if len(clean_segments) == 1 and "patch" not in payload:
+        _clarify(state, "That would leave the current text unchanged as one segment.")
+        return None
     out = {
         "selector": selector,
         "segments": clean_segments,

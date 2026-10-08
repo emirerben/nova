@@ -24,7 +24,7 @@ from tests.services.test_kria_editor_ops import _job, _variant
 
 
 def test_prompt_version_pinned() -> None:
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-10-08-v74"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-10-08-v75"
 
 
 def test_op_cap_is_a_single_shared_constant() -> None:
@@ -86,8 +86,10 @@ def test_prompt_preserves_legacy_contract_and_uses_server_bound_with_marker(monk
         max_ops=edit_copilot._MAX_OPS,
     )
     assert baseline == expected
-    assert render(marked) == baseline.replace("up to 48 ops", f"up to {MAX_EDITOR_OPS} ops")
-    assert "editor_ops_version" not in baseline
+    assert render(marked) == baseline.replace(
+        "up to 48 ops", f"up to {MAX_EDITOR_OPS} ops"
+    ).replace("editor_ops_version: 1", "editor_ops_version: 2")
+    assert "editor_ops_version: 1" in baseline
     # Empty fragments: even a v2 snapshot appends nothing.
     assert edit_copilot._with_v2_fragments(baseline, marked) == baseline
     assert editor_operation_contract(plain) == editor_operation_contract(marked)

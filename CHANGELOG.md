@@ -2,6 +2,56 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.182.0] - 2026-10-08
+
+### Changed
+- fix(kria): phone Montage render-ready receipts judge order, duplicates and the closing line (KRI-546) (#1503) <!-- release-pr: 1503 -->
+
+## [0.78.181.0] - 2026-10-08
+
+### Fixed
+- fix(kria): calmer reply for applied edits, serve single text asks when extraction fails, no stale video on first open (KRI-534, KRI-535, KRI-536) (#1498) <!-- release-pr: 1498 -->
+
+## [0.78.180.0] - 2026-10-08
+
+### Changed
+- fix(kria): render byte-identical iPhone uploads once under "each video once" (KRI-544) (#1502) <!-- release-pr: 1502 -->
+
+## [0.78.179.0] - 2026-10-08
+
+### Changed
+- fix(kria): chapter-title list never becomes the montage's opening title (KRI-545) (#1501) <!-- release-pr: 1501 -->
+
+## [0.78.178.0] - 2026-10-08
+
+### Changed
+- fix(kria): judge captions and speech cleanup on a finished phone render (KRI-541) (#1495) <!-- release-pr: 1495 -->
+
+## [0.78.177.0] - 2026-10-08
+
+### Changed
+- fix(kria): judge phone Voiceover pop-in and mix asks instead of "Couldn't verify" (KRI-537) (#1494) <!-- release-pr: 1494 -->
+
+## [0.78.176.0] - 2026-10-08
+
+### Changed
+- fix(agents): retry a MAX_TOKENS Gemini 3 call once at thinking "low" instead of dead-ending the turn (KRI-542) (#1493) <!-- release-pr: 1493 -->
+
+## [0.78.175.0] - 2026-10-08
+
+### Changed
+- fix(kria): preserve intent through brief and edit planning (KRI-524) (#1496) <!-- release-pr: 1496 -->
+
+## [0.78.174.0] - 2026-10-08
+
+### Changed
+- fix(kria): Turkish beat sounds resolve and Turkish beat asks get receipts (KRI-540) (#1492) <!-- release-pr: 1492 -->
+
+## [0.78.173.0] - 2026-10-08
+
+### Fixed
+- fix(kria): scope editor-turn receipts, keep text heights on align, no reload flash (KRI-529) (#1489) <!-- release-pr: 1489 -->
+
 ## [0.78.172.0] - 2026-10-08
 
 ### Changed

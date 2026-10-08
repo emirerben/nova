@@ -15,5 +15,7 @@ Return only one JSON object with exactly one top-level key: `brief_updates`.
 Do not return an editorial plan, summary, question, or any other field. Return an
 empty list when the current message adds no requirement. Apply the existing contract
 strictly: preserve exact creator words, never invent requirements, and use stable
-target ids and expected versions only when the request unambiguously changes or removes
-an existing requirement.
+target ids only when the request unambiguously changes or removes an existing
+requirement. Do not supply `expected_version`: the server attaches concurrency
+metadata from the saved brief used for this request. Interpret the creator's
+meaning, without guessing internal revision numbers.

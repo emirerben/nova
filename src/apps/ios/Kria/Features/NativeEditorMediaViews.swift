@@ -601,7 +601,8 @@ struct NativeVideoPreview: View {
                     }
                 }
             } else if session.sourcePreviewState == .preparing {
-                ProgressView("Preparing preview")
+                // KRI-535: with an AI edit staged, say that is what is being applied.
+                ProgressView(session.hasOnlyChatStagedChanges ? "Applying your edit" : "Preparing preview")
                     .tint(.white).foregroundStyle(.white)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if case .failed(let message) = session.sourcePreviewState {
@@ -734,6 +735,11 @@ struct NativeVideoPreview: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Showing your last finished video")
                         .font(KriaFont.body(12).weight(.semibold))
+                    if session.hasOnlyChatStagedChanges {
+                        // KRI-535: without this the old video reads as "the AI did nothing".
+                        Text("This is the version before your AI edit.")
+                            .font(KriaFont.body(11))
+                    }
                     if case .failed(let message) = session.sourcePreviewState {
                         Text(message)
                             .font(KriaFont.body(11))

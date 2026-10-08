@@ -52,14 +52,98 @@ _FILLER = frozenset(
 )  # fmt: skip
 # A description containing these is a refusal, never a request.
 _REFUSAL = frozenset({"no", "not", "none", "without", "never", "don", "dont"})
+
+# KRI-540: Turkish creators describe sounds in Turkish ("küçük bir fincan sesi")
+# while the library is English-only. Everything below applies ONLY to requests
+# that read as Turkish (see ``_is_turkish``), so English requests tokenise and
+# match exactly as before. Kept apart from ``_FILLER``/``_REFUSAL``, which the
+# web picker mirrors (``test_sfx_catalog_web_parity``). All keys are ASCII-folded.
+_FILLER_TR = frozenset(
+    {
+        "ses", "sesi", "sesini", "sesiyle", "sesler", "efekt", "efekti", "efektleri",
+        "kucuk", "ufak", "minik", "kisa", "hafif", "bir", "bi", "her", "gibi", "cal",
+        "calsin", "ekle", "koy", "olsun",
+    }
+)  # fmt: skip
+_REFUSAL_TR = frozenset({"olmasin", "istemiyorum", "istemem", "kaldir", "yok", "hayir"})
+# Turkish words that are also ordinary English tokens (or too short to trust):
+# translated inside a Turkish request, but never what makes a request Turkish.
+_TR_AMBIGUOUS = frozenset({"her", "can", "cam", "bi", "koy", "cal"})
+# Turkish sound word -> the English words the library names/search terms use.
+_TR_VOCAB: dict[str, tuple[str, ...]] = {
+    "fincan": ("cup",),
+    "bardak": ("glass",),
+    "kadeh": ("glass",),
+    "cam": ("glass",),
+    "kirilma": ("break",),
+    "zil": ("bell",),
+    "can": ("bell",),  # çan
+    "alkis": ("applause",),
+    "duduk": ("whistle",),
+    "islik": ("whistle",),
+    "hakem": ("referee",),
+    "kapi": ("door",),
+    "carpma": ("slam",),
+    "tik": ("click",),
+    "tiklama": ("click",),
+    "kalabalik": ("crowd",),
+    "patlama": ("explosion",),
+    "davul": ("drum",),
+    "para": ("money",),
+    "kasa": ("cash", "register"),
+    "gulme": ("laugh",),
+    "kahkaha": ("laugh",),
+    "korna": ("horn",),
+    "kamera": ("camera",),
+    "fotograf": ("photo",),
+    "klavye": ("keyboard",),
+    "tebrik": ("win",),
+    "zafer": ("win",),
+    "yanlis": ("wrong",),
+    "dogru": ("correct",),
+    "cevap": ("answer",),
+    "kalp": ("heart",),
+    "saat": ("clock",),
+    "sayfa": ("page",),
+    "vurus": ("hit",),
+    "yumruk": ("punch",),
+    "bildirim": ("notification",),
+    "mesaj": ("message",),
+    "gol": ("goal",),
+}
+# Soft-consonant stems before a vowel suffix: düdüğü, kalabalığı, ıslığı.
+_TR_VOCAB.update(
+    {k[:-1] + "g": v for k, v in list(_TR_VOCAB.items()) if k.endswith("k") and len(k) > 2}
+)
+_TR_PHRASES: dict[tuple[str, ...], tuple[str, ...]] = {("bozuk", "para"): ("coin",)}
+# Case/possessive/plural endings after a vocabulary stem (ASCII-folded).
+_TR_SUFFIX = re.compile(
+    r"(?:l[ae]r)?(?:s?[iu]|n?[iu]n|[iu]?n[iu]|y?[ae]|[dt][ae]n?|n[dt][ae]n?"
+    r"|[iu]?yl[ae]|s[iu]yl[ae]|l[ae]|n[ae])?"
+)
 _ONE_SHOT_MAX_S = 3.0
 # Level-matched creator library first; the quiet smart-* sound-design layer
 # ("core") and untiered legacy uploads only win when nothing else fits.
 _TIER_RANK = {"library": 0, "core": 1}
 
 
+# Turkish letters folded to the ASCII the (English) library is written in.
+_TR_FOLD = str.maketrans("çğıöşü", "cgiosu")
+_TR_LETTERS = frozenset("çğıöşü")
+
+
+def _raw_words(text: object) -> list[str]:
+    """Casefolded letter/digit runs of any script (Turkish dotted İ keeps its i)."""
+    folded = str(text or "").casefold().replace("\u0307", "")
+    return re.findall(r"[^\W_]+", folded)
+
+
 def words(text: object) -> list[str]:
-    return re.findall(r"[a-z0-9]+", str(text or "").casefold())
+    """Whole-word tokens, Turkish letters folded to ASCII.
+
+    Pure-ASCII text tokenises exactly as ``[a-z0-9]+`` on the casefolded text.
+    """
+    return [w.translate(_TR_FOLD) for w in _raw_words(text)]
 
 
 def _stem(word: str) -> str:
@@ -135,7 +219,73 @@ class SfxEntry:
         )
 
 
+def _tr_stem(word: str) -> str | None:
+    """The vocabulary stem a (possibly suffixed) folded Turkish word starts with."""
+    if word in _TR_VOCAB:
+        return word
+    for end in range(len(word) - 1, 2, -1):
+        if word[:end] in _TR_VOCAB and _TR_SUFFIX.fullmatch(word[end:]):
+            return word[:end]
+    return None
+
+
+def _is_turkish(raw: Sequence[str], folded: Sequence[str]) -> bool:
+    """A Turkish letter, or an exact (unsuffixed) Turkish word, makes a request Turkish.
+
+    Suffix matching is deliberately NOT a signal here: "golden", "parade" and
+    "tiki" would otherwise read as Turkish stems with a case ending.
+    """
+    if any(_TR_LETTERS & set(w) for w in raw):
+        return True
+    for w in folded:
+        if w in _TR_AMBIGUOUS:
+            continue
+        if w in _TR_VOCAB or w in _FILLER_TR or w in _REFUSAL_TR:
+            return True
+    return False
+
+
+def is_refusal(text: object) -> bool:
+    """ "no sound" / "ses olmasın": the creator is declining a sound."""
+    raw = _raw_words(text)
+    folded = [w.translate(_TR_FOLD) for w in raw]
+    if set(folded) & _REFUSAL:
+        return True
+    return _is_turkish(raw, folded) and bool(set(folded) & _REFUSAL_TR)
+
+
+def request_words(text: object) -> list[str]:
+    """``words`` for a request: Turkish filler dropped, sound words in English."""
+    raw = _raw_words(text)
+    folded = [w.translate(_TR_FOLD) for w in raw]
+    if not _is_turkish(raw, folded):
+        return folded
+    out: list[str] = []
+    i = 0
+    while i < len(folded):
+        for phrase, english in _TR_PHRASES.items():
+            n = len(phrase)
+            window = folded[i : i + n]
+            if len(window) == n and all((_tr_stem(w) or w) == p for w, p in zip(window, phrase)):
+                out.extend(english)
+                i += n
+                break
+        else:
+            w = folded[i]
+            i += 1
+            if w in _FILLER_TR:
+                continue
+            stem = _tr_stem(w)
+            out.extend(_TR_VOCAB[stem] if stem is not None else (w,))
+    return out
+
+
 def content_words(text: object) -> list[str]:
+    return [_stem(w) for w in request_words(text) if w not in _FILLER]
+
+
+def _entry_content_words(text: object) -> list[str]:
+    """Library text is English: no Turkish vocabulary applies."""
     return [_stem(w) for w in words(text) if w not in _FILLER]
 
 
@@ -156,7 +306,7 @@ def match_score(query: object, entry: SfxEntry) -> float:
     # The first search term is the effect's primary keyword ("pop" for Soft
     # pop, "slide whistle" for Slide whistle up): a bare "a pop" / "a
     # whistle" should land on the effect that IS that sound.
-    if entry.search_terms and " ".join(content_words(entry.search_terms[0])) == joined:
+    if entry.search_terms and " ".join(_entry_content_words(entry.search_terms[0])) == joined:
         score += 1.0
     return score
 
@@ -178,7 +328,7 @@ def resolve_described_effect(entries: Iterable[SfxEntry], description: object) -
     "without") names nothing. Otherwise return None rather than guess. Ties go
     to the base variant.
     """
-    if set(words(description)) & _REFUSAL:
+    if is_refusal(description):
         return None
     wanted = set(content_words(description))
     if not wanted:

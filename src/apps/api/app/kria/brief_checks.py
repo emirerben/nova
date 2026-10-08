@@ -9,8 +9,9 @@ and never labels an unchecked ask "Partly".
 
 Checks implemented: per-clip text coverage, ordering vs the requested key,
 duration within +/-10%, literal on-screen text, "keep my whole take" on a
-single-clip subtitled edit, and word-triggered pop-ins (reaction beats) plus the
-closing shot on a phone Talking edit.
+single-clip subtitled edit, word-triggered pop-ins (reaction beats) plus the
+closing shot on a phone Talking edit, and (KRI-546) a finished phone montage's
+held closing line and repeated video files.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_route import (
     END_KEYS,
     START_KEYS,
+    chapter_list,
     first_text,
     fold_text,
     loose_text,
@@ -79,6 +81,9 @@ class BeatFact:
     trigger: str
     visual_id: str | None = None
     sound: str | None = None
+    # Seconds into the render where the pop-in shows (a rendered variant's receipt);
+    # None for a draft, which has not been laid out yet.
+    at_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -115,6 +120,20 @@ class NarratedStepFact:
     start_s: float = 0.0
     end_s: float = 0.0
     text: str = ""
+
+
+@dataclass(frozen=True)
+class ClosingSpeechFact:
+    """The spoken line a finished phone montage holds whole on its closing clip (KRI-546).
+
+    Read off the plan record (`unified_montage.closing_speech`, recorded only when the
+    creator's own "last" ask seated the clip, it speaks and the camera audio is kept) and
+    confirmed against the finished timeline: the clip is last and its cut covers the line.
+    """
+
+    media_id: str
+    start_s: float
+    end_s: float
 
 
 @dataclass(frozen=True)
@@ -178,6 +197,11 @@ class PlanFacts:
     # spoken-excerpt montage record), not a draft that has not been laid out yet. A
     # required order a rendered plan cannot show is a failure; a draft's is pending.
     rendered_output: bool = False
+    # KRI-541: True when the facts were read off a finished phone render
+    # (`plan_facts_from_phone_variant`). `editor` stays True for its text lanes, but the
+    # edit format, caption style and speech cleanup below are what the render did, so the
+    # captions and cleanup checkers judge them instead of answering "can't check".
+    rendered_variant: bool = False
     # True only where the order requirement is bound to an authority that can verify it
     # (a contract-stamped job, or a brief-binding cohort: `build_receipts` sets it from the
     # writer's binding). Legacy / unbound jobs keep the original, softer order verdicts.
@@ -203,6 +227,10 @@ class PlanFacts:
     # Whether approving this draft offers "Clean up speech" (the preflight check is
     # enforced and this project is in its cohort). None = unknown, never assumed.
     speech_cleanup_offered: bool | None = None
+    # What speech cleanup did on a rendered variant: "applied" (pauses were cut),
+    # "no_change" (it ran and found nothing to cut), "not_run" (the render kept the whole
+    # take). None = unknown or a draft.
+    speech_cleanup_outcome: str | None = None
     # The strategy's caption style ("none", "clean", "kinetic", "karaoke",
     # "editorial", "auto"); None when the draft carries no strategy.
     caption_style: str | None = None
@@ -213,6 +241,14 @@ class PlanFacts:
     reaction_beats: tuple[BeatFact, ...] | None = None
     # Triggers of beats approval drops because their photo/sticker didn't resolve.
     dropped_beat_triggers: tuple[str, ...] = ()
+    # KRI-537: triggers the render never heard in the creator's voice (a phone variant's
+    # `phone_beat_receipt.unplaced[]`), so "never said" is told apart from "no room".
+    unheard_beat_triggers: tuple[str, ...] = ()
+    # The strategy's audio strategy ("voiceover", "original_audio", ...); None = unknown.
+    audio_strategy: str | None = None
+    # How loud the footage's own sound plays under the creator's voice (0..1; 1.0 = full
+    # volume). None = unknown, never guessed.
+    voiceover_bed_level: float | None = None
     closing_requested: bool = False
     closing_visual_id: str | None = None
     closing_badge_requested: bool = False
@@ -228,6 +264,24 @@ class PlanFacts:
     # The language the rendered captions are in, and the language that was spoken.
     caption_language: str | None = None
     spoken_language: str | None = None
+    # KRI-546: a finished phone unified montage, judged from its plan record and the render
+    # together (`plan_facts_from_rendered_montage`). Only there do the closing-line and
+    # duplicate-video checks below judge anything; every other plan keeps today's answers.
+    rendered_montage: bool = False
+    # The closing clip's whole spoken line, held by the plan and confirmed on the finished
+    # timeline. None = no line was held (or the render does not show it held).
+    closing_speech: ClosingSpeechFact | None = None
+    # False when the render records that the clips' own sound was dropped; None = unknown.
+    source_audio_kept: bool | None = None
+    # Every clip the creator added to this edit (footage and Visuals), whether or not the
+    # edit used it, so "that clip isn't in the edit" is told apart from an unknown clip id.
+    source_clip_ids: tuple[str, ...] = ()
+    # The finished edit's clips (1-based, in screen order) that play the same original file
+    # (same upload fingerprint), one group per file shown more than once; and how many extra
+    # copies the creator's own uploads held. None = some clip had no fingerprint, so
+    # nothing about duplicates is claimed.
+    duplicate_clip_positions: tuple[tuple[int, ...], ...] | None = None
+    source_duplicate_copies: int | None = None
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -363,6 +417,7 @@ def plan_facts_from_strategy(
         extra["video_clip_count"] = _video_clip_count(strategy, manifest)
     edit_format = strategy.get("edit_format")
     caption_style = strategy.get("caption_style")
+    audio_strategy = strategy.get("audio_strategy")
     return PlanFacts(
         clip_ids=tuple(str(c) for c in clip_ids),
         title=str(title) if title else None,
@@ -379,6 +434,7 @@ def plan_facts_from_strategy(
         speech_cleanup_enabled=speech_cleanup_enabled,
         speech_cleanup_offered=speech_cleanup_offered,
         caption_style=str(caption_style) if caption_style else None,
+        audio_strategy=str(audio_strategy) if audio_strategy else None,
         **extra,
     )
 
@@ -765,6 +821,257 @@ def plan_facts_from_editor_payload(
         title=title,
         text_spans=tuple(text_spans),
         text_timing_incomplete=text_timing_incomplete,
+    )
+
+
+# Receipt reasons that mean the spoken trigger itself never played in the creator's voice
+# (as opposed to "heard, but no safe room to show it"): see `beat_miss_sentence`.
+_NEVER_HEARD_REASONS = frozenset({"never_heard", "after_not_heard", "no_spoken_match"})
+
+
+def _finite_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _phone_receipt_facts(receipt: object, *, timed: bool) -> dict[str, Any]:
+    """Beat and closing facts read off a variant's persisted ``phone_beat_receipt``.
+
+    ``timed`` says the receipt's ``at_s`` is on the output timeline. A Talking render remaps
+    its lanes with the cut plan but leaves the receipt on the source take's timeline, so
+    only a Voiceover render (whose timeline is the voice) can quote times.
+    """
+    # A manual lane, a missing matcher or a failed matcher says nothing about the pop-ins.
+    if not isinstance(receipt, Mapping) or receipt.get("matcher") in ("manual", "failed", None):
+        return {}
+    beats: list[BeatFact] = []
+    placed = receipt.get("placed")
+    for entry in placed if isinstance(placed, list) else []:
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("trigger"), str):
+            continue
+        at_s = _finite_number(entry.get("at_s")) if timed else None
+        beats.append(
+            BeatFact(
+                trigger=entry["trigger"],
+                visual_id=str(entry.get("visual_label") or "") or None,
+                sound=str(entry.get("sound_label") or "") or None,
+                at_s=at_s,
+            )
+        )
+    unheard: list[str] = []
+    unplaced = receipt.get("unplaced")
+    for entry in unplaced if isinstance(unplaced, list) else []:
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("trigger"), str):
+            continue
+        reason = entry.get("reason")
+        if not reason or reason in _NEVER_HEARD_REASONS:
+            unheard.append(entry["trigger"])
+    facts: dict[str, Any] = {
+        "reaction_beats_available": True,
+        "reaction_beats": tuple(beats),
+        "unheard_beat_triggers": tuple(dict.fromkeys(unheard)),
+    }
+    closing = receipt.get("closing")
+    if isinstance(closing, Mapping):
+        if closing.get("status") == "placed":
+            facts["closing_visual_id"] = str(closing.get("visual_label") or "") or "closing"
+        elif closing.get("status") == "unplaced":
+            facts["closing_requested"] = True
+        if closing.get("badge") == "placed":
+            facts["closing_badge_requested"] = True
+            facts["closing_badge_id"] = "badge"
+        elif closing.get("badge") == "unplaced":
+            facts["closing_badge_requested"] = True
+    return facts
+
+
+def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFacts:
+    """Facts off a rendered phone variant (KRI-537).
+
+    Starts from the editor-payload facts (on-screen text lanes, ``editor=True``) and adds
+    what the render itself recorded: the ``phone_beat_receipt`` (where each pop-in landed,
+    which words were never heard, the closing shot) and ``voiceover_bed_level`` (how loud
+    the footage's own sound plays under the voice). Anything the variant does not carry
+    stays unknown; nothing is guessed.
+    """
+    if not isinstance(variant, Mapping):
+        return PlanFacts()
+    base = plan_facts_from_editor_payload(variant)
+    changes = _phone_receipt_facts(
+        variant.get("phone_beat_receipt"), timed=variant.get("resolved_archetype") == "narrated"
+    )
+    bed = _finite_number(variant.get("voiceover_bed_level"))
+    if bed is not None:
+        changes["voiceover_bed_level"] = max(0.0, bed)
+        changes["audio_strategy"] = "voiceover"
+    elif variant.get("resolved_archetype") == "narrated":
+        changes["audio_strategy"] = "voiceover"
+    changes.update(_rendered_speech_facts(variant))
+    return dataclasses.replace(base, **changes) if changes else base
+
+
+# KRI-541: the speech-spined archetypes a phone render records, as the brief's edit format.
+# A multi-clip phone Talking edit keeps `resolved_archetype == "subtitled"` too.
+_RENDERED_EDIT_FORMATS = {"narrated": "narrated", "subtitled": "subtitled"}
+
+
+def _rendered_speech_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    """Edit format, caption style and speech cleanup off a rendered Voiceover/Talking variant.
+
+    Both phone writers persist ``caption_cues``, ``voiceover_caption_style`` ("sentence"
+    or "word") and, only when cleanup ran, ``silence_cut_outcome``. A device render
+    always writes its cues, so no cues there means no captions and no outcome means the
+    take was kept whole; a cloud render fills those fields later, so their absence stays
+    unknown. Any other archetype adds nothing (the checkers keep today's answers).
+    """
+    edit_format = _RENDERED_EDIT_FORMATS.get(str(variant.get("resolved_archetype") or ""))
+    if edit_format is None:
+        return {}
+    device = variant.get("render_destination") == "device"
+    facts: dict[str, Any] = {"rendered_variant": True, "edit_format": edit_format}
+    cues = variant.get("caption_cues")
+    if isinstance(cues, list) and cues:
+        facts["caption_style"] = (
+            "karaoke" if variant.get("voiceover_caption_style") == "word" else "clean"
+        )
+    elif device:
+        facts["caption_style"] = "none"
+    outcome = variant.get("silence_cut_outcome")
+    if outcome in ("applied", "no_change"):
+        facts["speech_cleanup_enabled"] = True
+        facts["speech_cleanup_outcome"] = outcome
+    elif outcome is None and device:
+        facts["speech_cleanup_enabled"] = False
+        facts["speech_cleanup_outcome"] = "not_run"
+    return facts
+
+
+# KRI-546: the order facts a unified montage's plan record holds, laid over a finished
+# variant's facts so an order ask is judged at render-ready exactly as the plan was.
+_MONTAGE_ORDER_FIELDS = (
+    "ordering_basis",
+    "ordering_fallback_clip_ids",
+    "ordering_choice",
+    "sequence_statuses",
+    "sequence_unmet",
+    "sequence_absent",
+    "sequence_spots_met",
+    "route_start",
+    "route_end",
+    "first_endpoint",
+    "last_endpoint",
+)
+# How far a finished cut may start after / end before the held line and still hold it: the
+# timeline is rounded to milliseconds and one frame at 30 fps is ~0.033 s.
+_HELD_LINE_TOLERANCE_S = 0.05
+
+
+def _rendered_clip_cuts(
+    variant: Mapping[str, Any],
+) -> list[tuple[str, float | None, float | None]]:
+    """The finished edit's main-picture cuts in screen order: (media id, source start, end)."""
+    rows = variant.get("story_timeline")
+    cuts: list[tuple[float, int, str, float | None, float | None]] = []
+    for index, row in enumerate(rows if isinstance(rows, list) else []):
+        if not isinstance(row, Mapping) or row.get("lane", "clip") != "clip":
+            continue
+        media_id = row.get("media_id")
+        if not isinstance(media_id, str) or not media_id:
+            continue
+        at = _finite_number(row.get("output_start_s"))
+        cuts.append(
+            (
+                at if at is not None else math.inf,
+                index,
+                media_id,
+                _finite_number(row.get("source_start_s")),
+                _finite_number(row.get("source_end_s")),
+            )
+        )
+    cuts.sort(key=lambda cut: (cut[0], cut[1]))
+    return [(media_id, start, end) for _at, _index, media_id, start, end in cuts]
+
+
+def _same_file_positions(
+    ids: Sequence[str], fingerprints: Mapping[str, str]
+) -> tuple[tuple[int, ...], ...] | None:
+    """1-based positions in ``ids`` that play the same original file, one group per file
+    shown more than once (two cuts of one clip count too); None when a clip is unhashed."""
+    if not ids or any(not fingerprints.get(media_id) for media_id in ids):
+        return None
+    by_file: dict[str, list[int]] = {}
+    for position, media_id in enumerate(ids, start=1):
+        by_file.setdefault(fingerprints[media_id], []).append(position)
+    return tuple(tuple(group) for group in by_file.values() if len(group) > 1)
+
+
+def _held_closing_line(
+    record: Mapping[str, Any],
+    clip_ids: Sequence[str],
+    last_cut: tuple[str, float | None, float | None] | None,
+) -> ClosingSpeechFact | None:
+    """The record's held closing line when the finished edit really ends on it, else None."""
+    speech = record.get("closing_speech")
+    if not isinstance(speech, Mapping) or not clip_ids:
+        return None
+    media_id = str(speech.get("media_id") or "")
+    start = _finite_number(speech.get("source_start_s"))
+    end = _finite_number(speech.get("source_end_s"))
+    if not media_id or start is None or end is None or end <= start or clip_ids[-1] != media_id:
+        return None
+    if last_cut is not None:
+        # A finished timeline must show the closing cut covering the whole line.
+        cut_start, cut_end = last_cut[1], last_cut[2]
+        if (
+            cut_start is None
+            or cut_end is None
+            or cut_start > start + _HELD_LINE_TOLERANCE_S
+            or cut_end < end - _HELD_LINE_TOLERANCE_S
+        ):
+            return None
+    return ClosingSpeechFact(media_id=media_id, start_s=start, end_s=end)
+
+
+def plan_facts_from_rendered_montage(
+    variant: Mapping[str, Any] | None,
+    record: Mapping[str, Any] | None,
+    *,
+    fingerprints: Mapping[str, str] | None = None,
+) -> PlanFacts:
+    """Facts off a finished phone unified montage (KRI-546).
+
+    The variant's own facts (`plan_facts_from_phone_variant`: on-screen text, length) plus
+    what only the plan record and the finished timeline together show: how the clips were
+    ordered, whether the closing clip's spoken line plays whole in its own sound, and which
+    clips came from the same original file. ``fingerprints`` maps each media id the creator
+    added to the sha256 of its original upload; without it nothing about duplicates is
+    claimed. Pass only the record of the generation this variant rendered.
+    """
+    facts = plan_facts_from_phone_variant(variant)
+    if not isinstance(variant, Mapping) or not isinstance(record, Mapping):
+        return facts
+    plan = plan_facts_from_unified_montage(record)
+    cuts = _rendered_clip_cuts(variant)
+    clip_ids = tuple(media_id for media_id, _start, _end in cuts) or plan.clip_ids
+    prints = {
+        str(media_id): str(sha)
+        for media_id, sha in (fingerprints or {}).items()
+        if isinstance(media_id, str) and media_id and isinstance(sha, str) and sha
+    }
+    kept = variant.get("source_audio_preserved")
+    return dataclasses.replace(
+        facts,
+        **{name: getattr(plan, name) for name in _MONTAGE_ORDER_FIELDS},
+        clip_ids=clip_ids,
+        rendered_output=True,
+        rendered_montage=True,
+        closing_speech=_held_closing_line(record, clip_ids, cuts[-1] if cuts else None),
+        source_audio_kept=kept if isinstance(kept, bool) else None,
+        source_clip_ids=tuple(prints),
+        duplicate_clip_positions=_same_file_positions(clip_ids, prints) if prints else None,
+        source_duplicate_copies=len(prints) - len(set(prints.values())) if prints else None,
     )
 
 
@@ -1306,11 +1613,65 @@ _WHOLE_TAKE_RE = re.compile(
     r"|\b(don'?t|do not|never|no) (cut|trim|shorten)|\buncut\b|\bfull[- ]length\b"
     r"|\bbaştan sona\b|\bolduğu gibi\b|\bkesmeden\b|\bhiç kesme|\btamam[iı]n[iı]\b"
 )
+# Who says the trigger: the creator in the first or second person ("when I say ..."), or,
+# because the brief rewrites asks into third person, their voice ("when the voiceover
+# says ...", "when the narration mentions ...").
+_CUE_SPEAKER = (
+    r"(?:(?:i|you|we)"
+    r"|(?:my |the |our |this |her |his )?"
+    r"(?:voice[- ]?over|narration|narrator|recording|audio|script|voice|speech|commentary))"
+)
+_CUE_VERB = (
+    r"(?:say|says|mention|mentions|hear|hears|name|names|talk(?:s)? about|read(?:s)?"
+    r"|bring(?:s)? up|get(?:s)? to)"
+)
+_CUE_OPENER = r"(?:when|whenever|as soon as|the moment|the second|every time)"
+# The creator's voice is the trigger ("when I say ...", "dediğimde"). Without a named word,
+# only this counts as a pop-in ask; "pop up" and "sticker" alone do not.
+_SPOKEN_CUE_RE = re.compile(
+    rf"\b{_CUE_OPENER} {_CUE_SPEAKER} {_CUE_VERB}\b|\bwhen you hear\b"
+    r"|\bat (the |each |every )?(exact |spoken |specific )?words?\b|\bword[- ]triggered\b"
+    r"|dedi[ğg]i[mn]de|deyince|denince|dendi[ğg]inde|s[öo]yledi[ğg]i[mn]de|bahsetti[ğg]i[mn]de"
+    r"|ge[çc]ti[ğg]i[mn]de|ge[çc]ince"
+    # KRI-540: the passive / spoken-word forms the Kadıköy brief used ("'İlk durak'
+    # dendiğinde", "her 'kahve' kelimesinde"). Written against `_fold` output
+    # (ı -> i), tolerant of ASCII-typed ğ/ç/ş/ö/ü. Turkish "every X" ("her 'X'de",
+    # "her X'te") REQUIRES a quote or apostrophe suffix so English "her" never matches.
+    r"|\b(?:dend[ıi][ğg]inde|denince|denild[ıi][ğg]inde|derken|ded[ıi][ğg]inde"
+    r"|s[öo]ylend[ıi][ğg]inde|s[öo]yleyince|ge[çc]t[ıi][ğg]inde|ge[çc]ince|ge[çc]erken"
+    r"|duyuld[uü][ğg]unda|duyunca)\b"
+    r"|\bkelimesi(?:nde|ni)\b|\bs[öo]zc[üu][ğg][üu]nde\b|\bs[öo]z[üu]nde\b"
+    r"|\bher\s+[\"'\u201c\u201d\u2018\u2019\u00ab\u00bb][^\"'\u201c\u201d\u2018\u2019\u00ab\u00bb]{1,60}"
+    r"[\"'\u201c\u201d\u2018\u2019\u00ab\u00bb](?:d[ea]|t[ea])\b"
+    r"|\bher\s+[^\s\"'\u201c\u201d\u2018\u2019\u00ab\u00bb]{1,40}['\u2019](?:d[ea]|t[ea])\b"
+)
 _BEAT_CUE_RE = re.compile(
-    r"\bwhen (i|you|we) (say|mention|hear|talk about|name)\b|\bwhen you hear\b"
-    r"|\bpop(s|ping)?[- ]?(up|in|ups|ins)\b|\bat (the |each |every )?(exact |spoken |specific )?"
-    r"words?\b|\b(sticker|stamp)s?\b|\bword[- ]triggered\b"
-    r"|dediğimde|deyince|söylediğimde|bahsettiğimde|\bçikartma"
+    rf"{_SPOKEN_CUE_RE.pattern}|\bpop(s|ping)?[- ]?(up|in|ups|ins)\b|\b(sticker|stamp)s?\b"
+    r"|\b[çc]ikartma"
+)
+# The words after the cue verb ("... when voiceover says the medal, show ..."): the trigger
+# the creator named without quoting it.
+_CUE_TRIGGER_RE = re.compile(
+    rf"\b{_CUE_OPENER} {_CUE_SPEAKER} {_CUE_VERB}\s+"
+    r"(?:the (?:words?|phrase|name) )?(?P<trigger>.+)",
+    re.IGNORECASE,
+)
+# The trigger ends at punctuation or at ", and show ..." (a conjunction and an action verb).
+_CUE_TRIGGER_END_RE = re.compile(
+    r"[,;.!?:]|\s+(?:and|then|so|but)\s+(?:then\s+)?(?:show|put|pop|display|add|play|flash|insert"
+    r"|overlay|throw|cut|bring)\b",
+    re.IGNORECASE,
+)
+# A described kind of word ("any food name") is not a spoken phrase to look for.
+_GENERIC_TRIGGER_RE = re.compile(
+    r"\b(?:any|every|each|all|some|something|anything|whatever|whichever|names?|words?|things?"
+    r"|numbers?|phrases?|places?|people|persons?|countries|country|cities|city|them|it|that"
+    r"|those|these|her|hepsi\w*|herhangi)\b",
+    re.IGNORECASE,
+)
+_TRIGGER_STOPWORDS = frozenset(
+    "a an the it its we i you he she they me my our your his her their this that these those "
+    "to of and or but so then is are was were be been in on at for with from by as if".split()
 )
 _CLOSING_RE = re.compile(
     r"\b(finish|end|close|wrap up|wrap) (on|with)\b|\bending (on|with|shot)\b"
@@ -1318,7 +1679,7 @@ _CLOSING_RE = re.compile(
     r"|\bbitir|\bkapan[iı]ş"
 )
 _SOUND_RE = re.compile(
-    r"\b(sound|sounds|sfx|buzzer|ding|beep|whoosh|swoosh|boing|horn|applause)\b|\bses\b|\befekt"
+    r"\b(sound|sounds|sfx|buzzer|ding|beep|whoosh|swoosh|boing|horn|applause)\b|\bses(?:i|ini|iyle|ler|leri|lerini)?\b|\befekt"
 )
 _VISUAL_RE = re.compile(
     r"\b(sticker|stamp|badge|photo|picture|image|pic|flag|logo|emoji)s?\b"
@@ -1341,7 +1702,8 @@ _CLEANUP_VERB_RE = re.compile(
 # A specific stretch of speech named for removal ("the part where I say ...", a retake,
 # a quoted line): speech cleanup cuts pauses and non-word sounds, never spoken words.
 _NAMED_CUT_RE = re.compile(
-    r"\bretakes?\b|\bfalse starts?\b|\b(the )?(part|bit|place|section|moment) where\b"
+    r"\bretakes?\b|\brestart(s|ed|ing)?\b|\bfalse starts?\b"
+    r"|\b(the )?(part|bit|place|section|moment) where\b"
     r"|\bwhere i (say|said|start|stumble)|\blet me (start|try|say|do) (that|it|this|again|over|one)"
     r"|\bstart (that|it|this|one) (again|over)\b|\bstart (again|over)\b"
     r"|\btry (that|it|this) again\b"
@@ -1388,6 +1750,9 @@ _TRIGGER_FACT_KEYS = (
     "keywords",
 )
 _BEAT_KINDS = frozenset({"style", "audio", "select"})
+# The brief files "show the medal photo when the voiceover says the medal" as `timing`
+# as often as `style`/`audio`/`select` (KRI-537); only the pop-in check reads that kind.
+_BEAT_ASK_KINDS = _BEAT_KINDS | {"timing"}
 _CLEANUP_KINDS = frozenset({"timing", "style", "audio", "select"})
 # Edits spined by the creator's own speech: captions come from it, and speech
 # cleanup (pauses, filler sounds) is how it gets tightened.
@@ -1452,12 +1817,32 @@ def _fact_triggers(req: BriefRequirement) -> list[str]:
     return found
 
 
-def _named_triggers(req: BriefRequirement) -> list[str]:
-    """The spoken words the creator named: from `facts`, else quoted in the text."""
-    named = _fact_triggers(req)
-    if not named:
-        for field_value in (req.description, req.literal):
-            named.extend(_QUOTED_RE.findall(field_value or ""))
+def _cue_triggers(req: BriefRequirement) -> list[str]:
+    """The words right after a cue verb ("when voiceover says the medal, show ...").
+
+    A guess at what the creator named without quoting it, in their own spelling. It only
+    ever CONFIRMS (picks which pop-ins an ask is about, recognises an unheard word); a
+    guess that matches nothing never becomes a "No pop-in for X" verdict.
+    """
+    for field_value in (req.description, req.literal):
+        match = _CUE_TRIGGER_RE.search(field_value or "")
+        if match is None:
+            continue
+        words = _CUE_TRIGGER_END_RE.split(match.group("trigger"), maxsplit=1)[0]
+        words = " ".join(words.split()).strip(" \"'\u201c\u201d")
+        tokens = [t for t in re.split(r"\W+", _fold(words)) if t]
+        # A described kind of word ("any food name") names nothing to look for.
+        if (
+            2 < len(words) <= 80
+            and len(tokens) <= 8
+            and not all(t in _TRIGGER_STOPWORDS for t in tokens)
+            and not _GENERIC_TRIGGER_RE.search(words)
+        ):
+            return [words]
+    return []
+
+
+def _dedupe_names(named: Iterable[str]) -> list[str]:
     out: dict[str, str] = {}
     for name in named:
         cleaned = " ".join(str(name).split())
@@ -1466,10 +1851,85 @@ def _named_triggers(req: BriefRequirement) -> list[str]:
     return list(out.values())
 
 
-def _wants_beats(req: BriefRequirement) -> bool:
-    if req.kind not in _BEAT_KINDS:
+def _quoted_triggers(req: BriefRequirement) -> list[str]:
+    found: list[str] = []
+    for field_value in (req.description, req.literal):
+        found.extend(_QUOTED_RE.findall(field_value or ""))
+    return found
+
+
+def _named_triggers(req: BriefRequirement) -> list[str]:
+    """The spoken words the creator named for certain: from `facts`, else quoted."""
+    return _dedupe_names(_fact_triggers(req) or _quoted_triggers(req))
+
+
+# Without a named word, a cue like "when I say ..." is a pop-in ask only when something is
+# shown or played on it: a photo, sticker, sound, video card, the pop-in itself, or a
+# show/put/play verb. "When I say go, cut to the next clip" is a cut (its own timing,
+# unverified here), not a pop-in.
+_TIMING_POP_IN_RE = re.compile(
+    rf"{_VISUAL_RE.pattern}|{_SOUND_RE.pattern}"
+    r"|\b(?:videos?|clips?|footage|cards?|overlays?|pop[- ]?(?:ups?|ins?)|on[- ]screen)\b"
+    r"|\b(?:show|shows|put|puts|pop|pops|display|displays|flash|flashes|overlay|overlays"
+    r"|add|adds|play|plays|bring|brings|insert|inserts|place|places)\b"
+    r"|\bg[öo]rsel|\bvideo|\bkli[pb]|\bg[öo]ster|\b[çc][ıi]k(?:s[ıi]n|ar|)\b|\bekle|\bkoy"
+    # KRI-540 Turkish sound beats: "zil çal" (ring a bell), "ses çalsın" (play a sound).
+    r"|\bzil\b|\b[çc]al(?:s[ıi]n)?\b|\bduyulsun\b"
+)
+# Cut and edit verbs: a sentence that has one is an edit instruction, not a pop-in.
+_TIMING_CUT_RE = re.compile(
+    r"\b(?:cut|jump|switch|transition|move|go|skip|end|stop|start|begin|trim|speed|slow|fade"
+    r"|pause|freeze|zoom|rewind|remove|delete)(?:s|es|ing)?\b"
+    r"|\b(?:ge[çc]|atla|kes|dur|bitir|ba[şs]la|yava[şs]la|h[ıi]zlan)(?:sin|sun|s[üu]n)?\b"
+)
+# An explicit "show a picture / pop up / sticker" marker: the ask is about visuals even if
+# it also has a cut verb ("pop up a sticker when I say pause, cut the rest").
+_EXPLICIT_POP_RE = re.compile(
+    rf"\bpop(?:s|ping)?[- ]?(?:up|in|ups|ins)\b|{_VISUAL_RE.pattern}"
+    r"|\bfotograf|\bgorsel|\b[çc]ikartma"
+)
+
+
+def _cleanup_wording(req: BriefRequirement) -> bool:
+    """Removal verb + something speech cleanup removes ("cut the pauses", "remove the ums")."""
+    text = _req_text(req)
+    if _KEEP_PAUSES_RE.search(text) or not _CLEANUP_VERB_RE.search(text):
         return False
-    return bool(_fact_triggers(req) or _BEAT_CUE_RE.search(_req_text(req)))
+    return bool(_CLEANUP_NOUN_RE.search(text) or _NAMED_CUT_RE.search(text))
+
+
+def _wants_beats(req: BriefRequirement) -> bool:
+    if req.kind not in _BEAT_ASK_KINDS:
+        return False
+    if req.kind == "timing" and (
+        # Timing asks about length or a text's hold window keep their own checkers.
+        req.scope == "title"
+        or _has_duration_target(req)
+        or _wants_whole_take(req)
+        or _wants_whole_text_span(req)
+    ):
+        return False
+    text = _req_text(req)
+    if _fact_triggers(req):
+        return True
+    spoken = _SPOKEN_CUE_RE.search(text)
+    if _quoted_triggers(req):
+        # A named word with a cue is a pop-in ask (a timing ask needs the spoken cue).
+        return bool(spoken if req.kind == "timing" else _BEAT_CUE_RE.search(text))
+    if not spoken:
+        # The original rule for a style/audio/select ask: an explicit pop-in or sticker word
+        # is enough ("add stickers for each food", "pop up the pasta sticker"). A timing
+        # ask needs the spoken cue, so "make the text pop up quickly" stays a timing ask.
+        return req.kind != "timing" and bool(_BEAT_CUE_RE.search(text))
+    # No named word: a spoken cue alone also starts cuts, speed changes and cleanup
+    # ("every time I say um, cut it out"). Only a visual/sound pop-in object counts.
+    if _EXPLICIT_POP_RE.search(text):
+        return True
+    return bool(
+        _TIMING_POP_IN_RE.search(text)
+        and not _TIMING_CUT_RE.search(text)
+        and not _cleanup_wording(req)
+    )
 
 
 def _wants_closing(req: BriefRequirement) -> bool:
@@ -1485,10 +1945,7 @@ def _wants_cleanup(req: BriefRequirement) -> bool:
         return False
     if _wants_beats(req) or _wants_closing(req) or _wants_speech(req):
         return False
-    text = _req_text(req)
-    if _KEEP_PAUSES_RE.search(text) or not _CLEANUP_VERB_RE.search(text):
-        return False
-    return bool(_CLEANUP_NOUN_RE.search(text) or _NAMED_CUT_RE.search(text))
+    return _cleanup_wording(req)
 
 
 def _wants_named_cuts(req: BriefRequirement) -> bool:
@@ -1519,6 +1976,64 @@ def _wants_no_captions(req: BriefRequirement) -> bool:
 
 def _wants_word_captions(req: BriefRequirement) -> bool:
     return bool(_WORD_CAPTION_RE.search(_req_text(req)))
+
+
+# "Keep the crowd noise quiet under my voiceover": how loud the footage's own sound plays
+# beneath the creator's voice (KRI-537). Patterns run on `_fold` output.
+_SOUND_NOUN = r"(?:noise|noises|sound|sounds|audio|chatter|ambience|volume)"
+# Names the footage's own sound. Music is never footage sound here (a licensed track or a
+# "background music" ask is judged elsewhere).
+_FOOTAGE_SOUND_STRICT = (
+    rf"(?:(?:crowd|ambient|street|room|wind|traffic|natural|original|raw|footage|clip|clips"
+    rf"|video|camera) {_SOUND_NOUN}"
+    r"|(?:sound|audio|noise)s? (?:of|from|in) the (?:footage|clips?|video|crowd)"
+    r"|kalabalik\w*|orijinal ses\w*|ortam ses\w*|[çc]ekim\w* ses\w*"
+    r"|klip\w* ses\w*|video\w* ses\w*)"
+)
+# "background noise" counts for a keep-it-quiet ask, not for a mute (that may mean
+# noise reduction on the voice recording).
+_FOOTAGE_SOUND_LOOSE = (
+    rf"(?:{_FOOTAGE_SOUND_STRICT}|(?:background|bg) {_SOUND_NOUN}"
+    r"|arka ?plan\w* (?:ses|g[üu]r[üu]lt[üu])\w*)"
+)
+_BED_NOISE_RE = re.compile(rf"\b{_FOOTAGE_SOUND_LOOSE}\b|\bg[üu]r[üu]lt[üu]")
+_BED_NAMED_RE = re.compile(rf"\b{_FOOTAGE_SOUND_STRICT}\b")
+# Quiet wording about the bed. Bare adjectives ("soft", "calm") only count with
+# under/beneath, which are in the list themselves.
+_BED_QUIET_RE = re.compile(
+    r"\b(?:quiet(?:er)?|low(?:er)?|down|under|beneath|below|underneath|duck(?:ed|ing)?"
+    r"|in the background|turned down)\b"
+    r"|\bkisik|\bkis(?:il|ili|in)|\bd[üu][şs][üu]k|\balt[iı]nda|\barka planda|\bsessiz"
+)
+# The opposite direction ("raise the crowd noise", "not too quiet").
+_BED_UP_RE = re.compile(
+    r"\b(?:raise|louder|up|increase|boost|amplify|higher|too quiet|so quiet)\b"
+    r"|\byukselt|\byükselt|\bart[iı]r|\bdaha y[üu]ksek"
+)
+_BED_MUTE_RE = re.compile(
+    r"\b(?:mute|muted|silence|silenced|kill|strip|remove|delete|drop|get rid of|cut out|turn off"
+    r"|disable|no|without)\b|\bkapat|\bkaldir|\bsil\b|\bolmasin|\bolmadan"
+)
+
+
+def _wants_bed_under_voice(req: BriefRequirement) -> bool:
+    """Keep the footage's own sound (crowd, ambience, original audio) low under the voice."""
+    if req.kind not in _BEAT_KINDS or _wants_beats(req) or _wants_cleanup(req):
+        return False
+    text = _req_text(req)
+    return bool(
+        _BED_NOISE_RE.search(text) and _BED_QUIET_RE.search(text) and not _BED_UP_RE.search(text)
+    )
+
+
+def _wants_bed_muted(req: BriefRequirement) -> bool:
+    """Mute or remove the footage's own sound, with no "keep it low" wording."""
+    if req.kind not in _BEAT_KINDS or _wants_beats(req) or _wants_cleanup(req):
+        return False
+    text = _req_text(req)
+    return bool(
+        _BED_NAMED_RE.search(text) and _BED_MUTE_RE.search(text) and not _BED_QUIET_RE.search(text)
+    )
 
 
 def _has_duration_target(req: BriefRequirement) -> bool:
@@ -1558,6 +2073,10 @@ _CANT_CHECK_TIMING = "I can't verify this timing automatically."
 _CANT_CHECK_CLEANUP = "I can't check the speech cleanup on this draft yet."
 _CANT_CHECK_CAPTIONS = "I can't check the captions on this draft yet."
 _NO_CHECKER = "I can't verify this one automatically yet."
+_CANT_CHECK_MIX = "I can't check the sound mix on this draft yet."
+# Start of the reason on a "mute the footage sound" ask the voiceover mix cannot fully meet
+# (the footage sound is a quiet bed under the voice, never off): a limit of the format.
+_BED_STILL_PLAYS = "The footage sound still plays"
 # Speech cleanup (KRI-467 follow-up): what the chosen format does with the ask.
 _CLEANUP_PLANNED = "Speech cleanup cuts the long pauses"
 _CLEANUP_AT_APPROVAL = "Choose Clean up speech when you approve and the long pauses are cut"
@@ -1569,6 +2088,10 @@ _NAMED_CUTS_NEED_EDITOR = (
     "a retake or a specific line isn't cut automatically yet, so trim that in the editor"
 )
 _CAPTIONS_WORD_BY_WORD = "words light up as you say them"
+# KRI-541: what speech cleanup did on a finished render.
+_CLEANUP_DONE = "Speech cleanup cut the long pauses"
+_CLEANUP_NOTHING_TO_CUT = "Speech cleanup found no long pauses to cut"
+_CLEANUP_NOT_RUN = "Speech cleanup didn't run on this video, so the long pauses stay"
 
 # The Turkish twin of every static reason above (KRI-520). Reasons are written into
 # receipts when a turn runs, in that turn's language, so everything that tells one
@@ -1604,6 +2127,8 @@ _REASON_TR: dict[str, str] = {
     _CANT_CHECK_CLEANUP: "Bu taslakta konuşma temizliğini henüz kontrol edemiyorum.",
     _CANT_CHECK_CAPTIONS: "Bu taslaktaki altyazıları henüz kontrol edemiyorum.",
     _NO_CHECKER: "Bunu henüz otomatik olarak doğrulayamıyorum.",
+    _CANT_CHECK_MIX: "Bu taslakta ses karışımını henüz kontrol edemiyorum.",
+    _BED_STILL_PLAYS: "Çekim sesi hâlâ çalıyor",
     _CLEANUP_PLANNED: "Konuşma temizliği uzun duraklamaları keser",
     _CLEANUP_AT_APPROVAL: (
         "Onaylarken \u201cKonuşmayı temizle\u201d seçeneğini seç, uzun duraklamalar kesilir"
@@ -1618,6 +2143,9 @@ _REASON_TR: dict[str, str] = {
         "tekrar çekim ya da belirli bir cümle henüz otomatik kesilmiyor, onu editörde kırp"
     ),
     _CAPTIONS_WORD_BY_WORD: "kelimeler sen söylerken yanıyor",
+    _CLEANUP_DONE: "Konuşma temizliği uzun duraklamaları kesti",
+    _CLEANUP_NOTHING_TO_CUT: "Konuşma temizliği kesilecek uzun bir duraklama bulmadı",
+    _CLEANUP_NOT_RUN: ("Konuşma temizliği bu videoda çalışmadı, o yüzden uzun duraklamalar kaldı"),
 }
 
 
@@ -1650,6 +2178,7 @@ _NEUTRAL_EN = frozenset(
         _CANT_CHECK_TIMING,
         _CANT_CHECK_CLEANUP,
         _CANT_CHECK_CAPTIONS,
+        _CANT_CHECK_MIX,
         _NO_CHECKER,
     }
 )
@@ -1668,6 +2197,10 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _CLEANUP_AT_APPROVAL,
     _CLEANUP_IF_OFFERED,
     _CLEANUP_UNAVAILABLE,
+    _CLEANUP_DONE,
+    _CLEANUP_NOTHING_TO_CUT,
+    _CLEANUP_NOT_RUN,
+    _BED_STILL_PLAYS,
 )
 _FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
     *_FORMAT_LIMIT_EN,
@@ -1749,16 +2282,59 @@ def _check_whole_take(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
     return _receipt(req, "met", None)
 
 
+def _unheard_for(facts: PlanFacts, names: Sequence[str]) -> list[str]:
+    """The never-heard triggers this ask is about: only the ones it names.
+
+    An ask that names nothing is not blamed for another beat's unheard word.
+    """
+    return [t for t in facts.unheard_beat_triggers if any(_trigger_heard(n, t) for n in names)]
+
+
+def _never_heard_problem(triggers: Iterable[str]) -> str:
+    names = _names(triggers)
+    return say(
+        en=f"I never heard {names} in your voice",
+        tr=f"Sesinde {names} sözünü duymadım",
+    )
+
+
+def _placement_reason(placements: Sequence[BeatFact]) -> str | None:
+    """Where the met pop-ins landed, in time order; None when the render gave no times."""
+    timed = sorted((b for b in placements if b.at_s is not None), key=lambda b: b.at_s or 0.0)
+    if not timed:
+        return None
+    shown = timed[:_MAX_NAMED_IN_REASON]
+    more = len(timed) - len(shown)
+    items_en = [f'"{b.trigger}" at {b.at_s:.1f} s' for b in shown]
+    if more > 0:
+        items_en.append(f"{more} more")
+    joined_en = (
+        items_en[0] if len(items_en) == 1 else ", ".join(items_en[:-1]) + " and " + items_en[-1]
+    )
+    parts_tr = [f'"{b.trigger}" {b.at_s:.1f} sn\'de' for b in shown]
+    tail_tr = f" ve {more} tane daha" if more > 0 else ""
+    return say(
+        en=f"{'Pop-in' if len(timed) == 1 else 'Pop-ins'} on {joined_en}",
+        tr=f"{', '.join(parts_tr)}{tail_tr} çıkıyor",
+    )
+
+
 def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Word-triggered pop-ins and the closing shot, from the repaired strategy."""
     wants_beats = _wants_beats(req)
     wants_closing = _wants_closing(req)
-    if facts.reaction_beats is None or facts.editor:
+    if facts.reaction_beats is None:
         return _receipt(req, "partial", _CANT_CHECK_BEATS)
     beats = facts.reaction_beats
     problems: list[str] = []
     delivered = False
+    placements: list[BeatFact] = []
+    by_name = True
     if wants_beats:
+        # Words the creator named for certain (facts, quotes) can be "missing"; words only
+        # guessed from the sentence pick which pop-ins the ask is about, never a verdict.
+        named = _named_triggers(req)
+        names = named or _cue_triggers(req)
         if not facts.reaction_beats_available:
             problems.append(
                 say(
@@ -1768,27 +2344,54 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                 )
             )
         elif not beats:
-            problems.append(
-                say(
-                    en=(
-                        "I couldn't find the photos or stickers for "
-                        f"{_names(facts.dropped_beat_triggers)}"
-                    ),
-                    tr=(
-                        "Şunlar için fotoğraf ya da çıkartma bulamadım: "
-                        f"{_names(facts.dropped_beat_triggers)}"
-                    ),
+            # Nothing was placed at all: every unheard word is this ask's problem.
+            unheard = list(facts.unheard_beat_triggers) if not names else _unheard_for(facts, names)
+            if unheard:
+                problems.append(_never_heard_problem(unheard))
+            else:
+                problems.append(
+                    say(
+                        en=(
+                            "I couldn't find the photos or stickers for "
+                            f"{_names(facts.dropped_beat_triggers)}"
+                        ),
+                        tr=(
+                            "Şunlar için fotoğraf ya da çıkartma bulamadım: "
+                            f"{_names(facts.dropped_beat_triggers)}"
+                        ),
+                    )
+                    if facts.dropped_beat_triggers
+                    else say(
+                        en="This draft has no pop-ins timed to your words",
+                        tr="Bu taslakta sözlerine göre çıkan görsel yok",
+                    )
                 )
-                if facts.dropped_beat_triggers
-                else say(
-                    en="This draft has no pop-ins timed to your words",
-                    tr="Bu taslakta sözlerine göre çıkan görsel yok",
-                )
-            )
         else:
-            delivered = True
-            named = _named_triggers(req)
-            missing = [n for n in named if not any(_trigger_heard(n, b.trigger) for b in beats)]
+            unheard = _unheard_for(facts, names)
+            matched = [b for b in beats if any(_trigger_heard(n, b.trigger) for n in names)]
+            by_name = True
+            if not names:
+                placements = list(beats)
+            elif matched:
+                placements = matched
+            elif all(any(_trigger_heard(n, u) for u in unheard) for n in names):
+                # Everything this ask is about was never said: nothing of it landed.
+                placements = []
+            else:
+                # The sentence's own words matched no beat: judge the pop-ins as a whole
+                # (and quote no times, which would belong to other words).
+                placements = list(beats)
+                by_name = False
+            delivered = bool(placements)
+            # A word the render never heard is told as that, not as a missing pop-in.
+            missing = [
+                n
+                for n in named
+                if not any(_trigger_heard(n, b.trigger) for b in beats)
+                and not any(_trigger_heard(n, u) for u in unheard)
+            ]
+            if unheard:
+                problems.append(_never_heard_problem(unheard))
             unresolved = [
                 t
                 for t in facts.dropped_beat_triggers
@@ -1810,20 +2413,21 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                     )
                 )
             text = _req_text(req)
-            if _SOUND_RE.search(text) and not facts.beat_sound_triggers:
-                problems.append(
-                    say(
-                        en="None of the pop-ins plays a sound",
-                        tr="Çıkan görsellerin hiçbiri ses çalmıyor",
+            if placements:
+                if _SOUND_RE.search(text) and not any(b.sound for b in placements):
+                    problems.append(
+                        say(
+                            en="None of the pop-ins plays a sound",
+                            tr="Çıkan görsellerin hiçbiri ses çalmıyor",
+                        )
                     )
-                )
-            if _VISUAL_RE.search(text) and not facts.beat_visual_ids:
-                problems.append(
-                    say(
-                        en="None of the pop-ins shows a photo or sticker",
-                        tr="Çıkan görsellerin hiçbiri fotoğraf ya da çıkartma göstermiyor",
+                if _VISUAL_RE.search(text) and not any(b.visual_id for b in placements):
+                    problems.append(
+                        say(
+                            en="None of the pop-ins shows a photo or sticker",
+                            tr="Çıkan görsellerin hiçbiri fotoğraf ya da çıkartma göstermiyor",
+                        )
                     )
-                )
     if wants_closing:
         if facts.closing_visual_id is None:
             problems.append(
@@ -1847,7 +2451,7 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                     )
                 )
     if not problems:
-        return _receipt(req, "met", None)
+        return _receipt(req, "met", _placement_reason(placements) if by_name else None)
     status = "partial" if delivered else "not_possible"
     return _receipt(req, status, "; ".join(problems) + ".")
 
@@ -1948,10 +2552,12 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     Every honest outcome here is a limit of the format, not a simplification.
     """
     fmt = facts.edit_format
-    if fmt is None or facts.editor or fmt not in _SPEECH_FORMATS:
+    if fmt is None or (facts.editor and not facts.rendered_variant) or fmt not in _SPEECH_FORMATS:
         # Only a speech-spined edit is judged here; a montage's cut is its own
         # planner's to report, so the ask stays "can't verify" there, as before.
         return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
+    if facts.rendered_variant:
+        return _check_rendered_cleanup(req, facts)
     if facts.speech_cleanup_enabled:
         lead, status = _CLEANUP_PLANNED, "met"
     elif facts.speech_cleanup_offered is True:
@@ -1980,6 +2586,39 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     return _receipt(req, status, "; ".join(notes) if status == "partial" else None)
 
 
+def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """KRI-541: the cleanup ask against what a finished render's speech cleanup did."""
+    outcome = facts.speech_cleanup_outcome
+    if outcome == "applied":
+        lead, status = _CLEANUP_DONE, "met"
+    elif outcome == "no_change":
+        lead, status = _CLEANUP_NOTHING_TO_CUT, "met"
+    elif outcome == "not_run":
+        lead, status = _CLEANUP_NOT_RUN, "partial"
+    else:
+        return _receipt(req, "partial", _CANT_CHECK_CLEANUP)
+    notes = [_loc(lead)]
+    if _wants_named_cuts(req):
+        # The cut removes pauses and filler sounds; a named line or retake stays.
+        notes.append(_loc(_NAMED_CUTS_NEED_EDITOR))
+        status = "partial"
+    if _has_duration_target(req):
+        target = float(req.facts["duration_s"])
+        notes.append(
+            say(
+                en=f"the length follows what's left of your take, so it isn't held to {target:g}s",
+                tr=(
+                    "uzunluk çekimin geriye kalan kısmına göre belirlendi, "
+                    f"{target:g} sn'ye göre ayarlanmadı"
+                ),
+            )
+        )
+        status = "partial"
+    if status == "met" and outcome == "applied":
+        return _receipt(req, "met", None)
+    return _receipt(req, status, "; ".join(notes))
+
+
 def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Captions on / off / word-by-word, against the strategy's caption style.
 
@@ -1993,9 +2632,10 @@ def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
             return _check_caption_language(req, facts, asked)
     fmt = facts.edit_format
     text = _req_text(req)
+    rendered = facts.rendered_variant
     if (
         facts.caption_style is None
-        or facts.editor
+        or (facts.editor and not rendered)
         or fmt not in _SPEECH_FORMATS
         or _CAPTION_DETAIL_RE.search(text)
     ):
@@ -2010,15 +2650,22 @@ def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
             req,
             "partial",
             say(
-                en="Captions are still on in this draft.",
-                tr="Bu taslakta altyazılar hâlâ açık.",
+                en="Captions are on in this video."
+                if rendered
+                else "Captions are still on in this draft.",
+                tr="Bu videoda altyazılar açık."
+                if rendered
+                else "Bu taslakta altyazılar hâlâ açık.",
             ),
         )
     if style == "none":
         return _receipt(
             req,
             "partial",
-            say(en="Captions are off in this draft.", tr="Bu taslakta altyazılar kapalı."),
+            say(
+                en="This video has no captions." if rendered else "Captions are off in this draft.",
+                tr="Bu videoda altyazı yok." if rendered else "Bu taslakta altyazılar kapalı.",
+            ),
         )
     if _wants_word_captions(req):
         if style in {"karaoke", "kinetic"}:
@@ -2034,6 +2681,101 @@ def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
             ),
         )
     return _receipt(req, "met", None)
+
+
+# A footage bed under this fraction of full volume counts as "quiet under the voice".
+_BED_QUIET_BELOW = 0.5
+
+
+def _check_voice_bed(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """ "Keep the crowd noise quiet under my voice" / "mute the crowd noise".
+
+    A voiceover edit always mixes the footage's own sound as a bed under the voice (a
+    fraction of full volume), so a "keep it low" ask is met by the mix itself and a "mute
+    it" ask can only be partly met: the bed stays, quietly. That limit belongs to the
+    format, so it never turns the draft into the simpler-version question. Any other
+    audio strategy is judged by its own receipts and stays unchecked here.
+    """
+    level = facts.voiceover_bed_level
+    voiceover = facts.audio_strategy == "voiceover"
+    if level is None and not voiceover:
+        return _receipt(req, "partial", _CANT_CHECK_MIX)
+    pct = None if level is None else round(level * 100)
+    if _wants_bed_muted(req) and not _wants_bed_under_voice(req):
+        if level is not None and level <= 0:
+            return _receipt(req, "met", None)
+        if level is not None and level >= 1.0:
+            return _receipt(
+                req,
+                "partial",
+                say(
+                    en=(
+                        f"{_BED_STILL_PLAYS} at full volume alongside your voice; "
+                        "lower it in the editor's mix"
+                    ),
+                    tr=(
+                        f"{_REASON_TR[_BED_STILL_PLAYS]}, sesinle aynı seviyede; "
+                        "ayarı editördeki karışımdan düşür"
+                    ),
+                ),
+            )
+        about_en = "" if pct is None else f" (about {pct}%)"
+        about_tr = "" if pct is None else f" (yaklaşık %{pct})"
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=(
+                    f"{_BED_STILL_PLAYS} softly under your voice{about_en}; "
+                    "lower it in the editor's mix"
+                ),
+                tr=(
+                    f"{_REASON_TR[_BED_STILL_PLAYS]}, sesinin altında kısık{about_tr}; "
+                    "ayarı editördeki karışımdan düşür"
+                ),
+            ),
+        )
+    if level is None:
+        return _receipt(
+            req,
+            "met",
+            say(
+                en="Your footage sound plays under your voice",
+                tr="Çekim sesi sesinin altında çalıyor",
+            ),
+        )
+    if level >= 1.0:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="The footage sound plays at full volume alongside your voice",
+                tr="Çekim sesi sesinle aynı seviyede, tam sesle çalıyor",
+            ),
+        )
+    if level >= _BED_QUIET_BELOW:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=(
+                    f"The footage sound plays at about {pct}% alongside your voice, "
+                    "not far under it"
+                ),
+                tr=(
+                    f"Çekim sesi sesinin yanında yaklaşık %{pct} seviyesinde çalıyor, "
+                    "pek altında değil"
+                ),
+            ),
+        )
+    return _receipt(
+        req,
+        "met",
+        say(
+            en=f"Your footage sound sits under your voice at about {pct}% volume",
+            tr=f"Çekim sesi, sesinin altında yaklaşık %{pct} seviyesinde",
+        ),
+    )
 
 
 def _check_style(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -2270,12 +3012,16 @@ def _excerpt(text: str) -> str:
 
 def _wants_clip_timing(req: BriefRequirement) -> bool:
     """A timing ask with no number, no title and no "keep my take": it can only be about
-    when something plays, which a rendered Voiceover record may be able to answer."""
+    when something plays, which a rendered Voiceover record may be able to answer.
+    A pop-in ask ("show my photo when voiceover says X", KRI-537) is the beat checker's,
+    judged at draft from the strategy and at render from the variant's beat receipt, so
+    it is neither deferred nor read off the clip windows here."""
     return (
         req.kind == "timing"
         and req.scope != "title"
         and not _has_duration_target(req)
         and not _wants_whole_take(req)
+        and not _wants_beats(req)
     )
 
 
@@ -2488,7 +3234,9 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         )
     else:
         found = any(_contains_text(t, wanted) for t in facts.texts)
-    if found:
+    # KRI-545: "chapter titles: Sabah, Üniversite, ..." is on screen as those names, each its
+    # own text on its clips, never as one line.
+    if found or chapter_list(req.literal, facts.texts) is not None:
         return _receipt(req, "met", None)
     return _receipt(
         req,
@@ -2497,9 +3245,220 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     )
 
 
+# KRI-546: two asks a finished phone montage can settle from its own evidence. Patterns run
+# on `_loose_req` output (folded, no diacritics, punctuation as spaces: "don't" -> "don t").
+_MEDIA_NOUN = (
+    r"(?:videos?|clips?|shots?|footage|files?|uploads?|video\w*|klip\w*|cekim\w*|dosya\w*)"
+)
+# "If the same video is there twice, use one" / "aynı videodan iki tane varsa birini kullan":
+# a copy is named AND only one should stay, so "use the same clip at the start and the end"
+# never reads as a duplicate ask.
+_SAME_FILE_RE = re.compile(
+    r"\bduplicat\w*|\bde ?dup\w*|\bkopya\w*|\byinelen\w*|\btekrar ?(?:eden|lanan)\b"
+    rf"|\bsame {_MEDIA_NOUN}|\b(?:two|2) of the same\b"
+    rf"|\b{_MEDIA_NOUN} (?:that )?(?:is|are) the same\b|\bayni {_MEDIA_NOUN}"
+)
+_KEEP_ONE_RE = re.compile(
+    r"\b(?:remove|drop|skip|delete|cut|avoid|exclude|leave out|get rid of|no|without|don t"
+    r"|do not|never|once|single)\b|\b(?:only|just|keep|use|leave) (?:one|a single)\b"
+    r"|\bone (?:of (?:them|each|the)|copy)\b"
+    r"|\bbiri(?:ni|sini)?\b|\btek\b|\bsadece\b|\byalnizca\b|\bcikar(?:t|in|tin|sin|tsin)?\b"
+    r"|\bsil(?:in|sin)?\b|\bkullanma(?:yin|sin)?\b|\bolmasin\b|\bbir (?:kere|kez)\b"
+)
+# "End on Elif's sentence to the camera, in her own voice" / "en sonda Elif'in kameraya
+# söylediği cümleyi kendi sesiyle kullan": the closing clip's own spoken line.
+_ENDING_RE = re.compile(
+    r"\b(?:finish|end|close|wrap up|wrap) (?:on|with)\b|\bending (?:on|with)\b"
+    r"|\bat the (?:very )?end\b|\bin the end\b|\blast\b|\bclosing\b"
+    r"|\ben son\w*|\bsonda\b|\bsonunda\b|\bsona\b|\bkapanis\w*|\bbitir\w*|\bbitsin\b"
+)
+_OWN_SPEECH_RE = re.compile(
+    r"\bown (?:voice|sound|audio|words)\b|\b(?:her|his|their|my|your) voice\b"
+    r"|\b(?:sentence|says|said|saying|speaks|speaking|talks|talking)\b|\bto (?:the )?camera\b"
+    r"|\bkendi ses\w*|\bcumle\w*|\bsoyledi\w*|\bsoyler\w*|\bkonus\w*|\bdedi\w*|\bkameraya\b"
+)
+# A closing photo, sticker or song, a muted ending or a voiceover is a different ask.
+_NOT_OWN_SPEECH_RE = re.compile(
+    r"\bmute\w*|\bsilent\b|\bno sound\b|\bwithout (?:sound|audio)\b|\bsessiz\w*|\bkapat\w*"
+    r"|\bvoice ?over\b|\bnarrat\w*|\bseslendirme\w*|\bdis ses\w*"
+    r"|\bmusic\b|\bsong\b|\bmuzik\w*|\bsarki\w*"
+    r"|\b(?:photo|picture|image|pic|sticker|stamp|badge|logo|emoji)s?\b"
+    r"|\bfotograf\w*|\bresim\w*|\bgorsel\w*|\bcikartma\w*"
+)
+
+
+def _wants_one_of_duplicates(req: BriefRequirement) -> bool:
+    """ "If the same video is there twice, use one": keep a single copy of a repeated file."""
+    if req.kind not in ("select", "style"):
+        return False
+    text = _loose_req(req)
+    return bool(_SAME_FILE_RE.search(text) and _KEEP_ONE_RE.search(text))
+
+
+def _wants_closing_speech(req: BriefRequirement) -> bool:
+    """ "End on X's sentence in her own voice": the last clip plays its own spoken line."""
+    if req.kind not in (*_BEAT_KINDS, "order"):
+        return False
+    text = _loose_req(req)
+    if _NOT_OWN_SPEECH_RE.search(text) or not _OWN_SPEECH_RE.search(text):
+        return False
+    return bool(
+        _ENDING_RE.search(text)
+        or req.facts.get("last_clip")
+        or str(req.facts.get("position") or "").casefold() == "last"
+    )
+
+
+def judged_at_render(req: BriefRequirement) -> bool:
+    """True for an ask only a finished phone montage's evidence settles (KRI-546).
+
+    A unified montage's plan record cannot see these: a closing line is held while the
+    plan is laid out, and a duplicate file is told by the upload fingerprints. The
+    render-ready review judges them again even when the record carries a receipt.
+    """
+    return _wants_one_of_duplicates(req) or _wants_closing_speech(req)
+
+
+_CLIP_ID_PART_RE = re.compile(r"[^0-9A-Za-z]+")
+
+
+def _scope_clip_id(req: BriefRequirement, ids: Iterable[str]) -> str | None:
+    """The clip a ``clip:<id>`` scope names among ``ids``, else None.
+
+    The brief may name a clip by a short form of its id ("F0CECCF8" for
+    "analysis-proxy-ios-F0CECCF8-5871-....mp4"): a whole id part of 6+ letters and digits
+    that exactly one clip carries counts; anything ambiguous names no clip.
+    """
+    if not req.scope.startswith("clip:"):
+        return None
+    token = req.scope.split(":", 1)[1].strip()
+    known = list(dict.fromkeys(ids))
+    if token in known:
+        return token
+    if len(token) < 6 or not token.isalnum():
+        return None
+    folded = token.casefold()
+    hits = [
+        media_id
+        for media_id in known
+        if folded in {part.casefold() for part in _CLIP_ID_PART_RE.split(media_id)}
+    ]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _clip_numbers(positions: Sequence[int]) -> str:
+    """[2, 3] -> "clips 2 and 3" / "2. ve 3. klipler"."""
+    shown = [str(p) for p in positions]
+    head, tail = shown[:-1], shown[-1]
+    return say(
+        en=f"clips {', '.join(head)} and {tail}" if head else f"clip {tail}",
+        tr=(f"{', '.join(f'{p}.' for p in head)} ve {tail}. klipler" if head else f"{tail}. klip"),
+    )
+
+
+def _check_duplicates(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """Judge "keep one of a repeated video" on the finished edit's clips (KRI-546).
+
+    Met only when no two clips of the edit come from the same original file (same upload
+    fingerprint). Without a fingerprint for every clip nothing is claimed.
+    """
+    groups = facts.duplicate_clip_positions
+    if not facts.rendered_montage or groups is None:
+        return _receipt(req, "partial", _NO_CHECKER)
+    if not groups:
+        return _receipt(
+            req,
+            "met",
+            say(
+                en="No two clips in the edit come from the same video file",
+                tr="Düzenlemedeki hiçbir klip aynı video dosyasından gelmiyor",
+            ),
+        )
+    where = "; ".join(_clip_numbers(group) for group in groups)
+    extra = sum(len(group) - 1 for group in groups)
+    return _receipt(
+        req,
+        # Some uploaded copies were left out but not all: partly done. None were: not done.
+        "partial" if (facts.source_duplicate_copies or 0) > extra else "not_possible",
+        say(
+            en=f"The same video is in the edit more than once: {where}",
+            tr=f"Aynı video düzenlemede birden fazla kez var: {where}",
+        ),
+    )
+
+
+def _check_closing_speech(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """Judge "end on X's spoken line in her own voice" on a finished montage (KRI-546).
+
+    Met only when the clip the creator named (or, unnamed, the clip their own "last" ask
+    seated) ends the edit and the plan held its whole spoken line with the camera audio
+    kept, as the finished timeline shows.
+    """
+    ids = facts.clip_ids
+    if not facts.rendered_montage or not ids:
+        return _receipt(req, "partial", _NO_CHECKER)
+    if req.scope.startswith("clip:"):
+        target = _scope_clip_id(req, (*ids, *facts.source_clip_ids))
+        if target is None:
+            return _receipt(req, "partial", _NO_CHECKER)
+        if target not in ids:
+            return _receipt(
+                req,
+                "not_possible",
+                say(en="That clip isn't in the edit", tr="O klip düzenlemede yok"),
+            )
+        if ids[-1] != target:
+            return _receipt(
+                req,
+                "partial",
+                say(
+                    en="That clip is in the edit, but not at the end",
+                    tr="O klip düzenlemede var ama sonda değil",
+                ),
+            )
+    elif facts.closing_speech is None and "last" not in (facts.sequence_spots_met or ()):
+        # Unnamed, and no "last" ask of the creator's landed: nothing says which clip.
+        return _receipt(req, "partial", _NO_CHECKER)
+    if facts.source_audio_kept is False:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="The video ends on that clip, but the clips' own sound is off",
+                tr="Video o klipte bitiyor ama kliplerin kendi sesi kapalı",
+            ),
+        )
+    if facts.closing_speech is None or facts.closing_speech.media_id != ids[-1]:
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=(
+                    "The video ends on that clip, but I couldn't confirm its whole spoken "
+                    "line plays in its own sound"
+                ),
+                tr=(
+                    "Video o klipte bitiyor ama cümlenin tamamının klibin kendi sesiyle "
+                    "duyulduğunu doğrulayamadım"
+                ),
+            ),
+        )
+    return _receipt(
+        req,
+        "met",
+        say(
+            en="The video ends on that clip's whole spoken line, in its own sound",
+            tr="Video, o klipteki cümlenin tamamıyla ve klibin kendi sesiyle bitiyor",
+        ),
+    )
+
+
 def _has_checker(req: BriefRequirement) -> bool:
     """True when ``check_requirement`` can actually verify this requirement."""
     if _wants_cleanup(req) or _wants_captions(req):
+        return True
+    if judged_at_render(req):
+        # Neutral (`_NO_CHECKER`) anywhere but a finished phone montage (KRI-546).
         return True
     if req.kind == "text":
         return bool(
@@ -2513,19 +3472,42 @@ def _has_checker(req: BriefRequirement) -> bool:
             _has_duration_target(req)
             or _wants_whole_take(req)
             or _wants_whole_text_span(req)
+            or _wants_beats(req)
             or _wants_clip_timing(req)
         )
     if req.kind in _BEAT_KINDS:
-        return _wants_beats(req) or _wants_closing(req) or _wants_speech(req)
+        return (
+            _wants_beats(req)
+            or _wants_closing(req)
+            or _wants_speech(req)
+            or _wants_bed_under_voice(req)
+            or _wants_bed_muted(req)
+        )
     return req.kind == "order"
 
 
 def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
-    if _wants_cleanup(req) and facts.edit_format in _SPEECH_FORMATS and not facts.editor:
+    if (
+        _wants_cleanup(req)
+        and facts.edit_format in _SPEECH_FORMATS
+        and (not facts.editor or facts.rendered_variant)
+    ):
         # "Cut out the long pauses ... keep it under 45 s" on a Talking or voiceover
         # edit: the cleanup ask owns the sentence; the length it names is judged
         # inside it. Elsewhere the sentence takes its kind's usual path.
         return _check_speech_cleanup(req, facts)
+    if facts.rendered_montage:
+        # KRI-546: a finished phone montage shows which files repeat and whether the
+        # closing clip's own line plays whole; every other plan keeps its usual path.
+        if _wants_one_of_duplicates(req):
+            return _check_duplicates(req, facts)
+        if _wants_closing_speech(req):
+            if req.kind == "order":
+                # "End on Elif saying it": the seat is an order verdict first.
+                seated = _check_order(req, facts)
+                if seated.status != "met":
+                    return seated
+            return _check_closing_speech(req, facts)
     if req.kind == "text":
         if req.scope == "per_clip" or req.scope.startswith("clip:"):
             return _check_per_clip_text(req, facts)
@@ -2536,13 +3518,27 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
     elif req.kind == "order":
         return _check_order(req, facts)
     elif req.kind == "timing":
+        if _wants_beats(req):
+            return _check_reaction_beats(req, facts)
         return _check_timing(req, facts)
-    elif req.kind == "style" and facts.editor:
+    elif (
+        req.kind == "style"
+        and facts.editor
+        # A rendered variant keeps `editor=True` for its text lanes but also carries the
+        # render's own pop-in receipt and mix level (`plan_facts_from_phone_variant`): judge
+        # those asks.
+        and not (facts.reaction_beats is not None and (_wants_beats(req) or _wants_closing(req)))
+        and not (_wants_bed_under_voice(req) or _wants_bed_muted(req))
+        # KRI-541: "clean captions" on a rendered variant is judged against its captions.
+        and not (facts.rendered_variant and _wants_captions(req))
+    ):
         return _check_style(req, facts)
     elif req.kind in _BEAT_KINDS and _wants_speech(req) and facts.speech_sections is not None:
         return _check_speech_excerpts(req, facts)
     elif req.kind in _BEAT_KINDS and (_wants_beats(req) or _wants_closing(req)):
         return _check_reaction_beats(req, facts)
+    elif req.kind in _BEAT_KINDS and (_wants_bed_under_voice(req) or _wants_bed_muted(req)):
+        return _check_voice_bed(req, facts)
     if _wants_captions(req):
         return _check_captions(req, facts)
     return _receipt(req, "partial", _NO_CHECKER)
@@ -2814,6 +3810,7 @@ def reply_from_receipts(
     summary: str | None = None,
     notices: Sequence[str] = (),
     outcomes: Sequence[Mapping[str, Any]] = (),
+    edit_applied: bool = False,
 ) -> str:
     """Compose the creator-facing reply from receipts only.
 
@@ -2823,6 +3820,12 @@ def reply_from_receipts(
     carries them, so they are added back only when the summary is replaced.
     An unjudged receipt (stored before ``build_receipts`` dropped them) gets no
     line and never turns the reply into a failure notice.
+
+    ``edit_applied`` (KRI-534) is set only by an editor-operations turn, whose compiled
+    draft already exists. When nothing failed and the only open items are requirements
+    no checker can judge, say what happened ("Updated your edit") and which requirements
+    the creator should look at, instead of the alarming "I couldn't verify every change".
+    The model's own summary is still never echoed.
     """
     by_id = {req.id: req for req in brief.requirements}
     judged = [r for r in receipts if is_judged(by_id.get(r.requirement_id), r)]
@@ -2866,7 +3869,23 @@ def reply_from_receipts(
             )
         )
     body = "\n".join(f"- {line}" for line in lines)
-    if unchecked:
+    if unchecked and edit_applied and not failed and all(r.status == "met" for r in judged):
+        names = [by_id[r.requirement_id].text() for r in unchecked]
+        if len(names) == 1:
+            ask = say(
+                en=f"I can't check this automatically, so have a look: {names[0]}",
+                tr=f"Bunu otomatik olarak kontrol edemiyorum, bir göz at: {names[0]}",
+            )
+        else:
+            ask = say(
+                en="I can't check these automatically, so have a look:\n",
+                tr="Şunları otomatik olarak kontrol edemiyorum, bir göz at:\n",
+            ) + "\n".join(f"- {name}" for name in names)
+        done = say(en="Updated your edit.", tr="Düzenlemeni güncelledim.")
+        text = "\n".join(part for part in (done, body, ask) if part)
+        if notices:
+            text += "\n" + " ".join(notices)
+    elif unchecked:
         unchecked_lines = []
         for receipt in unchecked:
             verify = say(en="Couldn't verify", tr="Doğrulayamadım")
@@ -2900,6 +3919,7 @@ def reply_from_receipts(
 __all__ = [
     "UNIFIED_SETTLED_KINDS",
     "BeatFact",
+    "ClosingSpeechFact",
     "NO_TITLE_REASON",
     "RenderBlockRecovery",
     "NARRATED_ALIGNED_BASES",
@@ -2915,10 +3935,13 @@ __all__ = [
     "is_format_limit",
     "is_judged",
     "is_no_title_reason",
+    "judged_at_render",
     "needs_creator_choice",
     "SpeechSectionFact",
     "plan_facts_from_editor_payload",
     "plan_facts_from_narrated_alignment",
+    "plan_facts_from_phone_variant",
+    "plan_facts_from_rendered_montage",
     "plan_facts_from_speech_montage",
     "plan_facts_from_strategy",
     "plan_facts_from_unified_montage",

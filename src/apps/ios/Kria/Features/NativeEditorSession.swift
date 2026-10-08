@@ -647,7 +647,8 @@ struct NativeEditorTemporaryVideo {
 
     func showDeviceOutput(_ url: URL) {
         guard rendersOnDevice else { return }
-        installPlayer(url: url, preferredDuration: authoritativeDuration)
+        // KRI-535: a device render made before a staged chat edit lacks that edit.
+        installPlayer(url: url, preferredDuration: authoritativeDuration, isCurrent: chatStagedDocument == nil)
     }
 
     private let projectID: UUID
@@ -755,6 +756,15 @@ struct NativeEditorTemporaryVideo {
     private var submittedEditorStates: [String: SubmittedEditorState] = [:]
     private var submittedEditorStateOrder: [String] = []
     private static let submittedEditorStateLimit = 8
+
+    /// `exportEditorState` after staging any chat draft the editor has not shown yet (KRI-529).
+    /// The server treats this state as authoritative and ignores its own head draft, so a state
+    /// exported before the previous chat edit was staged silently drops that edit. The sync is
+    /// best-effort (it retries internally and never throws), so it can never block a send.
+    func exportEditorStateSyncingDraft(maxBytes: Int? = nil) async -> EditorStateRequest? {
+        await synchronizePromptRevision()
+        return exportEditorState(maxBytes: maxBytes)
+    }
 
     /// The editor's current UNSAVED state for a chat turn, or nil when it cannot be
     /// sent (not loaded, no baseline generation, or over `maxBytes`) and the caller
@@ -1396,7 +1406,8 @@ struct NativeEditorTemporaryVideo {
                 // other than "ready" means this output_url predates the
                 // document just loaded above.
                 installPlayer(url: url, preferredDuration: authoritativeDuration,
-                    isCurrent: authoritativeVariant?["render_status"]?.stringValue == "ready")
+                    isCurrent: authoritativeVariant?["render_status"]?.stringValue == "ready"
+                        && chatStagedDocument == nil)
             } else if allowPlaybackFallback, let jobID, let url = try? await api.playbackURL(jobID: jobID) {
                 installPlayer(url: url, preferredDuration: authoritativeDuration)
             }
@@ -1636,6 +1647,47 @@ struct NativeEditorTemporaryVideo {
         return loadedServerRevision != project.serverRevision
     }
 
+    /// KRI-529: reopen an already-loaded editor after chat turns WITHOUT a full reload.
+    ///
+    /// Every chat turn bumps the thread revision, so `needsReload` is true on each reopen and
+    /// the full `load` ran: loading state, the OLD rendered video, then the chat edit a few
+    /// seconds later, and any unsaved local edit reset. When the rendered variant is still the
+    /// generation this editor was built from, nothing was rendered in the meantime: stage the
+    /// newest chat draft in place instead. A different job, a different variant or a newer
+    /// render returns false, and the caller keeps the full reload (which swaps the video).
+    ///
+    /// KRI-535: the creator's own unsaved edits are never dropped by this path. A newer render of
+    /// the same job raises `newerJobPrompt` ("Switch" discards, "Keep editing" stays), and a
+    /// transient failure to read the variant keeps the session as it is.
+    func reconcileOnOpen(project: ProjectSummary, api: any KriaAPIClient) async -> Bool {
+        guard loadState == .loaded, !isSaving, project.runtimeVersion == 2, conversationRuntimeVersion == 2,
+              let jobID, let variantKey,
+              project.activeJobID.map({ $0 == jobID }) ?? true,
+              project.outputVariantID.map({ $0 == variantKey }) ?? true else { return false }
+        let hasOwnEdits = hasUnsavedChanges && !hasOnlyChatStagedChanges
+        let current: [String: JSONValue]
+        do {
+            current = try await api.editorVariant(jobID: jobID, variantID: variantKey)
+        } catch {
+            // Superseded (re-plan) keeps the full path, which follows the thread to its new job.
+            // Anything else (a dropped connection) must not wipe local edits or error the editor.
+            if let apiError = error as? APIError, apiError == .contentPlanUnavailable || apiError == .conflict {
+                return false
+            }
+            return hasOwnEdits
+        }
+        if variantUnchanged(current) {
+            loadedServerRevision = project.serverRevision
+            await synchronizePromptRevision()
+            return true
+        }
+        guard hasOwnEdits, !isSaving else { return false }
+        // A newer render exists and reloading would discard the creator's work: ask first.
+        // `loadedServerRevision` stays put, so the next open asks again until they decide.
+        newerJobPrompt = project
+        return true
+    }
+
     func load(project: ProjectSummary, api: any KriaAPIClient) async {
         loadState = .loading
         var resolvedProject = project
@@ -1835,6 +1887,10 @@ struct NativeEditorTemporaryVideo {
                let staged = stagedChatDocument(snapshot: head, draft: loadedDraft, variant: variant) {
                 applyStagedChatDocument(staged, revision: head.draftRevision)
                 refreshDuration()
+                // KRI-535: the rendered video predates this staged chat edit. Keep it
+                // hidden behind "Preparing preview" until the local composition (which
+                // has the edit) is ready, instead of showing the old version as current.
+                finishedRenderIsCurrent = false
             }
             loadState = .loaded
             await prepareSourcePreview()

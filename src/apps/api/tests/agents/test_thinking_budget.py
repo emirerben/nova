@@ -91,21 +91,35 @@ _KRI178_FIXTURE = (
     Path(__file__).resolve().parents[1]
     / "fixtures/agent_evals/main_creator/kri178_talking_reaction_beats.json"
 )
-# `nova.creator.main` latency over its 16 prod runs on 2026-09-23/24, fitted as
-# first-token time + time per generated (thinking + answer) token. The
-# first-token term includes the worst residual (+2.0 s).
-_FIRST_TOKEN_S = 6.7
-_S_PER_TOKEN = 0.00573
+# `nova.creator.main` latency fitted as first-token time + time per generated
+# (thinking + answer) token. The 2026-09-23/24 fit over 16 prod runs (small
+# manifests, thinking "low") was 6.7 s + 5.73 ms/token. KRI-542 (2026-10-08):
+# four single-call replays of an 18.8k-token manifest at thinking "high" with a
+# 16k budget measured (7,083 tok, 56.7 s), (8,724, 66.6 s), (9,586, 75.9 s),
+# (13,853, 105.9 s): 5.2 s + 7.27 ms/token. The steeper per-token slope is the
+# one the budget/timeout invariant below has to survive.
+_FIRST_TOKEN_S = 5.2
+_S_PER_TOKEN = 0.00727
 
 
 class _SharedBudgetGemini(ModelClient):
     """Gemini 3 counts thinking against `max_output_tokens`: the visible answer
     gets only what thinking leaves, and generation time grows with both."""
 
-    def __init__(self, *, answer: str, thinking_tokens: int, answer_tokens: int) -> None:
+    def __init__(
+        self,
+        *,
+        answer: str,
+        thinking_tokens: int,
+        answer_tokens: int,
+        thinking_tokens_by_level: dict[str, int] | None = None,
+    ) -> None:
         self.answer = answer
         self.thinking_tokens = thinking_tokens
         self.answer_tokens = answer_tokens
+        # KRI-542: how much the model thinks at each requested level; the
+        # default `thinking_tokens` applies to any level not listed.
+        self.thinking_tokens_by_level = thinking_tokens_by_level or {}
         self.calls: list[dict[str, Any]] = []
 
     def invoke(
@@ -113,10 +127,18 @@ class _SharedBudgetGemini(ModelClient):
         *,
         max_output_tokens: int | None = None,
         timeout_s: float = 30.0,
+        thinking_level: str | None = None,
         **_: Any,
     ) -> ModelInvocation:
-        self.calls.append({"max_output_tokens": max_output_tokens, "timeout_s": timeout_s})
-        wanted = self.thinking_tokens + self.answer_tokens
+        self.calls.append(
+            {
+                "max_output_tokens": max_output_tokens,
+                "timeout_s": timeout_s,
+                "thinking_level": thinking_level,
+            }
+        )
+        thinking = self.thinking_tokens_by_level.get(thinking_level or "", self.thinking_tokens)
+        wanted = thinking + self.answer_tokens
         budget = max_output_tokens or 0
         if _FIRST_TOKEN_S + min(wanted, budget) * _S_PER_TOKEN > timeout_s:
             raise ProviderOutcomeUnknownError(
@@ -126,13 +148,13 @@ class _SharedBudgetGemini(ModelClient):
             return ModelInvocation(
                 raw_text=self.answer[: len(self.answer) // 3],
                 raw_response=max_tokens_response(),
-                tokens_out=max(0, budget - self.thinking_tokens),
-                tokens_thoughts=self.thinking_tokens,
+                tokens_out=max(0, budget - thinking),
+                tokens_thoughts=thinking,
             )
         return ModelInvocation(
             raw_text=self.answer,
             tokens_out=self.answer_tokens,
-            tokens_thoughts=self.thinking_tokens,
+            tokens_thoughts=thinking,
         )
 
 
@@ -166,23 +188,140 @@ def test_main_creator_budget_runs_out_before_its_provider_timeout() -> None:
 def test_runaway_main_creator_call_ends_as_one_truncation_not_an_unknown_outcome() -> None:
     """Behavioral twin of the check above: a call that would think and write
     past its whole output budget stops at MAX_TOKENS inside the provider
-    deadline. The run fails once, as a retryable truncation -- never a second
-    ~54 s paid call, and never an outcome-unknown fence."""
+    deadline, never as an outcome-unknown fence. At thinking "high" it gets
+    exactly one retry at "low" (KRI-542); when that truncates too the run is
+    terminal -- never a third paid call."""
     from app.agents.main_creator import MainCreatorAgent
 
     fixture = json.loads(_KRI178_FIXTURE.read_text())
+    # Thinks the whole budget away at every level: nothing is left for the answer.
     client = _SharedBudgetGemini(
-        answer=fixture["raw_text"], thinking_tokens=7_000, answer_tokens=2_380
+        answer=fixture["raw_text"],
+        thinking_tokens=MainCreatorAgent.max_output_tokens,
+        answer_tokens=2_380,
     )
 
     with pytest.raises(TerminalError, match="output truncated") as failure:
         MainCreatorAgent(client).run(fixture["input"])
 
     assert not isinstance(failure.value, (ProviderOutcomeUnknownError, TerminalSchemaError))
-    [call] = client.calls
-    # The agent's declared budget and deadline are what reach the provider.
-    assert call["max_output_tokens"] == MainCreatorAgent.max_output_tokens
-    assert call["timeout_s"] == MainCreatorAgent.spec.timeout_s
+    assert [c["thinking_level"] for c in client.calls] == ["high", "low"]
+    for call in client.calls:
+        # The agent's declared budget and deadline are what reach the provider.
+        assert call["max_output_tokens"] == MainCreatorAgent.max_output_tokens
+        assert call["timeout_s"] == MainCreatorAgent.spec.timeout_s
+
+
+# ── KRI-542: a MAX_TOKENS call at thinking "high" is retried once at "low" ───
+# Prod 2026-10-08, thread 74dfc456 (M3 Berlin, the turn after a clip-picker
+# answer): the Main Creator at "high" (PR 1485) thought past its 8,192 tokens,
+# kept 315 for the plan, and the turn dead-ended with "I couldn't turn that
+# into a plan this time". Turn 1's two successful calls on the same prompt took
+# 48 s and 52 s for ~1.7k answer tokens, i.e. ~6k thinking each: every "high"
+# call on a big manifest already sits at 75-95% of the shared budget.
+
+
+def test_main_creator_truncated_at_high_thinking_is_retried_once_at_low(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.agents import _runtime as runtime_mod
+    from app.agents.main_creator import MainCreatorAgent
+
+    runs: list[dict[str, Any]] = []
+    warnings: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        runtime_mod.log,
+        "info",
+        lambda event, **kw: runs.append(dict(kw)) if event == "agent_run" else None,
+    )
+    monkeypatch.setattr(
+        runtime_mod.log, "warning", lambda event, **kw: warnings.append((event, dict(kw)))
+    )
+    fixture = json.loads(_KRI178_FIXTURE.read_text())
+    # The prod shape: thinking leaves ~300 tokens of the budget for the plan.
+    high_thinking = MainCreatorAgent.max_output_tokens - 300
+    client = _SharedBudgetGemini(
+        answer=fixture["raw_text"],
+        thinking_tokens=high_thinking,
+        answer_tokens=2_380,
+        thinking_tokens_by_level={"low": 1_500},
+    )
+
+    output = MainCreatorAgent(client).run(fixture["input"])
+
+    assert len(output.action.strategy.reaction_beats) == 13
+    assert [c["thinking_level"] for c in client.calls] == ["high", "low"]
+    [run] = runs
+    assert (run["outcome"], run["attempts"], run["thinking_degraded"]) == ("ok", 2, True)
+    assert run["tokens_thoughts"] == high_thinking + 1_500
+    [(event, degraded)] = warnings
+    assert event == "agent_thinking_degraded"
+    assert (degraded["from_level"], degraded["to_level"], degraded["attempt"]) == ("high", "low", 1)
+    # Sensitive agent: the warning carries no model text.
+    assert degraded["error"] == "sensitive_agent_error"
+
+
+def test_main_creator_truncated_at_low_thinking_is_terminal_after_one_call() -> None:
+    from dataclasses import replace
+
+    from app.agents.main_creator import MainCreatorAgent
+
+    class _LowThinkingMainCreator(MainCreatorAgent):
+        spec = replace(MainCreatorAgent.spec, thinking_level="low")
+
+    fixture = json.loads(_KRI178_FIXTURE.read_text())
+    client = _SharedBudgetGemini(
+        answer=fixture["raw_text"],
+        thinking_tokens=MainCreatorAgent.max_output_tokens,
+        answer_tokens=2_380,
+    )
+
+    with pytest.raises(TerminalError, match="output truncated"):
+        _LowThinkingMainCreator(client).run(fixture["input"])
+
+    assert [c["thinking_level"] for c in client.calls] == ["low"]
+
+
+def test_successful_high_thinking_call_is_not_degraded(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.agents import _runtime as runtime_mod
+    from app.agents.main_creator import MainCreatorAgent
+
+    runs: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        runtime_mod.log,
+        "info",
+        lambda event, **kw: runs.append(dict(kw)) if event == "agent_run" else None,
+    )
+    fixture = json.loads(_KRI178_FIXTURE.read_text())
+    client = _SharedBudgetGemini(
+        answer=fixture["raw_text"], thinking_tokens=5_800, answer_tokens=2_380
+    )
+
+    MainCreatorAgent(client).run(fixture["input"])
+
+    assert [c["thinking_level"] for c in client.calls] == ["high"]
+    [run] = runs
+    assert run["attempts"] == 1
+    assert "thinking_degraded" not in run
+
+
+@pytest.mark.parametrize(
+    ("model", "level", "expected"),
+    [
+        ("gemini-3.1-pro-preview", "high", "low"),
+        ("gemini-3.1-pro-preview", "medium", "low"),
+        ("gemini-3.6-flash", " HIGH ", "low"),
+        ("gemini-3.1-pro-preview", "low", None),
+        ("gemini-3.1-pro-preview", "minimal", None),
+        ("gemini-3.1-pro-preview", None, None),
+        # Gemini 2.5 budgets thinking separately (`thinking_budget`): unchanged.
+        ("gemini-2.5-flash", "high", None),
+    ],
+)
+def test_degraded_thinking_level_table(model: str, level: str | None, expected: str | None) -> None:
+    from app.agents._runtime import _degraded_thinking_level
+
+    assert _degraded_thinking_level(model, level) == expected
 
 
 def test_per_agent_timeout_is_enforced(capturing_client, monkeypatch):

@@ -576,6 +576,55 @@ since carry the spelled-out look whether or not the Save carried the text lane.
 Editor round trip, every reader and reburn:
 `tests/routes/test_narrated_storyboard_editor.py`.
 
+### Phone Voiceover pop-in and mix receipts (KRI-537)
+
+The phone narrated worker persists two pieces of render evidence on the variant:
+`phone_beat_receipt` (`placed` rows with `trigger`, `at_s`, `end_s`; `unplaced` rows
+with a `reason`) and `voiceover_bed_level` (footage gain under the voice, 0.25 in
+prod). The render-ready review (`_approved_generation_review`) builds its facts with
+`plan_facts_from_phone_variant`, which is `plan_facts_from_editor_payload` plus those
+two fields, so a finished render is judged on what it did rather than on text lanes
+alone. A `timing`-kind "when the voiceover says X, show my photo" ask is a pop-in ask:
+the beat checker judges it at draft from the strategy beats and at render from the
+variant receipt (met with the placement times; a trigger in `unplaced` is partial,
+"never heard"). "Keep crowd noise quiet under the voiceover" goes to the bed-under-voice
+checker (met with the bed percentage once the level is known; a mute ask is a format
+limit, since the bed only ducks). A variant with neither field behaves as before:
+`unchecked`, "Couldn't verify". Guards: `tests/kria/test_brief_marathon_receipts.py`,
+`tests/tasks/test_marathon_render_ready_review.py`.
+
+KRI-541: the same facts also carry what the render did for captions and speech cleanup.
+For a `narrated` / `subtitled` variant `plan_facts_from_phone_variant` sets
+`rendered_variant=True` (keeping `editor=True` for the text lanes), `edit_format`,
+`caption_style` (non-empty `caption_cues` + `voiceover_caption_style` "sentence" → clean,
+"word" → karaoke; a device render with no cues → none) and `speech_cleanup_outcome`
+(`silence_cut_outcome` applied / no_change; a device render without one → not_run). The
+captions and cleanup checkers judge those when `rendered_variant` is set; a real editor
+turn still answers "can't check". Cleanup never cuts a named line or retake ("the restart
+of the kilometer thirty sentence"), so such an ask stays "Partly" with the editor note. A
+cloud variant whose fields are not filled yet stays unknown. Guards:
+`tests/kria/test_brief_rendered_speech_facts.py`, the KRI-541 cases in
+`tests/tasks/test_marathon_render_ready_review.py`.
+
+### Phone Montage render-ready receipts (KRI-546)
+
+A published phone export carries the phone's upload attempt id as `render_generation_id`,
+while the plan records (`unified_montage`, `narrated_alignment`) carry the approved
+`creator_generation_id`, so the review used to drop them and answer "Couldn't verify" for
+an order the plan had already judged. `_plan_record_generations` now also accepts the
+`requirement_generation` of the variant's device record when its `published_attempt` is
+this variant's id (an editor turn keeps the exact match). For a matched `unified_montage`
+the facts are `plan_facts_from_rendered_montage`: the variant's facts plus the record's
+order facts, the finished `story_timeline` order, the held `closing_speech` (met only when
+that clip is the last cut, the cut covers the line and `source_audio_preserved` is not
+false) and duplicate files by the original uploads' sha256 (`_source_fingerprints`: phone
+source / Visuals bindings, then the binding's media snapshot). The record's judged
+receipts stand; its unjudged ones, and every "keep one of a repeated video" or "end on X's
+own spoken line" ask (`judged_at_render`), are judged from those facts. Drafts and every
+other plan keep "can't verify" for both asks. Guards:
+`tests/tasks/test_montage_render_ready_review.py`,
+`tests/kria/test_brief_montage_render_asks.py`.
+
 ### Narrated render receipts (KRI-533)
 
 A phone Voiceover draft used to list every order / timing / caption-language ask as

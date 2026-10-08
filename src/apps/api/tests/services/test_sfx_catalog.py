@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
+import json
 import random
+import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pytest
 
 from app.services.sfx_catalog import (
     SFX_CATEGORIES,
     SFX_CATEGORY_TERMS,
     SfxEntry,
+    content_words,
     match_score,
     placement_catalog,
     planner_catalog,
     rank_for_request,
     resolve_described_effect,
+    words,
 )
 
 
@@ -175,3 +182,120 @@ def test_catalog_rank_beats_upload_order_after_a_re_upload() -> None:
     rows[0]["catalog_rank"], rows[1]["catalog_rank"] = 0, 13
     assert [e.id for e in planner_catalog(rows, 2)] == ["buzz", "aww"]
     assert [e.id for e in placement_catalog(rows, 2)] == ["buzz", "aww"]
+
+
+# --- KRI-540: Turkish sound descriptions against the English-only library -----
+
+TR_LIBRARY = [
+    _seeded("clink", "Glass clink", "impact", ("glass", "clink", "cheers", "toast", "cup")),
+    _seeded("glass-break", "Glass break", "rejection", ("glass", "shatter", "smash", "break")),
+    _seeded("bell", "Bell hit", "impact", ("bell", "gong", "ring", "round")),
+    _seeded("ding", "Correct ding", "approval", ("ding", "bell", "quiz", "correct answer")),
+    _seeded("applause", "Applause", "approval", ("applause", "clap", "clapping", "bravo", "crowd")),
+    _seeded(
+        "applause-long",
+        "Applause long",
+        "approval",
+        ("applause", "clap", "clapping", "ovation", "crowd", "long"),
+    ),
+    _seeded("ref", "Referee whistle", "sports", ("whistle", "referee", "foul", "kick off")),
+    _seeded("slide", "Slide whistle up", "comedy", ("slide whistle", "whistle", "rise")),
+    _seeded("door", "Door slam", "impact", ("door", "slam", "shut", "leave", "angry")),
+    _seeded("coins", "Coins", "money", ("coins", "change", "pocket", "jingle")),
+    _seeded("cash", "Cash register", "money", ("ka ching", "register", "sale", "paid")),
+    _seeded("buzz", "Wrong buzzer", "rejection", ("buzzer", "quiz", "wrong answer", "nope")),
+]
+
+
+def _tr_entries() -> list[SfxEntry]:
+    return [SfxEntry.from_row(row) for row in TR_LIBRARY]
+
+
+def _resolved_id(description: str) -> str | None:
+    found = resolve_described_effect(_tr_entries(), description)
+    return found.id if found else None
+
+
+def test_turkish_descriptions_resolve_to_the_english_effect() -> None:
+    assert _resolved_id("küçük bir fincan sesi") == "clink"  # the prod miss
+    assert _resolved_id("fincan sesi") == "clink"
+    assert _resolved_id("zil sesi") == "bell"
+    assert _resolved_id("alkış") == "applause"
+    assert _resolved_id("alkışlar") == "applause"  # plural suffix
+    assert _resolved_id("düdük") == "ref"
+    assert _resolved_id("hakem düdüğü") == "ref"  # soft-g possessive
+    assert _resolved_id("kapı çarpması") == "door"
+    assert _resolved_id("bozuk para sesi") == "coins"
+    assert _resolved_id("kasa sesi") == "cash"
+    assert _resolved_id("yanlış") == "buzz"
+    assert _resolved_id("cam kırılması") == "glass-break"
+    # ASCII-typed Turkish works the same (phone keyboards drop diacritics).
+    assert _resolved_id("kucuk bir fincan sesi") == "clink"
+    assert _resolved_id("DÜDÜK") == "ref"
+    assert _resolved_id("İstanbul") is None
+
+
+def test_turkish_filler_and_refusals_name_no_effect() -> None:
+    assert _resolved_id("bir ses ekle") is None
+    assert _resolved_id("küçük bir ses") is None
+    assert _resolved_id("ses olmasın") is None
+    assert _resolved_id("zil sesi istemiyorum") is None
+    assert _resolved_id("sesi kaldır") is None
+    # An uncovered Turkish word still means "don't guess".
+    assert _resolved_id("küçük bir fincan çıngırak sesi") is None
+
+
+def test_english_behaviour_is_unchanged_by_the_turkish_vocabulary() -> None:
+    entries = _tr_entries()
+    assert resolve_described_effect(entries, "cup sound").id == "clink"
+    assert resolve_described_effect(entries, "buzzer").id == "buzz"
+    assert resolve_described_effect(entries, "a small cup sound") is None
+    # Words that are also Turkish ("can", "her", "cam") stay plain English.
+    assert content_words("the can sound") == ["can"]
+    assert content_words("her laugh") == ["her", "laugh"]
+    assert resolve_described_effect(entries, "no sound") is None
+    assert resolve_described_effect(entries, "yok") is None  # Turkish "none"
+
+
+def test_words_tokenisation_is_ascii_identical_and_folds_turkish() -> None:
+    assert words("Tape rewind") == ["tape", "rewind"]
+    for text in ("Wrong buzzer long", "ka-ching! 8 bit", "A  mix_of 3 THINGS", ""):
+        assert words(text) == re.findall(r"[a-z0-9]+", text.casefold())
+    assert words("küçük bir fincan sesi") == ["kucuk", "bir", "fincan", "sesi"]
+    assert words("İstanbul ışık ğ Şöför") == ["istanbul", "isik", "g", "sofor"]
+    assert words(None) == []
+
+
+def test_turkish_vocabulary_targets_words_the_real_library_uses() -> None:
+    from app.services.sfx_catalog import _TR_VOCAB
+
+    english = {
+        "cup", "glass", "break", "bell", "applause", "whistle", "referee", "door", "slam",
+        "click", "crowd", "explosion", "drum", "money", "cash", "register", "laugh", "horn",
+        "camera", "photo", "keyboard", "win", "wrong", "correct", "answer", "heart", "clock",
+        "page", "hit", "punch", "notification", "message", "goal",
+    }  # fmt: skip
+    assert {w for targets in _TR_VOCAB.values() for w in targets} <= english
+
+
+PROD_DUMP = Path(
+    "/private/tmp/claude-501/-Users-yasinberkyesilyurt-projects-nova/"
+    "600a1d9e-15cc-4dfe-947a-28cb3e01b121/scratchpad/sfx_library.json"
+)
+
+
+@pytest.mark.skipif(not PROD_DUMP.exists(), reason="prod SFX library dump not available")
+def test_turkish_descriptions_against_the_prod_library_dump() -> None:
+    rows = [{**r, "created_at": None} for r in json.loads(PROD_DUMP.read_text())["effects"]]
+    entries = [SfxEntry.from_row(r) for r in rows]
+
+    def name(description: str) -> str | None:
+        found = resolve_described_effect(entries, description)
+        return found.name if found else None
+
+    assert name("küçük bir fincan sesi") == "Glass clink"
+    assert name("zil sesi") == "Bell hit"
+    assert name("alkış") == "Applause"
+    assert name("hakem düdüğü") == "Referee whistle"
+    assert name("kapı çarpması") == "Door slam"
+    assert name("ses olmasın") is None

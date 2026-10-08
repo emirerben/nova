@@ -52,3 +52,30 @@ Voiceover adds word-timed alignment when enabled; Talking uses its speech/text
 operations; Slides uses its slide-specific text/reorder operations. Each operation
 is checked against the actual format, renderer and flags, rather than claiming
 all four formats support every operation.
+
+## Receipts on editor turns (KRI-529)
+
+A strategy draft (new cut) lists every live requirement, so unjudged ones show as
+`partial` / `unchecked` ("still needs an output check"). An editor-operations turn
+receipts only the requirements stated in that turn; it no longer re-lists earlier
+ones, which put a yellow chip on every unrelated requirement after each chat edit.
+iOS draws `verification == "unchecked"` as a neutral "Not checked yet" chip, never
+the yellow "Partly done" one (this also covers events stored before the change).
+
+## Editor-turn reply and extraction failures (KRI-534, KRI-536)
+
+- An editor-operations turn whose only open items are requirements no checker can
+  judge (for example a style ask) replies "Updated your edit." followed by "I can't
+  check this automatically, so have a look: <request>". It never echoes the model's
+  summary. A judged miss keeps the "I couldn't verify every requested change" wording,
+  and drafts, renders and the post-render review keep it too.
+- When requirement extraction fails on a rendered follow-up, the turn is served by the
+  edit copilot only if the message is one short text ask (a single sentence with no
+  "and"/"also"/comma, no re-plan cue) and the copilot answers with in-place text ops
+  alone. The full message is recorded as one unchecked `style`/`global` requirement, so
+  the request is preserved. Anything else (compound asks, structural ops, no editor
+  target, any error in this path) keeps the recovery reply and leaves the draft as it was.
+- Every recovery reply and every degraded turn carries `brief_coverage.cause`
+  (`stage`, `error_type`, `cause_type`: class names only, never the error text), readable
+  with `python scripts/admin.py [--prod] GET creation-threads/<id>/events`.
+  `cause_type: TerminalSchemaError` means the extractor produced invalid output.

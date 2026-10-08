@@ -35,8 +35,11 @@ from app.kria.brief_checks import (
     NARRATED_ALIGNMENT_FIELD,
     build_receipts,
     is_judged,
+    judged_at_render,
     needs_creator_choice,
     plan_facts_from_editor_payload,
+    plan_facts_from_phone_variant,
+    plan_facts_from_rendered_montage,
     plan_facts_from_strategy,
     reply_from_receipts,
     requirements_to_check_at_draft,
@@ -867,8 +870,17 @@ def _complete_draft_turn(
                         receipts,
                         summary=arguments.summary,
                         notices=planned.policy_notices,
+                        # KRI-534: compiled editor ops already produced the draft.
+                        edit_applied=apply_intent.tool_name == "draft.apply_editor_ops",
                     )
-        if settings.brief_binding_for(thread.creator_id) and brief is not None:
+        # KRI-529: list the untouched requirements only when a NEW cut is drafted (the
+        # approval moment). An editor turn reports on what it was asked, instead of a
+        # fresh "still needs an output check" chip for every earlier requirement.
+        if (
+            settings.brief_binding_for(thread.creator_id)
+            and brief is not None
+            and apply_intent.tool_name == "draft.apply_strategy"
+        ):
             from app.kria.contracts import RequirementReceipt  # noqa: PLC0415
 
             checked_ids = {receipt["requirement_id"] for receipt in requirement_receipts}
@@ -1827,13 +1839,17 @@ def _fail_turn(
         return None
 
 
-# 150 s soft limit: a clip-intent turn measured ~70 s of model + vision work, and may
+# 200 s soft limit: a clip-intent turn measured ~70 s of model + vision work, and may
 # also wait (bounded by this limit, see `turn_deadline`) for clip analysis in flight.
+# KRI-542: the Main Creator's own deadline is 130 s (thinking "high" on a 16k
+# budget), and a truncated call is retried once at "low" (~35-45 s), so a degraded
+# turn needs ~175 s before the resolver runs. Both limits stay far under the
+# broker's 1900 s visibility_timeout (tests/tasks/test_task_time_limits.py).
 @celery_app.task(
     bind=True,
     name="tasks.run_kria_turn",
-    soft_time_limit=150,
-    time_limit=180,
+    soft_time_limit=200,
+    time_limit=230,
     max_retries=0,
 )
 def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
@@ -3734,6 +3750,72 @@ def _voice_behind_footage_note(job: Job) -> str:
     return " ".join(sentences)
 
 
+def _plan_record_generations(job: Job, variant: dict) -> set[str | None]:
+    """The generations whose plan records describe this variant's finished output.
+
+    A cloud render (and a pending phone variant) carries the approved generation itself.
+    A published phone export carries the phone's upload attempt id instead (KRI-546), so
+    the approved generation is read off that variant's device record: the generation its
+    recipe was checked against when this very attempt was published. An editor Save pins
+    its own generation there, so the original plan's records are never read for it.
+    """
+    generation = str(variant.get("render_generation_id") or "") or None
+    accepted: set[str | None] = {generation}
+    records = (job.assembly_plan or {}).get(DEVICE_RENDER_FIELD)
+    record = (
+        records.get(str(variant.get("variant_id") or "")) if isinstance(records, dict) else None
+    )
+    if (
+        generation is not None
+        and variant.get("render_destination") == "device"
+        and isinstance(record, dict)
+        and str(record.get("published_attempt") or "") == generation
+    ):
+        pinned = record.get("requirement_generation")
+        if isinstance(pinned, str) and pinned:
+            accepted.add(pinned)
+    return accepted
+
+
+def _source_fingerprints(job: Job) -> dict[str, str]:
+    """Each added clip's media id -> the sha256 of its original upload (KRI-546).
+
+    Read from the job's phone source bindings and Visuals bindings (the fingerprints a
+    phone export is checked against), then the approved media snapshot's upload receipts.
+    A media id with two different fingerprints is left out, so it is never judged.
+    """
+    from app.services.phone_sources import (  # noqa: PLC0415
+        PHONE_SOURCES_FIELD,
+        PHONE_VISUALS_FIELD,
+    )
+
+    plan = job.assembly_plan or {}
+    found: dict[str, str] = {}
+    conflicted: set[str] = set()
+
+    def take(media_id: object, sha: object) -> None:
+        if not isinstance(media_id, str) or not media_id or not isinstance(sha, str) or not sha:
+            return
+        if found.setdefault(media_id, sha) != sha:
+            conflicted.add(media_id)
+
+    for row in plan.get(PHONE_SOURCES_FIELD) or []:
+        if isinstance(row, dict) and isinstance(row.get("original"), dict):
+            take(row.get("media_id"), row["original"].get("sha256"))
+    for row in plan.get(PHONE_VISUALS_FIELD) or []:
+        if isinstance(row, dict):
+            take(row.get("media_id"), row.get("sha256"))
+    binding = plan.get("creator_brief_binding")
+    snapshot = binding.get("media_snapshot") if isinstance(binding, dict) else None
+    for row in (snapshot.get("clip_assignments") if isinstance(snapshot, dict) else None) or []:
+        contract = row.get("upload_contract") if isinstance(row, dict) else None
+        proxy = contract.get("proxy") if isinstance(contract, dict) else None
+        original = proxy.get("original") if isinstance(proxy, dict) else None
+        if isinstance(original, dict):
+            take(row.get("media_id"), original.get("sha256"))
+    return {media_id: sha for media_id, sha in found.items() if media_id not in conflicted}
+
+
 def _approved_generation_review(
     db: Any,
     thread: CreationThread,
@@ -3756,28 +3838,57 @@ def _approved_generation_review(
     if brief is None or not brief.live():
         return default_text, []
     generation = str(variant.get("render_generation_id") or "") or None
+    # An editor turn changed the cut those records describe: it keeps the exact id match.
+    accepted = (
+        {generation}
+        if (execution.result or {}).get("editor_prep") is not None
+        else _plan_record_generations(job, variant)
+    )
     receipts = []
+    montage: dict | None = None
     for record_key in ("unified_montage", NARRATED_ALIGNMENT_FIELD):
         record = (job.assembly_plan or {}).get(record_key) or {}
-        if (
-            record.get("generation_id") != generation
-            or record.get("brief_version") != brief.version
-        ):
+        record_generation = record.get("generation_id")
+        if record_generation not in accepted or record.get("brief_version") != brief.version:
             continue
+        if record_key == "unified_montage":
+            montage = record
         for row in record.get("requirement_receipts") or []:
             try:
                 receipt = RequirementReceipt.model_validate(row)
             except ValueError:
                 continue
-            if receipt.brief_version == brief.version and receipt.generation_id == generation:
+            if (
+                receipt.brief_version == brief.version
+                and receipt.generation_id == record_generation
+            ):
                 receipts.append(receipt)
+    live = {req.id: req for req in brief.live()}
+    if montage is not None:
+        # KRI-546: a finished phone montage. Its plan record judged order, text and length
+        # when it was laid out; what the record left unjudged, and the asks only the
+        # finished edit can show (a held closing line, a repeated file), are judged here.
+        facts = plan_facts_from_rendered_montage(
+            variant, montage, fingerprints=_source_fingerprints(job)
+        )
+        receipts = [
+            receipt
+            for receipt in receipts
+            if is_judged(live.get(receipt.requirement_id), receipt)
+            and not judged_at_render(live[receipt.requirement_id])
+        ]
+    else:
+        # KRI-537: the variant's phone_beat_receipt and voiceover_bed_level are the render's
+        # evidence for pop-in and mix asks; the text-lane facts alone cannot see them.
+        facts = plan_facts_from_phone_variant(variant)
     known = {receipt.requirement_id for receipt in receipts}
-    facts = plan_facts_from_editor_payload(variant)
     receipts.extend(
         build_receipts(
             [req for req in brief.live() if req.id not in known], facts, include_unchecked=True
         )
     )
+    order = {req_id: index for index, req_id in enumerate(live)}
+    receipts.sort(key=lambda receipt: order.get(receipt.requirement_id, len(order)))
     receipts = [
         receipt.model_copy(
             update={
