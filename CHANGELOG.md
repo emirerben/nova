@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.179.0] - 2026-10-08
+
+### Changed
+- fix(kria): chapter-title list never becomes the montage's opening title (KRI-545) (#1501) <!-- release-pr: 1501 -->
+
 ## [0.78.178.0] - 2026-10-08
 
 ### Changed
