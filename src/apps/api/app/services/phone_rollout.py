@@ -717,6 +717,18 @@ def phone_subtitled_title_supported() -> bool:
     )
 
 
+def phone_subtitled_closing_title_supported() -> bool:
+    """Can a phone-rendered `subtitled` (Talking) edit carry the creator's
+    closing text (KRI-514)? It is a text row on the KRI-467 lane drawn as a
+    tag with a background, which the device draws with `authoredText`."""
+
+    return bool(
+        settings.phone_subtitled_closing_title_enabled
+        and phone_subtitled_title_supported()
+        and "authoredText" in settings.phone_render_verified_features
+    )
+
+
 def phone_narrated_title_preview_supported() -> bool:
     """Can the requesting app build show a phone `narrated` edit's opening
     title in its editor preview (KRI-455)?

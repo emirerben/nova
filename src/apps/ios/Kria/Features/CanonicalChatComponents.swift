@@ -511,10 +511,10 @@ struct FootageStage: View {
                     ForEach(attachedMedia) { media in
                         HStack(spacing: 10) {
                             CreationAttachmentThumbnail(media: media)
-                            Text(media.filename).font(KriaFont.body(12)).lineLimit(1)
+                            Text(media.displayName).font(KriaFont.body(12)).lineLimit(1)
                             Spacer()
                             Button { removeMedia(media.id) } label: { Image(systemName: "trash").frame(width: 44, height: 44) }
-                                .accessibilityLabel("Remove \(media.filename)")
+                                .accessibilityLabel("Remove \(media.displayName)")
                                 .disabled(isBusy || !uploads.isEmpty)
                         }
                     }

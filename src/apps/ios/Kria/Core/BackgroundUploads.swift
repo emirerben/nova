@@ -579,8 +579,9 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     }
 
     /// Photos exports are named `<UUID>-<original>` (see `ImportedMedia`), which is what the user would
-    /// otherwise read in an error. Shows the name they know.
-    static func displayFilename(_ name: String) -> String {
+    /// otherwise read in an error. Shows the name they know. Pure, so any isolation can call it: the
+    /// server echoes the same name back on attached media (`CreationAttachedMedia.displayName`).
+    nonisolated static func displayFilename(_ name: String) -> String {
         guard name.count > 37,
               UUID(uuidString: String(name.prefix(36))) != nil,
               name[name.index(name.startIndex, offsetBy: 36)] == "-" else { return name }

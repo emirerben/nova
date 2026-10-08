@@ -815,11 +815,11 @@ private struct CreationWorkspaceView: View {
                 ForEach(Array(media.enumerated()), id: \.offset) { _, attachment in
                     VStack(alignment: .leading, spacing: 5) {
                         CreationAttachmentThumbnail(media: attachment)
-                        Text(attachment.filename).font(KriaFont.body(11)).lineLimit(2)
+                        Text(attachment.displayName).font(KriaFont.body(11)).lineLimit(2)
                     }
                     .frame(width: 92, alignment: .leading)
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Uploaded \(attachment.filename)")
+                    .accessibilityLabel("Uploaded \(attachment.displayName)")
                     .accessibilityIdentifier("chat-media-\(attachment.id)")
                 }
             }

@@ -440,10 +440,10 @@ struct AttachmentSheet: View {
             ForEach(attachedMedia(for: role)) { attachment in
                 HStack(spacing: 12) {
                     CreationAttachmentThumbnail(media: attachment)
-                    Text(attachment.filename).font(KriaFont.body(14)).lineLimit(1)
+                    Text(attachment.displayName).font(KriaFont.body(14)).lineLimit(1)
                     Spacer()
                     Button { Task { await removeAttached(attachment) } } label: { Image(systemName: "trash").frame(width: 44, height: 44) }
-                        .accessibilityLabel("Remove \(attachment.filename)")
+                        .accessibilityLabel("Remove \(attachment.displayName)")
                         .disabled(removingMedia || !pendingRecords.filter { $0.projectID == projectID }.isEmpty)
                 }
             }

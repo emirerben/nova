@@ -2293,6 +2293,40 @@ Tests: `tests/pipeline/test_phone_subtitled_title.py`,
 `NativeEditorSessionTests.testPhoneTalkingTitleIsAnEditableTextRowThatReachesTheSave`,
 `NativeEditorTextBlocksTests.testAPhoneTalkingHookTitleIsListedAsTheTitle`.
 
+### Closing text on phone Talking edits (KRI-514)
+
+"End on the toast photo with a 'MY PICK' badge" became `closing_title`, which
+`compile_strategy_to_plan` refused for every `subtitled` edit, so the whole
+edit (photo pop-ins, sounds and all) stopped on "This kind of edit can't show
+your own text on each shot or at the end yet" (thread 7ae3a6f5, 2026-10-07).
+A phone Talking edit now draws it as a second row on the same text lane:
+
+- **Planner.** `phone_talking_closing` lets `closing_title` through when
+  `phone_subtitled_closing_title_supported()` (its flag, the KRI-467 text lane,
+  and `authoredText` for the tag's background). Cloud Talking edits, and the
+  flag off, still ask, now naming the text: 'This kind of edit can't show "MY
+  PICK" at the end yet. Should I make everything else and leave that text out?'
+- **Worker.** `_phone_talking_closing_rows` builds id `closing-title`: dark
+  TikTok Sans on the editor's caption lime (`#C5F82A`), from the closing
+  photo's entrance (else the last 3 s) to the end. Beat grounding names the
+  closing photo's card and shape (`GroundedReactionBeats.closing_card_id` /
+  `closing_card_aspect`), and `place_closing_on_photo` sets the tag on the
+  photo's lower edge, above the caption band (the photo is already off the
+  face). Without a photo, `place_talking_title` puts it at the title's spot,
+  off the face, and the generic PiP pass keeps out of that window. After an
+  ending clip the row is stretched to the recipe's end: the contract's
+  `closing` check wants it on screen there. Persisted beside the title in
+  `text_elements` plus a `closing_title_placement` receipt; the editor edits it
+  like any text row.
+
+Kill switch: `fly secrets set PHONE_SUBTITLED_CLOSING_TITLE_ENABLED=false
+--app nova-video` + restart (api + worker). The planner asks again; closing
+text already on a variant keeps rendering and survives Saves.
+Tests: `tests/tasks/test_phone_subtitled_closing_title_worker.py`,
+`tests/pipeline/test_phone_subtitled_title.py` (closing section),
+`tests/kria/test_strategy_policy.py::test_closing_text_*`,
+`tests/services/test_phone_reaction_grounding.py::test_closing_card_*`.
+
 ## Your song montages (KRI-374)
 
 A creator attaches their own song to a phone montage ("Add your song" in the

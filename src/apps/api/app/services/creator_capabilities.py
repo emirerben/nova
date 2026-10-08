@@ -42,6 +42,7 @@ from app.agents._schemas.creator_policy import (
     normalize_creator_strategy_media,
     repair_creator_strategy_shape,
     repair_creator_user_song,
+    repair_creator_voice_mode,
 )
 from app.agents._schemas.edit_format import (
     CLIP_INTENT_FREE_EDIT_FORMATS,
@@ -59,6 +60,7 @@ from app.services.phone_rollout import (
     phone_guided_narration_supported,
     phone_narrated_title_supported,
     phone_render_supported_formats,
+    phone_subtitled_closing_title_supported,
     phone_subtitled_overlays_supported,
     phone_subtitled_reaction_beats_supported,
     phone_subtitled_title_supported,
@@ -1013,6 +1015,11 @@ def compile_strategy_to_plan(
             str(exc), code=exc.code, edit_format=strategy.edit_format
         ) from exc
     shape_notices = [*shape_notices, *song_notices]
+    # KRI-479: a stray `voice_mode` (no camera-audio montage) is dropped; a no-op otherwise.
+    strategy, voice_notices = repair_creator_voice_mode(
+        strategy, route_available=settings.voice_behind_footage_enabled
+    )
+    shape_notices = [*shape_notices, *voice_notices]
     try:
         strategy = normalize_creator_strategy_media(manifest, strategy)
     except UserSongUnavailableError as exc:
@@ -1115,7 +1122,17 @@ def compile_strategy_to_plan(
             code="unsupported_treatment",
             edit_format=strategy.edit_format,
         )
-    if strategy.shot_labels or strategy.closing_title:
+    # KRI-514: the same text lane draws the creator's closing text ("end on the
+    # toast photo with a 'MY PICK' badge"); `PHONE_SUBTITLED_CLOSING_TITLE_ENABLED
+    # =false` restores the refusal below.
+    phone_talking_closing = bool(
+        strategy.closing_title
+        and strategy.edit_format == "subtitled"
+        and phone_capability is not None
+        and phone_capability.available
+        and phone_subtitled_closing_title_supported()
+    )
+    if strategy.shot_labels or (strategy.closing_title and not phone_talking_closing):
         # Exact per-shot labels and closing copy are burned by the guided
         # story-beat renderer only. Fail visibly anywhere they cannot render
         # instead of approving an edit that silently drops the creator's words.

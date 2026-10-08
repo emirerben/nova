@@ -109,6 +109,17 @@ import XCTest
         XCTAssertEqual(BackgroundUploadCoordinator.displayFilename(bare), bare, "a bare UUID with no name after it is left alone")
     }
 
+    func testAttachedMediaShowsTheNameTheCreatorKnows() {
+        // KRI-518: the server echoes the upload's own name back; the chat showed "F7B6D371-1487-4CDF-8668-74…".
+        let media = CreationAttachedMedia.parse(["media": .array([
+            .object(["media_id": .string("analysis-proxy-ios-1.mp4"), "filename": .string("F7B6D371-1487-4CDF-8668-7458EC781355-T2_01_footage.mp4")]),
+            .object(["media_id": .string("ios-2.m4a"), "kind": .string("audio"), "filename": .string("voiceover.m4a")]),
+            .object(["media_id": .string("asset-3")]),
+        ])])
+        XCTAssertEqual(media.map(\.displayName), ["T2_01_footage.mp4", "voiceover.m4a", "Attached media"])
+        XCTAssertEqual(media[0].filename, "F7B6D371-1487-4CDF-8668-7458EC781355-T2_01_footage.mp4", "the stored name is untouched")
+    }
+
     // MARK: admission gate
 
     func testGateAdmitsUpToItsLimitThenQueues() async throws {

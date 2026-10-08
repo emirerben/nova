@@ -875,7 +875,54 @@ def repair_creator_user_song(
     return strategy.model_copy(update=update), notices
 
 
+VOICE_MODE_SHAPE_NOTICE = (
+    "Your voice plays straight through under the other clips, so I'm not using a day-vlog "
+    "or single-hero shape for this edit."
+)
+
+
+def repair_creator_voice_mode(
+    strategy: CreativeStrategy, *, route_available: bool = True
+) -> tuple[CreativeStrategy, list[str]]:
+    """KRI-479: a ``voice_mode`` only means something under a camera-audio montage.
+
+    ``voice_mode`` names HOW the creator's chosen camera-audio source is used, so it
+    needs ``montage_audio.preserve_source_audio`` on a plain montage with no recorded
+    voiceover or creator song (both are the whole soundtrack). Anywhere else a stray
+    value is dropped silently (KRI-129: repair, never reject), and the strategy is
+    otherwise returned untouched so every existing strategy compiles byte-identically.
+    How many sources are named is NOT repaired here: several candidates is the
+    ``which_voice`` question, resolved before approval.
+    """
+
+    if strategy.voice_mode is None:
+        return strategy, []
+    audio = strategy.montage_audio
+    if (
+        not route_available
+        or audio is None
+        or not audio.preserve_source_audio
+        or strategy.edit_format != "montage"
+        or strategy.audio_strategy in ("voiceover", "user_song")
+        or strategy.execution_contract is not None
+    ):
+        return strategy.model_copy(update={"voice_mode": None}), []
+    if strategy.voice_mode == "continuous" and (
+        strategy.archetype is not None or strategy.hero_media_id is not None
+    ):
+        # The creator asked for one voice under the other clips; a day-vlog / single-hero
+        # SHAPE the model added on top is not part of that request and the voice composer has
+        # no use for it (KRI-469's recorded strategy carried `archetype: day_vlog`).
+        return (
+            strategy.model_copy(update={"archetype": None, "hero_media_id": None}),
+            [VOICE_MODE_SHAPE_NOTICE],
+        )
+    return strategy, []
+
+
 __all__ = [
+    "VOICE_MODE_SHAPE_NOTICE",
+    "repair_creator_voice_mode",
     "CAPABILITY_USER_SONG",
     "USER_SONG_CONTRACT_NOTICE",
     "USER_SONG_MISSING_CODE",

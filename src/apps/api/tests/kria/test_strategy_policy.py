@@ -167,6 +167,91 @@ def test_title_on_cloud_voiceover_edit_still_renders(prod_profile) -> None:
     assert checked.strategy.opening_title == "Barcelona"
 
 
+def _talking_visuals_manifest():
+    return capabilities.resolve_creator_manifest(
+        item_id="item-greek-yogurt",
+        edit_format="subtitled",
+        media=[{"media_id": CLIPS[0], "kind": "video", "duration_s": 32.5}]
+        + [{"media_id": media_id, "kind": "image"} for media_id in PHOTOS],
+        phone_source_media_ids=[CLIPS[0]],
+        phone_rendering_allowed=True,
+    )
+
+
+def test_closing_text_on_phone_talking_edit_renders_with_the_rest(prod_profile) -> None:
+    """KRI-514: the "Greek Yogurt & Smoothie Video" chat. "End on the toast
+    photo with a 'MY PICK' badge" used to stop the whole edit -- photo pop-ins,
+    sounds and all -- with "can't show your own text on each shot or at the
+    end yet". The phone Talking text lane now draws it on the closing photo."""
+    checked = check_strategy_for_runtime_v2(
+        _talking_visuals_manifest(),
+        _talking(
+            reaction_beats=[
+                {
+                    "beat_id": "yogurt",
+                    "trigger": "Greek yogurt",
+                    "visual_id": PHOTOS[0],
+                    "visual_role": "photo",
+                    "sound": "pop",
+                }
+            ],
+            closing_media={"visual_id": PHOTOS[1]},
+            closing_title="MY PICK",
+        ),
+        ask_before_simplifying=True,
+    )
+
+    assert isinstance(checked, CheckedStrategy)
+    assert checked.strategy.closing_title == "MY PICK"
+    assert checked.strategy.closing_media is not None
+    assert checked.strategy.closing_media.visual_id == PHOTOS[1]
+    assert [beat.beat_id for beat in checked.strategy.reaction_beats or []] == ["yogurt"]
+
+
+_MY_PICK_QUESTION = (
+    'This kind of edit can\'t show "MY PICK" at the end yet. Should I make everything '
+    "else and leave that text out?"
+)
+
+
+def test_closing_text_on_phone_talking_edit_is_asked_about_when_switched_off(
+    prod_profile, monkeypatch
+) -> None:
+    monkeypatch.setattr(capabilities.settings, "phone_subtitled_closing_title_enabled", False)
+
+    refused = check_strategy_for_runtime_v2(_talking_manifest(), _talking(closing_title="MY PICK"))
+
+    assert isinstance(refused, RefusedStrategy)
+    assert refused.code == "shot_text_unavailable"
+    assert refused.question == _MY_PICK_QUESTION
+
+
+def test_closing_text_on_cloud_talking_edit_names_the_text(prod_profile) -> None:
+    manifest = capabilities.resolve_creator_manifest(
+        item_id="item-talking-cloud",
+        edit_format="subtitled",
+        media=[{"media_id": CLIPS[0], "kind": "video", "duration_s": 40.0}],
+    )
+
+    refused = check_strategy_for_runtime_v2(manifest, _talking(closing_title="MY PICK"))
+
+    assert isinstance(refused, RefusedStrategy)
+    assert refused.question == _MY_PICK_QUESTION
+
+
+def test_shot_labels_are_still_asked_about_on_a_talking_edit(prod_profile) -> None:
+    refused = check_strategy_for_runtime_v2(
+        _talking_manifest(), _talking(shot_labels=["Day 1"], closing_title="MY PICK")
+    )
+
+    assert isinstance(refused, RefusedStrategy)
+    assert refused.code == "shot_text_unavailable"
+    assert refused.question == (
+        "This kind of edit can't show your own text on each shot or at the end yet. "
+        "Should I make everything else and leave that text out?"
+    )
+
+
 @pytest.mark.parametrize(
     ("manifest_factory", "strategy_factory"),
     [(_talking_manifest, _talking), (_narrated_manifest, _narrated)],
