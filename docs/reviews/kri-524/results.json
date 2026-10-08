@@ -1,10 +1,27 @@
 {
-  "base": "141a59c86",
+  "base": "f23aeb35aee42bd9138f82d42c71a8ac7416420d",
   "live": {
-    "runs": 0,
-    "spent_usd": 0,
+    "provider_calls": 28,
+    "budget_ledgers": 3,
+    "run_caps_usd": [
+      2,
+      2,
+      1
+    ],
+    "spent_usd": 0.483363,
     "total_cap_usd": 5,
-    "per_run_cap_usd": 2
+    "per_run_cap_usd": 2,
+    "unsettled_reservations": 0,
+    "final_canonical_cases": 9,
+    "changed_cases_compiler_and_save_validation_passed": 7,
+    "no_op_cases": 1,
+    "unsupported_cases": 1,
+    "component_extraction_to_save_probes": 1,
+    "models": [
+      "gemini-3.1-pro-preview",
+      "gemini-3.6-flash"
+    ],
+    "limits": "Synthetic component probes; earlier failures preserved; not a full HTTP/phone export or statistical reliability study. Unsupported final raw redirect corrected by structured-reason parser regression."
   },
   "offline_replay": {
     "command": ".venv/bin/python -m tests.evals.prompt_coverage --replay",
@@ -15,14 +32,14 @@
       "tests/evals/test_clip_intent_planner_evals.py",
       "tests/incidents"
     ],
-    "passed": 682,
+    "passed": 698,
     "xfailed": 2,
     "exit_code": 0,
     "library_cases_executed": 0
   },
   "kria_gate": {
     "command": "make verify-kria",
-    "passed": 1491,
+    "passed": 1492,
     "skipped": 6,
     "exit_code": 0,
     "database": "isolated local test database"
@@ -52,20 +69,8 @@
     "Audio-level contract is not audible continuity"
   ],
   "review": {
-    "status": "clean after corrections",
-    "reviewers": [
-      "parent critical pass",
-      "independent evaluation review",
-      "read-only plan/coverage audit"
-    ],
-    "fixed": [
-      "extra source occurrences accepted",
-      "generated-title identity lost",
-      "incomplete title timing treated as complete",
-      "unknown output duration treated as complete",
-      "playback speed lost across turns"
-    ],
-    "scope": "one runtime receipt module; internal evaluations; corpus and documentation"
+    "independent_review": "completed; explicit title role with kria-prefixed ID finding fixed and regression added",
+    "unresolved_blockers": []
   },
   "capability_gaps": {
     "related_linear": [
@@ -81,5 +86,24 @@
     "merged": false,
     "deployed": false,
     "approval": "required"
+  },
+  "affected_suites": {
+    "passed": 505,
+    "exit_code": 0,
+    "scope": [
+      "brief extractor contextual retry",
+      "editor parser/compiler",
+      "preservation/positioning",
+      "corpus schema",
+      "Skia renderer",
+      "device audio export contract",
+      "KRI-522 integration"
+    ]
+  },
+  "sequence_render": {
+    "passed": 2,
+    "tier": "offline_rendered_pixels",
+    "scope": "compiled children -> production overlay adapter -> Skia frames; alpha at entrance, hold, exit and non-overlap boundaries",
+    "full_video_export": false
   }
 }

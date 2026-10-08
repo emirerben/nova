@@ -13,7 +13,12 @@ from app.agents._schemas.brief_extractor import (
     BriefExtractionOutput,
 )
 from app.agents.main_creator import _BRIEF_PROMPT_SECTION
-from app.kria.brief import BriefUpdateBatchError, parse_brief_updates
+from app.kria.brief import (
+    BriefUpdateBatchError,
+    CreativeBrief,
+    apply_updates,
+    parse_brief_updates,
+)
 from app.pipeline.prompt_loader import load_prompt
 
 BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-08-v3"
@@ -79,8 +84,14 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
             data = json.loads(raw_text)
             if not isinstance(data, dict) or set(data) != {"brief_updates"}:
                 raise ValueError("response must contain only brief_updates")
+            updates = parse_brief_updates(data["brief_updates"])
+            # Keep old direct callers compatible: only planner-supplied context
+            # enables ledger validation.  The planner always supplies the field,
+            # including an empty brief, so non-additive updates fail closed.
+            if "current_brief" in input.model_fields_set:
+                apply_updates(input.current_brief or CreativeBrief(), updates, source_turn_id=None)
             return BriefExtractionOutput(
-                brief_updates=parse_brief_updates(data["brief_updates"]),
+                brief_updates=updates,
             )
         except (
             json.JSONDecodeError,

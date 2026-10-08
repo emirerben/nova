@@ -744,6 +744,14 @@ def build_editor_snapshot(
                 }
             },
             **_bar_clip_link(row, label_links),
+            # Sequence identity travels in existing round-trip-safe metadata;
+            # expose only its selector descriptor to the model.
+            **(
+                {"sequence_source_id": row["source_params"]["sequence_source_id"]}
+                if isinstance(row.get("source_params"), dict)
+                and isinstance(row["source_params"].get("sequence_source_id"), str)
+                else {}
+            ),
             # Caption/narration bars: selector groups must not sweep them up.
             **({"caption_cue": True} if is_caption_text_bar(row) else {}),
             # Tombstoned generated text: selector ops must not match it.

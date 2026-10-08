@@ -1517,13 +1517,6 @@ def _check_speech_excerpts(req: BriefRequirement, facts: PlanFacts) -> Requireme
     return _receipt(req, "partial", "; ".join(problems) + ".")
 
 
-_TEXT_STYLE_RE = re.compile(
-    r"\b(text|label|caption|title|font|bold|italic|colou?r|size|shadow|outline|stroke|"
-    r"uppercase|lowercase|yellow|red|blue|green|white|black|pink|orange|purple|renk|yaz[i\u0131])",
-    re.IGNORECASE,
-)
-
-
 def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Pauses, retakes and filler the creator asked to cut, against the draft.
 
@@ -1593,10 +1586,9 @@ def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
 
 
 def _check_style(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
-    # Compiled editor ops only exist when they changed a text element, so a text-style
-    # ask with edited elements in the payload is proven; anything else goes unjudged.
-    if facts.editor and facts.editor_text_edited and _TEXT_STYLE_RE.search(_req_text(req)):
-        return _receipt(req, "met", None)
+    # A changed text lane proves a mutation, not that the requested fields,
+    # targets, or animation relationships were satisfied. Until the requirement
+    # carries independently checkable style intent, retain an unchecked receipt.
     return _receipt(req, "partial", _NO_CHECKER)
 
 

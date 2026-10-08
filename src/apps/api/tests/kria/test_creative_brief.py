@@ -1556,13 +1556,30 @@ def test_main_creator_scope_recognisers_ignore_model_authored_brief_text() -> No
 # --------------------------------------------- KRI-219 editor-turn receipts
 
 
-def test_editor_restyle_is_met_when_text_elements_were_edited() -> None:
+def test_editor_restyle_is_unverified_without_requested_field_evidence() -> None:
     req = _req("style", "global", description="make all the labels yellow")
     facts = plan_facts_from_editor_payload({"text_elements": [{"id": "a", "color": "#FFD400"}]})
-    assert check_requirement(req, facts).status == "met"
+    assert check_requirement(req, facts).status == "partial"
+    assert not is_judged(req, check_requirement(req, facts))
     # Nothing edited: nothing was judged, so no receipt and no "Partly".
     unproven = check_requirement(req, plan_facts_from_editor_payload({"title": "x"}))
     assert not is_judged(req, unproven)
+
+
+def test_editing_one_style_field_does_not_prove_a_compound_animation_request() -> None:
+    req = _req(
+        "style",
+        "title",
+        description="Split the title into consecutive chunks with independent entrance and exit",
+    )
+    facts = plan_facts_from_editor_payload(
+        {
+            "text_elements": [{"id": "title", "text": "Keep every word", "effect": "fade-in"}],
+        }
+    )
+    receipt = check_requirement(req, facts)
+    assert receipt.status == "partial"
+    assert not is_judged(req, receipt)
 
 
 def test_editor_duration_met_when_slots_sum_to_target() -> None:

@@ -20,11 +20,14 @@ top level (the lane module ``editor_ops_v2.text`` imports it lazily).
 
 from __future__ import annotations
 
+import copy
+import math
 import re
 import unicodedata
 import uuid
 from typing import Any
 
+from app.schemas.guided_edit_revision import MAX_GUIDED_EDITOR_TEXT_ELEMENTS
 from app.services.kria_editor_ops import (
     _ALLOWED_FONTS,
     _CLIP_LABEL_BAR_PREFIX,
@@ -212,12 +215,19 @@ def bars_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(row, dict) or not isinstance(row.get("id"), str):
             continue
         clip = row.get("clip_id")
+        source_params = row.get("source_params")
+        sequence_source_id = row.get("sequence_source_id")
+        if not isinstance(sequence_source_id, str) and isinstance(source_params, dict):
+            sequence_source_id = source_params.get("sequence_source_id")
         out.append(
             {
                 "index": index,
                 "id": row["id"],
                 "text": str(row.get("text") or ""),
                 "role": row.get("role"),
+                "sequence_source_id": (
+                    sequence_source_id if isinstance(sequence_source_id, str) else None
+                ),
                 "clip_id": clip if isinstance(clip, str) and clip else None,
                 "removed": bool(row.get("removed")),
                 "start_s": _number(row.get("start_s")),
@@ -237,12 +247,19 @@ def bars_from_variant(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]]
             continue
         row_id = row.get("id")
         if isinstance(row_id, str):
+            source_params = row.get("source_params")
+            sequence_source_id = row.get("sequence_source_id")
+            if not isinstance(sequence_source_id, str) and isinstance(source_params, dict):
+                sequence_source_id = source_params.get("sequence_source_id")
             out.append(
                 {
                     "index": index,
                     "id": row_id,
                     "text": str(row.get("text") or ""),
                     "role": row.get("role"),
+                    "sequence_source_id": (
+                        sequence_source_id if isinstance(sequence_source_id, str) else None
+                    ),
                     "clip_id": (links.get(row_id) or {}).get("clip_id"),
                     "removed": bool(row.get("removed")),
                     "start_s": _number(row.get("start_s")),
@@ -273,15 +290,26 @@ def classify(bars: list[dict[str, Any]]) -> dict[str, str]:
             bar
             for bar in live
             if not is_label(bar)
-            and bar["role"] in (None, "generative_intro", "generative_sequence")
-            and not str(bar["id"]).startswith("kria-")
+            and bar["role"] in (None, "title", "generative_intro", "generative_sequence")
+            and (bar["role"] == "title" or not str(bar["id"]).startswith("kria-"))
             and bar["start_s"] is not None
             and bar["start_s"] <= 0.5
         ]
         if candidates:
             title_id = min(candidates, key=lambda bar: bar["start_s"])["id"]
+    title_bar = next((bar for bar in live if bar["id"] == title_id), None)
+    title_lineage = (
+        (title_bar.get("sequence_source_id") or title_id) if title_bar is not None else None
+    )
     return {
-        bar["id"]: "label" if is_label(bar) else "title" if bar["id"] == title_id else "text"
+        bar["id"]: (
+            "label"
+            if is_label(bar)
+            else "title"
+            if bar["id"] == title_id
+            or (title_lineage is not None and bar.get("sequence_source_id") == title_lineage)
+            else "text"
+        )
         for bar in bars
     }
 
@@ -562,6 +590,89 @@ def op_rewrite_text(state: _DraftState, op: dict[str, Any]) -> None:
             changed += 1
     state.changed.add("text")
     state.summary = f"Rewrite {_plural(changed, 'text')}"
+
+
+def _sequence_canonical(value: str) -> str:
+    return " ".join(unicodedata.normalize("NFC", value).split())
+
+
+def op_replace_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
+    """Replace one text bar with conserved, equal-duration text segments atomically."""
+    segments = op.get("segments")
+    if not isinstance(segments, list) or not 0 < len(segments) <= MAX_SELECTOR_LIST:
+        raise KriaEditorOpError("A text sequence must contain 1 to 100 segments")
+    clean_segments: list[str] = []
+    for segment in segments:
+        if not isinstance(segment, str):
+            raise KriaEditorOpError("A text sequence can contain only strings")
+        clean = _sequence_canonical(segment)
+        if not clean or len(clean) > MAX_TEXT_CHARS:
+            raise KriaEditorOpError("Each text sequence segment must contain 1 to 500 characters")
+        clean_segments.append(clean)
+    rows = _targets(state, op)
+    if len(rows) != 1:
+        raise KriaEditorOpError("A text sequence needs exactly one live text")
+    source = rows[0]
+    expected = op.get("expected_source_text")
+    if not isinstance(expected, str) or _sequence_canonical(
+        str(source.get("text") or "")
+    ) != _sequence_canonical(expected):
+        raise KriaEditorOpError(_DRIFT)
+    if _sequence_canonical(" ".join(clean_segments)) != _sequence_canonical(
+        str(source.get("text") or "")
+    ):
+        raise KriaEditorOpError("The replacement segments must conserve the original wording")
+    start, end = _number(source.get("start_s")), _number(source.get("end_s"))
+    if (
+        start is None
+        or end is None
+        or not math.isfinite(start)
+        or not math.isfinite(end)
+        or end <= start
+    ):
+        raise KriaEditorOpError("The source text has no valid time window")
+    if len(state.text) - 1 + len(clean_segments) > MAX_GUIDED_EDITOR_TEXT_ELEMENTS:
+        raise KriaEditorOpError("That sequence exceeds the text lane limit")
+    source_id = str(source.get("id"))
+    source_params = source.get("source_params")
+    sequence_source_id = source.get("sequence_source_id")
+    if not isinstance(sequence_source_id, str) and isinstance(source_params, dict):
+        sequence_source_id = source_params.get("sequence_source_id")
+    if not isinstance(sequence_source_id, str) or not sequence_source_id:
+        sequence_source_id = source_id
+    existing_ids = {str(row.get("id")) for row in state.text if row is not source}
+    child_ids = [f"{source_id}::sequence-{index + 1}" for index in range(len(clean_segments))]
+    if len(set(child_ids)) != len(child_ids) or existing_ids.intersection(child_ids):
+        raise KriaEditorOpError("Those sequence text ids already exist")
+    duration = end - start
+    replacements: list[dict[str, Any]] = []
+    if "patch" in op and (not isinstance(op["patch"], dict) or not op["patch"]):
+        raise KriaEditorOpError("No portable text style fields were supplied")
+    patch = op.get("patch")
+    for index, segment in enumerate(clean_segments):
+        row = copy.deepcopy(source)
+        row["id"] = child_ids[index]
+        child_params = row.get("source_params")
+        child_params = copy.deepcopy(child_params) if isinstance(child_params, dict) else {}
+        child_params["sequence_source_id"] = sequence_source_id
+        row["source_params"] = child_params
+        row["text"] = segment
+        row["start_s"] = round(start + duration * index / len(clean_segments), 6)
+        row["end_s"] = round(start + duration * (index + 1) / len(clean_segments), 6)
+        if row["end_s"] <= row["start_s"]:
+            raise KriaEditorOpError("That sequence would create a zero-duration text")
+        if isinstance(patch, dict):
+            try:
+                apply_patch(row, patch)
+            except KriaEditorOpError:
+                raise
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise KriaEditorOpError("Those text style fields aren't valid") from exc
+        replacements.append(row)
+    position = next(index for index, row in enumerate(state.text) if row is source)
+    state.text[position : position + 1] = replacements
+    state.changed.add("text")
+    state.summary = f"Split one text into {_plural(len(replacements), 'segment')}"
 
 
 def _merge_phases(row: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:

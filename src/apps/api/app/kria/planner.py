@@ -1255,6 +1255,7 @@ async def _call_brief_extractor(
     creator_id: uuid.UUID,
     item_id: uuid.UUID,
     creator_agent_session_id: uuid.UUID | None,
+    prior_brief: CreativeBrief | None = None,
 ) -> BriefExtractionOutput:
     """Extract only brief updates; rendered edits must never invoke Main Creator here."""
 
@@ -1262,6 +1263,7 @@ async def _call_brief_extractor(
         creator_request=creator_request,
         user_message=inputs.agent_input.user_message,
         conversation=inputs.agent_input.conversation,
+        current_brief=prior_brief,
     )
 
     def _run_agent():  # noqa: ANN202 - inferred BriefExtractionOutput
@@ -2362,6 +2364,7 @@ async def _plan_live_turn(
                         creator_id=creator_id,
                         item_id=item_id,
                         creator_agent_session_id=creator_agent_session_id,
+                        prior_brief=prior_brief,
                     )
                 )
                 if batch is not None:
@@ -2770,6 +2773,7 @@ async def extract_deferred_brief(
             creator_id=creator_id,
             item_id=item_id,
             creator_agent_session_id=session_id,
+            prior_brief=prior_brief,
         )
         extracted.extend(output.brief_updates)
     updates = tuple(extracted)
