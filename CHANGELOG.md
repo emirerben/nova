@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.151.0] - 2026-10-08
+
+### Changed
+- fix(narrated): honour the creator's caption-language ask on voiceover edits (#1472) <!-- release-pr: 1472 -->
+
 ## [0.78.150.0] - 2026-10-08
 
 ### Changed
