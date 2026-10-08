@@ -1,4 +1,5 @@
-"""KRI-467: the opening title on a phone Talking (subtitled) edit.
+"""KRI-467: the opening title on a phone Talking (subtitled) edit (and KRI-514's
+closing text, the second row on the same lane).
 
 `talking_title_element` builds the row (narrated look, confirmed or default
 timing), `place_talking_title` keeps it off the speaker's face and clear of
@@ -18,16 +19,21 @@ from app.pipeline.phone_subtitled_plan import TEXT_LAYER_PREFIX, compile_phone_s
 from app.pipeline.phone_subtitled_title import (
     _FALLBACK_FACE_BOX,
     CAPTION_BAND_TOP_FRAC,
+    TALKING_CLOSING_ELEMENT_ID,
     TALKING_TITLE_ELEMENT_ID,
+    ClosingPhoto,
     choose_title_y_frac,
     first_cue_word_end_s,
+    place_closing_on_photo,
     place_talking_title,
     source_box_to_canvas,
+    talking_closing_element,
+    talking_closing_window,
     talking_title_element,
 )
 from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
 from app.pipeline.silence_cut import CutPlan, Removal
-from app.services.phone_rollout import validate_phone_pilot_recipe
+from app.services.phone_rollout import PhoneCapabilityUnavailable, validate_phone_pilot_recipe
 from tests.pipeline.test_phone_subtitled_plan import _CUES, _binding
 
 _CANVAS = Canvas(width=1080, height=1920)
@@ -319,3 +325,93 @@ def test_a_cleanup_cut_keeps_the_title_in_the_first_seconds_of_the_cut_video():
     title = recipe.text_layers[0]
     assert (title.start, title.end) == (0.0, 2.0)
     assert recipe.duration == pytest.approx(11.0)
+
+
+# --- KRI-514: the closing text -----------------------------------------------------------
+
+_PHOTO = ClosingPhoto(x_frac=0.74, y_frac=0.3, width_frac=0.36, aspect=1080 / 1920)
+
+
+def _closing(photo: ClosingPhoto | None = _PHOTO, **window) -> dict:
+    start_s, end_s = talking_closing_window(10.0, window.get("photo_start_s", 7.0))
+    row = talking_closing_element("MY  PICK", start_s=start_s, end_s=end_s, photo=photo)
+    assert row is not None
+    return row
+
+
+def test_closing_text_holds_from_the_photo_or_the_last_three_seconds_to_the_end():
+    assert talking_closing_window(10.0, 6.2) == (6.2, 10.0)
+    assert talking_closing_window(10.0) == (7.0, 10.0)
+    assert talking_closing_window(2.0) == (0.0, 2.0)
+
+
+def test_closing_text_is_a_lime_tag_inside_the_photo_width():
+    row = _closing()
+
+    assert row["id"] == TALKING_CLOSING_ELEMENT_ID
+    assert row["text"] == "MY PICK"
+    assert (row["start_s"], row["end_s"]) == (7.0, 10.0)
+    assert (row["font_family"], row["color"], row["background_color"]) == (
+        "TikTok Sans Bold",
+        "#111111",
+        "#C5F82A",
+    )
+    assert row["source_params"] == {"source": "closing_title"}
+    assert row["x_frac"] == 0.74
+    assert row["max_width_frac"] == pytest.approx(0.36 * 0.9)
+
+
+def test_closing_text_without_a_photo_takes_the_title_spot():
+    row = _closing(photo=None)
+
+    assert (row["x_frac"], row["y_frac"]) == (0.5, 0.15)
+    assert "max_width_frac" not in row
+
+
+def test_empty_closing_text_or_no_time_left_draws_nothing():
+    assert talking_closing_element("  ", start_s=7.0, end_s=10.0) is None
+    assert talking_closing_element("MY PICK", start_s=10.0, end_s=10.0) is None
+
+
+def test_the_tag_sits_on_the_photos_lower_edge():
+    placed, receipt = place_closing_on_photo(_closing(), _PHOTO, canvas=_CANVAS)
+
+    box = _PHOTO.box(_CANVAS)
+    assert box is not None
+    assert receipt["status"] == "on_closing_photo"
+    assert _PHOTO.y_frac < placed["y_frac"] < box.bottom
+
+
+def test_the_tag_never_drops_into_the_caption_band():
+    low = ClosingPhoto(x_frac=0.5, y_frac=0.6, width_frac=0.5, aspect=1080 / 1920)
+
+    placed, _receipt = place_closing_on_photo(_closing(low), low, canvas=_CANVAS)
+
+    assert placed["y_frac"] < CAPTION_BAND_TOP_FRAC
+
+
+def test_with_the_photo_shape_unknown_the_tag_stays_on_its_centre():
+    unknown = ClosingPhoto(x_frac=0.74, y_frac=0.3, width_frac=0.36)
+
+    placed, receipt = place_closing_on_photo(_closing(unknown), unknown, canvas=_CANVAS)
+
+    assert placed["y_frac"] == 0.3
+    assert receipt["status"] == "photo_centre"
+
+
+def test_the_tag_compiles_with_its_background_and_needs_authored_text(monkeypatch):
+    features = ["basicComposition", "local1080Export", "positionedText", "animatedText"]
+    placed, _receipt = place_closing_on_photo(_closing(), _PHOTO, canvas=_CANVAS)
+    recipe = compile_phone_subtitled_plan(
+        (_binding(duration_s=10.0),), caption_cues=_CUES, text_elements=[placed]
+    )
+
+    [tag] = [layer for layer in recipe.text_layers if layer.id.startswith(TEXT_LAYER_PREFIX)]
+    assert (tag.start, tag.end) == (7.0, 10.0)
+    assert tag.background is not None
+    assert "authoredText" in recipe.required_capabilities
+    monkeypatch.setattr(settings, "phone_render_verified_features", [*features, "authoredText"])
+    validate_phone_pilot_recipe(recipe)
+    monkeypatch.setattr(settings, "phone_render_verified_features", features)
+    with pytest.raises(PhoneCapabilityUnavailable):
+        validate_phone_pilot_recipe(recipe)

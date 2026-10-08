@@ -60,6 +60,7 @@ from app.services.phone_rollout import (
     phone_guided_narration_supported,
     phone_narrated_title_supported,
     phone_render_supported_formats,
+    phone_subtitled_closing_title_supported,
     phone_subtitled_overlays_supported,
     phone_subtitled_reaction_beats_supported,
     phone_subtitled_title_supported,
@@ -1102,7 +1103,17 @@ def compile_strategy_to_plan(
             code="unsupported_treatment",
             edit_format=strategy.edit_format,
         )
-    if strategy.shot_labels or strategy.closing_title:
+    # KRI-514: the same text lane draws the creator's closing text ("end on the
+    # toast photo with a 'MY PICK' badge"); `PHONE_SUBTITLED_CLOSING_TITLE_ENABLED
+    # =false` restores the refusal below.
+    phone_talking_closing = bool(
+        strategy.closing_title
+        and strategy.edit_format == "subtitled"
+        and phone_capability is not None
+        and phone_capability.available
+        and phone_subtitled_closing_title_supported()
+    )
+    if strategy.shot_labels or (strategy.closing_title and not phone_talking_closing):
         # Exact per-shot labels and closing copy are burned by the guided
         # story-beat renderer only. Fail visibly anywhere they cannot render
         # instead of approving an edit that silently drops the creator's words.

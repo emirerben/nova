@@ -312,6 +312,21 @@ class Settings(BaseSettings):
     # PHONE_SUBTITLED_TITLE_ENABLED=false --app nova-video` + `fly machine
     # restart <id>` (api + worker).
     phone_subtitled_title_enabled: bool = True
+    # KRI-514 (closing text on phone Talking edits): a confirmed `closing_title`
+    # ("end on the toast photo with a 'MY PICK' badge") on a phone-rendered
+    # `subtitled` edit renders as an editable text row instead of the planner
+    # asking to drop it (`app.pipeline.phone_subtitled_title.
+    # talking_closing_element`): a lime tag on the closing photo, or near the
+    # top off the speaker's face when there is none, held to the end. It rides
+    # the KRI-467 text lane, so it also needs `phone_subtitled_title_supported`
+    # and "authoredText" (the tag's background) in
+    # `phone_render_verified_features` -- see
+    # `app.services.phone_rollout.phone_subtitled_closing_title_supported`.
+    # False: the planner asks to make the edit without that text again; text
+    # already on a variant keeps rendering and survives Saves. Rollback: `fly
+    # secrets set PHONE_SUBTITLED_CLOSING_TITLE_ENABLED=false --app nova-video`
+    # + `fly machine restart <id>` (api + worker).
+    phone_subtitled_closing_title_enabled: bool = True
     # KRI-465 (editable title on phone Voiceover edits): the opening title the
     # status route shows (`narrated_title_text_elements`) opens as an ordinary
     # editable text element: the capability map opens `text_elements` and a

@@ -27,6 +27,16 @@ final class NativeEditorTextBlocksTests: XCTestCase {
         XCTAssertEqual(doc.textBlocks.first?.kindLabel, "Title")
     }
 
+    func testAPhoneTalkingClosingTextIsListedAsTheClosing() {
+        // KRI-514: the Talking edit's closing text ("MY PICK") is "closing-title".
+        var doc = document
+        let index = doc.textElements.firstIndex { $0.id == "creator-note" }!
+        doc.textElements[index].id = "closing-title"
+        let block = doc.textBlocks.first { $0.id == "closing-title" }
+        XCTAssertEqual(block?.kind, .closing)
+        XCTAssertEqual(block?.kindLabel, "Closing")
+    }
+
     func testCaptionsAndRemovedBlocksAreLeftOut() {
         let ids = document.textBlocks.map(\.id)
         XCTAssertFalse(ids.contains("caption-1"), "captions have their own tab")
