@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.152.0] - 2026-10-08
+
+### Changed
+- fix(phone): honour the caption-language ask on cleaned-up Talking edits (#1473) <!-- release-pr: 1473 -->
+
 ## [0.78.151.0] - 2026-10-08
 
 ### Changed
