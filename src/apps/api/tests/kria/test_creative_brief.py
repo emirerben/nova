@@ -582,6 +582,137 @@ def test_duration_within_ten_percent(actual: float, status: str) -> None:
     assert check_requirement(req, PlanFacts()).status == "partial"
 
 
+def test_title_text_hold_is_not_checked_as_whole_source_preservation() -> None:
+    # A title-scoped timing ask can say "whole video" while describing the
+    # overlay's persistence. It must not enter the source whole-take checker.
+    req = _req("timing", "title", description="Make the text stay the whole video")
+    receipt = check_requirement(req, PlanFacts(edit_format="subtitled", video_clip_count=1))
+    assert receipt.reason == "I can't verify this timing automatically."
+    assert not is_judged(req, receipt)
+
+
+def test_title_text_hold_is_met_from_compiled_spans_for_every_target() -> None:
+    req = _req("timing", "title", description="Keep both texts on screen for the whole video")
+    facts = plan_facts_from_editor_payload(
+        {
+            "edit_duration_s": 12.0,
+            "text_elements": [
+                {"id": "title", "role": "title", "text": "Morning", "start_s": 0, "end_s": 12},
+                {"id": "place", "role": "title", "text": "Lisbon", "start_s": 0, "end_s": 12},
+            ],
+        }
+    )
+    receipt = check_requirement(req, facts)
+    assert receipt.status == "met"
+    checked = build_receipts([req], facts)[0]
+    assert is_judged(req, checked)
+
+
+@pytest.mark.parametrize("duration_key", ["edit_duration_s", "total_duration_s", "duration_s"])
+@pytest.mark.parametrize("fact_key", ["persistent", "keep_visible"])
+def test_typed_persistent_title_timing_uses_each_duration_fallback(
+    duration_key: str, fact_key: str
+) -> None:
+    req = _req(
+        "timing",
+        "title",
+        description="retain the selected overlay",
+        facts={fact_key: True},
+    )
+    facts = plan_facts_from_editor_payload(
+        {
+            duration_key: 12.0,
+            "text_elements": [
+                {"id": "title", "role": "title", "text": "Morning", "start_s": 0, "end_s": 12}
+            ],
+        }
+    )
+    assert check_requirement(req, facts).status == "met"
+
+
+def test_numeric_title_timing_keeps_numeric_duration_semantics() -> None:
+    req = _req(
+        "timing", "title", description="Show the title for 2 seconds", facts={"duration_s": 2}
+    )
+    facts = plan_facts_from_editor_payload(
+        {
+            "edit_duration_s": 12.0,
+            "text_elements": [{"id": "t", "role": "title", "text": "x", "start_s": 0, "end_s": 2}],
+        }
+    )
+    assert check_requirement(req, facts).reason == "This draft is about 12s; you asked for 2s."
+
+
+def test_title_persistence_ignores_labels_and_requires_named_targets() -> None:
+    labels = plan_facts_from_editor_payload(
+        {
+            "edit_duration_s": 12.0,
+            "text_elements": [
+                {"id": "label", "role": "label", "text": "x", "start_s": 0, "end_s": 12}
+            ],
+        }
+    )
+    req = _req("timing", "title", description="Keep the text on screen for the whole video")
+    assert check_requirement(req, labels).reason == "I can't verify this timing automatically."
+    missing = req.model_copy(update={"facts": {"target_ids": ["missing"]}})
+    title = plan_facts_from_editor_payload(
+        {
+            "edit_duration_s": 12.0,
+            "text_elements": [
+                {"id": "title", "role": "title", "text": "x", "start_s": 0, "end_s": 12}
+            ],
+        }
+    )
+    assert check_requirement(missing, title).reason == "I can't verify this timing automatically."
+
+
+def test_nonfinite_editor_timing_never_proves_persistence() -> None:
+    req = _req("timing", "title", description="Keep the text on screen for the whole video")
+    facts = plan_facts_from_editor_payload(
+        {
+            "edit_duration_s": float("nan"),
+            "text_elements": [
+                {"id": "title", "role": "title", "text": "x", "start_s": 0, "end_s": 12}
+            ],
+        }
+    )
+    assert check_requirement(req, facts).reason == "I can't verify this timing automatically."
+    infinite = plan_facts_from_editor_payload(
+        {
+            "edit_duration_s": float("inf"),
+            "text_elements": [
+                {"id": "title", "role": "title", "text": "x", "start_s": 0, "end_s": 12}
+            ],
+        }
+    )
+    assert check_requirement(req, infinite).reason == "I can't verify this timing automatically."
+
+
+def test_incomplete_title_spans_never_prove_all_text_persistence() -> None:
+    req = _req("timing", "title", description="Keep both texts on screen for the whole video")
+    facts = plan_facts_from_editor_payload(
+        {
+            "edit_duration_s": 12.0,
+            "text_elements": [
+                {"id": "title", "role": "title", "text": "x", "start_s": 0, "end_s": 12},
+                {"id": "place", "role": "title", "text": "y", "start_s": 0},
+            ],
+        }
+    )
+    assert check_requirement(req, facts).reason == "I can't verify this timing automatically."
+
+
+@pytest.mark.parametrize(
+    "scope",
+    ["global", "clip:clip-1", "per_clip"],
+)
+def test_source_whole_take_scopes_still_use_whole_take_checker(scope: str) -> None:
+    req = _req("timing", scope, description="Keep the whole take exactly as recorded")
+    facts = PlanFacts(edit_format="montage", video_clip_count=1)
+    receipt = check_requirement(req, facts)
+    assert "whole take" in (receipt.reason or "")
+
+
 def test_literal_title_must_match_exactly_after_normalization() -> None:
     req = _req("text", "title", literal="20K Koşu")
     assert check_requirement(req, PlanFacts(title="20k  koşu")).status == "met"
