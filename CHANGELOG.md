@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.184.0] - 2026-10-08
+
+### Changed
+- feat(ios): text opens on Edit text with the keyboard, one-line box that grows (KRI-508) (#1497) <!-- release-pr: 1497 -->
+
 ## [0.78.183.0] - 2026-10-08
 
 ### Added
