@@ -6113,6 +6113,95 @@ def _phone_talking_head_cutaways(
     )
 
 
+# KRI-178 beat-receipt bookkeeping, shared by the phone Talking and (KRI-519)
+# phone Voiceover workers.
+_BEAT_CARD_ID_RE = re.compile(r"^beat-(?P<beat_id>.+)-(?P<n>\d+)$")
+_BEAT_SFX_ID_RE = re.compile(r"^beat-(?P<beat_id>.+)-(?P<n>\d+)-sfx$")
+
+
+def _demote_beat_receipt(
+    receipt: dict,
+    *,
+    card_ids: frozenset[str] = frozenset(),
+    sfx_ids: frozenset[str] = frozenset(),
+    reason: str,
+) -> dict:
+    """Move a beat whose CARD (``card_ids``, e.g. ``beat-<id>-<n>`` or
+    ``closing-photo``/``closing-badge``) or SOUND (``sfx_ids``, e.g.
+    ``beat-<id>-<n>-sfx``) survived grounding but was dropped afterward
+    (a lane bind failure, the compiler's own retry loop, or a sound that
+    failed ``_resolve_phone_sound_effect``) out of ``placed``. A beat
+    loses only the side that actually failed -- if its OTHER side (a
+    card whose sound just failed, or a sound whose card just failed)
+    still stands, the ``placed`` entry survives with just the failed
+    side's fields stripped; only a beat with NEITHER side left moves to
+    ``unplaced`` with ``reason``. A dropped closing card/badge instead
+    flips ``receipt["closing"]``. Card ids are parsed greedily (``.+``
+    before the trailing ``-<occurrence>``) so a beat_id containing its
+    own dashes still resolves correctly."""
+    if not card_ids and not sfx_ids:
+        return receipt
+
+    card_failed_beats: set[str] = set()
+    for card_id in card_ids:
+        if card_id in ("closing-photo", "closing-badge"):
+            continue
+        match = _BEAT_CARD_ID_RE.match(card_id)
+        if match:
+            card_failed_beats.add(match.group("beat_id"))
+    sound_failed_beats: set[str] = set()
+    for sfx_id in sfx_ids:
+        match = _BEAT_SFX_ID_RE.match(sfx_id)
+        if match:
+            sound_failed_beats.add(match.group("beat_id"))
+
+    closing = dict(receipt.get("closing") or {})
+    if "closing-photo" in card_ids and closing.get("status") == "placed":
+        # Drop the now-stale visual fields (`visual_label`/`from_s`) --
+        # only `badge`/`badge_reason` (a separate lane) survive intact.
+        prior_badge_reason = dict(receipt.get("closing") or {}).get("badge_reason")
+        closing = {
+            "status": "unplaced",
+            "reason": reason,
+            "badge": closing.get("badge", "none"),
+        }
+        if prior_badge_reason is not None:
+            closing["badge_reason"] = prior_badge_reason
+    if "closing-badge" in card_ids and closing.get("badge") == "placed":
+        closing["badge"] = "unplaced"
+        closing["badge_reason"] = reason
+
+    kept: list[dict] = []
+    moved: list[dict] = []
+    for entry in receipt.get("placed") or []:
+        beat_id = entry.get("beat_id")
+        if beat_id not in card_failed_beats and beat_id not in sound_failed_beats:
+            kept.append(entry)
+            continue
+        visual_survives = bool(entry.get("visual_label")) and beat_id not in card_failed_beats
+        sound_survives = bool(entry.get("sound_label")) and beat_id not in sound_failed_beats
+        if not visual_survives and not sound_survives:
+            moved.append(
+                {"beat_id": beat_id, "trigger": entry.get("trigger", ""), "reason": reason}
+            )
+            continue
+        survivor: dict = {"beat_id": beat_id, "trigger": entry.get("trigger", "")}
+        if visual_survives:
+            survivor["at_s"] = entry.get("at_s")
+            survivor["end_s"] = entry.get("end_s")
+            survivor["visual_label"] = entry.get("visual_label")
+        if sound_survives:
+            survivor.setdefault("at_s", entry.get("at_s"))
+            survivor["sound_label"] = entry.get("sound_label")
+        kept.append(survivor)
+    return {
+        **receipt,
+        "placed": kept,
+        "unplaced": list(receipt.get("unplaced") or []) + moved,
+        "closing": closing,
+    }
+
+
 def _run_phone_subtitled_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> None:
@@ -6414,91 +6503,6 @@ def _run_phone_subtitled_job(
             else:
                 kept.append(entry)
         return {**receipt, "placed": kept, "unplaced": list(receipt.get("unplaced") or []) + moved}
-
-    _BEAT_CARD_ID_RE = re.compile(r"^beat-(?P<beat_id>.+)-(?P<n>\d+)$")
-    _BEAT_SFX_ID_RE = re.compile(r"^beat-(?P<beat_id>.+)-(?P<n>\d+)-sfx$")
-
-    def _demote_beat_receipt(
-        receipt: dict,
-        *,
-        card_ids: frozenset[str] = frozenset(),
-        sfx_ids: frozenset[str] = frozenset(),
-        reason: str,
-    ) -> dict:
-        """Move a beat whose CARD (``card_ids``, e.g. ``beat-<id>-<n>`` or
-        ``closing-photo``/``closing-badge``) or SOUND (``sfx_ids``, e.g.
-        ``beat-<id>-<n>-sfx``) survived grounding but was dropped afterward
-        (a lane bind failure, the compiler's own retry loop, or a sound that
-        failed ``_resolve_phone_sound_effect``) out of ``placed``. A beat
-        loses only the side that actually failed -- if its OTHER side (a
-        card whose sound just failed, or a sound whose card just failed)
-        still stands, the ``placed`` entry survives with just the failed
-        side's fields stripped; only a beat with NEITHER side left moves to
-        ``unplaced`` with ``reason``. A dropped closing card/badge instead
-        flips ``receipt["closing"]``. Card ids are parsed greedily (``.+``
-        before the trailing ``-<occurrence>``) so a beat_id containing its
-        own dashes still resolves correctly."""
-        if not card_ids and not sfx_ids:
-            return receipt
-
-        card_failed_beats: set[str] = set()
-        for card_id in card_ids:
-            if card_id in ("closing-photo", "closing-badge"):
-                continue
-            match = _BEAT_CARD_ID_RE.match(card_id)
-            if match:
-                card_failed_beats.add(match.group("beat_id"))
-        sound_failed_beats: set[str] = set()
-        for sfx_id in sfx_ids:
-            match = _BEAT_SFX_ID_RE.match(sfx_id)
-            if match:
-                sound_failed_beats.add(match.group("beat_id"))
-
-        closing = dict(receipt.get("closing") or {})
-        if "closing-photo" in card_ids and closing.get("status") == "placed":
-            # Drop the now-stale visual fields (`visual_label`/`from_s`) --
-            # only `badge`/`badge_reason` (a separate lane) survive intact.
-            prior_badge_reason = dict(receipt.get("closing") or {}).get("badge_reason")
-            closing = {
-                "status": "unplaced",
-                "reason": reason,
-                "badge": closing.get("badge", "none"),
-            }
-            if prior_badge_reason is not None:
-                closing["badge_reason"] = prior_badge_reason
-        if "closing-badge" in card_ids and closing.get("badge") == "placed":
-            closing["badge"] = "unplaced"
-            closing["badge_reason"] = reason
-
-        kept: list[dict] = []
-        moved: list[dict] = []
-        for entry in receipt.get("placed") or []:
-            beat_id = entry.get("beat_id")
-            if beat_id not in card_failed_beats and beat_id not in sound_failed_beats:
-                kept.append(entry)
-                continue
-            visual_survives = bool(entry.get("visual_label")) and beat_id not in card_failed_beats
-            sound_survives = bool(entry.get("sound_label")) and beat_id not in sound_failed_beats
-            if not visual_survives and not sound_survives:
-                moved.append(
-                    {"beat_id": beat_id, "trigger": entry.get("trigger", ""), "reason": reason}
-                )
-                continue
-            survivor: dict = {"beat_id": beat_id, "trigger": entry.get("trigger", "")}
-            if visual_survives:
-                survivor["at_s"] = entry.get("at_s")
-                survivor["end_s"] = entry.get("end_s")
-                survivor["visual_label"] = entry.get("visual_label")
-            if sound_survives:
-                survivor.setdefault("at_s", entry.get("at_s"))
-                survivor["sound_label"] = entry.get("sound_label")
-            kept.append(survivor)
-        return {
-            **receipt,
-            "placed": kept,
-            "unplaced": list(receipt.get("unplaced") or []) + moved,
-            "closing": closing,
-        }
 
     with pipeline_trace_for(job_id):
         with tempfile.TemporaryDirectory(
@@ -7730,6 +7734,116 @@ def _narrated_caption_transcript(
     return requested, requested_lang
 
 
+def _phone_narrated_reaction_lanes(
+    job_id: str,
+    *,
+    beats: list,
+    closing: dict | None,
+    words: list[dict],
+    duration_s: float,
+) -> tuple[Any, tuple, dict]:
+    """KRI-519: ground a phone Voiceover edit's reaction beats against the
+    voiceover's own words into the KRI-281 lanes -> ``(lanes | None, visuals,
+    receipt)``.
+
+    The same grounding, binding and sound resolution `_run_phone_subtitled_job`
+    runs for Talking, minus what a Voiceover edit has no use for: there is no
+    speaker clip to face-sample (``clip_path=None`` keeps grounding's
+    conservative fallback face box clear) and no generic KRI-176 pass. The
+    words are already on the rendered timeline (a cleaned voiceover's words
+    come pre-cut), so nothing is remapped afterwards. A beat never fails the
+    job: every failure lands on the receipt instead.
+    """
+    import app.services.phone_reaction_grounding as phone_reaction_grounding_mod  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes  # noqa: PLC0415
+    from app.services.phone_visuals import bind_phone_visual_assets  # noqa: PLC0415
+
+    try:
+        grounded = phone_reaction_grounding_mod.ground_phone_reaction_beats(
+            _sync_session,
+            job_id=job_id,
+            beats=beats,
+            closing=closing,
+            words=words,
+            duration_s=duration_s,
+            clip_path=None,
+        )
+    except OperationalError:
+        raise  # transient DB -> Celery autoretry, never a lane drop
+    except Exception as exc:  # noqa: BLE001 - beats never fail the job
+        log.warning("phone_narrated_beats.grounding_failed", job_id=job_id, error=str(exc)[:200])
+        return (
+            None,
+            (),
+            {
+                "version": 1,
+                "matcher": "failed",
+                "face_sampling": "skipped",
+                "placed": [],
+                "unplaced": [],
+                "closing": {"status": "none", "badge": "none"},
+                "error": str(exc)[:200],
+            },
+        )
+
+    receipt = grounded.receipt
+    cards = list(grounded.cards)
+    visuals: tuple = ()
+    if cards:
+        pins = {
+            card.media_id: (getattr(card, "kind", "image"), card.gcs_path, card.generation)
+            for card in cards
+        }
+        try:
+            visuals = bind_phone_visual_assets(_sync_session, job_id=job_id, pins=pins)
+        except OperationalError:
+            raise  # transient DB -> Celery autoretry, never a lane drop
+        except Exception as exc:  # noqa: BLE001 - a lane never fails the job
+            log.warning("phone_narrated_beats.bind_failed", job_id=job_id, error=str(exc)[:200])
+            receipt = _demote_beat_receipt(
+                receipt, card_ids=frozenset(card.id for card in cards), reason="bind_failed"
+            )
+            cards = []
+    resolved_sfx: list = []
+    for sfx in grounded.sound_effects:
+        try:
+            resolved_sfx.append(_resolve_phone_sound_effect(sfx))
+        except OperationalError:
+            raise  # transient DB -> Celery autoretry, never a lane drop
+        except Exception:  # noqa: BLE001 - one unplayable effect drops just that sound
+            receipt = _demote_beat_receipt(
+                receipt, sfx_ids=frozenset({sfx.id}), reason="sound_not_found"
+            )
+    if not cards and not resolved_sfx:
+        return None, (), receipt
+    return PhoneSubtitledLanes(overlays=cards, sound_effects=resolved_sfx), visuals, receipt
+
+
+def _record_phone_beat_events(variant_id: str, receipt: dict) -> None:
+    """The KRI-178 beats outcome events (`nova_steps` turns them into the
+    creator's render notes, quoting any trigger it never heard)."""
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    placed = receipt.get("placed") or []
+    unplaced = receipt.get("unplaced") or []
+    card_count = sum(1 for entry in placed if entry.get("visual_label"))
+    if card_count:
+        record_pipeline_event(
+            "media_overlay", "cards_applied", {"variant_id": variant_id, "card_count": card_count}
+        )
+    record_pipeline_event(
+        "phone",
+        "subtitled_reaction_beats",
+        {
+            "placed": len(placed),
+            "unplaced": len(unplaced),
+            "missed": [str(entry.get("trigger") or "")[:80] for entry in unplaced[:8]],
+            "missed_reasons": [str(entry.get("reason") or "")[:40] for entry in unplaced[:8]],
+            "closing": (receipt.get("closing") or {}).get("status", "none"),
+        },
+    )
+
+
 def _run_phone_narrated_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
 ) -> None:
@@ -7779,6 +7893,7 @@ def _run_phone_narrated_job(
         narrated_title_end_s,
         narrated_title_text_elements,
     )
+    from app.pipeline.phone_subtitled_lanes import SubtitledLaneError, drop_lane  # noqa: PLC0415
     from app.pipeline.phrase_sequence import split_phrases  # noqa: PLC0415
     from app.pipeline.transcribe import Transcript, Word, transcribe_whisper  # noqa: PLC0415
     from app.services.device_narration_binding import make_device_narration_binding  # noqa: PLC0415
@@ -7786,8 +7901,16 @@ def _run_phone_narrated_job(
         DEVICE_RENDER_FIELD,
         pin_device_request,
     )
-    from app.services.phone_rollout import validate_phone_pilot_recipe  # noqa: PLC0415
-    from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding  # noqa: PLC0415
+    from app.services.phone_reaction_grounding import trigger_vocabulary_prompt  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_voiceover_reaction_beats_supported,
+        validate_phone_pilot_recipe,
+    )
+    from app.services.phone_sources import (  # noqa: PLC0415
+        PHONE_SOURCES_FIELD,
+        PHONE_VISUALS_FIELD,
+        PhoneSourceBinding,
+    )
     from app.services.pipeline_trace import (  # noqa: PLC0415
         pipeline_trace_for,
         record_pipeline_event,
@@ -7849,6 +7972,17 @@ def _run_phone_narrated_job(
     # KRI-455: the confirmed title burns like the cloud narrated intro.
     raw_opening_title = (all_candidates.get("creator_strategy") or {}).get("opening_title")
     opening_title = raw_opening_title if isinstance(raw_opening_title, str) else None
+    # KRI-519: the confirmed strategy's reaction beats ("when I say the medal, show
+    # my medal photo"), grounded below against this voiceover's own words.
+    strategy = all_candidates.get("creator_strategy")
+    strategy = strategy if isinstance(strategy, dict) else {}
+    raw_beats = strategy.get("reaction_beats")
+    beats: list = raw_beats if isinstance(raw_beats, list) else []
+    raw_closing = strategy.get("closing_media")
+    closing: dict | None = raw_closing if isinstance(raw_closing, dict) else None
+    beats_enabled = bool(beats or closing) and phone_voiceover_reaction_beats_supported(
+        require_client=False
+    )
 
     # `required_v1`: the recorded voiceover is a normal, fully uploaded audio
     # file (never an analysis proxy -- see `content_plan_build.py`'s dispatch
@@ -7922,8 +8056,16 @@ def _run_phone_narrated_job(
                     language=cleaned_narration.language or "",
                 )
             else:
+                # KRI-519: seed whisper with the creator's trigger phrases, like
+                # Talking (KRI-178), or a name or "medal" comes back misspelled
+                # and the beat never fires. No beats: the call stays unchanged.
+                vocabulary_prompt = (
+                    trigger_vocabulary_prompt(beats, closing) if beats_enabled else None
+                )
                 transcript = transcribe_whisper(
-                    voiceover_local, model=settings.narrated_whisper_model
+                    voiceover_local,
+                    model=settings.narrated_whisper_model,
+                    **({"verbatim_prompt": vocabulary_prompt} if vocabulary_prompt else {}),
                 )
 
             guide_narrative_order = _resolve_narrative_order(
@@ -8143,21 +8285,73 @@ def _run_phone_narrated_job(
             opening_title_end_s = narrated_title_end_s(
                 transcript.words[0].end_s if transcript.words else None
             )
-            recipe = compile_phone_narrated_plan(
-                steps,
-                bindings,
-                narration,
-                voiceover_duration_s=voiceover_duration_s,
-                mix=mix,
-                caption_cues=cues,
-                caption_style=caption_style,
-                target_lufs=settings.output_target_lufs,
-                duck_footage_bed="audioDucking" in settings.phone_render_verified_features,
-                opening_title=opening_title,
-                opening_title_end_s=opening_title_end_s,
-            )
+            # KRI-519: beats become the Voiceover overlay / sound-effect lanes,
+            # the same ones an editor Save recompiles (KRI-281).
+            lanes: Any = None
+            visuals: tuple = ()
+            beat_receipt: dict | None = None
+            if beats_enabled:
+                lanes, visuals, beat_receipt = _phone_narrated_reaction_lanes(
+                    job_id,
+                    beats=beats,
+                    closing=closing,
+                    words=[
+                        {"text": word.text, "start_s": word.start_s, "end_s": word.end_s}
+                        for word in transcript.words
+                    ],
+                    duration_s=voiceover_duration_s,
+                )
+            while True:
+                try:
+                    recipe = compile_phone_narrated_plan(
+                        steps,
+                        bindings,
+                        narration,
+                        voiceover_duration_s=voiceover_duration_s,
+                        mix=mix,
+                        caption_cues=cues,
+                        caption_style=caption_style,
+                        target_lufs=settings.output_target_lufs,
+                        duck_footage_bed="audioDucking" in settings.phone_render_verified_features,
+                        opening_title=opening_title,
+                        opening_title_end_s=opening_title_end_s,
+                        lanes=lanes,
+                        visuals=visuals,
+                    )
+                    break
+                except UnsupportedPhonePlan as exc:
+                    # A beat lane never fails the job: drop the lane that failed
+                    # (every lane when the error names none), then recompile.
+                    if lanes is None or beat_receipt is None:
+                        raise
+                    lane = exc.lane if isinstance(exc, SubtitledLaneError) else None
+                    log.warning("phone_narrated_beats.lane_dropped", job_id=job_id, lane=lane)
+                    dropped = (
+                        drop_lane(lanes, lane)
+                        if lane is not None
+                        else lanes.model_copy(update={"overlays": [], "sound_effects": []})
+                    )
+                    beat_receipt = _demote_beat_receipt(
+                        beat_receipt,
+                        card_ids=frozenset(card.id for card in lanes.overlays)
+                        - frozenset(card.id for card in dropped.overlays),
+                        sfx_ids=frozenset(sfx.request.id for sfx in lanes.sound_effects)
+                        - frozenset(sfx.request.id for sfx in dropped.sound_effects),
+                        reason="compile_dropped",
+                    )
+                    lanes = dropped if dropped.overlays or dropped.sound_effects else None
+            if lanes is not None:
+                referenced = {card.media_id for card in lanes.overlays}
+                visuals = tuple(visual for visual in visuals if visual.media_id in referenced)
+            else:
+                visuals = ()
+            if beat_receipt is not None:
+                try:
+                    _record_phone_beat_events(variant_id="narrated", receipt=beat_receipt)
+                except Exception:  # noqa: BLE001 - observability only
+                    pass
 
-    validate_phone_pilot_recipe(recipe)
+    validate_phone_pilot_recipe(recipe, allow_editor_media=bool(lanes and lanes.overlays))
     variant_id = "narrated"
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id=variant_id, revision=1, recipe=recipe
@@ -8177,6 +8371,11 @@ def _run_phone_narrated_job(
             return
         prior_device = (current.get(DEVICE_RENDER_FIELD) or {}).get(variant_id)
         if prior_device is not None and prior_device.get("base_generation") == generation:
+            return
+        # KRI-519: the photo receipts the beat cards bind; absent-or-equal, never
+        # overwriting receipts another run pinned (same fence as Talking).
+        visual_rows = [visual.model_dump(mode="json") for visual in visuals]
+        if visual_rows and current.get(PHONE_VISUALS_FIELD, visual_rows) != visual_rows:
             return
         variants = list(current.get("variants") or [])
         existing_index = next(
@@ -8231,11 +8430,19 @@ def _run_phone_narrated_job(
                 "applied" if speech_cleanup_snapshot.cut_plan.removed else "no_change"
             )
             new_entry["_speech_cleanup_outcome_context"] = speech_cleanup_outcome_context
+        if beat_receipt is not None:
+            # KRI-519: the same creator-safe receipt Talking keeps; the chat's
+            # render notes read it to say which named moment never came up.
+            new_entry["phone_beat_receipt"] = beat_receipt
         if existing_index is not None:
             variants[existing_index] = new_entry
         else:
             variants.append(new_entry)
         current["variants"] = variants
+        if visual_rows:
+            # Private receipts the editor recompiles the overlay lane from; each
+            # row keeps gcs_path so pool deletion still sees the photo as referenced.
+            current[PHONE_VISUALS_FIELD] = visual_rows
         job.assembly_plan = current
         narration_binding = None
         if cleaned_narration is not None:

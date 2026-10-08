@@ -67,6 +67,7 @@ from app.services.phone_rollout import (
     phone_subtitled_video_overlays_supported,
     phone_talking_head_supported,
     phone_user_song_supported,
+    phone_voiceover_reaction_beats_supported,
 )
 
 CAPABILITY_SET_ITEM_INTENT = "set_item_intent"
@@ -707,7 +708,23 @@ def resolve_creator_manifest(
         and capabilities[CAPABILITY_PHONE_SOURCE_AUDIO].available
         and normalized_format == "subtitled"
     )
-    if is_phone_subtitled:
+    # KRI-519: a phone Voiceover edit (recorded voiceover, phone-renderable
+    # narrated format) grounds the same beats against the voiceover and draws
+    # them in its KRI-281 lanes. It is the only way runtime v2 times a Visual
+    # to the voice, so it is advertised only when the worker will honour it;
+    # otherwise the capability keeps its pre-KRI-519 `phone_talking_only` refusal.
+    is_phone_voiceover = (
+        phone_source_media_ids is not None
+        and capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO) is not None
+        and capabilities[CAPABILITY_PHONE_SOURCE_AUDIO].available
+        and normalized_format in NARRATED_EDIT_FORMATS
+        and has_voiceover
+        and resolved_narration is not None
+        and capabilities.get(f"phone_format:{normalized_format}", _unavailable("x", "x")).available
+    )
+    if is_phone_voiceover and phone_voiceover_reaction_beats_supported():
+        capabilities[CAPABILITY_REACTION_BEATS] = _available()
+    elif is_phone_subtitled:
         if (
             capabilities.get("media_overlays", _unavailable("x", "x")).available
             and phone_subtitled_reaction_beats_supported()

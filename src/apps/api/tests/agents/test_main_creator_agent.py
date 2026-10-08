@@ -122,7 +122,7 @@ def test_brief_prompt_requires_explicit_versioned_target_for_changes() -> None:
         _input().model_copy(update={"brief_enabled": True})
     )
 
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-07-v47"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-08-v48"
     assert '`operation`: "change"' in prompt
     assert "target_requirement_id" in prompt
     assert "expected_version" in prompt
@@ -589,6 +589,36 @@ def test_reaction_beats_prompt_section_present_when_capability_available() -> No
     assert "visual_id" in prompt
     assert "Never set `licensed_sfx`" in prompt
     assert 'edit_format: "subtitled"' in prompt
+
+
+def test_voiceover_reaction_beats_prompt_section_is_worded_for_the_voiceover() -> None:
+    """KRI-519: a phone Voiceover manifest that advertises beats gets the Voiceover
+    wording -- same field contract, but never `subtitled`, and an explicit rule that a
+    photo timed to the voiceover is a beat, not the guided `execution_contract` the
+    iPhone chat can never run (stress kit N3)."""
+    manifest = _manifest_with_reaction_beats_available().model_copy(
+        update={"edit_format": "narrated_planned", "has_voiceover": True}
+    )
+    prompt = MainCreatorAgent(None).render_prompt(  # type: ignore[arg-type]
+        _input().model_copy(update={"capability_manifest": manifest})
+    )
+
+    assert "REACTION BEATS (iPhone Voiceover)" in prompt
+    assert "iPhone Talking only" not in prompt
+    assert 'edit_format: "subtitled"' not in prompt
+    assert "never set `execution_contract` for it" in prompt
+    assert "when I say the medal, show my medal photo" in prompt
+
+
+def test_voiceover_reaction_beats_share_the_talking_field_contract() -> None:
+    import app.agents.main_creator as main_creator_module
+
+    talking = main_creator_module._REACTION_BEATS_PROMPT_SECTION
+    voiceover = main_creator_module._VOICEOVER_REACTION_BEATS_PROMPT_SECTION
+    fields = talking[talking.index("set `reaction_beats`:") : talking.index("Never set `licensed")]
+    assert fields in voiceover
+    assert '"hold_s": seconds on screen' in fields
+    assert "\n\n" not in voiceover
 
 
 def test_reaction_beats_prompt_section_absent_when_flag_off_but_manifest_shaped_like_montage() -> (

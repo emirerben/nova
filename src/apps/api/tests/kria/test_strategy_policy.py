@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.agents._schemas.creator_agent import CreativeStrategy
+from app.agents._schemas.creator_agent import CreativeStrategy, CreatorEditSnapshot
 from app.agents._schemas.creator_policy import GUIDED_VOICEOVER_EXECUTION_CONTRACT
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.brief_checks import PlanFacts, check_requirement, reply_from_receipts
@@ -328,3 +328,56 @@ def test_receipts_reply_keeps_policy_notices_when_it_replaces_the_summary() -> N
 
     assert reply.startswith("Not everything you asked for made it in:")
     assert reply.endswith(CAPTIONS_KEPT_NOTICE)
+
+
+# --- KRI-519: photos timed to a phone voiceover ------------------------------
+
+
+def test_phone_voiceover_keeps_photo_pop_ins_instead_of_asking(prod_profile) -> None:
+    """Stress kit N3: "When I say the medal, show my medal photo" on an iPhone
+    Voiceover edit is a reaction beat that survives the v2 check untouched."""
+    manifest = _narrated_manifest()
+    assert manifest.capabilities[capabilities.CAPABILITY_REACTION_BEATS].available is True
+
+    checked = check_strategy_for_runtime_v2(
+        manifest,
+        _narrated(
+            reaction_beats=[
+                {"beat_id": "medal", "trigger": "the medal", "visual_id": PHOTOS[0]},
+                {
+                    "beat_id": "finish",
+                    "trigger": "four hours and twelve minutes",
+                    "visual_id": PHOTOS[1],
+                },
+            ]
+        ),
+        ask_before_simplifying=True,
+        ask_about_stated_settings=True,
+    )
+
+    assert isinstance(checked, CheckedStrategy)
+    assert [beat.visual_id for beat in checked.strategy.reaction_beats] == PHOTOS
+    assert checked.notices == ()
+
+
+def test_simplify_question_never_claims_a_draft_on_the_first_request(prod_profile) -> None:
+    guided = CreativeStrategy(
+        edit_format="narrated_planned",
+        audio_strategy="voiceover",
+        media_scope="all",
+        execution_contract=GUIDED_VOICEOVER_EXECUTION_CONTRACT,
+        render_program="guided",
+        selected_media_ids=[*CLIPS, *PHOTOS],
+    )
+
+    first = check_strategy_for_runtime_v2(_narrated_manifest(), guided, ask_before_simplifying=True)
+    assert isinstance(first, RefusedStrategy)
+    assert "draft is unchanged" not in first.question
+    assert first.question.endswith("Should I make a simpler version?")
+
+    with_edit = _narrated_manifest().model_copy(
+        update={"current_edit": CreatorEditSnapshot(revision=2, status="ready")}
+    )
+    later = check_strategy_for_runtime_v2(with_edit, guided, ask_before_simplifying=True)
+    assert isinstance(later, RefusedStrategy)
+    assert "Your current draft is unchanged. Should I make a simpler version?" in later.question

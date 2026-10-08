@@ -25,6 +25,7 @@ from app.agents._schemas.creator_policy import (
     CAPABILITY_DRAFT_GUIDED_PROPOSAL,
     UserSongUnavailableError,
 )
+from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.config import settings
 from app.kria.brief import BriefUpdate, parse_brief_updates
 from app.pipeline.prompt_loader import load_prompt
@@ -60,7 +61,8 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # KRI-479: `voice_mode` (continuous | excerpts) for a montage that keeps one clip's camera
 # audio, taught only when the manifest advertises `phone_source_audio` AND the route can render
 # (`Settings.voice_behind_footage_enabled`) (v47).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-07-v47"
+# KRI-519: reaction beats on an iPhone Voiceover edit, worded for the voiceover (v48).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-08-v48"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -205,6 +207,31 @@ spoken moment adds NO beats; say in `summary` that only sounds tied to the momen
 named are added on iPhone. This edit always stays `edit_format: "subtitled"` with no
 `opening_title`.
 """.strip("\n")
+
+# KRI-519: the same beats on a phone Voiceover edit, grounded against the recorded
+# voiceover's words. Shares the Talking section's field contract verbatim (sliced, so
+# the two can never drift and the Talking prompt stays byte-identical); only the
+# opening request and the closing edit rules differ.
+_FIELDS_START = _REACTION_BEATS_PROMPT_SECTION.index("set `reaction_beats`:")
+_FIELDS_END = _REACTION_BEATS_PROMPT_SECTION.index("Never set `licensed_sfx`")
+_VOICEOVER_REACTION_BEATS_PROMPT_SECTION = (
+    """
+REACTION BEATS (iPhone Voiceover)
+When the creator wants a photo/sticker or sound effect to pop up when their recorded voiceover
+says something ("when I say the medal, show my medal photo", "show the watch photo at four
+hours and twelve minutes"),
+"""[1:]
+    + _REACTION_BEATS_PROMPT_SECTION[_FIELDS_START:_FIELDS_END]
+    + """
+Triggers are matched against the words of the recorded voiceover, so copy the phrase exactly as
+the creator quoted it. On this edit a photo or sticker timed to the voiceover is ALWAYS a
+reaction beat: never set `execution_contract` for it, and never leave such a request out. A
+photo beat shows as a picture-in-picture card over the footage. Never set `licensed_sfx` on this
+edit once this capability is available -- beats place sound at the exact moments the creator
+named instead. A bare "add fun sound effects" with no named spoken moment adds NO beats. Keep the
+edit's own voiceover `edit_format`.
+""".strip("\n")
+)
 
 
 # KRI-374: the creator's own uploaded song on an iPhone montage. Rendered INSIDE
@@ -464,9 +491,10 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             # concatenates this slot directly onto `$clip_intents_section`'s
             # line (no line of its own) so an empty value never adds a blank
             # line; the leading "\n" here supplies the separator only when
-            # there is real content to show.
+            # there is real content to show. KRI-519: a Voiceover manifest gets
+            # the Voiceover wording of the same contract.
             reaction_beats_section=(
-                "\n" + _REACTION_BEATS_PROMPT_SECTION
+                "\n" + _reaction_beats_section(input.capability_manifest)
                 if _reaction_beats_available(input.capability_manifest)
                 else ""
             ),
@@ -692,6 +720,16 @@ def _reaction_beats_available(manifest: ResolvedCreatorManifest) -> bool:
 
     capability = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
     return bool(capability is not None and capability.available)
+
+
+def _reaction_beats_section(manifest: ResolvedCreatorManifest) -> str:
+    """KRI-519: the beats guidance worded for the edit that advertises them --
+    the capability resolver only opens it on a phone Talking or a phone
+    Voiceover (recorded voiceover) manifest."""
+
+    if manifest.has_voiceover and manifest.edit_format in NARRATED_EDIT_FORMATS:
+        return _VOICEOVER_REACTION_BEATS_PROMPT_SECTION
+    return _REACTION_BEATS_PROMPT_SECTION
 
 
 def _repair_action_envelope(action: object) -> object:

@@ -208,6 +208,18 @@ class Settings(BaseSettings):
     # source clips bumps its protocol to this value; builds that predate it
     # send a lower one (or none) and keep the lanes closed.
     phone_voiceover_editor_min_client_protocol: int = 3
+    # KRI-519 kill switch: KRI-178 reaction beats ("when I say the medal, show
+    # my medal photo") on a phone Voiceover (`narrated*` + recorded voiceover)
+    # edit. Only takes effect while
+    # `phone_rollout.phone_subtitled_reaction_beats_supported()` AND the
+    # KRI-281 Voiceover lanes gate hold (`phone_voiceover_reaction_beats_
+    # supported()`): the manifest advertises `reaction_beats` on that edit and
+    # `_run_phone_narrated_job` grounds the beats against the voiceover's own
+    # words into the Voiceover overlay / sound-effect lanes. False: the
+    # capability stays `phone_talking_only` there, byte-identical to before.
+    # Rollback: `fly secrets set PHONE_VOICEOVER_REACTION_BEATS_ENABLED=false
+    # --app nova-video` + `fly machine restart <id>` (api + worker + light).
+    phone_voiceover_reaction_beats_enabled: bool = True
     # KRI-183 (video Visuals as PiP): when this flag AND
     # `phone_rollout.phone_subtitled_overlays_supported()` hold AND
     # "visualVideos" is in `phone_render_verified_features` -- i.e.
