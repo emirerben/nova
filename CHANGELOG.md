@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.170.0] - 2026-10-08
+
+### Changed
+- fix(narrated): pin only the creator's first/last clips when aligning a phone voiceover (KRI-532) (#1490) <!-- release-pr: 1490 -->
+
 ## [0.78.169.0] - 2026-10-08
 
 ### Changed
