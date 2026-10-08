@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.152.0] - 2026-10-08
+
+### Changed
+- fix(phone): honour the caption-language ask on cleaned-up Talking edits (#1473) <!-- release-pr: 1473 -->
+
+## [0.78.151.0] - 2026-10-08
+
+### Changed
+- fix(narrated): honour the creator's caption-language ask on voiceover edits (#1472) <!-- release-pr: 1472 -->
+
+## [0.78.150.0] - 2026-10-08
+
+### Changed
+- fix(clip-intents): "skip the X clip" never becomes include; voiceover-matched order is kept (KRI-511) (#1471) <!-- release-pr: 1471 -->
+
+## [0.78.149.0] - 2026-10-07
+
+### Changed
+- feat(editor): original-audio volume in Sounds + working per-clip audio button (phone, incl. lip-sync videos) (#1467) <!-- release-pr: 1467 -->
+
 ## [0.78.148.0] - 2026-10-07
 
 ### Changed

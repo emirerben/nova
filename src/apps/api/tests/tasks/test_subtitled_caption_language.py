@@ -813,3 +813,165 @@ def test_phone_keeps_first_pass_when_the_retranscribe_is_empty(monkeypatch):
     gb._run_generative_job(str(job.id))
 
     assert job.assembly_plan["variants"][0]["caption_language"] == "tr"
+
+
+# --------------------------------------------------------------------------
+# Phone: "Clean up speech" (required_v1) + an explicit caption-language ask
+# --------------------------------------------------------------------------
+
+# The Turkish whisper pass of the SAME clip `_raw_preflight_snapshot`'s English
+# preflight words come from, on the original (uncut) clip timeline.
+_TR_CLIP_WORDS = (
+    ("yani", 0.5, 0.7),
+    ("ııı,", 1.0, 1.3),
+    ("bugün", 1.5, 1.9),
+    ("biz", 2.0, 2.2),
+    ("yaptık", 4.6, 4.9),
+    ("o", 5.0, 5.2),
+    ("şeyi.", 5.3, 5.9),
+)
+
+
+def _setup_phone_cleanup(monkeypatch, *, request: str | None):
+    """A `required_v1` phone Talking job on `_raw_preflight_snapshot`'s English
+    clip (cut keeps (0, 0.88), (1.42, 2.5), (4.4, 6.5)), with media lanes on so
+    the persisted `overlay_transcript` shows which words grounding used."""
+    from tests.tasks.test_generative_build_silence_cut import DURATION
+    from tests.tasks.test_phone_subtitled_narrated_dispatch import _raw_preflight_snapshot
+
+    job, snapshot, _session, binding = _setup_subtitled(monkeypatch, duration_s=DURATION)
+    monkeypatch.setattr(gb.settings, "phone_subtitled_media_lanes_enabled", True)
+    snapshot["speech_cleanup_contract"] = "required_v1"
+    snapshot["_speech_cleanup_internal"] = {
+        "preflight_snapshot": _raw_preflight_snapshot(storage_path=binding.proxy_path)
+    }
+    if request is not None:
+        job.all_candidates["caption_language_request"] = request
+    return job, snapshot
+
+
+def _spy_caption_words(monkeypatch) -> list[list[tuple[str, float, float]]]:
+    import app.pipeline.captions as captions_mod
+
+    seen: list[list[tuple[str, float, float]]] = []
+    build_cues = captions_mod.build_plain_cues
+
+    def _spy(words, *args, **kwargs):
+        seen.append([(word.text, word.start_s, word.end_s) for word in words])
+        return build_cues(words, *args, **kwargs)
+
+    monkeypatch.setattr(captions_mod, "build_plain_cues", _spy)
+    return seen
+
+
+def _phone_events(monkeypatch) -> Mock:
+    from app.services import pipeline_trace
+
+    events = Mock()
+    monkeypatch.setattr(pipeline_trace, "record_pipeline_event", events)
+    return events
+
+
+def _event_payloads(events: Mock, name: str) -> list[dict]:
+    return [c.args[2] for c in events.call_args_list if c.args[1] == name]
+
+
+def test_phone_cleanup_request_captions_in_the_requested_language(monkeypatch):
+    """ "Clean up speech" + "Turkish captions" on an English clip: captions come
+    from a Turkish-hinted pass of the ORIGINAL clip remapped through the SAME
+    cut (raw float offsets, filler dropped), while the cut and the grounding
+    transcript stay on the spoken English preflight words."""
+    from app.services.device_render import device_status
+
+    job, snapshot = _setup_phone_cleanup(monkeypatch, request="tr")
+    whisper = Mock(
+        return_value=Transcript(
+            words=_words(*_TR_CLIP_WORDS),
+            language="tr",
+            full_text=" ".join(text for text, _, _ in _TR_CLIP_WORDS),
+        )
+    )
+    monkeypatch.setattr("app.pipeline.transcribe.transcribe_whisper_cached", whisper)
+    seen = _spy_caption_words(monkeypatch)
+    events = _phone_events(monkeypatch)
+
+    gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    whisper.assert_called_once()
+    assert whisper.call_args.args[0] == "/tmp/c0.mp4"
+    assert whisper.call_args.kwargs.get("language") == "tr"
+
+    (words,) = seen
+    assert [text for text, _, _ in words] == ["yani", "bugün", "biz", "yaptık", "o", "şeyi."]
+    assert [start for _, start, _ in words] == pytest.approx([0.5, 0.96, 1.46, 2.16, 2.56, 2.86])
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["caption_language"] == "tr"
+    assert variant["silence_cut_outcome"] == "applied"
+    # Grounding keeps the spoken words, in original clip time.
+    assert [w["text"] for w in variant["overlay_transcript"]] == [
+        "so",
+        "um,",
+        "today",
+        "we",
+        "built",
+        "the",
+        "thing.",
+        "uh",
+    ]
+    recipe = device_status(job, "subtitled").request.recipe
+    video_track = next(t for t in recipe.tracks if t.kind == "video")
+    assert [(round(c.source_start, 3), round(c.source_duration, 3)) for c in video_track.clips] == [
+        (0.0, 0.88),
+        (1.42, 1.08),
+        (4.4, 2.1),
+    ]
+
+    assert _event_payloads(events, "caption_language_requested") == [
+        {"variant_id": "subtitled", "requested": "tr", "spoken": "en"}
+    ]
+    assert _event_payloads(events, "caption_language_request_empty") == []
+
+
+def test_phone_cleanup_request_matching_spoken_language_is_a_noop(monkeypatch):
+    """Asking for the language already spoken changes nothing: no extra
+    transcription, captions straight from the preflight words."""
+    job, snapshot = _setup_phone_cleanup(monkeypatch, request="en")
+
+    def _explode(*_a, **_k):
+        raise AssertionError("a request for the spoken language must not re-transcribe")
+
+    monkeypatch.setattr("app.pipeline.transcribe.transcribe_whisper_cached", _explode)
+    seen = _spy_caption_words(monkeypatch)
+    events = _phone_events(monkeypatch)
+
+    gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    (words,) = seen
+    assert [text for text, _, _ in words] == ["so", "today", "we", "built", "the", "thing."]
+    assert job.assembly_plan["variants"][0]["caption_language"] == "en"
+    assert _event_payloads(events, "caption_language_requested") == []
+
+
+def test_phone_cleanup_request_keeps_spoken_captions_when_the_pass_is_empty(monkeypatch):
+    """A requested-language pass that hears nothing never blanks the captions:
+    they stay in the spoken language and the miss is recorded."""
+    job, snapshot = _setup_phone_cleanup(monkeypatch, request="tr")
+    whisper = Mock(return_value=Transcript(words=[], language="tr", full_text=""))
+    monkeypatch.setattr("app.pipeline.transcribe.transcribe_whisper_cached", whisper)
+    seen = _spy_caption_words(monkeypatch)
+    events = _phone_events(monkeypatch)
+
+    gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    assert job.status == "awaiting_device"
+    whisper.assert_called_once()
+    (words,) = seen
+    assert [text for text, _, _ in words] == ["so", "today", "we", "built", "the", "thing."]
+    assert job.assembly_plan["variants"][0]["caption_language"] == "en"
+    assert _event_payloads(events, "caption_language_request_empty") == [
+        {"variant_id": "subtitled", "requested": "tr", "spoken": "en"}
+    ]
+    assert _event_payloads(events, "caption_language_requested") == []

@@ -111,7 +111,7 @@ struct NativeEditorYourSong: Equatable, Sendable {
     let mode: String?
 
     static let fallbackTitle = "Your song"
-    static let helperCopy = "This is the song you added. Camera audio is muted so it plays alone."
+    static let helperCopy = "This is the song you added. Camera audio is muted so it plays alone, until you turn up Original audio."
     static let songEndsEarlyCopy = "Song ends before the video does."
     static let lipSyncLockCopy = "Lip-sync keeps the song where you filmed it."
     static let removedHelperCopy = "Song removed. Your camera audio plays instead."

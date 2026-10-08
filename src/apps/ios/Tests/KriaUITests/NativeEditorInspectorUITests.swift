@@ -1083,6 +1083,49 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertFalse(app.buttons["native-editor-save"].isEnabled)
     }
 
+    /// The founder's debugging need: on a creator-song (lip-sync) video, Sounds carries an Original audio
+    /// volume (0% by default, because the song plays alone) and the clip's Audio button really toggles that
+    /// clip's sound. Both are unsaved, undoable edits.
+    func testOriginalAudioVolumeAndPerClipAudioButtonWorkOnALipSyncVideo() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes", "-ui-testing-editor-user-song-lipsync"]
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["native-editor-save"].isEnabled)
+
+        app.buttons["native-editor-tool-sounds"].tap()
+        let control = app.descendants(matching: .any)["native-editor-original-audio-volume"].firstMatch
+        XCTAssertTrue(control.waitForExistence(timeout: 4), "Sounds carries an Original audio control")
+        let percent = app.staticTexts["native-editor-original-audio-percent"]
+        XCTAssertTrue(percent.exists)
+        XCTAssertEqual(percent.label, "0%", "the song plays alone until the creator turns the camera up")
+        let slider = app.sliders["Original audio volume"]
+        XCTAssertTrue(slider.waitForExistence(timeout: 4))
+        XCTAssertGreaterThanOrEqual(control.frame.height, 44, "the control keeps a 44pt touch target")
+        // Scroll the control into the panel's reachable area if the song controls pushed it down.
+        let scroll = app.scrollViews["native-editor-sounds-scroll"]
+        if !slider.isHittable { scroll.swipeUp() }
+        slider.adjust(toNormalizedSliderPosition: 0.5)
+        XCTAssertNotEqual(percent.label, "0%", "moving the slider changes the level")
+        XCTAssertTrue(app.buttons["native-editor-save"].isEnabled, "a level change is an unsaved edit")
+        app.buttons["native-editor-sounds-done"].tap()
+
+        // The per-clip Audio button in the clip's context strip now flips that clip's sound.
+        let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        XCTAssertTrue(clip.waitForExistence(timeout: 4))
+        clip.tap()
+        let audio = app.buttons["native-editor-clip-audio"]
+        XCTAssertTrue(audio.waitForExistence(timeout: 4))
+        XCTAssertTrue(audio.isEnabled)
+        XCTAssertTrue(audio.isHittable)
+        XCTAssertEqual(audio.frame.height, app.buttons["native-editor-adjust"].frame.height, accuracy: 1, "same size as its neighbours")
+        XCTAssertEqual(audio.value as? String, "On", "the clip is audible once the level is up")
+        audio.tap()
+        XCTAssertEqual(audio.value as? String, "Off", "tapping Audio mutes this clip")
+        audio.tap()
+        XCTAssertEqual(audio.value as? String, "On", "and tapping again brings it back")
+    }
+
     func testSongReferenceBarKeepsTimelineAndToolsOnScreen() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes", "-ui-testing-editor-song-reference"]

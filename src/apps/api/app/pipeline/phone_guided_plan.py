@@ -264,6 +264,12 @@ def compile_phone_guided_plan(
     ]
     has_transitions = any(value not in {"none", "cut"} for value in boundaries)
     preserve_audio = plan_preserves_source_audio(plan)
+    # The creator's own level for the footage's sound (Sounds > Original audio). Only an
+    # explicit, audible choice changes anything: unset keeps today's defaults.
+    creator_original_level = plan.editor_original_level
+    creator_hears_camera = creator_original_level is not None and creator_original_level > 0
+    if creator_hears_camera:
+        preserve_audio = True
     # V6 reconstructs cloud source audio at the same overlapping source
     # windows as the native mixer. Legacy transition renders discarded audio.
     if has_transitions and preserve_audio and plan.compiler_version < 6:
@@ -536,6 +542,9 @@ def compile_phone_guided_plan(
                 transition=incoming,
                 look="golden_hour" if moment.look_preset == "golden_hour" else None,
                 source_crop=source_crop,
+                # The creator silenced this occurrence's own sound; a default clip stays
+                # byte-identical (volume unset).
+                **({"volume": 0.0} if moment.source_audio_muted else {}),
             )
         )
         cursor = moment.output_end_s
@@ -699,7 +708,15 @@ def compile_phone_guided_plan(
             )
         except UnsupportedEditorMedia as exc:
             raise UnsupportedPhonePlan(str(exc), capability="visualBlocks") from exc
-    audio = AudioMixRecipe(original_volume=plan.editor_audio_level if preserve_audio else 0)
+    audio = AudioMixRecipe(
+        original_volume=(
+            creator_original_level
+            if creator_original_level is not None and preserve_audio
+            else plan.editor_audio_level
+            if preserve_audio
+            else 0
+        )
+    )
     required_capabilities = (
         {"basicComposition", "local1080Export"}
         | (
@@ -824,8 +841,17 @@ def compile_phone_guided_plan(
         # of the `song-bed` track above (which starts at the creator's chosen window). Left
         # at the default 1.0 the song played twice at once (prod job 934811f3, KRI-481).
         # The audible gain lives on the track clip, so the legacy bed is silenced.
-        audio = AudioMixRecipe(original_volume=0.0, music_asset_id=song_asset.id, music_volume=0.0)
+        # An explicit creator level (Sounds > Original audio) lets the camera play WITH the song
+        # at that level; the song keeps its own level on the `song-bed` clip, and a lip-sync
+        # take's timing is untouched (only the camera gain changes). Unset = silent, as before.
+        audio = AudioMixRecipe(
+            original_volume=float(creator_original_level) if creator_hears_camera else 0.0,
+            music_asset_id=song_asset.id,
+            music_volume=0.0,
+        )
         required_capabilities |= set(USER_SONG_REQUIRED_CAPABILITIES)
+        if creator_hears_camera:
+            required_capabilities |= {"audioMix"}
     return EditRecipeV2(
         canvas=Canvas(width=canvas.width, height=canvas.height),
         assets=list(assets.values()),

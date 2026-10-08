@@ -1462,7 +1462,13 @@ def test_guided_v2_device_variant_closes_every_edit_the_phone_compiler_rejects(
     assert cloud["visual_editor_style"] is True
 
     closed_clip_operations = {"add", "looks", "edit_wide_looks", "source_crop", "playback_rate"}
-    assert set(cloud["clips"]) - closed_clip_operations == {
+    # Camera audio is the one control the PHONE renders (a cloud render ignores it), so it is
+    # closed on cloud and open on device: the reverse of the clamp below.
+    assert cloud["clips"]["audio"] == {"editable": False, "reason": "original_audio_phone_only"}
+    assert device["clips"]["audio"] == {"editable": True, "reason": None}
+    assert cloud["original_audio"] == {"editable": False, "reason": "original_audio_phone_only"}
+    assert device["original_audio"] == {"editable": True, "reason": None}
+    assert set(cloud["clips"]) - closed_clip_operations - {"audio"} == {
         "remove",
         "reorder",
         "split",
@@ -1470,6 +1476,8 @@ def test_guided_v2_device_variant_closes_every_edit_the_phone_compiler_rejects(
         "transitions",
     }
     for operation, capability in cloud["clips"].items():
+        if operation == "audio":
+            continue
         expected = _PHONE_CLOSED if operation in closed_clip_operations else capability
         assert device["clips"][operation] == expected
     assert device["clips"]["transitions"] == {"editable": True, "reason": None}
@@ -1491,6 +1499,7 @@ def test_guided_v2_device_variant_closes_every_edit_the_phone_compiler_rejects(
     # text, trim/reorder/split/remove, orientation and music stay as the cloud map.
     assert device.keys() == cloud.keys()
     assert {key for key in cloud if device[key] != cloud[key]} == {
+        "original_audio",
         "clips",
         "lanes",
         "media_source_controls",

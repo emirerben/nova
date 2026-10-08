@@ -334,13 +334,22 @@ struct NativeEditorContextStrip: View {
                 .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
                 .accessibilityIdentifier("native-editor-adjust")
 
-                Button(action: onAdjust) {
-                    Label("Audio", systemImage: "speaker.slash")
+                // Toggles the selected clip's own sound (it used to open Adjust and show a static
+                // "not supported" note). The icon is the state: speaker = heard, slashed = silent.
+                let clipID = session.selection?.kind == .clip ? session.selection?.id : nil
+                let audioOn = clipID.map { session.isClipAudioOn(clipID: $0) } ?? false
+                Button {
+                    if let clipID { session.toggleClipAudio(clipID: clipID) }
+                } label: {
+                    Label("Audio", systemImage: audioOn ? "speaker.wave.2" : "speaker.slash")
                         .frame(minHeight: 44)
                         .padding(.horizontal, 16)
                 }
                 .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
+                .disabled(clipID == nil || !session.canEditClipAudio || !session.canEditOriginalAudio)
                 .accessibilityIdentifier("native-editor-clip-audio")
+                .accessibilityValue(audioOn ? "On" : "Off")
+                .accessibilityHint("Turns this clip's original sound on or off")
 
                 if session.canEditOperation(["clips.transitions"], section: .timeline) {
                     Button(action: onTransition) {

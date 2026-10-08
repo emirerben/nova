@@ -1,16 +1,18 @@
-"""Caption-language policy for talking-to-camera captions (KRI-177).
+"""Caption-language policy for talking-to-camera and voiceover captions (KRI-177).
 
 Default rule: captions are in the language the person SPEAKS. The only thing that
 may change that is the creator explicitly asking for captions in another language
 ("captions in English", "altyazılar Türkçe olsun"). Nothing else — the job's
 UI/content language, a hard-coded "en", a previous item — may silently win.
 
-Four pure helpers:
+Pure helpers:
 
 - ``parse_caption_language_request`` — grounded, deterministic extraction of an
   explicit caption-language request from the creator's own words. Requires a
   caption/subtitle keyword AND a language name in the same clause, so a prompt
   merely *written* in Turkish never changes the caption language.
+- ``coerce_caption_language_request`` — render-time re-validation of the persisted
+  request (supported code or None).
 - ``infer_language_from_text`` — a conservative EN/TR guess from transcript text,
   used when whisper reports no language, and to cross-check the one it reports.
 - ``crosscheck_detected_language`` — whisper's detection vs an independent
@@ -94,6 +96,18 @@ def parse_caption_language_request(text: str | None) -> str | None:
         if len(targeted) == 1:
             requested = targeted.pop()
     return requested
+
+
+def coerce_caption_language_request(value: object) -> str | None:
+    """Re-validate a persisted ``caption_language_request`` at render time.
+
+    The dispatcher only ever writes a parsed, supported code, but a stray or legacy
+    value must never silently become a caption-language override.
+    """
+    if not isinstance(value, str):
+        return None
+    code = value.strip().lower()
+    return code if code in SUPPORTED_CAPTION_LANGUAGES else None
 
 
 _TR_CHARS = re.compile(r"[ğşıİçöüĞŞÇÖÜ]")

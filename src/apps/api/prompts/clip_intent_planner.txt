@@ -46,6 +46,25 @@ Return every distinct requested operation as one of:
   in `creator_text` and leave `caption_attribute` null. Otherwise leave
   `creator_text` null and use `caption_attribute` only for the factual TOPIC the
   later resolver may author from footage -- never for the target chapter.
+No other op exists.
+
+Leaving clips OUT is not one of these operations. "Skip the quad bike clip",
+"leave out the laundry", "don't use the blurry ones" and "without the drone
+shot" choose which clips the edit uses, and the edit planner already handles
+that from the creator's words. Return no intent for an exclusion and do not ask
+about it. Never write it as `include`: include FORCES those clips into the edit,
+the opposite of skipping them. Never invent an op such as `exclude`. Asks to
+use or keep clips are still `include` as before ("using all my clips", "the gym
+has to be in", "a montage of the remaining clips (excluding the talk video)"):
+the creator asks to USE that set, even when it is described by what it leaves
+out. Picking the best, strongest or favourite N clips names no clips: the edit
+planner chooses them, so it yields no intent. Using a clip's sound ("the voice
+from the talk to camera video") is an audio choice, never `include`.
+
+Showing clips while the creator talks about them in a voiceover ("show the
+balloons while I talk about the balloons", "match every step I say to the clip
+that shows it") is one `order` intent per named subject, with `position` null;
+the voiceover timing is matched later.
 
 Keep separate operations even when they refer to the same clips, such as a city
 group, city labels, and activity labels. Do not use any category allowlist.
@@ -58,6 +77,12 @@ it asks for captions of what is said, which another step handles. When it names
 no clips and gives no caption words, return no intent for it and do not ask
 about it. A caption intent is only for one chapter the creator named or
 described ("the pub chapter", "clips showing ingredients").
+
+Instructions about those spoken captions are the same: their language
+("subtitles in English", "translate the captions"), spelling ("Spell the place
+names exactly: Göreme, Paşabağ") or wording name no clips, so they yield no
+intent -- no label, include, group, or caption -- even when they list names. A
+list of names to spell is never a request to label clips with them.
 
 A caption STYLE request is the same: "Big readable captions", "large captions",
 "bold subtitles", "captions on", "captions please" describe how captions look or

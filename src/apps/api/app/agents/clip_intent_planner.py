@@ -33,7 +33,9 @@ _ORDER_BY_NOTE = (
     ' is an order intent with `order_by`: "capture_time" for filming order, "route" for a'
     " route walked or driven. You MUST include that `order_by` value on the returned intent;"
     " never omit it. Leave `position` null for it; it is never combined with first/last."
-    " Attribute: the creator's own words for the order."
+    " Attribute: the creator's own words for the order. Every other order intent (first/last,"
+    " a listed sequence, clips shown while the creator talks about them) has `order_by`"
+    ' null: JSON null, never the string "null" and never any other value.'
 )
 
 _ORDER_BY_FIELD = ',"order_by":"capture_time|route|null"'
@@ -261,6 +263,118 @@ def _repair_position(data: dict[str, Any]) -> None:
     data["position"] = "first" if first else "last" if last else None
 
 
+_ORDER_BY_VALUES = frozenset({"capture_time", "route"})
+_ORDER_BY_NULLS = frozenset({"", "null", "none", "n/a"})
+_CAPTURE_ORDER_TOKENS = frozenset(
+    "capture captured filmed filming film chronological chronologically".split()
+)
+_ROUTE_ORDER_TOKENS = frozenset({"route", "itinerary"})
+# A fact-based order arranges EVERY clip, so the creator's quote names the order
+# itself ("in the order I filmed them", "chronological", "along my route").
+_ORDER_BY_EVIDENCE = re.compile(
+    r"order|chrono|film|shot|record|captur|route|sequen|happen|time|stop|earliest|latest"
+    r"|oldest|newest|sıra|kronoloj|çek",
+    re.IGNORECASE,
+)
+
+
+def _repair_order_by(data: dict[str, Any]) -> None:
+    """Map an invented ``order_by`` onto the enum or null, in place (KRI-511).
+
+    The template shows ``"capture_time|route|null"``, so Flash writes the string
+    ``"null"`` or invents a value ("voiceover_match" for "show the balloons while
+    I talk about the balloons"), and the whole instruction was rejected. A
+    filming-order synonym maps onto ``capture_time``/``route``; anything else, and
+    any value whose quote never asks for an order of the whole edit, is null. A
+    valid value on a first/last or non-order intent is left for the validator,
+    which asks the creator: guessing which half was meant would drop the other.
+    """
+    value = data.get("order_by")
+    if value is None:
+        return
+    text = value.strip().casefold() if isinstance(value, str) else ""
+    if text in _ORDER_BY_NULLS:
+        data["order_by"] = None
+        return
+    if text in _ORDER_BY_VALUES:
+        quote = data.get("source_quote")
+        if (
+            data.get("op") == "order"
+            and data.get("position") is None
+            and isinstance(quote, str)
+            and not _ORDER_BY_EVIDENCE.search(_norm(quote))
+        ):
+            data["order_by"] = None
+        return
+    tokens = set(re.findall(r"[a-z]+", text))
+    if data.get("op") == "order" and data.get("position") is None:
+        if tokens & _CAPTURE_ORDER_TOKENS:
+            data["order_by"] = "capture_time"
+            return
+        if tokens & _ROUTE_ORDER_TOKENS:
+            data["order_by"] = "route"
+            return
+    data["order_by"] = None
+
+
+# KRI-511: leaving clips OUT is clip selection, which the Main Creator owns
+# (`selected_media_ids` against the brief's `select` requirement). There is no
+# exclude op: Flash either invents one (a loud rejection, so the creator was asked
+# to restate "Skip the quad bike clip") or writes `include`, which FORCES the clip
+# into the edit, the opposite of the ask. Both are dropped silently.
+_EXCLUSION_OPS = frozenset("exclude excluded exclusion skip remove omit drop deselect hide".split())
+_LEADING_GLUE = r"^(?:(?:and|but|also|please|then|so|just|oh)\s+)*"
+_EXCLUSION_ASK = re.compile(
+    _LEADING_GLUE + r"(?:skip|remove|omit|exclude|excluding|ignore|lose|without|except|drop"
+    r"|get\s+rid\s+of|leave\b.*\bout\b|cut\s+(?:out|the|that|this|those|these|my)\b"
+    r"|(?:i\s+)?(?:don't|dont|do\s+not)\s+(?:use|include|show|want|need|put)"
+    r"|no\s+more)\b",
+    re.IGNORECASE,
+)
+# Turkish puts the verb last: "quad klibini kullanma", "... atla", "... çıkar".
+_EXCLUSION_ASK_TR = re.compile(r"\b(?:kullanma|atla|çıkar|koyma|gösterme|ekleme)\b\W*$")
+# KRI-511: an instruction about the spoken captions ("subtitles in English",
+# "Spell the place names exactly: Göreme, Paşabağ") names no clips. Flash mints
+# it as `include: subtitles`, `label: place name` or a caption per listed name.
+_SPEECH_CAPTION_WORDS = frozenset(
+    "captions caption subtitles subtitle altyazı altyazılar altyazi".split()
+)
+_SPELLING_ASK = re.compile(_LEADING_GLUE + r"(?:spell|spelled|spelt|spelling)\b", re.IGNORECASE)
+_SPELLING_WORDS = frozenset({"spell", "spelled", "spelt", "spelling"})
+
+
+def _is_exclusion_ask(quote: str) -> bool:
+    text = _norm(quote).casefold()
+    return bool(_EXCLUSION_ASK.search(text) or _EXCLUSION_ASK_TR.search(text))
+
+
+def _silent_non_clip_drop(data: dict[str, Any]) -> str | None:
+    """Why an intent is not a clip operation at all, or None to keep it (KRI-511).
+
+    Closed vocabulary: ``exclusion_dropped`` (an invented exclude op, or an
+    ``include`` whose quote asks to leave clips out), ``spelling_dropped`` (how
+    names are spelled), ``speech_caption_dropped`` (a non-caption op whose target
+    is the spoken captions). The creator's words stay in the Creative Brief, which
+    the Main Creator and the caption steps read.
+    """
+    op = data.get("op")
+    quote = data.get("source_quote")
+    quote_text = quote if isinstance(quote, str) else ""
+    if isinstance(op, str) and op.strip().casefold() in _EXCLUSION_OPS:
+        return "exclusion_dropped"
+    if op == "include" and _is_exclusion_ask(quote_text):
+        return "exclusion_dropped"
+    attribute = data.get("attribute")
+    attribute_words = set(_words(attribute)) if isinstance(attribute, str) else set()
+    if _SPELLING_ASK.search(_norm(quote_text)) or attribute_words & _SPELLING_WORDS:
+        return "spelling_dropped"
+    # A caption op may name its clips beside the word ("captions for the beach
+    # clips"); `_silent_caption_drop` owns that shape.
+    if op != "caption" and attribute_words & _SPEECH_CAPTION_WORDS:
+        return "speech_caption_dropped"
+    return None
+
+
 # KRI-456: a `caption` intent is a chapter caption on named clips. Two shapes the
 # model keeps minting are NOT clip operations: a style ask ("big readable
 # captions") and a title treatment (`Title: "..."`). Resolved against footage they
@@ -409,8 +523,9 @@ class ClipIntentPlannerOutput(BaseModel):
     salvage_reasons: list[str] = Field(
         default_factory=list, max_length=16, exclude_if=lambda value: not value
     )
-    # Parser-authored (KRI-456): intents that were never clip operations (a style
-    # ask like "big readable captions", a `Title: "..."` line) and were dropped
+    # Parser-authored (KRI-456, KRI-511): intents that were never clip operations (a
+    # style ask like "big readable captions", a `Title: "..."` line, "Skip the quad
+    # bike clip", "Spell the place names exactly: ...") and were dropped
     # SILENTLY, as {closed-vocabulary reason: count}. Diagnostics only: it never
     # raises a creator question.
     silent_drops: dict[str, int] = Field(default_factory=dict, exclude_if=lambda value: not value)
@@ -420,7 +535,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.clip_intent_planner",
         prompt_id="clip_intent_planner",
-        prompt_version="2026-10-06.1",
+        prompt_version="2026-10-07.1",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -605,9 +720,10 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         if not isinstance(data.get("intent_id"), str) or not data["intent_id"].strip():
             data["intent_id"] = f"intent-{index + 1}"
         _repair_placeholder(data, sources)
-        # KRI-456: a style ask or title line is not a clip operation. Drop it before
-        # shape/provenance checks so a garbled quote can never turn it into a question.
-        silent_reason = _silent_caption_drop(data)
+        # KRI-456/KRI-511: a style ask, title line, exclusion, or spoken-caption
+        # instruction is not a clip operation. Drop it before shape/provenance checks
+        # so a garbled quote can never turn it into a question.
+        silent_reason = _silent_caption_drop(data) or _silent_non_clip_drop(data)
         if silent_reason is not None:
             if silent is not None:
                 silent.append(silent_reason)
@@ -620,6 +736,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         if data.get("op") != "order":
             data["position"] = None
         _repair_position(data)
+        _repair_order_by(data)
         creator_text = data.get("creator_text")
         text_max = CREATOR_CAPTION_MAX_CHARS if data.get("op") == "caption" else _CREATOR_TEXT_MAX
         if isinstance(creator_text, str) and len(creator_text) > text_max:

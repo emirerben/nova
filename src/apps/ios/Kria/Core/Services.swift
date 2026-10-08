@@ -1913,6 +1913,15 @@ extension DraftSnapshot {
                 audioMix["music_level"] = mix
                 sections["audio_mix"] = .object(audioMix)
             }
+            // The creator's own original-audio level (Sounds > Original audio). Only a phone-rendered
+            // guided edit honors it, so no other variant's persisted value reaches the document.
+            if !isIntentionalEmpty, authoritativeVariant["resolved_archetype"]?.stringValue == "guided_story",
+               authoritativeVariant["render_destination"]?.stringValue == "device",
+               case .number? = authoritativeVariant["original_audio_level"] {
+                var audioMix = Self.object(sections["audio_mix"]) ?? [:]
+                audioMix["original_level"] = authoritativeVariant["original_audio_level"]
+                sections["audio_mix"] = .object(audioMix)
+            }
             if !isIntentionalEmpty, let title = authoritativeVariant["track_title"] {
                 sections["music_track_title"] = title
             }

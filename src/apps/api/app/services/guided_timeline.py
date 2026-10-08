@@ -170,6 +170,16 @@ def build_guided_segments(
             # retimes stay legacy so their normalized hash does not churn.
             if inherited_segment.get("playback_rate") is not None:
                 segment["playback_rate"] = inherited_segment["playback_rate"]
+        # Per-occurrence camera sound. Omission preserves the saved state
+        # (a split child inherits its parent's); an explicit value replaces it.
+        if "muted" in slot.model_fields_set and slot.muted is not None:
+            muted = bool(slot.muted)
+        else:
+            muted = bool(
+                isinstance(inherited_segment, dict) and inherited_segment.get("source_audio_muted")
+            )
+        if muted:
+            segment["source_audio_muted"] = True
         # New clients send the occurrence's canonical fit. Older clients omit
         # it; preserve a layout already stored on this segment (including its
         # parent when a split child is being written) and otherwise retain the

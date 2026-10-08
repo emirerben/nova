@@ -78,6 +78,10 @@ enum NativeEditorRenderError: Error, Equatable {
         let requestedOriginalGain = document.mix["original_level"]?.numberValue ?? 1
         let originalGain = requestedOriginalGain.isFinite ? min(max(0, requestedOriginalGain), 1) : 1
         let hasExplicitOriginalGain = document.mix["original_level"] != nil
+        // The creator's song replaces the camera audio unless they explicitly turned the original
+        // audio up (Sounds > Original audio): then the camera plays WITH the song at that level
+        // (the song keeps its own level). An unset level, or an explicit 0, keeps the camera silent.
+        let creatorHearsCameraWithSong = hasExplicitOriginalGain && originalGain > 0
         let activeSlots = document.clips.filter { !$0.removed }
         func slot(for clip: EditorClip, index: Int) -> EditorTimelineSlot? {
             if let id = clip.slotID, let value = activeSlots.first(where: { $0.id == id }) { return value }
@@ -149,7 +153,7 @@ enum NativeEditorRenderError: Error, Equatable {
             video.append(TimelineClip(id: clip.slotID ?? clip.id.uuidString, sourceAssetID: id,
                 sourceStart: clip.trimIn, sourceDuration: consumedSourceDuration, timelineStart: clip.start,
                 rate: requestedRate, transition: transition,
-                volume: audioSources[Self.songSourceKey] != nil ? 0 : cameraLevel, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
+                volume: audioSources[Self.songSourceKey] != nil && !creatorHearsCameraWithSong ? 0 : cameraLevel, look: authoredSlot?.lookPreset == "golden_hour" ? .goldenHour : nil,
                 holdDuration: holdDuration > 0 ? holdDuration : nil,
                 sourceCrop: try Self.sourceCrop(authoredSlot?.raw["source_crop"])))
             // KRI-306: letterbox a sideways clip when the creator chose black
@@ -203,8 +207,9 @@ enum NativeEditorRenderError: Error, Equatable {
         }
         // The creator's own song (KRI-374) is the project's soundtrack, played from the pinned
         // device recipe's `song` clip. Camera audio is forced to 0 above while a song source is
-        // present, whatever a slot's `muted` / `mix.original_level` says, so it never leaks over
-        // the song. A caller that removed the song passes no song source at all.
+        // present unless the creator explicitly set `mix.original_level` above 0 (then the clip's
+        // own `muted` flag decides), so by default it never leaks over the song. A caller that removed the song passes no
+        // song source at all.
         if let song = audioSources[Self.songSourceKey] {
             guard let fingerprint = song.asset.fingerprint, let available = song.asset.duration,
                   available.isFinite, available > 0 else { throw MediaEngineError.missingAsset(Self.songTrackID) }
