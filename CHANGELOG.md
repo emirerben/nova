@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.155.0] - 2026-10-08
+
+### Changed
+- fix(order): a placed "end on <clip>" rule no longer dead-ends the chat (KRI-510) (#1469) <!-- release-pr: 1469 -->
+
 ## [0.78.154.0] - 2026-10-08
 
 ### Changed
