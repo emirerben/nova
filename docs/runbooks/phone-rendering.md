@@ -879,6 +879,18 @@ geometry`) and a sound per occurrence with a `sound`, then places
 duplicating it). Surviving cards/sounds lane through the exact same bind /
 `_resolve_phone_sound_effect` / compile / retry path Phase 1 and Phase 2 use.
 
+**Video beats (KRI-521).** Where the KRI-183 video gate holds
+(`media_overlays:video_cards` on the manifest, `video_overlays_enabled` in the
+worker), a beat's `visual_id` may name a Visuals VIDEO ("when I say 'İlk
+durak', show the brewing video small in the corner"). Manifest repair
+resolves it with `resolve_creator_visual_video_media_ref` (`asset-*` videos
+only, never the speaker take); grounding builds a muted `kind="video"` card in
+the photo corner, played from its first frame for its own length (capped at
+`_VIDEO_HOLD_S_MAX`, never past the clip). Gate off: approval drops the beat
+with "Videos can't pop up on your words in this edit yet…", and a video card
+that still reaches the bind step drops alone with beat reason
+`visual_is_video`. The closing shot and badge stay photo-only.
+
 **The creator's beats win their Visuals and windows; Phase 2 fills the
 rest (KRI-183).** Beats ground FIRST. Every beat card's media id (photos,
 stickers, closing shot, badge) is then excluded from Phase 2's candidate set

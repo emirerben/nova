@@ -350,7 +350,7 @@ _MAX_MISSED_DETAIL_LINES = 8
 # Every bucket maps to a FIXED, honest sentence -- the raw reason code is
 # never quoted back to the creator.
 _MISS_REASON_NEVER_HEARD: frozenset[str] = frozenset({"never_heard", "after_not_heard"})
-_MISS_REASON_VISUAL_MISSING: frozenset[str] = frozenset({"visual_not_in_pool", "visual_is_video"})
+_MISS_REASON_VISUAL_MISSING: frozenset[str] = frozenset({"visual_not_in_pool"})
 _MISS_REASON_NO_ROOM: frozenset[str] = frozenset({"no_safe_spot", "too_short", "overlap"})
 
 # KRI-183: `render_notes_from_overlay_receipt`'s reason buckets -- mirrors
@@ -388,8 +388,9 @@ def beat_miss_sentence(trigger: str, reason: str | None) -> str:
     `reason` is `phone_reaction_grounding`'s per-beat `unplaced[].reason` (or
     a post-grounding demotion reason `_demote_beat_receipt` writes) --
     `None`/`never_heard`/`after_not_heard` means the trigger genuinely never
-    played; `visual_not_in_pool`/`visual_is_video` means the photo/sticker
-    itself was the problem; `sound_not_found` means the sound was; `no_safe_
+    played; `visual_not_in_pool` means the photo/sticker itself was the
+    problem; `visual_is_video` means the video can't pop in on this render
+    (KRI-521); `sound_not_found` means the sound was; `no_safe_
     spot`/`too_short`/`overlap` means there was no safe window to show it;
     anything else (`bind_failed`, `compile_dropped`, `error: ...`) is an
     internal render-pipeline hiccup, reported honestly but generically.
@@ -398,6 +399,8 @@ def beat_miss_sentence(trigger: str, reason: str | None) -> str:
         return f'I never heard "{trigger}", so its photo or sound wasn\'t shown'
     if reason in _MISS_REASON_VISUAL_MISSING:
         return f'Couldn\'t find the photo or sticker for "{trigger}" in your Visuals'
+    if reason == "visual_is_video":
+        return f'Videos can\'t pop up on your words in this edit yet, so "{trigger}" had no video'
     if reason == "sound_not_found":
         return f'Couldn\'t find a sound for "{trigger}" in the library'
     if reason in _MISS_REASON_NO_ROOM:

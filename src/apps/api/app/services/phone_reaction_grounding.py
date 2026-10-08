@@ -67,6 +67,9 @@ MAX_REACTION_OCCURRENCES = 8
 
 _PHOTO_HOLD_S_DEFAULT = 3.0
 _STICKER_HOLD_S_DEFAULT = 2.5
+# KRI-521: a video beat plays its own length by default, capped so a long clip
+# doesn't sit in the corner for half the take.
+_VIDEO_HOLD_S_MAX = 6.0
 _MIN_CARD_WINDOW_S = 0.3
 _MIN_TRUNCATED_WINDOW_S = 0.4
 _CLOSING_DEFAULT_LOOKBACK_S = 3.0
@@ -355,7 +358,7 @@ def _visual_id_candidates(visual_id: str) -> list[str]:
 
 
 def _resolve_visual(
-    visual_id: str | None, assets_by_id: dict[str, dict]
+    visual_id: str | None, assets_by_id: dict[str, dict], *, video_supported: bool = False
 ) -> tuple[dict | None, str | None]:
     if not visual_id:
         return None, None
@@ -367,7 +370,11 @@ def _resolve_visual(
     if asset is None:
         return None, "visual_not_in_pool"
     if asset.get("kind") == "video":
-        return None, "visual_is_video"
+        if not video_supported:
+            return None, "visual_is_video"
+        if not asset.get("gcs_generation"):
+            return None, "visual_not_in_pool"
+        return asset, None
     if asset.get("kind") != "image" or not asset.get("gcs_generation"):
         return None, "visual_not_in_pool"
     return asset, None
@@ -502,9 +509,16 @@ def ground_phone_reaction_beats(
     words: list[dict],
     duration_s: float,
     clip_path: str | None,
+    video_supported: bool = False,
 ) -> GroundedReactionBeats:
     """Ground creator-authored reaction beats + closing media against the
     clip's raw Whisper words into phone Talking-lane cards/sounds (KRI-178).
+
+    ``video_supported`` (KRI-521, the worker's KRI-183 video-PiP gate) lets a
+    beat's ``visual_id`` name a Visuals VIDEO: it becomes a muted
+    ``kind="video"`` card in the photo corner, played from its start. Off
+    (default), a video is reported ``visual_is_video`` exactly as before. The
+    closing shot and badge stay photo-only.
 
     Fails open at every stage: a broken face sampler leaves no face regions
     protected (`face_sampling == "failed"`), a bad DB row is skipped, and any
@@ -565,10 +579,16 @@ def ground_phone_reaction_beats(
 
             asset: dict | None = None
             if visual_id:
-                asset, visual_reason = _resolve_visual(visual_id, assets_by_id)
+                asset, visual_reason = _resolve_visual(
+                    visual_id, assets_by_id, video_supported=video_supported
+                )
                 if visual_reason:
                     _record_beat_failure(beat_id, trigger, visual_reason)
                     continue
+            is_video = asset is not None and asset.get("kind") == "video"
+            if is_video:
+                # A video is a picture-in-picture clip, never a sticker badge.
+                slot = "photo"
 
             match = _match_trigger(stream, trigger, after, str(occurrence_mode))
             if match.reason:
@@ -576,7 +596,11 @@ def ground_phone_reaction_beats(
                 continue
 
             hold = _coerce_float(hold_s, 0.0) if hold_s is not None else None
-            if hold is None:
+            if is_video and asset is not None:
+                video_s = _coerce_float(asset.get("duration_s"), 0.0)
+                natural = video_s if video_s > 0 else _VIDEO_HOLD_S_MAX
+                hold = min(hold if hold is not None else _VIDEO_HOLD_S_MAX, natural)
+            elif hold is None:
                 hold = _PHOTO_HOLD_S_DEFAULT if slot == "photo" else _STICKER_HOLD_S_DEFAULT
 
             any_success = False
@@ -865,6 +889,9 @@ def ground_phone_reaction_beats(
                 scale=float(resolved["scale"]),
                 fade=True,
                 z=1 if card.slot == "sticker" else 0,
+                # KRI-521: muted, from its first frame, like a KRI-183 PiP card.
+                kind="video" if card.asset.get("kind") == "video" else "image",
+                source_start_s=0.0,
             )
         )
 
