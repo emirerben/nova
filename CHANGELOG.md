@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.163.0] - 2026-10-08
+
+### Changed
+- fix(kria): "when I say X, show my video" pops a Visuals video on phone Talking (KRI-521) (#1482) <!-- release-pr: 1482 -->
+
+## [0.78.162.0] - 2026-10-08
+
+### Changed
+- fix(clip-intents): chapter captions read forward under a filming-time order (KRI-516) (#1477) <!-- release-pr: 1477 -->
+
+## [0.78.161.0] - 2026-10-08
+
+### Changed
+- feat(kria): whole-video corner text and honest planner-failure copy (KRI-523) (#1480) <!-- release-pr: 1480 -->
+
+## [0.78.160.0] - 2026-10-08
+
+### Changed
+- fix(kria): keep start clip, typewriter hook and placeholder corner labels across turns (KRI-522) (#1479) <!-- release-pr: 1479 -->
+
 ## [0.78.159.0] - 2026-10-08
 
 ### Changed

@@ -51,6 +51,27 @@ def test_main_creator_eval(
         assert action["strategy"]["montage_audio"]["preserve_source_audio"] is True
         assert action["strategy"]["montage_audio"]["source_media_ids"] == []
 
+    pinned = fixture.meta.get("pinned_texts")
+    if pinned:
+        # KRI-523: corner / whole-video text is `pinned_texts` (in stack order), never a
+        # (<=10 s, centred) opening title; the creator's own words ground each pin.
+        assert result.output is not None
+        action = result.output["action"]
+        assert action["kind"] == "propose_strategy"
+        assert action["strategy"]["pinned_texts"] == pinned
+        assert not action["strategy"].get("opening_title")
+        from app.agents._schemas.creator_agent import CreatorRenderIntentEvidence
+        from app.kria.planner import ground_pinned_texts
+        from app.schemas.edit_proposal import PinnedText
+
+        evidence = CreatorRenderIntentEvidence.model_validate(action["render_intent_evidence"])
+        _kept, dropped = ground_pinned_texts(
+            [PinnedText(**pin) for pin in pinned],
+            evidence=evidence.pinned_texts or "",
+            user_sources=[fixture.input["user_message"]],
+        )
+        assert dropped == 0
+
     if fixture.meta.get("manual_visual_removal"):
         assert result.output is not None
         assert result.output["action"]["kind"] == "ask_user", (

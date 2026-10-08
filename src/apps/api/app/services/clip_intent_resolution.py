@@ -75,6 +75,7 @@ from app.schemas.clip_intents import (
     ground_placeholder_label,
 )
 from app.schemas.clip_understanding import ClipUnderstanding
+from app.services.clip_facts import order_by_capture_time
 from app.services.clip_selection import (
     MAX_QUESTION_CLIPS,
     build_clip_question,
@@ -761,12 +762,129 @@ def _build_clip_question(
     return question
 
 
+def _filming_sequence(clips: list[IntentClip]) -> tuple[list[IntentClip], dict[str, int]]:
+    """``clips`` in the montage's filming order and each timed clip's 1-based place in it.
+
+    The same ``order_by_capture_time`` the montage sorts by (a clip with no capture
+    time keeps its slot and gets no place). Fewer than two timed clips: no sequence.
+    """
+    times = {c.media_id: c.capture_time for c in clips if c.capture_time is not None}
+    ordering = order_by_capture_time([c.media_id for c in clips], times)
+    if ordering.basis != "capture_time":
+        return clips, {}
+    by_id = {c.media_id: c for c in clips}
+    ordered = [by_id[media_id] for media_id in ordering.ordered_ids]
+    return ordered, {c.media_id: n for n, c in enumerate(ordered, 1) if c.media_id in times}
+
+
+def _chapter_rank(intents: list[ResolvedClipIntent], creator_request: str) -> dict[str, int]:
+    """Chapter captions (creator-written) ranked by where the creator wrote them, or {}.
+
+    Needs two or more, every one found as a whole word or phrase in the request, at
+    distinct places; otherwise the creator's chapter sequence is unknown.
+    """
+    from app.kria.brief_route import fold_text  # noqa: PLC0415
+
+    request = fold_text(creator_request or "")
+    spots: dict[str, int] = {}
+    for intent in intents:
+        if intent.op != "caption" or intent.status != "resolved" or not intent.creator_text:
+            continue
+        text = fold_text(intent.creator_text)
+        match = re.search(rf"(?<!\w){re.escape(text)}(?!\w)", request) if text else None
+        if match is None:
+            return {}
+        spots[intent.intent_id] = match.start()
+    if len(spots) < 2 or len(set(spots.values())) != len(spots):
+        return {}
+    ordered = sorted(spots, key=spots.__getitem__)
+    return {intent_id: rank for rank, intent_id in enumerate(ordered)}
+
+
+def keep_chapters_in_filming_order(
+    intents: list[ResolvedClipIntent], clips: list[IntentClip], creator_request: str
+) -> tuple[list[ResolvedClipIntent], int]:
+    """KRI-516: chapter captions under a filming-time order never run backwards.
+
+    "Order by when I filmed them; chapters: Morning, University, Lunch, Gym, Evening"
+    makes each chapter one stretch of the day. When the resolved chapters break that
+    (an evening clip under "Lunch" after "Gym"), keep the largest-confidence set of
+    chapter memberships that reads forward in filming order, at most one chapter per
+    clip, and drop the rest: an unlabelled clip just continues the chapter before it,
+    a backwards title never prints. Returns ``(intents, dropped count)``; unchanged
+    (0) when the chapters already read forward, the chapter order is unknown, or
+    fewer than two clips have a capture time. Clips without one are left alone.
+    """
+    rank = _chapter_rank(intents, creator_request)
+    _ordered, place = _filming_sequence(clips)
+    if not rank or not place:
+        return intents, 0
+    options: dict[str, list[tuple[int, float, str]]] = {}
+    for intent in intents:
+        if intent.intent_id in rank:
+            for a in intent.assignments:
+                if a.media_id in place:
+                    options.setdefault(a.media_id, []).append(
+                        (rank[intent.intent_id], a.confidence, intent.intent_id)
+                    )
+    timeline = sorted(options, key=place.__getitem__)
+    seen_max = -1
+    forward = True
+    for media_id in timeline:
+        ranks = [r for r, _c, _i in options[media_id]]
+        if len(ranks) > 1 or ranks[0] < seen_max:
+            forward = False
+            break
+        seen_max = ranks[0]
+    if forward:
+        return intents, 0
+    # best[k]: (score, kept) for the best forward choice so far whose last chapter is k.
+    best: dict[int, tuple[float, tuple[tuple[str, str], ...]]] = {-1: (0.0, ())}
+    for media_id in timeline:
+        step = dict(best)  # leaving this clip out of every chapter
+        for chapter, confidence, intent_id in options[media_id]:
+            prior = [value for k, value in best.items() if k <= chapter]
+            score, kept = max(prior, key=lambda value: value[0])
+            candidate = (score + confidence, (*kept, (media_id, intent_id)))
+            if chapter not in step or candidate[0] > step[chapter][0]:
+                step[chapter] = candidate
+        best = step
+    keep = set(max(best.values(), key=lambda value: value[0])[1])
+    dropped = 0
+    out: list[ResolvedClipIntent] = []
+    for intent in intents:
+        if intent.intent_id not in rank:
+            out.append(intent)
+            continue
+        assignments = [
+            a
+            for a in intent.assignments
+            if a.media_id not in place or (a.media_id, intent.intent_id) in keep
+        ]
+        dropped += len(intent.assignments) - len(assignments)
+        out.append(intent.model_copy(update={"assignments": assignments}))
+    return out, dropped
+
+
 def _build_resolver_input(
     intents: list[ClipIntent],
     creator_request: str,
     clips: list[IntentClip],
+    *,
+    filming_order: bool = False,
 ) -> tuple[ClipRequestResolverInput, dict[str, str], list[str]]:
-    """Returns (resolver input, alias -> media_id, aliases in clip order)."""
+    """Returns (resolver input, alias -> media_id, aliases in clip order).
+
+    ``filming_order`` (KRI-516): the creator asked for the clips in the order they
+    were filmed. The resolver then reads the clips in that order, each with its
+    ``filmed_order`` place, so a sequence of chapter captions ("Morning, University,
+    Lunch, Gym, Evening") can be matched as consecutive stretches of the day instead
+    of by look alone (an evening dinner clip read as "lunch"). Shards stay contiguous
+    stretches of filming time. Only the place is sent, never the time itself.
+    """
+    places: dict[str, int] = {}
+    if filming_order:
+        clips, places = _filming_sequence(clips)
     aliases: list[str] = []
     alias_to_media: dict[str, str] = {}
     resolver_clips: list[ResolverClipIn] = []
@@ -775,11 +893,14 @@ def _build_resolver_input(
         aliases.append(alias)
         alias_to_media[alias] = clip.media_id
         record = clip_record(clip.analysis, kind=clip.kind)
+        view = record.prompt_view(transcript_chars=_TRANSCRIPT_CHARS_IN_PROMPT)
+        if clip.media_id in places:
+            view = {"filmed_order": places[clip.media_id], **view}
         resolver_clips.append(
             ResolverClipIn(
                 alias=alias,
                 kind="image" if clip.kind == "image" else "video",
-                record=record.prompt_view(transcript_chars=_TRANSCRIPT_CHARS_IN_PROMPT),
+                record=view,
             )
         )
     resolver_intents = [
@@ -852,11 +973,14 @@ async def resolve_clip_intents_for_turn(
     checkpoint: Callable[[dict[str, dict[str, dict[str, Any]]]], Awaitable[None]] | None = None,
     max_vision_requeries: int | None = None,
     vision_deadline_s: float | None = None,
+    filming_order: bool = False,
 ) -> IntentResolution:
     """Resolve ``intents`` against ``clips``.
 
     ``max_vision_requeries`` / ``vision_deadline_s`` raise the FOREGROUND vision
-    budget for callers (the Kria v2 chat turn) that have no background lane."""
+    budget for callers (the Kria v2 chat turn) that have no background lane.
+    ``filming_order`` (KRI-516): the creator asked for filming order, so the resolver
+    reads the clips in that order (see ``_build_resolver_input``)."""
     ctx: RunContext = run_context if isinstance(run_context, RunContext) else RunContext()
 
     # This resolver has no pinned narration/timeline authority. Never send
@@ -876,7 +1000,7 @@ async def resolve_clip_intents_for_turn(
     position_by_media = {c.media_id: idx + 1 for idx, c in enumerate(clips)}
 
     resolver_input, alias_to_media, _aliases = _build_resolver_input(
-        intents, creator_request, clips
+        intents, creator_request, clips, filming_order=filming_order
     )
 
     resolver_agent = ClipRequestResolverAgent(default_client())

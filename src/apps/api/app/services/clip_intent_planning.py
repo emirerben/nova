@@ -31,6 +31,7 @@ from app.schemas.clip_intents import (
 from app.services.clip_intent_resolution import (
     IntentClip,
     IntentResolution,
+    keep_chapters_in_filming_order,
     picker_eligible,
     resolve_clip_intents_for_turn,
 )
@@ -441,7 +442,15 @@ async def plan_and_resolve_clip_intents(
         checkpoint=checkpoint,
         max_vision_requeries=max_vision_requeries,
         vision_deadline_s=vision_deadline_s,
+        # KRI-516: chapter captions under a filming-time order are stretches of the day.
+        # Omitted otherwise, so every other call is unchanged.
+        **({"filming_order": True} if order_by_intents else {}),
     )
+    if order_by_intents:
+        kept, dropped = keep_chapters_in_filming_order(resolution.intents, clips, creator_request)
+        if dropped:
+            log.info("clip_intent_chapter_order_repaired", dropped_assignments=dropped)
+            resolution = replace(resolution, intents=kept)
     if resolved_orders:
         resolution = replace(resolution, intents=[*resolution.intents, *resolved_orders])
     return PlannedIntentResolution(intents, resolution)

@@ -40,6 +40,7 @@ from app.agents._schemas.sfx_intent import (
 from app.schemas.clip_intents import MAX_CLIP_INTENTS, ClipIntent, ResolvedClipIntent
 from app.schemas.edit_proposal import (
     CREATOR_TITLE_MAX_CHARS,
+    MAX_CREATOR_PINNED_TEXTS,
     MAX_CREATOR_SHOT_LABELS,
     MAX_OPENING_TITLE_DURATION_S,
     MIN_OPENING_TITLE_DURATION_S,
@@ -47,11 +48,19 @@ from app.schemas.edit_proposal import (
     MixedMediaTimingProfile,
     MontageAudioPlan,
     MontageCadenceConstraint,
+    PinnedText,
     ProposalDuration,
     StoryShape,
     VideoReusePolicy,
     clean_creator_copy,
+    clean_creator_pinned_texts,
     clean_creator_shot_labels,
+)
+from app.schemas.text_style_intent import (
+    LabelPosition,
+    TitleAnimation,
+    normalize_label_position,
+    normalize_title_animation,
 )
 
 CREATOR_AGENT_SCHEMA_VERSION = 1
@@ -385,6 +394,23 @@ class CreativeStrategy(_CreatorModel):
         max_length=16,
         description="Confirmed intro color (#RRGGBB or a supported color alias).",
     )
+    title_animation: TitleAnimation | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "How the opening title enters, ONLY when the creator named it ('animated with "
+            "typewriter'): typewriter | fade | pop | slide. Omit otherwise."
+        ),
+    )
+    label_position: LabelPosition | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "Where per-clip labels sit, ONLY when the creator named it ('to the bottom "
+            "left'): top_left | top | top_right | middle | bottom_left | bottom | "
+            "bottom_right. Omit otherwise."
+        ),
+    )
     # KRI-127 (flag CLIP_INTENTS_ENABLED). Both default to None so stored
     # strategies and every exclude_none hash stay byte-identical when unused.
     # SkipJsonSchema keeps both OUT of every derived JSON schema: the Kria
@@ -462,6 +488,21 @@ class CreativeStrategy(_CreatorModel):
     # when the manifest advertises `phone_source_audio`.
     voice_mode: SkipJsonSchema[VoiceMode | None] = Field(default=None)
 
+    # KRI-523 (whole-video corner text). MODEL-authored like `song_sync`: SkipJsonSchema
+    # keeps it OUT of every derived JSON schema (the Kria `apply_strategy` tool schema
+    # stays byte-identical -- the Main Creator reads its fields from the prompt), default
+    # None and the omit-when-None serializer keep stored strategies and every hash
+    # byte-identical when unused. One entry is one on-screen line held for the whole
+    # video; list order is the top-to-bottom stack order within a corner.
+    pinned_texts: SkipJsonSchema[list[PinnedText] | None] = Field(
+        default=None, max_length=MAX_CREATOR_PINNED_TEXTS
+    )
+
+    @field_validator("pinned_texts", mode="before")
+    @classmethod
+    def _validate_pinned_texts(cls, value: object) -> list[PinnedText] | None:
+        return clean_creator_pinned_texts(value)
+
     @field_validator("voice_mode", mode="before")
     @classmethod
     def _coerce_voice_mode(cls, value: object) -> object:
@@ -523,6 +564,7 @@ class CreativeStrategy(_CreatorModel):
             "song_sync",
             "resolved_song_takes",
             "voice_mode",
+            "pinned_texts",
         ):
             if data.get(key) is None:
                 data.pop(key, None)
@@ -646,6 +688,16 @@ class CreativeStrategy(_CreatorModel):
         if canonical is None:
             raise ValueError("font_family must be a known font registry key")
         return canonical
+
+    @field_validator("title_animation", mode="before")
+    @classmethod
+    def _normalize_title_animation(cls, value: object) -> str | None:
+        return normalize_title_animation(value)
+
+    @field_validator("label_position", mode="before")
+    @classmethod
+    def _normalize_label_position(cls, value: object) -> str | None:
+        return normalize_label_position(value)
 
     @field_validator("text_color", mode="before")
     @classmethod
@@ -777,6 +829,9 @@ class CreatorRenderIntentEvidence(_CreatorModel):
     )
     closing_title: str | None = Field(
         default=None, max_length=1200, exclude_if=lambda value: value is None
+    )
+    pinned_texts: str | None = Field(
+        default=None, max_length=2400, exclude_if=lambda value: value is None
     )
     # Grounds the named-effect decision in either direction: a request names
     # the effect inside the excerpt, while a decline ("Don't add the Fah sound

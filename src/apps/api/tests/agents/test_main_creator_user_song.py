@@ -26,12 +26,13 @@ from app.agents.main_creator import (
 from app.config import settings
 from tests.agents.test_main_creator_agent import _input, _manifest
 
-# (clip_intents_enabled, brief_enabled) -> sha256 of the KRI-506 v46 render without a song.
+# (clip_intents_enabled, brief_enabled) -> sha256 of the KRI-523 v49 render without a song
+# (v48 plus the pinned_texts rule).
 PRE_CHANGE_PROMPT_SHA = {
-    (True, False): "47fdf325d8c20b5851bf5f88aca7c4609349f12d697bba36da23f6e6be9dc8f5",
-    (True, True): "b7d2b67861fdd19dc9c3d9a64cc2a505a0026ea32c76afbb9a25735fcc31549b",
-    (False, False): "8818499503544a04696940bc5c752dbb51739ded19e70fc4abe0e1f20b0e62d5",
-    (False, True): "cfa4f20b7698078a0b5c8c3f2dfcafe4219253951053a0176e7e04268407073b",
+    (True, False): "62ac873d56e88328dc93fdf5923a3a4540e96c61a6002eadec424cb077e638f2",
+    (True, True): "9669dca6690cafdf1062f7f4a277f5ffea1c229b1f9d715af9dd137d79b9397f",
+    (False, False): "1b27f2b3059f2cbcd56805d100e8dc68b383d6430ba2ba5eeab7ff69c91ba218",
+    (False, True): "219d0083dd84b971f67e7e45d4bef30bb694aeccf569e0842098725caee7b752",
 }
 
 
@@ -101,7 +102,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-08-v48"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-08-v50"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

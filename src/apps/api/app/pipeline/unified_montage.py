@@ -54,15 +54,22 @@ from app.kria.brief_route import (
     wants_filming_time_text,
     wants_hour_only_text,
 )
+from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.edit_proposal import (
     CREATOR_SELECTED_ORIENTATION_REASON,
+    MAX_CREATOR_PINNED_TEXTS,
     MAX_PROPOSAL_DURATION_S,
     ClipLabel,
     EditProposalSnapshot,
     FastMontageCut,
     MediaRef,
+    PinnedText,
     StoryBeat,
     canonical_media_digest,
+)
+from app.schemas.text_style_intent import (
+    normalize_label_position,
+    normalize_title_animation,
 )
 from app.schemas.user_song import UserSongPlan
 from app.services.clip_facts import (
@@ -176,6 +183,11 @@ class BriefView:
     global_literal: str | None = None
     facts: Mapping[str, Any] = field(default_factory=dict)
     target_duration_s: float | None = None
+    # KRI-522: how the creator asked the title to enter / where labels sit / that the
+    # labels are placeholders to fill in later. Typed here so they survive turns.
+    title_animation: str | None = None
+    label_position: str | None = None
+    placeholder_labels: bool = False
 
 
 def brief_view(brief: Any) -> BriefView:
@@ -192,6 +204,9 @@ def brief_view(brief: Any) -> BriefView:
     global_literal: str | None = None
     facts: dict[str, Any] = {}
     target: float | None = None
+    title_animation: str | None = None
+    label_position: str | None = None
+    placeholder_labels = False
     for req in brief.live():
         for key, value in (req.facts or {}).items():
             if value not in (None, "") and key not in facts:
@@ -203,8 +218,19 @@ def brief_view(brief: Any) -> BriefView:
                 wants_time = True
             if req.scope == "per_clip" and wants_hour_only_text(req.description, req.literal):
                 wants_time = hour_only = True
+            if req.scope == "title":
+                # The animation is a title ask even before the creator words the hook.
+                title_animation = title_animation or normalize_title_animation(
+                    (req.facts or {}).get("animation")
+                )
             if req.scope == "per_clip":
                 wants_text = True
+                label_position = label_position or normalize_label_position(
+                    (req.facts or {}).get("position")
+                )
+                placeholder_labels = placeholder_labels or _fact_is_true(
+                    (req.facts or {}).get("placeholder")
+                )
             elif req.scope.startswith("clip:") and req.literal:
                 wants_text = True
                 clip_literals[req.scope.split(":", 1)[1]] = _nfc(req.literal)
@@ -235,7 +261,17 @@ def brief_view(brief: Any) -> BriefView:
         global_literal=global_literal,
         facts=facts,
         target_duration_s=target,
+        title_animation=title_animation,
+        label_position=label_position,
+        placeholder_labels=placeholder_labels,
     )
+
+
+def _fact_is_true(value: object) -> bool:
+    """A brief fact the extractor wrote as ``true`` (or the string "true"/"yes")."""
+    if isinstance(value, bool):
+        return value
+    return isinstance(value, str) and value.strip().casefold() in {"true", "yes", "1"}
 
 
 _first = first_text
@@ -410,6 +446,11 @@ class UnifiedMontagePlan:
         )
         song = {"user_song": dict(self.song_receipt)} if self.song_receipt else {}
         speech = {"closing_speech": dict(self.closing_speech)} if self.closing_speech else {}
+        pins = (
+            {"pinned_texts": [pin.model_dump(mode="json") for pin in self.snapshot.pinned_texts]}
+            if self.snapshot.pinned_texts
+            else {}
+        )
         return {
             "version": 1,
             "brief_version": self.brief_version,
@@ -437,6 +478,7 @@ class UnifiedMontagePlan:
             "endpoint_places": dict(self.endpoint_places),
             **visuals,
             **closing_title,
+            **pins,
             **scope,
             **outcomes,
             **choice,
@@ -995,6 +1037,16 @@ def plan_unified_montage(
             chosen = (described[clip.ref_id], "creator", None, False)
         elif not described and index < len(positional):
             chosen = (positional[index], "creator", None, False)
+        elif (
+            view.placeholder_labels
+            and view.wants_per_clip_text
+            and not view.per_clip_text_is_time
+            and not described
+        ):
+            # KRI-522: "placeholder location on each video" is the creator's own ask and
+            # stays in force across turns (the brief). Every clip prints the fixed
+            # placeholder, never a place read from footage in its stead.
+            chosen = (PLACEHOLDER_LABEL_TEXT, "creator", None, False)
         elif clip.ref_id in intent_labels:
             text, creator_text = intent_labels[clip.ref_id]
             chosen = (text, "creator" if creator_text else "fact", None, not creator_text)
@@ -1053,12 +1105,19 @@ def plan_unified_montage(
     # ── title and typography ─────────────────────────────────────────────────
     title, title_source = _title(strategy, view)
     closing = _nfc(strategy.get("closing_title")) or None
+    pins = _pinned_texts(strategy)
     requested_font = strategy.get("font_family")
     requested_font = requested_font if isinstance(requested_font, str) and requested_font else None
     labelled_before = set(labels)
     family, title, closing, labels = _fit_typography(
-        font_covers, requested_font, title, closing, labels
+        font_covers,
+        requested_font,
+        title,
+        closing,
+        labels,
+        extra_texts=[pin.text for pin in pins],
     )
+    pins = _fit_pins(pins, family or requested_font or _DEFAULT_FONT, font_covers)
     for media_id in ordered_ids(ordered):
         if media_id in labelled_before - set(labels):
             dropped.append(media_id)
@@ -1272,6 +1331,8 @@ def plan_unified_montage(
     snapshot_kwargs: dict[str, Any] = {}
     if closing:
         snapshot_kwargs["closing_title"] = closing
+    if pins:
+        snapshot_kwargs["pinned_texts"] = pins
     image_layout = strategy.get("image_layout")
     if image_layout in ("fullscreen", "supporting_card") and any(
         clip.kind == "image" for clip in ordered
@@ -1284,6 +1345,16 @@ def plan_unified_montage(
         snapshot_kwargs["opening_title_duration_s"] = hold
     if song_plan is not None:
         snapshot_kwargs["user_song"] = song_plan
+    # KRI-522: the brief is cumulative, so the creator's ask survives a later turn whose
+    # strategy omits it; the strategy's own typed value is the fallback.
+    title_animation = view.title_animation or normalize_title_animation(
+        strategy.get("title_animation")
+    )
+    if title_animation is not None and title:
+        snapshot_kwargs["title_animation"] = title_animation
+    label_position = view.label_position or normalize_label_position(strategy.get("label_position"))
+    if label_position is not None and labels:
+        snapshot_kwargs["label_position"] = label_position
     if output_orientation in ("portrait", "landscape"):
         snapshot_kwargs["output_orientation"] = output_orientation
         snapshot_kwargs["output_orientation_reason"] = CREATOR_SELECTED_ORIENTATION_REASON
@@ -1391,6 +1462,8 @@ def _fit_typography(
     title: str | None,
     closing: str | None,
     labels: dict[str, ClipLabel],
+    *,
+    extra_texts: Sequence[str] = (),
 ) -> tuple[str | None, str | None, str | None, dict[str, ClipLabel]]:
     """Pick the first bundled font that can draw every string, keeping Unicode.
 
@@ -1399,7 +1472,11 @@ def _fit_typography(
     """
     if covers is None:
         return requested, title, closing, labels
-    texts = [text for text in (title, closing, *(label.text for label in labels.values())) if text]
+    texts = [
+        text
+        for text in (title, closing, *(label.text for label in labels.values()), *extra_texts)
+        if text
+    ]
     candidates = list(dict.fromkeys(f for f in (requested, _DEFAULT_FONT, *_FALLBACK_FONTS) if f))
     chosen = next(
         (family for family in candidates if all(covers(family, text) for text in texts)), None
@@ -1418,6 +1495,33 @@ def _fit_typography(
         labels = fixed
     keep = requested is not None or chosen != _DEFAULT_FONT
     return (chosen if keep else None), title, closing, labels
+
+
+def _pinned_texts(strategy: Mapping[str, Any]) -> list[PinnedText]:
+    """KRI-523: the creator's whole-video corner text, as confirmed on the strategy."""
+    pins: list[PinnedText] = []
+    for raw in strategy.get("pinned_texts") or []:
+        if not isinstance(raw, Mapping):
+            continue
+        try:
+            pins.append(PinnedText(text=_nfc(raw.get("text")), corner=raw.get("corner")))
+        except ValidationError:
+            continue
+    return pins[:MAX_CREATOR_PINNED_TEXTS]
+
+
+def _fit_pins(
+    pins: list[PinnedText], family: str, covers: Callable[[str, str], bool] | None
+) -> list[PinnedText]:
+    """Drop only the glyphs the chosen font cannot draw; a pin never vanishes silently."""
+    if covers is None:
+        return pins
+    fitted: list[PinnedText] = []
+    for pin in pins:
+        text = pin.text if covers(family, pin.text) else _strip_uncovered(pin.text, family, covers)
+        if text:
+            fitted.append(pin.model_copy(update={"text": text}))
+    return fitted
 
 
 def _described_shot_labels(strategy: Mapping[str, Any], enabled: bool) -> dict[str, str]:
@@ -1649,6 +1753,17 @@ def _title(strategy: Mapping[str, Any], view: BriefView) -> tuple[str | None, st
     confirmed = _nfc(strategy.get("opening_title"))
     if confirmed:
         return confirmed[:280], "creator"
+    pins = _pinned_texts(strategy)
+    if pins:
+        # KRI-523: the creator's "title" words were pinned to a corner for the whole video
+        # (the brief records them as a title/global literal too). Burning them again as a
+        # centred opening title would show every pinned line twice, and a labelled edit shows
+        # only confirmed copy. A genuinely different title literal still stands.
+        pinned = {fold_text(pin.text) for pin in pins}
+        literal = _nfc(view.title_literal)
+        if literal and fold_text(literal) not in pinned:
+            return literal[:280], "creator"
+        return None, "none"
     if view.title_literal:
         return _nfc(view.title_literal)[:280], "creator"
     start = _first(view.facts, _START_KEYS)

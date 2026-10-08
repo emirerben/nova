@@ -25,6 +25,8 @@ enum GuidedLabelRebase {
     static let labelMediaPrefix = "clip-label-media-"
     static let openingTitleID = "guided-title"
     static let closingTitleID = "guided-closing-title"
+    /// KRI-523: whole-video corner text (`guided-pinned-<i>`) rides the timeline like a title.
+    static let pinnedPrefix = "guided-pinned-"
 
     /// One active slot's output window on the editor's base clock (the same walk the
     /// timeline renders, including transition overlap).
@@ -61,7 +63,7 @@ enum GuidedLabelRebase {
     }
 
     private static func isAnchoredTitle(_ element: EditorTextElement) -> Bool {
-        element.id == openingTitleID || element.id == closingTitleID
+        element.id == openingTitleID || element.id == closingTitleID || element.id.hasPrefix(pinnedPrefix)
     }
 
     static func isClipLabel(_ element: EditorTextElement) -> Bool {

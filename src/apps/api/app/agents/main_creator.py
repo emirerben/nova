@@ -30,6 +30,7 @@ from app.kria.brief import BriefUpdate, parse_brief_updates
 from app.kria.reply_language import prompt_language_line
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import (
+    MAX_OPENING_TITLE_DURATION_S,
     MontageCadenceConstraint,
     recognize_cadence_reuse_policy,
     recognize_explicit_cadence_reuse_policy,
@@ -62,9 +63,11 @@ from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS
 # KRI-479: `voice_mode` (continuous | excerpts) for a montage that keeps one clip's camera
 # audio, taught only when the manifest advertises `phone_source_audio` AND the route can render
 # (`Settings.voice_behind_footage_enabled`) (v47).
+# KRI-522: brief facts for first_clip/last_clip, animation, position, placeholder (v48).
+# KRI-523: `pinned_texts` (whole-video corner text) + choice-answer brief rule (v49).
 # KRI-520: a Turkish chat gets a reply-language line at the end of the prompt; English is
-# byte-identical (v48).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-08-v48"
+# byte-identical (v50).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-08-v50"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -304,6 +307,14 @@ requirement they describe. Never invent a requirement only to store background f
 an `order` requirement when the creator ASKS the edit to follow a sequence ("put them in the order
 I filmed", "order them chronologically", "start the edit at X and finish at Y"): {"kind":
 "order", "scope": "global", "facts": {"key": "capture_time"}} plus "start"/"end" when named.
+A clip the creator wants FIRST or LAST ("start with the video that is blue", "end on the
+sunset") goes in that SAME order requirement as `first_clip` / `last_clip`: the creator's own
+words for the clip ({"key": "capture_time", "first_clip": "the video that is blue"}); the
+`description` alone is not enough. How on-screen text should look goes in the `facts` of its text
+requirement, only what the creator said: `animation` ("typewriter", "fade", "pop" or "slide") for
+"animated with typewriter"; `position` ("top_left", "top", "top_right", "middle", "bottom_left",
+"bottom", "bottom_right") for "bottom left"; `placeholder` true when they ask for placeholder
+text to fill in later ("placeholder location").
 Merely narrating that footage was captured "from A to B", at sunset and then at night, or during
 two activities is not such an ask. Compatible requirements with the same kind and scope coexist.
 ALWAYS add a `timing` requirement ({"kind": "timing", "scope": "global", "facts": {"duration_s":
@@ -333,6 +344,22 @@ them" => brief_updates:
 "literal": null, "description": "the landmark shown in each clip", "facts": {}},
 {"operation":"add", "kind": "order", "scope": "global", "literal": null,
 "description": "chronological by filming time", "facts": {"key": "capture_time"}}].
+Example: "Start with the video that is blue. Add a hook there, animated with typewriter. Then
+everything chronologically. Add placeholder location to each video to the bottom left" =>
+brief_updates: [{"operation":"add", "kind": "order", "scope": "global", "literal": null,
+"description": "chronological, starting with the blue video", "facts": {"key": "capture_time",
+"first_clip": "the video that is blue"}}, {"operation":"add", "kind": "text", "scope": "title",
+"literal": null, "description": "a hook animated with typewriter", "facts": {"animation":
+"typewriter"}}, {"operation":"add", "kind": "text", "scope": "per_clip", "literal": null,
+"description": "placeholder location at the bottom left", "facts": {"placeholder": true,
+"position": "bottom_left"}}].
+Text the creator wants pinned in a corner or on screen for the whole video (see `pinned_texts`)
+is recorded as one {"kind": "text", "scope": "global"} add per line with that line's exact words
+as `literal`, never as `per_clip` or a `clip:` scope. When the creator's latest message simply
+picks one of the alternatives you offered in your previous question, their original request has
+changed to that alternative: record the superseded requirements with `change` or `remove`
+(exact `target_requirement_id` and `expected_version` from the contract) and plan the chosen
+alternative using the original request's exact words.
 """.strip("\n")
 
 
@@ -635,6 +662,17 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 f"{'.'.join(str(part) for part in error['loc'])}: {error['type']}"
                 for error in exc.errors(include_input=False, include_context=False)[:8]
             )[:1000]
+            if any(
+                "opening_title_duration_s" in map(str, error["loc"])
+                for error in exc.errors(include_input=False, include_context=False)
+            ):
+                # KRI-523: a title hold is capped; text that must stay the whole video
+                # is a different field, so the retry names it instead of looping.
+                self._schema_feedback += (
+                    "; opening_title_duration_s is a short hold (max "
+                    f"{MAX_OPENING_TITLE_DURATION_S:g}s): text that must stay on screen the "
+                    "whole video belongs in pinned_texts, not in a longer title hold"
+                )
             raise SchemaError(f"main_creator: invalid output: {exc}") from exc
         except Exception as exc:  # noqa: BLE001
             if isinstance(exc, UserSongUnavailableError):

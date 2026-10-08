@@ -16,7 +16,7 @@ from app.agents.main_creator import _BRIEF_PROMPT_SECTION
 from app.kria.brief import BriefUpdateBatchError, parse_brief_updates
 from app.pipeline.prompt_loader import load_prompt
 
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-07-v2"
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-08-v3"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")

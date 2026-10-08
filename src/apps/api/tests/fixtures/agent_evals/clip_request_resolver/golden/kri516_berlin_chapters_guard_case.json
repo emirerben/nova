@@ -1,0 +1,659 @@
+{
+ "agent": "nova.plan.clip_request_resolver",
+ "prompt_version": "2026-10-08.1",
+ "input": {
+  "creator_request": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [order/global] chronological from morning to night facts={\"key\":\"capture_time\"}\n- [r2] [timing/global] 25 seconds facts={\"duration_s\":25}\n- [r3] [text/global] chapter titles: Sabah, Üniversite, Öğle arası, Spor, Akşam\n- [r4] [audio/global] use Elif's original voice at the end\nLatest message: Berlin'de öğrenci olarak bir günüm. Videoları çektiğim saat sırasına göre diz, sabahtan geceye. Bölüm başlıkları koy: Sabah, Üniversite, Öğle arası, Spor, Akşam. Aynı videodan iki tane varsa birini kullan. En sonda Elif'in kameraya söylediği cümleyi kendi sesiyle kullan. Videonun tamamı dikey olsun. 25 saniye olsun.",
+  "intents": [
+   {
+    "intent_id": "caption_sabah",
+    "op": "caption",
+    "attribute": "Sabah chapter",
+    "creator_text": "Sabah",
+    "caption_attribute": null,
+    "position": null
+   },
+   {
+    "intent_id": "caption_uni",
+    "op": "caption",
+    "attribute": "Üniversite chapter",
+    "creator_text": "Üniversite",
+    "caption_attribute": null,
+    "position": null
+   },
+   {
+    "intent_id": "caption_oglearasi",
+    "op": "caption",
+    "attribute": "Öğle arası chapter",
+    "creator_text": "Öğle arası",
+    "caption_attribute": null,
+    "position": null
+   },
+   {
+    "intent_id": "caption_spor",
+    "op": "caption",
+    "attribute": "Spor chapter",
+    "creator_text": "Spor",
+    "caption_attribute": null,
+    "position": null
+   },
+   {
+    "intent_id": "caption_aksam",
+    "op": "caption",
+    "attribute": "Akşam chapter",
+    "creator_text": "Akşam",
+    "caption_attribute": null,
+    "position": null
+   },
+   {
+    "intent_id": "include_unique_clips",
+    "op": "include",
+    "attribute": "unique videos",
+    "creator_text": null,
+    "caption_attribute": null,
+    "position": null
+   },
+   {
+    "intent_id": "order_elif_voice_end",
+    "op": "order",
+    "attribute": "Elif's original voice clip",
+    "creator_text": null,
+    "caption_attribute": null,
+    "position": "last"
+   }
+  ],
+  "clips": [
+   {
+    "alias": "m001",
+    "kind": "video",
+    "record": {
+     "filmed_order": 1,
+     "subject": "moka pot brewing coffee",
+     "summary": "A moka pot is actively brewing coffee on a portable gas stove, with visible steam rising, next to a white mug.",
+     "setting": "kitchen counter next to a window",
+     "activity": "brewing coffee",
+     "content_type": "ambience",
+     "audio_type": "ambient",
+     "notable_moments": [
+      {
+       "start_s": 0.0,
+       "end_s": 2.0,
+       "description": "steam rising from moka pot"
+      },
+      {
+       "start_s": 2.5,
+       "end_s": 4.5,
+       "description": "coffee brewing on stove"
+      }
+     ]
+    }
+   },
+   {
+    "alias": "m002",
+    "kind": "video",
+    "record": {
+     "filmed_order": 2,
+     "subject": "yellow train and passengers",
+     "summary": "A bright yellow train pulls into an underground station, stops, and opens its doors as passengers wait on the platform.",
+     "setting": "underground train station",
+     "activity": "train arriving and doors opening; people waiting on platform",
+     "people": {
+      "speaks_to_camera": false,
+      "count": 10,
+      "note": "people waiting on a train platform"
+     },
+     "content_type": "action",
+     "audio_type": "ambient",
+     "notable_moments": [
+      {
+       "start_s": 0.0,
+       "end_s": 2.0,
+       "description": "train pulling into station"
+      },
+      {
+       "start_s": 2.5,
+       "end_s": 4.5,
+       "description": "train slowing to stop"
+      },
+      {
+       "start_s": 5.0,
+       "end_s": 6.5,
+       "description": "train doors opening"
+      }
+     ]
+    }
+   },
+   {
+    "alias": "m003",
+    "kind": "video",
+    "record": {
+     "filmed_order": 3,
+     "subject": "yellow subway train",
+     "summary": "A yellow subway train arrives at a platform, slows down, and stops. Its doors open, and passengers begin to disembark while other people wait on the platform.",
+     "setting": "underground subway station platform",
+     "activity": "subway train arriving and opening doors; people waiting and exiting train",
+     "people": {
+      "speaks_to_camera": false,
+      "count": 10,
+      "note": "diverse group of adults waiting and exiting a train"
+     },
+     "content_type": "action",
+     "audio_type": "ambient",
+     "notable_moments": [
+      {
+       "start_s": 0.0,
+       "end_s": 1.2,
+       "description": "subway train arriving"
+      },
+      {
+       "start_s": 3.7,
+       "end_s": 5.0,
+       "description": "train doors opening"
+      }
+     ]
+    }
+   },
+   {
+    "alias": "m004",
+    "kind": "video",
+    "record": {
+     "filmed_order": 4,
+     "subject": "professor lecturing",
+     "summary": "A professor lectures to a classroom of students, explaining a concept from a slide projected on a large screen.",
+     "setting": "large university lecture hall",
+     "activity": "lecturing to students",
+     "people": {
+      "speaks_to_camera": false,
+      "count": 25,
+      "note": "a professor and a class of students"
+     },
+     "speech": {
+      "has_speech": true,
+      "to_camera": false,
+      "transcript": "So as we see on the slide, the key principle here is integration. This builds directly on last week's concepts."
+     },
+     "content_type": "broll",
+     "audio_type": "dialogue",
+     "notable_moments": [
+      {
+       "start_s": 0.0,
+       "end_s": 2.5,
+       "description": "professor introduces topic"
+      },
+      {
+       "start_s": 2.5,
+       "end_s": 5.0,
+       "description": "professor connects concepts"
+      }
+     ]
+    }
+   },
+   {
+    "alias": "m005",
+    "kind": "video",
+    "record": {
+     "filmed_order": 5,
+     "subject": "person highlighting in notebook",
+     "summary": "A person sits at a desk with a laptop and a notebook, using a yellow highlighter to mark text in the notebook.",
+     "setting": "bright room with large windows, likely a library or study space",
+     "activity": "highlighting notes in a notebook while a laptop is open nearby",
+     "people": {
+      "speaks_to_camera": false,
+      "count": 1,
+      "note": "one person's hand is visible"
+     },
+     "content_type": "broll",
+     "audio_type": "ambient",
+     "notable_moments": [
+      {
+       "start_s": 0.0,
+       "end_s": 1.5,
+       "description": "hand highlighting text in notebook"
+      },
+      {
+       "start_s": 2.5,
+       "end_s": 5.0,
+       "description": "repeated highlighting motion"
+      }
+     ]
+    }
+   },
+   {
+    "alias": "m006",
+    "kind": "video",
+    "record": {
+     "filmed_order": 6,
+     "subject": "chef preparing doner",
+     "summary": "A chef is slicing meat from a large doner kebab spit and preparing a doner wrap for a customer while a small group of friends watches with excitement.",
+     "setting": "outdoor food stand on a street",
+     "activity": "slicing doner kebab meat and preparing a doner wrap",
+     "people": {
+      "speaks_to_camera": false,
+      "count": 6,
+      "note": "one chef and five customers"
+     },
+     "speech": {
+      "has_speech": true,
+      "to_camera": false,
+      "transcript": "Das sieht so gut aus! Ja, ich kann's kaum erwarten. So, fertig, hier bitte, danke."
+     },
+     "content_type": "action",
+     "audio_type": "dialogue",
+     "notable_moments": [
+      {
+       "start_s": 0.0,
+       "end_s": 1.0,
+       "description": "chef slicing doner meat"
+      },
+      {
+       "start_s": 3.5,
+       "end_s": 4.5,
+       "description": "chef presenting finished doner"
+      }
+     ]
+    }
+   },
+   {
+    "alias": "m007",
+    "kind": "video",
+    "record": {
+     "filmed_order": 7,
+     "subject": "person cycling",
+     "summary": "A person rides a bicycle down a tree-lined path covered in autumn leaves, offering a first-person perspective of the journey.",
+     "setting": "outdoor park or treelined path in autumn",
+     "activity": "cycling on a path",
+     "people": {
+      "speaks_to_camera": false,
+      "note": "distant blurry figures"
+     },
+     "content_type": "broll",
+     "audio_type": "ambient",
+     "notable_moments": [
+      {
+       "start_s": 0.0,
+       "end_s": 1.9,
+       "description": "cycling through autumn leaves"
+      },
+      {
+       "start_s": 2.2,
+       "end_s": 4.1,
+       "description": "bike moving on leafy path"
+      }
+     ]
+    }
+   },
+   {
+    "alias": "m008",
+    "kind": "video",
+    "record": {
+     "filmed_order": 8,
+     "subject": "man performing deadlift",
+     "summary": "A man in a gym performs a deadlift, lifting a heavy barbell from the floor to a standing position, then lowering it back down. Chalk dust is visible around him.",
+     "setting": "gym interior",
+     "activity": "performing a deadlift with a barbell",
+     "people": {
+      "speaks_to_camera": false,
+      "count": 1,
+      "note": "a man in a tank top and shorts"
+     },
+     "brands": [
+      "Nike"
+     ],
+     "content_type": "action",
+     "audio_type": "ambient",
+     "notable_moments": [
+      {
+       "start_s": 0.5,
+       "end_s": 1.7,
+       "description": "man initiating deadlift"
+      },
+      {
+       "start_s": 3.9,
+       "end_s": 5.0,
+       "description": "man lowering barbell"
+      }
+     ]
+    }
+   },
+   {
+    "alias": "m009",
+    "kind": "video",
+    "record": {
+     "filmed_order": 9,
+     "subject": "person selecting a drink from a fridge",
+     "summary": "A person opens a glass-door refrigerator filled with a variety of bottled beverages and reaches for one. The fridge is brightly lit, showcasing rows of drinks.",
+     "setting": "indoor retail space or cafe",
+     "activity": "selecting a bottled beverage from a refrigerator",
+     "people": {
+      "speaks_to_camera": false,
+      "count": 1,
+      "note": "a person's hand"
+     },
+     "brands": [
+      "Cola",
+      "Gate",
+      "Teem",
+      "Gatorade"
+     ],
+     "content_type": "broll",
+     "audio_type": "ambient",
+     "notable_moments": [
+      {
+       "start_s": 1.2,
+       "end_s": 2.2,
+       "description": "hand reaching for bottle"
+      }
+     ]
+    }
+   },
+   {
+    "alias": "m010",
+    "kind": "video",
+    "record": {
+     "filmed_order": 10,
+     "subject": "three people cooking pasta",
+     "summary": "Three friends are in a kitchen preparing a meal, with one person stirring a pot of pasta and another chopping ingredients. They discuss how good the food smells.",
+     "setting": "kitchen interior",
+     "activity": "cooking pasta and chopping vegetables",
+     "people": {
+      "speaks_to_camera": false,
+      "count": 3,
+      "note": "two young men and one young woman"
+     },
+     "speech": {
+      "has_speech": true,
+      "to_camera": false,
+      "transcript": "Pasta's almost ready. Smells amazing. It does. I'm starving. Perfect."
+     },
+     "content_type": "broll",
+     "audio_type": "dialogue",
+     "notable_moments": [
+      {
+       "start_s": 0.0,
+       "end_s": 1.5,
+       "description": "man speaking to friends"
+      },
+      {
+       "start_s": 3.0,
+       "end_s": 4.5,
+       "description": "man lifting pasta with tongs"
+      }
+     ]
+    }
+   },
+   {
+    "alias": "m011",
+    "kind": "video",
+    "record": {
+     "filmed_order": 11,
+     "subject": "Oberbaum Bridge with train",
+     "summary": "A yellow train crosses the illuminated Oberbaum Bridge in Berlin at night, with the bridge's lights reflecting on the water below.",
+     "setting": "Outdoor, over a body of water at night",
+     "activity": "train crossing a bridge",
+     "content_type": "ambience",
+     "audio_type": "ambient",
+     "notable_moments": [
+      {
+       "start_s": 0.0,
+       "end_s": 2.5,
+       "description": "train approaches bridge"
+      },
+      {
+       "start_s": 2.8,
+       "end_s": 5.0,
+       "description": "train crosses bridge"
+      }
+     ]
+    }
+   },
+   {
+    "alias": "m012",
+    "kind": "video",
+    "record": {
+     "filmed_order": 12,
+     "subject": "woman holding a beer",
+     "summary": "A woman sits in a bar, holding a beer, smiling and laughing while talking to the camera about life in Berlin, acknowledging its difficulties but concluding it's worth it.",
+     "setting": "bar interior at night",
+     "activity": "talking to camera while holding a beer",
+     "people": {
+      "speaks_to_camera": true,
+      "count": 1,
+      "note": "a woman with long dark hair"
+     },
+     "speech": {
+      "has_speech": true,
+      "to_camera": true,
+      "transcript": "Berlin'de hayat pahalı, kışlar karanlık. Ama yemin ederim, her şeye değer."
+     },
+     "content_type": "talking_head",
+     "audio_type": "dialogue",
+     "notable_moments": [
+      {
+       "start_s": 2.7,
+       "end_s": 5.4,
+       "description": "woman delivers a key line"
+      }
+     ]
+    }
+   }
+  ]
+ },
+ "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"caption_sabah\",\n      \"assignments\": [\n        {\n          \"media\": \"m001\",\n          \"value\": \"\",\n          \"evidence\": \"moka pot brewing coffee; filmed_order 1 (first clip of the day)\",\n          \"confidence\": 0.9\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"caption_uni\",\n      \"assignments\": [\n        {\n          \"media\": \"m002\",\n          \"value\": \"\",\n          \"evidence\": \"yellow train pulls into an underground station, filmed_order 2\",\n          \"confidence\": 0.8\n        },\n        {\n          \"media\": \"m004\",\n          \"value\": \"\",\n          \"evidence\": \"professor lectures to a classroom of students in a large university lecture hall, filmed_order 4\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m005\",\n          \"value\": \"\",\n          \"evidence\": \"person highlighting in notebook at a desk with a laptop, likely a library or study space, filmed_order 5\",\n          \"confidence\": 0.8\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"caption_oglearasi\",\n      \"assignments\": [\n        {\n          \"media\": \"m006\",\n          \"value\": \"\",\n          \"evidence\": \"chef is slicing meat from a large doner kebab spit and preparing a doner wrap, outdoor food stand, filmed_order 6\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m009\",\n          \"value\": \"\",\n          \"evidence\": \"person selecting a drink from a fridge in a retail space or cafe, filmed_order 9\",\n          \"confidence\": 0.8\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"caption_spor\",\n      \"assignments\": [\n        {\n          \"media\": \"m007\",\n          \"value\": \"\",\n          \"evidence\": \"person rides a bicycle down a tree-lined path, activity: cycling, filmed_order 7\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m008\",\n          \"value\": \"\",\n          \"evidence\": \"man in a gym performs a deadlift, activity: performing a deadlift, filmed_order 8\",\n          \"confidence\": 0.9\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"caption_aksam\",\n      \"assignments\": [\n        {\n          \"media\": \"m010\",\n          \"value\": \"\",\n          \"evidence\": \"three friends are in a kitchen preparing a meal, cooking pasta, filmed_order 10\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m011\",\n          \"value\": \"\",\n          \"evidence\": \"yellow train crosses the illuminated Oberbaum Bridge in Berlin at night, filmed_order 11\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m012\",\n          \"value\": \"\",\n          \"evidence\": \"woman sits in a bar interior at night, talking to the camera, filmed_order 12\",\n          \"confidence\": 0.9\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"include_unique_clips\",\n      \"assignments\": [\n        {\n          \"media\": \"m001\",\n          \"value\": \"\",\n          \"evidence\": \"unique subject: moka pot brewing coffee\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m002\",\n          \"value\": \"\",\n          \"evidence\": \"clip selected over m003 for unique train arrival sequence\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m004\",\n          \"value\": \"\",\n          \"evidence\": \"unique subject: professor lecturing\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m005\",\n          \"value\": \"\",\n          \"evidence\": \"unique subject: person highlighting in notebook\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m006\",\n          \"value\": \"\",\n          \"evidence\": \"unique subject: chef preparing doner\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m007\",\n          \"value\": \"\",\n          \"evidence\": \"unique subject: person cycling\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m008\",\n          \"value\": \"\",\n          \"evidence\": \"unique subject: man performing deadlift\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m009\",\n          \"value\": \"\",\n          \"evidence\": \"unique subject: person selecting a drink from a fridge\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m010\",\n          \"value\": \"\",\n          \"evidence\": \"unique subject: three people cooking pasta\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m011\",\n          \"value\": \"\",\n          \"evidence\": \"unique subject: Oberbaum Bridge with train at night\",\n          \"confidence\": 0.9\n        },\n        {\n          \"media\": \"m012\",\n          \"value\": \"\",\n          \"evidence\": \"unique subject: woman talking to the camera\",\n          \"confidence\": 0.9\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"order_elif_voice_end\",\n      \"assignments\": [\n        {\n          \"media\": \"m012\",\n          \"value\": \"\",\n          \"evidence\": \"woman talking to the camera, speech: 'Berlin'de hayat pahalı, kışlar karanlık. Ama yemin ederim, her şeye değer.'\",\n          \"confidence\": 0.9\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    }\n  ]\n}",
+ "output": {
+  "intents": [
+   {
+    "intent_id": "caption_sabah",
+    "assignments": [
+     {
+      "media": "m001",
+      "value": null,
+      "evidence": "moka pot brewing coffee; filmed_order 1 (first clip of the day)",
+      "confidence": 0.9
+     }
+    ],
+    "needs_vision": [],
+    "question": null,
+    "caption": null
+   },
+   {
+    "intent_id": "caption_uni",
+    "assignments": [
+     {
+      "media": "m002",
+      "value": null,
+      "evidence": "yellow train pulls into an underground station, filmed_order 2",
+      "confidence": 0.8
+     },
+     {
+      "media": "m004",
+      "value": null,
+      "evidence": "professor lectures to a classroom of students in a large university lecture hall, filmed_order 4",
+      "confidence": 0.9
+     },
+     {
+      "media": "m005",
+      "value": null,
+      "evidence": "person highlighting in notebook at a desk with a laptop, likely a library or study space, filmed_order 5",
+      "confidence": 0.8
+     }
+    ],
+    "needs_vision": [],
+    "question": null,
+    "caption": null
+   },
+   {
+    "intent_id": "caption_oglearasi",
+    "assignments": [
+     {
+      "media": "m006",
+      "value": null,
+      "evidence": "chef is slicing meat from a large doner kebab spit and preparing a doner wrap, outdoor food stand, filmed_order 6",
+      "confidence": 0.9
+     },
+     {
+      "media": "m009",
+      "value": null,
+      "evidence": "person selecting a drink from a fridge in a retail space or cafe, filmed_order 9",
+      "confidence": 0.8
+     }
+    ],
+    "needs_vision": [],
+    "question": null,
+    "caption": null
+   },
+   {
+    "intent_id": "caption_spor",
+    "assignments": [
+     {
+      "media": "m007",
+      "value": null,
+      "evidence": "person rides a bicycle down a tree-lined path, activity: cycling, filmed_order 7",
+      "confidence": 0.9
+     },
+     {
+      "media": "m008",
+      "value": null,
+      "evidence": "man in a gym performs a deadlift, activity: performing a deadlift, filmed_order 8",
+      "confidence": 0.9
+     }
+    ],
+    "needs_vision": [],
+    "question": null,
+    "caption": null
+   },
+   {
+    "intent_id": "caption_aksam",
+    "assignments": [
+     {
+      "media": "m010",
+      "value": null,
+      "evidence": "three friends are in a kitchen preparing a meal, cooking pasta, filmed_order 10",
+      "confidence": 0.9
+     },
+     {
+      "media": "m011",
+      "value": null,
+      "evidence": "yellow train crosses the illuminated Oberbaum Bridge in Berlin at night, filmed_order 11",
+      "confidence": 0.9
+     },
+     {
+      "media": "m012",
+      "value": null,
+      "evidence": "woman sits in a bar interior at night, talking to the camera, filmed_order 12",
+      "confidence": 0.9
+     }
+    ],
+    "needs_vision": [],
+    "question": null,
+    "caption": null
+   },
+   {
+    "intent_id": "include_unique_clips",
+    "assignments": [
+     {
+      "media": "m001",
+      "value": null,
+      "evidence": "unique subject: moka pot brewing coffee",
+      "confidence": 0.9
+     },
+     {
+      "media": "m002",
+      "value": null,
+      "evidence": "clip selected over m003 for unique train arrival sequence",
+      "confidence": 0.9
+     },
+     {
+      "media": "m004",
+      "value": null,
+      "evidence": "unique subject: professor lecturing",
+      "confidence": 0.9
+     },
+     {
+      "media": "m005",
+      "value": null,
+      "evidence": "unique subject: person highlighting in notebook",
+      "confidence": 0.9
+     },
+     {
+      "media": "m006",
+      "value": null,
+      "evidence": "unique subject: chef preparing doner",
+      "confidence": 0.9
+     },
+     {
+      "media": "m007",
+      "value": null,
+      "evidence": "unique subject: person cycling",
+      "confidence": 0.9
+     },
+     {
+      "media": "m008",
+      "value": null,
+      "evidence": "unique subject: man performing deadlift",
+      "confidence": 0.9
+     },
+     {
+      "media": "m009",
+      "value": null,
+      "evidence": "unique subject: person selecting a drink from a fridge",
+      "confidence": 0.9
+     },
+     {
+      "media": "m010",
+      "value": null,
+      "evidence": "unique subject: three people cooking pasta",
+      "confidence": 0.9
+     },
+     {
+      "media": "m011",
+      "value": null,
+      "evidence": "unique subject: Oberbaum Bridge with train at night",
+      "confidence": 0.9
+     },
+     {
+      "media": "m012",
+      "value": null,
+      "evidence": "unique subject: woman talking to the camera",
+      "confidence": 0.9
+     }
+    ],
+    "needs_vision": [],
+    "question": null,
+    "caption": null
+   },
+   {
+    "intent_id": "order_elif_voice_end",
+    "assignments": [
+     {
+      "media": "m012",
+      "value": null,
+      "evidence": "woman talking to the camera, speech: 'Berlin'de hayat pahalı, kışlar karanlık. Ama yemin ederim, her şeye değer.'",
+      "confidence": 0.9
+     }
+    ],
+    "needs_vision": [],
+    "question": null,
+    "caption": null
+   }
+  ]
+ },
+ "meta": {
+  "source": "kri516_live_recorded",
+  "ticket": "KRI-516",
+  "case": "KRI-516 prod thread 0b1f9556 (stress kit M3 'Berlin', 12 clips incl. a byte-identical U-Bahn duplicate, Turkish prompt): 'order the videos by the time I filmed them, morning to night; chapter titles: Sabah, Üniversite, Öğle arası, Spor, Akşam'. Records are the real clip_metadata output; clips are listed in filming order with filmed_order (the KRI-516 resolver input). Prompt 2026-10-05.1 put the 18:55 fridge clip (and in 5/6 also the 19:30 cooking-with-roommates clip) under 'Öğle arası' after 'Spor' in 6/6 live runs; prompt 2026-10-08.1 keeps cooking and the bridge in 'Akşam' in 20/20 and the whole chapter sequence forward in 17/20.",
+  "note": "Recorded live 2026-10-08 (test_run_id kri516-golden2-20261008): one of the 3/20 runs that still put the fridge (filmed after the gym) under 'Öğle arası'. Kept verbatim: clip_intent_resolution.keep_chapters_in_filming_order must drop exactly that membership (tests/services/test_chapter_filming_order.py).",
+  "expect_covered": {
+   "caption_aksam": [
+    "m010",
+    "m011"
+   ]
+  },
+  "expect_not_assigned": {
+   "caption_oglearasi": [
+    "m010",
+    "m011",
+    "m012"
+   ]
+  },
+  "expect_no_question": true
+ }
+}

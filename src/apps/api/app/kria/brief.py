@@ -258,6 +258,20 @@ def merge_requirements(
     return merged
 
 
+# KRI-522: facts that record HOW the creator wants a requirement done ("starting with the blue
+# video", "animated with typewriter", "bottom left", "placeholder"). A later turn that only
+# changes the words ("the hook should say ...") restates the requirement without them; the
+# creator never withdrew them, so a same-kind, same-scope change keeps them unless it sets them.
+STICKY_FACTS = frozenset({"first_clip", "last_clip", "animation", "position", "placeholder"})
+
+
+def _carry_sticky_facts(target: BriefRequirement, update: BriefUpdate) -> dict[str, Any]:
+    if update.kind != target.kind or update.scope != target.scope:
+        return update.facts
+    kept = {k: v for k, v in target.facts.items() if k in STICKY_FACTS and k not in update.facts}
+    return {**kept, **update.facts} if kept else update.facts
+
+
 def apply_updates(
     prior: CreativeBrief | None,
     updates: Iterable[BriefUpdate],
@@ -294,7 +308,7 @@ def apply_updates(
                     "scope": update.scope,
                     "literal": update.literal,
                     "description": update.description,
-                    "facts": update.facts,
+                    "facts": _carry_sticky_facts(target, update),
                     "source_turn_id": source_turn_id,
                     "status": "open",
                 }
