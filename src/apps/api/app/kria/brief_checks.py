@@ -1311,6 +1311,17 @@ _BEAT_CUE_RE = re.compile(
     r"|\bpop(s|ping)?[- ]?(up|in|ups|ins)\b|\bat (the |each |every )?(exact |spoken |specific )?"
     r"words?\b|\b(sticker|stamp)s?\b|\bword[- ]triggered\b"
     r"|dediğimde|deyince|söylediğimde|bahsettiğimde|\bçikartma"
+    # KRI-540: the passive / spoken-word forms the Kadıköy brief used ("'İlk durak'
+    # dendiğinde", "her 'kahve' kelimesinde"). Written against `_fold` output
+    # (ı -> i), tolerant of ASCII-typed ğ/ç/ş/ö/ü. Turkish "every X" ("her 'X'de",
+    # "her X'te") REQUIRES a quote or apostrophe suffix so English "her" never matches.
+    r"|\b(?:dend[ıi][ğg]inde|denince|denild[ıi][ğg]inde|derken|ded[ıi][ğg]inde"
+    r"|s[öo]ylend[ıi][ğg]inde|s[öo]yleyince|ge[çc]t[ıi][ğg]inde|ge[çc]ince|ge[çc]erken"
+    r"|duyuld[uü][ğg]unda|duyunca)\b"
+    r"|\bkelimesi(?:nde|ni)\b|\bs[öo]zc[üu][ğg][üu]nde\b|\bs[öo]z[üu]nde\b"
+    r"|\bher\s+[\"'\u201c\u201d\u2018\u2019\u00ab\u00bb][^\"'\u201c\u201d\u2018\u2019\u00ab\u00bb]{1,60}"
+    r"[\"'\u201c\u201d\u2018\u2019\u00ab\u00bb](?:d[ea]|t[ea])\b"
+    r"|\bher\s+[^\s\"'\u201c\u201d\u2018\u2019\u00ab\u00bb]{1,40}['\u2019](?:d[ea]|t[ea])\b"
 )
 _CLOSING_RE = re.compile(
     r"\b(finish|end|close|wrap up|wrap) (on|with)\b|\bending (on|with|shot)\b"
@@ -1318,7 +1329,7 @@ _CLOSING_RE = re.compile(
     r"|\bbitir|\bkapan[iı]ş"
 )
 _SOUND_RE = re.compile(
-    r"\b(sound|sounds|sfx|buzzer|ding|beep|whoosh|swoosh|boing|horn|applause)\b|\bses\b|\befekt"
+    r"\b(sound|sounds|sfx|buzzer|ding|beep|whoosh|swoosh|boing|horn|applause)\b|\bses(?:i|ini|iyle|ler|leri|lerini)?\b|\befekt"
 )
 _VISUAL_RE = re.compile(
     r"\b(sticker|stamp|badge|photo|picture|image|pic|flag|logo|emoji)s?\b"
