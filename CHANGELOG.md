@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.169.0] - 2026-10-08
+
+### Changed
+- feat(kria): time-ranged pinned text, title/semantic-agent fixes, pins on every phone montage writer (KRI-525, KRI-526, KRI-527) (#1487) <!-- release-pr: 1487 -->
+
 ## [0.78.168.0] - 2026-10-08
 
 ### Changed
