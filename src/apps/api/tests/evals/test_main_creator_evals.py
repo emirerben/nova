@@ -60,8 +60,11 @@ def test_main_creator_eval(
     voiceover_beats = fixture.meta.get("voiceover_reaction_beats")
     if voiceover_beats:
         # KRI-519: photos timed to an iPhone voiceover are reaction beats, never the
-        # guided contract runtime v2 cannot run.
-        from app.services.phone_reaction_grounding import fold_tokens
+        # guided contract runtime v2 cannot run. Triggers compare as plain lowercase
+        # words (the grounding module itself needs the render stack, absent on the
+        # eval runner).
+        def _words(text: object) -> list[str]:
+            return re.findall(r"[a-z0-9]+", str(text or "").casefold())
 
         assert result.output is not None
         action = result.output["action"]
@@ -71,7 +74,7 @@ def test_main_creator_eval(
         beats = strategy.get("reaction_beats") or []
         for trigger, visual_id in voiceover_beats.items():
             assert any(
-                fold_tokens(beat.get("trigger")) == fold_tokens(trigger)
+                _words(beat.get("trigger")) == _words(trigger)
                 and beat.get("visual_id") == visual_id
                 for beat in beats
             ), f"no beat shows {visual_id} on {trigger!r}: {beats}"
