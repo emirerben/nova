@@ -89,7 +89,8 @@ extension EditorDocument {
             // `opening-title` on a phone Talking edit (KRI-467).
             if ["guided-title", "narrated-title", "opening-title"].contains(element.id) { return .title }
             if let position = labelPosition[element.id] { return .clipLabel(position) }
-            if element.id == "guided-closing-title" { return .closing }
+            // Closing text: `closing-title` on a phone Talking edit (KRI-514).
+            if ["guided-closing-title", "closing-title"].contains(element.id) { return .closing }
             return .other
         }
         // The title and its first clip label start together; the title reads first.

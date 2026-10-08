@@ -731,6 +731,41 @@ def test_closing_none_has_badge_none(monkeypatch):
     assert result.receipt["closing"] == {"status": "none", "badge": "none"}
 
 
+def test_closing_card_names_the_closing_photo_and_its_shape(monkeypatch):
+    """KRI-514: the worker puts the creator's closing text on this card."""
+    _patch(monkeypatch, assets=[_asset("v-closing", aspect=0.5625)])
+    result = rg.ground_phone_reaction_beats(
+        _open_session,
+        job_id="j1",
+        beats=[],
+        closing={"visual_id": "v-closing"},
+        words=[],
+        duration_s=5.0,
+        clip_path=None,
+    )
+    assert (result.closing_card_id, result.closing_card_aspect) == ("closing-photo", 0.5625)
+
+
+def test_closing_card_is_the_beat_card_the_photo_merged_into(monkeypatch):
+    result = _run_scenario(monkeypatch)
+    assert result.closing_card_id == "beat-salah-photo-1"
+
+
+def test_no_closing_photo_names_no_closing_card(monkeypatch):
+    _patch(monkeypatch, assets=[])
+    result = rg.ground_phone_reaction_beats(
+        _open_session,
+        job_id="j1",
+        beats=[],
+        closing={"visual_id": "missing"},
+        words=[],
+        duration_s=5.0,
+        clip_path=None,
+    )
+    assert result.receipt["closing"]["status"] == "unplaced"
+    assert (result.closing_card_id, result.closing_card_aspect) == (None, None)
+
+
 def test_card_window_too_short_after_duration_clamp(monkeypatch):
     """A trigger spoken right near the end of the clip clamps its card window
     under 0.3s -- distinct from `overlap` (which is reserved for a window

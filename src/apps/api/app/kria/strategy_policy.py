@@ -302,15 +302,30 @@ def _refusal_question(exc: ValueError, strategy: CreativeStrategy) -> RefusedStr
                     ),
                     code="shot_text_unavailable",
                 )
+            # KRI-514: name only what was asked for, and say the rest is kept. A
+            # lone closing text is quoted back ("MY PICK") instead of a generic
+            # "on each shot or at the end" the creator never asked for.
+            if strategy.shot_labels:
+                missing = "your own text on each shot" + (
+                    " or at the end" if strategy.closing_title else ""
+                )
+                missing_tr = (
+                    "her çekimde ya da sonda senin yazını"
+                    if strategy.closing_title
+                    else "her çekimde senin yazını"
+                )
+            else:
+                missing = f'"{strategy.closing_title}" at the end'
+                missing_tr = f'sonda "{strategy.closing_title}" yazısını'
             return RefusedStrategy(
                 question=say(
                     en=(
-                        "This kind of edit can't show your own text on each shot or at the "
-                        "end yet. Should I make it without that text?"
+                        f"This kind of edit can't show {missing} yet. Should I make everything "
+                        "else and leave that text out?"
                     ),
                     tr=(
-                        "Bu tür düzenleme her çekimde ya da sonda senin yazını henüz "
-                        "gösteremiyor. O yazı olmadan yapayım mı?"
+                        f"Bu tür düzenleme {missing_tr} henüz gösteremiyor. Geri kalan her şeyi "
+                        "yapıp o yazıyı dışarıda bırakayım mı?"
                     ),
                 ),
                 code="shot_text_unavailable",

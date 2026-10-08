@@ -232,6 +232,18 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   0.4s video-cut floor is shown whole (`MIN_VIDEO_CUT_S`, KRI-217): whole frames
   stopped a fraction of a frame short of a 0.298s iPhone clip, which the strict
   snapshot refused.
+- *Closing spoken line (KRI-517)*: when a resolved `last` order intent seats the
+  closing clip, that clip's analysed `understanding.speech` has segments, and the
+  camera audio is kept (`montage_audio.preserve_source_audio`, or
+  `audio_strategy="original_audio"`), the closing cut holds the whole line, from
+  `SPEECH_LEAD_S` (0.15s) before the first segment to `SPEECH_TAIL_S` (0.3s) after
+  the last. That cut never shrinks or grows, and the other cuts share the rest of the
+  length. A line the creator's length can't also fit, a song montage, or a montage
+  that merely ends on a talking clip keeps the ordinary cut. The record carries
+  `closing_speech` ({media_id, source window}) only when a line was held. Incident:
+  stress kit M3, prod thread 0b1f9556. "End on Elif's sentence in her own voice" was
+  cut from 2.70-4.97s of a 0.00-5.44s line. Guard:
+  `tests/pipeline/test_unified_montage_closing_speech.py`.
 - *Title*: confirmed strategy title > brief title literal > brief global literal
   (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`). With
   none of those sources, the visible opening title is omitted; `Montage` remains

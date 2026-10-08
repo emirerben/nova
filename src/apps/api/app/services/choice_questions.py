@@ -295,6 +295,13 @@ def choice_question_text(candidate: ConflictCandidate) -> str:
                 f'ya da "{options[0].label}" yaz.'
             ),
         )
+    if candidate.kind == CONFLICT_VOICE_VS_DURATION and len(options) == 1:
+        # Only the length the clips and the voice allow: a statement, never "the most I can do".
+        only = options[0]
+        return (
+            f"{candidate.intro} {candidate.reason} I can make it {only.label}. "
+            f'Reply "{only.label}" to go with that, or change your request.'
+        )
     if len(options) == 1:
         # One way forward is a statement, not a choice.
         only = options[0]
@@ -308,12 +315,16 @@ def choice_question_text(candidate: ConflictCandidate) -> str:
                 f'{only.label}. Bunu istiyorsan "{only.label}" yaz ya da isteğini değiştir.'
             ),
         )
-    lines = [
-        say(
-            en=f"{candidate.intro} Unfortunately {candidate.reason} Which do you prefer?",
-            tr=f"{candidate.intro} Maalesef {candidate.reason} Hangisini tercih edersin?",
-        )
-    ]
+    if candidate.reason.endswith("?"):
+        # The reason is itself the question ("How long should the video be?").
+        lines = [f"{candidate.intro} {candidate.reason}"]
+    else:
+        lines = [
+            say(
+                en=f"{candidate.intro} Unfortunately {candidate.reason} Which do you prefer?",
+                tr=f"{candidate.intro} Maalesef {candidate.reason} Hangisini tercih edersin?",
+            )
+        ]
     for index, option in enumerate(options, start=1):
         mark = say(en=" (recommended)", tr=" (önerilen)") if option.recommended else ""
         lines.append(f"{index}. {option.label}{mark}")
@@ -484,13 +495,18 @@ CONFLICT_DURATION_VS_COUNT = "duration_vs_count"
 CONFLICT_ORDER_BASIS = "order_basis"
 CONFLICT_TEXT_PLACEMENT = "text_placement"
 CONFLICT_TITLE_TEXT = "title_text"
+# KRI-479 (voice behind footage; only for a `voice_mode == "continuous"` plan).
+CONFLICT_VOICE_VS_DURATION = "voice_vs_duration"
+CONFLICT_WHICH_VOICE = "which_voice"
 # Fixed priority: an answer can change a later detector's inputs, so exactly one question
 # is asked per turn, in this order.
 CONFLICT_PRIORITY = (
     CONFLICT_ORDER_BASIS,
+    CONFLICT_WHICH_VOICE,
     CONFLICT_TEXT_PLACEMENT,
     CONFLICT_TITLE_TEXT,
     CONFLICT_DURATION_VS_COUNT,
+    CONFLICT_VOICE_VS_DURATION,
 )
 
 OPT_EXTEND = "extend"
@@ -499,6 +515,8 @@ OPT_ATTACHMENT_ORDER = "attachment_order"
 OPT_UNORDERED = "unordered"
 OPT_OWN_SEQUENCE = "own_sequence"
 OPT_NO_TITLE = "no_title"
+OPT_MATCH_VOICE = "match_voice"
+OPT_SILENT_TAIL = "silent_tail"
 
 # What an "order I filmed them" requirement means to the contract (brief order keys).
 ATTACHMENT_ORDER_KEY = "attachment"
@@ -524,6 +542,9 @@ class ChoiceCapability:
     # montage will render the draft (its title receipt is only judged at render time);
     # ``None`` = unknown, so that question is never asked.
     creator_id: object = None
+    # KRI-479: the continuous-voice route can actually render for new jobs
+    # (`Settings.voice_behind_footage_enabled`). False => no voice question is ever asked.
+    voice_route: bool = False
 
 
 @dataclass(frozen=True)
@@ -627,7 +648,7 @@ def _clean_seconds(value: float) -> float | int:
     return int(value) if float(value).is_integer() else round(value, 1)
 
 
-def _montage_exempt(strategy: Mapping[str, Any]) -> bool:
+def _montage_exempt(strategy: Mapping[str, Any], cap: ChoiceCapability) -> bool:
     """Strategies whose length is not a promise about N flash-cut clips.
 
     Only a plain montage cuts every clip to ``target_duration_s``. Voiceover, creator-song
@@ -640,7 +661,10 @@ def _montage_exempt(strategy: Mapping[str, Any]) -> bool:
         strategy.get("edit_format", "montage") != "montage"
         or strategy.get("montage_cadence")
         or strategy.get("mixed_media_timing")
-        or strategy.get("montage_audio")
+        # A continuous voice (KRI-479) is composed by the voice-behind-footage composer, which
+        # cuts the picture clips to the length: unlike a camera-audio excerpt montage, the
+        # clips-per-length question applies to it.
+        or (strategy.get("montage_audio") and _continuous_voice(strategy, cap) is None)
         or strategy.get("archetype")
         or strategy.get("execution_contract")
         or strategy.get("audio_strategy") in ("voiceover", "user_song")
@@ -694,7 +718,7 @@ _FEWER_TR_ALIASES = (
 def _duration_vs_count(
     strategy: Mapping[str, Any], brief: Any, rows: list[Any], cap: ChoiceCapability
 ) -> UnresolvedChoice | None:
-    if _montage_exempt(strategy):
+    if _montage_exempt(strategy, cap):
         return None
     durations, requirement_ids, quoted = _requested_durations(brief)
     if not durations:
@@ -710,7 +734,8 @@ def _duration_vs_count(
     if not ids or len(set(ids)) != len(ids):
         return None
     kept = _included_ids(strategy)
-    clip_ids = [m for m in ids if kept is None or m in kept]
+    voice_id = _continuous_voice(strategy, cap)
+    clip_ids = [m for m in ids if (kept is None or m in kept) and m != voice_id]
     # The selection the draft carries IS the clip set (like `_order_basis`): 8 selected
     # clips of 42 are not 42, and `fewer` must never re-add a clip that was left out.
     chosen = {str(m) for m in strategy.get("selected_media_ids") or []}
@@ -755,7 +780,8 @@ def _duration_vs_count(
     effects: dict[str, Mapping[str, Any]] = {
         OPT_FEWER: {
             "strategy": {
-                "selected_media_ids": subset,
+                # The continuous voice's clip stays selected: it is heard, never counted.
+                "selected_media_ids": [*subset, voice_id] if voice_id else subset,
                 "media_scope": "selected",
                 "target_duration_s": _clean_seconds(seconds),
                 "target_duration_requested": True,
@@ -1212,6 +1238,354 @@ def title_text_choice(requirement_ids: Iterable[str]) -> UnresolvedChoice:
     )
 
 
+# ── Continuous voice (KRI-479) ────────────────────────────────────────────────
+
+# A voice that plays longer than this with NO stated length is a question ("how long?"); at or
+# under it the edit simply follows the voice (the short-form ceiling).
+_VOICE_IMPLICIT_ASK_S = 60.0
+# A voice shorter than the asked length by more than this is a question.
+_VOICE_SHORT_BY_S = 1.0
+_MIN_ASKED_VOICE_S = 3.0  # ProposalDuration floor
+_STANDARD_LENGTHS_S = (30, 45, 60)
+_MAX_LENGTH_OPTIONS = 3
+_SPEECH_PAD_S = 0.28  # the lead + tail the composer keeps around the first and last word
+
+
+def _voice_audio(strategy: Mapping[str, Any], cap: ChoiceCapability) -> Mapping[str, Any] | None:
+    """``montage_audio`` of a ``voice_mode == "continuous"`` strategy, when the route can render.
+
+    ``cap.voice_route`` is false unless the continuous-voice route is actually available to new
+    jobs (stamped jobs and the camera-audio renderer): then no voice question is ever asked and
+    ``montage_audio`` keeps its legacy exemptions.
+    """
+
+    if not cap.voice_route or strategy.get("voice_mode") != "continuous":
+        return None
+    audio = strategy.get("montage_audio")
+    if not isinstance(audio, Mapping) or not audio.get("preserve_source_audio"):
+        return None
+    return audio
+
+
+def _continuous_voice(strategy: Mapping[str, Any], cap: ChoiceCapability) -> str | None:
+    """The ONE named voice clip of a continuous-voice plan, else None."""
+
+    audio = _voice_audio(strategy, cap)
+    ids = [str(m) for m in (audio or {}).get("source_media_ids") or [] if m]
+    return ids[0] if len(ids) == 1 else None
+
+
+def _row_duration_s(row: Any) -> float | None:
+    """Source length of one snapshot row (explicit, else the phone receipt's original)."""
+
+    if not isinstance(row, Mapping):
+        return None
+    contract = row.get("upload_contract")
+    proxy = contract.get("proxy") if isinstance(contract, Mapping) else None
+    original = proxy.get("original") if isinstance(proxy, Mapping) else None
+    for candidate in (
+        row.get("duration_s"),
+        original.get("duration_s") if isinstance(original, Mapping) else None,
+        proxy.get("duration_s") if isinstance(proxy, Mapping) else None,
+    ):
+        value = _number(candidate)
+        if value is not None:
+            return value
+    return None
+
+
+def _speech_length_s(row: Mapping[str, Any]) -> float | None:
+    """Seconds of actual speech in a clip when its timed segments are known, else None."""
+
+    analysis = row.get("analysis")
+    understanding = analysis.get("understanding") if isinstance(analysis, Mapping) else None
+    speech = understanding.get("speech") if isinstance(understanding, Mapping) else None
+    segments = speech.get("segments") if isinstance(speech, Mapping) else None
+    starts, ends = [], []
+    for seg in segments or []:
+        if isinstance(seg, Mapping):
+            start, end = _number(seg.get("start_s")), _number(seg.get("end_s"))
+            if end is not None:
+                starts.append(start if start is not None else 0.0)
+                ends.append(end)
+    if not ends:
+        return None
+    return max(ends) - min(starts) + _SPEECH_PAD_S
+
+
+def _voice_length_s(row: Mapping[str, Any]) -> float | None:
+    """How long the voice really plays: the speech when timed, else the clip."""
+
+    clip = _row_duration_s(row)
+    speech = _speech_length_s(row)
+    if speech is None:
+        return clip
+    return min(speech, clip) if clip is not None else speech
+
+
+def _spoken_quote(row: Mapping[str, Any]) -> str:
+    """The first few words of a clip's speech: enough to recognise the take, no more."""
+
+    from app.services.clip_understanding import clip_record  # noqa: PLC0415
+
+    kind = "image" if str(row.get("kind") or "video") == "image" else "video"
+    speech = clip_record(row.get("analysis"), kind=kind).speech
+    words = " ".join(str(speech.transcript or "").split()).split(" ")
+    quote = " ".join(w for w in words[:8] if w)
+    return quote[:60]
+
+
+def _has_speech(row: Mapping[str, Any]) -> bool:
+    from app.services.clip_understanding import clip_record  # noqa: PLC0415
+
+    kind = "image" if str(row.get("kind") or "video") == "image" else "video"
+    return bool(clip_record(row.get("analysis"), kind=kind).speech.has_speech)
+
+
+def _picture_ids(strategy: Mapping[str, Any], rows: list[Any], cap: ChoiceCapability) -> list[str]:
+    """The clips a continuous voice's picture is cut from: the plan's clip set minus the voice."""
+
+    voice_id = _continuous_voice(strategy, cap)
+    ids = [str(r["media_id"]) for r in rows if isinstance(r, Mapping) and r.get("media_id")]
+    kept = _included_ids(strategy)
+    chosen = {str(m) for m in strategy.get("selected_media_ids") or []}
+    return [
+        m
+        for m in ids
+        if m != voice_id and (kept is None or m in kept) and (not chosen or m in chosen)
+    ]
+
+
+def _picture_bounds_s(
+    strategy: Mapping[str, Any], rows: list[Any], cap: ChoiceCapability
+) -> tuple[float, float] | None:
+    """(shortest, longest) edit the picture clips allow, from their real lengths; None = unknown."""
+
+    by_id = {str(r["media_id"]): r for r in rows if isinstance(r, Mapping) and r.get("media_id")}
+    durations = []
+    for media_id in _picture_ids(strategy, rows, cap):
+        length = _row_duration_s(by_id[media_id])
+        if length is None:
+            return None
+        durations.append(length)
+    if not durations:
+        return None
+    from app.pipeline.phone_speech_montage_plan import frame_bounds_for_durations  # noqa: PLC0415
+
+    floor_s = cap.min_readable_shot_s
+    lo, hi = frame_bounds_for_durations(durations, min_shot_s=floor_s)
+    return lo / _MAX_FIT_FRAMES_FPS, hi / _MAX_FIT_FRAMES_FPS
+
+
+def _picture_identity(strategy: Mapping[str, Any], rows: list[Any], cap: ChoiceCapability) -> list:
+    """Ids and lengths of the picture clips: part of the digest, so a media change reopens it."""
+
+    by_id = {str(r["media_id"]): r for r in rows if isinstance(r, Mapping) and r.get("media_id")}
+    return sorted(
+        (m, round(_row_duration_s(by_id[m]) or 0.0, 2)) for m in _picture_ids(strategy, rows, cap)
+    )
+
+
+def _which_voice(
+    strategy: Mapping[str, Any], brief: Any, rows: list[Any], cap: ChoiceCapability
+) -> UnresolvedChoice | None:
+    audio = _voice_audio(strategy, cap)
+    if audio is None:
+        return None
+    named = [str(m) for m in audio.get("source_media_ids") or [] if m]
+    if len(named) == 1:
+        return None
+    by_id = {str(r["media_id"]): r for r in rows if isinstance(r, Mapping) and r.get("media_id")}
+    pool = (
+        [m for m in named if m in by_id]
+        if named
+        else [m for m, r in by_id.items() if r.get("kind", "video") != "image" and _has_speech(r)]
+    )
+    if len(pool) < 2:
+        return None  # one speaker is not a question, and nothing is guessed either
+    pool = pool[:MAX_CHOICE_OPTIONS]
+    options: list[ConflictOption] = []
+    effects: dict[str, Mapping[str, Any]] = {}
+    for index, media_id in enumerate(pool, start=1):
+        row = by_id[media_id]
+        length = _voice_length_s(row)
+        quote = _spoken_quote(row)
+        label = f"Clip {index}" + (f" ({_clean_seconds(length)} s)" if length else "")
+        label += f": \u201c{quote}\u201d" if quote else ""
+        key = f"clip_{index}"
+        options.append(
+            ConflictOption(
+                key=key,
+                label=label,
+                description="Use this recording's voice under the other clips.",
+                aliases=(f"clip {index}",),
+            )
+        )
+        effects[key] = {
+            "strategy": {
+                "montage_audio": {
+                    **{k: v for k, v in audio.items() if k != "source_media_ids"},
+                    "source_media_ids": [media_id],
+                }
+            }
+        }
+    return UnresolvedChoice(
+        kind=CONFLICT_WHICH_VOICE,
+        conflict_id=CONFLICT_WHICH_VOICE,
+        field_path="montage_audio.source_media_ids[]",
+        requirement_ids=(),
+        intro="More than one of your clips has someone talking.",
+        reason="only one recording can be the voice that plays under the rest.",
+        options=tuple(options),
+        input_digest=_digest(CONFLICT_WHICH_VOICE, sorted(pool)),
+        effects=effects,
+    )
+
+
+def length_option_key(seconds: int) -> str:
+    return f"length_{int(seconds)}"
+
+
+def _length_options(base: int, ceiling: float) -> list[int]:
+    """The lengths worth offering: the shortest that works first, then sensible larger ones.
+
+    ``base`` is the least that lets every clip be seen (a whole second, rounded UP); every value
+    stays within ``ceiling`` (the voice and the footage). Never the fixed {30, 60}: those only
+    appear when they are real, larger-than-needed choices.
+    """
+
+    values = [base]
+    values += [v for v in _STANDARD_LENGTHS_S if base < v <= ceiling][:2]
+    if len(values) == 1 and ceiling - base >= 2:
+        values.append(int(math.floor(ceiling)))  # "all of it": the voice / footage you have
+    return values[:_MAX_LENGTH_OPTIONS]
+
+
+def _voice_vs_duration(
+    strategy: Mapping[str, Any], brief: Any, rows: list[Any], cap: ChoiceCapability
+) -> UnresolvedChoice | None:
+    voice_id = _continuous_voice(strategy, cap)
+    if voice_id is None:
+        return None
+    row = next((r for r in rows if isinstance(r, Mapping) and r.get("media_id") == voice_id), None)
+    length = _voice_length_s(row) if row else None
+    if length is None or length < _MIN_ASKED_VOICE_S:
+        return None
+    durations, requirement_ids, quoted = _requested_durations(brief)
+    if any(abs(value - durations[0]) > 0.001 for value in durations[1:]):
+        return None  # conflicting lengths are the contract's own typed error
+    bounds = _picture_bounds_s(strategy, rows, cap)  # (shortest, longest) the clips allow
+    identity = _picture_identity(strategy, rows, cap)
+    digest = _digest(
+        CONFLICT_VOICE_VS_DURATION,
+        voice_id,
+        round(length * 1000),
+        durations[0] if durations else None,
+        identity,
+    )
+    if durations:
+        asked = durations[0]
+        # A longer voice is trimmed to the asked length and disclosed: never a question.
+        if length >= asked - _VOICE_SHORT_BY_S:
+            return None
+        whole = int(math.floor(length))
+        asked_s, voice_s = _clean_seconds(asked), _clean_seconds(whole)
+        said = quoted or f"{asked_s} seconds"
+        options: list[ConflictOption] = []
+        effects: dict[str, Mapping[str, Any]] = {}
+        # Each option only if the clips can actually be cut to it (never a promise that ends in
+        # "won't loop": the footage must reach it and every clip must be seen).
+        if whole >= _MIN_ASKED_VOICE_S and (bounds is None or bounds[0] <= whole <= bounds[1]):
+            options.append(
+                ConflictOption(
+                    key=OPT_MATCH_VOICE,
+                    label=f"End the edit when your voice ends ({voice_s} seconds)",
+                    description="The video is exactly as long as your voice.",
+                    recommended=True,
+                    aliases=("end when my voice ends", "match my voice", "match the voice"),
+                )
+            )
+            effects[OPT_MATCH_VOICE] = {
+                "strategy": {"target_duration_s": whole, "target_duration_requested": True}
+            }
+        if bounds is None or asked <= bounds[1]:
+            options.append(
+                ConflictOption(
+                    key=OPT_SILENT_TAIL,
+                    label=(
+                        f"Keep {asked_s} seconds, the last {_clean_seconds(asked - whole)} "
+                        "seconds play without voice"
+                    ),
+                    description="Your voice plays first, then the footage carries on in silence.",
+                    aliases=("keep the length", "keep the length without voice"),
+                )
+            )
+            # The answered length rides with the answer, so it can never be lost.
+            effects[OPT_SILENT_TAIL] = {
+                "strategy": {
+                    "target_duration_s": _clean_seconds(asked),
+                    "target_duration_requested": True,
+                }
+            }
+        if not options:
+            return None
+        intro = f'Your brief says "{said}" and your voice runs {voice_s} seconds.'
+        reason = "your voice can't fill the whole video."
+    elif length > _VOICE_IMPLICIT_ASK_S:
+        count = len(_picture_ids(strategy, rows, cap))
+        lo_s, hi_s = bounds if bounds is not None else (None, None)
+        if lo_s is None:
+            from app.pipeline.unified_montage import MIN_READABLE_SHOT_S  # noqa: PLC0415
+
+            lo_s = count * (cap.min_readable_shot_s or MIN_READABLE_SHOT_S)
+        ceiling = min(length, hi_s) if hi_s is not None else length
+        base = max(int(_MIN_ASKED_VOICE_S), math.ceil(lo_s - 1e-9))
+        if base > ceiling + 1e-9:
+            return None  # nothing works: the composer's typed decline says what is true
+        values = _length_options(base, ceiling)
+        options = []
+        effects = {}
+        for index, seconds in enumerate(values):
+            key = length_option_key(seconds)
+            options.append(
+                ConflictOption(
+                    key=key,
+                    label=f"{seconds} seconds",
+                    description=(
+                        "The shortest length where every clip stays on screen long enough "
+                        "to be seen."
+                        if index == 0
+                        else "Longer: each clip stays on screen a little longer."
+                    ),
+                    recommended=index == 0,
+                    aliases=(str(seconds), f"{seconds} seconds"),
+                )
+            )
+            effects[key] = {
+                "strategy": {"target_duration_s": seconds, "target_duration_requested": True}
+            }
+        intro = f"Your voice runs {_clean_seconds(length)} seconds."
+        reason = (
+            "How long should the video be?"
+            if len(values) > 1
+            else f"{count} clips need at least {_clean_seconds(lo_s)} seconds to each be seen."
+        )
+        requirement_ids = []
+    else:
+        return None
+    return UnresolvedChoice(
+        kind=CONFLICT_VOICE_VS_DURATION,
+        conflict_id=CONFLICT_VOICE_VS_DURATION,
+        field_path="target_duration_s",
+        requirement_ids=tuple(requirement_ids),
+        intro=intro,
+        reason=reason,
+        options=tuple(options),
+        input_digest=digest,
+        effects=effects,
+    )
+
+
 def collect_conflicts(
     strategy: Any,
     brief: Any,
@@ -1237,6 +1611,8 @@ def collect_conflicts(
         _text_placement,
         functools.partial(_title_text, clip_paths=clip_paths),
         _duration_vs_count,
+        _which_voice,
+        _voice_vs_duration,
     ):
         result = detector(data, brief, rows, cap)
         if isinstance(result, list):
@@ -1523,6 +1899,15 @@ class ChoiceResolution:
     superseded: tuple[str, ...] = ()
 
 
+def _disclosure(kind: object, option: object) -> str | None:
+    """The plain-language note for an answered option (dynamic ``length_N`` keys included)."""
+
+    note = _DISCLOSURES.get((kind, option))
+    if note is None and kind == CONFLICT_VOICE_VS_DURATION and str(option).startswith("length_"):
+        return f"I'm making it {str(option).removeprefix('length_')} seconds."
+    return note
+
+
 def _apply_effect(strategy: dict[str, Any], choice: UnresolvedChoice, option_key: str) -> None:
     for key, value in (choice.effects.get(option_key) or {}).get("strategy", {}).items():
         strategy[key] = value
@@ -1540,6 +1925,14 @@ _DISCLOSURES = {
     (CONFLICT_TITLE_TEXT, OPT_NO_TITLE): (
         "I'm leaving the title off, since you didn't give me the words."
     ),
+    (CONFLICT_VOICE_VS_DURATION, OPT_MATCH_VOICE): "I ended the edit where your voice ends.",
+    (CONFLICT_VOICE_VS_DURATION, OPT_SILENT_TAIL): (
+        "I kept your length: the last seconds play without voice."
+    ),
+    **{
+        (CONFLICT_WHICH_VOICE, f"clip_{i}"): "I'm using that clip's voice under the other clips."
+        for i in range(1, MAX_CHOICE_OPTIONS + 1)
+    },
 }
 # The same notes for a Turkish chat (KRI-520), keyed identically.
 _DISCLOSURES_TR = {
@@ -1750,6 +2143,24 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                 elif option == OPT_UNORDERED:
                     changed[req.id] = req.model_copy(update={"status": "superseded"})
             elif (
+                kind == CONFLICT_VOICE_VS_DURATION
+                and option == OPT_MATCH_VOICE
+                and req.kind == "timing"
+            ):
+                new = _number(data.get("target_duration_s"))
+                old = _number((req.facts or {}).get("duration_s"))
+                if new is None or old is None or abs(new - old) < 0.001:
+                    continue
+                changed[req.id] = req.model_copy(
+                    update={
+                        "facts": {**req.facts, "duration_s": data["target_duration_s"]},
+                        "description": (
+                            f"Keep {_clean_seconds(new)} seconds (as long as your voice, "
+                            f"shortened from {_clean_seconds(old)})"
+                        ),
+                    }
+                )
+            elif (
                 kind == CONFLICT_TITLE_TEXT
                 and option == OPT_NO_TITLE
                 and req.kind == "text"
@@ -1825,12 +2236,16 @@ __all__ = [
     "CONFLICT_PRIORITY",
     "CONFLICT_TEXT_PLACEMENT",
     "CONFLICT_TITLE_TEXT",
+    "CONFLICT_VOICE_VS_DURATION",
+    "CONFLICT_WHICH_VOICE",
     "KEEP_OPEN_REASON",
     "MAX_ASKS_PER_QUESTION",
     "OPT_ATTACHMENT_ORDER",
     "OPT_EXTEND",
     "OPT_FEWER",
+    "OPT_MATCH_VOICE",
     "OPT_NO_TITLE",
+    "OPT_SILENT_TAIL",
     "OPT_UNORDERED",
     "title_text_choice",
     "ChoiceCapability",

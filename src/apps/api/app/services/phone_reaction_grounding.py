@@ -486,6 +486,11 @@ class GroundedReactionBeats:
     cards: list[SubtitledOverlayCard] = field(default_factory=list)
     sound_effects: list[SubtitledSoundEffect] = field(default_factory=list)
     receipt: dict[str, Any] = field(default_factory=dict)
+    # KRI-514: the placed card that holds the closing photo (`closing-photo`, or
+    # the beat card it merged into) and its width/height ratio, so the
+    # creator's closing text can sit on it. `None` when no closing photo stands.
+    closing_card_id: str | None = None
+    closing_card_aspect: float | None = None
 
 
 def ground_phone_reaction_beats(
@@ -932,4 +937,15 @@ def ground_phone_reaction_beats(
         "unplaced": unplaced,
         "closing": closing_receipt,
     }
-    return GroundedReactionBeats(cards=cards, sound_effects=sound_effects, receipt=receipt)
+    closing_card_id = merged_card_id or "closing-photo"
+    if closing_card_id not in {card.id for card in cards}:
+        closing_card_id = None
+    return GroundedReactionBeats(
+        cards=cards,
+        sound_effects=sound_effects,
+        receipt=receipt,
+        closing_card_id=closing_card_id,
+        closing_card_aspect=(
+            footprints_by_id[closing_card_id].aspect_ratio if closing_card_id else None
+        ),
+    )

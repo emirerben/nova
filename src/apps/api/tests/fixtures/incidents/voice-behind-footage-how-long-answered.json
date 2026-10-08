@@ -1,0 +1,298 @@
+{
+  "id": "voice-behind-footage-how-long-answered",
+  "incident": {
+    "ticket": "KRI-479",
+    "summary": "Synthetic: KRI-469 as stated (no length, a 147.7 s voice). The creator answers 'how long' with 45 s; the plan then composes straight through, the voice trimmed to the length and every clip shown once."
+  },
+  "kind": "output",
+  "approved": {
+    "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "original_audio",
+      "voice_mode": "continuous",
+      "montage_audio": {
+        "preserve_source_audio": true,
+        "source_media_ids": [
+          "v-voice"
+        ]
+      },
+      "ordering_choice": "chronological",
+      "media_scope": "all",
+      "render_program": "guided",
+      "pacing": "fast",
+      "rationale": "(synthetic)",
+      "story_structure": [
+        "(synthetic)"
+      ],
+      "target_duration_s": 24,
+      "selected_media_ids": [],
+      "optional_treatments": []
+    },
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "order",
+          "facts": {
+            "key": "capture_time"
+          },
+          "scope": "global",
+          "status": "open",
+          "literal": null,
+          "description": "in the order I filmed them",
+          "source_turn_id": "turn-1"
+        }
+      ]
+    },
+    "creator_request": "Use the voice from my talk-to-camera video over a fast montage of the rest, in the order I filmed them.",
+    "provenance": "synthetic"
+  },
+  "inputs": {
+    "media": [
+      {
+        "id": "v-voice",
+        "kind": "video",
+        "duration_s": 147.7,
+        "capture_time": "2026-01-01T10:00:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": true
+        }
+      },
+      {
+        "id": "v-c01",
+        "kind": "video",
+        "duration_s": 6.2,
+        "capture_time": "2026-01-01T09:14:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c02",
+        "kind": "video",
+        "duration_s": 9.4,
+        "capture_time": "2026-01-01T09:03:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c03",
+        "kind": "video",
+        "duration_s": 7.1,
+        "capture_time": "2026-01-01T09:09:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c04",
+        "kind": "video",
+        "duration_s": 12.0,
+        "capture_time": "2026-01-01T09:21:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c05",
+        "kind": "video",
+        "duration_s": 8.3,
+        "capture_time": "2026-01-01T09:09:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c06",
+        "kind": "video",
+        "duration_s": 10.5,
+        "capture_time": "2026-01-01T09:40:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c07",
+        "kind": "video",
+        "duration_s": 6.8,
+        "capture_time": "2026-01-01T09:28:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c08",
+        "kind": "video",
+        "duration_s": 9.0,
+        "capture_time": "2026-01-01T09:33:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c09",
+        "kind": "video",
+        "duration_s": 11.2,
+        "capture_time": "2026-01-01T09:05:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c10",
+        "kind": "video",
+        "duration_s": 7.7,
+        "capture_time": "2026-01-01T09:18:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c11",
+        "kind": "video",
+        "duration_s": 8.8,
+        "capture_time": "2026-01-01T09:47:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c12",
+        "kind": "video",
+        "duration_s": 13.1,
+        "capture_time": "2026-01-01T09:52:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      }
+    ],
+    "turns": [
+      {
+        "role": "user",
+        "text": "Use the voice from my talk-to-camera video over a fast montage of the rest, in the order I filmed them."
+      }
+    ],
+    "phone_proxy_media": true,
+    "notes": [
+      "Synthetic neutral media: the KRI-469 request shape (a long talk-to-camera voice clip, 12 dated clips with one capture-time tie), no private data.",
+      "The answer is replayed through the real resolve_choices; the contract then pins 45 s (the answer is evidence of the length).",
+      "expect.contract is the UNANSWERED plan's contract (no length pinned); the answered contract (45 s) is rebuilt and composed by test_voice_behind_footage_record_composes_and_verifies."
+    ],
+    "voice_behind_footage": {
+      "answers": [
+        "length_45"
+      ]
+    }
+  },
+  "expect": {
+    "contract": {
+      "audio_source_ids": [
+        "v-voice"
+      ],
+      "original_audio": "require",
+      "order_required": true,
+      "order_basis": "capture_time",
+      "order_ids": [
+        "v-c02",
+        "v-c09",
+        "v-c03",
+        "v-c05",
+        "v-c01",
+        "v-c10",
+        "v-c04",
+        "v-c07",
+        "v-c08",
+        "v-c06",
+        "v-c11",
+        "v-c12"
+      ],
+      "resolved": true
+    },
+    "output_facts": {
+      "duration_s": 45,
+      "duration_basis": "creator_request",
+      "voice_source_ids": [
+        "v-voice"
+      ],
+      "order_ids": [
+        "v-c02",
+        "v-c09",
+        "v-c03",
+        "v-c05",
+        "v-c01",
+        "v-c10",
+        "v-c04",
+        "v-c07",
+        "v-c08",
+        "v-c06",
+        "v-c11",
+        "v-c12"
+      ]
+    }
+  },
+  "observations": [
+    {
+      "label": "post-fix",
+      "source": "real voice-behind-footage composer + verify_phone_recipe(composition=) on the answered plan",
+      "proof": "pytest tests/incidents/test_incident_corpus.py::test_voice_behind_footage_record_composes_and_verifies",
+      "facts": {
+        "duration_s": 45,
+        "voice_source_ids": [
+          "v-voice"
+        ],
+        "order_ids": [
+          "v-c02",
+          "v-c09",
+          "v-c03",
+          "v-c05",
+          "v-c01",
+          "v-c10",
+          "v-c04",
+          "v-c07",
+          "v-c08",
+          "v-c06",
+          "v-c11",
+          "v-c12"
+        ]
+      },
+      "evidence": {
+        "duration_s": "recipe.duration",
+        "voice_source_ids": "audible audio-track originals",
+        "order_ids": "video-track clip order"
+      }
+    }
+  ],
+  "repro": {
+    "command": "pytest tests/incidents/test_incident_corpus.py -k voice-behind-footage-how-long-answered",
+    "status": "available"
+  }
+}

@@ -84,6 +84,7 @@ from app.routes.generative_jobs import (
 from app.services.choice_questions import (
     CONFLICT_ORDER_BASIS,
     CONFLICT_TITLE_TEXT,
+    CONFLICT_WHICH_VOICE,
     KEEP_OPEN_REASON,
     MAX_ASKS_PER_QUESTION,
     ChoiceCapability,
@@ -449,9 +450,11 @@ def _unresolved_choice_plan(
     evaluated for that cohort alone.
     """
 
+    from app.config import settings  # noqa: PLC0415
     from app.services.creator_render_contract import (  # noqa: PLC0415
         CreatorRenderContractError,
         build_render_contract,
+        commitments_from_strategy,
     )
 
     if not strategy:
@@ -462,7 +465,9 @@ def _unresolved_choice_plan(
         else ""
     )
     history = list(events)
-    capability = ChoiceCapability(creator_id=creator_id) if creator_id is not None else None
+    capability = ChoiceCapability(
+        creator_id=creator_id, voice_route=settings.voice_behind_footage_enabled
+    )
     for conflict in open_conflicts(strategy, brief, media_snapshot, capability):
         if count_asks(history, conflict.conflict_id, conflict.input_digest) < (
             MAX_ASKS_PER_QUESTION
@@ -477,7 +482,7 @@ def _unresolved_choice_plan(
                 ),
                 KEEP_OPEN_REASON,
             )
-        if conflict.kind in (CONFLICT_ORDER_BASIS, CONFLICT_TITLE_TEXT):
+        if conflict.kind in (CONFLICT_ORDER_BASIS, CONFLICT_TITLE_TEXT, CONFLICT_WHICH_VOICE):
             # The option labels follow the chat's language (the conflict is built under
             # the turn's binding) and the matcher accepts them, so they are quoted as is.
             quoted = [f'"{o.label}"' for o in conflict.options]
@@ -506,7 +511,16 @@ def _unresolved_choice_plan(
             )
     try:
         contract = build_render_contract(
-            strategy, generation_id="preflight", brief=contract_brief, media_snapshot=media_snapshot
+            strategy,
+            generation_id="preflight",
+            brief=contract_brief,
+            media_snapshot=media_snapshot,
+            # KRI-479: the dry run resolves the order the dispatch-time contract will.
+            composition=(
+                commitments_from_strategy(strategy)
+                if settings.kria_plan_authority_enabled
+                else None
+            ),
         )
     except CreatorRenderContractError as exc:
         return (
@@ -3696,6 +3710,26 @@ def _user_song_note(job: Job) -> str:
     return " ".join(notes)
 
 
+def _voice_behind_footage_note(job: Job) -> str:
+    """What the continuous-voice composer changed, in the creator's words (KRI-479).
+
+    Reads the composer's own receipt (`assembly_plan["speech_montage"]["adjustments"]`, set only
+    for `route == "voice_behind_footage"`): a trimmed voice, a length extended so every clip is
+    shown, a silent stretch, clips sharing a capture time. Empty when nothing changed.
+    """
+    record = (job.assembly_plan or {}).get("speech_montage")
+    if not isinstance(record, dict) or record.get("route") != "voice_behind_footage":
+        return ""
+    sentences: list[str] = []
+    for raw in record.get("adjustments") or []:
+        text = " ".join(str(raw).split())
+        if not text:
+            continue
+        text = text[0].upper() + text[1:]
+        sentences.append(text if text.endswith((".", "!", "?")) else f"{text}.")
+    return " ".join(sentences)
+
+
 def _approved_generation_review(
     db: Any,
     thread: CreationThread,
@@ -4096,6 +4130,9 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
                 song_note = _user_song_note(job)
                 if song_note:
                     review_text = f"{review_text} {song_note}"
+                voice_note = _voice_behind_footage_note(job)
+                if voice_note:
+                    review_text = f"{review_text} {voice_note}"
                 review = _append_sync_event(
                     db,
                     thread,

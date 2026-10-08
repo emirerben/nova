@@ -388,7 +388,325 @@ def run_phone_speech_montage_job(
     return True
 
 
+def _voice_decline(
+    message: str, reason: str, field_path: str | None, alternative: str
+) -> UnsupportedPhonePlan:
+    from app.services.creator_render_contract import CreatorRenderContractError  # noqa: PLC0415
+
+    return CreatorRenderContractError(
+        message,
+        decline_reason=reason,  # type: ignore[arg-type]
+        field_path=field_path,
+        alternative=alternative,
+    )
+
+
+def _capture_tie_note(snapshot: dict, ordered_ids: list[str]) -> str:
+    """Clips that share a capture time keep the order they were added in: say so."""
+    from app.services.clip_facts import capture_from_assignment  # noqa: PLC0415
+
+    binding = snapshot.get("creator_brief_binding")
+    media = binding.get("media_snapshot") if isinstance(binding, dict) else None
+    rows = (media or {}).get("clip_assignments") or []
+    times: dict[str, str] = {}
+    for row in rows:
+        if isinstance(row, dict) and row.get("media_id") in ordered_ids:
+            capture = capture_from_assignment(row)
+            if capture and capture.capture_time:
+                times[str(row["media_id"])] = str(capture.capture_time)
+    counts: dict[str, int] = {}
+    for stamp in times.values():
+        counts[stamp] = counts.get(stamp, 0) + 1
+    tied = sum(n for n in counts.values() if n > 1)
+    if not tied:
+        return ""
+    return f"{tied} clips share a capture time, so I kept them in the order they were added"
+
+
+def run_phone_voice_behind_footage_job(
+    job_id: str,
+    snapshot: dict,
+    all_candidates: dict,
+    *,
+    ownership_epoch: int | None,
+    load_words: Any = None,
+) -> bool:
+    """KRI-479: compose ONE clip's voice under the other clips, from the approved plan alone.
+
+    Called by the phone dispatcher only for a STAMPED job whose route resolves to
+    ``voice_behind_footage``. Everything it decides comes from the pinned contract (voice
+    clip, picture order, length, opening words), the composition commitments next to it,
+    and typed strategy values -- never the request text, a live thread, or an LLM planner.
+    The compiled recipe must pass ``verify_phone_recipe`` WITH the commitments before it is
+    pinned as the (non-editable) ``speech_montage`` variant, so a render path cannot ship a
+    different edit than the one that was approved. Returns ``False`` when it cannot start
+    (the dispatcher turns that into a typed decline); raises typed declines otherwise.
+
+    ``load_words(binding)`` is a test seam returning ``(words, language)``.
+    """
+    from app.services.creator_render_contract import (  # noqa: PLC0415
+        read_composition,
+        stamped_plan_contract,
+        verify_phone_recipe,
+    )
+
+    contract = stamped_plan_contract(snapshot, all_candidates)
+    if contract is None:
+        return False
+    if not settings.speech_excerpt_montage_enabled:
+        raise _voice_decline(
+            "The confirmed camera-audio renderer is unavailable.",
+            "capability_unavailable",
+            "montage_audio.source_media_ids[]",
+            "Try again later, or ask for a plain montage.",
+        )
+
+    from app.kria.device_render import make_device_request  # noqa: PLC0415
+    from app.pipeline.phone_recipe_shared import EXPORT_SAFETY_MARGIN_S  # noqa: PLC0415
+    from app.pipeline.phone_speech_montage_plan import (  # noqa: PLC0415
+        compile_phone_voice_behind_footage_plan,
+        implicit_picture_duration,
+        select_voice_window,
+    )
+    from app.services.device_render import (  # noqa: PLC0415
+        DEVICE_RENDER_FIELD,
+        pin_device_request,
+    )
+    from app.services.phone_rollout import validate_phone_pilot_recipe  # noqa: PLC0415
+    from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding  # noqa: PLC0415
+    from app.services.pipeline_trace import (  # noqa: PLC0415
+        pipeline_trace_for,
+        record_pipeline_event,
+    )
+    from app.tasks import generative_build as gb  # noqa: PLC0415
+
+    generation = snapshot.get("creator_generation_id")
+    if not isinstance(generation, str) or not generation:
+        return False
+    bindings = tuple(
+        PhoneSourceBinding.model_validate(row) for row in snapshot.get(PHONE_SOURCES_FIELD) or []
+    )
+    clip_paths = list(all_candidates.get("clip_paths") or [])
+    binding_by_path = {b.proxy_path: b for b in bindings}
+    if not bindings or not clip_paths or any(p not in binding_by_path for p in clip_paths):
+        return False
+    if any(
+        isinstance(record, dict) and record.get("base_generation") == generation
+        for record in (snapshot.get(DEVICE_RENDER_FIELD) or {}).values()
+    ):
+        return True  # already pinned for this generation: nothing to redo
+
+    composition = read_composition(snapshot, contract.digest)
+    if composition is None or composition.voice_picture != "hidden":
+        raise _voice_decline(
+            "This edit lost its composition plan; please try again.",
+            "evidence_missing",
+            "voice_mode",
+            "Ask me to make the edit again from your latest request.",
+        )
+    if len(contract.audio_source_ids) != 1:
+        raise _voice_decline(
+            "I need to know which clip is your voice.",
+            "needs_choice",
+            "montage_audio.source_media_ids[]",
+            "Tell me which clip is your voice.",
+        )
+    binding_by_media = {b.media_id: b for b in bindings}
+    voice_id = contract.audio_source_ids[0]
+    voice = binding_by_media.get(voice_id)
+    if voice is None or voice.media_id not in {binding_by_path[p].media_id for p in clip_paths}:
+        raise _voice_decline(
+            "I can't find the clip you picked as your voice.",
+            "capability_unavailable",
+            "montage_audio.source_media_ids[]",
+            "Pick a clip where you talk to use as the voice.",
+        )
+    if contract.order_required:
+        ordered_ids = list(contract.order_ids)
+        ordering_basis = contract.order_basis or "attachment"
+    else:
+        # No order was promised: the clips keep the order they were added in.
+        ordered_ids = [binding_by_path[p].media_id for p in clip_paths]
+        ordered_ids = [m for m in ordered_ids if m != voice_id]
+        ordering_basis = "attachment"
+    if voice_id in ordered_ids or any(m not in binding_by_media for m in ordered_ids):
+        raise _voice_decline(
+            "I can't prove the confirmed picture order for this audio edit.",
+            "evidence_missing",
+            "ordering_choice",
+            "Ask me to make the edit again from your latest request.",
+        )
+    picture = tuple(binding_by_media[m] for m in ordered_ids)
+    tie_note = _capture_tie_note(snapshot, ordered_ids) if ordering_basis == "capture_time" else ""
+
+    if load_words is None:
+        from app.services.speech_segments import transcribe_stored_clip  # noqa: PLC0415
+
+        def load_words(binding):  # noqa: ANN202
+            return transcribe_stored_clip(binding.proxy_path)
+
+    strategy = all_candidates.get("creator_strategy")
+    margin = EXPORT_SAFETY_MARGIN_S
+    with pipeline_trace_for(job_id):
+        words, _language = load_words(voice)
+        source_s = float(voice.original.duration_s)
+        adjustments: list[str] = []
+        if contract.duration_s is not None:
+            duration_s = float(contract.duration_s)
+        else:
+            # No length was stated (the plan's own pick, or the voice's): the voice's length
+            # capped at the pick, EXTENDED so every clip is shown and kept to the footage there
+            # is, all in whole frames exactly as the composer allocates them. A creator-stated
+            # length never comes through here (it is pinned in the contract).
+            full = select_voice_window(words, source_duration_s=source_s, max_length_s=None)
+            length = implicit_picture_duration(
+                picture,
+                speech_s=full.length_s + margin,
+                target_s=_strategy_target_s(strategy) or 24.0,
+                min_shot_s=composition.min_shot_s,
+            )
+            duration_s = length.duration_s
+            adjustments.extend(length.adjustments)
+        window = select_voice_window(
+            words, source_duration_s=source_s, max_length_s=duration_s - margin
+        )
+        opening = next((t for t in contract.exact_texts if t.role == "opening"), None)
+        recipe, receipt = compile_phone_voice_behind_footage_plan(
+            voice,
+            window,
+            picture,
+            duration_s=duration_s,
+            opening_title=opening.text if opening else None,
+            opening_title_hold_s=opening.duration_s if opening else None,
+            min_shot_s=composition.min_shot_s,
+            allow_silent_tail=composition.voice_span_s is not None,
+            target_lufs=settings.output_target_lufs,
+        )
+        # Counts only: the voice is the creator's private words.
+        record_pipeline_event(
+            "voice_behind_footage",
+            "composed",
+            {
+                "shots": len(receipt.shots),
+                "duration_s": round(receipt.duration_s, 3),
+                "voice_span_s": round(receipt.voice_span_s, 3),
+                "hard_cut": window.hard_cut,
+            },
+        )
+    validate_phone_pilot_recipe(recipe)
+    verified = composition
+    if composition.voice_span_s is not None:
+        # A chosen silent tail promises the voice plays what it has: the clip's length at
+        # plan time, never more than the speech the transcript actually found.
+        verified = composition.model_copy(
+            update={"voice_span_s": min(composition.voice_span_s, window.length_s)}
+        )
+    verify_phone_recipe(
+        contract,
+        recipe,
+        source_audio={b.media_id: b.original.has_audio for b in bindings},
+        composition=verified,
+    )
+    if not gb._phone_rendering_globally_available():
+        raise ValueError(
+            "Phone rendering is currently unavailable; originals remain on the device."
+        )
+
+    record = {
+        **receipt.record(),
+        "route": "voice_behind_footage",
+        # The shape brief receipts read off a camera-audio montage: the voice section only.
+        "sections": [
+            {
+                "index": 0,
+                "kind": "speech",
+                "visual": "cutaways",
+                "media_id": voice_id,
+                "quote": "",
+                "start_s": 0.0,
+                "end_s": round(receipt.duration_s, 3),
+            }
+        ],
+        "cut_count": len(receipt.shots),
+        "ordering_basis": ordering_basis,
+        "adjustments": [*adjustments, *receipt.adjustments, *([tie_note] if tie_note else [])],
+    }
+    _user_id, _assignments, brief = gb._load_unified_montage_inputs(job_id)
+    if brief is not None and brief.live():
+        from app.kria.brief_checks import (  # noqa: PLC0415
+            build_receipts,
+            plan_facts_from_speech_montage,
+        )
+
+        record["requirement_receipts"] = [
+            r.model_dump(mode="json")
+            for r in build_receipts(
+                brief.live(),
+                plan_facts_from_speech_montage(record),
+                strict_order=True,  # a stamped job has a pinned contract to verify the order
+            )
+        ]
+
+    request_obj = make_device_request(
+        job_id=uuid.UUID(job_id),
+        variant_id=SPEECH_MONTAGE_VARIANT_ID,
+        revision=1,
+        recipe=recipe,
+    )
+    with gb._sync_session() as db:
+        entry = gb._lock_owned_entry_job(db, job_id)
+        if (
+            entry is None
+            or entry[1] != ownership_epoch
+            or entry[0].status == gb._CANCELLED_JOB_STATUS
+        ):
+            return True
+        job = entry[0]
+        if not settings.phone_rendering_for(job.user_id):
+            raise ValueError("Phone rendering is unavailable for this account")
+        current = copy.deepcopy(job.assembly_plan or {})
+        if (
+            current.get("creator_generation_id") != generation
+            or current.get(PHONE_SOURCES_FIELD) != snapshot.get(PHONE_SOURCES_FIELD)
+            or current.get(CONTRACT_FIELD) != snapshot.get(CONTRACT_FIELD)
+        ):
+            return True
+        if any(
+            isinstance(rec, dict) and rec.get("base_generation") == generation
+            for rec in (current.get(DEVICE_RENDER_FIELD) or {}).values()
+        ):
+            return True
+        if current.get("variants"):
+            raise ValueError("Initial phone planning cannot replace existing variants")
+        current["variants"] = [
+            {
+                "variant_id": SPEECH_MONTAGE_VARIANT_ID,
+                "rank": 1,
+                "text_mode": "none",
+                "resolved_archetype": SPEECH_MONTAGE_VARIANT_ID,
+                "render_generation_id": generation,
+                "render_status": "awaiting_device",
+                "render_destination": "device",
+                "duration_s": round(receipt.duration_s, 3),
+                "intro_mode": "linear",
+                "intro_layout": "linear",
+                "text_elements": [],
+                "orientation": "portrait",
+                "ok": False,
+            }
+        ]
+        current[SPEECH_MONTAGE_FIELD] = record
+        job.assembly_plan = current
+        pin_device_request(job, request_obj, base_generation=generation)
+        job.status = "awaiting_device"
+        job.error_detail = None
+        job.failure_reason = None
+        db.commit()
+    return True
+
+
 __all__ = [
+    "run_phone_voice_behind_footage_job",
     "SPEECH_MONTAGE_FIELD",
     "SPEECH_MONTAGE_VARIANT_ID",
     "SpeechMontageClarification",

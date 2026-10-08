@@ -9,7 +9,11 @@ from pathlib import Path
 
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.kria.brief_binding import BriefBinding
-from app.services.creator_render_contract import CreatorRenderContract, build_render_contract
+from app.services.creator_render_contract import (
+    CreatorRenderContract,
+    build_render_contract,
+    commitments_from_strategy,
+)
 from tests.incidents.models import IncidentRecord
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "incidents"
@@ -78,6 +82,9 @@ def build_contract(record: IncidentRecord) -> CreatorRenderContract | None:
             brief=binding.resolve(),
             media_snapshot=binding.media_snapshot,
             has_voiceover=bool(record.inputs.voiceover_id),
+            # A stamped dispatch derives the plan's composition commitments (KRI-479): a
+            # continuous voice's own picture is hidden, so it is left out of the order.
+            composition=commitments_from_strategy(record.approved.strategy),
         )
     finally:
         settings.clip_intents_enabled = previous

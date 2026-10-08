@@ -549,6 +549,25 @@ changes or Reduce Motion, while panel drafts and outgoing edit cleanup stay
 shared across tool switches. See the KRI-148 section of the iOS development
 runbook for the interaction and verification contract.
 
+Text and titles are edited on the video itself (KRI-508, plan 027). One tap on
+a text in the editor preview selects it: a 2pt Sky box with an ink halo, a 28pt
+Sky resize/rotate corner kept inside the preview, and the preview grows to its
+0.6-screen cap while that text stays selected. The text's actions sit in a white
+pill next to it (above, or below near the top): **Edit text** (Lilac fill, Plum
+label), **Style** (the existing Text panel) and **Delete** (the word, failure
+red). A preview too narrow for the pill, or an accessibility text size, keeps
+them in the island strip. A second tap or Edit text types on the video: the
+header, timeline handle, transport, rail and Kria button step aside, the frame
+dims 24% around a field drawn in the text's own face, colour and place, a bar
+rides the keyboard (font chips in their own faces and a Butter Done; five
+swatches, Simple/Bold/Highlight, alignment), and a vertical size slider (24–320)
+sits in the margin beside the video. Emptying the words removes the text with a
+"Text removed · Undo" notice. While paused with nothing selected, editable text
+carries a faint dashed outline; moving shows Sky centre lines and shades the
+area platform buttons cover; resizing shows a "Size N" readout. A read-only
+title explains itself ("This title can't be edited here yet.") instead of
+ignoring the tap. See the KRI-508 section of the iOS development runbook.
+
 The native chat transcript never hard-cuts content at the screen edges:
 `kriaScrollEdgeFade` blurs (an `.ultraThinMaterial`/`.regularMaterial` strip; a
 plain fade under Reduce Transparency) everything that scrolls above the floating

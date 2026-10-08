@@ -2269,7 +2269,11 @@ async def _gate_unresolved_choices(
         answered_brief(brief, strategy),
         planned.media_snapshot,
         events,
-        ChoiceCapability(max_duration_s=float(MAX_PROPOSAL_DURATION_S), creator_id=creator_id),
+        ChoiceCapability(
+            max_duration_s=float(MAX_PROPOSAL_DURATION_S),
+            creator_id=creator_id,
+            voice_route=settings.voice_behind_footage_enabled,
+        ),
     )
     if resolution.question is not None:
         if resolution.question.kind == "title_text":

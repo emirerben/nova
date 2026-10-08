@@ -546,6 +546,7 @@ def test_every_adapter_accounts_for_every_requirement_exactly_once():
     names = set(ADAPTER_DECLARATIONS) | set(CLOUD_ADAPTER_DECLARATIONS)
     assert names == {
         "phone_speech_montage",
+        "phone_voice_behind_footage",
         "phone_guided_unified_montage",
         "phone_voiceover_montage",
         "phone_subtitled",

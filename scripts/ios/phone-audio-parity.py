@@ -55,6 +55,21 @@ is in OUT.
    at the voice-slider value, the wrong authored level), `voiceover_music_authored_doubled`
    (clip + `music_asset_id` bed, the old authored shape), `speech_music_doubled_bed`.
 
+4. One voice behind footage, once (KRI-479). `voice_behind_footage`: the recipe comes from the
+   REAL server composer (`compile_phone_voice_behind_footage_plan`, voice window from
+   `select_voice_window`) and passes `verify_phone_recipe` WITH its composition commitments
+   before it is exported. Inputs are tone/colour tagged: the voice clip is a staircase (source
+   second k = one pure tone) under a colour of its own that must NEVER show, and every picture
+   clip is a unique colour carrying its own (muted) tone, listed in a deliberately NON-sorted
+   order. The EXPORT must hold: the voice's own tones for the whole window, in order, each
+   once (a second copy from source 0 is a different tone), the picture clips' tones nowhere,
+   the picture colours in the contract's order at every cut centre, the opening text only in
+   its window (against a no-text twin), the length within one frame of the plan, and a
+   non-silent loudness. NEGATIVE CONTROLS (compare requires each to fail its named check):
+   `voice_behind_footage_unmuted` (picture clips at volume 1), `voice_behind_footage_voice_
+   stops_early` (the voice clip cut to half), `voice_behind_footage_wrapped` (a picture clip
+   shown twice, another dropped). Command: `prepare OUT --cases voice_behind_footage`.
+
 On a simulator, run the package scheme instead of `swift test`:
     TEST_RUNNER_KRIA_AUDIO_PARITY_DIR=OUT xcodebuild test -scheme KriaMediaEngine \
       -destination "platform=iOS Simulator,name=<iPhone>" \
@@ -514,6 +529,8 @@ def compare(out: Path) -> int:
                 continue  # only a reference frame source for its parent case
             if proof["kind"] == "audio_levels":
                 row, failed = _compare_audio_levels(directory, proof)
+            elif proof["kind"] == "voice_behind_footage":
+                row, failed = _compare_voice_behind_footage(out, directory, proof)
             else:
                 row, failed = _compare_user_song(out, directory, proof)
         else:
@@ -1389,7 +1406,404 @@ def _compare_audio_levels(directory: Path, proof: dict) -> tuple[dict, bool]:
     return row, bool(failed_checks)
 
 
-CASES = {"all", "parity", "user_song", "voiceover_music_authored", "speech_music"}
+
+# ----------------------------------------------------- one voice behind footage (KRI-479)
+
+VOICE_ITEM_ID = "voice"
+VOICE_PICTURE_IDS = ["cam4", "cam1", "cam6", "cam2", "cam5", "cam3"]  # NOT sorted
+VOICE_DURATION_S = 20.0
+VOICE_TITLE = "Summer in Lisbon"
+VOICE_TITLE_HOLD_S = 3.0
+VOICE_PRESENT_MIN_DB = -3.0  # the heard tone vs the source tone, per window
+VOICE_FRAME_S = 1 / 30
+
+
+def _synthetic_voice_words(seconds: float = SONG_SECONDS - 1.0) -> list[dict]:
+    """Word timings for the staircase voice: a word every 0.5 s, a sentence every 5 words."""
+    out, t, i = [], 0.4, 0
+    while t + 0.3 < seconds:
+        mark = "." if (i + 1) % 5 == 0 else ""
+        out.append({"text": f"w{i}{mark}", "start_s": round(t, 3), "end_s": round(t + 0.3, 3)})
+        t += 0.5
+        i += 1
+    return out
+
+
+def _write_voice_clip(path: Path, rgb: tuple[int, int, int]) -> None:
+    """A colour-only picture over the staircase voice (the picture must never show)."""
+    audio = path.with_suffix(".staircase.m4a")
+    _write_staircase_song(audio)
+    colour = "0x{:02x}{:02x}{:02x}".format(*rgb)
+    _ffmpeg(
+        "-f", "lavfi", "-i", f"color=c={colour}:s=1080x1920:r=30:d={SONG_SECONDS}",
+        "-i", str(audio), "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+        "-c:a", "copy", "-shortest", str(path),
+    )  # fmt: skip
+
+
+def _voice_binding(media_id: str, clip: Path) -> PhoneSourceBinding:
+    fingerprint = _fingerprint(clip)
+    return PhoneSourceBinding(
+        media_id=media_id,
+        proxy_path=f"users/u/analysis-proxy-{media_id}.mp4",
+        generation="1",
+        original=OriginalMediaDescriptor(
+            sha256=fingerprint.sha256,
+            byte_count=fingerprint.byte_count,
+            duration_s=_duration(clip),
+            width=1080,
+            height=1920,
+            has_audio=True,
+        ),
+    )
+
+
+def _write_voice_case(out: Path, case: str, recipe, files: dict[str, Path], proof: dict) -> None:
+    directory = out / "cases" / case
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "recipe.json").write_text(recipe.model_dump_json())
+    assets = {}
+    for asset in recipe.asset_manifest.assets:
+        if asset.kind == "original":
+            assets[asset.id] = str(files[asset.media_id])
+    for asset in recipe.assets:
+        if asset.id.startswith("font-"):  # typography the device ships with
+            assets[asset.id] = str(
+                REPO / "src/apps/api/assets/fonts" / asset.id.removeprefix("font-")
+            )
+    (directory / "assets.json").write_text(json.dumps(assets, indent=2))
+    (directory / "proof.json").write_text(json.dumps(proof, indent=2))
+
+
+def _voice_recipe(files: dict[str, Path]):
+    """The REAL composer's recipe, verified with its commitments, plus the contract facts."""
+    from app.pipeline.phone_speech_montage_plan import (  # noqa: PLC0415
+        compile_phone_voice_behind_footage_plan,
+        select_voice_window,
+    )
+    from app.services.creator_render_contract import (  # noqa: PLC0415
+        CompositionCommitments,
+        CreatorRenderContract,
+        TextRequirement,
+        verify_phone_recipe,
+    )
+
+    voice = _voice_binding(VOICE_ITEM_ID, files[VOICE_ITEM_ID])
+    picture = tuple(_voice_binding(m, files[m]) for m in VOICE_PICTURE_IDS)
+    window = select_voice_window(
+        _synthetic_voice_words(),
+        source_duration_s=float(voice.original.duration_s),
+        max_length_s=VOICE_DURATION_S - 0.05,
+    )
+    recipe, receipt = compile_phone_voice_behind_footage_plan(
+        voice,
+        window,
+        picture,
+        duration_s=VOICE_DURATION_S,
+        opening_title=VOICE_TITLE,
+        opening_title_hold_s=VOICE_TITLE_HOLD_S,
+    )
+    contract = CreatorRenderContract(generation_id="proof").rebind(
+        duration_s=VOICE_DURATION_S,
+        audio_source_ids=(VOICE_ITEM_ID,),
+        original_audio="require",
+        order_required=True,
+        order_ids=tuple(VOICE_PICTURE_IDS),
+        order_basis="capture_time",
+        exact_texts=(
+            TextRequirement(role="opening", text=VOICE_TITLE, duration_s=VOICE_TITLE_HOLD_S),
+        ),
+    )
+    verify_phone_recipe(
+        contract,
+        recipe,
+        source_audio={m: True for m in [VOICE_ITEM_ID, *VOICE_PICTURE_IDS]},
+        composition=CompositionCommitments(voice_picture="hidden"),
+    )
+    return recipe, receipt, window
+
+
+def prepare_voice_behind_footage(out: Path) -> None:
+    out.mkdir(parents=True, exist_ok=True)
+    sources = out / "voice_behind_footage_inputs"
+    sources.mkdir(exist_ok=True)
+    colours = list(PALETTE)
+    files: dict[str, Path] = {}
+    camera: dict[str, dict] = {}
+    for index, media_id in enumerate(sorted(VOICE_PICTURE_IDS)):
+        colour = colours[index % len(colours)]
+        files[media_id] = sources / f"{media_id}.mp4"
+        _write_camera_clip(files[media_id], PALETTE[colour], CAMERA_TONES_HZ[index], 8.0)
+        camera[media_id] = {"colour": colour, "tone_hz": CAMERA_TONES_HZ[index]}
+    files[VOICE_ITEM_ID] = sources / "voice.mp4"
+    # A colour no picture clip uses: if the voice clip's own picture shows, the check sees it.
+    _write_voice_clip(files[VOICE_ITEM_ID], (90, 90, 90))
+    recipe, receipt, window = _voice_recipe(files)
+    footage = next(t for t in recipe.tracks if t.id == "voice-footage")
+    voice = next(t for t in recipe.tracks if t.id == "voice").clips[0]
+    proof = {
+        "kind": "voice_behind_footage",
+        "duration_s": recipe.duration,
+        "voice": {
+            "source_start_s": voice.source_start,
+            "span_s": voice.source_duration,
+            "fade_in_s": voice.audio_fade_in,
+            "fade_out_s": voice.audio_fade_out,
+            "volume": voice.volume,
+            "seconds": SONG_SECONDS,
+            "freqs_hz": [_song_freq(k) for k in range(SONG_SECONDS)],
+            "amplitude": SONG_TONE_AMPLITUDE,
+            "file": "voice.mp4",
+        },
+        "camera_tones_hz": [row["tone_hz"] for row in camera.values()],
+        "clips": [
+            {
+                "id": clip.id,
+                "media_id": clip.source_asset_id,
+                "start_s": clip.timeline_start,
+                "duration_s": clip.source_duration / clip.rate,
+                "colour": camera[clip.source_asset_id]["colour"],
+            }
+            for clip in sorted(footage.clips, key=lambda c: c.timeline_start)
+        ],
+        "text": {
+            "text": VOICE_TITLE,
+            "start_s": min(layer.start for layer in recipe.text_layers),
+            "end_s": max(layer.end for layer in recipe.text_layers),
+        },
+        "palette": PALETTE,
+        "twin": "voice_behind_footage_notext",
+    }
+    _write_voice_case(out, "voice_behind_footage", recipe, files, proof)
+    twin = recipe.model_copy(
+        update={
+            "text_layers": [],
+            "required_capabilities": recipe.required_capabilities
+            - {"positionedText", "animatedText"},
+        }
+    )
+    _write_voice_case(
+        out, "voice_behind_footage_notext", twin, files, {"kind": "text_twin", "of": "voice"}
+    )
+
+    def control(name: str, expect: list[str], allowed: list[str], mutated) -> None:  # noqa: ANN001
+        # `expect` must ALL fail; nothing outside `allowed` may (a control that breaks
+        # unrelated checks proves a sloppy harness, not a sharp one).
+        _write_voice_case(
+            out,
+            name,
+            mutated,
+            files,
+            {
+                **proof,
+                "expect_failure": expect,
+                "allowed_failures": allowed,
+                "twin": "voice_behind_footage_notext",
+            },
+        )
+
+    def with_clips(track_id: str, clips: list) -> object:
+        return recipe.model_copy(
+            update={
+                "tracks": [
+                    t.model_copy(update={"clips": clips}) if t.id == track_id else t
+                    for t in recipe.tracks
+                ]
+            }
+        )
+
+    # 1. The picture clips' own sound switched back on.
+    control(
+        "voice_behind_footage_unmuted",
+        ["camera_audio_silent"],
+        ["camera_audio_silent", "voice_once"],
+        with_clips("voice-footage", [c.model_copy(update={"volume": 1.0}) for c in footage.clips]),
+    )
+    # 2. The voice stops at half its span.
+    control(
+        "voice_behind_footage_voice_stops_early",
+        ["voice_present_throughout"],
+        ["voice_present_throughout", "voice_once"],
+        with_clips("voice", [voice.model_copy(update={"source_duration": voice.source_duration / 2})]),
+    )
+    # 3. A picture clip shown twice (the wrap-around), another one never shown.
+    wrapped = list(footage.clips)
+    wrapped[3] = wrapped[3].model_copy(update={"source_asset_id": wrapped[0].source_asset_id})
+    control(
+        "voice_behind_footage_wrapped",
+        ["picture_order"],
+        ["picture_order"],
+        with_clips("voice-footage", wrapped),
+    )
+    print(
+        f"prepared voice_behind_footage cases in {out} (voice {voice.source_start:.2f}s +"
+        f" {voice.source_duration:.2f}s, {len(footage.clips)} cuts, {recipe.duration:.2f}s)"
+    )
+
+
+def _compare_voice_behind_footage(out: Path, directory: Path, proof: dict) -> tuple[dict, bool]:
+    import numpy as np  # noqa: PLC0415
+
+    name = directory.name
+    phone = directory / "phone.mp4"
+    row: dict = {"case": name, "kind": "voice_behind_footage", "checks": {}}
+    if not phone.exists():
+        print(f"{name}: phone.mp4 missing -- run AudioParityFixtureTests first")
+        return row, True
+    checks = row["checks"]
+    exported = _duration(phone)
+    checks["duration"] = {
+        "expected_s": round(proof["duration_s"], 3),
+        "actual_s": round(exported, 3),
+        "ok": abs(exported - proof["duration_s"]) <= 0.1,
+    }
+
+    order_rows = []
+    for cut in proof["clips"]:
+        at = cut["start_s"] + cut["duration_s"] / 2
+        frame = _frame_rgb(phone, at)[70:90, 35:55].reshape(-1, 3).mean(axis=0)
+        seen = _nearest_colour(frame, proof["palette"])
+        order_rows.append(
+            {"cut": cut["id"], "at_s": round(at, 2), "expected": cut["colour"], "seen": seen,
+             "ok": seen == cut["colour"]}
+        )  # fmt: skip
+    checks["picture_order"] = {"cuts": order_rows, "ok": all(r["ok"] for r in order_rows)}
+
+    voice = proof["voice"]
+    rate = 48000
+    pcm = np.asarray(_pcm(phone), dtype=np.float64)
+    source = _pcm(directory.parent.parent / "voice_behind_footage_inputs" / voice["file"])
+    freqs = voice["freqs_hz"]
+    start = voice["source_start_s"]
+    span = voice["span_s"]
+    fade = max(voice["fade_in_s"] or 0.0, voice["fade_out_s"] or 0.0, 0.5)
+    expected_peak = voice["amplitude"] * (voice["volume"] or 1.0)
+    rows, worst_leak, covered_to = [], -180.0, 0.0
+    for second in range(int(start), SONG_SECONDS):
+        centre = second + 0.5 - start  # where source second `second` lands in the export
+        if centre < fade + 0.25 or centre > span - fade - 0.25:
+            continue
+        reference = _goertzel(source, rate, second + 0.5, 0.2, freqs[second])
+        heard = _goertzel(pcm, rate, centre, 0.2, freqs[second])
+        others = [f for k, f in enumerate(freqs) if k != second] + proof["camera_tones_hz"]
+        leak_db = max(_goertzel(pcm, rate, centre, 0.2, f) for f in others)
+        leak_db = _amp_db(leak_db) - _amp_db(heard)
+        worst_leak = max(worst_leak, leak_db)
+        covered_to = max(covered_to, centre)
+        rows.append(
+            {"source_second": second, "export_s": round(centre, 2), "expected_hz": freqs[second],
+             "level_vs_source_db": round(_amp_db(heard) - _amp_db(reference), 2),
+             "loudest_other_vs_expected_db": round(leak_db, 1)}
+        )  # fmt: skip
+    present = bool(rows) and all(
+        r["level_vs_source_db"] >= VOICE_PRESENT_MIN_DB
+        and abs(r["level_vs_source_db"]) <= LEVEL_TOLERANCE_DB
+        for r in rows
+    )
+    # Where the voice really ends in the EXPORTED audio: the last 0.1 s step in which any voice
+    # tone is above -9 dB of its source level (the closing fade is below that after ~0.1 s).
+    steps = np.arange(0.05, exported - 0.05, 0.1)
+    floor_amp = expected_peak * 0.35
+    voiced = [
+        t for t in steps if max(_goertzel(pcm, rate, t, 0.05, f) for f in freqs) >= floor_amp
+    ]
+    heard_end = (max(voiced) + 0.05) if voiced else 0.0
+    # (a) the export plays the voice to where the plan says it ends (within a fade + a step);
+    # (b) that end fills the picture to within the shared tail slack. A voice cut at half its
+    # span fails (a); a voice the plan itself stopped far short of the picture fails (b).
+    slack = min(3.0, 0.15 * proof["duration_s"])  # = phone_recipe_shared.voice_tail_slack_s
+    reaches = bool(abs(heard_end - span) <= 0.5)
+    fills_picture = bool(heard_end >= proof["duration_s"] - slack - 0.1)
+    checks["voice_present_throughout"] = {
+        "windows": rows,
+        "covered_to_s": round(covered_to, 2),
+        "planned_voice_span_s": round(span, 2),
+        "heard_voice_end_s": round(heard_end, 2),
+        "tail_slack_s": round(slack, 2),
+        "level_within_db": LEVEL_TOLERANCE_DB,
+        "ok": bool(present and reaches and fills_picture),
+    }
+    checks["voice_once"] = {
+        "worst_other_tone_vs_expected_db": round(worst_leak, 1),
+        "max_db": LEAK_MAX_DB,
+        "ok": bool(rows) and worst_leak <= LEAK_MAX_DB,
+    }
+    camera_peak = max(
+        (_goertzel(pcm, rate, t + 0.25, 0.25, f) for f in proof["camera_tones_hz"]
+         for t in np.arange(0, exported - 0.5, 0.5)),
+        default=0.0,
+    )  # fmt: skip
+    camera_db = _amp_db(camera_peak) - _amp_db(expected_peak)
+    checks["camera_audio_silent"] = {
+        "loudest_camera_tone_vs_expected_voice_level_db": round(camera_db, 1),
+        "max_db": LEAK_MAX_DB,
+        "ok": camera_db <= LEAK_MAX_DB,
+    }
+    integrated, _peak = _ebur128(phone)
+    checks["loudness_sane"] = {"integrated_lufs": integrated, "ok": -45.0 < integrated < -5.0}
+
+    twin = directory.parent / proof["twin"] / "phone.mp4"
+    text = proof["text"]
+    if twin.exists():
+        inside = text["start_s"] + (text["end_s"] - text["start_s"]) / 2
+        after = min(text["end_s"] + 1.0, proof["duration_s"] - 0.3)
+
+        def diff(at: float) -> float:
+            return float(np.abs(_frame_rgb(phone, at) - _frame_rgb(twin, at)).mean())
+
+        inside_diff, after_diff = diff(inside), diff(after)
+        checks["opening_text"] = {
+            "window_s": [round(text["start_s"], 2), round(text["end_s"], 2)],
+            "mean_diff_inside": round(inside_diff, 3),
+            "mean_diff_after": round(after_diff, 3),
+            "ok": inside_diff >= TEXT_DIFF_MIN and inside_diff >= TEXT_DIFF_RATIO * after_diff,
+        }
+    else:
+        checks["opening_text"] = {"ok": False, "reason": f"{proof['twin']}/phone.mp4 missing"}
+
+    montage = directory / "montage.png"
+    try:
+        from PIL import Image  # noqa: PLC0415
+
+        tiles = [Image.fromarray(_frame_rgb(phone, r["at_s"]).astype("uint8")) for r in order_rows]
+        if twin.exists():
+            tiles += [
+                Image.fromarray(_frame_rgb(phone, inside).astype("uint8")),
+                Image.fromarray(_frame_rgb(twin, inside).astype("uint8")),
+            ]
+        sheet = Image.new("RGB", (90 * len(tiles), 160))
+        for position, tile in enumerate(tiles):
+            sheet.paste(tile, (90 * position, 0))
+        sheet.save(montage)
+        row["montage"] = str(montage)
+    except ImportError:
+        row["montage"] = None
+
+    failed_checks = sorted(k for k, v in checks.items() if not v["ok"])
+    row["failed_checks"] = failed_checks
+    expect = proof.get("expect_failure")
+    if expect:
+        # Negative control: the harness must SEE the regression it exists to catch.
+        allowed = set(proof.get("allowed_failures") or expect)
+        caught = set(expect) <= set(failed_checks) <= allowed
+        row["expect_failure"] = expect
+        row["allowed_failures"] = sorted(allowed)
+        row["negative_control_detected"] = caught
+        print(f"{name}: negative control {'DETECTED' if caught else 'MISSED'} ({failed_checks})")
+        return row, not caught
+    row["passed"] = not failed_checks
+    print(f"{name}: {'PASS' if row['passed'] else 'FAIL'} {failed_checks}")
+    return row, bool(failed_checks)
+
+
+CASES = {
+    "all",
+    "parity",
+    "user_song",
+    "voiceover_music_authored",
+    "speech_music",
+    "voice_behind_footage",
+}
 
 
 def prepare(out: Path, cases: str = "all") -> None:
@@ -1401,6 +1815,8 @@ def prepare(out: Path, cases: str = "all") -> None:
         prepare_voiceover_music_authored(out)
     if cases in {"all", "speech_music"}:
         prepare_speech_music(out)
+    if cases in {"all", "voice_behind_footage"}:
+        prepare_voice_behind_footage(out)
 
 
 if __name__ == "__main__":
