@@ -3441,6 +3441,7 @@ def reply_from_receipts(
     summary: str | None = None,
     notices: Sequence[str] = (),
     outcomes: Sequence[Mapping[str, Any]] = (),
+    edit_applied: bool = False,
 ) -> str:
     """Compose the creator-facing reply from receipts only.
 
@@ -3450,6 +3451,12 @@ def reply_from_receipts(
     carries them, so they are added back only when the summary is replaced.
     An unjudged receipt (stored before ``build_receipts`` dropped them) gets no
     line and never turns the reply into a failure notice.
+
+    ``edit_applied`` (KRI-534) is set only by an editor-operations turn, whose compiled
+    draft already exists. When nothing failed and the only open items are requirements
+    no checker can judge, say what happened ("Updated your edit") and which requirements
+    the creator should look at, instead of the alarming "I couldn't verify every change".
+    The model's own summary is still never echoed.
     """
     by_id = {req.id: req for req in brief.requirements}
     judged = [r for r in receipts if is_judged(by_id.get(r.requirement_id), r)]
@@ -3493,7 +3500,23 @@ def reply_from_receipts(
             )
         )
     body = "\n".join(f"- {line}" for line in lines)
-    if unchecked:
+    if unchecked and edit_applied and not failed and all(r.status == "met" for r in judged):
+        names = [by_id[r.requirement_id].text() for r in unchecked]
+        if len(names) == 1:
+            ask = say(
+                en=f"I can't check this automatically, so have a look: {names[0]}",
+                tr=f"Bunu otomatik olarak kontrol edemiyorum, bir göz at: {names[0]}",
+            )
+        else:
+            ask = say(
+                en="I can't check these automatically, so have a look:\n",
+                tr="Şunları otomatik olarak kontrol edemiyorum, bir göz at:\n",
+            ) + "\n".join(f"- {name}" for name in names)
+        done = say(en="Updated your edit.", tr="Düzenlemeni güncelledim.")
+        text = "\n".join(part for part in (done, body, ask) if part)
+        if notices:
+            text += "\n" + " ".join(notices)
+    elif unchecked:
         unchecked_lines = []
         for receipt in unchecked:
             verify = say(en="Couldn't verify", tr="Doğrulayamadım")

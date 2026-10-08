@@ -2620,7 +2620,11 @@ async def test_kri529_lisbon_editor_turns_scope_receipts_and_keep_each_texts_hei
         # KRI-524: a changed text lane does not prove a style ask, so it stays honestly
         # unchecked (it is not claimed "met"), but it is still just THIS turn's receipt.
         assert receipts["r2"]["verification"] == "unchecked"
-        assert "output check" not in content
+        # KRI-534: the edit applied, so the reply says so instead of "I couldn't verify".
+        assert content == (
+            "Updated your edit.\nI can't check this automatically, so have a look: "
+            "Add fade-in animation to all of them"
+        )
 
         # The creator's unsaved manual edit (a recolour) rides along as client state.
         manual = _pinned_rows()
@@ -2638,7 +2642,7 @@ async def test_kri529_lisbon_editor_turns_scope_receipts_and_keep_each_texts_hei
         receipts = {r["requirement_id"]: r for r in payload["requirement_receipts"]}
         assert set(receipts) == {"r3"}
         assert receipts["r3"]["verification"] == "unchecked"
-        assert "output check" not in content
+        assert content.startswith("Updated your edit.") and "verify" not in content.lower()
         with sync_session() as db:
             head = db.execute(
                 select(CreatorEditDraft).where(

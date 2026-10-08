@@ -2018,7 +2018,22 @@ def _brief_wants_capture_order(brief: CreativeBrief | None) -> bool:
     return brief_view(brief).order_by_capture
 
 
-def _request_recovery(manifest, prior, *, updates=(), reason="context_limit") -> PlannedKriaTurn:
+def _recovery_cause(stage: str, exc: BaseException) -> dict[str, str]:
+    """Which step failed and with what, for the admin turn/event views (KRI-536).
+
+    Class names only, never ``str(exc)``: the message can quote the creator's words.
+    ``cause_type`` is the wrapped error (``TerminalSchemaError`` vs a transient
+    ``TerminalError``), which is what tells a bad extractor output from a provider fault.
+    """
+    cause: dict[str, str] = {"stage": stage, "error_type": type(exc).__name__}
+    if exc.__cause__ is not None:
+        cause["cause_type"] = type(exc.__cause__).__name__
+    return cause
+
+
+def _request_recovery(
+    manifest, prior, *, updates=(), reason="context_limit", cause=None
+) -> PlannedKriaTurn:
     effective = apply_updates(prior, updates, source_turn_id=None)
     ids = [req.id for req in effective.live()]
     log.info("kria_request_recovery", stage="planning", reason=reason, requirement_ids=ids)
@@ -2085,6 +2100,7 @@ def _request_recovery(manifest, prior, *, updates=(), reason="context_limit") ->
             "unresolved_ids": ids,
             "stage": "planning",
             "reason": reason,
+            **({"cause": cause} if cause else {}),
         },
     )
 
@@ -2094,6 +2110,82 @@ async def _refetch_item(db: AsyncSession, item_id: uuid.UUID) -> PlanItem:
     if item is None:
         raise RuntimeError("Kria target item is unavailable")
     return item
+
+
+async def _serve_unextracted_edit(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    item_id: uuid.UUID,
+    user_message: str,
+    prior_brief: CreativeBrief | None,
+    manifest: ResolvedCreatorManifest,
+    editor_state: Any,
+    cause: dict[str, str],
+) -> PlannedKriaTurn | None:
+    """A short in-place text edit whose requirement extraction failed (KRI-536).
+
+    Abandoning "add fade-in to all texts" because the extractor's JSON was malformed left
+    the creator with "I couldn't reliably read every requested change" for an ordinary ask.
+    The edit copilot reads the whole ledger plus the message and its ops are compiled
+    deterministically into a reversible draft, so a result made ONLY of in-place text ops
+    (the KRI-219 fast-path set) is served. Request preservation (KRI-459) holds because the
+    creator's full message is recorded as one requirement that no checker can judge, so it
+    stays visible as "can't check automatically" instead of being dropped.
+
+    Returns None whenever that is not the case (a re-plan cue, a long message, no editor
+    target, the copilot asking a question or proposing structural ops): the caller then
+    keeps the honest recovery reply and the draft is untouched.
+    """
+    # Only a clearly SINGLE text ask: when extraction failed the typed requirements are
+    # unknown, so a compound ask ("smaller and keep the whole video") must not get half of
+    # it applied (KRI-524). Anything not obviously one text edit keeps the honest recovery.
+    if not (
+        _fast_path_eligible(user_message)
+        and _is_text_edit_ask(user_message)
+        and _is_single_ask(user_message)
+    ):
+        return None
+    try:
+        update = BriefUpdate(
+            operation="add", kind="style", scope="global", description=user_message
+        )
+    except ValidationError:
+        return None
+    await db.rollback()
+    item = await _refetch_item(db, item_id)
+    editor_plan = await _plan_editor_revision(
+        db,
+        thread_id=thread_id,
+        item=item,
+        user_message=user_message,
+        original_request=(
+            render_brief_request(prior_brief, latest_message=user_message) if prior_brief else None
+        ),
+        **_state_kw(editor_state),
+    )
+    if not _is_fast_path_plan(editor_plan):
+        return None
+    log.warning("kria_request_degraded_to_copilot", **cause)
+    ids = [req.id for req in apply_updates(prior_brief, (update,), source_turn_id=None).live()]
+    return PlannedKriaTurn(
+        plan=editor_plan,
+        manifest_hash=manifest.manifest_hash,
+        context_hash=manifest.context_hash,
+        brief_updates=(update,),
+        brief_route="editor_ops",
+        brief_clip_ids=tuple(str(media.media_id) for media in manifest.media),
+        brief_manifest=manifest,
+        brief_coverage={
+            "applicable_ids": ids,
+            "retrieved_ids": [],
+            "enforced_ids": [],
+            "unresolved_ids": ids,
+            "degraded_from": "request_extraction_failed",
+            "cause": cause,
+        },
+        brief_expected_version=prior_brief.version if prior_brief else 0,
+    )
 
 
 # Ops whose effect is confined to the current render's text/labels/order. A turn the
@@ -2154,6 +2246,21 @@ def _is_text_edit_ask(message: str) -> bool:
         _TEXT_EDIT_ASK.search(" ".join(message.casefold().split()))
         or _TEXT_EDIT_ASK_TR.search(loose_text(message))
     )
+
+
+# Joiners that make a message more than one ask (English and Turkish), plus list punctuation.
+_COMPOUND_CUES = re.compile(
+    r"[;,&+]|\b(?:and|also|then|plus|as well|too|after that|ve|ayr[iı]ca|sonra|bir de)\b"
+)
+
+
+def _is_single_ask(message: str) -> bool:
+    """One sentence with no joiner: the only shape safe to serve without typed requirements."""
+    text = " ".join(message.casefold().split())
+    if not text or "\n" in message.strip():
+        return False
+    sentences = [part for part in re.split(r"(?<=[.!?])\s+", text) if part.strip(" .!?")]
+    return len(sentences) == 1 and _COMPOUND_CUES.search(text) is None
 
 
 def _fast_path_eligible(message: str) -> bool:
@@ -2762,30 +2869,35 @@ async def _plan_live_turn(
                 error=str(exc)[:500],
                 exc_info=True,
             )
-            if brief_on:
-                return _request_recovery(
-                    manifest,
-                    prior_brief,
-                    updates=pre_extracted_updates if extraction_complete else (),
-                    reason="editor_planning_failed"
-                    if extraction_complete
-                    else "request_extraction_failed",
-                )
-            item = await _refetch_item(db, item_id)
-            editor_plan = await _plan_editor_revision(
-                db,
-                thread_id=thread_id,
-                item=item,
-                user_message=user_message,
-                **_state_kw(editor_state),
+            # `extract_first` implies the brief is on, so the old "brief off: let the copilot
+            # serve it" fallback that used to follow was unreachable (KRI-536).
+            cause = _recovery_cause("followup_extraction", exc)
+            if not extraction_complete:
+                try:
+                    served = await _serve_unextracted_edit(
+                        db,
+                        thread_id=thread_id,
+                        item_id=item_id,
+                        user_message=user_message,
+                        prior_brief=prior_brief,
+                        manifest=manifest,
+                        editor_state=editor_state,
+                        cause=cause,
+                    )
+                except Exception:  # noqa: BLE001 - best effort; the honest recovery follows
+                    log.warning("kria_request_degrade_failed", **cause, exc_info=True)
+                    served = None
+                if served is not None:
+                    return served
+            return _request_recovery(
+                manifest,
+                prior_brief,
+                updates=pre_extracted_updates if extraction_complete else (),
+                reason="editor_planning_failed"
+                if extraction_complete
+                else "request_extraction_failed",
+                cause=cause,
             )
-            if editor_plan is not None:
-                return PlannedKriaTurn(
-                    plan=editor_plan,
-                    manifest_hash=manifest.manifest_hash,
-                    context_hash=manifest.context_hash,
-                )
-            raise
     try:
         inputs = await _load_creator_inputs(
             db,
@@ -2848,6 +2960,7 @@ async def _plan_live_turn(
                 prior_brief,
                 updates=pre_extracted_updates,
                 reason="request_extraction_failed" if reading else "creator_planning_failed",
+                cause=_recovery_cause("main_creator", exc),
             )
         if not extract_first or answers_clip_question:
             raise
