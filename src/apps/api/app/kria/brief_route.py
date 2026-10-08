@@ -92,3 +92,54 @@ _HOUR_ONLY_TEXT = re.compile(
 def wants_hour_only_text(description: str | None, literal: str | None = None) -> bool:
     """True when the wording asks for the hour WITHOUT the minutes."""
     return bool(_HOUR_ONLY_TEXT.search(loose_text(f"{description or ''} {literal or ''}")))
+
+
+# KRI-545: "Bölüm başlıkları koy: Sabah, Üniversite, Öğle arası, Spor, Akşam". The brief keeps
+# the creator's whole list as ONE text literal while each name is printed on its own chapter's
+# clips. One reader for the montage planner (no opening title from it), the receipt checker and
+# the phone recipe verifier (the names on the clips are that text), so the three cannot disagree.
+# Whitespace alone never separates names: "Hello world" is not a list of "Hello" and "world".
+_LIST_GAP = re.compile(r"\s*(?:[,;/|·•→&+–—]|->|\s-\s)\s*|\s+(?:and|ve|then|sonra)\s+")
+_LIST_END = re.compile(r"[\s.!…]*")
+_LIST_QUOTES = str.maketrans("", "", "\"'“”‘’«»")
+
+
+def chapter_list(literal: str | None, texts: Iterable[str]) -> tuple[str, ...] | None:
+    """The ``texts`` that ``literal`` lists, in its order, when it is nothing but that list.
+
+    ``texts`` are whole on-screen strings (the labels on the clips). The literal is a list of
+    them when it is two or more different ones joined only by list separators (comma,
+    semicolon, slash, arrow, dash, "and" / "ve" / "then" / "sonra"), compared with the
+    Turkish-aware fold. Returns the matched texts as written in ``texts``; None for anything
+    else (a single name, a word that is not one of them, or names run together by spaces).
+    """
+    known: dict[str, str] = {}
+    for text in texts:
+        key = fold_text(str(text or "").translate(_LIST_QUOTES))
+        if key:
+            known.setdefault(key, str(text))
+    wanted = fold_text(str(literal or "").replace("\n", ",").translate(_LIST_QUOTES))
+    if len(known) < 2 or not wanted:
+        return None
+    keys = sorted(known, key=len, reverse=True)  # "Öğle arası" before "Öğle"
+    memo: dict[int, tuple[str, ...] | None] = {}
+
+    def walk(start: int) -> tuple[str, ...] | None:
+        if start not in memo:
+            memo[start] = None
+            for key in keys:
+                if not wanted.startswith(key, start):
+                    continue
+                end = start + len(key)
+                if _LIST_END.fullmatch(wanted, end):
+                    memo[start] = (known[key],)
+                    break
+                gap = _LIST_GAP.match(wanted, end)
+                rest = walk(gap.end()) if gap and gap.end() < len(wanted) else None
+                if rest is not None:
+                    memo[start] = (known[key], *rest)
+                    break
+        return memo[start]
+
+    parts = walk(0)
+    return parts if parts is not None and len(set(parts)) >= 2 else None
