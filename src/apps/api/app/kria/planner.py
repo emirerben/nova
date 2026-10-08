@@ -2469,7 +2469,11 @@ async def _plan_live_turn(
             extraction_complete = True
             item = await _refetch_item(db, item_id)
             plan = await db.get(ContentPlan, item.content_plan_id)
+            if plan is None or plan.user_id != creator_id:
+                raise RuntimeError("Kria target item ownership changed")
             persona = await db.get(Persona, plan.persona_id)
+            if persona is None or persona.user_id != creator_id:
+                raise RuntimeError("Kria creator context is unavailable")
         except BriefCoverageError as exc:
             return _request_recovery(
                 manifest,

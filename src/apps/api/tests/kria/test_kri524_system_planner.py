@@ -212,3 +212,42 @@ async def test_editor_failure_preserves_extracted_request_and_names_failed_stage
     assert result.brief_coverage["reason"] == "editor_planning_failed"
     assert len(result.brief_updates) == 1
     assert "read every" not in result.plan.response
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed_model", ["ContentPlan", "Persona"])
+async def test_replan_rechecks_ownership_after_model_io(monkeypatch, changed_model):
+    import uuid
+
+    output = SimpleNamespace(
+        action=AskUser(**_ASK),
+        brief_updates=[_upd("select", "global", description="funniest shots")],
+    )
+    db, item, creator_id, _, creator_runs = _wire_planner(
+        monkeypatch,
+        output=output,
+        editor_plan=None,
+        snapshot={"allowed_op_families": ["text"], "text_bars": []},
+    )
+    get = db.get.side_effect
+    seen = 0
+
+    async def changed_owner(model, identifier, **kwargs):
+        nonlocal seen
+        row = await get(model, identifier, **kwargs)
+        if model.__name__ == changed_model:
+            seen += 1
+            if seen > 1:
+                row = SimpleNamespace(**{**vars(row), "user_id": uuid.uuid4()})
+        return row
+
+    db.get.side_effect = changed_owner
+    result = await plan_live_turn(
+        db,
+        thread_id=item.id,
+        item_id=item.id,
+        creator_id=creator_id,
+        user_message="Use the funniest shots",
+    )
+    assert not creator_runs, "the planner must not receive another creator's reloaded context"
+    assert not result.plan.intents

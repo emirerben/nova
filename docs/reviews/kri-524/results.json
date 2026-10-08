@@ -50,7 +50,7 @@
   },
   "kria_gate": {
     "command": "make verify-kria",
-    "passed": 1525,
+    "passed": 1527,
     "skipped": 6,
     "exit_code": 0,
     "database": "isolated local test database"
@@ -80,7 +80,7 @@
     "Audio-level contract is not audible continuity"
   ],
   "review": {
-    "independent_review": "reviewed shared routing, selector/CAS and capability flow; parent verified findings and fixed error-stage misreporting",
+    "independent_review": "Shared routing, selector/CAS and capability flow reviewed; reload ownership checks restored and regression-tested; no remaining concrete blockers",
     "unresolved_blockers": []
   },
   "capability_gaps": {

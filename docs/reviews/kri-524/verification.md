@@ -11,7 +11,7 @@
 
 ## Executed evidence
 
-Current results: **769 passed / 2 expected failures** in offline prompt-coverage replay; **1,288 passed / 15 skipped** in the affected/evals suites; **1,525 passed / 6 skipped** in `make verify-kria`. Counts overlap and must not be added together. Scoped lint and preship checks passed. Details are recorded in `results.json`. Commands run from `src/apps/api` unless otherwise specified:
+Current results: **769 passed / 2 expected failures** in offline prompt-coverage replay; **1,288 passed / 15 skipped** in the affected/evals suites; **1,527 passed / 6 skipped** in `make verify-kria`. Counts overlap and must not be added together. Scoped lint and preship checks passed. Details are recorded in `results.json`. Commands run from `src/apps/api` unless otherwise specified:
 
 ```sh
 .venv/bin/python -m tests.evals.prompt_coverage --report
