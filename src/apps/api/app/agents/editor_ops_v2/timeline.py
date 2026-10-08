@@ -21,6 +21,7 @@ import math
 from typing import Any
 
 from app.agents.editor_ops_v2 import OpSpec
+from app.kria.reply_language import say
 
 # Mirrors src/apps/ios/Kria/Core/NativeEditorDocument.swift NativeEditorWireContract.
 LOOK_PRESETS = (
@@ -237,11 +238,19 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
     untimed = [str(n + 1) for n, index in enumerate(active) if str(index) not in times]
     if len(times) < 2:
         state.reply_notes.append(
-            "I couldn't order them by filming time: "
-            + (
-                "none of your clips carries a filming time."
-                if not times
-                else "only one of your clips carries a filming time."
+            say(
+                en="I couldn't order them by filming time: "
+                + (
+                    "none of your clips carries a filming time."
+                    if not times
+                    else "only one of your clips carries a filming time."
+                ),
+                tr="Klipleri çekim saatine göre sıralayamadım: "
+                + (
+                    "hiçbir klibinde çekim saati yok."
+                    if not times
+                    else "yalnızca bir klibinde çekim saati var."
+                ),
             )
         )
         state.reject(
@@ -257,9 +266,14 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
     if permutation == list(range(len(slots))):
         state.reorder_noop = True
         state.reply_notes.append(
-            "The clips are already in "
-            + ("newest-first" if direction == "desc" else "chronological")
-            + " order."
+            say(
+                en="The clips are already in "
+                + ("newest-first" if direction == "desc" else "chronological")
+                + " order.",
+                tr="Klipler zaten "
+                + ("en yeniden eskiye" if direction == "desc" else "çekim sırasına göre")
+                + " sıralı.",
+            )
         )
         state.reject(
             op=name, reason="capability_unavailable", detail="the clips are already in that order"
@@ -267,9 +281,20 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
         return None
     if untimed:
         state.reply_notes.append(
-            f"No filming time for clip{'s' if len(untimed) != 1 else ''} {', '.join(untimed)}."
+            say(
+                en=f"No filming time for clip{'s' if len(untimed) != 1 else ''} "
+                f"{', '.join(untimed)}.",
+                tr=f"Şu kliplerde çekim saati yok: {', '.join(untimed)}."
+                if len(untimed) != 1
+                else f"{untimed[0]}. klipte çekim saati yok.",
+            )
         )
-        state.reply_notes.append("Clips without one stay where they are.")
+        state.reply_notes.append(
+            say(
+                en="Clips without one stay where they are.",
+                tr="Çekim saati olmayan klipler yerinde kalıyor.",
+            )
+        )
     return {
         "criterion": criterion,
         "direction": direction,

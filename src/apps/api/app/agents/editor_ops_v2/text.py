@@ -23,6 +23,7 @@ import unicodedata
 from typing import Any
 
 from app.agents.editor_ops_v2 import OpSpec, is_v2_snapshot
+from app.kria.reply_language import say
 
 _FAMILY = frozenset({"text", "text_timeline"})
 ADD_TEXT_EXTRAS = (
@@ -136,7 +137,16 @@ def _selected(
         if bar["id"] in set(matched)
     ):
         state.reply_notes.append(
-            "I applied that to the captions you added in chat (free texts, not clip labels)."
+            say(
+                en=(
+                    "I applied that to the captions you added in chat "
+                    "(free texts, not clip labels)."
+                ),
+                tr=(
+                    "Bunu sohbette eklediğin yazılara uyguladım (klip etiketlerine değil, "
+                    "serbest yazılara)."
+                ),
+            )
         )
     return selector, matched
 

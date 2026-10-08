@@ -137,6 +137,8 @@ async def create_turn(
             ),
             creator_id=user.id,
             body=body,
+            # KRI-520: the reply-language fallback when the message doesn't say.
+            locale=request.headers.get("accept-language"),
         )
     except RuntimeFailure as failure:
         await db.rollback()

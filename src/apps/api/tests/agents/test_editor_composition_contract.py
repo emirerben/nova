@@ -111,3 +111,41 @@ def test_unmet_requests_are_disclosed_even_when_model_calls_them_an_edit(has_sup
     assert "Voice replacement is unavailable." in output.reply
     assert "all changes" not in output.reply
     assert output.outcome == ("proposed" if has_supported_change else "unsupported")
+
+
+def test_partial_supported_reply_respects_turkish_and_preserves_the_limitation():
+    from app.kria.reply_language import reply_language_for
+
+    request = EditCopilotInput(
+        utterance="Başlığı sarı yap ve konuşmamı Japonca sesle değiştir.",
+        reply_language="tr",
+        variant_snapshot={
+            "editor_ops_version": 2,
+            "allowed_op_families": ["text"],
+            "total_duration_s": 5,
+            "text_bars": [{"id": "title", "text": "Merhaba", "start_s": 0, "end_s": 5}],
+        },
+    )
+    with reply_language_for("tr"):
+        output = EditCopilotAgent(ModelClient()).parse(
+            json.dumps(
+                {
+                    "intent": "edit",
+                    "confidence": 1,
+                    "reply": "Hepsini yaptım.",
+                    "ops": [
+                        {"op": "patch_text_style", "bar_index": 0, "patch": {"color": "#FFFF00"}}
+                    ],
+                    "unmet_requests": [
+                        {
+                            "request": "Konuşmamı değiştir",
+                            "reason": "Ses değiştirme desteklenmiyor.",
+                        }
+                    ],
+                }
+            ),
+            request,
+        )
+    assert output.outcome == "proposed"
+    assert len(output.ops) == 1
+    assert output.reply == "Desteklenen değişiklikleri hazırladım. Ses değiştirme desteklenmiyor."

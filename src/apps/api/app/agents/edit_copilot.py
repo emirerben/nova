@@ -27,6 +27,8 @@ from app.agents._schemas.text_element import _ALLOWED_EFFECTS, _ALLOWED_FONTS, _
 from app.agents.editor_ops_v2 import text as _v2_text
 from app.agents.music_matcher import _sanitize_text
 from app.config import settings
+from app.kria.brief_route import fold_text, loose_text
+from app.kria.reply_language import prompt_language_line, say
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
 from app.services.editor_limits import (
@@ -39,7 +41,7 @@ from app.services.editor_limits import (
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-08-v73"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-08-v74"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -711,6 +713,9 @@ class EditCopilotInput(BaseModel):
     # KRI-186: the thread's first creator brief, so a later "do that again"
     # style follow-up can be read against what the creator originally asked.
     original_request: str | None = Field(default=None, max_length=_MAX_UTTERANCE_CHARS)
+    # KRI-520: the chat's language (app.kria.reply_language). None/"en" => the
+    # prompt is byte-identical and the field is left out of input dumps.
+    reply_language: str | None = Field(default=None, max_length=8, exclude_if=lambda v: v is None)
 
 
 class EditCopilotOutput(BaseModel):
@@ -2194,15 +2199,67 @@ def _sanitize_clarification_context(value: object) -> dict[str, Any] | None:
     }
 
 
-_REFERENT_PRONOUN_RE = re.compile(r"\b(?:them|those|these|all\s+of\s+(?:them|those|these))\b", re.I)
-_PENDING_NEGATION_RE = re.compile(r"\b(?:do\s+not|don't|skip|without|except)\b", re.I)
-_DURATION_ANSWER_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b", re.I)
-_VAGUE_DURATION_RE = re.compile(
-    r"\b(?:shorter|shorten|shorten(?:ed|ing)?|make\s+.+\s+short)\b", re.I
+class _BilingualPattern:
+    """An English pattern and its Turkish twin (KRI-520).
+
+    ``search`` tries the English pattern on the text as typed, then the Turkish one on
+    ``loose_text`` of it (lowercase, dotless i -> i, diacritics stripped), so "Onları 10
+    saniye yap", "ONLARI" and the ASCII "onlari" are one spelling. Turkish suffixes attach
+    to the stem ("görselleri", "klibe"), so the Turkish side matches stem prefixes. English
+    text is matched exactly as before.
+    """
+
+    __slots__ = ("_english", "_turkish")
+
+    def __init__(self, english: str, turkish: str) -> None:
+        self._english = re.compile(english, re.I)
+        self._turkish = re.compile(turkish)
+
+    def search(self, text: str) -> re.Match[str] | None:
+        found = self._english.search(text)
+        if found is not None:
+            return found
+        return self._turkish.search(loose_text(text))
+
+
+# "them/those/these" -> onlari, bunlari, sunlari, hepsini, tumunu (bare "tum" is "all the").
+_REFERENT_PRONOUN_RE = _BilingualPattern(
+    r"\b(?:them|those|these|all\s+of\s+(?:them|those|these))\b",
+    r"\b(?:onlar|bunlar|sunlar|hepsi|tumu)\w*",
 )
-_IMAGE_WORD_RE = re.compile(r"\bimages?\b", re.I)
-_VIDEO_WORD_RE = re.compile(r"\bvideos?\b", re.I)
-_CLIP_WORD_RE = re.compile(r"\bclips?\b", re.I)
+_PENDING_NEGATION_RE = _BilingualPattern(
+    r"\b(?:do\s+not|don't|skip|without|except)\b",
+    r"\b(?:yapma|yapmayin|yapmasin|ekleme|eklemeyin|dokunma|dokunmayin|kullanma|"
+    r"kullanmayin|haric|olmadan|disinda|degil|olmasin|istemiyorum|atla|atlayin|gecme)\b",
+)
+# Group 1 is the number. Turkish writes a decimal comma ("2,5 saniye"): callers normalize.
+_DURATION_ANSWER_RE = _BilingualPattern(
+    r"\b(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
+    r"\b(\d+(?:[.,]\d+)?)\s*(?:saniye\w*|sn\b|sny\b)",
+)
+_VAGUE_DURATION_RE = _BilingualPattern(
+    r"\b(?:shorter|shorten|shorten(?:ed|ing)?|make\s+.+\s+short)\b",
+    # Shortening only, like the English side: "uzat" is not a vague "how short?".
+    r"\bkisalt\w*|\bdaha\s+kisa\b|\bkisa\s+(?:yap|olsun|tut|kes)\w*",
+)
+# foto(graf), resim, gorsel; "resmi/resme" drops the vowel; "klip" softens to "klib-".
+_IMAGE_WORD_RE = _BilingualPattern(
+    r"\bimages?\b", r"\b(?:foto|resim|gorsel)\w*|\bresm(?:i|in|e|ini|ine|ide|inde)\b"
+)
+_VIDEO_WORD_RE = _BilingualPattern(r"\bvideos?\b", r"\bvideo\w*")
+_CLIP_WORD_RE = _BilingualPattern(r"\bclips?\b", r"\bkli(?:p|b)\w*")
+_STACK_RE = _BilingualPattern(r"\bstack(?:ing)?\b", r"\bust\s+uste\b|\bistif\w*|\byigin\w*")
+_UNUSED_SOURCES_RE = _BilingualPattern(
+    r"\b(?:unused|unsued|uploaded|sources?)\b",
+    r"\bkullanilmam\w*|\bkullanilmayan\w*|\byuklen\w*|\byukledi\w*|\bkaynak\w*",
+)
+_ADD_SOURCES_RE = _BilingualPattern(
+    r"\b(?:add|include|use|all)\b", r"\b(?:ekle|dahil|kullan|hepsi|tum)\w*"
+)
+
+
+def _duration_seconds(match: re.Match[str]) -> float:
+    return float(match.group(1).replace(",", "."))
 
 
 def _explicit_media_kinds(utterance: str) -> set[str]:
@@ -2251,7 +2308,7 @@ def _continues_pending_bulk(utterance: str) -> bool:
     if _REFERENT_PRONOUN_RE.search(utterance):
         return True
     names_images = bool(_IMAGE_WORD_RE.search(utterance))
-    requests_stack = bool(re.search(r"\bstack(?:ing)?\b", utterance, re.I))
+    requests_stack = bool(_STACK_RE.search(utterance))
     requests_bulk_duration = bool(
         _VAGUE_DURATION_RE.search(utterance)
         and (_IMAGE_WORD_RE.search(utterance) or _VIDEO_WORD_RE.search(utterance))
@@ -2364,7 +2421,7 @@ def _merge_prior_pending_actions(
             if duration_match is None:
                 unresolved.append(name)
                 continue
-            candidate["duration_s"] = float(duration_match.group(1))
+            candidate["duration_s"] = _duration_seconds(duration_match)
         merged.append(candidate)
     return merged, unresolved
 
@@ -2429,8 +2486,8 @@ def _bulk_pending_for_clarification(
         names.add(name)
     if (
         "add_unused_sources" not in names
-        and re.search(r"\b(?:unused|unsued|uploaded|sources?)\b", utterance, re.I)
-        and re.search(r"\b(?:add|include|use|all)\b", utterance, re.I)
+        and _UNUSED_SOURCES_RE.search(utterance)
+        and _ADD_SOURCES_RE.search(utterance)
     ):
         candidates.append(
             {
@@ -2443,7 +2500,7 @@ def _bulk_pending_for_clarification(
             }
         )
         names.add("add_unused_sources")
-    if "stack_images" not in names and re.search(r"\bstack(?:ing)?\b", utterance, re.I):
+    if "stack_images" not in names and _STACK_RE.search(utterance):
         candidates.append(
             {
                 "op": "stack_images",
@@ -2468,6 +2525,34 @@ def _bulk_pending_for_clarification(
     return [_stamp_pending_integrity(action, snapshot) for action in sanitized]
 
 
+def _integrity_reply(code: str) -> str:
+    """The reply for a saved bulk plan that can no longer be trusted (shown to the creator)."""
+    if code == "incomplete":
+        return say(
+            en="the saved all-selection proof is incomplete; refresh and try again",
+            tr='Kaydedilen "hepsi" seçimi eksik; yenile ve tekrar dene.',
+        )
+    if code == "unverifiable":
+        return say(
+            en="the complete all-selection can no longer be verified; refresh and try again",
+            tr='"Hepsi" seçiminin tamamı artık doğrulanamıyor; yenile ve tekrar dene.',
+        )
+    if code == "source_changed":
+        return say(
+            en="the source pool changed after Kria read it; refresh and try again",
+            tr="Kria okuduktan sonra kaynaklar değişti; yenile ve tekrar dene.",
+        )
+    if code == "selection_changed":
+        return say(
+            en="the complete all-selection changed after Kria read it; refresh and try again",
+            tr='Kria okuduktan sonra "hepsi" seçimi değişti; yenile ve tekrar dene.',
+        )
+    return say(
+        en="the guided editor revision changed after Kria read it; refresh and try again",
+        tr="Kria okuduktan sonra editördeki düzenleme sürümü değişti; yenile ve tekrar dene.",
+    )
+
+
 def _bulk_pending_integrity_mismatch(
     pending_actions: list[dict[str, Any]], snapshot: dict
 ) -> str | None:
@@ -2475,7 +2560,7 @@ def _bulk_pending_integrity_mismatch(
     for action in pending_actions:
         integrity = action.get("integrity")
         if not isinstance(integrity, dict):
-            return "the saved all-selection proof is incomplete; refresh and try again"
+            return _integrity_reply("incomplete")
         required_numbers = ("source_count", "timeline_count", "target_count")
         required_tokens = ("source_digest", "selection_digest")
         if any(
@@ -2487,18 +2572,18 @@ def _bulk_pending_integrity_mismatch(
             not isinstance(integrity.get(key), str) or not integrity.get(key)
             for key in required_tokens
         ):
-            return "the saved all-selection proof is incomplete; refresh and try again"
+            return _integrity_reply("incomplete")
         if not any(
             isinstance(integrity.get(key), (str, int))
             and not isinstance(integrity.get(key), bool)
             and integrity.get(key) not in {"", None}
             for key in ("revision_number", "base_generation", "state_hash")
         ):
-            return "the saved all-selection proof is incomplete; refresh and try again"
+            return _integrity_reply("incomplete")
 
         selector = action.get("selector")
         if not isinstance(selector, dict):
-            return "the saved all-selection proof is incomplete; refresh and try again"
+            return _integrity_reply("incomplete")
         targets = _bulk_target_rows(snapshot, selector, operation=str(action.get("op")))
         authoritative_rows = _bulk_selector_has_authoritative_rows(snapshot, selector)
         summary = snapshot.get("source_pool_summary")
@@ -2513,7 +2598,7 @@ def _bulk_pending_integrity_mismatch(
         )
         observed_target_count = len(targets) if authoritative_rows else summarized_count
         if not isinstance(observed_target_count, int) or isinstance(observed_target_count, bool):
-            return "the complete all-selection can no longer be verified; refresh and try again"
+            return _integrity_reply("unverifiable")
         current = _snapshot_bulk_integrity(snapshot, observed_target_count)
         for key in (
             "revision_number",
@@ -2527,18 +2612,13 @@ def _bulk_pending_integrity_mismatch(
             recorded = integrity.get(key)
             observed = current.get(key)
             if recorded is not None and observed is None:
-                return "the complete all-selection can no longer be verified; refresh and try again"
+                return _integrity_reply("unverifiable")
             if recorded is not None and recorded != observed:
                 if key in {"source_digest", "source_count"}:
-                    return "the source pool changed after Kria read it; refresh and try again"
+                    return _integrity_reply("source_changed")
                 if key == "target_count":
-                    return (
-                        "the complete all-selection changed after Kria read it; "
-                        "refresh and try again"
-                    )
-                return (
-                    "the guided editor revision changed after Kria read it; refresh and try again"
-                )
+                    return _integrity_reply("selection_changed")
+                return _integrity_reply("revision_changed")
 
         recorded_selection = integrity["selection_digest"]
         observed_selection = (
@@ -2557,9 +2637,9 @@ def _bulk_pending_integrity_mismatch(
                 "sel1",
             )
         if not isinstance(observed_selection, str) or not observed_selection:
-            return "the complete all-selection can no longer be verified; refresh and try again"
+            return _integrity_reply("unverifiable")
         if recorded_selection != observed_selection:
-            return "the complete all-selection changed after Kria read it; refresh and try again"
+            return _integrity_reply("selection_changed")
     return None
 
 
@@ -2613,15 +2693,28 @@ def _bulk_capacity_clarification(
     if requested <= available:
         return None
 
-    detail = (
-        f"The current {current_slots}-slot edit leaves room for only {available} additional "
-        f"slots under the {_GUIDED_TIMELINE_MAX_SLOTS}-slot Save limit, but all "
-        f"{requested} ready unused sources "
-        "were requested."
+    detail = say(
+        en=(
+            f"The current {current_slots}-slot edit leaves room for only {available} additional "
+            f"slots under the {_GUIDED_TIMELINE_MAX_SLOTS}-slot Save limit, but all "
+            f"{requested} ready unused sources "
+            "were requested."
+        ),
+        tr=(
+            f"Şu anki düzenlemede {current_slots} klip yeri dolu; {_GUIDED_TIMELINE_MAX_SLOTS} "
+            f"yerlik kaydetme sınırına kadar yalnızca {available} yer daha var, ama "
+            f"kullanılmayan {requested} hazır kaynağın hepsi istendi."
+        ),
     )
-    return (
-        detail + f" Choose a media kind and count of at most {available} while retaining the "
-        "current edit, or remove existing content first."
+    return detail + say(
+        en=(
+            f" Choose a media kind and count of at most {available} while retaining the "
+            "current edit, or remove existing content first."
+        ),
+        tr=(
+            f" Mevcut düzenleme korunarak en fazla {available} olacak şekilde bir medya "
+            "türü ve sayı seç ya da önce var olan içerikten kaldır."
+        ),
     )
 
 
@@ -3042,11 +3135,21 @@ def _drop_normalized_no_effect_ops(
         filtered.append(op)
     message = None
     if removed_trim_start is not None and not filtered:
-        message = (
-            f"The draft already starts at {removed_trim_start:g} seconds, so I didn't change it."
+        message = say(
+            en=(
+                f"The draft already starts at {removed_trim_start:g} seconds, "
+                "so I didn't change it."
+            ),
+            tr=(
+                f"Taslak zaten {removed_trim_start:g} saniyede başlıyor, "
+                "o yüzden bir şey değiştirmedim."
+            ),
         )
     if appearance_unchanged and not filtered and message is None:
-        message = "All selected text already has that appearance; no changes were staged."
+        message = say(
+            en="All selected text already has that appearance; no changes were staged.",
+            tr="Seçili yazıların hepsi zaten bu görünümde; hiçbir şey değişmedi.",
+        )
     return filtered, message
 
 
@@ -3109,7 +3212,11 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             custom_effect_catalog=_custom_effect_catalog(),
             max_ops=_operation_limit(input.variant_snapshot),
         )
-        return _with_v2_fragments(prompt, input.variant_snapshot)
+        prompt = _with_v2_fragments(prompt, input.variant_snapshot)
+        # KRI-520: the reply-language instruction goes last, after every fragment.
+        # "" for English/unknown: byte-identical prompt.
+        language_line = prompt_language_line(input.reply_language)
+        return f"{prompt.rstrip(chr(10))}\n\n{language_line}\n" if language_line else prompt
 
     def parse(self, raw_text: str, input: EditCopilotInput) -> EditCopilotOutput:  # noqa: A002
         try:
@@ -3357,12 +3464,24 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             if referent == "images" and any(
                 action.get("op") == "stack_images" for action in bulk_pending_actions
             ):
-                reply = (
-                    "Which images would you like to put together, "
-                    "and how short should each image be?"
+                reply = say(
+                    en=(
+                        "Which images would you like to put together, "
+                        "and how short should each image be?"
+                    ),
+                    tr=(
+                        "Hangi görselleri bir araya getirmek istersin ve "
+                        "her görsel ne kadar kısa olsun?"
+                    ),
                 )
             else:
-                reply = f"How short should the {referent or 'clips'} be?"
+                reply = say(
+                    en=f"How short should the {referent or 'clips'} be?",
+                    tr=(
+                        f"{_TR_REFERENT_NOUNS.get(referent or 'clips', 'Klipler')} "
+                        "ne kadar kısa olsun?"
+                    ),
+                )
         if not ops and state.invalid_notes:
             state.reply_notes.extend(state.invalid_notes)
         if state.reply_notes:
@@ -3372,7 +3491,10 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             else:
                 reply = f"{reply} {notes}".strip() if ops else notes
         if not reply:
-            reply = "Got it. What else should we change?"
+            reply = say(
+                en="Got it. What else should we change?",
+                tr="Tamam. Başka neyi değiştirelim?",
+            )
 
         suggestions_raw = data.get("suggestions") or []
         if not isinstance(suggestions_raw, list):
@@ -3475,7 +3597,13 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
                 # as completed. Execution/approval still belongs to the caller.
                 limitation = " ".join(reasons)[:1200]
                 if ops:
-                    reply = "I prepared the supported changes. " + limitation
+                    reply = (
+                        say(
+                            en="I prepared the supported changes. ",
+                            tr="Desteklenen değişiklikleri hazırladım. ",
+                        )
+                        + limitation
+                    )
                 elif outcome in {"no_effect", "unsupported"}:
                     outcome = "unsupported"
                     reply = limitation
@@ -3526,6 +3654,9 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         return self.schema_clarification()
 
 
+_TR_REFERENT_NOUNS = {"images": "Görseller", "videos": "Videolar", "clips": "Klipler"}
+
+
 def _server_reply(ops: list[dict], notes: str) -> str:
     """Reply composed from the ops themselves (never model prose) for a mixed bundle
     whose reorder was a no-op."""
@@ -3533,10 +3664,22 @@ def _server_reply(ops: list[dict], notes: str) -> str:
     for op in ops:
         if op.get("op") == "label_each_clip" and op.get("label_from") == "capture_time":
             count = len(op.get("labels") or [])
-            verb = "Added the filming hour to" if op.get("mode") == "append" else "Labelled"
-            parts.append(f"{verb} {count} clip{'s' if count != 1 else ''}.")
+            if op.get("mode") == "append":
+                parts.append(
+                    say(
+                        en=f"Added the filming hour to {count} clip{'s' if count != 1 else ''}.",
+                        tr=f"{count} klibe çekim saatini ekledim.",
+                    )
+                )
+            else:
+                parts.append(
+                    say(
+                        en=f"Labelled {count} clip{'s' if count != 1 else ''}.",
+                        tr=f"{count} klibe etiket ekledim.",
+                    )
+                )
         else:
-            parts.append("Updated the edit.")
+            parts.append(say(en="Updated the edit.", tr="Düzenlemeyi güncelledim."))
     return " ".join([*dict.fromkeys(parts), notes])
 
 
@@ -3584,7 +3727,10 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
         state.reject(
             op=name,
             reason="capability_unavailable",
-            detail=CAPABILITY_UNAVAILABLE_DETAIL,
+            detail=say(
+                en=CAPABILITY_UNAVAILABLE_DETAIL,
+                tr="Bunu bu düzenlemede henüz değiştiremiyorum.",
+            ),
         )
         return None
 
@@ -3657,8 +3803,15 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
             state.reject(
                 op=name,
                 reason="capability_unavailable",
-                detail=(
-                    "This text follows its narration or source timing; its timing was not changed."
+                detail=say(
+                    en=(
+                        "This text follows its narration or source timing; "
+                        "its timing was not changed."
+                    ),
+                    tr=(
+                        "Bu yazı seslendirmeyi ya da kaynağın zamanlamasını izliyor; "
+                        "zamanlaması değişmedi."
+                    ),
                 ),
             )
             return None
@@ -4028,8 +4181,8 @@ def _coerce_text_appearance(
 _CREATIVE_CAPTION_RE = re.compile(
     r"\b(explain\w*|describ\w*|what (is|s|was|happens|happened)|which part|"
     r"what (it|they|this|that) (is|are|shows?|looks?)|about what|"
-    r"part of (the |a |my )?\w+|what each|a\u00e7\u0131kla\w*|acikla\w*|anlat\w*|"
-    r"hangi b\u00f6l\u00fcm\w*|ne(ler)? ol\w+|ne oluyor)\b"
+    r"part of (the |a |my )?\w+|what each|a[\u00e7c]ikla\w*|anlat\w*|"
+    r"hangi b[\u00f6o]l[\u00fcu]m\w*|ne(ler)? ol\w+|ne oluyor)\b"
 )
 _CREATIVE_CAPTION_USE_ADD_TEXT = (
     "Place and time labels can't describe what each clip shows. Ask me to 'write a short "
@@ -4041,12 +4194,26 @@ _CREATIVE_CAPTION_CLARIFICATION = (
     "'clip 1 is the airport pickup, clip 2 is the pre-wedding') and I'll write those on the "
     "clips, or I can label them with the place names or the times instead."
 )
+_CREATIVE_CAPTION_USE_ADD_TEXT_TR = (
+    "Yer ve saat etiketleri her klibin ne gösterdiğini anlatamaz. Bana 'her klip için kısa bir "
+    "yazı yaz' de, çekimlerde gördüklerime göre yazayım."
+)
+_CREATIVE_CAPTION_CLARIFICATION_TR = (
+    "Klipleri yalnızca elimdeki bilgilerle (yer, mekân ya da çekim saati) etiketleyebilirim, o "
+    "yüzden her klibin günün hangi kısmını gösterdiğini bilemem. Her klibin ne olduğunu söyle "
+    "(örneğin 'klip 1 havalimanı karşılaması, klip 2 düğün öncesi'), ben de bunları kliplerin "
+    "üzerine yazayım; istersen yer adlarıyla ya da saatlerle de etiketleyebilirim."
+)
 
 
 _CAPTION_INSTRUCTION_WORDS = frozenset(
     "add text each every clip clips video videos explain explaining explains describe describing "
     "what happening happens write short caption captions label labels with from this that into "
     "your have could would like please make part parts something kind sort name names".split()
+    # KRI-520: the same instruction words in (folded) Turkish.
+    + "klip klibe klibi klipe klipler klipleri kliplere videoya videoyu videolar yazi yazisi "
+    "yazilar ekle ekleyin aciklayan acikla aciklayici anlat anlatan hangi hangisi kisa baslik "
+    "etiket etiketi altyazi altyazilar bunu bana lutfen".split()
 )
 
 
@@ -4063,11 +4230,11 @@ _EFFECT_WORDS = re.compile(
     r"\b(effects?|animat\w*|typewriter|fade|pop|motion|efekt\w*|animasyon\w*)\b"
 )
 _SHADOW_WORDS = re.compile(
-    r"\b(shadows?|outlines?|strokes?|borders?|glow|g\u00f6lge\w*|kontur\w*)\b"
+    r"\b(shadows?|outlines?|strokes?|borders?|glow|g[\u00f6o]lge\w*|kontur\w*)\b"
 )
 _REMOVE_WORDS = re.compile(
     r"\b(remove|removing|no|without|turn off|disable|stop|get rid of|"
-    r"kald\u0131r\w*|sil|olmas\u0131n)\b"
+    r"kaldir\w*|kapat\w*|sil|olmasin)\b"
 )
 _NO_PHASES = {"entrance": "none", "exit": "none", "loop": "none"}
 
@@ -4125,10 +4292,19 @@ def _effect_removal_pass(
         and isinstance(bar.get("animation_phases"), dict)
         and (bar["animation_phases"].get("entrance") or "none") != "none"
     }
-    label = f"the {sorted(names)[0]} animation" if len(names) == 1 else "the text animation"
-    note = f"I turned off {label}"
+    if len(names) == 1:
+        label = say(
+            en=f"the {sorted(names)[0]} animation",
+            tr=f"{sorted(names)[0]} animasyonunu",
+        )
+    else:
+        label = say(en="the text animation", tr="yazı animasyonunu")
+    note = say(en=f"I turned off {label}", tr=f"{label[:1].upper()}{label[1:]} kapattım")
     if not wants_shadow:
-        note += "; say if you also want the shadow gone"
+        note += say(
+            en="; say if you also want the shadow gone",
+            tr="; gölgeyi de kaldırmamı istersen söyle",
+        )
     state.reply_notes.append(note + ".")
     return kept
 
@@ -4205,17 +4381,36 @@ def _ground_descriptive_captions(
         names = ", ".join(str(n) for n, _w in sorted(mismatched))
         words = ", ".join(sorted({w for _n, w in mismatched}))
         state.reply_notes.append(
-            f"Clip{'s' if len(mismatched) != 1 else ''} {names} "
-            f'{"don" if len(mismatched) != 1 else "doesn"}\'t look like "{words}" from what I '
-            "saw, so I didn't put that wording on "
-            f"{'them' if len(mismatched) != 1 else 'it'}. Tell me what "
-            f"{'they are' if len(mismatched) != 1 else 'it is'}, or ask me to describe what I see."
+            say(
+                en=(
+                    f"Clip{'s' if len(mismatched) != 1 else ''} {names} "
+                    f'{"don" if len(mismatched) != 1 else "doesn"}\'t look like "{words}" from '
+                    "what I saw, so I didn't put that wording on "
+                    f"{'them' if len(mismatched) != 1 else 'it'}. Tell me what "
+                    f"{'they are' if len(mismatched) != 1 else 'it is'}, or ask me to describe "
+                    "what I see."
+                ),
+                tr=(
+                    f'Klip {names} gördüğüm kadarıyla "{words}" gibi görünmüyor, o yüzden bu '
+                    "ifadeyi koymadım. Ne olduğunu söyle ya da gördüğümü anlatmamı iste."
+                ),
+            )
         )
     if not written:
         if dropped:
             state.reply_notes.append(
-                "I can't tell what those clips show, so I didn't write captions for them. Tell me "
-                "what each clip is (for example 'clip 1 is the airport pickup') and I'll add them."
+                say(
+                    en=(
+                        "I can't tell what those clips show, so I didn't write captions for them. "
+                        "Tell me what each clip is (for example 'clip 1 is the airport pickup') "
+                        "and I'll add them."
+                    ),
+                    tr=(
+                        "Bu kliplerin ne gösterdiğini anlayamadım, o yüzden onlara yazı yazmadım. "
+                        "Her klibin ne olduğunu söyle (örneğin 'klip 1 havalimanı karşılaması'), "
+                        "ben de ekleyeyim."
+                    ),
+                )
             )
         return kept
     written.sort()
@@ -4228,26 +4423,44 @@ def _ground_descriptive_captions(
         if n not in captioned and n not in flagged and media in seen
     ]
     state.reply_notes.append(
-        "I wrote these from what I saw in each clip, so tell me if any is wrong: "
-        + "; ".join(f"clip {n}: {t}" for n, t in written)
+        say(
+            en="I wrote these from what I saw in each clip, so tell me if any is wrong: ",
+            tr="Bunları her klipte gördüklerime göre yazdım, yanlış olan varsa söyle: ",
+        )
+        + "; ".join(f"{say(en='clip', tr='klip')} {n}: {t}" for n, t in written)
         + "."
     )
     if unseen:
         plural = "s" if len(unseen) != 1 else ""
         state.reply_notes.append(
-            f"I left out clip{plural} {', '.join(unseen)}: I can't tell what "
-            f"{'they show' if plural else 'it shows'}. Tell me and I'll add "
-            f"{'them' if plural else 'it'}."
+            say(
+                en=(
+                    f"I left out clip{plural} {', '.join(unseen)}: I can't tell what "
+                    f"{'they show' if plural else 'it shows'}. Tell me and I'll add "
+                    f"{'them' if plural else 'it'}."
+                ),
+                tr=(
+                    f"Klip {', '.join(unseen)} dışarıda kaldı: ne gösterdiğini anlayamadım. "
+                    "Söylersen ekleyeyim."
+                ),
+            )
         )
     if skipped:
         state.reply_notes.append(
-            f"I didn't caption clip{'s' if len(skipped) != 1 else ''} {', '.join(skipped)}."
+            say(
+                en=(
+                    f"I didn't caption clip{'s' if len(skipped) != 1 else ''} {', '.join(skipped)}."
+                ),
+                tr=f"Klip {', '.join(skipped)} için yazı eklemedim.",
+            )
         )
     return kept
 
 
 def _label_fold(text: str) -> str:
-    return " ".join(unicodedata.normalize("NFKC", text).casefold().split())
+    # KRI-520: ``fold_text`` is the Turkish-aware fold ("AÇIKLA" and "açıkla" are one
+    # spelling; dotless i folds to i), so the regexes that read this match the folded form.
+    return fold_text(unicodedata.normalize("NFKC", text))
 
 
 # An ask about label TIMING ("texts aren't aligned with their videos", "readjust all
@@ -4256,11 +4469,15 @@ def _label_fold(text: str) -> str:
 _ALIGNMENT_ASK_RE = re.compile(
     r"\b(align\w*|out of sync|in sync|sync\w*|shift\w*|too early|too late|early|late|"
     r"re-?time\w*|readjust\w*|re-?adjust\w*|line[sd]? up|fit the|respective|"
-    r"hizala\w*|senkron\w*|kayd\w*)\b"
+    r"hizal\w*|senkron\w*|kay(?:d|ik)\w*|erken|gecik\w*)\b"
 )
 _LABEL_ALIGNMENT_NOT_WORDING = (
     "I can't fix label timing that way: that tool only changes label wording. "
     "Ask me to realign the labels to their clips and I'll line them up."
+)
+_LABEL_ALIGNMENT_NOT_WORDING_TR = (
+    "Etiketlerin zamanlamasını bu şekilde düzeltemem: bu araç yalnızca etiketlerin yazısını "
+    "değiştiriyor. Etiketleri kliplerine göre yeniden hizalamamı iste, ben de hizalayayım."
 )
 
 
@@ -4305,7 +4522,9 @@ def _coerce_label_each_clip(
             for slot in _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
         )
         state.selector_clarification = (
-            _CREATIVE_CAPTION_USE_ADD_TEXT if has_seen else _CREATIVE_CAPTION_CLARIFICATION
+            say(en=_CREATIVE_CAPTION_USE_ADD_TEXT, tr=_CREATIVE_CAPTION_USE_ADD_TEXT_TR)
+            if has_seen
+            else say(en=_CREATIVE_CAPTION_CLARIFICATION, tr=_CREATIVE_CAPTION_CLARIFICATION_TR)
         )
         state.reject(
             op=name,
@@ -4431,25 +4650,48 @@ def _coerce_label_each_clip(
     if from_time:
         if untimed:
             plural = "s" if len(untimed) != 1 else ""
-            state.reply_notes.append(f"No filming time for clip{plural} {', '.join(untimed)}.")
+            state.reply_notes.append(
+                say(
+                    en=f"No filming time for clip{plural} {', '.join(untimed)}.",
+                    tr=f"Klip {', '.join(untimed)} için çekim saati yok.",
+                )
+            )
         if labels:
             state.reply_notes.append(timezone_note(zone, zone_basis))
     if not labels:
         state.reject(
             op=name,
             reason="capability_unavailable",
-            detail=_LABEL_ALIGNMENT_NOT_WORDING
+            detail=say(en=_LABEL_ALIGNMENT_NOT_WORDING, tr=_LABEL_ALIGNMENT_NOT_WORDING_TR)
             if _ALIGNMENT_ASK_RE.search(_label_fold(state.utterance))
             else (
-                "every clip already has its label"
+                say(
+                    en="every clip already has its label",
+                    tr="Her klibin etiketi zaten var.",
+                )
                 if already_correct
                 else (
-                    "The labels you edited by hand were kept, and no other clip needs a label."
+                    say(
+                        en=(
+                            "The labels you edited by hand were kept, "
+                            "and no other clip needs a label."
+                        ),
+                        tr=(
+                            "Elle düzenlediğin etiketleri korudum, "
+                            "başka bir klibe etiket gerekmiyor."
+                        ),
+                    )
                     if kept_edited
                     else (
-                        "none of the clips carries a filming time"
+                        say(
+                            en="none of the clips carries a filming time",
+                            tr="Hiçbir klibin çekim saati yok.",
+                        )
                         if from_time
-                        else "none of the clips has a grounded place, landmark or creator label"
+                        else say(
+                            en="none of the clips has a grounded place, landmark or creator label",
+                            tr="Hiçbir klibin yeri, mekânı ya da senin yazdığın bir etiketi yok.",
+                        )
                     )
                 )
             ),
@@ -4517,7 +4759,10 @@ def _coerce_payload(
             state.reject(
                 op=name,
                 reason="stale_target",
-                detail="An uploaded visual is no longer available in this draft",
+                detail=say(
+                    en="An uploaded visual is no longer available in this draft",
+                    tr="Yüklediğin bir görsel artık bu taslakta yok",
+                ),
             )
             return None
         return {"target_ids": list(targets)}
@@ -5445,13 +5690,21 @@ def _coerce_patch(patch: dict, state: _ParseState) -> dict:
             continue
         if key == "font_family":
             if not isinstance(value, str) or value not in _ALLOWED_FONTS:
-                state.invalid_value(f"I don't have a font called {value!r}")
+                state.invalid_value(
+                    say(
+                        en=f"I don't have a font called {value!r}",
+                        tr=f"{value!r} adında bir yazı tipim yok",
+                    )
+                )
                 return {}
             out[key] = value
         elif key == "effect":
             if not isinstance(value, str) or value not in _ALLOWED_EFFECTS:
                 state.invalid_value(
-                    f"I couldn't set the effect to {value!r}; the options are "
+                    say(
+                        en=f"I couldn't set the effect to {value!r}; the options are ",
+                        tr=f"Efekti {value!r} yapamadım; seçenekler: ",
+                    )
                     + ", ".join(sorted(_ALLOWED_EFFECTS))
                 )
                 return {}
@@ -5471,8 +5724,16 @@ def _coerce_patch(patch: dict, state: _ParseState) -> dict:
                 value = _TEXT_CASE_ALIASES.get(" ".join(value.casefold().split()), value)
             if value not in _VALID_TEXT_CASE:
                 state.invalid_value(
-                    "I couldn't set the letter case to "
-                    f"{value!r}; the options are none, upper, lower, title"
+                    say(
+                        en=(
+                            "I couldn't set the letter case to "
+                            f"{value!r}; the options are none, upper, lower, title"
+                        ),
+                        tr=(
+                            f"Harf biçimini {value!r} yapamadım; "
+                            "seçenekler: none, upper, lower, title"
+                        ),
+                    )
                 )
                 return {}
             out[key] = value

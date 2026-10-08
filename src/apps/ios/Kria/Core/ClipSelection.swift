@@ -27,9 +27,14 @@ struct ClipQuestion: Equatable, Sendable {
     static let supportedVersion = 1
 
     /// The server sends the creator's own wording ("dodgeball"); capitalise the first letter for display.
+    /// Wording with Turkish letters keeps Turkish capitals ("ilk gün" -> "İlk gün", not "Ilk gün").
+    /// Decided by the label's own letters, never the device language: "ice cream" stays "Ice cream".
     static func displayLabel(_ raw: String) -> String {
         guard let first = raw.first else { return raw }
-        return first.uppercased() + raw.dropFirst()
+        let turkishLetters = CharacterSet(charactersIn: "çğıöşüÇĞİÖŞÜ")
+        let turkish = raw.unicodeScalars.contains { turkishLetters.contains($0) }
+        let capital = turkish ? String(first).uppercased(with: Locale(identifier: "tr")) : String(first).uppercased()
+        return capital + raw.dropFirst()
     }
 
     /// nil when the payload has no usable question (absent, newer version, no categories, no candidates).

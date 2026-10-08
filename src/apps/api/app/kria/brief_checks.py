@@ -34,6 +34,7 @@ from app.kria.brief_route import (
     wants_hour_only_text,
 )
 from app.kria.contracts import InferredLabel, RequirementReceipt
+from app.kria.reply_language import current_reply_language, say
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.services.clip_facts import CAPTURE_ORDER_KEYS
 
@@ -391,13 +392,38 @@ def _declared_outro_s(record: Mapping[str, Any]) -> float:
     return 0.0
 
 
+_SPOT_TR = {"first": "ilk", "last": "son", "then": "sonra"}
+# What an ordering basis / edit format is called in Turkish copy; an unknown value
+# is shown as written (underscores spaced), exactly as the English copy does.
+_BASIS_TR = {
+    "attachment": "klipleri eklediğin sıra",
+    "attachment_order": "klipleri eklediğin sıra",
+    "creator_order": "senin verdiğin sıra",
+    "song_time": "şarkının zamanı",
+    "confirmed": "onayladığın sıra",
+    "editor": "editördeki sıra",
+    "route": "rota",
+}
+_FORMAT_TR = {
+    "montage": "montaj",
+    "day_vlog": "günlük vlog",
+    "single_hero": "tek kahraman",
+    "talking_head": "konuşmalı",
+    "subtitled": "konuşmalı",
+    "narrated": "seslendirmeli",
+    "narrated_planned": "seslendirmeli",
+    "narrated_ready": "seslendirmeli",
+    "slides": "slayt",
+}
+
+
 def _sequence_label(name: str) -> str:
     """``first: the video that is blue`` (the planner's outcome name) -> ``the video that is
     blue (first)``, the way a creator would say it back."""
     spot, _, words = name.partition(": ")
     if words and spot in ("first", "last", "then"):
-        return f"{words} ({spot})"
-    return name or "the order you described"
+        return say(en=f"{words} ({spot})", tr=f"{words} ({_SPOT_TR[spot]})")
+    return name or say(en="the order you described", tr="tarif ettiğin sıra")
 
 
 def _sequence_problems(record: Mapping[str, Any], codes: tuple[str | None, ...]) -> tuple[str, ...]:
@@ -685,7 +711,7 @@ def _receipt(
         verification=verification,  # type: ignore[arg-type]
         stage=stage,  # type: ignore[arg-type]
         target_media_ids=target_media_ids,
-        reason=reason[:300] if reason else None,
+        reason=_loc(reason)[:300] if reason else None,
         inferred=list(dict.fromkeys(str(x) for x in inferred))[:24],
         inferred_labels=list(labels)[:24],
     )
@@ -724,8 +750,18 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
             return _receipt(
                 req,
                 "partial",
-                f"{len(bad)} of {len(facts.per_clip_text)} labels still show more than the "
-                "hour. A re-render can't reformat them; ask me again to change them in the editor.",
+                say(
+                    en=(
+                        f"{len(bad)} of {len(facts.per_clip_text)} labels still show more than "
+                        "the hour. A re-render can't reformat them; ask me again to change "
+                        "them in the editor."
+                    ),
+                    tr=(
+                        f"{len(facts.per_clip_text)} etiketin {len(bad)} tanesi hâlâ saatten "
+                        "fazlasını gösteriyor. Videoyu yeniden oluşturmak bunları düzeltmez; "
+                        "editörde değiştirmem için tekrar iste."
+                    ),
+                ),
             )
     wanted = _fold(req.literal or "")
     core = _stand_in_core(req.literal)
@@ -743,7 +779,14 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
         ):
             return _receipt(req, "partial", _CANT_CHECK_EDITOR_CLIP_TEXT)
         if wanted:
-            return _receipt(req, "partial", "That exact text isn't in this edit.")
+            return _receipt(
+                req,
+                "partial",
+                say(
+                    en="That exact text isn't in this edit.",
+                    tr="Bu tam yazı bu düzenlemede yok.",
+                ),
+            )
         return _receipt(req, "partial", _CANT_CHECK_EDITOR_CLIP_TEXT)
     if facts.editor and wanted and _wants_exact_text(req):
         # "just say X" / "X only": every clip this turn touched must read exactly X.
@@ -753,8 +796,16 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
             return _receipt(
                 req,
                 "partial",
-                f"{len(off)} of {total} text{'s' if total != 1 else ''} "
-                f"didn't end up reading exactly \u201c{req.literal}\u201d.",
+                say(
+                    en=(
+                        f"{len(off)} of {total} text{'s' if total != 1 else ''} "
+                        f"didn't end up reading exactly \u201c{req.literal}\u201d."
+                    ),
+                    tr=(
+                        f"{total} yazının {len(off)} tanesi tam olarak "
+                        f"\u201c{req.literal}\u201d olmadı."
+                    ),
+                ),
             )
     if (
         not facts.editor
@@ -783,12 +834,29 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
             return _receipt(
                 req,
                 "partial",
-                "That clip's label repeated the clip before it, so I left it off.",
+                say(
+                    en="That clip's label repeated the clip before it, so I left it off.",
+                    tr=("O klibin etiketi önceki klibin etiketiyle aynıydı, o yüzden koymadım."),
+                ),
             )
         if value is None:
-            return _receipt(req, "not_possible", "That clip didn't get its own text in this draft.")
+            return _receipt(
+                req,
+                "not_possible",
+                say(
+                    en="That clip didn't get its own text in this draft.",
+                    tr="O klibe bu taslakta kendi yazısı gelmedi.",
+                ),
+            )
         if wanted and not _contains_text(value, wanted):
-            return _receipt(req, "partial", "That clip's text isn't the exact text you gave.")
+            return _receipt(
+                req,
+                "partial",
+                say(
+                    en="That clip's text isn't the exact text you gave.",
+                    tr="O klibin yazısı verdiğin yazıyla aynı değil.",
+                ),
+            )
         guessed = _guess_labels(facts, only=clip)
         return _receipt(req, "met", None, [g.text for g in guessed], guessed)
 
@@ -805,7 +873,14 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
         given = [*facts.per_clip_text.values(), *facts.positional_labels]
         if not any(_contains_text(t, wanted) for t in given):
             return _receipt(
-                req, "partial", "The clips don't carry the exact text you gave.", inferred, guessed
+                req,
+                "partial",
+                say(
+                    en="The clips don't carry the exact text you gave.",
+                    tr="Kliplerde verdiğin tam yazı yok.",
+                ),
+                inferred,
+                guessed,
             )
     if total and count >= total:
         if facts.unreadable_label_clip_ids:
@@ -813,8 +888,13 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
             return _receipt(
                 req,
                 "partial",
-                f"{n} clip{'s are' if n != 1 else ' is'} too short for its text to stay "
-                "on screen long enough to read.",
+                say(
+                    en=(
+                        f"{n} clip{'s are' if n != 1 else ' is'} too short for its text to stay "
+                        "on screen long enough to read."
+                    ),
+                    tr=f"{n} klip, yazısının okunacak kadar ekranda kalması için çok kısa.",
+                ),
                 inferred,
                 guessed,
             )
@@ -823,17 +903,34 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
         return _receipt(
             req,
             "not_possible",
-            "No clip got its own text in this draft."
-            if not total
-            else f"None of the {total} clips got its own text in this draft.",
+            say(
+                en=(
+                    "No clip got its own text in this draft."
+                    if not total
+                    else f"None of the {total} clips got its own text in this draft."
+                ),
+                tr=(
+                    "Bu taslakta hiçbir klibe kendi yazısı gelmedi."
+                    if not total
+                    else f"Bu taslakta {total} klibin hiçbirine kendi yazısı gelmedi."
+                ),
+            ),
         )
-    reason = f"Text landed on {count} of {total} clips." if total else f"Text on {count} clips."
+    reason = say(
+        en=(f"Text landed on {count} of {total} clips." if total else f"Text on {count} clips."),
+        tr=(
+            f"Yazı {total} klibin {count} tanesine geldi." if total else f"{count} klipte yazı var."
+        ),
+    )
     repeats = len(facts.repeat_label_clip_ids)
     if repeats:
         # Left off on purpose: the same name twice in a row adds nothing to the viewer.
-        reason = (
-            f"{reason[:-1]}; {repeats} more repeated the label before, so I left "
-            f"{'them' if repeats != 1 else 'it'} off."
+        reason = say(
+            en=(
+                f"{reason[:-1]}; {repeats} more repeated the label before, so I left "
+                f"{'them' if repeats != 1 else 'it'} off."
+            ),
+            tr=(f"{reason[:-1]}; {repeats} tanesi önceki etiketin aynısıydı, o yüzden koymadım."),
         )
     return _receipt(req, "partial", reason, inferred, guessed)
 
@@ -849,15 +946,26 @@ def _check_filming_time_text(req: BriefRequirement, facts: PlanFacts) -> Require
         return _receipt(
             req,
             "not_possible",
-            "The labels are place names, not the hour each clip was filmed.",
+            say(
+                en="The labels are place names, not the hour each clip was filmed.",
+                tr="Etiketler yer adı, klibin çekildiği saat değil.",
+            ),
         )
     if len(timed) < total:
         missing = total - len(timed)
         return _receipt(
             req,
             "partial",
-            f"Filming hour on {len(timed)} of {total} clips; "
-            f"{missing} {'have' if missing != 1 else 'has'} no filming time.",
+            say(
+                en=(
+                    f"Filming hour on {len(timed)} of {total} clips; "
+                    f"{missing} {'have' if missing != 1 else 'has'} no filming time."
+                ),
+                tr=(
+                    f"Çekim saati {total} klibin {len(timed)} tanesinde var; "
+                    f"{missing} klibin çekim saati yok."
+                ),
+            ),
         )
     if facts.label_timezone:
         # Delivered, but the creator must know which zone the hours are in.
@@ -927,10 +1035,17 @@ def _route_reversed_reason(req: BriefRequirement, facts: PlanFacts) -> str | Non
     if forward or not backward:
         return None
     saw_first, saw_last = _short(first.label or end), _short(last.label or start)
-    return (
-        f"Your clips were filmed starting at {saw_first} and ending at {saw_last}, the reverse "
-        f"of the route you gave ({_short(start)} → {_short(end)}). I kept filming order; "
-        "tell me if you want your route order instead."
+    return say(
+        en=(
+            f"Your clips were filmed starting at {saw_first} and ending at {saw_last}, the "
+            f"reverse of the route you gave ({_short(start)} → {_short(end)}). I kept filming "
+            "order; tell me if you want your route order instead."
+        ),
+        tr=(
+            f"Klipler şöyle çekilmiş: başlangıç {saw_first}, bitiş {saw_last}. Bu, verdiğin "
+            f"rotanın ({_short(start)} → {_short(end)}) tersi. Çekim sırasını korudum; rota "
+            "sırasını istersen söyle."
+        ),
     )
 
 
@@ -995,7 +1110,16 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
             return _receipt(
                 req,
                 unmet,
-                f"This draft is ordered by {basis.replace('_', ' ')}, not the order you asked for.",
+                say(
+                    en=(
+                        f"This draft is ordered by {basis.replace('_', ' ')}, not the order "
+                        "you asked for."
+                    ),
+                    tr=(
+                        "Bu taslak istediğin sıraya göre değil, şuna göre dizilmiş: "
+                        f"{_BASIS_TR.get(basis, basis.replace('_', ' '))}."
+                    ),
+                ),
             )
     elif facts.sequence_statuses:
         # The creator described the order in their own words; the plan placed (or
@@ -1005,7 +1129,10 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
             return _receipt(
                 req,
                 "partial" if landed or not required else "not_possible",
-                "some of the groups you named are not where you said",
+                say(
+                    en="some of the groups you named are not where you said",
+                    tr="söylediğin gruplardan bazıları dediğin yerde değil",
+                ),
             )
     elif basis in _ARRIVAL_BASES and key != basis:
         # An order only the creator's words describe, and nothing in the plan applied
@@ -1034,10 +1161,27 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
         # the render; say so before.
         said = []
         if facts.sequence_unmet:
-            said.append(f"these aren't where you asked: {', '.join(facts.sequence_unmet)}")
+            said.append(
+                say(
+                    en=f"these aren't where you asked: {', '.join(facts.sequence_unmet)}",
+                    tr=f"bunlar istediğin yerde değil: {', '.join(facts.sequence_unmet)}",
+                )
+            )
         if facts.sequence_absent:
-            said.append(f"I found no clips for: {', '.join(facts.sequence_absent)}")
-        return _receipt(req, unmet, f"Your clips are in filming order, but {'; '.join(said)}.")
+            said.append(
+                say(
+                    en=f"I found no clips for: {', '.join(facts.sequence_absent)}",
+                    tr=f"şunlar için klip bulamadım: {', '.join(facts.sequence_absent)}",
+                )
+            )
+        return _receipt(
+            req,
+            unmet,
+            say(
+                en=f"Your clips are in filming order, but {'; '.join(said)}.",
+                tr=f"Klipler çekim sırasında, ama {'; '.join(said)}.",
+            ),
+        )
     missing_anchor = _unplaced_order_anchor(req, facts)
     if missing_anchor is not None:
         # KRI-522: "chronological, starting with the blue video" lives in the brief as
@@ -1050,14 +1194,24 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
         return _receipt(
             req,
             "partial",
-            f"{n} clip{'s' if n != 1 else ''} had no capture time, so I kept "
-            f"{'their' if n != 1 else 'its'} attachment order.",
+            say(
+                en=(
+                    f"{n} clip{'s' if n != 1 else ''} had no capture time, so I kept "
+                    f"{'their' if n != 1 else 'its'} attachment order."
+                ),
+                tr=(f"{n} klibin çekim zamanı yoktu, o yüzden bunları eklediğin sırada bıraktım."),
+            ),
         )
     if key in _CAPTURE_ORDER_KEYS and facts.ordering_choice == "group_first":
         # Honest: the creator picked grouping over strict filming order, so the order
         # holds inside each group only.
         return _receipt(
-            req, "met", "you chose grouping first, so it's in filming order inside each group"
+            req,
+            "met",
+            say(
+                en="you chose grouping first, so it's in filming order inside each group",
+                tr="önce gruplamayı seçtin, o yüzden her grubun içinde çekim sırasında",
+            ),
         )
     return _receipt(req, "met", None)
 
@@ -1305,7 +1459,9 @@ def _names(values: Iterable[str]) -> str:
     items = list(dict.fromkeys(values))
     shown = ", ".join(items[:_MAX_NAMED_IN_REASON])
     extra = len(items) - _MAX_NAMED_IN_REASON
-    return f"{shown} and {extra} more" if extra > 0 else shown
+    if extra <= 0:
+        return shown
+    return say(en=f"{shown} and {extra} more", tr=f"{shown} ve {extra} tane daha")
 
 
 # Reasons that mean "the facts to judge this were not available": neutral in the
@@ -1318,6 +1474,7 @@ _CANT_CHECK_TAKE = "I can't confirm this draft keeps your whole take."
 _CANT_CHECK_TITLE = "I can't confirm where this draft's title came from."
 _NO_TITLE = "I didn't add a title because no creator text or grounded brief facts were available."
 NO_TITLE_REASON = _NO_TITLE  # stored on a blocked render's receipts (see `render_block_recovery`)
+
 _CANT_CONFIRM_LENGTH = "I can't confirm this draft's length yet."
 _TALKING_KEEPS_WHOLE_TAKE = "A Talking edit keeps your whole take, so its length follows your clip"
 _VOICEOVER_SETS_LENGTH = "A voiceover edit runs as long as your voiceover"
@@ -1336,7 +1493,74 @@ _NAMED_CUTS_NEED_EDITOR = (
     "a retake or a specific line isn't cut automatically yet, so trim that in the editor"
 )
 _CAPTIONS_WORD_BY_WORD = "words light up as you say them"
-_NEUTRAL_REASONS = frozenset(
+
+# The Turkish twin of every static reason above (KRI-520). Reasons are written into
+# receipts when a turn runs, in that turn's language, so everything that tells one
+# reason from another (neutral, format limit, wordless title) accepts both texts;
+# `_loc` also turns a reason a worker stored in English into Turkish for a Turkish reply.
+_REASON_TR: dict[str, str] = {
+    _CANT_CHECK_EDITOR_CLIP_TEXT: "Editör düzenlemesinde klip başına yazıyı doğrulayamıyorum.",
+    _CANT_CHECK_TARGET_CLIP_TEXT: "Bu taslakta o klibin yazısını doğrulayamıyorum.",
+    _CANT_CONFIRM_ORDER: "Bu taslağın kullandığı sırayı doğrulayamıyorum.",
+    _CANT_CHECK_ORDER_RULE: "Bu sıralamayı otomatik olarak doğrulayamıyorum.",
+    _ORDER_NOT_APPLIED: (
+        "Anlattığını kliplerle eşleştiremedim, o yüzden klipler eklediğin sırada kaldı."
+    ),
+    _ORDER_NOT_RECORDED: "Düzenlemenin kullandığı sırayı doğrulayamadım.",
+    _ORDER_RULE_NOT_APPLIED: (
+        "Bu sıralama kuralını doğrulayamıyorum ve klipler kurala uyduğunu gösterebileceğim "
+        "bir sırada değil."
+    ),
+    _CANT_CHECK_BEATS: "Bu taslakta sözlerine göre çıkan görselleri henüz kontrol edemiyorum.",
+    _CANT_CHECK_SPEECH: "Bu taslaktaki konuşma bölümlerini henüz kontrol edemiyorum.",
+    _CANT_CHECK_TAKE: "Bu taslağın çekimini baştan sona koruduğunu doğrulayamıyorum.",
+    _CANT_CHECK_TITLE: "Bu taslaktaki başlığın nereden geldiğini doğrulayamıyorum.",
+    _NO_TITLE: (
+        "Başlık eklemedim, çünkü kullanabileceğim bir yazın ya da isteğinde dayanabileceğim "
+        "bir bilgi yoktu."
+    ),
+    _CANT_CONFIRM_LENGTH: "Bu taslağın uzunluğunu henüz doğrulayamıyorum.",
+    _TALKING_KEEPS_WHOLE_TAKE: (
+        "Konuşmalı düzenleme çekimini baştan sona korur, o yüzden uzunluğu klibini izler"
+    ),
+    _VOICEOVER_SETS_LENGTH: "Seslendirmeli düzenleme seslendirmen kadar sürer",
+    _CANT_CHECK_TIMING: "Bu süreyi otomatik olarak doğrulayamıyorum.",
+    _CANT_CHECK_CLEANUP: "Bu taslakta konuşma temizliğini henüz kontrol edemiyorum.",
+    _CANT_CHECK_CAPTIONS: "Bu taslaktaki altyazıları henüz kontrol edemiyorum.",
+    _NO_CHECKER: "Bunu henüz otomatik olarak doğrulayamıyorum.",
+    _CLEANUP_PLANNED: "Konuşma temizliği uzun duraklamaları keser",
+    _CLEANUP_AT_APPROVAL: (
+        "Onaylarken \u201cKonuşmayı temizle\u201d seçeneğini seç, uzun duraklamalar kesilir"
+    ),
+    _CLEANUP_IF_OFFERED: (
+        "Onaylarken \u201cKonuşmayı temizle\u201d çıkarsa, uzun duraklamaları kesmek için onu seç"
+    ),
+    _CLEANUP_UNAVAILABLE: (
+        "Konuşma temizliği bu proje için henüz yok, o yüzden duraklamalar kalıyor"
+    ),
+    _NAMED_CUTS_NEED_EDITOR: (
+        "tekrar çekim ya da belirli bir cümle henüz otomatik kesilmiyor, onu editörde kırp"
+    ),
+    _CAPTIONS_WORD_BY_WORD: "kelimeler sen söylerken yanıyor",
+}
+
+
+def _loc(reason: str) -> str:
+    """A static English reason in the chat's language; any other text comes back as is."""
+    return say(en=reason, tr=_REASON_TR.get(reason, reason))
+
+
+# NO_TITLE_REASON is the English text; a receipt written in a Turkish turn carries the
+# Turkish twin, so compare with `is_no_title_reason`.
+_NO_TITLE_REASONS = frozenset({_NO_TITLE, _REASON_TR[_NO_TITLE]})
+
+
+def is_no_title_reason(reason: object) -> bool:
+    """True for the receipt reason of a title requirement that came with no words."""
+    return isinstance(reason, str) and reason in _NO_TITLE_REASONS
+
+
+_NEUTRAL_EN = frozenset(
     {
         _CANT_CHECK_BEATS,
         _CANT_CHECK_SPEECH,
@@ -1353,6 +1577,7 @@ _NEUTRAL_REASONS = frozenset(
         _NO_CHECKER,
     }
 )
+_NEUTRAL_REASONS = _NEUTRAL_EN | frozenset(_REASON_TR[reason] for reason in _NEUTRAL_EN)
 
 # Reasons that describe what the format the creator chose does with an ask, not a
 # simplification Kria made instead of it: a Talking edit's length follows the take,
@@ -1360,13 +1585,17 @@ _NEUTRAL_REASONS = frozenset(
 # receipt stays an honest "Partly"; it never turns a first draft into the "should I
 # make a simpler version?" question (`needs_creator_choice`), which only makes sense
 # when there is a different, simpler plan to choose.
-_FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
+_FORMAT_LIMIT_EN: tuple[str, ...] = (
     _TALKING_KEEPS_WHOLE_TAKE,
     _VOICEOVER_SETS_LENGTH,
     _CLEANUP_PLANNED,
     _CLEANUP_AT_APPROVAL,
     _CLEANUP_IF_OFFERED,
     _CLEANUP_UNAVAILABLE,
+)
+_FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
+    *_FORMAT_LIMIT_EN,
+    *(_REASON_TR[reason] for reason in _FORMAT_LIMIT_EN),
 )
 
 
@@ -1407,16 +1636,39 @@ def _check_whole_take(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         return _receipt(
             req,
             "partial",
-            f"This {facts.edit_format.replace('_', ' ')} edit cuts your footage down; "
-            "a Talking edit keeps the whole take.",
+            say(
+                en=(
+                    f"This {facts.edit_format.replace('_', ' ')} edit cuts your footage down; "
+                    "a Talking edit keeps the whole take."
+                ),
+                tr=(
+                    f"Bu düzenleme ({_FORMAT_TR.get(facts.edit_format, facts.edit_format)}) "
+                    "çekimlerini kısaltır; Konuşmalı düzenleme çekimin tamamını korur."
+                ),
+            ),
         )
     if facts.video_clip_count is None:
         return _receipt(req, "partial", _CANT_CHECK_TAKE)
     if facts.video_clip_count != 1:
-        return _receipt(req, "partial", "This edit uses one of your clips, not every take.")
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="This edit uses one of your clips, not every take.",
+                tr="Bu düzenleme kliplerinden yalnızca birini kullanıyor, her çekimi değil.",
+            ),
+        )
     if facts.speech_cleanup_enabled:
         return _receipt(
-            req, "partial", "Speech cleanup is on, so some pauses or retakes may be cut."
+            req,
+            "partial",
+            say(
+                en="Speech cleanup is on, so some pauses or retakes may be cut.",
+                tr=(
+                    "Konuşma temizliği açık, o yüzden bazı duraklamalar ya da tekrar "
+                    "çekimler kesilebilir."
+                ),
+            ),
         )
     return _receipt(req, "met", None)
 
@@ -1433,13 +1685,29 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     if wants_beats:
         if not facts.reaction_beats_available:
             problems.append(
-                "Photo and sound pop-ins timed to your words aren't available for this edit yet"
+                say(
+                    en="Photo and sound pop-ins timed to your words aren't available for this "
+                    "edit yet",
+                    tr="Sözlerine göre çıkan fotoğraf ve ses efektleri bu düzenleme için henüz yok",
+                )
             )
         elif not beats:
             problems.append(
-                f"I couldn't find the photos or stickers for {_names(facts.dropped_beat_triggers)}"
+                say(
+                    en=(
+                        "I couldn't find the photos or stickers for "
+                        f"{_names(facts.dropped_beat_triggers)}"
+                    ),
+                    tr=(
+                        "Şunlar için fotoğraf ya da çıkartma bulamadım: "
+                        f"{_names(facts.dropped_beat_triggers)}"
+                    ),
+                )
                 if facts.dropped_beat_triggers
-                else "This draft has no pop-ins timed to your words"
+                else say(
+                    en="This draft has no pop-ins timed to your words",
+                    tr="Bu taslakta sözlerine göre çıkan görsel yok",
+                )
             )
         else:
             delivered = True
@@ -1452,25 +1720,56 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                 and not any(_trigger_heard(t, n) for n in missing)
             ]
             if missing:
-                problems.append(f"No pop-in for {_names(missing)}")
+                problems.append(
+                    say(
+                        en=f"No pop-in for {_names(missing)}",
+                        tr=f"Şunlar için çıkan görsel yok: {_names(missing)}",
+                    )
+                )
             if unresolved:
-                problems.append(f"I couldn't find the photo or sticker for {_names(unresolved)}")
+                problems.append(
+                    say(
+                        en=f"I couldn't find the photo or sticker for {_names(unresolved)}",
+                        tr=(f"Şunlar için fotoğraf ya da çıkartma bulamadım: {_names(unresolved)}"),
+                    )
+                )
             text = _req_text(req)
             if _SOUND_RE.search(text) and not facts.beat_sound_triggers:
-                problems.append("None of the pop-ins plays a sound")
+                problems.append(
+                    say(
+                        en="None of the pop-ins plays a sound",
+                        tr="Çıkan görsellerin hiçbiri ses çalmıyor",
+                    )
+                )
             if _VISUAL_RE.search(text) and not facts.beat_visual_ids:
-                problems.append("None of the pop-ins shows a photo or sticker")
+                problems.append(
+                    say(
+                        en="None of the pop-ins shows a photo or sticker",
+                        tr="Çıkan görsellerin hiçbiri fotoğraf ya da çıkartma göstermiyor",
+                    )
+                )
     if wants_closing:
         if facts.closing_visual_id is None:
             problems.append(
-                "I couldn't find the closing photo you named"
+                say(
+                    en="I couldn't find the closing photo you named",
+                    tr="Söylediğin kapanış fotoğrafını bulamadım",
+                )
                 if facts.closing_requested
-                else "This draft doesn't end on the photo you asked for"
+                else say(
+                    en="This draft doesn't end on the photo you asked for",
+                    tr="Bu taslak istediğin fotoğrafla bitmiyor",
+                )
             )
         else:
             delivered = True
             if facts.closing_badge_requested and facts.closing_badge_id is None:
-                problems.append("I couldn't find the closing badge you named")
+                problems.append(
+                    say(
+                        en="I couldn't find the closing badge you named",
+                        tr="Söylediğin kapanış rozetini bulamadım",
+                    )
+                )
     if not problems:
         return _receipt(req, "met", None)
     status = "partial" if delivered else "not_possible"
@@ -1509,14 +1808,33 @@ def _check_speech_excerpts(req: BriefRequirement, facts: PlanFacts) -> Requireme
         return _receipt(
             req,
             "not_possible",
-            "None of your lines made it in" + (f" ({missing})" if missing else ""),
+            say(
+                en="None of your lines made it in",
+                tr="Cümlelerinden hiçbiri videoya girmedi",
+            )
+            + (f" ({missing})" if missing else ""),
         )
     if missing:
-        problems.append(f"I couldn't find {missing} in your clip")
+        problems.append(
+            say(
+                en=f"I couldn't find {missing} in your clip",
+                tr=f"Klibinde şunu bulamadım: {missing}",
+            )
+        )
     if _SPEECH_OVER_RE.search(text) and not any(s.visual == "cutaways" for s in speech):
-        problems.append("Your words never play over the other footage")
+        problems.append(
+            say(
+                en="Your words never play over the other footage",
+                tr="Sözlerin diğer çekimlerin üzerinde hiç çalmıyor",
+            )
+        )
     if _SPEAKER_RE.search(text) and not any(s.visual == "speaker" for s in speech):
-        problems.append("It never cuts to you talking")
+        problems.append(
+            say(
+                en="It never cuts to you talking",
+                tr="Hiçbir yerde konuşurken sana geçmiyor",
+            )
+        )
     # "Return to the speaker": a speaker shot that comes AFTER something that is not the speaker.
     first_other = next(
         (i for i, s in enumerate(sections) if s.kind == "montage" or s.visual == "cutaways"), None
@@ -1526,9 +1844,19 @@ def _check_speech_excerpts(req: BriefRequirement, facts: PlanFacts) -> Requireme
         and _SPEAKER_RE.search(text)
         and not any(s.visual == "speaker" for s in sections[first_other + 1 :])
     ):
-        problems.append("It doesn't come back to you after the other footage")
+        problems.append(
+            say(
+                en="It doesn't come back to you after the other footage",
+                tr="Diğer çekimlerden sonra sana geri dönmüyor",
+            )
+        )
     if _BACK_TO_MONTAGE_RE.search(text) and not any(s.kind == "montage" for s in sections):
-        problems.append("There are no fast cuts between your lines")
+        problems.append(
+            say(
+                en="There are no fast cuts between your lines",
+                tr="Cümlelerin arasında hızlı kesimler yok",
+            )
+        )
     if not problems:
         return _receipt(req, "met", None)
     return _receipt(req, "partial", "; ".join(problems) + ".")
@@ -1557,13 +1885,21 @@ def _check_speech_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     else:
         # Unknown whether approval offers the choice: never promise it.
         lead, status = _CLEANUP_IF_OFFERED, "partial"
-    notes = [lead]
+    notes = [_loc(lead)]
     if _wants_named_cuts(req):
-        notes.append(_NAMED_CUTS_NEED_EDITOR)
+        notes.append(_loc(_NAMED_CUTS_NEED_EDITOR))
         status = "partial"
     if _has_duration_target(req):
         target = float(req.facts["duration_s"])
-        notes.append(f"the length follows what's left of your take, so I can't promise {target:g}s")
+        notes.append(
+            say(
+                en=f"the length follows what's left of your take, so I can't promise {target:g}s",
+                tr=(
+                    "uzunluk çekimin geriye kalan kısmına göre belirleniyor, "
+                    f"{target:g} sn için söz veremem"
+                ),
+            )
+        )
         status = "partial"
     return _receipt(req, status, "; ".join(notes) if status == "partial" else None)
 
@@ -1590,15 +1926,33 @@ def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
             return _receipt(req, "met", None)
         if style == "auto":
             return _receipt(req, "partial", _CANT_CHECK_CAPTIONS)
-        return _receipt(req, "partial", "Captions are still on in this draft.")
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="Captions are still on in this draft.",
+                tr="Bu taslakta altyazılar hâlâ açık.",
+            ),
+        )
     if style == "none":
-        return _receipt(req, "partial", "Captions are off in this draft.")
+        return _receipt(
+            req,
+            "partial",
+            say(en="Captions are off in this draft.", tr="Bu taslakta altyazılar kapalı."),
+        )
     if _wants_word_captions(req):
         if style in {"karaoke", "kinetic"}:
             return _receipt(req, "met", _CAPTIONS_WORD_BY_WORD)
         if style == "auto":
             return _receipt(req, "partial", _CANT_CHECK_CAPTIONS)
-        return _receipt(req, "partial", "Captions are on as full sentences, not word by word.")
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en="Captions are on as full sentences, not word by word.",
+                tr="Altyazılar kelime kelime değil, tam cümleler olarak açık.",
+            ),
+        )
     return _receipt(req, "met", None)
 
 
@@ -1652,11 +2006,25 @@ def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt
         return _receipt(req, "met", None)
     # The edit's own length is what is compared: the phone adds its outro after the edit,
     # so the file runs `outro_s` longer than this (28.0s of edit is a ~29.6s video).
-    outro = f" (plus a {facts.outro_s:g}s outro on the finished video)" if facts.outro_s else ""
+    outro = ""
+    if facts.outro_s:
+        outro = say(
+            en=f" (plus a {facts.outro_s:g}s outro on the finished video)",
+            tr=f" (bitmiş videoda buna ek olarak {facts.outro_s:g} saniyelik bir kapanış var)",
+        )
     return _receipt(
         req,
         "partial",
-        f"This draft is about {facts.duration_s:g}s{outro}; you asked for {float(target):g}s.",
+        say(
+            en=(
+                f"This draft is about {facts.duration_s:g}s{outro}; "
+                f"you asked for {float(target):g}s."
+            ),
+            tr=(
+                f"Bu taslak yaklaşık {facts.duration_s:g} saniye{outro}; sen "
+                f"{float(target):g} saniye istedin."
+            ),
+        ),
     )
 
 
@@ -1672,7 +2040,14 @@ def _check_title(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
         return _receipt(req, "partial", _CANT_CHECK_TITLE)
     if facts.title_source in _TITLE_SOURCES_THE_CREATOR_OWNS:
         return _receipt(req, "met", None)
-    return _receipt(req, "partial", "I used a plain default title because none was given.")
+    return _receipt(
+        req,
+        "partial",
+        say(
+            en="I used a plain default title because none was given.",
+            tr="Başlık vermediğin için sade bir varsayılan başlık kullandım.",
+        ),
+    )
 
 
 # The render-time block of the unified phone montage (`_run_phone_unified_montage_job`):
@@ -1705,19 +2080,36 @@ def render_block_recovery(failures: Sequence[Mapping[str, Any]]) -> RenderBlockR
     are untouched: only the wording shown at the block changes.
     """
 
-    reasons = [str(row.get("reason") or "A requested change is missing.") for row in failures]
-    if reasons and all(reason == _NO_TITLE for reason in reasons):
+    blocked = say(
+        en=NO_TITLE_BLOCKED,
+        tr="Videoyu henüz oluşturamadım: başlık istedin ama kelimelerini vermedin.",
+    )
+    alternative = say(
+        en=TITLE_WORDS_ALTERNATIVE,
+        tr='Başlığın kelimelerini söyle ya da "başlık olmasın" yaz.',
+    )
+    fallback = say(en="A requested change is missing.", tr="İstediğin bir değişiklik eksik.")
+    reasons = [str(row.get("reason") or fallback) for row in failures]
+    if reasons and all(is_no_title_reason(reason) for reason in reasons):
+        saved = say(en="Your draft is saved.", tr="Taslağın kaydedildi.")
         return RenderBlockRecovery(
-            message=f"{NO_TITLE_BLOCKED} Your draft is saved. {TITLE_WORDS_ALTERNATIVE}",
+            message=f"{blocked} {saved} {alternative}",
             decline_reason="needs_choice",
             field_path="opening_title",
-            alternative=TITLE_WORDS_ALTERNATIVE,
+            alternative=alternative,
         )
-    shown = " ".join(dict.fromkeys(NO_TITLE_BLOCKED if r == _NO_TITLE else r for r in reasons))
-    message = f"{shown} {_RENDER_BLOCK_SUFFIX}"
-    if _NO_TITLE in reasons:
+    shown = " ".join(dict.fromkeys(blocked if is_no_title_reason(r) else _loc(r) for r in reasons))
+    suffix = say(
+        en=_RENDER_BLOCK_SUFFIX,
+        tr="Taslağın kaydedildi. Tekrar mı deneyeyim, yoksa isteği sadeleştireyim mi?",
+    )
+    message = f"{shown} {suffix}"
+    if any(is_no_title_reason(r) for r in reasons):
         # Untyped (two blockers), but the title's way forward must not be lost.
-        message = f"{message} {_TITLE_WAY_FORWARD_MIXED}"
+        message = f"{message} " + say(
+            en=_TITLE_WAY_FORWARD_MIXED,
+            tr='Başlık için kelimeleri söyle ya da "başlık olmasın" yaz.',
+        )
     return RenderBlockRecovery(message=message)
 
 
@@ -1735,7 +2127,11 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         found = any(_contains_text(t, wanted) for t in facts.texts)
     if found:
         return _receipt(req, "met", None)
-    return _receipt(req, "partial", "That exact text isn't in this draft.")
+    return _receipt(
+        req,
+        "partial",
+        say(en="That exact text isn't in this draft.", tr="Bu tam yazı bu taslakta yok."),
+    )
 
 
 def _has_checker(req: BriefRequirement) -> bool:
@@ -1917,6 +2313,75 @@ _LABEL = {
     # KRI-282: the creator was asked and chose the other side of a conflict.
     "chosen": "As you chose",
 }
+_LABEL_TR = {
+    "met": "Yapıldı",
+    "partial": "Kısmen",
+    "not_possible": "Yapamadım",
+    "chosen": "Senin seçimin",
+}
+
+
+def _label(status: str) -> str:
+    return say(en=_LABEL[status], tr=_LABEL_TR[status])
+
+
+# What the render says about each requested group, label or chapter text
+# (`unified_montage._intent_outcomes`) is English; a Turkish reply reads these known
+# phrases in Turkish and leaves anything else (the creator's own words) as written.
+_OUTCOME_REASON_TR = {
+    "I found no clips of it": "Bununla ilgili klip bulamadım",
+    "I couldn't put your own words on it": "Senin sözlerini üstüne koyamadım",
+    "no clip got one": "hiçbir klibe gelmedi",
+    "I couldn't tell which clips": "Hangi kliplerden söz ettiğini anlayamadım",
+    "its clips are already in an earlier group": "klipleri zaten önceki bir grupta",
+    "the clips did not end up there": "klipler oraya gelmedi",
+    "you chose grouping first, each group in the order you filmed it": (
+        "önce gruplamayı seçtin, her grup çektiğin sırada"
+    ),
+}
+_OUTCOME_STRETCH_PREFIX_TR = (
+    ("you chose strictly chronological order, so ", "kesin kronolojik sırayı seçtin, o yüzden "),
+    ("clips stay in the order you filmed them, so ", "klipler çektiğin sırada kalıyor, o yüzden "),
+)
+_OUTCOME_STRETCHES = re.compile(r"^(.+) is in (\d+) stretches$")
+
+
+def _outcome_name(row: Mapping[str, Any]) -> str:
+    name = str(row["name"])
+    if current_reply_language() != "tr":
+        return name
+    op = row.get("op")
+    if op == "order":
+        position = str(row.get("position") or "")
+        if position in _SPOT_TR and name.startswith(f"{position}: "):
+            return f"{_SPOT_TR[position]}: {name[len(position) + 2 :]}"
+        if name == "the order you described":
+            return "tarif ettiğin sıra"
+    elif op == "group" and name.startswith("group by "):
+        return f"gruplama: {name[len('group by ') :]}"
+    elif op == "caption" and name.startswith("text for "):
+        return f"{name[len('text for ') :]} için yazı"
+    elif op == "label" and name.startswith("the ") and name.endswith(" name on its clips"):
+        return f"kliplerindeki {name[len('the ') : -len(' name on its clips')]} adı"
+    return name
+
+
+def _outcome_reason(reason: str) -> str:
+    if current_reply_language() != "tr":
+        return reason
+    known = _OUTCOME_REASON_TR.get(reason)
+    if known is not None:
+        return known
+    for prefix, prefix_tr in _OUTCOME_STRETCH_PREFIX_TR:
+        if reason.startswith(prefix):
+            parts = []
+            for part in reason[len(prefix) :].split("; "):
+                match = _OUTCOME_STRETCHES.match(part)
+                parts.append(
+                    f"{match.group(1)} {match.group(2)} parçaya bölünüyor" if match else part
+                )
+            return prefix_tr + "; ".join(parts)
+    return _loc(reason)
 
 
 def reply_from_receipts(
@@ -1953,37 +2418,53 @@ def reply_from_receipts(
         if status not in _LABEL or not row.get("name"):
             continue
         failed = failed or status not in {"met", "chosen"}
-        line = f"{_LABEL[status]}: {row['name']}"
+        line = f"{_label(status)}: {_outcome_name(row)}"
         if row.get("reason"):
-            line += f" ({str(row['reason']).rstrip('.')})"
+            line += f" ({_outcome_reason(str(row['reason'])).rstrip('.')})"
         lines.append(line)
     for receipt in judged:
-        line = f"{_LABEL[receipt.status]}: {by_id[receipt.requirement_id].text()}"
+        line = f"{_label(receipt.status)}: {by_id[receipt.requirement_id].text()}"
         if receipt.reason:
-            line += f" ({receipt.reason.rstrip('.')})"
+            line += f" ({_loc(receipt.reason).rstrip('.')})"
         lines.append(line)
         guesses.extend(receipt.inferred)
     if guesses:
         shown = ", ".join(dict.fromkeys(guesses))
         lines.append(
-            f"I guessed these, tell me if any is wrong: {shown} "
-            "(text I took from the footage, not from your words)"
+            say(
+                en=(
+                    f"I guessed these, tell me if any is wrong: {shown} "
+                    "(text I took from the footage, not from your words)"
+                ),
+                tr=(
+                    f"Şunları tahmin ettim, yanlış olan varsa söyle: {shown} "
+                    "(senin sözlerinden değil, çekimlerden aldığım yazılar)"
+                ),
+            )
         )
     body = "\n".join(f"- {line}" for line in lines)
     if unchecked:
         unchecked_lines = []
         for receipt in unchecked:
-            line = f"Couldn't verify: {by_id[receipt.requirement_id].text()}"
+            verify = say(en="Couldn't verify", tr="Doğrulayamadım")
+            line = f"{verify}: {by_id[receipt.requirement_id].text()}"
             if receipt.reason:
-                line += f" ({receipt.reason.rstrip('.')})"
+                line += f" ({_loc(receipt.reason).rstrip('.')})"
             unchecked_lines.append(f"- {line}")
-        text = "I couldn't verify every requested change:\n" + "\n".join(
-            [*unchecked_lines, *([body] if body else [])]
-        )
+        text = say(
+            en="I couldn't verify every requested change:\n",
+            tr="İstediğin değişikliklerin hepsini doğrulayamadım:\n",
+        ) + "\n".join([*unchecked_lines, *([body] if body else [])])
         if notices:
             text += "\n" + " ".join(notices)
     elif failed or any(r.status != "met" for r in judged):
-        text = "Not everything you asked for made it in:\n" + body
+        text = (
+            say(
+                en="Not everything you asked for made it in:\n",
+                tr="İstediklerinin hepsi videoya giremedi:\n",
+            )
+            + body
+        )
         if notices:
             text += "\n" + " ".join(notices)
     else:
@@ -2005,6 +2486,7 @@ __all__ = [
     "check_requirement",
     "is_format_limit",
     "is_judged",
+    "is_no_title_reason",
     "needs_creator_choice",
     "SpeechSectionFact",
     "plan_facts_from_editor_payload",

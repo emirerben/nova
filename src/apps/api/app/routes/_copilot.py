@@ -29,6 +29,8 @@ from app.agents.edit_copilot import (
     EditCopilotInput,
     EditCopilotOutput,
 )
+from app.kria.brief_route import loose_text
+from app.kria.reply_language import current_reply_language, say
 from app.services.copilot_limits import COPILOT_SNAPSHOT_MAX_BYTES
 
 log = structlog.get_logger()
@@ -95,9 +97,45 @@ _NEGATED_SUCCESS = re.compile(
     re.IGNORECASE,
 )
 
+# KRI-520: the same honesty guard for a Turkish reply. Matched on ``loose_text``
+# (lowercase, dotless i -> i, diacritics stripped) so "Başlığı büyüttüm", "BAŞLIĞI
+# BÜYÜTTÜM" and the ASCII "basligi buyuttum" are one spelling. Edit-verb stems only
+# (never a bare "...dim" ending): "istedim" and "bilmiyorum" are not edit claims.
+_TR_EDIT_STEMS = (
+    "ekle|kaldir|cikar|degistir|sil|tasi|kisalt|uzat|buyut|kucult|yap|guncelle|duzelt|"
+    "ayarla|koy|kis|diz|hazirla|uygula|duzenle|birlestir|bol|kes|ayir|kapat|ac|sustur|"
+    "hizlandir|yavaslat|azalt|artir|arttir|yukselt|dusur|cevir|dondur|kirp|hizala|"
+    "adlandir|yaz|olustur|yerlestir|tamamla|hallet|yenile|gizle|kaydir|sabitle|ortala|"
+    "kalinlastir"
+)
+_TR_SUCCESS_WORDS = re.compile(
+    rf"\b(?:{_TR_EDIT_STEMS})"
+    # first person past ("ekledim", "kaldirdim", "buyuttum") or passive past
+    # ("eklendi", "kaldirildi", "silindi", "buyutuldu").
+    r"(?:(?:d|t)(?:i|u)(?:m|k)|(?:il|in|ul|un|l|n)(?:d|t)(?:i|u))\b"
+)
+_TR_NEGATED_SUCCESS = re.compile(
+    r"\b(?:degil|degildir|zaten|henuz|hicbir|yapamam|edemem)\b"
+    r"|\bdegisiklik yok\b"
+    # "-madim/-medi" ("yapmadim", "olmadi", "yapamadim", "edemedim"), but not "komedi".
+    r"|\b(?!komedi\b)\w{2,}(?:ma|me)(?:d|t)(?:i|u)(?:m|k|n|niz|nuz|ler|lar)?\b"
+    r"|\b\w{2,}(?:ma|me)y(?:a|e)(?:c|g)\w*"  # "yapmayacagim"
+    r"|\b\w{2,}(?:mi|mu)yor\w*"  # "yapmiyorum", "bilmiyorum"
+    r"|\b\w{2,}(?:ma|me)z\b"  # "olmaz", "yapilamaz"
+    r"|\b\w{2,}(?:ama|eme)(?:m|z)\b"  # "yapamam", "edemez" (never "tamam")
+)
+
+
+def _has_success_words(reply: str) -> bool:
+    return bool(_SUCCESS_WORDS.search(reply) or _TR_SUCCESS_WORDS.search(loose_text(reply)))
+
+
+def _negates_success(reply: str) -> bool:
+    return bool(_NEGATED_SUCCESS.search(reply) or _TR_NEGATED_SUCCESS.search(loose_text(reply)))
+
 
 def _claims_success(reply: str) -> bool:
-    return bool(_SUCCESS_WORDS.search(reply) and not _NEGATED_SUCCESS.search(reply))
+    return _has_success_words(reply) and not _negates_success(reply)
 
 
 # KRI-297: "use all overlays as full screen" is a display-mode change the editor
@@ -107,16 +145,34 @@ _OVERLAY_WORD = re.compile(
     r"\b(overlays?|visuals?|photos?|images?|pictures?|cards?|cutaways?|videos?|clips?)\b",
     re.IGNORECASE,
 )
+# KRI-520: the Turkish phrasing, matched on ``loose_text``: "tam ekran", "tüm ekran",
+# "ekranı kaplasın", "resim içinde resim"; and the things a creator shows that way.
+_TR_FULLSCREEN_WORD = re.compile(
+    r"\b(?:tam|tum|butun)\s+ekran\w*"
+    r"|\bekran(?:i|in)?\s+(?:kapl|doldur|tamam)\w*"
+    r"|\btam\s+kadraj\b"
+    r"|\bresim\s+icinde\s+resim\b"
+)
+_TR_OVERLAY_WORD = re.compile(
+    r"\b(?:overlay|gorsel|foto|resim|resm|kart|klip|klib|video|cutaway|katman)\w*"
+)
 OVERLAY_DISPLAY_LIMIT_REPLY = (
     "Full-screen overlays on an already-rendered iPhone edit need a fresh edit "
     "\u2014 they can't be switched on in place."
+)
+_OVERLAY_DISPLAY_LIMIT_REPLY_TR = (
+    "Hazır bir iPhone düzenlemesinde görselleri tam ekran yapmak için yeni bir düzenleme "
+    "gerekiyor \u2014 mevcut düzenlemede açılamıyor."
 )
 
 
 def is_overlay_display_ask(message: str) -> bool:
     """True when the creator asks to show their overlays/Visuals full screen."""
     text = message or ""
-    return bool(_FULLSCREEN_WORD.search(text) and _OVERLAY_WORD.search(text))
+    if _FULLSCREEN_WORD.search(text) and _OVERLAY_WORD.search(text):
+        return True
+    loose = loose_text(text)
+    return bool(_TR_FULLSCREEN_WORD.search(loose) and _TR_OVERLAY_WORD.search(loose))
 
 
 def _honest_outcome(
@@ -150,7 +206,10 @@ def _honest_outcome(
     if outcome == "proposed":
         if reply and not _claims_success(reply):
             return outcome, reply
-        canned = "I prepared this edit for the editor to validate and stage."
+        canned = say(
+            en="I prepared this edit for the editor to validate and stage.",
+            tr="Bu düzenlemeyi hazırladım, editör kontrol edip uygulayacak.",
+        )
         return outcome, f"{canned} {output.reply_notes}".strip()
     if outcome == "applied":
         # Compatibility response for pre-v2 browser bundles during a split
@@ -159,29 +218,47 @@ def _honest_outcome(
     if outcome == "clarification":
         if reply and not _claims_success(reply):
             return outcome, reply
-        return outcome, "I need one detail before changing the draft."
+        return outcome, say(
+            en="I need one detail before changing the draft.",
+            tr="Taslağı değiştirmeden önce bir ayrıntıya ihtiyacım var.",
+        )
     if outcome == "stale":
-        return outcome, "That edit is based on an older draft. Refresh the editor and try again."
+        return outcome, say(
+            en="That edit is based on an older draft. Refresh the editor and try again.",
+            tr="Bu düzenleme taslağın eski bir halini temel alıyor. Editörü yenile ve tekrar dene.",
+        )
     detail = next((item.get("detail") for item in reasons if item.get("detail")), None)
     if outcome == "unsupported":
         if detail:
             return outcome, detail
         # With no supported operation, a negation elsewhere in the sentence
         # must not excuse a separate claim that something was changed.
-        if reply and not _SUCCESS_WORDS.search(reply):
+        if reply and not _has_success_words(reply):
             return outcome, reply
         if is_overlay_display_ask(message):
-            return outcome, OVERLAY_DISPLAY_LIMIT_REPLY
-        return outcome, "That kind of edit isn't available for this draft yet."
+            return outcome, say(en=OVERLAY_DISPLAY_LIMIT_REPLY, tr=_OVERLAY_DISPLAY_LIMIT_REPLY_TR)
+        return outcome, say(
+            en="That kind of edit isn't available for this draft yet.",
+            tr="Bu tür bir düzenleme bu taslakta henüz yapılamıyor.",
+        )
     if outcome == "failed":
         if output.reply_notes:
             # A specific reason beats the generic line (e.g. which value was not accepted).
-            return outcome, f"I couldn't apply that: {output.reply_notes}"
-        return outcome, "I couldn't build a valid draft change for that request. Try again."
-    if reasons and _SUCCESS_WORDS.search(reply):
+            return outcome, say(
+                en=f"I couldn't apply that: {output.reply_notes}",
+                tr=f"Bunu uygulayamadım: {output.reply_notes}",
+            )
+        return outcome, say(
+            en="I couldn't build a valid draft change for that request. Try again.",
+            tr="Bu istek için geçerli bir taslak değişikliği oluşturamadım. Tekrar dene.",
+        )
+    if reasons and _has_success_words(reply):
         # A structured rejection means nothing changed: never surface prose that
         # claims it did (negation elsewhere in the sentence must not excuse it).
-        return outcome, detail or "I couldn't make that change on this edit."
+        return outcome, detail or say(
+            en="I couldn't make that change on this edit.",
+            tr="Bu değişikliği bu düzenlemede yapamadım.",
+        )
     if reply and not _claims_success(reply):
         return outcome, reply
     # A request that matched nothing must say so, not claim the draft already
@@ -189,7 +266,10 @@ def _honest_outcome(
     unmet = next((u.get("reason") for u in output.unmet_requests if u.get("reason")), None)
     if unmet:
         return outcome, unmet
-    return outcome, "That change is already reflected in the draft."
+    return outcome, say(
+        en="That change is already reflected in the draft.",
+        tr="Bu değişiklik taslakta zaten var.",
+    )
 
 
 def _snapshot_size_bytes(snapshot: dict) -> int:
@@ -238,6 +318,8 @@ async def run_copilot_turn(
         prior_turns=body.turns[:12],
         variant_snapshot=body.snapshot,
         original_request=body.original_request,
+        # KRI-520: bound per Kria turn; None (unchanged prompt) everywhere else.
+        reply_language=current_reply_language(),
     )
 
     try:

@@ -7,11 +7,11 @@
 - The Gemini Pro brief extractor succeeded for both original requests. The first editor patch applied only a fade-in and did not split the requested text. A correction reached valid extraction but failed during brief-ledger application at an unknown exact redacted update.
 - The full requirement router now combines supported text, audio, ordering, global timing and caption-lane requirements. The speculative brief-enabled fast path was removed; `MainCreator` replans through the existing binding/clip-intent pipeline, and the planner passes the whole effective brief to the editor. Extraction or editor-planning failures stop mutation and preserve the valid request, with `editor_planning_failed` distinguished from extraction failure.
 - The implementation supports arbitrary text replacement sequences while conserving wording, inheriting look/timing, sharing entrance/exit, and enforcing the 100-child/16-operation compiler budget. Whole-bar versus chunk semantics, generic composition prompts, partial-axis defaults, title-role selection and sequence lineage preservation were clarified. Compiler flags now drive `timeline_patch_capabilities`; the current legacy-speed probe now returns an honest limitation. Canonical caption style/font/color/position are projected into the next turn, and plural intro/title-group selection updates both stacked titles while excluding unrelated locations. Brief-context application is validated inside the existing bounded schema retry; final CAS remains unchanged.
-- Pixel/Skia checks cover production-overlay adaptation, frame alpha and phase behavior. No renderer capability, product UI, public endpoint, migration or authorization boundary changed. The edit prompt is now version 2026-10-08-v73.
+- Pixel/Skia checks cover production-overlay adaptation, frame alpha and phase behavior. No renderer capability, product UI, public endpoint, migration or authorization boundary changed. The edit prompt is now version 2026-10-08-v74.
 
 ## Executed evidence
 
-Current results: **769 passed / 2 expected failures** in offline prompt-coverage replay; **1,288 passed / 15 skipped** in the affected/evals suites; **1,527 passed / 6 skipped** in `make verify-kria`. Counts overlap and must not be added together. Scoped lint and preship checks passed. Details are recorded in `results.json`. Commands run from `src/apps/api` unless otherwise specified:
+Current results: **769 passed / 2 expected failures** in offline prompt-coverage replay; **1,375 passed / 15 skipped** in the affected/evals suites; **1,876 passed / 6 skipped** in `make verify-kria`. Counts overlap and must not be added together. Scoped lint and preship checks passed. Details are recorded in `results.json`. Commands run from `src/apps/api` unless otherwise specified:
 
 ```sh
 .venv/bin/python -m tests.evals.prompt_coverage --report
@@ -61,3 +61,5 @@ Unsupported library controls such as invented footage and unrecorded speech are 
 PR [#1481](https://github.com/emirerben/nova/pull/1481) remains open and unmerged. KRI-522's fixes are integrated upstream in main via PR #1479. Version and changelog updates belong to Nova's post-merge release metadata workflow.
 
 Merge/deploy require the current explicit **Land now / Wait / Revise / Cancel** decision. After approval, use Nova's existing guarded deployment workflow and verify the deployed revision. Until then, this is implementation and review evidence only.
+
+KRI-520 integration: merged main `7de2936de`, retained complete-request routing alongside Turkish replies, and localized partial-success and editor-failure messages. Fresh offline replay and Turkish integration checks pass. Live captures were collected on v73; the integrated v74 received offline validation, with no additional provider spending.

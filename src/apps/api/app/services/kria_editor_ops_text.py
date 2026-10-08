@@ -473,10 +473,42 @@ def describe_selector(selector: dict[str, Any], *, find: str | None = None) -> s
     return " ".join(parts)
 
 
+def _describe_selector_tr(selector: dict[str, Any], *, find: str | None = None) -> str:
+    """``describe_selector`` in Turkish word order (qualifiers before the noun), capitalized
+    because it opens the sentence."""
+    if selector.get("ids"):
+        noun = "o yazıyı"
+    else:
+        noun = {
+            "labels": "bir klip etiketi",
+            "title": "bir başlık",
+            "free": "serbest bir yazı",
+        }.get(str(selector.get("group")), "bir yazı")
+    qualifiers = []
+    if selector.get("clip_ids") and not selector.get("ids"):
+        qualifiers.append("o klipte")
+    if selector.get("contains"):
+        qualifiers.append(f"“{selector['contains']}” içeren")
+    if selector.get("equals"):
+        qualifiers.append(f"tam olarak “{selector['equals']}” olan")
+    if find:
+        qualifiers.append(f"“{find}” içeren")
+    phrase = " ".join([*qualifiers, noun])
+    return phrase[:1].upper() + phrase[1:]
+
+
 def zero_match_message(selector: dict[str, Any], *, find: str | None = None) -> str:
-    return (
-        f"I couldn't find {describe_selector(selector, find=find)}, so I changed nothing. "
-        "Which text did you mean?"
+    from app.kria.reply_language import say  # noqa: PLC0415
+
+    return say(
+        en=(
+            f"I couldn't find {describe_selector(selector, find=find)}, so I changed nothing. "
+            "Which text did you mean?"
+        ),
+        tr=(
+            f"{_describe_selector_tr(selector, find=find)} bulamadım, bu yüzden hiçbir şeyi "
+            "değiştirmedim. Hangi yazıyı kastettin?"
+        ),
     )
 
 

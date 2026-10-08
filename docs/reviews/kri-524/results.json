@@ -1,5 +1,5 @@
 {
-  "base": "9efee3db781b554f1bbdc08c5e8652ec4fed049e",
+  "base": "7de2936de2dbf61e66b8b3f1cf45bea3f992dfc8",
   "live": {
     "provider_calls": 112,
     "budget_ledgers": 8,
@@ -50,7 +50,7 @@
   },
   "kria_gate": {
     "command": "make verify-kria",
-    "passed": 1527,
+    "passed": 1876,
     "skipped": 6,
     "exit_code": 0,
     "database": "isolated local test database"
@@ -69,7 +69,7 @@
   },
   "preship": {
     "exit_code": 0,
-    "python_files": 35,
+    "python_files": 37,
     "web_typecheck": "not applicable: no web changes",
     "release_metadata": "unchanged by feature"
   },
@@ -102,15 +102,15 @@
     "approval": "required"
   },
   "affected_suites": {
-    "passed": 1288,
+    "passed": 1375,
     "exit_code": 0,
     "scope": [
       "all offline agent evaluations",
-      "text selectors and compiler/save",
+      "editor parser and text sequences",
       "brief extraction",
       "capability context",
-      "caption save projection",
-      "Skia overlay and device audio contracts"
+      "capture-time composition",
+      "Turkish editor behavior"
     ],
     "skipped": 15
   },
@@ -124,5 +124,11 @@
     "passed": 19,
     "captured_cases": 18,
     "includes_independent_underselection_negative_control": true
+  },
+  "integration": {
+    "upstream": "KRI-520",
+    "prompt_version": "2026-10-08-v74",
+    "live_capture_prompt_version": "2026-10-08-v73",
+    "validation": "Fresh offline replay, full Kria gate, and Turkish partial-success/error recovery regressions. No new provider calls."
   }
 }
