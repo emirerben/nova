@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.156.0] - 2026-10-08
+
+### Changed
+- fix(dispatch): v2 montages render exactly the Creator's clip pick (KRI-515) (#1474) <!-- release-pr: 1474 -->
+
 ## [0.78.155.0] - 2026-10-08
 
 ### Changed
