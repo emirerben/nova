@@ -162,8 +162,6 @@
       "KriaUITests/NativeEditorInspectorUITests/testSavingWithACaptionLineOpenCommitsItAndClosesTheBar",
       "KriaUITests/NativeEditorInspectorUITests/testAllPersistedLanesExposeStableTimelineIdentityAndInspector",
       "KriaUITests/NativeEditorInspectorUITests/testPreviewDragIsOneUndoableTextEdit",
-      "KriaUITests/NativeEditorInspectorUITests/testSecondTapOnPreviewTextTypesOnTheVideo",
-      "KriaUITests/NativeEditorInspectorUITests/testTypingATextEmptyRemovesItWithUndo",
       "KriaUITests/NativeEditorInspectorUITests/testStressFixtureRemainsReachableAtAccessibilityTypeWithReduceMotion",
       "KriaUITests/NativeEditorInspectorUITests/testLongCaptionListScrollsByHandToLastLines",
       "KriaUITests/NativeEditorInspectorUITests/testPermanentSourceFailureHidesTryAgain",

@@ -258,13 +258,13 @@ final class EditorUITests: XCTestCase {
         let text = app.descendants(matching: .any)["native-editor-timeline-text-00000000-0000-4000-8000-000000000100"]
         XCTAssertTrue(text.waitForExistence(timeout: 3))
         text.tap()
-        // KRI-508: "Edit text" types on the video itself.
-        app.buttons["native-editor-text-edit-action"].firstMatch.tap()
-        let input = app.textViews["native-editor-inline-text-field"]
+        app.buttons["Edit text"].tap()
+        app.buttons["Edit text"].tap()
+        let input = app.descendants(matching: .any)["native-editor-text-content"]
         XCTAssertTrue(input.waitForExistence(timeout: 3))
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        input.tap()
         input.typeText(" that becomes a much longer multi-line title without changing the cut")
-        app.buttons["native-editor-inline-text-done"].tap()
+        app.buttons["native-editor-text-inspector-done"].tap()
 
         let updatedText = app.descendants(matching: .any)["native-editor-preview-text-00000000-0000-4000-8000-000000000100"]
         expectation(
