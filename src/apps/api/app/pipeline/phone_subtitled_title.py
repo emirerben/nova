@@ -30,16 +30,25 @@ preset spot covers it. "Never assume there's no face" (KRI-183): when the
 sampler cannot confirm the frame, a conservative centre-top talk-to-camera
 face box is protected instead. The chosen ``y_frac`` is stored on the row, so
 every renderer draws the same spot and the editor shows where it went.
+
+Closing text (KRI-514): a confirmed ``closing_title`` ("end on the toast photo
+with a 'MY PICK' badge") is a second row on the same lane, drawn as a tag --
+dark TikTok Sans on the editor's caption lime -- from the moment the closing
+photo appears (else the last 3 s) to the end. With a closing photo it sits on
+the photo's lower edge like a sticker badge (`place_closing_on_photo`; the
+photo is already off the face); without one it takes the title's top spot and
+face check (`place_talking_title`).
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 import structlog
 
-from app.pipeline.narrated_title import narrated_title_placement
+from app.pipeline.narrated_title import TITLE_Y_FRAC, narrated_title_placement
 from app.pipeline.phone_subtitled_lanes import CAPTION_BAND_TOP_FRAC
 from app.pipeline.render_geometry import (
     NormalizedBox,
@@ -54,6 +63,24 @@ log = structlog.get_logger(__name__)
 
 TALKING_TITLE_ELEMENT_ID = "opening-title"
 TALKING_TITLE_SOURCE = "opening_title"
+TALKING_CLOSING_ELEMENT_ID = "closing-title"
+TALKING_CLOSING_SOURCE = "closing_title"
+
+# KRI-514: the closing tag's look, and how long it holds with no closing photo
+# (the photo's own default lookback,
+# `phone_reaction_grounding._CLOSING_DEFAULT_LOOKBACK_S`).
+_CLOSING_DEFAULT_S = 3.0
+_CLOSING_FONT_FAMILY = "TikTok Sans Bold"
+_CLOSING_SIZE_PX = 64
+_CLOSING_TEXT_COLOR = "#111111"
+_CLOSING_BACKGROUND = "#C5F82A"
+# The tag spans at most this share of the photo's width and sits this far
+# (canvas height) above the photo's bottom edge.
+_CLOSING_PHOTO_WIDTH_SHARE = 0.9
+_CLOSING_PHOTO_INSET_FRAC = 0.015
+# The background pads the measured text block by 4 px above and below
+# (`portable_text_layout`'s `TextBackground`).
+_CLOSING_PILL_PAD_PX = 4
 
 # Mirrors the narrated title (`phone_narrated_plan`): the cloud intro window
 # and the longest title the top band is fitted for.
@@ -362,3 +389,114 @@ def place_talking_title(
     placed = dict(row)
     placed["y_frac"] = round(chosen, _Y_FRAC_DECIMALS)
     return placed, {**receipt, **decision, "default_y_frac": default_y}
+
+
+@dataclass(frozen=True)
+class ClosingPhoto:
+    """The closing photo card on the canvas: its centre, its width as a
+    fraction of the canvas width, and its width/height ratio (``None`` when
+    unknown)."""
+
+    x_frac: float
+    y_frac: float
+    width_frac: float
+    aspect: float | None = None
+
+    @classmethod
+    def from_card(cls, card: Any, *, aspect: float | None) -> ClosingPhoto:
+        """From a `SubtitledOverlayCard`, clamped like the compiler draws it."""
+        return cls(
+            x_frac=float(card.x_frac),
+            y_frac=min(float(card.y_frac), CAPTION_BAND_TOP_FRAC),
+            width_frac=float(card.scale),
+            aspect=aspect,
+        )
+
+    def box(self, canvas: _Canvas) -> NormalizedBox | None:
+        if not self.aspect or self.aspect <= 0:
+            return None
+        height = self.width_frac * canvas.width / canvas.height / self.aspect
+        return NormalizedBox(
+            self.x_frac - self.width_frac / 2,
+            self.y_frac - height / 2,
+            self.x_frac + self.width_frac / 2,
+            self.y_frac + height / 2,
+        )
+
+
+def talking_closing_window(
+    timeline_duration_s: float, photo_start_s: float | None = None
+) -> tuple[float, float]:
+    """From the closing photo's entrance, else the last 3 s, to the end."""
+    end_s = float(timeline_duration_s)
+    start_s = end_s - _CLOSING_DEFAULT_S if photo_start_s is None else float(photo_start_s)
+    return round(max(0.0, min(start_s, end_s)), 3), round(end_s, 3)
+
+
+def talking_closing_element(
+    closing_title: str | None,
+    *,
+    start_s: float,
+    end_s: float,
+    photo: ClosingPhoto | None = None,
+) -> dict | None:
+    """The closing text as one editable TextElement row, or ``None`` without
+    text or time for it. Centred on ``photo`` and kept inside its width when
+    there is one, else at the title's top spot."""
+    from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+
+    text = " ".join((closing_title or "").split())[:_TITLE_MAX_CHARS]
+    if not text or end_s - start_s < _TITLE_MIN_S / 5:
+        return None
+    element = TextElement(
+        id=TALKING_CLOSING_ELEMENT_ID,
+        text=text,
+        start_s=start_s,
+        end_s=end_s,
+        role="generative_intro",
+        position="custom",
+        x_frac=round(photo.x_frac, _Y_FRAC_DECIMALS) if photo is not None else 0.5,
+        y_frac=round(photo.y_frac, _Y_FRAC_DECIMALS) if photo is not None else TITLE_Y_FRAC,
+        font_family=_CLOSING_FONT_FAMILY,
+        size_px=_CLOSING_SIZE_PX,
+        color=_CLOSING_TEXT_COLOR,
+        background_color=_CLOSING_BACKGROUND,
+        shadow_enabled=False,
+        max_width_frac=(
+            round(photo.width_frac * _CLOSING_PHOTO_WIDTH_SHARE, _Y_FRAC_DECIMALS)
+            if photo is not None
+            else None
+        ),
+        effect="fade-in",
+        source_params={"source": TALKING_CLOSING_SOURCE},
+    )
+    return element.model_dump(mode="json", exclude_none=True)
+
+
+def place_closing_on_photo(
+    row: dict, photo: ClosingPhoto, *, canvas: _Canvas
+) -> tuple[dict, dict[str, Any]]:
+    """``row`` set on the lower edge of the closing photo, like a sticker badge
+    on it, and never in the caption band; plus a receipt. The photo was placed
+    off the speaker's face already (`resolve_phone_card_geometry`), so a tag
+    inside it needs no face check of its own. Never raises: with the photo's
+    shape unknown, or anything going wrong while measuring, the tag stays on
+    the photo's centre."""
+    box = photo.box(canvas)
+    if box is None:
+        return dict(row), {"status": "photo_centre", "chosen_y_frac": row["y_frac"]}
+    try:
+        measured = _measure_title_box(row, canvas=canvas)
+    except Exception as exc:  # noqa: BLE001 - a placement nicety never blocks a render
+        log.warning("phone_subtitled_title.closing_placement_failed", error=str(exc)[:200])
+        return dict(row), {"status": "error", "error": str(exc)[:200]}
+    half = (measured.bottom - measured.top) / 2 + _CLOSING_PILL_PAD_PX / canvas.height
+    y_frac = min(box.bottom - _CLOSING_PHOTO_INSET_FRAC - half, CAPTION_BAND_TOP_FRAC - half)
+    y_frac = round(max(y_frac, _TOP_MARGIN_FRAC + half), _Y_FRAC_DECIMALS)
+    placed = dict(row)
+    placed["y_frac"] = y_frac
+    return placed, {
+        "status": "on_closing_photo",
+        "chosen_y_frac": y_frac,
+        "photo_box": box.as_dict(),
+    }

@@ -552,7 +552,8 @@
       "The prod job carried no creator_render_requirements object: it predates the contract, so the contract here is rebuilt from the persisted approval the way dispatch rebuilds it.",
       "expect.output_facts.duration_s=30 is the STRATEGY's chosen length (duration_basis=strategy_choice), not a creator ask: the creator never requested a length and target_duration_requested was not persisted, so the contract carries no duration. KRI-469's fix is the lane honouring the approved strategy.",
       "Typed refusal (reason + field_path) asserted since KRI-476 / PR-A: evidence_missing on montage_audio.source_media_ids[] (list paths carry a [] suffix).",
-      "Output-level repro is the lane fix's own check (KRI-477 / PR-F); the repro command here only re-runs what the corpus proves (contract, decline)."
+      "Output-level repro is the lane fix's own check (KRI-477 / PR-F); the repro command here only re-runs what the corpus proves (contract, decline).",
+      "KRI-479 / PR-H status: NOT flipped, on purpose. With voice_mode=continuous the plan now resolves to route voice_behind_footage (the voice clip is left out of order_ids and its own sound is the only sound), and the same shape is proven end to end on synthetic media (voice-behind-footage-slice, voice-behind-footage-how-long-answered; export proof: scripts/ios/phone-audio-parity.py --cases voice_behind_footage). But this record's expected 30 s is the strategy's own pick over ALL 41 other clips, and 41 clips at the 0.8 s readable floor need 32.8 s: the new flow asks 'how long' offering only 60 s (never a flash-cut 30 s), so no real compile of THIS plan yields 30 s. Flipping needs the owner to re-base the expectation (a creator-confirmed length, or fewer clips), not a hand-edited observation."
     ]
   },
   "expect": {
@@ -601,7 +602,7 @@
   ],
   "xfail": [
     {
-      "reason": "KRI-477 / PR-F",
+      "reason": "KRI-512 / PR-H",
       "scope": "output"
     }
   ],

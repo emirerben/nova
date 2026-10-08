@@ -1,0 +1,60 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-07.1",
+  "input": {
+    "creator_request": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [text/global] English subtitles with exact place name spellings: Göreme, Paşabağ, Avanos, Kızılçukur\n- [r2] [order/global] Match balloons to voiceover and end on sunset valley\n- [r3] [select/global] Skip the quad bike clip\nLatest message: The voiceover is in Turkish, but I want the subtitles in English so my foreign followers understand. Spell the place names exactly: Göreme, Paşabağ, Avanos, Kızılçukur. Show the balloons while I talk about the balloons, and end on the sunset valley. Skip the quad bike clip.",
+    "latest_user_message": "The voiceover is in Turkish, but I want the subtitles in English so my foreign followers understand. Spell the place names exactly: Göreme, Paşabağ, Avanos, Kızılçukur. Show the balloons while I talk about the balloons, and end on the sunset valley. Skip the quad bike clip.",
+    "generated_brief": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [text/global] English subtitles with exact place name spellings: Göreme, Paşabağ, Avanos, Kızılçukur\n- [r2] [order/global] Match balloons to voiceover and end on sunset valley\n- [r3] [select/global] Skip the quad bike clip\nLatest message: The voiceover is in Turkish, but I want the subtitles in English so my foreign followers understand. Spell the place names exactly: Göreme, Paşabağ, Avanos, Kızılçukur. Show the balloons while I talk about the balloons, and end on the sunset valley. Skip the quad bike clip.",
+    "candidate_intents": null,
+    "clip_facts": true
+  },
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"order_balloons_with_vo\",\n      \"op\": \"order\",\n      \"attribute\": \"balloons\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"Show the balloons while I talk about the balloons\"\n    },\n    {\n      \"intent_id\": \"order_sunset_valley_last\",\n      \"op\": \"order\",\n      \"attribute\": \"sunset valley\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": \"last\",\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"end on the sunset valley\"\n    }\n  ],\n  \"question\": null\n}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "order_balloons_with_vo",
+        "op": "order",
+        "attribute": "balloons",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Show the balloons while I talk about the balloons"
+      },
+      {
+        "intent_id": "order_sunset_valley_last",
+        "op": "order",
+        "attribute": "sunset valley",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": "last",
+        "source_quote": "end on the sunset valley"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "live_capture_gemini_2_5_flash",
+    "case": "KRI-511 (prod thread 2ef61a47, stress-test kit N2): 'Skip the quad bike clip' must yield NO intent (the Main Creator leaves the clip out; include would force it in), 'Show the balloons while I talk about the balloons' is a described order with no order_by, and the subtitle language/spelling asks yield nothing.",
+    "expect_intents": [
+      {
+        "op": "order",
+        "source_quote_keywords": [
+          "balloons while I talk"
+        ]
+      },
+      {
+        "op": "order",
+        "source_quote_keywords": [
+          "sunset valley"
+        ]
+      }
+    ],
+    "expect_absent_ops": [
+      "include",
+      "label",
+      "caption"
+    ],
+    "expect_any": true,
+    "expect_question": false
+  }
+}

@@ -97,6 +97,18 @@ Flow (flag on):
    instructions" reply carries closed-vocabulary `drop_classes` on the turn's
    `plan.diagnostics` (`/admin/creation-threads/<id>/turns`) and a
    `clip_intent_planner.salvaged` log line; the agent itself stores no raw output.
+   **There is no exclude op (KRI-511).** "Skip the quad bike clip" is clip
+   selection, owned by the Main Creator (`selected_media_ids` against the brief's
+   `select` requirement). Flash used to invent `op: "exclude"` (a loud rejection,
+   so the creator was asked to restate it) or, worse, write `include`, which forces
+   the clip INTO the edit. The prompt says so, and the parser drops both silently
+   (`silent_drops["exclusion_dropped"]`). Spoken-caption instructions ("subtitles
+   in English", "Spell the place names exactly: ...") are not clip operations
+   either (`spelling_dropped`, `speech_caption_dropped`). "Show the balloons while
+   I talk about the balloons" is a described `order` intent with no `order_by`;
+   an invented `order_by` ("voiceover_match", the string "null") is repaired to a
+   filming-order synonym or null instead of rejecting the instruction. Goldens:
+   `golden/kri511_cappadocia_*.json`.
    `app/services/clip_intent_planning.py` forwards the complete inventory for
    grounding. Transcript-sourced requests stay in the complete inventory but
    bypass the visual resolver; they require a pinned guided narration before a
@@ -404,7 +416,7 @@ the snapshot replan/direction-replacement planners and the editor-op tool
 `tests/tasks/test_edit_proposal_build_clip_facts.py`,
 `tests/agents/test_landmark_guess.py`, `tests/evals/test_landmark_guess_evals.py`.
 Current relevant prompt versions: `main_creator` 2026-10-02-v40,
-`edit_proposal` 1.18.0, `clip_intent_planner` 2026-10-02.2, and
+`edit_proposal` 1.18.0, `clip_intent_planner` 2026-10-07.1, and
 `landmark_guess` 2026-09-24.1. Optional
 live evals (`--eval-mode=live`, no judge):
 `test_landmark_guess_evals.py`, `test_clip_intent_planner_evals.py`,

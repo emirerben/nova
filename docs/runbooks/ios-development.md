@@ -132,6 +132,23 @@ variant is in the script docstring. Cases:
 - `speech_music`: the real spoken-excerpt compiler with a music bed. Music is audible only
   under the montage runs (continuing where it left off), the speaker's tone alone under the
   speech, b-roll silent. Control `speech_music_doubled_bed` must fail `music_once`.
+- `voice_behind_footage` (KRI-479): the REAL composer (`compile_phone_voice_behind_footage_plan`)
+  puts ONE clip's voice under six picture clips listed in a non-sorted order, with opening
+  text, and the recipe must pass `verify_phone_recipe` with its composition commitments before
+  it is exported. The voice is a staircase of one pure tone per source second under a grey
+  picture that must never show; every picture clip is a unique colour with its own (muted)
+  tone. Checks: length within 0.1 s; every cut's centre frame is the contract's colour at that
+  position (order, each once); each voice tone sounds at the source's level for the whole
+  span, and the MEASURED voice end (the last 0.1 s step in the export with a voice tone) matches the
+  plan's span and fills the picture to within `min(3 s, 15 %)` of its end
+  (`voice_present_throughout`); no other voice tone and no picture-clip tone above -30 dB
+  (`voice_once`, `camera_audio_silent`); non-silent loudness; the opening text differs from the
+  `voice_behind_footage_notext` twin inside its window and not after it. Controls that must
+  fail their named check AND nothing outside an explicit allowed set (unmuted: `camera_audio_silent` +
+  `voice_once`; voice stops early: `voice_present_throughout` + `voice_once`; wrapped: `picture_order` only): `voice_behind_footage_unmuted` (`camera_audio_silent`),
+  `voice_behind_footage_voice_stops_early` (`voice_present_throughout`),
+  `voice_behind_footage_wrapped` (`picture_order`). Run it alone with
+  `prepare "$OUT" --cases voice_behind_footage`.
 - `user_song_doubled_bed`: the NEGATIVE CONTROL, the same recipe with `music_volume = 1.0`
   (the KRI-481 failure). `compare` requires it to FAIL `tone_a_absent` and `song_once`;
   a harness that cannot see the double play fails loudly.
@@ -139,7 +156,9 @@ variant is in the script docstring. Cases:
 **Cadence.** This proof is opt-in and not in CI, so it only protects what someone re-runs.
 Re-run the full cycle (`prepare`, `swift test`, `compare`; all controls detected, exit 0)
 on every PR that touches `pipeline/phone_guided_plan.py`, `pipeline/phone_authored_timeline.py`,
-`pipeline/phone_speech_montage_plan.py`, `pipeline/phone_voiceover_montage_plan.py`,
+`pipeline/phone_speech_montage_plan.py` (including the voice-behind-footage composer),
+`pipeline/phone_voiceover_montage_plan.py`, the composition checks in
+`services/creator_render_contract.py:verify_phone_recipe`,
 `services/phone_editor.py` audio handling, or `Composition.swift`, and attach `report.json`
 and `montage.png` to the PR.
 
@@ -390,6 +409,46 @@ play/pause, and keyboard visibility (including a source-pixel check).
 `NativeEditorPanelLifecycleTests` and `NativeTextAnimationPreviewTests` cover
 cleanup ownership and preview timing; `AppleTextAccessibilityUITests` exercises
 the controls at 320pt width with accessibility text sizes.
+
+### Text on the video (KRI-508)
+
+Plan 027 owns the design. The preview already moved, resized and rotated text
+(`NativeTextTransformLayer`); KRI-508 adds editing the words there and makes the
+existing gestures findable.
+
+- **Select → type.** `NativeVideoPreview.selectPreviewObject` selects the topmost
+  text on the first tap (pausing playback, `onTextFocus`). A tap on the text that
+  is already selected calls `onEditText` instead of cycling, and the editor opens
+  `NativeEditorPanel.textInline(id)`. The timeline keeps its own rule: a second
+  tap on a text bar still opens the Text panel.
+- **Text focus.** `NativeEditorView.previewTextFocusID` grows the preview to
+  `NativeEditorLayoutMetrics.maxPreviewHeight` while a text a preview gesture
+  selected stays selected and no panel is open. Growth waits for the gesture to
+  end (`settleDirectManipulation` reports the text afterwards).
+- **Actions.** `NativeTextActionPill` (Edit text / Style / Delete) is drawn above
+  the canvas, not inside it, so its buttons never also count as a canvas tap.
+  It carries the island strip's identifiers (`native-editor-text-context`,
+  `native-editor-text-edit-action`, `native-editor-text-delete`); the editor shows
+  exactly one of the two (`NativeTextPillPlacement.fits`, never at accessibility
+  sizes).
+- **Typing.** The typing layer draws the selected text's prepared
+  `TextInteractionFrame` (below + above layers), dims it 24% (45% with no frame,
+  e.g. fixtures), and places `NativeTextInlineField` (an `ExplicitLineTextView`
+  in the text's face, colour, background and alignment) on the anchor plus the
+  measured block-centre offset. `NativeTextInlineLayout.displaySize` keeps the
+  field at least 15pt. The editor hides the project header and reuses the caption
+  edit-bar layout path (`captionEditBarHeight`) for `NativeTextInlineBar`. One
+  transaction spans the whole typing session; Done or a tap on the dimmed video
+  commits, and an emptied text is deleted inside it so one Undo restores it.
+- **Sizes.** Gestures and the slider clamp to `NativeTextSizeRange` (24–320)
+  without jumping a stored value outside it.
+- **Tests.** `NativeTextOnVideoTests` (placement, ranges, layout, guides);
+  `testSecondTapOnPreviewTextTypesOnTheVideo` and
+  `testTypingATextEmptyRemovesItWithUndo` in `NativeEditorInspectorUITests`;
+  `testNativeEditorLongTextEditPreservesDurationAndClipGeometry` types through
+  the strip's Edit text.
+- **Not yet:** the covers-a-face warning (plan 027 D13), tapping a caption on the
+  video to open its line (D14), and "+ → Text" going straight to typing (D15).
 
 ## Native chat creation (KRI-24)
 

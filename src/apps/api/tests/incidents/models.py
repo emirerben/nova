@@ -101,6 +101,20 @@ class PhoneRecipeSpec(_Strict):
     sections: list[PhoneSection]
 
 
+class VoiceBehindFootageSpec(_Strict):
+    """KRI-479: compose the approved plan with the REAL voice-behind-footage composer.
+
+    The picture is the contract's ``order_ids``; the voice is the contract's one camera-audio
+    source, its words synthesised densely over the clip (records carry no transcripts), cut
+    to the contract's length. The recipe must pass the real ``verify_phone_recipe`` WITH the
+    composition commitments the plan implies. Nothing is exported: the export proof is
+    ``scripts/ios/phone-audio-parity.py`` (``--cases voice_behind_footage``).
+    """
+
+    # Option keys the creator answered, in order (applied by the real ``resolve_choices``).
+    answers: list[str] = []
+
+
 class GuidedPlanSpec(_Strict):
     order: list[str] = Field(description="Media ids in the order the plan's timeline shows them")
     opening_title: str | None = None
@@ -115,6 +129,7 @@ class Inputs(_Strict):
     clip_groups: list[ClipGroup] = []
     synthetic: list[SyntheticClip] = []
     phone_recipe: PhoneRecipeSpec | None = None
+    voice_behind_footage: VoiceBehindFootageSpec | None = None
     cloud_preflight: bool = False
     # KRI-470 / PR-E: the cloud adapter that would render the plan (preflight consults its
     # declaration) and the receipt its renderer reported (the publication verifier's input).
