@@ -514,6 +514,7 @@ def build_generative_job(
             CONTRACT_FIELD,
             REQUIREMENT_VERSION_FIELD,
             build_render_contract,
+            commitments_from_strategy,
             stamp_plan_authority,
         )
 
@@ -529,6 +530,11 @@ def build_generative_job(
         contract = build_render_contract(
             persisted_strategy,
             generation_id=creator_generation_id,
+            composition=(
+                commitments_from_strategy(persisted_strategy)
+                if settings.kria_plan_authority_enabled
+                else None
+            ),
         )
         if contract is not None:
             creator_contract = {CONTRACT_FIELD: contract.model_dump(mode="json")}

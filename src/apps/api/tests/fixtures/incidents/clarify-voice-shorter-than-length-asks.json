@@ -1,0 +1,236 @@
+{
+  "id": "clarify-voice-shorter-than-length-asks",
+  "incident": {
+    "ticket": "KRI-479",
+    "summary": "Synthetic: the voice clip (20 s) is shorter than the 30 s the creator asked for; ask end-at-voice vs silent tail."
+  },
+  "kind": "clarification",
+  "approved": {
+    "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "original_audio",
+      "voice_mode": "continuous",
+      "montage_audio": {
+        "preserve_source_audio": true,
+        "source_media_ids": [
+          "v-voice"
+        ]
+      },
+      "ordering_choice": "chronological",
+      "media_scope": "all",
+      "render_program": "guided",
+      "pacing": "fast",
+      "rationale": "(synthetic)",
+      "story_structure": [
+        "(synthetic)"
+      ],
+      "target_duration_s": 30,
+      "target_duration_requested": true,
+      "selected_media_ids": [],
+      "optional_treatments": []
+    },
+    "brief": {
+      "version": 1,
+      "requirements": [
+        {
+          "id": "r1",
+          "kind": "order",
+          "facts": {
+            "key": "capture_time"
+          },
+          "scope": "global",
+          "status": "open",
+          "literal": null,
+          "description": "in the order I filmed them",
+          "source_turn_id": "turn-1"
+        },
+        {
+          "id": "r2",
+          "kind": "timing",
+          "facts": {
+            "duration_s": 30
+          },
+          "scope": "global",
+          "status": "open",
+          "literal": null,
+          "description": "Keep 30 seconds",
+          "source_turn_id": "turn-1"
+        }
+      ]
+    },
+    "creator_request": "Use the voice from my talk-to-camera video over a fast montage of the rest, in the order I filmed them, 30 seconds.",
+    "provenance": "synthetic"
+  },
+  "inputs": {
+    "media": [
+      {
+        "id": "v-voice",
+        "kind": "video",
+        "duration_s": 20.0,
+        "capture_time": "2026-01-01T10:00:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": true,
+          "to_camera": true
+        }
+      },
+      {
+        "id": "v-c01",
+        "kind": "video",
+        "duration_s": 6.2,
+        "capture_time": "2026-01-01T09:14:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c02",
+        "kind": "video",
+        "duration_s": 9.4,
+        "capture_time": "2026-01-01T09:03:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c03",
+        "kind": "video",
+        "duration_s": 7.1,
+        "capture_time": "2026-01-01T09:09:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c04",
+        "kind": "video",
+        "duration_s": 12.0,
+        "capture_time": "2026-01-01T09:21:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c05",
+        "kind": "video",
+        "duration_s": 8.3,
+        "capture_time": "2026-01-01T09:09:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c06",
+        "kind": "video",
+        "duration_s": 10.5,
+        "capture_time": "2026-01-01T09:40:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c07",
+        "kind": "video",
+        "duration_s": 6.8,
+        "capture_time": "2026-01-01T09:28:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c08",
+        "kind": "video",
+        "duration_s": 9.0,
+        "capture_time": "2026-01-01T09:33:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c09",
+        "kind": "video",
+        "duration_s": 11.2,
+        "capture_time": "2026-01-01T09:05:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c10",
+        "kind": "video",
+        "duration_s": 7.7,
+        "capture_time": "2026-01-01T09:18:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c11",
+        "kind": "video",
+        "duration_s": 8.8,
+        "capture_time": "2026-01-01T09:47:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      },
+      {
+        "id": "v-c12",
+        "kind": "video",
+        "duration_s": 13.1,
+        "capture_time": "2026-01-01T09:52:00Z",
+        "has_audio": true,
+        "speech": {
+          "has_speech": false,
+          "to_camera": false
+        }
+      }
+    ],
+    "turns": [
+      {
+        "role": "user",
+        "text": "Use the voice from my talk-to-camera video over a fast montage of the rest, in the order I filmed them, 30 seconds."
+      }
+    ],
+    "phone_proxy_media": true,
+    "notes": [
+      "Synthetic neutral media: the KRI-469 request shape (a long talk-to-camera voice clip, 12 dated clips with one capture-time tie), no private data."
+    ]
+  },
+  "expect": {
+    "question": {
+      "kind": "voice_vs_duration",
+      "option_keys": [
+        "match_voice",
+        "silent_tail"
+      ],
+      "min_options": 2
+    }
+  },
+  "repro": {
+    "command": "pytest tests/incidents/test_incident_corpus.py -k clarify-voice-shorter-than-length-asks",
+    "status": "available"
+  }
+}

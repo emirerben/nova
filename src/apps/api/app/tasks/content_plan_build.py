@@ -2404,12 +2404,26 @@ def _dispatch_item_render(
                 )
 
                 already_stamped = (job.all_candidates or {}).get(REQUIREMENT_VERSION_FIELD) == 1
+                # KRI-479: composition commitments (a continuous voice's hidden picture)
+                # apply to plan-authority jobs only: an unstamped job keeps its exact
+                # legacy contract.
+                from app.services.creator_render_contract import (  # noqa: PLC0415
+                    PLAN_AUTHORITY_FIELD,
+                    commitments_from_strategy,
+                )
+
+                authority_on = (job.all_candidates or {}).get(PLAN_AUTHORITY_FIELD) is not None or (
+                    not already_stamped and settings.kria_plan_authority_enabled
+                )
                 contract = build_render_contract(
                     strategy_payload,
                     generation_id=job.assembly_plan["creator_generation_id"],
                     brief=brief,
                     media_snapshot=binding.media_snapshot,
                     has_voiceover=bool(getattr(item, "voiceover_gcs_path", None)),
+                    composition=(
+                        commitments_from_strategy(strategy_payload) if authority_on else None
+                    ),
                 )
                 if contract is not None:
                     job.all_candidates = {**job.all_candidates, REQUIREMENT_VERSION_FIELD: 1}
@@ -2550,6 +2564,14 @@ def _dispatch_item_render(
     from app.services.render_route import stamp_route  # noqa: PLC0415
 
     job.assembly_plan = stamp_route(
+        job.assembly_plan or {}, getattr(job, "all_candidates", None) or {}
+    )
+    # KRI-479: the composition commitments, keyed by the contract digest, copying the route
+    # stamped just above (one source of truth). Plan-authority jobs only; same object back
+    # for every other job.
+    from app.services.creator_render_contract import stamp_composition  # noqa: PLC0415
+
+    job.assembly_plan = stamp_composition(
         job.assembly_plan or {}, getattr(job, "all_candidates", None) or {}
     )
     # Caller holds Plan -> Persona -> PlanItem locks and has revalidated this

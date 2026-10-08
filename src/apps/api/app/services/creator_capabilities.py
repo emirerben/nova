@@ -42,6 +42,7 @@ from app.agents._schemas.creator_policy import (
     normalize_creator_strategy_media,
     repair_creator_strategy_shape,
     repair_creator_user_song,
+    repair_creator_voice_mode,
 )
 from app.agents._schemas.edit_format import (
     CLIP_INTENT_FREE_EDIT_FORMATS,
@@ -994,6 +995,11 @@ def compile_strategy_to_plan(
             str(exc), code=exc.code, edit_format=strategy.edit_format
         ) from exc
     shape_notices = [*shape_notices, *song_notices]
+    # KRI-479: a stray `voice_mode` (no camera-audio montage) is dropped; a no-op otherwise.
+    strategy, voice_notices = repair_creator_voice_mode(
+        strategy, route_available=settings.voice_behind_footage_enabled
+    )
+    shape_notices = [*shape_notices, *voice_notices]
     try:
         strategy = normalize_creator_strategy_media(manifest, strategy)
     except UserSongUnavailableError as exc:

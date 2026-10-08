@@ -23,13 +23,16 @@ from app.kria.brief import CreativeBrief
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
+from app.pipeline.phone_recipe_shared import voice_tail_slack_s
 from app.services.choice_questions import (
     ATTACHMENT_ORDER_KEY,
     CAPTURE_ORDER_KEYS,
     CONFLICT_DURATION_VS_COUNT,
     CONFLICT_ORDER_BASIS,
     CONFLICT_TEXT_PLACEMENT,
+    CONFLICT_VOICE_VS_DURATION,
     OPT_ATTACHMENT_ORDER,
+    OPT_SILENT_TAIL,
     OPT_UNORDERED,
 )
 from app.services.clip_order_sequence import (
@@ -216,6 +219,18 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "render_contract:order",
         "ordering_choice",
         note="only `chronological` pins order; `group_first` is resolved upstream, not projected",
+    ),
+    **_rules(
+        "upstream_resolved",
+        "render_contract:composition",
+        "voice_mode",
+        note=(
+            "KRI-479: `continuous` = one named camera-audio clip's voice plays under the whole "
+            "edit and its own picture is hidden. Not part of the pinned projection (the strict "
+            "contract model never grows a field): the route resolver reads it and dispatch "
+            "derives the composition commitments (sibling `creator_composition` key) the "
+            "verifier checks; absent/`excerpts` = the spoken-excerpt lane unchanged"
+        ),
     ),
     # Taste: no renderer is held to it.
     **_rules(
@@ -546,6 +561,14 @@ ADAPTER_DECLARATIONS: dict[str, AdapterDeclaration] = {
             {"duration_s", "audio_source_ids", "original_audio", "order_required"},
             require_voiceover=_VOICE_CONFLICT,
         ),
+        # services/phone_speech_montage_job.py:run_phone_voice_behind_footage_job (KRI-479):
+        # one clip's voice under the others, composed from the contract's own fields and
+        # verified with the composition commitments.
+        _phone(
+            "phone_voice_behind_footage",
+            {"duration_s", "audio_source_ids", "original_audio", "exact_texts", "order_required"},
+            require_voiceover=_VOICE_CONFLICT,
+        ),
         # _run_phone_unified_montage_job -> _run_phone_guided_job.
         _phone(
             "phone_guided_unified_montage",
@@ -676,6 +699,155 @@ def _clip_intents_on() -> bool:
     return bool(settings.clip_intents_enabled)
 
 
+# --- Composition commitments (KRI-479) -------------------------------------------------
+#
+# What the plan commits to about HOW the tracks compose, beside (never inside) the strict
+# contract model: older workers read stamped jobs with `extra="forbid"`, so a new contract
+# field -- even one skipped while unset -- would make them unreadable during a rolling deploy
+# or after a rollback. The commitments are a plain dict on the job
+# (`assembly_plan["creator_composition"]`), keyed by the digest of the contract they were
+# resolved against, written and read only by new code, and only for plan-authority jobs.
+
+COMPOSITION_FIELD = "creator_composition"
+ROUTE_VOICE_BEHIND_FOOTAGE = "voice_behind_footage"
+# Mirrors `phone_recipe_shared.EXPORT_SAFETY_MARGIN_S` (kept literal: the contract module
+# does not import pipeline compilers).
+_VOICE_SAFETY_MARGIN_S = 0.05
+
+
+class CompositionCommitments(BaseModel):
+    """Plan commitments the verifier checks; none of them is a timeline."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+    # The voice clip's own picture is not part of the picture sequence (so it is left out of
+    # `order_ids`; `audio_source_ids` keeps it).
+    voice_picture: Literal["hidden"] | None = None
+    # Seconds of voice the plan promises when that is LESS than the picture (a silent tail
+    # the creator chose). None = the voice covers the whole timeline.
+    voice_span_s: float | None = Field(default=None, gt=0)
+    # Readable-shot floor in force. None = the policy constant (`MIN_READABLE_SHOT_S`).
+    min_shot_s: float | None = Field(default=None, ge=0.4)
+
+
+def commitments_from_strategy(
+    strategy: Mapping[str, Any] | None, *, voice_duration_s: float | None = None
+) -> CompositionCommitments | None:
+    """The commitments a typed strategy implies, or None (no continuous voice).
+
+    Only ``voice_mode == "continuous"`` with exactly ONE named camera-audio source
+    commits anything; several candidates are a question (`which_voice`), not a guess.
+    ``voice_duration_s`` is the voice clip's length (the silent-tail span needs it).
+    """
+
+    typed = _strategy(strategy)
+    if typed is None or typed.voice_mode != "continuous":
+        return None
+    audio = typed.montage_audio
+    ids = list(getattr(audio, "source_media_ids", None) or [])
+    if audio is None or not audio.preserve_source_audio or len(ids) != 1:
+        return None
+    span: float | None = None
+    answers = {a.conflict: a for a in (typed.choice_answers or ())}
+    tail = answers.get(CONFLICT_VOICE_VS_DURATION)
+    if tail is not None and tail.option == OPT_SILENT_TAIL and voice_duration_s:
+        span = max(0.1, round(float(voice_duration_s) - _VOICE_SAFETY_MARGIN_S, 3))
+    return CompositionCommitments(voice_picture="hidden", voice_span_s=span)
+
+
+def _bound_duration_s(assembly: Mapping[str, Any], media_id: str) -> float | None:
+    """The bound original's duration for ``media_id`` from the job's phone-source receipts."""
+
+    from app.services.phone_sources import PHONE_SOURCES_FIELD  # noqa: PLC0415
+
+    for row in assembly.get(PHONE_SOURCES_FIELD) or []:
+        if isinstance(row, Mapping) and row.get("media_id") == media_id:
+            original = row.get("original")
+            value = original.get("duration_s") if isinstance(original, Mapping) else None
+            if isinstance(value, int | float) and not isinstance(value, bool) and value > 0:
+                return float(value)
+    return None
+
+
+def stamp_composition(
+    assembly: Mapping[str, Any],
+    candidates: Mapping[str, Any],
+    *,
+    voice_duration_s: float | None = None,
+) -> dict[str, Any]:
+    """``assembly`` with its ``creator_composition`` key (re)computed -- plan-authority jobs only.
+
+    Call it once at dispatch, right after the route stamp (the stamped route is copied in so
+    there is one source of truth). A job without the plan-authority stamp comes back as the
+    SAME object; a strategy with no continuous voice REMOVES a previous key. Never raises.
+    """
+
+    unchanged = assembly if isinstance(assembly, dict) else dict(assembly)
+    if candidates.get(PLAN_AUTHORITY_FIELD) is None:
+        return unchanged
+    try:
+        contract = read_render_contract(assembly)
+        strategy = candidates.get("creator_strategy")
+        commitments = (
+            commitments_from_strategy(strategy, voice_duration_s=voice_duration_s)
+            if contract is not None
+            else None
+        )
+        if commitments is not None and voice_duration_s is None:
+            # The silent-tail span needs the voice clip's length, from the bound receipts.
+            ids = (strategy.get("montage_audio") or {}).get("source_media_ids") or []
+            known = _bound_duration_s(assembly, str(ids[0])) if ids else None
+            if known is not None:
+                commitments = commitments_from_strategy(strategy, voice_duration_s=known)
+        if contract is None or commitments is None:
+            if COMPOSITION_FIELD not in assembly:
+                return unchanged
+            return {k: v for k, v in assembly.items() if k != COMPOSITION_FIELD}
+        stamp = assembly.get("creator_route")
+        route = stamp.get("route") if isinstance(stamp, Mapping) else None
+        return {
+            **assembly,
+            COMPOSITION_FIELD: {
+                "contract_digest": contract.digest,
+                "route": route if isinstance(route, str) else None,
+                **commitments.model_dump(mode="json"),
+            },
+        }
+    except Exception:  # noqa: BLE001 -- advisory; never block dispatch
+        return unchanged
+
+
+def read_composition(
+    assembly: Mapping[str, Any], contract_digest: str
+) -> CompositionCommitments | None:
+    """The commitments, or None when absent, malformed or stale (another contract's)."""
+
+    raw = assembly.get(COMPOSITION_FIELD)
+    if not isinstance(raw, Mapping) or not contract_digest:
+        return None
+    if raw.get("contract_digest") != contract_digest:
+        return None
+    try:
+        return CompositionCommitments.model_validate(
+            {k: v for k, v in raw.items() if k not in {"contract_digest", "route"}}
+        )
+    except ValidationError:
+        return None
+
+
+def composition_route(assembly: Mapping[str, Any], contract_digest: str) -> str | None:
+    """The route recorded with the commitments (None when absent or stale)."""
+
+    raw = assembly.get(COMPOSITION_FIELD)
+    if (
+        isinstance(raw, Mapping)
+        and contract_digest
+        and raw.get("contract_digest") == contract_digest
+        and isinstance(raw.get("route"), str)
+    ):
+        return raw["route"]
+    return None
+
+
 def build_render_contract(
     strategy: Mapping[str, Any] | None,
     *,
@@ -684,8 +856,15 @@ def build_render_contract(
     media_snapshot: Mapping[str, Any] | None = None,
     clip_order: Sequence[str] = (),
     has_voiceover: bool = False,
+    composition: CompositionCommitments | None = None,
 ) -> CreatorRenderContract | None:
-    """Pin only facts that a portable recipe can objectively demonstrate."""
+    """Pin only facts that a portable recipe can objectively demonstrate.
+
+    ``composition`` (KRI-479) carries plan commitments that change how the order set is
+    derived without touching the contract model: with ``voice_picture == "hidden"`` the
+    camera-audio clip is the voice only, so it is left out of ``order_ids``
+    (``audio_source_ids`` keeps it). ``None`` is byte-identical to before.
+    """
     if strategy is None and brief is None:
         return None
     typed = _strategy(strategy)
@@ -730,7 +909,10 @@ def build_render_contract(
         typed.edit_format in TAKE_LENGTH_EDIT_FORMATS or typed.audio_strategy == "voiceover"
     )
     is_user_song = bool(typed and typed.audio_strategy == "user_song")
-    duration_answered = answers.get(CONFLICT_DURATION_VS_COUNT) is not None
+    duration_answered = (
+        answers.get(CONFLICT_DURATION_VS_COUNT) is not None
+        or answers.get(CONFLICT_VOICE_VS_DURATION) is not None
+    )
     brief_names_duration = bool(
         brief is not None
         and any(r.kind == "timing" and r.facts.get("duration_s") is not None for r in brief.live())
@@ -747,7 +929,18 @@ def build_render_contract(
         durations.append(float(raw["target_duration_s"]))
     order_required = bool(typed and typed.ordering_choice == "chronological")
     attachment_order = False
-    order_ids = tuple(str(item) for item in clip_order if str(item).strip())
+    hidden_ids: frozenset[str] = frozenset()
+    if (
+        composition is not None
+        and composition.voice_picture == "hidden"
+        and typed is not None
+        and typed.montage_audio is not None
+        and typed.montage_audio.preserve_source_audio
+    ):
+        hidden_ids = frozenset(str(v) for v in typed.montage_audio.source_media_ids or [])
+    order_ids = tuple(
+        str(item) for item in clip_order if str(item).strip() and str(item) not in hidden_ids
+    )
     order_basis = "confirmed" if order_ids else None
     unresolved: list[str] = []
     song_time_owns_order = bool(
@@ -761,7 +954,9 @@ def build_render_contract(
             if requirement.kind == "timing" and requirement.facts.get("duration_s") is not None:
                 if not length_is_pinnable:
                     continue
-                answered = answers.get(CONFLICT_DURATION_VS_COUNT)
+                answered = answers.get(CONFLICT_DURATION_VS_COUNT) or answers.get(
+                    CONFLICT_VOICE_VS_DURATION
+                )
                 if answered is not None and requirement.id in answered.requirement_ids:
                     # The creator chose a different length for exactly this requirement;
                     # the approved strategy carries it (target_duration_s, requested).
@@ -837,10 +1032,16 @@ def build_render_contract(
     if order_required and attachment_order:
         # An explicit, verifiable basis: the order the clips were added to the project.
         rows = (media_snapshot or {}).get("clip_assignments") or []
-        selected = set(typed.selected_media_ids or ()) if typed else set()
+        selected = set(typed.selected_media_ids or ()) - hidden_ids if typed else set()
         if selected:
             rows = [
                 row for row in rows if isinstance(row, Mapping) and row.get("media_id") in selected
+            ]
+        if hidden_ids:
+            rows = [
+                row
+                for row in rows
+                if not (isinstance(row, Mapping) and str(row.get("media_id")) in hidden_ids)
             ]
         ids = [
             str(row["media_id"]) for row in rows if isinstance(row, Mapping) and row.get("media_id")
@@ -854,10 +1055,16 @@ def build_render_contract(
         from app.services.clip_facts import capture_from_assignment
 
         rows = (media_snapshot or {}).get("clip_assignments") or []
-        selected = set(typed.selected_media_ids or ()) if typed else set()
+        selected = set(typed.selected_media_ids or ()) - hidden_ids if typed else set()
         if selected:
             rows = [
                 row for row in rows if isinstance(row, Mapping) and row.get("media_id") in selected
+            ]
+        if hidden_ids:
+            rows = [
+                row
+                for row in rows
+                if not (isinstance(row, Mapping) and str(row.get("media_id")) in hidden_ids)
             ]
         dates = {}
         for row in rows:
@@ -1116,21 +1323,143 @@ def doubled_soundtrack_assets(recipe: EditRecipeV2) -> list[str]:
     return []
 
 
+_SOUNDTRACK_UNREQUESTED = Decline(
+    "requirement_conflict",
+    "I can rebuild the edit without that soundtrack, or you can ask for music.",
+)
+
+
+def _verify_composition(
+    contract: CreatorRenderContract,
+    recipe: EditRecipeV2,
+    composition: CompositionCommitments,
+    *,
+    manifest: Mapping[str, Any],
+    audible: Any,
+    picture: Sequence[Any],
+    frame: float,
+) -> None:
+    """The checks that only make sense once the plan commits to a composition (KRI-479).
+
+    ``voice_covers_timeline`` / ``voice_window_contiguous``: the approved camera-audio clip
+    plays as ONE contiguous window from time zero up to where the picture ends (or the
+    committed span), give or take the sentence-snap slack. ``picture_shot_floor``: no shot is
+    below the readable floor unless its whole clip is. No soundtrack other than the approved
+    voice. Nothing, voice included, runs past the picture (``recipe.duration`` is the max end
+    over ALL tracks, so a long voice would silently stretch the video).
+    """
+
+    voice_ids = set(contract.audio_source_ids)
+    if composition.voice_picture == "hidden" and any(
+        isinstance(manifest.get(clip.source_asset_id), OriginalRenderAsset)
+        and manifest[clip.source_asset_id].media_id in voice_ids
+        for clip in picture
+    ):
+        raise _phone_decline(
+            "order_required",
+            "This edit shows the picture of the clip that is only meant to be heard.",
+        )
+
+    picture_end = max((c.timeline_start + c.source_duration / c.rate for c in picture), default=0.0)
+    if any(layer.end > picture_end + frame for layer in recipe.text_layers):
+        # A title held past the last shot would sit over black (or stretch the video).
+        raise _phone_decline(
+            "exact_texts",
+            "This edit keeps confirmed text on screen after the picture has ended.",
+            field_path="opening_title_duration_s",
+        )
+    if recipe.duration > picture_end + frame:
+        raise _phone_decline(
+            "duration_s",
+            "This edit's voice or text runs past the end of the picture.",
+            field_path="target_duration_s",
+        )
+
+    extras = [
+        clip
+        for track in recipe.tracks
+        if track.kind in {"video", "audio"}
+        for clip in track.clips
+        if audible(track, clip)
+        and not isinstance(manifest.get(clip.source_asset_id), OriginalRenderAsset)
+    ]
+    if extras or music_bed_audible(recipe) is not None or recipe.audio.narration_asset_id:
+        raise CreatorRenderContractError(
+            "This edit has a soundtrack you didn't ask for.",
+            decline_reason=_SOUNDTRACK_UNREQUESTED.reason,
+            field_path="audio_strategy",
+            alternative=_SOUNDTRACK_UNREQUESTED.alternative,
+        )
+
+    voice = sorted(
+        (
+            clip
+            for track in recipe.tracks
+            if track.kind == "audio"
+            for clip in track.clips
+            if isinstance(manifest.get(clip.source_asset_id), OriginalRenderAsset)
+            and manifest[clip.source_asset_id].media_id in voice_ids
+            and audible(track, clip)
+        ),
+        key=lambda clip: clip.timeline_start,
+    )
+    expected = composition.voice_span_s if composition.voice_span_s is not None else picture_end
+    covered = 0.0
+    for clip in voice:
+        if clip.timeline_start > covered + frame:
+            raise _phone_decline(
+                "audio_source_ids",
+                "This edit's voice has a gap or starts late instead of playing straight through.",
+            )
+        covered = max(covered, clip.timeline_start + clip.source_duration / clip.rate)
+    if not voice or covered < expected - voice_tail_slack_s(expected) - frame:
+        raise _phone_decline(
+            "audio_source_ids", "This edit's voice stops before the end of the picture."
+        )
+
+    from app.pipeline.unified_montage import MIN_READABLE_SHOT_S  # noqa: PLC0415
+
+    floor = composition.min_shot_s if composition.min_shot_s is not None else MIN_READABLE_SHOT_S
+    source_seconds = {asset.id: asset.duration for asset in recipe.assets}
+    for clip in picture:
+        shown = clip.source_duration / clip.rate
+        whole = source_seconds.get(clip.source_asset_id)
+        if shown + frame / 2 >= floor or (whole is not None and shown + 0.05 + 2 * frame >= whole):
+            continue
+        raise _phone_decline(
+            "duration_s",
+            "A shot in this edit is too short to be seen.",
+            field_path="target_duration_s",
+        )
+
+
 def verify_phone_recipe(
     contract: CreatorRenderContract,
     recipe: EditRecipeV2,
     *,
     source_audio: Mapping[str, bool] | None = None,
+    composition: CompositionCommitments | None = None,
 ) -> list[dict[str, Any]]:
+    """Check a compiled phone recipe against the pinned contract.
+
+    ``composition`` (KRI-479) is passed only for a composer route whose plan carries
+    commitments: it adds the voice / shot-floor / soundtrack / overrun checks and tightens
+    the duration tolerance from 10 % to ``max(0.1 s, 1 frame)`` (the composer sums exact
+    shots, so a looser bound only hides drift). ``None`` leaves every legacy lane unchanged.
+    """
     if contract.unresolved:
         raise unresolved_decline(contract.unresolved[0])
     manifest = {asset.id: asset for asset in recipe.asset_manifest.assets}
     receipts: list[dict[str, Any]] = []
-    if (
-        contract.duration_s is not None
-        and abs(recipe.duration - contract.duration_s) / contract.duration_s > 0.1
-    ):
-        raise _phone_decline("duration_s", "This edit couldn't keep the confirmed length.")
+    if contract.duration_s is not None:
+        drift = abs(recipe.duration - contract.duration_s)
+        allowed = (
+            max(0.1, 1 / recipe.frame_rate)
+            if composition is not None
+            else contract.duration_s * 0.1
+        )
+        if drift > allowed + 1e-9:
+            raise _phone_decline("duration_s", "This edit couldn't keep the confirmed length.")
 
     def audible(track, clip) -> bool:
         return _clip_audible(recipe, track, clip)
@@ -1202,6 +1531,16 @@ def verify_phone_recipe(
         key=lambda clip: clip.timeline_start,
     )
     frame = 1 / recipe.frame_rate
+    if composition is not None:
+        _verify_composition(
+            contract,
+            recipe,
+            composition,
+            manifest=manifest,
+            audible=audible,
+            picture=picture,
+            frame=frame,
+        )
 
     def _run_can_be_visible(run) -> bool:  # noqa: ANN001
         """Reject only layers the portable paint contract proves invisible."""

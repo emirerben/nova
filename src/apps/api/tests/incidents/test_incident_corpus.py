@@ -294,6 +294,30 @@ def test_latest_recorded_output_meets_the_expected_facts(record: IncidentRecord)
 
 
 @pytest.mark.parametrize(
+    "record",
+    [pytest.param(r, id=r.id) for r in RECORDS if r.inputs.voice_behind_footage],
+)
+def test_voice_behind_footage_record_composes_and_verifies(
+    record: IncidentRecord, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """KRI-479: the approved plan, through the REAL composer and the REAL verifier (with the
+    plan's composition commitments), yields the facts the record's latest observation states.
+
+    This is plan-to-recipe proof, not output proof: nothing renders here. The export proof is
+    ``python scripts/ios/phone-audio-parity.py prepare OUT --cases voice_behind_footage``.
+    """
+    _recipe, _receipt, derived = harness.voice_behind_footage_composition(record, monkeypatch)
+    seen = record.observations[-1].facts
+    assert seen.duration_s is not None and abs(seen.duration_s - derived.duration_s) <= 1 / 30
+    assert seen.voice_source_ids == derived.voice_source_ids
+    assert seen.order_ids == derived.order_ids
+    assert seen.exact_texts == derived.exact_texts
+    want = record.expect.output_facts
+    assert want is not None
+    assert not output_mismatches(record, want, record.observations[-1])
+
+
+@pytest.mark.parametrize(
     "record", [pytest.param(r, id=r.id) for r in RECORDS if r.inputs.synthetic]
 )
 def test_synthetic_substitutes_regenerate_with_the_declared_shape(

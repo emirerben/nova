@@ -2426,6 +2426,59 @@ def _shadow_route(
         log.warning("route_shadow_unavailable", job_id=job_id, point=point)
 
 
+def _voice_behind_footage_route(snapshot: dict, candidates: dict) -> bool:
+    """KRI-479: does this STAMPED plan resolve to ``voice_behind_footage``?
+
+    The same pure resolver the shadow check runs, over the same persisted inputs. Only a
+    plan-authority job (the dispatch-time stamp AND a pinned contract) can answer yes. A resolver
+    fault answers no (legacy lane) except for a stamped continuous-voice plan, which declines.
+    """
+    try:
+        from app.services.creator_render_contract import stamped_plan_contract  # noqa: PLC0415
+        from app.services.render_route import (  # noqa: PLC0415
+            Route,
+            resolve_route,
+            route_capabilities_from_settings,
+            route_inputs_from_job,
+        )
+
+        contract = stamped_plan_contract(snapshot, candidates)
+        if contract is None:
+            return False
+        inputs = route_inputs_from_job(
+            snapshot,
+            candidates,
+            platform="phone",
+            capabilities=route_capabilities_from_settings(),
+            contract=contract,
+        )
+        if inputs is None:
+            return False
+        resolution = resolve_route(inputs)
+        return resolution.outcome == "route" and resolution.route is Route.VOICE_BEHIND_FOOTAGE
+    except Exception as exc:  # noqa: BLE001
+        log.warning("voice_route_unavailable", error_class=type(exc).__name__)
+        strategy = candidates.get("creator_strategy")
+        if (
+            candidates.get("creator_plan_authority_version") is not None
+            and isinstance(strategy, dict)
+            and strategy.get("voice_mode") == "continuous"
+        ):
+            # A stamped continuous-voice plan must never fall back to the excerpt lane (the lane
+            # that re-decides the approved plan): a retryable typed decline instead.
+            from app.services.creator_render_contract import (  # noqa: PLC0415
+                CreatorRenderContractError,
+            )
+
+            raise CreatorRenderContractError(
+                "I couldn't set up your voice edit just now.",
+                decline_reason="evidence_missing",
+                field_path="voice_mode",
+                alternative="Try again in a moment, or ask me to make the edit again.",
+            ) from exc
+        return False  # anything else keeps its legacy lane
+
+
 def _run_generative_job(
     job_id: str,
     *,
@@ -2557,6 +2610,31 @@ def _run_generative_job_impl(
                             "phone_format", "This kind of edit isn't available on your iPhone yet."
                         )
                     raise ValueError("No phone renderer is registered for this edit")
+                elif (
+                    declared_format in GUIDED_EDIT_FORMATS
+                    and not has_voiceover_candidate
+                    and _voice_behind_footage_route(phone_snapshot, candidates)
+                ):
+                    # KRI-479: a STAMPED plan whose route resolves to voice_behind_footage
+                    # (one named clip's voice straight through under the other clips) is
+                    # composed from the approved contract and commitments. Unstamped jobs
+                    # never reach this branch and keep the speech lane below, line for line.
+                    from app.services.phone_speech_montage_job import (  # noqa: PLC0415
+                        run_phone_voice_behind_footage_job,
+                    )
+
+                    _shadow_route(
+                        job_id,
+                        phone_snapshot,
+                        candidates,
+                        "phone",
+                        "voice_behind_footage",
+                        "phone_dispatch",
+                    )
+                    if not run_phone_voice_behind_footage_job(
+                        job_id, phone_snapshot, candidates, ownership_epoch=ownership_epoch
+                    ):
+                        raise speech_edit_not_built()
                 elif declared_format in GUIDED_EDIT_FORMATS:
                     if has_voiceover_candidate:
                         # KRI-220: the voiceover montage writer is the ONLY phone

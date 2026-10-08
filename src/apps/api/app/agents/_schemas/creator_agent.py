@@ -276,6 +276,11 @@ AudioStrategy = Literal["licensed_music", "original_audio", "voiceover", "user_s
 # music bed; "lipsync" = the song is the master clock and takes are placed by
 # song time.
 SongSyncMode = Literal["background", "lipsync"]
+# KRI-479: how a creator-named camera-audio source is used under a montage.
+# "continuous" = ONE clip's voice plays straight through the whole edit while the
+# other clips are the (silent) picture; "excerpts" = chosen lines from the
+# speaker (the spoken-excerpt montage). Absent = today's behaviour, unchanged.
+VoiceMode = Literal["continuous", "excerpts"]
 ExecutionContract = Literal["guided_voiceover_v1"]
 MediaScope = Literal["all", "selected"]
 CaptionStyle = Literal["none", "clean", "kinetic", "karaoke", "editorial", "auto"]
@@ -450,6 +455,22 @@ class CreativeStrategy(_CreatorModel):
         default=None, max_length=MAX_CREATOR_MEDIA_REFS
     )
 
+    # KRI-479 (voice behind footage). MODEL-authored like `song_sync`: SkipJsonSchema
+    # keeps it OUT of every derived JSON schema (the Kria `apply_strategy` tool schema
+    # stays byte-identical), default None and the omit-when-None serializer keep stored
+    # strategies and every hash byte-identical when unused. The prompt teaches it only
+    # when the manifest advertises `phone_source_audio`.
+    voice_mode: SkipJsonSchema[VoiceMode | None] = Field(default=None)
+
+    @field_validator("voice_mode", mode="before")
+    @classmethod
+    def _coerce_voice_mode(cls, value: object) -> object:
+        """Anything unrecognised reads as unset (KRI-129: repair, never reject)."""
+        if value is None:
+            return None
+        text = str(value).strip().casefold()
+        return text if text in {"continuous", "excerpts"} else None
+
     @field_validator("song_sync", mode="before")
     @classmethod
     def _coerce_song_sync(cls, value: object) -> object:
@@ -501,6 +522,7 @@ class CreativeStrategy(_CreatorModel):
             "closing_media",
             "song_sync",
             "resolved_song_takes",
+            "voice_mode",
         ):
             if data.get(key) is None:
                 data.pop(key, None)
@@ -1429,6 +1451,7 @@ def canonical_manifest_hash(manifest: ResolvedCreatorManifest | Mapping[str, Any
 
 __all__ = [
     "SongSyncMode",
+    "VoiceMode",
     "UserSongFacts",
     "ApplySpeechCutCommand",
     "AskUser",
