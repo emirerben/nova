@@ -249,6 +249,12 @@ class PlanFacts:
     # The language the rendered captions are in, and the language that was spoken.
     caption_language: str | None = None
     spoken_language: str | None = None
+    # KRI-547: how a phone Talking render framed a sideways speaker clip for a
+    # "vertical / keep my face in frame" ask (`variant["speaker_framing"]`): "face_fill",
+    # "letterbox" or "centre_fill", and why. None = no framing receipt (no such ask, a
+    # draft, or a render that does not record one): nothing about framing is claimed.
+    speaker_framing: str | None = None
+    speaker_framing_reason: str | None = None
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -876,6 +882,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     elif variant.get("resolved_archetype") == "narrated":
         changes["audio_strategy"] = "voiceover"
     changes.update(_rendered_speech_facts(variant))
+    changes.update(_speaker_framing_facts(variant))
     return dataclasses.replace(base, **changes) if changes else base
 
 
@@ -2625,6 +2632,122 @@ def _check_style(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     return _receipt(req, "partial", _NO_CHECKER)
 
 
+# KRI-547: "I filmed it sideways but want a vertical video, keep my face in frame".
+# The phone Talking worker reads the same words off the approved brief
+# (`app.kria.speaker_framing_ask`) and records how it framed the speaker on the
+# variant (`phone_speaker_framing`); these judge the ask from that receipt.
+_FRAMING_RECEIPT_MODES = frozenset({"face_fill", "letterbox", "centre_fill"})
+
+
+def _wants_speaker_framing(req: BriefRequirement) -> bool:
+    """A style ask for a vertical / full-screen / face-in-frame video, and nothing a
+    more specific checker owns (captions, pop-ins, the closing shot, speech cleanup)."""
+    from app.kria.speaker_framing_ask import requirement_asks_vertical_framing  # noqa: PLC0415
+
+    return requirement_asks_vertical_framing(req) and not (
+        _wants_captions(req) or _wants_beats(req) or _wants_closing(req) or _wants_cleanup(req)
+    )
+
+
+def _speaker_framing_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    """``speaker_framing`` / ``speaker_framing_reason`` off a variant's framing receipt."""
+    receipt = variant.get("speaker_framing")
+    if not isinstance(receipt, Mapping) or receipt.get("mode") not in _FRAMING_RECEIPT_MODES:
+        return {}
+    reason = receipt.get("reason")
+    return {
+        "speaker_framing": str(receipt["mode"]),
+        "speaker_framing_reason": str(reason) if isinstance(reason, str) and reason else None,
+    }
+
+
+def _framing_fallback_reason(reason: str | None, *, cropped: bool) -> str:
+    """Why the face crop was not used, and what the creator sees instead."""
+    shown = (
+        say(
+            en="so the video is cropped to the middle and your face can leave the frame",
+            tr="o yüzden video ortadan kırpıldı ve yüzün kadrajdan çıkabilir",
+        )
+        if cropped
+        else say(
+            en="so the whole frame shows with black bars above and below",
+            tr="o yüzden görüntünün tamamı üstte ve altta siyah bantlarla görünüyor",
+        )
+    )
+    if reason == "face_moves_too_much":
+        why = say(
+            en="Your face moves too far for one vertical crop to hold it",
+            tr="Yüzün tek bir dikey kadraja sığmayacak kadar hareket ediyor",
+        )
+    elif reason == "face_under_captions":
+        why = say(
+            en="A vertical crop would put the captions over your face",
+            tr="Dikey kırpma altyazıları yüzünün üstüne getirirdi",
+        )
+    elif reason == "creator_chose_bars":
+        return say(
+            en="You chose black bars in the editor, so the whole frame shows",
+            tr="Editörde siyah bantları seçtin, o yüzden görüntünün tamamı görünüyor",
+        )
+    elif reason == "creator_chose_crop":
+        return say(
+            en=(
+                "You chose crop in the editor, so the video is cropped to the middle "
+                "and your face can leave the frame"
+            ),
+            tr=(
+                "Editörde kırpmayı seçtin, o yüzden video ortadan kırpıldı ve yüzün "
+                "kadrajdan çıkabilir"
+            ),
+        )
+    else:
+        why = say(
+            en="I couldn't find your face reliably in the clip",
+            tr="Klipte yüzünü güvenle bulamadım",
+        )
+    return f"{why}, {shown}"
+
+
+def _check_speaker_framing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    mode = facts.speaker_framing
+    if mode is None:
+        reason = (
+            say(
+                en="This video didn't record how it framed you, so I can't check it.",
+                tr="Bu video seni nasıl kadrajladığını kaydetmedi, o yüzden kontrol edemiyorum.",
+            )
+            if facts.rendered_variant
+            else say(
+                en="I'll check the framing on the finished video.",
+                tr="Kadrajı video hazır olunca kontrol edeceğim.",
+            )
+        )
+        return _receipt(req, "partial", reason, verification="unchecked")
+    if mode == "face_fill":
+        return _receipt(
+            req,
+            "met",
+            say(
+                en="The video fills the vertical frame and your face stays in it throughout",
+                tr="Video dikey ekranı dolduruyor ve yüzün baştan sona kadrajda kalıyor",
+            ),
+        )
+    if facts.speaker_framing_reason == "not_landscape":
+        return _receipt(
+            req,
+            "met",
+            say(
+                en="Your clip is already vertical, so it fills the frame",
+                tr="Klibin zaten dikey, o yüzden ekranı dolduruyor",
+            ),
+        )
+    return _receipt(
+        req,
+        "partial",
+        _framing_fallback_reason(facts.speaker_framing_reason, cropped=mode == "centre_fill"),
+    )
+
+
 def _check_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if _wants_whole_take(req):
         return _check_whole_take(req, facts)
@@ -3087,6 +3210,8 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
 
 def _has_checker(req: BriefRequirement) -> bool:
     """True when ``check_requirement`` can actually verify this requirement."""
+    if _wants_speaker_framing(req):
+        return True
     if _wants_cleanup(req) or _wants_captions(req):
         return True
     if req.kind == "text":
@@ -3125,6 +3250,8 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
         # edit: the cleanup ask owns the sentence; the length it names is judged
         # inside it. Elsewhere the sentence takes its kind's usual path.
         return _check_speech_cleanup(req, facts)
+    if _wants_speaker_framing(req):
+        return _check_speaker_framing(req, facts)
     if req.kind == "text":
         if req.scope == "per_clip" or req.scope.startswith("clip:"):
             return _check_per_clip_text(req, facts)

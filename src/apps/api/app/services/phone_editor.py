@@ -44,6 +44,7 @@ from app.pipeline.phone_recipe_shared import (
     apply_landscape_fit,
     timeline_end_s,
 )
+from app.pipeline.phone_speaker_framing import SPEAKER_FRAMING_FIELD, editor_speaker_framing
 from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, lane_names
 from app.pipeline.phone_subtitled_plan import (
     SFX_DUCK_RECEIPT_FIELD,
@@ -800,6 +801,12 @@ def _compile_subtitled_editor_commit(
     landscape_fit = _resolved_landscape_fit(
         variant, previous.recipe, prep.get("landscape_fit_override")
     )
+    # KRI-547: a face-filled speaker keeps its crop on Save, drops it when the
+    # creator picks black bars, and gets it back when they pick crop again.
+    # A variant without a framing receipt compiles exactly as before.
+    speaker_position_x, framing_receipt = editor_speaker_framing(
+        variant.get(SPEAKER_FRAMING_FIELD), landscape_fit=landscape_fit
+    )
 
     recipe = compile_phone_subtitled_plan(
         (speaker,),
@@ -816,6 +823,7 @@ def _compile_subtitled_editor_commit(
         # a text section), in the cut-timeline seconds the cues use.
         text_elements=variant.get("text_elements") or [],
         text_elements_user_edited=bool(variant.get("text_elements_user_edited")),
+        **({"speaker_position_x": speaker_position_x} if speaker_position_x is not None else {}),
     )
     duck_receipt = sfx_duck_receipt(lanes, recipe)
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(lanes.overlays or cutaways))
@@ -838,6 +846,8 @@ def _compile_subtitled_editor_commit(
         row["duration_s"] = recipe.duration
         if caption_cues_overridden:
             row["caption_cues"] = caption_cues
+        if framing_receipt is not None:
+            row[SPEAKER_FRAMING_FIELD] = framing_receipt
         _persist_lane_state(
             row, lanes, labels, paths, caption_style=caption_style, duck_receipt=duck_receipt
         )

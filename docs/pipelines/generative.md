@@ -606,6 +606,53 @@ cloud variant whose fields are not filled yet stays unknown. Guards:
 `tests/kria/test_brief_rendered_speech_facts.py`, the KRI-541 cases in
 `tests/tasks/test_marathon_render_ready_review.py`.
 
+### Phone Talking face-filled vertical crop (KRI-547, `PHONE_SPEAKER_FACE_FILL_ENABLED`)
+
+A sideways (landscape) speaker clip on a phone Talking edit is letterboxed at the item's
+default `landscape_fit="fit"` (KRI-283), and "fill" is a blind centre crop that can cut a
+speaker standing in the left third out of frame. When the approved brief asks for a
+vertical / 9:16 / full-screen / "keep my face in frame" result (`style` requirements,
+EN + TR, read deterministically by `app/kria/speaker_framing_ask.py`; no strategy field
+or prompt change), `_run_phone_subtitled_job` calls
+`phone_speaker_framing.decide_speaker_framing`:
+
+- samples the speaker's face across the kept take (one frame per ~1.25 s, 6..24, on the
+  analysis proxy, `sample_face_regions(raw_boxes=True)`); the speaker is every detection
+  the size of the recurring face (0.6x..1.5x), wherever it moved;
+- needs ≥80% of anchors decoded (no timeout) and the face on ≥60% of them;
+- finds ONE static window (the engine's cover fill, slid sideways) centred on the union
+  of the face boxes: each box must keep ≥95% of its width inside it, and the face bottom
+  must stay above the caption block (canvas y 0.72; letterboxed captions sat on the bar);
+- `face_fill` compiles the speaker clips (every cleanup segment) with identity scale and
+  `MediaTransform.position_x` (`phone_recipe_shared.face_fill_transform`, clamped so no
+  black edge shows). The iOS engine already applies `positionX` to main-track clips: no
+  capability, no app update. Anything short of that keeps today's framing (`letterbox`
+  for "fit", `centre_fill` for "fill") and records why.
+
+The variant carries `speaker_framing` (`mode` face_fill / letterbox / centre_fill,
+`reason` face_in_window / face_moves_too_much / no_face / face_unconfirmed /
+face_under_captions / not_landscape / creator_chose_bars / creator_chose_crop, `window`,
+`eligible`, `asked_by`, `faces`), plus `landscape_fit="fill"` when face-filled.
+`brief_checks._check_speaker_framing` answers the ask from it at render-ready
+(`plan_facts_from_phone_variant`): Done for face_fill (or an already-vertical clip),
+Partly with the reason for a fallback, unchecked at draft. Face geometry downstream uses
+the crop: the opening/closing title (`place_talking_title(position_x=...)`) and the
+beat/PiP card arbitration (`resolve_phone_card_geometry(face_box_to_canvas=...)`, raw
+face boxes mapped then padded on the canvas). On a face-filled close-up the face spans
+most of the frame, so a PiP card often has no safe spot and is reported `no_safe_spot`
+rather than covering the face. Editor Save (`editor_speaker_framing`): keeps the crop,
+drops it when the creator picks bars (`creator_chose_bars`), restores it on crop. The
+native editor's live preview compiles its own recipe (`NativeEditorRenderCompiler`), which
+knows bars/crop but not this shift, so it previews a centre crop (iOS follow-up).
+
+No ask, or the flag off: no sampling, no receipt, byte-identical recipe and variant.
+Rollback: `fly secrets set PHONE_SPEAKER_FACE_FILL_ENABLED=false --app nova-video` +
+`fly machine restart <id>` (worker). Guards: `tests/pipeline/test_phone_speaker_framing.py`,
+`tests/kria/test_speaker_framing_ask.py`, `tests/kria/test_brief_speaker_framing.py`,
+`tests/tasks/test_phone_subtitled_speaker_framing_worker.py`, the KRI-547 cases in
+`tests/pipeline/test_phone_subtitled_plan.py` and
+`tests/routes/test_phone_subtitled_editor_commit.py`.
+
 ### Narrated render receipts (KRI-533)
 
 A phone Voiceover draft used to list every order / timing / caption-language ask as

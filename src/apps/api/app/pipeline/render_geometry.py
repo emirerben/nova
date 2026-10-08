@@ -314,11 +314,25 @@ def _face_protection_box(raw: NormalizedBox) -> NormalizedBox:
     padding thin; sides and chin stay generously padded.
     """
 
+    return pad_face_box(clamp_face_width(raw))
+
+
+def clamp_face_width(raw: NormalizedBox) -> NormalizedBox:
+    """A raw Haar box wider than 55% of its frame narrowed to a centered
+    head-size box (the background-merge case `_face_protection_box` describes)."""
+
     if raw.width > 0.55:
         center_x = (raw.left + raw.right) / 2
-        raw = NormalizedBox(
+        return NormalizedBox(
             max(0.0, center_x - 0.275), raw.top, min(1.0, center_x + 0.275), raw.bottom
         )
+    return raw
+
+
+def pad_face_box(raw: NormalizedBox) -> NormalizedBox:
+    """The protection padding around a face box, in the box's own normalized
+    units: thin above the hairline, generous at the sides and under the chin."""
+
     return NormalizedBox(
         max(0.0, raw.left - 0.06),
         max(0.0, raw.top - 0.02),
@@ -327,16 +341,21 @@ def _face_protection_box(raw: NormalizedBox) -> NormalizedBox:
     )
 
 
-def _face_region_at(at_s: float, raw_box: dict[str, Any]) -> ProtectedRegion:
+def _face_region_at(
+    at_s: float, raw_box: dict[str, Any], *, raw_boxes: bool = False
+) -> ProtectedRegion:
+    box = NormalizedBox(**raw_box)
     return ProtectedRegion(
         start_s=max(0.0, at_s - 0.5),
         end_s=at_s + 0.5,
-        box=_face_protection_box(NormalizedBox(**raw_box)),
+        box=box if raw_boxes else _face_protection_box(box),
         kind="face",
     )
 
 
-def _partial_samples_from_stream(stdout: str | None) -> tuple[list[ProtectedRegion], int, int]:
+def _partial_samples_from_stream(
+    stdout: str | None, *, raw_boxes: bool = False
+) -> tuple[list[ProtectedRegion], int, int]:
     """Rebuild whatever the worker streamed before it was killed.
 
     The worker emits one ``{"anchor": {...}}`` line per anchor (flushed), so a
@@ -362,7 +381,7 @@ def _partial_samples_from_stream(stdout: str | None) -> tuple[list[ProtectedRegi
                 decoded += 1
             raw_box = anchor.get("box")
             if raw_box:
-                regions.append(_face_region_at(at_s, raw_box))
+                regions.append(_face_region_at(at_s, raw_box, raw_boxes=raw_boxes))
         except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
             continue
     return regions, attempted, decoded
@@ -375,6 +394,7 @@ def sample_face_regions(
     max_samples: int = 12,
     timeout_s: float = 2.0,
     count_decoded: bool = False,
+    raw_boxes: bool = False,
 ) -> tuple[list[ProtectedRegion], dict[str, Any]]:
     """Sample faces in a killable subprocess so the wall-clock budget is real.
 
@@ -382,6 +402,11 @@ def sample_face_regions(
     identical) adds a ``decoded`` field — the number of anchors that produced a
     decodable frame — which the caption-placement chooser uses as its coverage
     denominator (plan 011 Feature C).
+
+    ``raw_boxes`` (default off ⇒ unchanged) returns the detector's own boxes
+    instead of `_face_protection_box`'s clamped + padded ones, for a caller that
+    maps the face into another frame first (KRI-547 face-filled crop) and pads
+    it there.
 
     A timeout keeps the anchors the worker already streamed (``partial: True``)
     instead of reporting zero. Losing them was catastrophic rather than
@@ -412,7 +437,7 @@ def sample_face_regions(
         # `subprocess.run` kills the child and re-collects its output before
         # re-raising, so partial stdout is available here.
         partial, partial_attempted, partial_decoded = _partial_samples_from_stream(
-            exc.stdout if isinstance(exc.stdout, str) else None
+            exc.stdout if isinstance(exc.stdout, str) else None, raw_boxes=raw_boxes
         )
         receipt: dict[str, Any] = {
             "attempted": partial_attempted or len(anchors),
@@ -441,7 +466,11 @@ def sample_face_regions(
             if raw_decoded is not None:
                 decoded = int(raw_decoded)
             for sample in payload.get("samples") or []:
-                regions.append(_face_region_at(max(0.0, float(sample["at_s"])), sample["box"]))
+                regions.append(
+                    _face_region_at(
+                        max(0.0, float(sample["at_s"])), sample["box"], raw_boxes=raw_boxes
+                    )
+                )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             regions = []
             worker_error = f"bad_payload:{type(exc).__name__}"

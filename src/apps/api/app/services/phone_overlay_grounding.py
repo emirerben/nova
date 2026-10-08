@@ -185,6 +185,7 @@ def resolve_phone_card_geometry(
     clip_path: str | None,
     job_id: str,
     footprints_by_id: dict[str, MediaFootprint],
+    face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, str], str]:
     """Face-aware, caption-safe geometry arbitration shared by every phone
     card-placement grounding module (KRI-176 overlay grounding, KRI-178
@@ -213,6 +214,12 @@ def resolve_phone_card_geometry(
       dict (its ``x_frac``/``y_frac``/``scale`` may have moved or shrunk).
     - ``reason_by_id``: omitted card id -> ``"no_safe_spot"`` or ``"duplicate"``.
     - ``face_sampling``: ``"ok"`` | ``"failed"`` | ``"skipped"``.
+
+    ``face_box_to_canvas`` (KRI-547, default ``None`` = unchanged): when the
+    speaker clip is drawn through a face-filled crop, the sampled faces are
+    taken RAW and mapped onto the canvas with it
+    (`phone_speaker_framing.face_box_mapper`, which pads them there), so cards
+    avoid the face where it is actually drawn. A face outside the crop drops.
     """
 
     anchors: list[float] = []
@@ -234,7 +241,14 @@ def resolve_phone_card_geometry(
                     _FACE_SAMPLE_TIMEOUT_BASE_S + _FACE_SAMPLE_TIMEOUT_PER_ANCHOR_S * len(anchors)
                 ),
                 count_decoded=False,
+                **({"raw_boxes": True} if face_box_to_canvas is not None else {}),
             )
+            if face_box_to_canvas is not None:
+                face_regions = [
+                    ProtectedRegion(region.start_s, region.end_s, mapped, kind=region.kind)
+                    for region in face_regions
+                    if (mapped := face_box_to_canvas(region.box)) is not None
+                ]
             face_sampling = "ok"
         except Exception as exc:  # noqa: BLE001 - fail open: keep no face regions
             log.warning(
@@ -452,6 +466,7 @@ def ground_phone_subtitled_overlays(
     used_media_ids: frozenset[str] = frozenset(),
     video_supported: bool = False,
     layout: str = "pip",
+    face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
 ) -> GroundedOverlayCards:
     """Match the speaker's transcript against the item's ready Visuals pool
     and resolve face-aware, caption-safe PiP card geometry (KRI-176).
@@ -627,6 +642,7 @@ def ground_phone_subtitled_overlays(
         clip_path=clip_path,
         job_id=job_id,
         footprints_by_id=footprints_by_id,
+        **({"face_box_to_canvas": face_box_to_canvas} if face_box_to_canvas is not None else {}),
     )
 
     cards: list[SubtitledOverlayCard] = []

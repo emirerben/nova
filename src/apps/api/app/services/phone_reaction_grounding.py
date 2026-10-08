@@ -49,7 +49,7 @@ from app.pipeline.phone_subtitled_lanes import (
     SubtitledSoundEffect,
     sfx_path_is_playable,
 )
-from app.pipeline.render_geometry import MediaFootprint
+from app.pipeline.render_geometry import MediaFootprint, NormalizedBox
 from app.services.phone_overlay_grounding import (
     _label_for_asset,
     _load_ready_pool_assets,
@@ -510,6 +510,7 @@ def ground_phone_reaction_beats(
     duration_s: float,
     clip_path: str | None,
     video_supported: bool = False,
+    face_box_to_canvas: Callable[[NormalizedBox], NormalizedBox | None] | None = None,
 ) -> GroundedReactionBeats:
     """Ground creator-authored reaction beats + closing media against the
     clip's raw Whisper words into phone Talking-lane cards/sounds (KRI-178).
@@ -519,6 +520,10 @@ def ground_phone_reaction_beats(
     ``kind="video"`` card in the photo corner, played from its start. Off
     (default), a video is reported ``visual_is_video`` exactly as before. The
     closing shot and badge stay photo-only.
+
+    ``face_box_to_canvas`` (KRI-547, default ``None`` = unchanged) maps the
+    sampled faces through a face-filled speaker crop before cards are placed
+    (`phone_overlay_grounding.resolve_phone_card_geometry`).
 
     Fails open at every stage: a broken face sampler leaves no face regions
     protected (`face_sampling == "failed"`), a bad DB row is skipped, and any
@@ -846,6 +851,7 @@ def ground_phone_reaction_beats(
         clip_path=clip_path,
         job_id=job_id,
         footprints_by_id=footprints_by_id,
+        **({"face_box_to_canvas": face_box_to_canvas} if face_box_to_canvas is not None else {}),
     )
 
     cards: list[SubtitledOverlayCard] = []

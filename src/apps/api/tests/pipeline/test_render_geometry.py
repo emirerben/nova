@@ -535,3 +535,61 @@ def test_guided_text_best_effort_never_prefers_a_chrome_unsafe_candidate() -> No
     picked = receipt["evaluated"][receipt["candidate_index"]]
     assert picked["clears_chrome"] is True
     assert chosen == pytest.approx(0.16)  # earliest chrome-safe candidate on a coverage tie
+
+
+# ── KRI-547: raw detector boxes for a caller that maps the face first ─────────
+
+
+def test_protection_box_is_the_clamp_then_the_padding():
+    from app.pipeline.render_geometry import (  # noqa: PLC0415
+        _face_protection_box,
+        clamp_face_width,
+        pad_face_box,
+    )
+
+    normal = NormalizedBox(0.2, 0.15, 0.45, 0.6)
+    merged = NormalizedBox(0.05, 0.1, 0.85, 0.7)
+    for raw in (normal, merged):
+        assert _face_protection_box(raw) == pad_face_box(clamp_face_width(raw))
+    assert clamp_face_width(normal) == normal
+    assert clamp_face_width(merged).width == pytest.approx(0.55)
+    padded = pad_face_box(normal)
+    assert (padded.left, padded.top, padded.right, padded.bottom) == pytest.approx(
+        (0.14, 0.13, 0.51, 0.68)
+    )
+
+
+def test_raw_boxes_skip_the_protection_box_on_every_path(monkeypatch):
+    import json  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+
+    import app.pipeline.render_geometry as geometry  # noqa: PLC0415
+
+    raw = {"left": 0.2, "top": 0.15, "right": 0.45, "bottom": 0.6}
+    assert geometry._face_region_at(3.0, raw, raw_boxes=True).box == NormalizedBox(**raw)
+    assert geometry._face_region_at(3.0, raw).box == geometry._face_protection_box(
+        NormalizedBox(**raw)
+    )
+
+    stream = "\n".join(
+        json.dumps({"anchor": {"at_s": at, "decoded": True, "box": raw}}) for at in (1.0, 2.0)
+    )
+    partial, attempted, decoded = geometry._partial_samples_from_stream(stream, raw_boxes=True)
+    assert (attempted, decoded) == (2, 2)
+    assert [region.box for region in partial] == [NormalizedBox(**raw)] * 2
+    padded, _, _ = geometry._partial_samples_from_stream(stream)
+    assert padded[0].box == geometry._face_protection_box(NormalizedBox(**raw))
+
+    payload = {"attempted": 1, "decoded": 1, "samples": [{"at_s": 1.0, "box": raw}]}
+    monkeypatch.setattr(
+        geometry.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=json.dumps(payload), stderr=""),
+    )
+    regions, receipt = geometry.sample_face_regions(
+        "/tmp/c.mp4", [1.0], count_decoded=True, raw_boxes=True
+    )
+    assert [region.box for region in regions] == [NormalizedBox(**raw)]
+    assert receipt["decoded"] == 1
+    default, _ = geometry.sample_face_regions("/tmp/c.mp4", [1.0])
+    assert default[0].box == geometry._face_protection_box(NormalizedBox(**raw))
