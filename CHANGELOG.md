@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.164.0] - 2026-10-08
+
+### Changed
+- feat(kria): Turkish chats are understood and answered in Turkish (KRI-520) (#1483) <!-- release-pr: 1483 -->
+
 ## [0.78.163.0] - 2026-10-08
 
 ### Changed
