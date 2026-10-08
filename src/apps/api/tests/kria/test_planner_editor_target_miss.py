@@ -640,7 +640,144 @@ async def test_extraction_validation_error_does_not_stage_partial_copilot_edit(
     )
     assert result.plan.mode == "respond" and not result.plan.intents
     assert result.brief_coverage["reason"] == "request_extraction_failed"
+    # KRI-536: the copilot is asked, but a question/refusal is never staged as an edit.
+    planner._plan_editor_revision.assert_awaited_once()
+    assert result.brief_updates == ()
+    assert result.brief_coverage["cause"]["stage"] == "followup_extraction"
+
+
+# ---------------------------------------------------------------------------- KRI-536
+
+
+def _extraction_failure() -> RuntimeError:
+    """What `_call_brief_extractor` raises: the wrapped TerminalSchemaError."""
+    from app.agents._runtime import TerminalSchemaError
+
+    try:
+        try:
+            raise TerminalSchemaError("scope must be title | per_clip | clip:<id> | global")
+        except TerminalSchemaError as inner:
+            raise RuntimeError("Kria could not extract the creative brief reliably") from inner
+    except RuntimeError as exc:
+        return exc
+
+
+def _fade_plan(op: str = "patch_text") -> SimpleNamespace:
+    arguments = {
+        "operations": [{"op": op, "patch": {"animation_phases": {"entrance": "fade"}}}],
+        "summary": "Updated your edit.",
+    }
+    intent = SimpleNamespace(tool_name="draft.apply_editor_ops", arguments=arguments)
+    return SimpleNamespace(mode="act", turn_value="action", response=None, intents=[intent])
+
+
+async def _extraction_fails(monkeypatch, message, copilot):  # noqa: ANN001, ANN202
+    db, item, creator_id, _runs = _wire(monkeypatch, miss="no_ready_variant")
+    monkeypatch.setattr(settings, "kria_copilot_first_enabled", False)
+    monkeypatch.setattr(
+        planner, "_load_creator_inputs", AsyncMock(side_effect=_extraction_failure())
+    )
+    monkeypatch.setattr(planner, "_plan_editor_revision", AsyncMock(return_value=copilot))
+    result = await planner.plan_live_turn(
+        db,
+        thread_id=uuid.uuid4(),
+        item_id=item._fields["id"],
+        creator_id=creator_id,
+        user_message=message,
+    )
+    return result
+
+
+async def test_failed_extraction_still_serves_a_short_in_place_text_edit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-536: "Add fade in animation to all texts" died with "couldn't reliably read"."""
+    message = "Add fade in animation to all texts"
+    result = await _extraction_fails(monkeypatch, message, _fade_plan())
+    assert result.plan.intents[0].tool_name == "draft.apply_editor_ops"
+    # The creator's full words are kept as one requirement no checker can judge (KRI-459).
+    (update,) = result.brief_updates
+    assert (update.operation, update.kind, update.scope) == ("add", "style", "global")
+    assert update.description == message
+    assert result.brief_route == "editor_ops"
+    assert result.brief_coverage["degraded_from"] == "request_extraction_failed"
+    assert result.brief_coverage["cause"] == {
+        "stage": "followup_extraction",
+        "error_type": "RuntimeError",
+        "cause_type": "TerminalSchemaError",
+    }
+    # The copilot sees the whole ledger plus the message, not the bare message.
+    kwargs = planner._plan_editor_revision.await_args.kwargs
+    assert kwargs["user_message"] == message
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "give me a different version",  # a re-plan cue belongs to the planner
+        "make the title bigger " * 20,  # over the fast-path size
+        "Make the title smaller and keep the whole video.",  # compound: half must not apply
+        "Make the title smaller, then make it red",
+        "Add a new title \u201cLisbon\u201d. Animate it",  # two sentences
+        "Başlığı küçült ve rengini kırmızı yap",  # Turkish joiner
+        "Use the order you added the clips",  # not a text edit
+    ],
+)
+async def test_failed_extraction_does_not_serve_replans_or_long_requests(
+    monkeypatch: pytest.MonkeyPatch, message: str
+) -> None:
+    result = await _extraction_fails(monkeypatch, message, _fade_plan())
+    assert result.brief_coverage["reason"] == "request_extraction_failed"
+    assert result.brief_updates == ()
     planner._plan_editor_revision.assert_not_awaited()
+
+
+@pytest.mark.parametrize("copilot", [None, _fade_plan("remove_clip"), _fade_plan("trim_clip")])
+async def test_failed_extraction_keeps_recovery_when_the_copilot_cannot_serve_it(
+    monkeypatch: pytest.MonkeyPatch, copilot: object
+) -> None:
+    """No editor target, or structural ops: the draft stays untouched and the cause is kept."""
+    result = await _extraction_fails(monkeypatch, "make the title bigger", copilot)
+    assert result.plan.mode == "respond" and not result.plan.intents
+    assert result.brief_coverage["reason"] == "request_extraction_failed"
+    assert result.brief_coverage["cause"]["cause_type"] == "TerminalSchemaError"
+    assert result.brief_updates == ()
+
+
+async def test_a_crash_inside_the_degrade_still_ends_in_the_honest_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fallback is best effort: it must never turn a recoverable failure into a crash."""
+    db, item, creator_id, _runs = _wire(monkeypatch, miss="no_ready_variant")
+    monkeypatch.setattr(settings, "kria_copilot_first_enabled", False)
+    monkeypatch.setattr(
+        planner, "_load_creator_inputs", AsyncMock(side_effect=_extraction_failure())
+    )
+    monkeypatch.setattr(
+        planner, "_plan_editor_revision", AsyncMock(side_effect=AttributeError("boom"))
+    )
+    result = await planner.plan_live_turn(
+        db,
+        thread_id=uuid.uuid4(),
+        item_id=item._fields["id"],
+        creator_id=creator_id,
+        user_message="make the title bigger",
+    )
+    assert result.plan.mode == "respond" and not result.plan.intents
+    assert result.brief_coverage["reason"] == "request_extraction_failed"
+    assert result.brief_coverage["cause"]["cause_type"] == "TerminalSchemaError"
+
+
+def test_recovery_cause_names_classes_never_the_creators_words() -> None:
+    exc = _extraction_failure()
+    exc.args = ("make the title say my secret plan",)
+    cause = planner._recovery_cause("followup_extraction", exc)
+    assert cause == {
+        "stage": "followup_extraction",
+        "error_type": "RuntimeError",
+        "cause_type": "TerminalSchemaError",
+    }
+    assert "secret" not in repr(cause)
 
 
 # KRI-282: a clip-picker answer ("Dodgeball: clip 21" + structured clip_selection) used to
