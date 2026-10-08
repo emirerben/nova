@@ -503,6 +503,7 @@ decision read.
 | --- | --- | --- | --- | --- |
 | `guided_story` | phone | an approved guided snapshot is attached | `_run_phone_guided_job` (first branch of the phone fork) | - |
 | `speech_montage` | phone | montage family, no voice requirement, `contract.audio_source_ids` | `run_phone_speech_montage_job` (`required_speech`) | `speech_montage_possible` / `mentions_speech` raw-text gate (`phone_speech_montage_job.py`, `speech_montage_planning.py`, `render_shape.py`); fall-through to unified when the speech job returns False |
+| `voice_behind_footage` | phone | montage family, no voice requirement, `contract.audio_source_ids` of exactly ONE clip, `plan.voice_mode == "continuous"` (KRI-479) | `run_phone_voice_behind_footage_job` (the dispatcher's `_voice_behind_footage_route` branch, STAMPED jobs only; unstamped jobs keep the speech lane line for line) | the speech lane's "I can't prove the confirmed picture order" refusal for this shape (the voice clip is not in `order_ids`) and its LLM excerpt planner / wrapping b-roll pool; on cloud the same plan is the existing `capability_unavailable` refusal with the iPhone alternative |
 | `voiceover_montage` | phone | montage family + `contract.require_voiceover` | `_run_phone_voiceover_montage_job` | voiceover-file presence over the plan (the phone fork already reads the contract flag; `_run_phone_subtitled_job` still reads the file) |
 | `unified_montage` | phone | montage family, none of the above | `_run_phone_unified_montage_job` -> `_run_phone_guided_job` | speech-coverage fallbacks to montage |
 | `user_song_montage` / `lipsync_montage` | phone | montage family + `audio_strategy == "user_song"` (+ `song_sync == "lipsync"`) | unified montage entry with `candidates["user_song"]` | silent lip-sync -> background fallback; a stale song attachment steering the route |
@@ -651,6 +652,142 @@ an alias) is not seen; the prose-taking helpers `speech_montage_possible`, `ment
 "still shadow" row is expected; use the event's `legacy_route` / `resolver_route` pair to decide
 the next flip. The runbook note lives in `docs/runbooks/admin-job-debug.md`.
 
+## Voice behind footage (KRI-479, PR-H: the first composable-tracks slice)
+
+Design: `docs/designs/one-plan-voice-behind-footage.md` (sections 2, 3, 6, 7 are what this
+slice builds). A stamped phone job whose approved plan is "one talk-to-camera clip is the
+continuous voice, the other clips are the chronological picture, optional exact opening text,
+an explicit or implied length" is **composed**, not planned: no LLM picks excerpts, no request
+text is read, nothing wraps.
+
+**Plan shape.** `CreativeStrategy.voice_mode` (`continuous` | `excerpts` | absent) is a
+model-authored strategy field like `song_sync` (`SkipJsonSchema`: out of every derived JSON
+schema, omitted when unset, so stored strategies and hashes are byte-identical when unused).
+The Main Creator prompt teaches it only when the manifest advertises `phone_source_audio` AND
+`Settings.voice_behind_footage_enabled` holds (`KRIA_PLAN_AUTHORITY_ENABLED` and
+`SPEECH_EXCERPT_MONTAGE_ENABLED` both on: the route renders only for stamped jobs and needs the
+camera-audio renderer), and says plainly when NOT to set `continuous` (best-quote requests,
+talking-head / subtitled edits, several clips' sounds, no named clip, ambiguity; null is the safe
+default). Prompt `2026-10-07-v47`; **the live re-record is pending an owner-approved spend**,
+replay evals ignore the prompt text. `repair_creator_voice_mode` drops a stray value (no camera-audio
+montage, voiceover/user-song, non-montage, or the route unavailable) silently and clears a
+model-added day-vlog / single-hero shape next to a continuous voice (KRI-469's recorded strategy
+had one); that clearing reaches the draft as a plan notice. The strategy key is read by new code
+only: deploy API and workers together (an old pod ignores `voice_mode`, the same precedent as
+`song_sync`). Absent or
+`excerpts` = the speech-excerpt lane, unchanged. `FIELD_MATRIX`: `voice_mode` is
+`upstream_resolved` (owner `render_contract:composition`): it changes nothing in the pinned
+projection by itself; the route resolver reads it and dispatch derives the commitments below.
+
+**Composition commitments (sibling key, never a contract field).**
+`assembly_plan["creator_composition"] = {contract_digest, route, voice_picture, voice_span_s,
+min_shot_s}`, written at dispatch right after the `creator_route` stamp
+(`creator_render_contract.stamp_composition`), plan-authority jobs only, keyed by the contract
+digest (`read_composition` reads a stale or malformed key as absent), removed again when the
+strategy no longer implies it. `voice_picture="hidden"` is passed to `build_render_contract`
+as an ARGUMENT (`composition=`): the voice clip is then left out of `order_ids` and the
+selected set while `audio_source_ids` keeps it; with `composition=None` (every unstamped job)
+the contract is byte-identical. `voice_span_s` is set only when the creator chose a silent
+tail (the voice clip's length less the safety margin); `None` = the voice covers the whole
+picture. `min_shot_s` is reserved for a creator-authored cadence (policy floor otherwise).
+`CreatorRenderContract` gained no field (golden schema test unchanged).
+
+**Composer.** `pipeline/phone_speech_montage_plan.py:compile_phone_voice_behind_footage_plan`
+takes typed facts only (voice binding + `VoiceWindow`, ordered picture bindings, duration,
+opening words + hold, floor, whether a silent tail is allowed); its signature has no request
+text. One contiguous `voice` audio clip from timeline 0 (`volume` 1, fades), each picture clip
+once in the given order on a `voice-footage` video track at `volume=0` (frame aligned, never
+below the readable floor `MIN_READABLE_SHOT_S` 0.8 s unless the whole clip is shorter), the
+opening title through the narrated title helpers, no music bed. `select_voice_window` picks the
+voice span from word timings: from just before the first word, all the speech when it fits,
+else the last sentence end inside the length when within `VOICE_TAIL_SLACK_S` (3 s) of it, else
+a natural pause (a gap of 0.8 s or more) within it, else the last word (longer fade-out); a
+cut is called "ending on a full sentence" only when the last word really ends one. The slack
+is `voice_tail_slack_s(picture) = min(3 s, 15 % of the picture)`, one function shared by the
+composer and the verifier. Lengths are computed in whole frames per clip exactly as the
+composer allocates (`picture_frame_bounds`, `implicit_picture_duration`): a stated length
+within 2 frames of the footage there is is clamped to it (inside the verifier's tolerance), any
+other shortfall is a typed decline whose two numbers never read the same. Typed declines instead
+of guessing: too many clips for the
+length (`requirement_conflict`, alternative names the length that would fit), footage shorter
+than the length (never looped), a voice shorter than the length without a chosen silent tail,
+a clip without speech/audio, the voice clip among the picture clips.
+
+**Worker entry.** `services/phone_speech_montage_job.py:run_phone_voice_behind_footage_job`
+reads only the pinned contract, the commitments and typed strategy values. A length the creator
+STATED (pinned in the contract, including a `voice_vs_duration` answer) is never touched: it
+renders or declines, typed. A length nobody stated (the plan's own pick) is the voice's length
+capped at the pick, EXTENDED up to what every clip needs to be seen (n x the 0.8 s floor, capped
+by the speech and the footage; KRI-129: a model-picked number is never a reason to refuse) and
+kept to the footage there is, with an adjustment either way,
+transcribes the voice clip, composes, runs `validate_phone_pilot_recipe` and
+`verify_phone_recipe(..., composition=)`, and pins the device request as the (non-editable)
+`speech_montage` variant with `assembly_plan["speech_montage"]["route"] ==
+"voice_behind_footage"`. `SPEECH_EXCERPT_MONTAGE_ENABLED=false` still stops it (no new flag;
+rollback of the whole train is `KRIA_PLAN_AUTHORITY_ENABLED` for new jobs).
+
+**Verifier (only when commitments are passed).** `voice_covers_timeline` /
+`voice_window_contiguous` (one audible window from time zero up to the picture end or the
+committed span, give or take `voice_tail_slack_s`; typed `audio_source_ids` decline),
+`picture_shot_floor`, no text layer past the picture end, no soundtrack other than the approved voice (`requirement_conflict` on
+`audio_strategy`), the hidden voice clip's picture on no video track, nothing past the picture
+(`recipe.duration` is the max end over ALL tracks, so a long voice would silently stretch the
+video), and the duration tolerance tightens from 10 % to `max(0.1 s, 1 frame)`.
+
+**Conflict kinds added (this route only).** `which_voice` (several named or candidate speech
+clips: one option per clip with its length and first words; the answer rewrites
+`montage_audio.source_media_ids` to one id); `voice_vs_duration`: a voice (its SPEECH length when the clip's timed segments are known, else the
+clip) shorter than an EXPLICIT length by more than 1 s asks `match_voice` ("End the edit when
+your voice ends", rewrites the length) or `silent_tail` ("Keep the length, the last seconds play
+without voice", commits `voice_span_s`, carries `target_duration_requested`), each only if the
+clips can actually be cut to it; a voice over 60 s with NO stated length asks "how long", with
+lengths computed from the real constraint: the smallest length every clip can be seen in (rounded
+UP to a whole second, recommended, first), then up to two larger sensible values (30 / 45 / 60 s)
+or all the footage, never more than the speech or the total footage allows; a longer voice with
+a stated length is trimmed and disclosed after the render, never asked. The picture set (ids
+and lengths) is part of the question's `input_digest`, so an answer does not survive a media
+change. None of these is asked, and `duration_vs_count` keeps its legacy `montage_audio`
+exemption, unless `ChoiceCapability.voice_route` (= `Settings.voice_behind_footage_enabled`)
+holds. An unanswered `which_voice` after the maximum asks gets the same plain recovery message as
+`order_basis` / `title_text`, never the excerpts lane. `duration_vs_count` now applies to this shape
+(the voice clip is not counted; `fewer` keeps it selected). Priority:
+`order_basis`, `which_voice`, `text_placement`, `title_text`, `duration_vs_count`,
+`voice_vs_duration`. A `voice_mode` question is not implemented (the Creator sets it).
+A `voice_vs_duration` answer counts as evidence of the length for the contract exactly like a
+`duration_vs_count` answer.
+
+**Disclosure.** The composer's `adjustments` (voice trimmed to the first N seconds and how it
+ends, length extended or kept to the footage, a silent stretch over 1 s, clips that share a
+capture time) are stored in `assembly_plan["speech_montage"]["adjustments"]` and reach the
+creator in the finished-cut `assistant_review` reply (`kria_runtime._voice_behind_footage_note`,
+the channel that already carries the creator-song note). They are NOT shown on the draft before
+render: the trim and extension are decided at render time from the transcript. A resolver fault
+on a stamped continuous-voice job is a retryable typed decline (`evidence_missing`), never the
+excerpts lane.
+
+**Proof.** Plan to recipe: `tests/pipeline/test_phone_voice_behind_footage_plan.py`,
+`tests/services/test_creator_composition*.py`, `tests/services/test_phone_voice_behind_footage_job.py`,
+`tests/tasks/test_voice_behind_footage_dispatch.py` (real dispatcher; stamped renders via the
+composer, unstamped twin keeps the speech lane), the incident records
+`voice-behind-footage-*` / `clarify-*voice*`. Export: `scripts/ios/phone-audio-parity.py
+prepare OUT --cases voice_behind_footage` + `swift test --filter AudioParityFixtureTests` +
+`compare OUT` (voice tones once for the whole span, picture clips silent, picture order, opening
+text vs a no-text twin, length, loudness; negative controls for unmuted picture, a voice that
+stops early and a wrapped picture), see `docs/runbooks/ios-development.md`.
+
+**Known limits.** The editor cannot edit these variants on the server (same as
+`speech_montage`: "edit its timeline in the app"); recompiling from the pure composer on a
+text/length edit is a follow-up. Cloud declines the plan (`capability_unavailable`, iPhone
+alternative). A request to show the speaker first ("speaker for the first N seconds, then
+cut away") is NOT in this slice: the voice clip's own picture is hidden, so such a plan has no
+route here. Only the opening text is composed; closing/per-clip/any text requirements fail
+the verifier's `exact_texts` check (typed) rather than render without them. Capture-time ties
+keep the snapshot order and are disclosed in the review reply, not asked. The `kri469-voice-clip-ignored` output
+record stays xfail (owner now `KRI-512 / PR-H`, the re-base ticket): its recorded 30 s is the strategy's own pick
+over 41 other clips, which cannot each be seen in 30 s; the new flow asks "how long" and offers
+33 s (the least in which every clip is seen), 45 s and 60 s. What is missing to flip it is a
+creator-confirmed length for that plan (no ticket is filed for it here).
+
 ## Routing and failure behavior
 
 Routing consumes the typed contract rather than treating raw prompt wording as
@@ -660,6 +797,19 @@ capability cannot silently fall through to an ordinary montage when the
 contract requires speech. Unsupported combinations decline with a
 creator-facing reason before pinning; missing evidence is a contract failure,
 not an invitation to accept a one-off raw-text override.
+
+The clips a job is dispatched with must be the clips the contract pins
+(KRI-515). The contract filters the bound media snapshot by an explicit
+`media_scope="selected"` pick, so `content_plan_build._creator_selected_clip_paths`
+narrows `clip_paths` to that pick whenever the dispatch has no approved guided
+proposal (every runtime-v2 approval): attachment order is kept, a named
+`montage_audio.source_media_ids` clip always stays, and a pick that names no
+attached clip keeps every clip. Proposal-backed guided jobs still hand the
+worker every clip (the proposal owns media choice). Before this, a v2 montage
+rendered a clip the Creator had dropped (a duplicate, "skip the X clip") and,
+under an order rule, the phone verifier refused it: "This edit couldn't keep
+the confirmed clip order" (prod thread 0b1f9556, stress kit M3). Guard:
+`tests/tasks/test_selected_clip_dispatch.py`.
 
 Cloud preflight declines unresolved order facts and every requirement the
 dispatched adapter's declaration lists as declined (see "Cloud evidence"). For
@@ -820,6 +970,33 @@ what the creator said was refused after rendering while the receipt read "met". 
   native render program orders by `content_plan_build.order_paths_by_resolved_intents` (a
   third copy of the seating rule, not contract-checked). An explicit sequence of clips
   ("clips 1..8 in that sequence", KRI-491) is not a sequence rule here.
+
+**A sequence rule with no basis order (KRI-510).** "End on the sip by the window" with no
+filming or upload order asked for: the brief records an `order` requirement whose key is not a
+capture key, and the resolver places the described clip (a resolved `order` intent,
+`position: last`). The question gate does not ask about a placed rule
+(`choice_questions._placed_sequence`), but the contract still listed every non-capture rule as
+`unresolved`, so the planning preflight answered only "I can't verify this ordering rule from
+the approved media." (prod thread 8e5e9930, 2026-10-07). Now:
+
+* A described rule is PLACED when clip intents are on, every sequence row is `resolved`, and at
+  least one row matched a clip in the media snapshot (a Visuals-only match is not placed: the
+  planner seats clips only). `build_render_contract` skips a placed rule: not `unresolved`, not
+  `order_required`.
+* With a basis order (a capture-key requirement or an attachment answer alongside it) the
+  KRI-503 seating pins it in `order_ids` as before. Without one there is no full order to pin,
+  and `CreatorRenderContract` takes no new field (old workers must read every contract, see
+  `test_the_contract_model_schema_is_unchanged_so_old_workers_can_still_read_it`). The proof is
+  the brief receipt: `_check_order` reads where each described group landed
+  (`intent_outcomes`), and a checked receipt that is not met blocks a bound unified montage
+  before anything renders.
+* A rule nothing placed (no intent, a `needs_creator` intent, a Visuals-only match, clip intents
+  off) builds a byte-identical contract: the same unresolved message, still `order_required`,
+  and the gate still asks its order question.
+* Known limit: on routes that do not seat a described sequence (cloud guided story,
+  spoken-excerpt montage) nothing in the contract checks a placed rule with no basis; the brief
+  receipt is the only report. Pins: `tests/services/test_described_order_contract.py`, corpus
+  record `kri510-order-end-on-clip-no-basis`.
 
 **Last good artifact.** A contract refusal never replaces the last accepted artifact. At
 the editor Save / `pin_device_request` the check runs before any mutation; at the retry

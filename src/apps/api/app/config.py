@@ -719,6 +719,16 @@ class Settings(BaseSettings):
                 return value
         return [part.strip() for part in raw.split(",") if part.strip()]
 
+    @property
+    def voice_behind_footage_enabled(self) -> bool:
+        """Is the continuous-voice route actually available to NEW jobs? (KRI-479)
+
+        It renders only for plan-authority (stamped) jobs and needs the camera-audio renderer.
+        Questions, the prompt section and `voice_mode` repairs advertise the shape only while
+        both hold, so no flag combination promises a render that cannot happen.
+        """
+        return bool(self.kria_plan_authority_enabled and self.speech_excerpt_montage_enabled)
+
     def brief_binding_for(self, user_id: object) -> bool:
         """Writer cohort only; readers always honor previously saved bindings."""
         return self.kria_brief_binding_enabled or (

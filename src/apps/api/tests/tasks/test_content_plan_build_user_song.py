@@ -116,7 +116,7 @@ def test_sync_comes_from_the_approved_strategy(monkeypatch, strategy, expected) 
     # here, exactly as the confirmed strategy reaches dispatch).
     monkeypatch.setattr(
         "app.tasks.content_plan_build._creator_selected_clip_paths",
-        lambda _item, clip_paths, _strategy: clip_paths,
+        lambda _item, clip_paths, _strategy, **_kwargs: clip_paths,
     )
     result, job, _build = _run(monkeypatch, creator_strategy=strategy)
 

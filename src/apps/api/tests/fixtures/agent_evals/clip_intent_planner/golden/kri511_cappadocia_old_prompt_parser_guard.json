@@ -1,0 +1,60 @@
+{
+  "agent": "nova.plan.clip_intent_planner",
+  "prompt_version": "2026-10-06.1",
+  "input": {
+    "creator_request": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [text/global] English subtitles with exact place name spellings: Göreme, Paşabağ, Avanos, Kızılçukur\n- [r2] [order/global] Match balloons to voiceover and end on sunset valley\n- [r3] [select/global] Skip the quad bike clip\nLatest message: The voiceover is in Turkish, but I want the subtitles in English so my foreign followers understand. Spell the place names exactly: Göreme, Paşabağ, Avanos, Kızılçukur. Show the balloons while I talk about the balloons, and end on the sunset valley. Skip the quad bike clip.",
+    "latest_user_message": "The voiceover is in Turkish, but I want the subtitles in English so my foreign followers understand. Spell the place names exactly: Göreme, Paşabağ, Avanos, Kızılçukur. Show the balloons while I talk about the balloons, and end on the sunset valley. Skip the quad bike clip.",
+    "generated_brief": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [text/global] English subtitles with exact place name spellings: Göreme, Paşabağ, Avanos, Kızılçukur\n- [r2] [order/global] Match balloons to voiceover and end on sunset valley\n- [r3] [select/global] Skip the quad bike clip\nLatest message: The voiceover is in Turkish, but I want the subtitles in English so my foreign followers understand. Spell the place names exactly: Göreme, Paşabağ, Avanos, Kızılçukur. Show the balloons while I talk about the balloons, and end on the sunset valley. Skip the quad bike clip.",
+    "candidate_intents": null,
+    "clip_facts": true
+  },
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"subtitle_english_gorem\",\n      \"op\": \"label\",\n      \"attribute\": \"Göreme\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"Spell the place names exactly: Göreme\"\n    },\n    {\n      \"intent_id\": \"subtitle_english_pasabag\",\n      \"op\": \"label\",\n      \"attribute\": \"Paşabağ\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"Spell the place names exactly: Göreme, Paşabağ\"\n    },\n    {\n      \"intent_id\": \"subtitle_english_avanos\",\n      \"op\": \"label\",\n      \"attribute\": \"Avanos\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"Spell the place names exactly: Göreme, Paşabağ, Avanos\"\n    },\n    {\n      \"intent_id\": \"subtitle_english_kizilcuk\",\n      \"op\": \"label\",\n      \"attribute\": \"Kızılçukur\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"Spell the place names exactly: Göreme, Paşabağ, Avanos, Kızılçukur\"\n    },\n    {\n      \"intent_id\": \"order_balloons_vo\",\n      \"op\": \"order\",\n      \"attribute\": \"the balloons\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"Show the balloons while I talk about the balloons\"\n    },\n    {\n      \"intent_id\": \"order_end_sunset\",\n      \"op\": \"order\",\n      \"attribute\": \"the sunset valley\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": \"last\",\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"end on the sunset valley\"\n    },\n    {\n      \"intent_id\": \"include_skip_quad\",\n      \"op\": \"include\",\n      \"attribute\": \"the quad bike clip\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"source_quote\": \"Skip the quad bike clip\"\n    }\n  ],\n  \"question\": null\n}",
+  "output": {
+    "intents": [
+      {
+        "intent_id": "order_balloons_vo",
+        "op": "order",
+        "attribute": "the balloons",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": null,
+        "source_quote": "Show the balloons while I talk about the balloons"
+      },
+      {
+        "intent_id": "order_end_sunset",
+        "op": "order",
+        "attribute": "the sunset valley",
+        "creator_text": null,
+        "caption_attribute": null,
+        "position": "last",
+        "source_quote": "end on the sunset valley"
+      }
+    ],
+    "question": null
+  },
+  "meta": {
+    "source": "live_capture_gemini_2_5_flash_old_prompt",
+    "case": "KRI-511 parser-guard regression: REAL output of the 2026-10-06.1 prompt, kept verbatim: 'Skip the quad bike clip' minted as include (forcing the clip IN) and 'Spell the place names exactly' minted as four per-clip labels. The parser must drop all five silently and keep only the two order intents, with no question.",
+    "expect_intents": [
+      {
+        "op": "order",
+        "source_quote_keywords": [
+          "balloons while I talk"
+        ]
+      },
+      {
+        "op": "order",
+        "source_quote_keywords": [
+          "sunset valley"
+        ]
+      }
+    ],
+    "expect_absent_ops": [
+      "include",
+      "label",
+      "caption"
+    ],
+    "expect_any": true,
+    "expect_question": false
+  }
+}

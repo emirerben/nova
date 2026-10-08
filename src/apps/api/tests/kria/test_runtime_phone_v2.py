@@ -821,6 +821,47 @@ def test_observer_review_notes_a_background_fallback_and_kept_broll(
     assert "I matched 1 take by your singing." in review["content"]
 
 
+def test_observer_review_tells_the_creator_what_the_voice_edit_changed() -> None:
+    """KRI-479: trims, extensions and silent stretches reach the creator in the review reply."""
+    job = _device_job()
+    job.assembly_plan["speech_montage"] = {
+        "route": "voice_behind_footage",
+        "adjustments": [
+            "Extended the edit to 32.8 seconds so every clip is shown.",
+            "used the first 30 seconds of your voice, ending on a full sentence",
+            "the last 2 seconds play without voice",
+            "2 clips share a capture time, so I kept them in the order they were added",
+        ],
+    }
+    _publish(job)
+    _outcome, _execution_row, events = _observe(job, {})
+    review = next(e for e in events if e["event_type"] == "assistant_review")
+    content = review["content"]
+    assert content.startswith(_LEGACY_REVIEW)
+    assert "Extended the edit to 32.8 seconds so every clip is shown." in content
+    assert "Used the first 30 seconds of your voice, ending on a full sentence." in content
+    assert "The last 2 seconds play without voice." in content
+    assert "2 clips share a capture time" in content
+
+
+def test_observer_review_adds_nothing_for_other_routes_or_no_adjustments() -> None:
+    plain = _device_job()
+    plain.assembly_plan["speech_montage"] = {"route": "voice_behind_footage", "adjustments": []}
+    _publish(plain)
+    _o, _e, events = _observe(plain, {})
+    assert next(e for e in events if e["event_type"] == "assistant_review")["content"] == (
+        _LEGACY_REVIEW
+    )
+    excerpts = _device_job()
+    excerpts.assembly_plan["speech_montage"] = {"adjustments": ["trimmed a line"]}
+    _publish(excerpts)
+    _o, _e, events = _observe(excerpts, {})
+    assert (
+        "trimmed a line"
+        not in next(e for e in events if e["event_type"] == "assistant_review")["content"]
+    )
+
+
 def test_a_phone_capability_reject_stays_retryable() -> None:
     """KRI-286: a capability the device has not verified yet is a rollout decision,
     not a plan defect -- the same edit works after the flag flips, so retry stays open."""

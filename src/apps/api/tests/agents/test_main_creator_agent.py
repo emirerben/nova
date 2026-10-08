@@ -122,7 +122,7 @@ def test_brief_prompt_requires_explicit_versioned_target_for_changes() -> None:
         _input().model_copy(update={"brief_enabled": True})
     )
 
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-07-v46"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-07-v47"
     assert '`operation`: "change"' in prompt
     assert "target_requirement_id" in prompt
     assert "expected_version" in prompt
@@ -543,6 +543,7 @@ def test_reaction_beats_prompt_section_omitted_when_capability_unavailable() -> 
         .replace("$reaction_beats_section", "")
         .replace("$brief_section", "")
         .replace("$user_song_section", "")
+        .replace("$voice_mode_section", "")
     )
     prompt_manifest = agent_input.capability_manifest.model_dump_json(
         exclude_none=True, exclude={"narration": True}

@@ -132,6 +132,11 @@ ROUTE_TABLE = [
     ("phone", {"strategy": _strategy(**_SPEECH_IDS)}, Route.SPEECH_MONTAGE),
     (
         "phone",
+        {"strategy": _strategy(**_SPEECH_IDS, voice_mode="continuous")},
+        Route.VOICE_BEHIND_FOOTAGE,
+    ),
+    (
+        "phone",
         {"strategy": _strategy(audio_strategy="user_song"), "song": {"sync": "background"}},
         Route.USER_SONG_MONTAGE,
     ),
@@ -228,6 +233,13 @@ REFUSALS = [
     (
         "cloud",
         {"strategy": _strategy(**_SPEECH_IDS)},
+        "capability_unavailable",
+        "montage_audio.source_media_ids[]",
+    ),
+    # KRI-479: one clip's voice over the others needs the phone; the cloud says so.
+    (
+        "cloud",
+        {"strategy": _strategy(**_SPEECH_IDS, voice_mode="continuous")},
         "capability_unavailable",
         "montage_audio.source_media_ids[]",
     ),
@@ -375,6 +387,7 @@ def test_the_resolver_inputs_are_a_typed_projection_without_prose() -> None:
         ("PlanFacts", "audio_strategy"),
         ("PlanFacts", "song_sync"),
         ("PlanFacts", "render_program"),
+        ("PlanFacts", "voice_mode"),
         ("ContractFacts", "original_audio"),
         # a matrix field path derived from the exact text's ROLE, never its content
         ("ContractFacts", "text_field_path"),
@@ -605,3 +618,62 @@ def test_a_job_without_a_contract_is_left_alone() -> None:
     assembly, candidates = _job("phone")
     assembly.pop(CONTRACT_FIELD)
     assert stamp_route(assembly, candidates) is assembly
+
+
+# --- KRI-479: voice_behind_footage ---------------------------------------------------------
+
+
+def test_a_continuous_voice_needs_exactly_one_named_source_to_get_its_own_route() -> None:
+    one = _resolve("phone", strategy=_strategy(**_SPEECH_IDS, voice_mode="continuous"))
+    assert (one.outcome, one.route, one.adapter) == (
+        "route",
+        Route.VOICE_BEHIND_FOOTAGE,
+        "phone_voice_behind_footage",
+    )
+    assert "plan.voice_mode" in one.drivers
+    several = _resolve(
+        "phone",
+        strategy=_strategy(
+            audio_strategy="original_audio",
+            montage_audio={"preserve_source_audio": True, "source_media_ids": ["c0", "c1"]},
+            voice_mode="continuous",
+        ),
+    )
+    assert several.route is Route.SPEECH_MONTAGE  # several candidates is a question, not a guess
+    excerpts = _resolve("phone", strategy=_strategy(**_SPEECH_IDS, voice_mode="excerpts"))
+    assert excerpts.route is Route.SPEECH_MONTAGE
+    unset = _resolve("phone", strategy=_strategy(**_SPEECH_IDS))
+    assert unset.route is Route.SPEECH_MONTAGE
+
+
+def test_the_voice_route_keeps_the_soundtrack_conflicts_of_the_speech_route() -> None:
+    both = _resolve(
+        "phone",
+        strategy=_strategy(**_SPEECH_IDS, voice_mode="continuous"),
+        contract={"require_voiceover": True},
+        voiceover=True,
+    )
+    assert (both.outcome, both.reason) == ("refusal", "requirement_conflict")
+
+
+def test_the_voice_route_declines_what_it_cannot_prove_and_consumes_what_it_can() -> None:
+    from app.services.creator_render_contract import ADAPTER_DECLARATIONS
+
+    declaration = ADAPTER_DECLARATIONS["phone_voice_behind_footage"]
+    assert declaration.consumes == {
+        "duration_s",
+        "audio_source_ids",
+        "original_audio",
+        "exact_texts",
+        "order_required",
+    }
+    assert declaration.declines["require_voiceover"].reason == "requirement_conflict"
+    assert declaration.declines["unresolved"].reason == "needs_choice"
+
+
+def test_a_stray_voice_mode_value_never_reaches_the_resolver() -> None:
+    from app.services.render_route import plan_facts
+
+    assert plan_facts({"voice_mode": "continuous"}).voice_mode == "continuous"
+    assert plan_facts({"voice_mode": "Please play it ALL the way through"}).voice_mode is None
+    assert plan_facts({"voice_mode": 7}).voice_mode is None

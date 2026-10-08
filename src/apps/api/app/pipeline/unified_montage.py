@@ -381,6 +381,10 @@ class UnifiedMontagePlan:
     # empty without a song so every earlier record is unchanged.
     user_song: UserSongPlan | None = None
     song_receipt: dict[str, Any] = field(default_factory=dict)
+    # KRI-517: the closing clip's whole spoken line, held because the creator placed
+    # that clip last with its own audio kept ({media_id, source_start_s, source_end_s}).
+    # Empty when no line was held, so every earlier record is unchanged.
+    closing_speech: dict[str, Any] = field(default_factory=dict)
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
@@ -405,6 +409,7 @@ class UnifiedMontagePlan:
             else {}
         )
         song = {"user_song": dict(self.song_receipt)} if self.song_receipt else {}
+        speech = {"closing_speech": dict(self.closing_speech)} if self.closing_speech else {}
         return {
             "version": 1,
             "brief_version": self.brief_version,
@@ -437,6 +442,7 @@ class UnifiedMontagePlan:
             **choice,
             **zone,
             **song,
+            **speech,
         }
 
     def guided_edit(self, *, generation_attempt_id: str | None = None) -> dict[str, Any]:
@@ -540,6 +546,69 @@ def _window_start_s(clip: UnifiedClip, duration_s: float) -> float:
             start = moment_start
     latest = max(0.0, float(clip.duration_s) - duration_s)
     return round(min(max(0.0, start), latest), 3)
+
+
+# KRI-517: "end on Elif's sentence, in her own voice". Analysed speech bounds are
+# approximate (Gemini segment times), so the held window keeps a breath either side.
+# Measured on the M3 kit's closing clip: speech 0.1-5.45 s by loudness, analysed 0.00-5.44 s.
+SPEECH_LEAD_S = 0.15
+SPEECH_TAIL_S = 0.3
+
+
+def _speech_span(clip: UnifiedClip) -> tuple[float, float] | None:
+    """The clip's analysed speech, first word to last, padded and kept inside the clip."""
+    analysis = clip.analysis if isinstance(clip.analysis, Mapping) else {}
+    understanding = analysis.get("understanding")
+    speech = understanding.get("speech") if isinstance(understanding, Mapping) else None
+    if not isinstance(speech, Mapping) or speech.get("has_speech") is not True:
+        return None
+    bounds: list[tuple[float, float]] = []
+    for segment in speech.get("segments") or []:
+        if not isinstance(segment, Mapping):
+            continue
+        try:
+            start, end = float(segment.get("start_s")), float(segment.get("end_s"))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(start) and math.isfinite(end) and 0 <= start < end:
+            bounds.append((start, end))
+    if not bounds:
+        return None
+    start = max(0.0, min(s for s, _e in bounds) - SPEECH_LEAD_S)
+    end = min(float(clip.duration_s), max(e for _s, e in bounds) + SPEECH_TAIL_S)
+    if end - start < MIN_VIDEO_CUT_S:
+        return None
+    return round(start, 3), round(end, 3)
+
+
+def _keeps_source_audio(strategy: Mapping[str, Any]) -> bool:
+    audio = strategy.get("montage_audio")
+    if isinstance(audio, Mapping) and audio.get("preserve_source_audio") is True:
+        return True
+    return strategy.get("audio_strategy") == "original_audio"
+
+
+def _closing_speech_span(
+    ordered: Sequence[UnifiedClip],
+    rows: Sequence[tuple[str | None, str, list[str], str]],
+    strategy: Mapping[str, Any],
+) -> tuple[float, float] | None:
+    """The spoken line the closing cut must hold whole, if the creator asked to end on it.
+
+    Only when the creator placed the closing clip last (a resolved ``last`` sequence
+    row names it), the clip speaks, and the camera audio is kept: a montage that just
+    happens to end on a talking clip keeps its normal cut.
+    """
+    if not ordered or not _keeps_source_audio(strategy):
+        return None
+    closing = ordered[-1]
+    if closing.lane != "clip" or closing.kind != "video":
+        return None
+    placed_last = any(
+        position == "last" and status == "resolved" and closing.ref_id in members
+        for position, _name, members, status in rows
+    )
+    return _speech_span(closing) if placed_last else None
 
 
 def _story_beats(cuts: Sequence[FastMontageCut]) -> list[StoryBeat]:
@@ -1019,6 +1088,22 @@ def plan_unified_montage(
     growth_ceiling = (
         list(capacity) if target_s else [min(cap, int(READING_MAX_S * FPS)) for cap in capacity]
     )
+    # KRI-517: the creator asked to end on a clip that speaks, with its own audio. Its
+    # cut holds the whole spoken line (never shrunk, never grown past it) and the other
+    # cuts share the rest of the length. A line the creator's length cannot also fit
+    # keeps the ordinary cut.
+    speech_span = (
+        _closing_speech_span(ordered, sequence, strategy) if song_duration_s is None else None
+    )
+    if speech_span is not None:
+        line = int(math.ceil((speech_span[1] - speech_span[0]) * FPS - 1e-9))
+        held = max(wanted[-1], min(capacity[-1], line))
+        if not target_s or sum(wanted) - wanted[-1] + held <= target_frames:
+            wanted[-1] = held
+            growth_ceiling[-1] = held
+            labelled[-1] = True  # ``_shrink`` only takes frames from unlabelled cuts
+        else:
+            speech_span = None
     total = _grow(wanted, growth_ceiling, target_frames)
     if total < floor_frames:
         # Too short to be a video at all: use every frame the clips have.
@@ -1145,7 +1230,8 @@ def plan_unified_montage(
             # which the snapshot refuses: a clip this short is shown whole.
             start, end = 0.0, math.floor(clip.duration_s * 1000) / 1000
         else:
-            start = _window_start_s(clip, duration)
+            closing_line = speech_span is not None and index == len(ordered) - 1
+            start = speech_span[0] if closing_line else _window_start_s(clip, duration)
             end = round(start + duration, 3)
             if end > clip.duration_s + 0.001:
                 start = round(max(0.0, clip.duration_s - duration), 3)
@@ -1259,6 +1345,15 @@ def plan_unified_montage(
         label_timezone_basis=hour_basis if view.per_clip_text_is_time and labels else "",
         user_song=song_plan,
         song_receipt=song_receipt,
+        closing_speech=(
+            {
+                "media_id": cuts[-1].media_id,
+                "source_start_s": cuts[-1].source_start_s,
+                "source_end_s": cuts[-1].source_end_s,
+            }
+            if speech_span is not None
+            else {}
+        ),
     )
 
 

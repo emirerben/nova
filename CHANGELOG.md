@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.157.0] - 2026-10-08
+
+### Changed
+- fix(unified-montage): hold the whole closing line when the creator ends on a speaking clip (KRI-517) (#1475) <!-- release-pr: 1475 -->
+
+## [0.78.156.0] - 2026-10-08
+
+### Changed
+- fix(dispatch): v2 montages render exactly the Creator's clip pick (KRI-515) (#1474) <!-- release-pr: 1474 -->
+
+## [0.78.155.0] - 2026-10-08
+
+### Changed
+- fix(order): a placed "end on <clip>" rule no longer dead-ends the chat (KRI-510) (#1469) <!-- release-pr: 1469 -->
+
+## [0.78.154.0] - 2026-10-08
+
+### Changed
+- feat(ios): edit text and titles right on the video (KRI-508) (#1468) <!-- release-pr: 1468 -->
+
+## [0.78.153.0] - 2026-10-08
+
+### Changed
+- feat(voice): one talk-to-camera voice behind a chronological montage, composed and verified from the plan (KRI-479) (#1470) <!-- release-pr: 1470 -->
+
+## [0.78.152.0] - 2026-10-08
+
+### Changed
+- fix(phone): honour the caption-language ask on cleaned-up Talking edits (#1473) <!-- release-pr: 1473 -->
+
+## [0.78.151.0] - 2026-10-08
+
+### Changed
+- fix(narrated): honour the creator's caption-language ask on voiceover edits (#1472) <!-- release-pr: 1472 -->
+
+## [0.78.150.0] - 2026-10-08
+
+### Changed
+- fix(clip-intents): "skip the X clip" never becomes include; voiceover-matched order is kept (KRI-511) (#1471) <!-- release-pr: 1471 -->
+
 ## [0.78.149.0] - 2026-10-07
 
 ### Changed
