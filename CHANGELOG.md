@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.168.0] - 2026-10-08
+
+### Changed
+- fix(clip-intents): Turkish chapter titles are never "couldn't verify" over model slips (KRI-531) (#1488) <!-- release-pr: 1488 -->
+
 ## [0.78.167.0] - 2026-10-08
 
 ### Changed
