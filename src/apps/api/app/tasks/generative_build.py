@@ -6528,9 +6528,10 @@ def _run_phone_subtitled_job(
             if cleanup_required:
                 # Reuse the preflight analysis's own verbatim words -- the
                 # SAME transcription the CutPlan was computed from, never a
-                # second Whisper call -- so the cut and the captions can
-                # never disagree about a word's timing (mirrors
-                # `_render_subtitled_variant`'s cloud `required_v1` path,
+                # second Whisper call for the cut -- so the cut, the lane
+                # grounding (`raw_words`) and the captions can never disagree
+                # about a word's timing (mirrors `_render_subtitled_variant`'s
+                # cloud `required_v1` path,
                 # `sc_entry = active_snapshot.legacy_analysis_entry(...)`).
                 # No Gemini caption-language crosscheck/retranscribe here
                 # (that safety net needs a second live Whisper call in
@@ -6538,6 +6539,14 @@ def _run_phone_subtitled_job(
                 # double-transcription this branch exists to avoid) --
                 # `speech_cleanup_snapshot.analysis.language` is the sole
                 # detected-language signal.
+                #
+                # The one exception is the creator's explicit caption-language
+                # ask (KRI-177) for a language other than the one spoken: the
+                # ORIGINAL clip is transcribed once more with that hint, and
+                # those words feed the captions ONLY -- remapped through the
+                # same CutPlan, exactly like the cloud
+                # `_resolve_verbatim_caption_language` + `_cut_caption_words`.
+                # The cut itself and `raw_words` stay on the spoken words.
                 assert speech_cleanup_snapshot is not None and cut_plan is not None  # noqa: S101
                 words = speech_cleanup_snapshot.source_words()
                 detected_lang, _lang_source = resolve_spoken_caption_language(
@@ -6578,6 +6587,42 @@ def _run_phone_subtitled_job(
                         }
                         for word in words
                     ]
+                caption_words = words
+                if caption_language_req is not None and caption_language_req != detected_lang:
+                    requested_transcript = transcribe_whisper_cached(
+                        clip_path, language=caption_language_req, verbatim_prompt=vocabulary_prompt
+                    )
+                    if requested_transcript.words:
+                        record_pipeline_event(
+                            "captions",
+                            "caption_language_requested",
+                            {
+                                "variant_id": "subtitled",
+                                "requested": caption_language_req,
+                                "spoken": detected_lang,
+                            },
+                        )
+                        caption_words = requested_transcript.words
+                        detected_lang = caption_language_req
+                    else:
+                        # Nothing heard in the requested language: keep the
+                        # spoken-language captions rather than ship none.
+                        record_pipeline_event(
+                            "captions",
+                            "caption_language_request_empty",
+                            {
+                                "variant_id": "subtitled",
+                                "requested": caption_language_req,
+                                "spoken": detected_lang,
+                            },
+                        )
+                        log.warning(
+                            "caption_language_request_empty",
+                            job_id=job_id,
+                            variant_id="subtitled",
+                            requested=caption_language_req,
+                            spoken=detected_lang,
+                        )
                 # Raw float mapping, no frame grid: the phone recipe plays
                 # each keep segment at its exact float offsets.
                 cut_words = [
@@ -6587,7 +6632,7 @@ def _run_phone_subtitled_job(
                         end_s=item["end_s"],
                         confidence=1.0,
                     )
-                    for item in remap_words(words, cut_plan)
+                    for item in remap_words(caption_words, cut_plan)
                     if not is_filler_token(item["text"])
                 ]
                 cues = build_plain_cues(cut_words, attach_words=True)
