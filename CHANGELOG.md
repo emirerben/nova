@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.78.157.0] - 2026-10-08
+
+### Changed
+- fix(unified-montage): hold the whole closing line when the creator ends on a speaking clip (KRI-517) (#1475) <!-- release-pr: 1475 -->
+
 ## [0.78.156.0] - 2026-10-08
 
 ### Changed
