@@ -45,5 +45,10 @@ Rules:
 - When the order is LOCKED, the first listed clip always starts at the very first word of
   the voiceover (the video opens on it), even if its subject is narrated later; choose the
   other clips' start words after it, strictly increasing in the listed order.
+- When the order is PINNED, list the placements in on-screen order: the pinned opening
+  clips first and the pinned closing clips last, exactly as stated, and every other clip
+  between them where the narration describes it, keeping any described sequence in its
+  stated order. The first listed clip starts at the very first word of the voiceover (the
+  video opens on it).
 - Keep every clip on screen for at least about two seconds when the voiceover length allows
   it, and avoid starting two clips on neighbouring words.

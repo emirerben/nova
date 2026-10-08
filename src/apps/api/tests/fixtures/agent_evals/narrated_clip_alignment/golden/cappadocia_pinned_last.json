@@ -1,0 +1,424 @@
+{
+ "agent": "nova.compose.narrated_clip_alignment",
+ "prompt_version": "2026-10-08.1",
+ "input": {
+  "words": [
+   {
+    "text": "Kapadokya'da",
+    "end_s": 0.7400000095367432,
+    "start_s": 0.0,
+    "word_id": "w000000"
+   },
+   {
+    "text": "tek",
+    "end_s": 0.9800000190734863,
+    "start_s": 0.7400000095367432,
+    "word_id": "w000001"
+   },
+   {
+    "text": "bir",
+    "end_s": 1.1399999856948853,
+    "start_s": 0.9800000190734863,
+    "word_id": "w000002"
+   },
+   {
+    "text": "günüm",
+    "end_s": 1.3200000524520874,
+    "start_s": 1.1399999856948853,
+    "word_id": "w000003"
+   },
+   {
+    "text": "olsaydı,",
+    "end_s": 1.899999976158142,
+    "start_s": 1.3200000524520874,
+    "word_id": "w000004"
+   },
+   {
+    "text": "işte",
+    "end_s": 2.299999952316284,
+    "start_s": 2.119999885559082,
+    "word_id": "w000005"
+   },
+   {
+    "text": "böyle",
+    "end_s": 2.5999999046325684,
+    "start_s": 2.299999952316284,
+    "word_id": "w000006"
+   },
+   {
+    "text": "geçirirdim.",
+    "end_s": 3.1600000858306885,
+    "start_s": 2.5999999046325684,
+    "word_id": "w000007"
+   },
+   {
+    "text": "Sabah",
+    "end_s": 3.690000057220459,
+    "start_s": 3.4100000858306885,
+    "word_id": "w000008"
+   },
+   {
+    "text": "beşte,",
+    "end_s": 4.25,
+    "start_s": 3.690000057220459,
+    "word_id": "w000009"
+   },
+   {
+    "text": "Döreme'de",
+    "end_s": 4.890000343322754,
+    "start_s": 4.430000305175781,
+    "word_id": "w000010"
+   },
+   {
+    "text": "balonları",
+    "end_s": 5.37000036239624,
+    "start_s": 4.890000343322754,
+    "word_id": "w000011"
+   },
+   {
+    "text": "izleyerek",
+    "end_s": 5.890000343322754,
+    "start_s": 5.37000036239624,
+    "word_id": "w000012"
+   },
+   {
+    "text": "başla.",
+    "end_s": 6.289999961853027,
+    "start_s": 5.890000343322754,
+    "word_id": "w000013"
+   },
+   {
+    "text": "Gökyüzü",
+    "end_s": 7.210000038146973,
+    "start_s": 6.789999961853027,
+    "word_id": "w000014"
+   },
+   {
+    "text": "yüzlerce",
+    "end_s": 7.810000419616699,
+    "start_s": 7.210000038146973,
+    "word_id": "w000015"
+   },
+   {
+    "text": "balonla",
+    "end_s": 8.190000534057617,
+    "start_s": 7.810000419616699,
+    "word_id": "w000016"
+   },
+   {
+    "text": "doluyor.",
+    "end_s": 8.630000114440918,
+    "start_s": 8.190000534057617,
+    "word_id": "w000017"
+   },
+   {
+    "text": "Sonra",
+    "end_s": 9.178437076293946,
+    "start_s": 8.998436771118165,
+    "word_id": "w000018"
+   },
+   {
+    "text": "Paşabağ'da",
+    "end_s": 9.898437343322755,
+    "start_s": 9.178437076293946,
+    "word_id": "w000019"
+   },
+   {
+    "text": "peribacalarının",
+    "end_s": 10.598437152587891,
+    "start_s": 9.898437343322755,
+    "word_id": "w000020"
+   },
+   {
+    "text": "arasında",
+    "end_s": 11.018437228881837,
+    "start_s": 10.598437152587891,
+    "word_id": "w000021"
+   },
+   {
+    "text": "yürü.",
+    "end_s": 11.278437457763673,
+    "start_s": 11.018437228881837,
+    "word_id": "w000022"
+   },
+   {
+    "text": "Öğlen",
+    "end_s": 12.038436732971192,
+    "start_s": 11.858437381469727,
+    "word_id": "w000023"
+   },
+   {
+    "text": "Avanos'a",
+    "end_s": 12.598437152587891,
+    "start_s": 12.038436732971192,
+    "word_id": "w000024"
+   },
+   {
+    "text": "geç",
+    "end_s": 12.798436961853028,
+    "start_s": 12.598437152587891,
+    "word_id": "w000025"
+   },
+   {
+    "text": "ve",
+    "end_s": 13.198437534057618,
+    "start_s": 12.798436961853028,
+    "word_id": "w000026"
+   },
+   {
+    "text": "bir",
+    "end_s": 13.498436771118165,
+    "start_s": 13.198437534057618,
+    "word_id": "w000027"
+   },
+   {
+    "text": "çömlek",
+    "end_s": 13.778437457763673,
+    "start_s": 13.498436771118165,
+    "word_id": "w000028"
+   },
+   {
+    "text": "atölyesinde",
+    "end_s": 14.41843684741211,
+    "start_s": 13.778437457763673,
+    "word_id": "w000029"
+   },
+   {
+    "text": "kendi",
+    "end_s": 14.758437,
+    "start_s": 14.41843684741211,
+    "word_id": "w000030"
+   },
+   {
+    "text": "kaseni",
+    "end_s": 15.178438029968262,
+    "start_s": 14.758437,
+    "word_id": "w000031"
+   },
+   {
+    "text": "yap.",
+    "end_s": 15.47843726702881,
+    "start_s": 15.178438029968262,
+    "word_id": "w000032"
+   },
+   {
+    "text": "Akşam",
+    "end_s": 15.973998427795411,
+    "start_s": 15.794000029968263,
+    "word_id": "w000033"
+   },
+   {
+    "text": "yemeğinde",
+    "end_s": 16.513999343322755,
+    "start_s": 15.973998427795411,
+    "word_id": "w000034"
+   },
+   {
+    "text": "testi",
+    "end_s": 16.953999877380372,
+    "start_s": 16.513999343322755,
+    "word_id": "w000035"
+   },
+   {
+    "text": "kebabı",
+    "end_s": 17.333999038146974,
+    "start_s": 16.953999877380372,
+    "word_id": "w000036"
+   },
+   {
+    "text": "dene.",
+    "end_s": 17.513999343322755,
+    "start_s": 17.333999038146974,
+    "word_id": "w000037"
+   },
+   {
+    "text": "Testiyi",
+    "end_s": 18.373999953674318,
+    "start_s": 18.033999801086427,
+    "word_id": "w000038"
+   },
+   {
+    "text": "masada,",
+    "end_s": 19.013999343322755,
+    "start_s": 18.373999953674318,
+    "word_id": "w000039"
+   },
+   {
+    "text": "senin",
+    "end_s": 19.353999495910646,
+    "start_s": 19.27399957220459,
+    "word_id": "w000040"
+   },
+   {
+    "text": "önünde",
+    "end_s": 19.653998732971193,
+    "start_s": 19.353999495910646,
+    "word_id": "w000041"
+   },
+   {
+    "text": "kırıyorlar.",
+    "end_s": 20.11399972479248,
+    "start_s": 19.653998732971193,
+    "word_id": "w000042"
+   },
+   {
+    "text": "Dünü",
+    "end_s": 20.603999495910646,
+    "start_s": 20.36399972479248,
+    "word_id": "w000043"
+   },
+   {
+    "text": "Kızılçukur",
+    "end_s": 21.323998809265138,
+    "start_s": 20.603999495910646,
+    "word_id": "w000044"
+   },
+   {
+    "text": "Vadisi'nde",
+    "end_s": 21.84399926702881,
+    "start_s": 21.323998809265138,
+    "word_id": "w000045"
+   },
+   {
+    "text": "gün",
+    "end_s": 22.063998580383302,
+    "start_s": 21.84399926702881,
+    "word_id": "w000046"
+   },
+   {
+    "text": "batımıyla",
+    "end_s": 22.50399911444092,
+    "start_s": 22.063998580383302,
+    "word_id": "w000047"
+   },
+   {
+    "text": "bitir.",
+    "end_s": 22.84399926702881,
+    "start_s": 22.50399911444092,
+    "word_id": "w000048"
+   },
+   {
+    "text": "Bu",
+    "end_s": 23.50399911444092,
+    "start_s": 23.34399926702881,
+    "word_id": "w000049"
+   },
+   {
+    "text": "manzarayı",
+    "end_s": 24.044000029968263,
+    "start_s": 23.50399911444092,
+    "word_id": "w000050"
+   },
+   {
+    "text": "hiçbir",
+    "end_s": 24.423999190734865,
+    "start_s": 24.044000029968263,
+    "word_id": "w000051"
+   },
+   {
+    "text": "fotoğraf",
+    "end_s": 24.88399827520752,
+    "start_s": 24.423999190734865,
+    "word_id": "w000052"
+   },
+   {
+    "text": "anlatamıyor.",
+    "end_s": 25.50399911444092,
+    "start_s": 24.88399827520752,
+    "word_id": "w000053"
+   }
+  ],
+  "clips": [
+   {
+    "clip_id": "files/dx3z04lg4fbe",
+    "duration_s": null,
+    "description": "Numerous hot air balloons ascend into the morning sky over a landscape featuring unique rock formations, as viewed from a rooftop. | hot air balloons ascending | hot air balloons over rock formations | rooftop terrace at sunrise in Cappadocia, Turkey",
+    "creator_label": "the balloons"
+   },
+   {
+    "clip_id": "files/1aybtglmnbnz",
+    "duration_s": null,
+    "description": "A table is set for a Turkish-style breakfast on an outdoor terrace, offering a panoramic view of a valley filled with numerous hot air balloons gracefully ascending into a clear morning sky. | displaying a scenic breakfast setup | breakfast spread with hot air balloons | outdoor terrace overlooking a valley",
+    "creator_label": "the balloons"
+   },
+   {
+    "clip_id": "files/n09rgl3uoeek",
+    "duration_s": null,
+    "description": "A server uses a hammer to break open a traditional clay pot containing food, releasing a burst of steam, much to the delight and applause of the customers seated at the table. | cracking open a clay pot with a hammer to reveal food | server opening clay pot | outdoor restaurant patio during daytime",
+    "creator_label": ""
+   },
+   {
+    "clip_id": "files/8b1crkzz53hi",
+    "duration_s": null,
+    "description": "A person's hands are shown working with clay on a spinning potter's wheel, shaping it into a bowl-like form against a rustic stone background. | shaping pottery on a wheel | person's hands shaping clay | rustic workshop with stone walls",
+    "creator_label": ""
+   },
+   {
+    "clip_id": "files/patnzi0q58hp",
+    "duration_s": null,
+    "description": "A woman walks along a dusty path through a landscape filled with tall, cone-shaped rock formations under a clear sky. | walking on a path | woman walking | Outdoor desert-like landscape with 'fairy chimney' rock formations, possibly Cappadocia",
+    "creator_label": ""
+   },
+   {
+    "clip_id": "files/l3b7i9r61r8s",
+    "duration_s": null,
+    "description": "The clip shows a wide landscape view of a valley filled with unique geological formations, with a single person standing atop a distant rock formation, observing the scenery at sunrise or sunset. | observing landscape | person on distant rock formation | rocky valley at sunrise or sunset",
+    "creator_label": "the sunset valley"
+   }
+  ],
+  "creator_request": "Creative brief v1 (everything the creator has asked for, still in force):\n- [r1] [style/global] Provide English subtitles translated from the Turkish voiceover, spelling the specific place names exactly: Göreme, Paşabağ, Avanos, Kızılçukur\n- [r2] [timing/global] Show the balloons while talking about the balloons\n- [r3] [order/global] End on the sunset valley facts={\"last_clip\":\"the sunset valley\"}\n- [r4] [select/global] Skip the quad bike clip\nLatest message: The voiceover is in Turkish, but I want the subtitles in English so my foreign followers understand. Spell the place names exactly: Göreme, Paşabağ, Avanos, Kızılçukur. Show the balloons while I talk about the balloons, and end on the sunset valley. Skip the quad bike clip.",
+  "order_locked": false,
+  "pinned_first": [],
+  "pinned_last": [
+   "files/l3b7i9r61r8s"
+  ],
+  "language": "tr",
+  "ordered_groups": [
+   [
+    "files/dx3z04lg4fbe",
+    "files/1aybtglmnbnz"
+   ]
+  ]
+ },
+ "raw_text": "{\n  \"placements\": [\n    {\n      \"clip_id\": \"files/dx3z04lg4fbe\",\n      \"start_word_id\": \"w000000\",\n      \"reason\": \"First clip in locked order starts at the beginning of the voiceover.\"\n    },\n    {\n      \"clip_id\": \"files/1aybtglmnbnz\",\n      \"start_word_id\": \"w000008\",\n      \"reason\": \"Creator requested showing balloons while talking about balloons. This clip shows balloons and a breakfast view.\"\n    },\n    {\n      \"clip_id\": \"files/patnzi0q58hp\",\n      \"start_word_id\": \"w000018\",\n      \"reason\": \"The voiceover describes walking among the fairy chimneys in Paşabağ.\"\n    },\n    {\n      \"clip_id\": \"files/8b1crkzz53hi\",\n      \"start_word_id\": \"w000023\",\n      \"reason\": \"The voiceover describes making a bowl in a pottery workshop in Avanos.\"\n    },\n    {\n      \"clip_id\": \"files/n09rgl3uoeek\",\n      \"start_word_id\": \"w000033\",\n      \"reason\": \"The voiceover describes trying 'testi kebabı' for dinner, which involves breaking a clay pot.\"\n    },\n    {\n      \"clip_id\": \"files/l3b7i9r61r8s\",\n      \"start_word_id\": \"w000043\",\n      \"reason\": \"Creator requested ending on the sunset valley. This clip shows a valley at sunrise or sunset.\"\n    }\n  ]\n}",
+ "output": {
+  "placements": [
+   {
+    "clip_id": "files/dx3z04lg4fbe",
+    "start_word_id": "w000000",
+    "reason": "First clip in locked order starts at the beginning of the voiceover."
+   },
+   {
+    "clip_id": "files/1aybtglmnbnz",
+    "start_word_id": "w000008",
+    "reason": "Creator requested showing balloons while talking about balloons. This clip shows balloons and a breakfast view."
+   },
+   {
+    "clip_id": "files/patnzi0q58hp",
+    "start_word_id": "w000018",
+    "reason": "The voiceover describes walking among the fairy chimneys in Paşabağ."
+   },
+   {
+    "clip_id": "files/8b1crkzz53hi",
+    "start_word_id": "w000023",
+    "reason": "The voiceover describes making a bowl in a pottery workshop in Avanos."
+   },
+   {
+    "clip_id": "files/n09rgl3uoeek",
+    "start_word_id": "w000033",
+    "reason": "The voiceover describes trying 'testi kebabı' for dinner, which involves breaking a clay pot."
+   },
+   {
+    "clip_id": "files/l3b7i9r61r8s",
+    "start_word_id": "w000043",
+    "reason": "Creator requested ending on the sunset valley. This clip shows a valley at sunrise or sunset."
+   }
+  ]
+ },
+ "meta": {
+  "source": "prod job 38caaebd placements re-sorted by start word (KRI-532)",
+  "scenario": "creator pinned the closing clip ('end on the sunset valley') and described one group (the two balloon clips); the voiceover walks the other clips in its own order",
+  "job": "prod 38caaebd",
+  "prod_unsorted_raw_text": "{\n  \"placements\": [\n    {\n      \"clip_id\": \"files/dx3z04lg4fbe\",\n      \"start_word_id\": \"w000000\",\n      \"reason\": \"First clip in locked order starts at the beginning of the voiceover.\"\n    },\n    {\n      \"clip_id\": \"files/1aybtglmnbnz\",\n      \"start_word_id\": \"w000008\",\n      \"reason\": \"Creator requested showing balloons while talking about balloons. This clip shows balloons and a breakfast view.\"\n    },\n    {\n      \"clip_id\": \"files/n09rgl3uoeek\",\n      \"start_word_id\": \"w000033\",\n      \"reason\": \"The voiceover describes trying 'testi kebabı' for dinner, which involves breaking a clay pot.\"\n    },\n    {\n      \"clip_id\": \"files/8b1crkzz53hi\",\n      \"start_word_id\": \"w000023\",\n      \"reason\": \"The voiceover describes making a bowl in a pottery workshop in Avanos.\"\n    },\n    {\n      \"clip_id\": \"files/patnzi0q58hp\",\n      \"start_word_id\": \"w000018\",\n      \"reason\": \"The voiceover describes walking among the fairy chimneys in Paşabağ.\"\n    },\n    {\n      \"clip_id\": \"files/l3b7i9r61r8s\",\n      \"start_word_id\": \"w000043\",\n      \"reason\": \"Creator requested ending on the sunset valley. This clip shows a valley at sunrise or sunset.\"\n    }\n  ]\n}"
+ }
+}

@@ -585,8 +585,14 @@ With `NARRATED_CLIP_ALIGNMENT_ENABLED=true` (default) the worker first asks
 `NarratedClipAlignmentAgent` (`nova.compose.narrated_clip_alignment`) which
 voiceover word each clip should start on, from the timed words, each clip's
 visual description, the creator's shot labels (resolved clip intents) and the
-creator request. `order_locked` (a filming-guide order or any `order` clip
-intent) pins the clip order; otherwise the agent may reorder. The agent never
+creator request. `order_locked` (a filming-guide order only) fixes the whole clip
+order. Creator-stated `first`/`last` `order` intents are PINS (`pinned_first` /
+`pinned_last`): only those clips are fixed at the head/tail and every other clip is
+placed where the narration describes it (KRI-532). Unpositioned `order` intents are
+the creator's described sequence (`ordered_groups`: every clip of a group before every
+clip of the next; other clips free). In PINNED mode `parse` re-sorts the placements by
+start word (trace `resorted`) before checking pins/groups. With none of these, the agent
+may reorder freely. The agent never
 owns timestamps: `app.pipeline.narrated_alignment.resolve_aligned_steps` turns
 the chosen words into contiguous windows (first step starts at 0.0, minimum step
 1.5 s by pulling boundaries earlier). For legacy unbound jobs, a precondition miss (<2 clips, no/too
@@ -599,7 +605,7 @@ before using a simpler sequence when alignment is unavailable. The scripted film
 `fly secrets set NARRATED_CLIP_ALIGNMENT_ENABLED=false --app nova-video` + worker
 restart (restores the bucket split for unbound jobs; bound requests ask for recovery). Eval:
 `tests/evals/test_narrated_clip_alignment_evals.py` (goldens recorded from the
-cacio e pepe job).
+cacio e pepe job, plus a pinned-last Cappadocia case from prod 38caaebd).
 
 Clip ORDER for native (phone) edits is set at dispatch, not by the model's
 `selected_media_ids` order: `content_plan_build._creator_intent_clip_order`
