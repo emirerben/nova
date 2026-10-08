@@ -1292,6 +1292,8 @@ def _creator_selected_clip_paths(
     item: PlanItem,
     clip_paths: list[str],
     creator_strategy: dict | None,
+    *,
+    without_proposal: bool = False,
 ) -> list[str]:
     """Resolve opaque confirmed media IDs to exact item-owned native clip paths.
 
@@ -1299,6 +1301,15 @@ def _creator_selected_clip_paths(
     Native execution has no proposal layer, so it must honor the confirmed
     subset here instead of silently rendering every attached clip. Pool assets
     are not native clip inputs; selecting only those fails closed as no clips.
+
+    ``without_proposal`` (KRI-515): a guided dispatch with no approved proposal
+    (a runtime-v2 approval; the worker plans a unified, voiceover or speech
+    montage from every clip it is handed) honors an explicit ``selected``
+    subset too. The render contract pins exactly those clips, so handing the
+    worker a clip the Creator left out (a duplicate, "skip the X clip") renders
+    it anyway and, under an order rule, fails verification. Attachment order is
+    kept (the unified montage plans from it), a camera-audio source the plan
+    names always stays, and a selection naming no attached clip keeps every clip.
     """
 
     if not creator_strategy:
@@ -1314,7 +1325,10 @@ def _creator_selected_clip_paths(
         answer.kind == "duration_vs_count" and answer.option == "fewer"
         for answer in strategy.choice_answers or ()
     )
-    if (strategy.render_program != "native" and not chose_fewer) or not selected:
+    explicit_subset = without_proposal and strategy.media_scope == "selected"
+    if not selected or (
+        strategy.render_program != "native" and not chose_fewer and not explicit_subset
+    ):
         return clip_paths
     path_by_id: dict[str, str] = {}
     assignments = [value for value in (item.clip_assignments or []) if isinstance(value, dict)]
@@ -1328,6 +1342,11 @@ def _creator_selected_clip_paths(
         path_by_id.update(
             {f"legacy-clip-{index + 1}": path for index, path in enumerate(clip_paths)}
         )
+    if strategy.render_program != "native" and not chose_fewer:
+        audio = strategy.montage_audio
+        named = {*selected, *(audio.source_media_ids if audio is not None else ())}
+        kept = {path_by_id[media_id] for media_id in named if media_id in path_by_id}
+        return [path for path in clip_paths if path in kept] if kept else clip_paths
     return [path_by_id[media_id] for media_id in selected if media_id in path_by_id]
 
 
@@ -1929,7 +1948,9 @@ def _dispatch_item_render(
             )
             return DispatchResult("proposal_stale")
     clip_paths = item_clip_paths
-    clip_paths = _creator_selected_clip_paths(item, clip_paths, creator_strategy)
+    clip_paths = _creator_selected_clip_paths(
+        item, clip_paths, creator_strategy, without_proposal=approved_proposal is None
+    )
     intent_order_placed = 0
     if not creator_clip_order:
         # An explicit preserved-order revision fence wins; otherwise the resolved
