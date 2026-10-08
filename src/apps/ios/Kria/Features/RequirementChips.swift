@@ -60,6 +60,9 @@ struct RequirementReceiptItem: Equatable, Sendable {
     let outcome: RequirementOutcome
     let reason: String?
     let inferredLabels: [InferredLabel]
+    /// KRI-529: the server could not check this requirement against the output. That is "not
+    /// checked yet", not "partly done": it must never read as a half-finished result.
+    let isUnchecked: Bool
 
     /// `nil` for anything that isn't a receipt this build understands (a future status, a missing id).
     init?(json: JSONValue) {
@@ -68,6 +71,8 @@ struct RequirementReceiptItem: Equatable, Sendable {
               let outcome = object["status"]?.stringValue.flatMap(RequirementOutcome.init(rawValue:)) else { return nil }
         requirementID = id
         self.outcome = outcome
+        // A receipt that was refused as impossible stays a failure even if nothing was checked.
+        isUnchecked = object["verification"]?.stringValue == "unchecked" && outcome != .notPossible
         reason = object["reason"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
         let labels: [InferredLabel] = (object["inferred_labels"]?.arrayValue ?? []).compactMap { raw in
             guard case .object(let label) = raw, let text = label["text"]?.stringValue, !text.isEmpty else { return nil }
@@ -203,7 +208,9 @@ private struct RequirementChip: View {
     let toggle: () -> Void
 
     private var treatment: (icon: String, foreground: Color, background: Color) {
-        switch receipt.outcome {
+        // KRI-529: an unchecked requirement is neutral, never the yellow "partly done".
+        if receipt.isUnchecked { return ("questionmark", KriaColor.zinc, KriaColor.softZinc) }
+        return switch receipt.outcome {
         case .met: ("checkmark", KriaColor.success, KriaColor.successSoft)
         case .partial: ("circle.lefthalf.filled", KriaColor.ink, KriaColor.butter)
         case .notPossible: ("xmark", KriaColor.failureText, KriaColor.failureSoft)
@@ -230,11 +237,11 @@ private struct RequirementChip: View {
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(receipt.outcome.word): \(label)")
+            .accessibilityLabel("\(receipt.isUnchecked ? "Not checked yet" : receipt.outcome.word): \(label)")
             .accessibilityHint(isExpanded ? "Hides the reason" : "Shows the reason")
             .accessibilityIdentifier("requirement-chip-\(receipt.requirementID)")
             if isExpanded {
-                Text(receipt.reason ?? receipt.outcome.defaultReason)
+                Text(receipt.reason ?? (receipt.isUnchecked ? "I couldn’t check this one automatically yet." : receipt.outcome.defaultReason))
                     .font(KriaFont.body(12))
                     .foregroundStyle(KriaColor.zinc)
                     .fixedSize(horizontal: false, vertical: true)

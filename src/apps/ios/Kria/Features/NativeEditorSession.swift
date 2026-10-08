@@ -756,6 +756,15 @@ struct NativeEditorTemporaryVideo {
     private var submittedEditorStateOrder: [String] = []
     private static let submittedEditorStateLimit = 8
 
+    /// `exportEditorState` after staging any chat draft the editor has not shown yet (KRI-529).
+    /// The server treats this state as authoritative and ignores its own head draft, so a state
+    /// exported before the previous chat edit was staged silently drops that edit. The sync is
+    /// best-effort (it retries internally and never throws), so it can never block a send.
+    func exportEditorStateSyncingDraft(maxBytes: Int? = nil) async -> EditorStateRequest? {
+        await synchronizePromptRevision()
+        return exportEditorState(maxBytes: maxBytes)
+    }
+
     /// The editor's current UNSAVED state for a chat turn, or nil when it cannot be
     /// sent (not loaded, no baseline generation, or over `maxBytes`) and the caller
     /// must fall back to the legacy save-then-send flow. A clean editor exports
@@ -1634,6 +1643,26 @@ struct NativeEditorTemporaryVideo {
         if let target = project.activeJobID, let jobID, target != jobID { return true }
         guard let loadedServerRevision else { return false }
         return loadedServerRevision != project.serverRevision
+    }
+
+    /// KRI-529: reopen an already-loaded editor after chat turns WITHOUT a full reload.
+    ///
+    /// Every chat turn bumps the thread revision, so `needsReload` is true on each reopen and
+    /// the full `load` ran: loading state, the OLD rendered video, then the chat edit a few
+    /// seconds later, and any unsaved local edit reset. When the rendered variant is still the
+    /// generation this editor was built from, nothing was rendered in the meantime: stage the
+    /// newest chat draft in place instead. A different job, a different variant or a newer
+    /// render returns false, and the caller keeps the full reload (which swaps the video).
+    func reconcileOnOpen(project: ProjectSummary, api: any KriaAPIClient) async -> Bool {
+        guard loadState == .loaded, !isSaving, project.runtimeVersion == 2, conversationRuntimeVersion == 2,
+              let jobID, let variantKey,
+              project.activeJobID.map({ $0 == jobID }) ?? true,
+              project.outputVariantID.map({ $0 == variantKey }) ?? true,
+              let current = try? await api.editorVariant(jobID: jobID, variantID: variantKey),
+              variantUnchanged(current) else { return false }
+        loadedServerRevision = project.serverRevision
+        await synchronizePromptRevision()
+        return true
     }
 
     func load(project: ProjectSummary, api: any KriaAPIClient) async {

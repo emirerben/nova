@@ -1383,7 +1383,9 @@ private struct CreationWorkspaceView: View {
                 await refreshEditorStateCapability()
             }
             if capabilities?.editorStateTurnsEnabled == true {
-                editorState = editorSession.exportEditorState(maxBytes: capabilities?.editorStateMaxBytes)
+                // KRI-529: stage the previous chat edit first; the server ignores its own head
+                // draft when it receives this state, so an unstaged edit would be dropped.
+                editorState = await editorSession.exportEditorStateSyncingDraft(maxBytes: capabilities?.editorStateMaxBytes)
             }
         }
         if editorState == nil, editorSession.hasUnsavedChanges, !editorSession.hasOnlyChatStagedChanges {
