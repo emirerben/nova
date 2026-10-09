@@ -1137,7 +1137,9 @@ class EditorCommitMix(BaseModel):
     semantics (voice/bed balance — voiceover variants only). `original_level` is the
     footage's own sound level: persisted on every variant, and honored by the phone
     renderer for guided-story edits (including creator-song videos, where it plays WITH
-    the song; unset keeps the song video's camera silent)."""
+    the song; unset keeps the song video's camera silent) and by the cloud renderer for
+    song variants (footage plays UNDER the song) and original-audio variants (footage
+    volume). Cloud voiceover variants refuse it (422 original_audio_voiceover_unsupported)."""
 
     music_level: float | None = Field(None, ge=0.0, le=1.0)
     original_level: float | None = Field(None, ge=0.0, le=1.0)

@@ -93,3 +93,26 @@ def test_original_audio_variant_level_scales_the_footage_sound(media, tmp_path):
     assert _amp(half, FOOTAGE_HZ) == pytest.approx(_amp(full, FOOTAGE_HZ) * 0.5, rel=0.1)
     silent = _samples(_apply_original_audio_level(media["video"], str(tmp_path / "z.mp4"), 0.0))
     assert float(np.max(np.abs(silent))) < 0.001
+
+
+def test_song_variant_level_with_validated_window_still_mixes_both(media, monkeypatch):
+    """The validated-window chain (atrim + apad) feeds amix; it must stay bounded."""
+    out = _mix(media, monkeypatch, "windowed", original_level=1.0, validated_window_duration_s=3.0)
+    assert _amp(out, FOOTAGE_HZ) > 0.01 and _amp(out, SONG_HZ) > 0.01
+    assert len(out) / 48000 < 4.5  # bounded by the video, not an infinite pad
+
+
+def test_song_variant_level_on_silent_footage_keeps_the_song(media, monkeypatch):
+    """No footage audio to mix: fall back to the historical replace, never fail."""
+    silent = media["dir"] / "silent.mp4"
+    _run(
+        "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=64x64:r=30", "-t", "4",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(silent),
+    )  # fmt: skip
+    monkeypatch.setattr(to, "download_to_file", lambda _src, dst: shutil.copy(media["song"], dst))
+    out = media["dir"] / "silent_out.mp4"
+    to._mix_template_audio(
+        str(silent), "music/song.m4a", str(out), str(media["dir"]),
+        require_audio=True, original_level=0.5,
+    )  # fmt: skip
+    assert _amp(_samples(out), SONG_HZ) > 0.01
