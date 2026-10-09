@@ -518,6 +518,14 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-557-thinking,slide-post-binding-recovery"),
             ),
             (
+                "src/apps/api/app/schemas/user_song.py",
+                (True, "covered", "kri-561-song-order"),
+            ),
+            (
+                "src/apps/api/app/pipeline/lipsync_montage.py",
+                (True, "covered", "kri-561-song-order"),
+            ),
+            (
                 "src/apps/api/app/kria/planner.py.backup",
                 (True, "gap", ""),
             ),
