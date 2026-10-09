@@ -1,7 +1,8 @@
 # KRI-524: compound trim and Save follow-up
 
 Status: production Save rejection matched to the local regression; fixes verified locally.
-Base: `52383860bc91e7d8209f06be9e6d35f1f855a8d4`.
+Base: `0c25a307e` (`origin/main` at the delivery review).
+Deployment: fixes are not deployed yet.
 
 ## Evidence and boundaries
 
@@ -45,8 +46,11 @@ Raw conversations and device diagnostics remain outside the repository.
 - `make verify-kria`: **2,318 passed, 6 skipped**, using an isolated local test
   database. The shared database had enough retained drafts to affect its bounded
   retention test; the isolated database removes that test-state interference.
-- Affected compiler, timeline, and Save suites: **222 passed**. The updated
+- Affected compiler, timeline, and Save suites: **227 passed**. The updated
   twelve-word sequence case also passes with a gap in compiler-style sequence IDs.
+- The five bulk timing regressions now cover selector targeting, explicit no-op
+  authorship, output-clock projection of untouched labels, and atomic rejection
+  of nonfinite values. The focused guided timeline file passes **35 tests**.
 - iOS `ChatDraftStagingTests`: **46 passed** in the simulator. The new case applies
   flat clip/text draft fields over stale nested fields, refreshes again, and checks
   the outgoing Save request. Server transport is a fixture in this suite.
@@ -56,6 +60,10 @@ Raw conversations and device diagnostics remain outside the repository.
   surviving footage, and audible source tone in all three clips.
 - Scoped lint, format, and preship checks pass. Independent runtime review found
   no blocker in the local patch.
+- The full backend gate completed with **2,318 passed, 6 skipped**. Creation
+  native export completed successfully. The trim-save native result is now a
+  required CI journey and its separate result bundle and render are uploaded;
+  the existing immutable journey evidence still hashes the creation case only.
 - No new paid model calls. Offline replay and synthetic export do not prove live
   model reliability. Production behavior after deployment still needs verification.
 
