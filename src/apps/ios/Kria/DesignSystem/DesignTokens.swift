@@ -19,6 +19,18 @@ enum KriaColor {
     static let successSoft = Color(hex: 0xEAF6EE)
     static let failureText = Color(hex: 0xB42318)
     static let failureSoft = Color(hex: 0xFFF0ED)
+
+    // Live plan "color behind the glass" (Paper -B artboards).
+    /// Pill / chip fill (`--color-fill`).
+    static let fill = Color(hex: 0xF1F3F6)
+    /// Deciding-card gradient stops (160deg), over the butter wash.
+    static let butterWarm = Color(hex: 0xFFF3B8)
+    static let butterPale = Color(hex: 0xFFFBE6)
+    /// The deeper end of the progress fill and the deciding-card glow (#F5BE28).
+    static let butterDeep = Color(hex: 0xF1D048)
+    static let butterGlow = Color(hex: 0xF5BE28)
+    /// Near-white screen gradient behind the wash.
+    static let screenTop = Color(hex: 0xFCFDFF)
 }
 
 enum KriaTransparency {

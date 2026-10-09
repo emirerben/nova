@@ -107,5 +107,7 @@
   "KriaUITests/SignInUITests/testSignInShowsEveryProviderAndLegalLink": 21.0,
   "KriaUITests/SignInUITests/testSignInWithReduceMotionIsInteractiveImmediately": 7.5,
   "KriaUITests/SlidePostUITests/testSlideFormatCoverAndBackRemainReachableAtLargeText": 15.6,
-  "KriaUITests/SlidePostUITests/testSlidePostCreationUsesExplicitProposalAndCreateThenContextualKria": 31.9
+  "KriaUITests/SlidePostUITests/testSlidePostCreationUsesExplicitProposalAndCreateThenContextualKria": 31.9,
+  "KriaUITests/CreationUITests/testLivePlanFeedRendersStructuredPayloadsAndOffersReview": 30.0,
+  "KriaUITests/CreationUITests/testLivePlanFeedV2UnderReduceTransparency": 30.0
 }

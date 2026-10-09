@@ -608,10 +608,16 @@ private struct CreationWorkspaceView: View {
                 : feed.turnID != nil && stopUnavailableJobID != feed.jobID,
             isStopping: isStoppingRender,
             stopMessage: stopMessage,
-            stop: stopRender
+            stop: stopRender,
+            // The Review CTA / Change pills exist only when the server speaks live-plan contract v2.
+            openReview: capabilities?.livePlanReviewAvailable == true ? { openPlanReview(section: $0) } : nil
         )
         .id("plan-feed")
     }
+
+    /// Hook for the Review view (KRI-440). `section` is the card whose Change was tapped, nil for the CTA.
+    /// The Review sheet itself lands in the next lane; until then this is the single place it mounts.
+    private func openPlanReview(section: PlanSectionID?) {}
 
     /// Cancels the render behind the feed. Always sends the newest thread revision: every `plan_block`
     /// event bumps it, so the revision the feed was drawn with is usually stale.

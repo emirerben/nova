@@ -96,6 +96,10 @@ final class CreationChatFixture: @unchecked Sendable {
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CAPS"] == "fail" { return nil }
             var capabilities: [String: Any] = ["formats": [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", 1), ("slides", "slides", 20)].map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
             if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1" { capabilities["live_plan_review_enabled"] = true }
+            // `KRIA_CHAT_PLAN_BLOCKS_VERSION=2`: the server speaks live-plan contract v2 (structured payloads,
+            // 8 sections including post_caption, Review entry points). Absent = an older feed-only server.
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1",
+               let version = ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_VERSION"].flatMap(Int.init) { capabilities["live_plan_review_version"] = version }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_RICH_TEXT"] == "1" { capabilities["slide_post_rich_text"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_EXTENDED_DEVICE_EXPORT"] == "1" { capabilities["slide_post_extended_device_export"] = true }
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CHAT_EDIT"] == "1" { capabilities["slide_post_chat_edit"] = true }
@@ -444,23 +448,55 @@ final class CreationChatFixture: @unchecked Sendable {
     }
     /// KRI-443: the staged `plan_block` payloads, in the order the pipeline would decide them.
     private static var planScript: [[[String: Any]]] {
-        func block(_ section: String, _ state: String, _ summary: String? = nil, detail: String? = nil, skipped: Bool = false) -> [String: Any] {
+        let v2 = (ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_VERSION"].flatMap(Int.init) ?? 1) >= 2
+        func block(_ section: String, _ state: String, _ summary: String? = nil, detail: String? = nil, skipped: Bool = false, payload: Any? = nil) -> [String: Any] {
             var value: [String: Any] = ["section_id": section, "state": state, "intent": false, "skipped": skipped]
             if let summary { value["summary"] = summary }
             if let detail { value["detail"] = detail }
             if state == "decided" { value["decided_at"] = "2026-10-05T10:00:00Z" }
+            if v2 {
+                value["revision"] = state == "decided" ? 1 : 0
+                value["changed"] = false
+                if let payload { value["payload"] = payload }
+            }
             return value
         }
-        let sections = ["title", "clips", "captions", "music", "sfx", "overlays", "look"]
+        var sections = ["title", "clips", "captions", "music", "sfx", "overlays", "look"]
+        if v2 { sections.append("post_caption") }
         if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS_DEVICE"] == "1" {
             // What an iPhone account gets in production: every section waiting, then every section decided
             // almost at once, because the server only plans and the video is built on the device.
+            var decided = [block("title", "decided", "Sunday reset, slowed down"), block("clips", "decided", "30 clips · 30s"),
+                           block("captions", "decided", "Bold captions, lower third"), block("music", "decided", "Your song"),
+                           block("sfx", "decided", "4 sound effects"), block("overlays", "decided", nil, skipped: true),
+                           block("look", "decided", "Warm film grain")]
+            if v2 { decided.append(block("post_caption", "decided", "Slow summer days in Bodrum")) }
+            return [sections.map { block($0, "waiting") }, decided]
+        }
+        if v2 {
+            let clips: [[String: Any]] = (0..<6).map { index in
+                var clip: [String: Any] = ["index": index, "kind": "video", "role": ["kettle", "street", "bakery", "bench", "harbor", "sunset"][index],
+                                           "start_s": Double(index) * 4, "end_s": Double(index + 1) * 4]
+                if index < 5 { clip["transition"] = ["cut", "dissolve", "whip", "fade", "banana"][index] }
+                return clip
+            }
             return [
                 sections.map { block($0, "waiting") },
-                [block("title", "decided", "Sunday reset, slowed down"), block("clips", "decided", "30 clips · 30s"),
-                 block("captions", "decided", "Bold captions, lower third"), block("music", "decided", "Your song"),
-                 block("sfx", "decided", "4 sound effects"), block("overlays", "decided", nil, skipped: true),
-                 block("look", "decided", "Warm film grain")],
+                [block("title", "deciding")],
+                [block("title", "decided", "A slow summer day", payload: ["text": "A slow summer day", "bar_id": "guided-title-1"]), block("clips", "deciding")],
+                [block("clips", "decided", "6 clips · 24s · beach first", payload: ["total_duration_s": 24.0, "clips": clips])],
+                [block("captions", "decided", "4 lines · pop-in · bottom", payload: ["count": 4, "truncated": false, "lines": [
+                    ["id": "c1", "kind": "cue", "text": "Slow mornings.", "start_s": 0.0, "end_s": 2.5],
+                    ["id": "c2", "kind": "cue", "text": "Salt, sun, sand.", "start_s": 3.0, "end_s": 5.5],
+                    ["id": "c3", "kind": "cue", "text": "Golden hour.", "start_s": 11.0, "end_s": 13.0],
+                    ["id": "c4", "kind": "cue", "text": "Stay a little longer.", "start_s": 18.0, "end_s": 21.0],
+                ] as [[String: Any]]]), block("music", "deciding")],
+                [block("music", "decided", "Sunday Drive by Kira", payload: ["source": "catalog", "title": "Sunday Drive", "artist": "Kira", "bpm": 112.0, "start_s": 12.0,
+                                                                               "mix": ["music_level": 0.7, "original_level": 0.5]]), block("sfx", "deciding")],
+                // A malformed payload must fall back to the summary, never break the feed.
+                [block("sfx", "decided", "4 sound effects", payload: "not-an-object"), block("overlays", "decided", nil, skipped: true), block("look", "deciding")],
+                [block("look", "decided", "Warm film · light grain", payload: ["chips": ["Warm film", "Light grain", "Serif titles"]]), block("post_caption", "deciding")],
+                [block("post_caption", "decided", "Slow summer days in Bodrum", payload: ["text": "Slow summer days in Bodrum, one roll of film at a time.", "hashtags": ["slowsummer", "bodrum"], "platform": "tiktok"])],
             ]
         }
         return [

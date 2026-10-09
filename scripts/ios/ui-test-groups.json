@@ -106,7 +106,9 @@
       "KriaUITests/CreationUITests/testLivePlanFeedStopCancelsTheDeviceRender",
       "KriaUITests/CreationUITests/testLivePlanFeedStopCancelsTheRender",
       "KriaUITests/CreationUITests/testLivePlanFeedStopHidesWhenTheRenderCannotBeCancelled",
-      "KriaUITests/CreationUITests/testLivePlanFeedUnderReduceMotionAndReduceTransparency"
+      "KriaUITests/CreationUITests/testLivePlanFeedUnderReduceMotionAndReduceTransparency",
+      "KriaUITests/CreationUITests/testLivePlanFeedRendersStructuredPayloadsAndOffersReview",
+      "KriaUITests/CreationUITests/testLivePlanFeedV2UnderReduceTransparency"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",

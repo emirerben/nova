@@ -21,7 +21,10 @@ final class PlanBlockFeedTests: XCTestCase {
         )
     }
 
-    private var allWaiting: [JSONValue] { PlanSectionID.allCases.map { block($0.rawValue, "waiting") } }
+    /// What an older (feed-only) server sends: seven sections, no post caption.
+    private let legacySections = PlanSectionID.allCases.filter { $0 != .postCaption }
+
+    private var allWaiting: [JSONValue] { legacySections.map { block($0.rawValue, "waiting") } }
 
     func testBlocksComeBackInDisplayOrderRegardlessOfArrival() {
         let feed = PlanBlockFeedState.reduce(events: [
@@ -41,7 +44,7 @@ final class PlanBlockFeedTests: XCTestCase {
         feed = PlanBlockFeedState.reduce(events: events)
         XCTAssertEqual(feed.decidedCount, 1)
         XCTAssertEqual(feed.newestDecided, .title)
-        events.append(event(3, PlanSectionID.allCases.map { block($0.rawValue, "decided", summary: $0.label) }))
+        events.append(event(3, legacySections.map { block($0.rawValue, "decided", summary: $0.label) }))
         feed = PlanBlockFeedState.reduce(events: events)
         XCTAssertTrue(feed.isComplete)
         XCTAssertEqual(feed.progress, 1)
@@ -216,11 +219,105 @@ final class PlanBlockFeedTests: XCTestCase {
         XCTAssertNotNil(feed.blocksBySection[.music]?.decidedAt)
     }
 
+    // MARK: Live plan contract v2 (KRI-439 / KRI-450): decode with fallback, revision-aware reducer
+
+    private func v2Block(_ section: String, _ state: String, summary: String? = nil, revision: Int = 0, changed: Bool = false,
+                         payload: JSONValue? = nil, previous: JSONValue? = nil) -> JSONValue {
+        guard case .object(var fields) = block(section, state, summary: summary) else { return .null }
+        fields["revision"] = .number(Double(revision)); fields["changed"] = .bool(changed)
+        if let payload { fields["payload"] = payload }
+        if let previous { fields["previous"] = previous }
+        return .object(fields)
+    }
+
+    func testPostCaptionIsTheEighthSectionAndDisplayOnly() {
+        XCTAssertEqual(PlanSectionID.allCases.last, .postCaption)
+        XCTAssertFalse(PlanSectionID.postCaption.isScopable)
+        XCTAssertTrue(PlanSectionID.allCases.dropLast().allSatisfy(\.isScopable))
+        let feed = PlanBlockFeedState.reduce(events: [event(1, PlanSectionID.allCases.map { block($0.rawValue, "waiting") })])
+        XCTAssertEqual(feed.totalCount, 8)
+        XCTAssertEqual(feed.blocks.last?.section, .postCaption)
+    }
+
+    func testAnOldSevenSectionEventStillWorks() {
+        let feed = PlanBlockFeedState.reduce(events: [event(1, allWaiting), event(2, legacySections.map { block($0.rawValue, "decided", summary: "x") })])
+        XCTAssertEqual(feed.totalCount, 7)
+        XCTAssertTrue(feed.isComplete)
+        XCTAssertTrue(feed.blocks.allSatisfy { $0.payload == nil && $0.revision == 0 && !$0.changed })
+    }
+
+    func testStructuredPayloadsDecodeAndAMalformedOneFallsBackToTheSummary() throws {
+        let clips: JSONValue = .object(["total_duration_s": .number(24), "clips": .array([
+            .object(["index": .number(0), "start_s": .number(0), "end_s": .number(4), "transition": .string("dissolve")]),
+            .object(["index": .string("bad")]),                                        // a bad row is skipped, not fatal
+            .object(["index": .number(2), "start_s": .number(8), "end_s": .number(12), "transition": .string("banana")]),
+        ])])
+        let feed = PlanBlockFeedState.reduce(events: [event(1, [
+            v2Block("clips", "decided", summary: "3 clips", revision: 1, payload: clips),
+            v2Block("title", "decided", summary: "Hi", revision: 1, payload: .string("garbage")),
+            v2Block("captions", "decided", summary: "4 lines", revision: 1, payload: .object(["lines": .string("nope")])),
+            v2Block("music", "decided", summary: "Song", revision: 1, payload: .object(["source": .string("???"), "bpm": .number(112)])),
+        ])])
+        guard case .clips(let payload)? = feed.blocksBySection[.clips]?.payload else { return XCTFail("clips payload") }
+        XCTAssertEqual(payload.clips.map(\.index), [0, 2])
+        XCTAssertEqual(payload.clips.first?.transition, .dissolve)
+        XCTAssertNil(payload.clips.last?.transition, "an unmapped transition is nil, never a guess")
+        XCTAssertNil(feed.blocksBySection[.title]?.payload, "a non-object payload falls back")
+        XCTAssertEqual(feed.blocksBySection[.title]?.displaySummary, "Hi")
+        guard case .captions(let captions)? = feed.blocksBySection[.captions]?.payload else { return XCTFail("captions payload") }
+        XCTAssertTrue(captions.lines.isEmpty)
+        guard case .music(let music)? = feed.blocksBySection[.music]?.payload else { return XCTFail("music payload") }
+        XCTAssertEqual(music.source, .catalog, "an unknown source decodes to the documented default")
+        XCTAssertEqual(music.bpm, 112)
+    }
+
+    func testAHigherRevisionReplacesTheWholeBlockAndALowerOneIsIgnored() {
+        let previous: JSONValue = .object(["revision": .number(1), "job_id": .string("job-0"), "summary": .string("Old"), "skipped": .bool(false),
+                                           "payload": .object(["text": .string("Old title")])])
+        let feed = PlanBlockFeedState.reduce(events: [
+            event(1, [v2Block("title", "decided", summary: "Old", revision: 1, payload: .object(["text": .string("Old title")]))]),
+            event(2, [v2Block("title", "decided", summary: "New", revision: 2, changed: true, payload: .object(["text": .string("New title")]), previous: previous)]),
+            event(3, [v2Block("title", "decided", summary: "Stale", revision: 1)]),
+        ])
+        let title = feed.blocksBySection[.title]
+        XCTAssertEqual(title?.summary, "New")
+        XCTAssertEqual(title?.revision, 2)
+        XCTAssertEqual(title?.changed, true)
+        XCTAssertEqual(title?.previous?.summary, "Old")
+        XCTAssertEqual(title?.previous?.jobID, "job-0")
+        guard case .title(let payload)? = title?.payload else { return XCTFail("payload") }
+        XCTAssertEqual(payload.text, "New title")
+        guard case .title(let was)? = title?.previous?.payload else { return XCTFail("previous payload") }
+        XCTAssertEqual(was.text, "Old title")
+    }
+
+    func testScopeAndPreviousJobComeFromTheEventTopLevel() {
+        var scoped = event(1, [v2Block("captions", "deciding", revision: 1)])
+        scoped = ThreadEvent(id: "s", sequence: 1, revision: 2, role: "system", eventType: "plan_block", content: nil,
+                             payload: ["turn_id": .string("t"), "job_id": .string("job-2"), "scope": .array([.string("captions"), .string("hologram")]),
+                                       "previous_job_id": .string("job-1"), "blocks": .array([v2Block("captions", "deciding", revision: 1)])],
+                             createdAt: Date(timeIntervalSince1970: 0))
+        let feed = PlanBlockFeedState.reduce(events: [scoped])
+        XCTAssertEqual(feed.scope, [.captions])
+        XCTAssertEqual(feed.previousJobID, "job-1")
+    }
+
+    func testReviewIsOfferedOnlyOnAContractV2Server() throws {
+        func caps(_ extra: String) throws -> CreationCapabilities {
+            try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[],"live_plan_review_enabled":true\#(extra)}"#.utf8))
+        }
+        XCTAssertFalse(try caps("").livePlanReviewAvailable)
+        XCTAssertFalse(try caps(#","live_plan_review_version":1"#).livePlanReviewAvailable)
+        XCTAssertTrue(try caps(#","live_plan_review_version":2"#).livePlanReviewAvailable)
+        let off = try JSONDecoder().decode(CreationCapabilities.self, from: Data(#"{"formats":[],"live_plan_review_enabled":false,"live_plan_review_version":2}"#.utf8))
+        XCTAssertFalse(off.livePlanReviewAvailable)
+    }
+
     // MARK: Device-build pacing (KRI-443 follow-up)
 
     /// What the server sends an iPhone account: everything decided at once, overlays skipped.
     private var serverAllDecided: PlanBlockFeedState {
-        PlanBlockFeedState.reduce(events: [event(1, allWaiting), event(2, PlanSectionID.allCases.map {
+        PlanBlockFeedState.reduce(events: [event(1, allWaiting), event(2, legacySections.map {
             $0 == .overlays ? block($0.rawValue, "decided", skipped: true) : block($0.rawValue, "decided", summary: "\($0.label) value")
         })])
     }
