@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import copy
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.config import settings
 from app.kria.brief_binding import BriefBinding
@@ -29,6 +31,107 @@ def _item() -> SimpleNamespace:
     )
     return SimpleNamespace(
         id=uuid.uuid4(), edit_format="slides", slide_post=draft.model_dump(mode="json")
+    )
+
+
+def _roundtripped_binding_payload() -> tuple[SlidePostDraft, dict]:
+    """A server-minted snapshot after native JSON turns a float into an int."""
+    from app.schemas.slide_post import SlideEdits, SlideTextElement
+
+    asset_id = uuid.uuid4()
+    draft = SlidePostDraft(
+        platform_profile="tiktok_photo",
+        slides=[
+            SlideRef(
+                id="slide",
+                asset_id=asset_id,
+                kind="image",
+                edits=SlideEdits(
+                    texts=[SlideTextElement(id="text", text="Title", shadow_opacity=1.0)]
+                ),
+            )
+        ],
+    )
+    binding = BriefBinding.create(
+        uuid.uuid4(),
+        None,
+        latest_message="Keep the title.",
+        media_snapshot={"draft": draft.model_dump(mode="json", exclude={"brief_binding"})},
+    )
+    payload = binding.model_dump(mode="json")
+    payload["media_snapshot"]["draft"]["slides"][0]["edits"]["texts"][0]["shadow_opacity"] = 1
+    return draft, payload
+
+
+def test_slide_post_binding_accepts_native_numeric_roundtrip_in_both_request_models() -> None:
+    draft, binding_payload = _roundtripped_binding_payload()
+    draft_payload = draft.model_dump(mode="json", exclude={"brief_binding"})
+
+    parsed_draft = SlidePostDraft.model_validate(draft_payload | {"brief_binding": binding_payload})
+    parsed_body = plan_items.SlidePostDraftBody.model_validate(
+        {
+            "platform_profile": draft.platform_profile,
+            "slides": draft_payload["slides"],
+            "brief_binding": binding_payload,
+        }
+    )
+
+    assert parsed_draft.brief_binding is not None
+    assert parsed_body.brief_binding is not None
+    assert parsed_draft.brief_binding.digest == binding_payload["digest"]
+    assert parsed_body.brief_binding.digest == binding_payload["digest"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda payload: payload.__setitem__("creator_request", "Changed request."),
+        lambda payload: payload["media_snapshot"]["draft"]["slides"][0].__setitem__(
+            "asset_id", str(uuid.uuid4())
+        ),
+    ],
+)
+def test_slide_post_binding_canonicalization_still_rejects_tampering(mutation) -> None:
+    draft, binding_payload = _roundtripped_binding_payload()
+    tampered = copy.deepcopy(binding_payload)
+    mutation(tampered)
+
+    with pytest.raises(ValidationError, match="Brief binding digest mismatch"):
+        SlidePostDraft.model_validate(
+            draft.model_dump(mode="json", exclude={"brief_binding"}) | {"brief_binding": tampered}
+        )
+
+
+def test_non_slide_bindings_remain_strict_for_numeric_changes() -> None:
+    binding = BriefBinding.create(
+        uuid.uuid4(), None, latest_message="Keep it", media_snapshot={"opacity": 1.0}
+    )
+    payload = binding.model_dump(mode="json")
+    payload["media_snapshot"]["opacity"] = 1
+
+    with pytest.raises(ValidationError, match="Brief binding digest mismatch"):
+        BriefBinding.model_validate(payload)
+
+
+def test_slide_post_binding_ownership_guard_rejects_redigested_media_id() -> None:
+    asset_id = uuid.uuid4()
+    item = SimpleNamespace(id=uuid.uuid4())
+    asset = SimpleNamespace(
+        id=asset_id, kind="image", gcs_generation="1", content_fingerprint="fingerprint"
+    )
+    draft = SlidePostDraft(
+        platform_profile="tiktok_photo",
+        slides=[SlideRef(id="slide", asset_id=asset_id, kind="image")],
+    )
+    thread = SimpleNamespace(id=uuid.uuid4())
+    snapshot = plan_items._slide_post_media_snapshot(item, draft, [asset])
+    snapshot["assets"][0]["asset_id"] = str(uuid.uuid4())
+    binding = BriefBinding.create(
+        thread.id, None, latest_message="Keep it", media_snapshot=snapshot
+    )
+
+    assert not plan_items._binding_matches_slide_post(
+        binding, thread=thread, item=item, draft=draft, owned_assets=[asset]
     )
 
 
@@ -272,8 +375,6 @@ async def test_new_client_put_with_texts_is_saved_and_mirrored(
     ],
 )
 def test_put_body_rejects_invalid_rich_texts(edits: dict) -> None:
-    from pydantic import ValidationError
-
     with pytest.raises(ValidationError):
         plan_items.SlidePostDraftBody.model_validate(
             {
